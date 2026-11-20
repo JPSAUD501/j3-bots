@@ -1,23 +1,27 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
-import * as Schema from "effect/Schema";
 
 // Whether a live dynamic tool runs on purpose, which decides whether the
-// engine's stop counts it as pending (`Translate.ts`, `isPersistentTool`). The
+// engine's stop counts it as pending (`Translate.ts`, `isUncountedTool`). The
 // stream drops the mark from an input above 16 KiB, so the adapter reads such
 // an input again: first the item alone, which the engine cuts at 256 KiB, and
-// only when the cut hides the mark, the session's transcript, which carries it
-// whole.
+// when the cut leaves the mark unknown, the session's transcript, which
+// carries it whole. Reads that fail back off, and a tool no read decides in a
+// bounded number of tries is undecidable.
 
 /**
  * What the input of a dynamic tool the stream summarized says of its
- * persistence. `undecidable`: no read the engine offers returns enough of it,
- * because its transcript is past the export limit. Such a tool counts as not
- * pending: the engine's own stop still interrupts it unless it is persistent,
- * so the cost is a Stop that may settle a moment before a transient tool
- * ends, never a Stop that waits for good on a persistent one.
+ * persistence. `undecidable`: no read the engine offers returned enough of it,
+ * because its transcript is past the export limit, or reading it failed too
+ * many times. Such a tool counts as not pending: the engine's own stop still
+ * interrupts it unless it is persistent, so the cost is a Stop that may settle
+ * a moment before a transient tool ends, never a Stop that waits for good on a
+ * persistent one.
  */
 export type ToolPersistence = "persistent" | "transient" | "undecidable";
 
@@ -33,104 +37,25 @@ export const hasPersistentFlag = (input: unknown) =>
  */
 const TRUNCATION_MARKER = "\n… output truncated for transport";
 
-const decodeKey = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.String));
-
-const isSpace = (char: string | undefined) =>
-  char === " " || char === "\t" || char === "\n" || char === "\r";
-
-/** Where the JSON string opening at `start` ends, past its closing quote; none when the text ends first. */
-const stringEnd = (text: string, start: number): Option.Option<number> => {
-  for (let at = start + 1; at < text.length; at++) {
-    if (text[at] === "\\") at++;
-    else if (text[at] === '"') return Option.some(at + 1);
-  }
-  return Option.none();
-};
-
-/** Where the JSON value starting at `start` ends; none when the text ends first. */
-const valueEnd = (text: string, start: number): Option.Option<number> => {
-  const first = text[start];
-  if (first === '"') return stringEnd(text, start);
-  if (first === "{" || first === "[") {
-    let depth = 0;
-    for (let at = start; at < text.length; at++) {
-      const char = text[at];
-      if (char === '"') {
-        const end = stringEnd(text, at);
-        if (Option.isNone(end)) return end;
-        at = end.value - 1;
-      } else if (char === "{" || char === "[") {
-        depth++;
-      } else if (char === "}" || char === "]") {
-        depth--;
-        if (depth === 0) return Option.some(at + 1);
-      }
-    }
-    return Option.none();
-  }
-  // A number or a literal ends at the next delimiter, which a cut may have taken.
-  for (let at = start; at < text.length; at++) {
-    const char = text[at];
-    if (char === "," || char === "}" || char === "]" || isSpace(char)) return Option.some(at);
-  }
-  return Option.none();
-};
-
-/**
- * Whether the JSON object whose text `text` begins with marks itself
- * persistent, read from its top-level members up to where the text ends: a
- * member `persistent` read whole tells, `true` or anything else; none when
- * the text ends before such a member, or inside it.
- */
-const persistentInPrefix = (text: string): Option.Option<boolean> => {
-  let at = 0;
-  const skipSpace = () => {
-    while (isSpace(text[at])) at++;
-  };
-  skipSpace();
-  if (text[at] !== "{") return Option.none();
-  at++;
-  while (true) {
-    skipSpace();
-    if (text[at] === "}") return Option.some(false);
-    if (text[at] !== '"') return Option.none();
-    const keyEnd = stringEnd(text, at);
-    if (Option.isNone(keyEnd)) return Option.none();
-    const key = decodeKey(text.slice(at, keyEnd.value));
-    at = keyEnd.value;
-    skipSpace();
-    if (text[at] !== ":") return Option.none();
-    at++;
-    skipSpace();
-    if (at >= text.length) return Option.none();
-    if (Option.contains(key, "persistent")) {
-      // Only the literal `true` marks it, and a cut can leave part of one.
-      if (text[at] !== "t") return Option.some(false);
-      return text.length - at >= 4 ? Option.some(text.startsWith("true", at)) : Option.none();
-    }
-    const end = valueEnd(text, at);
-    if (Option.isNone(end)) return Option.none();
-    at = end.value;
-    skipSpace();
-    if (text[at] === ",") at++;
-    else return text[at] === "}" ? Option.some(false) : Option.none();
-  }
-};
+/** What `getTurnItem` returned for a tool. */
+export type ItemRead =
+  | { readonly _tag: "tool"; readonly input: unknown }
+  /** The engine has no dynamic tool by that id any more. */
+  | { readonly _tag: "not-a-tool" };
 
 /**
  * The persistence the input `getTurnItem` returned shows, or none when the
- * engine's cut hides it. A cut text that does not open with `{` was no object,
- * so it carried no mark. One that does carried the object's members in the
- * order they were written, so a `persistent` member before the cut tells; a
- * string input that itself opens with an object's text reads the same.
+ * engine's cut leaves it unknown. Nothing the engine sends says whether a cut
+ * input was a string or an object: it cuts a string as it is and an object as
+ * its JSON text, and the stream's summary is the first line of either
+ * (`WireProjection.ts`, `summarizeDynamicValue`, L69-107). A cut text that
+ * does not open with `{` was no object, so it carried no mark. One that does
+ * may be either, so it tells nothing: a string that opens with an object's
+ * text is transient, whatever that text says.
  */
 export const persistenceInItem = (input: unknown): Option.Option<ToolPersistence> => {
   if (typeof input === "string" && input.endsWith(TRUNCATION_MARKER)) {
-    const text = input.slice(0, -TRUNCATION_MARKER.length);
-    if (!text.startsWith("{")) return Option.some("transient");
-    return Option.map(persistentInPrefix(text), (persistent) =>
-      persistent ? "persistent" : "transient",
-    );
+    return input.startsWith("{") ? Option.none() : Option.some("transient");
   }
   return Option.some(hasPersistentFlag(input) ? "persistent" : "transient");
 };
@@ -142,21 +67,129 @@ export type WholeInput =
   | { readonly _tag: "unavailable" };
 
 /**
- * A tool's persistence, from the item read alone when its cut shows it, and
- * from the session's transcript otherwise. A failed read fails: nothing is
- * known, and the tool is read again later.
+ * A tool's persistence, from the item read alone when it shows it, and from
+ * the session's transcript otherwise. An item that is no longer a dynamic tool
+ * is transient: nothing marks it persistent, and the engine's stop goes by
+ * its own state. A failed read fails: nothing is known.
  */
 export const resolvePersistence = <EI, RI, EW, RW>(reads: {
-  readonly item: Effect.Effect<unknown, EI, RI>;
+  readonly item: Effect.Effect<ItemRead, EI, RI>;
   readonly whole: Effect.Effect<WholeInput, EW, RW>;
 }): Effect.Effect<ToolPersistence, EI | EW, RI | RW> =>
-  Effect.flatMap(reads.item, (input) =>
-    Option.match(persistenceInItem(input), {
+  Effect.flatMap(reads.item, (read) => {
+    if (read._tag === "not-a-tool") return Effect.succeed<ToolPersistence>("transient");
+    return Option.match(persistenceInItem(read.input), {
       onSome: Effect.succeed,
       onNone: () =>
         Effect.map(reads.whole, (whole): ToolPersistence => {
           if (whole._tag === "unavailable") return "undecidable";
           return hasPersistentFlag(whole.input) ? "persistent" : "transient";
         }),
-    }),
-  );
+    });
+  });
+
+/**
+ * How long after its `n`th failed read in a row a tool is read again: from 2
+ * seconds, doubling up to 10 minutes, as the server's recovery backs off. A
+ * transcript read exports the whole thread, and the engine runs two at a time,
+ * which can stall its other readers: it is not retried on every catch-up.
+ */
+export const toolReadBackoff = (n: number): Duration.Duration =>
+  Duration.min(Duration.seconds(2 * 2 ** Math.max(0, n - 1)), Duration.minutes(10));
+
+/** A tool whose persistence this many reads in a row failed to learn is undecidable. */
+export const MAX_TOOL_READ_FAILURES = 5;
+
+type ToolRead =
+  | { readonly _tag: "settled"; readonly persistence: ToolPersistence }
+  | { readonly _tag: "reading"; readonly failures: number }
+  | { readonly _tag: "failed"; readonly failures: number; readonly retryAt: number };
+
+/**
+ * What the adapter learned of each summarized tool's persistence, by session,
+ * shared by every stream of the session and by a Stop's reads, so a tool is
+ * read once at a time, a failed read backs off, and the bound holds however
+ * many readers ask.
+ */
+export interface ToolReads {
+  /**
+   * The tool's persistence: as settled before, or read now when no read of it
+   * runs and its backoff passed. None while nothing is known.
+   */
+  readonly resolve: <E, R>(
+    sessionId: string,
+    itemId: string,
+    read: Effect.Effect<ToolPersistence, E, R>,
+  ) => Effect.Effect<Option.Option<ToolPersistence>, never, R>;
+  /** Forgets each tool of the session but those listed, which are still live. */
+  readonly keep: (sessionId: string, live: ReadonlyArray<string>) => Effect.Effect<void>;
+  /** Forgets every tool of a session that is gone. */
+  readonly forget: (sessionId: string) => Effect.Effect<void>;
+}
+
+export const makeToolReads = (): ToolReads => {
+  const sessions = new Map<string, Map<string, ToolRead>>();
+  const readsOf = (sessionId: string) => {
+    const found = sessions.get(sessionId);
+    if (found !== undefined) return found;
+    const created = new Map<string, ToolRead>();
+    sessions.set(sessionId, created);
+    return created;
+  };
+
+  const resolve = <E, R>(
+    sessionId: string,
+    itemId: string,
+    read: Effect.Effect<ToolPersistence, E, R>,
+  ): Effect.Effect<Option.Option<ToolPersistence>, never, R> =>
+    Effect.gen(function* () {
+      const reads = readsOf(sessionId);
+      const before = reads.get(itemId);
+      if (before?._tag === "settled") return Option.some(before.persistence);
+      if (before?._tag === "reading") return Option.none();
+      if (before?._tag === "failed" && before.retryAt > (yield* Clock.currentTimeMillis)) {
+        return Option.none();
+      }
+      const failures = before?.failures ?? 0;
+      reads.set(itemId, { _tag: "reading", failures });
+      const settle = (persistence: ToolPersistence) => {
+        reads.set(itemId, { _tag: "settled", persistence });
+        return Option.some(persistence);
+      };
+      return yield* read.pipe(
+        Effect.matchEffect({
+          onSuccess: (persistence) => Effect.sync(() => settle(persistence)),
+          onFailure: () =>
+            Effect.map(Clock.currentTimeMillis, (now) => {
+              const failed = failures + 1;
+              if (failed >= MAX_TOOL_READ_FAILURES) return settle("undecidable");
+              const retryAt = now + Duration.toMillis(toolReadBackoff(failed));
+              reads.set(itemId, { _tag: "failed", failures: failed, retryAt });
+              return Option.none<ToolPersistence>();
+            }),
+        }),
+        // An interrupted read, or a defect, learned nothing: the tool is as it was.
+        Effect.onExit((exit) =>
+          Exit.isSuccess(exit)
+            ? Effect.void
+            : Effect.sync(() => {
+                if (before === undefined) reads.delete(itemId);
+                else reads.set(itemId, before);
+              }),
+        ),
+      );
+    });
+
+  return {
+    resolve,
+    keep: (sessionId, live) =>
+      Effect.sync(() => {
+        const reads = sessions.get(sessionId);
+        if (reads === undefined) return;
+        const kept = new Set(live);
+        for (const itemId of reads.keys()) if (!kept.has(itemId)) reads.delete(itemId);
+        if (reads.size === 0) sessions.delete(sessionId);
+      }),
+    forget: (sessionId) => Effect.sync(() => void sessions.delete(sessionId)),
+  };
+};

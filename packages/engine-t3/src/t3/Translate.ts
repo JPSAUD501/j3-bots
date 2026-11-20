@@ -93,8 +93,8 @@ export interface Mirror {
   readonly fetched: Map<string, FileChangeItem>;
   /**
    * Whether each live dynamic tool whose input the stream summarized runs on
-   * purpose, as read from the item fetched whole, by item id. See
-   * `isPersistentTool`.
+   * purpose, as the adapter's reads of it settled it, by item id. See
+   * `isUncountedTool`.
    */
   readonly toolPersistence: Map<string, ToolPersistence>;
 }
@@ -462,8 +462,9 @@ const isSummarizedInput = (input: unknown) =>
  * L242-258). For an input the stream summarized, the adapter's read of the
  * input tells (`toolPersistence.ts`). Until a read succeeds the tool counts
  * as pending: a Stop then waits on it, and keeps sending fresh rounds while
- * it does. One whose input no read returns whole enough to tell is not
- * counted, so that it can never hold a Stop open for good.
+ * it does. One that is undecidable (no read returns its input whole enough
+ * to tell, or reads failed too many times in a row) is not counted, so that
+ * it can never hold a Stop open for good.
  */
 const isUncountedTool = (mirror: Mirror, item: Item) => {
   if (item.type !== "dynamic_tool") return false;
@@ -472,20 +473,23 @@ const isUncountedTool = (mirror: Mirror, item: Item) => {
   return persistence === "persistent" || persistence === "undecidable";
 };
 
-/**
- * Live dynamic tools whose input the stream summarized and whose persistence
- * no read of the item settled yet: a read that failed leaves one here, to be
- * read again.
- */
-export const toolsToResolve = (mirror: Mirror): ReadonlyArray<string> =>
+/** Live dynamic tools whose input the stream summarized: those whose persistence a read tells. */
+export const summarizedTools = (mirror: Mirror): ReadonlyArray<string> =>
   [...mirror.items.values()].flatMap((item) =>
     item.type === "dynamic_tool" &&
     isOrchestrationV2WorkActive(item.status) &&
-    isSummarizedInput(item.input) &&
-    !mirror.toolPersistence.has(item.id)
+    isSummarizedInput(item.input)
       ? [item.id]
       : [],
   );
+
+/**
+ * Live dynamic tools whose input the stream summarized and whose persistence
+ * no read of the item settled yet: a read that failed leaves one here, to be
+ * read again once its backoff passed.
+ */
+export const toolsToResolve = (mirror: Mirror): ReadonlyArray<string> =>
+  summarizedTools(mirror).filter((itemId) => !mirror.toolPersistence.has(itemId));
 
 /** The session's latest run, as the engine's stop picks it: the last one that is not queued. */
 const latestRun = (mirror: Mirror) =>

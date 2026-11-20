@@ -39,6 +39,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as HttpClient from "effect/http/HttpClient";
+import type { HttpClientError } from "effect/http/HttpClientError";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -115,12 +116,19 @@ import {
   queuedRuns,
   replacement,
   runnableTurns,
+  summarizedTools,
   toolsToResolve,
   type EventBody,
   type Mirror,
   type View,
 } from "./Translate.ts";
-import { resolvePersistence, type ToolPersistence, type WholeInput } from "./toolPersistence.ts";
+import {
+  type ItemRead,
+  makeToolReads,
+  resolvePersistence,
+  type ToolPersistence,
+  type WholeInput,
+} from "./toolPersistence.ts";
 
 // The `Engine` service over a real T3 Code server. See `Engine.ts` for the
 // contract; this file only says how each method meets it.
@@ -388,6 +396,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
 
   /** The batches every session's streams emitted, for resuming one by replay. */
   const batches = makeBatches(BATCHES_KEPT);
+  const toolReads = makeToolReads();
 
   // ---------------------------------------------------------------------------
   // Sending
@@ -484,7 +493,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   const wholeToolInput = Effect.fn("Engine.wholeToolInput")(function* (
     sessionId: SessionId,
     itemId: string,
-  ) {
+  ): Effect.fn.Return<WholeInput, HttpClientError | Schema.SchemaError> {
     const token = yield* currentToken;
     const response = yield* http.execute(
       HttpClientRequest.get(
@@ -497,7 +506,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     if (response.status === 400) {
       const refusal = yield* decodeRefusal(response);
       if (refusal.reason === "thread_transcript_too_large") {
-        return { _tag: "unavailable" } satisfies WholeInput as WholeInput;
+        return { _tag: "unavailable" };
       }
     }
     const transcript = yield* HttpClientResponse.filterStatusOk(response).pipe(
@@ -505,47 +514,57 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     );
     const found = transcript.items.find((row) => row.item.id === itemId);
     return found?.item.type === "dynamic_tool"
-      ? ({ _tag: "found", input: found.item.input } satisfies WholeInput as WholeInput)
-      : ({ _tag: "unavailable" } satisfies WholeInput as WholeInput);
+      ? { _tag: "found", input: found.item.input }
+      : { _tag: "unavailable" };
   }, Effect.timeout(TRANSCRIPT_TIMEOUT));
 
   /**
    * The persistence of a dynamic tool whose input the stream summarized
-   * (`resolvePersistence`): from the item, cut at 256 KiB, then, only when
-   * the cut hides the mark, from the transcript. None when a read failed or
-   * took too long: nothing is known, and the item is read again later.
+   * (`resolvePersistence`): from the item, cut at 256 KiB, then, when the cut
+   * leaves it unknown, from the transcript. Through `toolReads`, shared by
+   * every reader of the session: none while a read runs, or while a failed
+   * read's backoff runs, and undecidable once too many failed in a row.
    */
   const toolPersistence = (sessionId: SessionId, itemId: string) =>
-    resolvePersistence({
-      item: rpc["orchestration.getTurnItem"]({
-        threadId: ThreadId.make(sessionId),
-        itemId: TurnItemId.make(itemId),
-      }).pipe(
-        Effect.timeout(FETCH_TIMEOUT),
-        Effect.flatMap(({ item }) =>
-          item?.type === "dynamic_tool"
-            ? Effect.succeed(item.input)
-            : Effect.fail(new EngineUnavailable()),
+    toolReads.resolve(
+      sessionId,
+      itemId,
+      resolvePersistence({
+        item: rpc["orchestration.getTurnItem"]({
+          threadId: ThreadId.make(sessionId),
+          itemId: TurnItemId.make(itemId),
+        }).pipe(
+          Effect.timeout(FETCH_TIMEOUT),
+          Effect.map(({ item }): ItemRead =>
+            item?.type === "dynamic_tool"
+              ? { _tag: "tool", input: item.input }
+              : { _tag: "not-a-tool" },
+          ),
         ),
-      ),
-      whole: wholeToolInput(sessionId, itemId),
-    }).pipe(Effect.option);
+        whole: wholeToolInput(sessionId, itemId),
+      }),
+    );
 
   /**
    * Settles in `mirror` the persistence of each tool whose input the stream
-   * summarized, as far as it can be read now.
+   * summarized, as far as it can be read now, and forgets what was learned of
+   * the session's tools that are no longer live.
    */
   const resolveTools = (sessionId: SessionId, mirror: Mirror) =>
-    Effect.forEach(
-      toolsToResolve(mirror),
-      (itemId) =>
-        Effect.map(
-          toolPersistence(sessionId, itemId),
-          Option.map((persistence) => {
-            mirror.toolPersistence.set(itemId, persistence);
-          }),
+    toolReads.keep(sessionId, summarizedTools(mirror)).pipe(
+      Effect.andThen(
+        Effect.forEach(
+          toolsToResolve(mirror),
+          (itemId) =>
+            Effect.map(
+              toolPersistence(sessionId, itemId),
+              Option.map((persistence) => {
+                mirror.toolPersistence.set(itemId, persistence);
+              }),
+            ),
+          { discard: true },
         ),
-      { discard: true },
+      ),
     );
 
   /** The state of a session that is still in use: a retired one is `SessionNotFound`. */
@@ -886,6 +905,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     yield* retire.pipe(Effect.catchTag("SessionNotFound", () => Effect.void));
     // A retired session's streams end, and nothing resumes them.
     batches.forget(sessionId);
+    yield* toolReads.forget(sessionId);
   });
 
   // ---------------------------------------------------------------------------
@@ -1262,12 +1282,14 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
          * without its diff, once per version of the item. Only a fetched item
          * comes back to the loop: a fetch that fails or takes longer than
          * `FETCH_TIMEOUT` leaves the card a summary, and is not tried again.
-         * Each live dynamic tool whose input the stream summarized is fetched
-         * too, for its persistence: a read that fails is asked for again on
-         * the next pass here, which every event and every catch-up runs, and
-         * until one succeeds the tool counts as pending.
+         * Each live dynamic tool whose input the stream summarized is read
+         * too, for its persistence: one whose read failed is asked for again
+         * on a pass here, which every event and every catch-up runs, once its
+         * backoff passed, and until one succeeds or the reads give up the
+         * tool counts as pending.
          */
         const fetchChanges = Effect.fnUntraced(function* () {
+          yield* toolReads.keep(input.sessionId, summarizedTools(mirror));
           for (const itemId of toolsToResolve(mirror)) {
             const key = `tool:${itemId}`;
             if (asked.has(key)) continue;
@@ -1385,7 +1407,13 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
         /** The engine has no record of the session's thread, or deleted it. */
         const gone = Effect.suspend(() => {
           batches.forget(input.sessionId);
-          return Queue.fail(output, new SessionNotFound({ sessionId: input.sessionId }));
+          return toolReads
+            .forget(input.sessionId)
+            .pipe(
+              Effect.andThen(
+                Queue.fail(output, new SessionNotFound({ sessionId: input.sessionId })),
+              ),
+            );
         });
 
         while (true) {
