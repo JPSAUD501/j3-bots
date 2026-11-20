@@ -48,13 +48,14 @@ j3-bots service install
 
 `doctor` checks the machine before anything starts ([what it checks](#what-doctor-checks)). Fix every ✗ it reports. A `!` is a warning: the server still runs.
 
-`service install` does the following:
+`service install` does the following, in this order, and stops at the first step that fails, leaving any installed unit as it was:
 
-- creates the data directory, `~/.j3-bots`, readable by this user only;
-- writes `~/.j3-bots/config.json` with the defaults;
-- checks the configuration as the service will run it, and stops there, leaving any installed unit as it was, if the server would refuse it;
-- stops there too if a server you started yourself, with `j3-bots serve`, is already running for the data directory. A server that answers the way this release does names its process, and it is the service's only if that process is the unit's main process. One that answers otherwise, such as an older release, is the service's only if the kernel shows the unit's main process holding the admin socket; when that cannot be told, `service install` stops and asks you to stop that server first;
-- writes the unit `~/.config/systemd/user/j3-bots.service`;
+- checks the configuration as the service will run it, and the data directory, `~/.j3-bots`, which must be open to this user only. A refused configuration leaves the data directory as it was, or uncreated;
+- creates the data directory, readable by this user only, if it does not exist yet;
+- writes `~/.j3-bots/config.json` with the defaults, if there is none yet. An existing file is never rewritten;
+- checks that nothing but a socket is at `~/.j3-bots/admin.sock`, where the admin socket goes, and that `host` is still an address of this machine, by listening on it for a moment on a port the system picks;
+- stops if a server you started yourself, with `j3-bots serve`, is already running for the data directory. A server that answers the way this release does names its process, and it is the service's only if that process is the unit's main process. One that answers otherwise, such as an older release, is the service's only if the kernel shows the unit's main process holding the admin socket; when that cannot be told, `service install` stops and asks you to stop that server first;
+- writes the unit `~/.config/systemd/user/j3-bots.service`, whole: to a new file beside it first, which then replaces it, so a full disk or an interruption never leaves half a unit;
 - enables the unit and starts it;
 - waits up to a minute for the service's own server to answer (its process must be the unit's main process), and says whether it did and what state the engine is in.
 
@@ -72,6 +73,28 @@ If you did not create a dedicated user, turn lingering on for your own user so t
 ```sh
 sudo loginctl enable-linger "$(id -un)"
 ```
+
+### When `lan` is refused
+
+If the Pi has a public IPv4 address, the default `"host": "lan"` is refused, and `doctor` and `service install` say so, naming the address. Nothing is created then, so create the data directory and the configuration yourself, with `host` set to one private address of the Pi, such as its home network or Tailscale address (`ip -4 addr` lists them):
+
+```sh
+mkdir -m 700 ~/.j3-bots
+cat > ~/.j3-bots/config.json <<'EOF'
+{
+  "host": "192.168.1.40",
+  "port": 3737,
+  "toolPort": 3739,
+  "enginePort": 3738,
+  "webClient": null,
+  "tls": null
+}
+EOF
+j3-bots doctor
+j3-bots service install
+```
+
+To serve the public address instead, set `host` to it and `tls` to a certificate and key ([Configuration](#configuration)).
 
 ### The unit
 
@@ -185,7 +208,7 @@ Each line is ✓ (fine), `!` (a warning: the server runs, but something is missi
 | Ports | With the server running, the ports it listens on, and a problem if the engine's port was taken. With no server running, that the server's port, the bot tool port and the engine's port are free on their addresses. |
 | Engine | That the pinned engine has a release for this machine, whether it is installed yet, and, with the server running, the state the server reports for it. |
 | Claude Code, Codex | That the harness is on the `PATH` the service runs with (your shell's while the service is not installed), and what the engine reports about the server's providers on it. |
-| Web client | That a built web client is there, and that the running server serves it. |
+| Web client | Whether the running server serves the web client, as it reports it. With no server running, whether a client is built where the server would serve it from. |
 | Pairing | How many devices are paired. |
 | Service | That the unit is installed, enabled and running, and has not failed. A unit that is still `activating` is a warning: it is starting or restarting, and the log says which. |
 | Start at boot | That lingering is on for this user. |
