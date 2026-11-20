@@ -8,7 +8,7 @@ import {
   MAX_MESSAGE_LENGTH,
 } from "@j3-bots/contracts";
 import { ArrowUpIcon, FileIcon, MicIcon, PlusIcon, XIcon } from "lucide-react";
-import { useRef, type Ref } from "react";
+import { useId, useRef, type Ref } from "react";
 import { useI18n } from "../app/context";
 import type { I18n } from "../i18n/i18n";
 import { cn } from "../lib/cn";
@@ -82,6 +82,7 @@ export function Composer({
   const i18n = useI18n();
   const { t, locale } = i18n;
   const pickerRef = useRef<HTMLInputElement>(null);
+  const waitingId = useId();
   const label = t("composer.label", { name: recipient });
   const empty = value.trim() === "" && !files.some((file) => file._tag === "ready");
   const uploading = files.some((file) => file._tag === "uploading");
@@ -199,12 +200,16 @@ export function Composer({
             variant="primary"
             size="icon-pill"
             aria-disabled={!ready}
-            aria-label={uploading ? t("composer.stillUploading") : t("composer.send")}
+            aria-label={t("composer.send")}
+            aria-describedby={uploading ? waitingId : undefined}
           >
             <ArrowUpIcon />
           </Button>
         )}
       </div>
+      <span id={waitingId} hidden>
+        {t("composer.stillUploading")}
+      </span>
       <p role="alert" className="px-3 text-xs text-blocked empty:hidden">
         {tooLong
           ? t("composer.tooLong", {
