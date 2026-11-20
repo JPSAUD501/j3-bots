@@ -364,9 +364,16 @@ export const layer = Layer.effect(
       engineSessionId: SessionId,
       outcome: Outcome,
     ) {
+      // Only a target's latest round is observed, once acknowledged: one a
+      // fresh round superseded decides nothing, and a target whose latest
+      // round is not sent yet waits for it.
       const sent = yield* sql<{ readonly stop_id: string; readonly round: number }>`
-        SELECT stop_id, round FROM stop_targets
-        WHERE session_id = ${sessionId} AND stopped_at IS NULL AND sent_at IS NOT NULL
+        SELECT t.stop_id, t.round FROM stop_targets t
+        WHERE t.session_id = ${sessionId} AND t.stopped_at IS NULL AND t.sent_at IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM stop_targets u
+            WHERE u.stop_id = t.stop_id AND u.session_id = t.session_id AND u.round > t.round
+          )
       `.pipe(Effect.orDie);
       if (sent.length === 0) return "done" satisfies Progress;
       const synced = yield* observer.synchronize(sessionId, engineSessionId).pipe(
