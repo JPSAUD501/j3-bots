@@ -24,7 +24,7 @@ import { ensureCredential } from "../src/t3/Credential.ts";
 import { ensureInstalled } from "../src/t3/Install.ts";
 import { layer as engineLayer } from "../src/t3/T3Engine.ts";
 import { type Act, Bench } from "./Bench.ts";
-import { scenarios } from "./scenarios.ts";
+import { scenarios, turnOf } from "./scenarios.ts";
 
 // The conformance scenarios against the real adapter, over the pinned engine
 // running the scripted ACP agent. Run with `pnpm --filter @j3-bots/engine-t3
@@ -193,7 +193,7 @@ const openWatched = Effect.fnUntraced(function* (name: string) {
 
 describe("Engine conformance, real engine only", () => {
   it.live(
-    "survives an engine restart: the stream resumes and the cut turn runs to its end",
+    "survives an engine restart: the stream resumes and the cut turn stays interrupted",
     () =>
       Effect.gen(function* () {
         const engine = yield* Engine;
@@ -212,7 +212,7 @@ describe("Engine conformance, real engine only", () => {
         yield* killEngine(home);
         const end = yield* until(
           queue,
-          (event) => event._tag === "turn-finished" && event.turnId === running.turnId,
+          (event) => event._tag === "turn-finished" && event.turnId === turnOf(running),
         );
         yield* engineReady;
         const after = yield* engine.dispatch({
@@ -224,11 +224,13 @@ describe("Engine conformance, real engine only", () => {
         });
         const next = yield* until(
           queue,
-          (event) => event._tag === "turn-finished" && event.turnId === after.turnId,
+          (event) => event._tag === "turn-finished" && event.turnId === turnOf(after),
         );
 
-        // The engine held the cut run and the adapter resumed it: it ran again to its end.
-        assert.deepStrictEqual(end._tag === "turn-finished" && end.outcome, { _tag: "completed" });
+        // Provisioned not to continue turns after its restart, the engine ends the cut turn.
+        assert.deepStrictEqual(end._tag === "turn-finished" && end.outcome, {
+          _tag: "interrupted",
+        });
         assert.deepStrictEqual(next._tag === "turn-finished" && next.outcome, {
           _tag: "completed",
         });
@@ -259,7 +261,7 @@ describe("Engine conformance, real engine only", () => {
           const started = yield* until(queue, (event) => event._tag === "turn-started");
           yield* until(
             queue,
-            (event) => event._tag === "turn-finished" && event.turnId === disposition.turnId,
+            (event) => event._tag === "turn-finished" && event.turnId === turnOf(disposition),
           );
           // The turn ends after this cursor, so a replacement must list it.
           return { dispatch, disposition, sessionId, cursor: started.cursor };
@@ -269,27 +271,20 @@ describe("Engine conformance, real engine only", () => {
         const second = yield* Effect.gen(function* () {
           const engine = yield* Engine;
           const again = yield* engine.dispatch(first.dispatch);
-          const lookup = yield* engine.lookupDispatch({
-            sessionId: first.sessionId,
-            key: first.dispatch.key,
-          });
           const queue = yield* engine
             .events({ sessionId: first.sessionId, after: first.cursor })
             .pipe(Stream.orDie, Stream.toQueue({ capacity: "unbounded" }));
           const resumed = yield* take(queue);
-          return { again, lookup, resumed };
+          return { again, resumed };
         }).pipe(Effect.scoped, Effect.provide(engines));
 
-        assert.deepStrictEqual(second.again, first.disposition);
-        assert.deepStrictEqual(second.lookup, {
-          _tag: "applied",
-          disposition: first.disposition,
-        });
+        assert.strictEqual(first.disposition._tag, "started");
+        assert.deepStrictEqual(second.again, { _tag: "applied-earlier" });
         assert.strictEqual(second.resumed._tag, "replaced");
         if (second.resumed._tag !== "replaced") return;
         assert.deepStrictEqual(second.resumed.openTurns, []);
         assert.isTrue(
-          second.resumed.endedTurns.some((turn) => turn.turnId === first.disposition.turnId),
+          second.resumed.endedTurns.some((turn) => turn.turnId === turnOf(first.disposition)),
         );
       }),
     { timeout: 240_000 },

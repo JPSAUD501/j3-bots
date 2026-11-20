@@ -38,7 +38,7 @@ export type InstanceSpec =
       readonly environment: ReadonlyArray<EnvironmentVariable>;
     };
 
-export interface EnvironmentVariable {
+interface EnvironmentVariable {
   readonly name: string;
   readonly value: Redacted.Redacted<string>;
 }
@@ -67,7 +67,7 @@ export const TOOL_SERVER = "j3";
  * session. Removed from the model's tool list; the base prompt names the J3
  * Bots replacement for each.
  */
-export const CLAUDE_DISALLOWED_TOOLS = [
+const CLAUDE_DISALLOWED_TOOLS = [
   "AskUserQuestion",
   "EnterPlanMode",
   "ExitPlanMode",
@@ -78,7 +78,7 @@ export const CLAUDE_DISALLOWED_TOOLS = [
   "PushNotification",
 ] as const;
 
-export const claudeLaunchArgs = (systemPromptFile: string) =>
+const claudeLaunchArgs = (systemPromptFile: string) =>
   [
     "--append-system-prompt-file",
     systemPromptFile,
@@ -97,6 +97,10 @@ const ENGINE_SETTINGS = {
   // An unattended bot has nobody to press a compact button.
   idleCompaction: "beforeCacheExpires",
   autoResumeLimitedThreads: true,
+  // A turn an engine restart cuts short stays ended (`interrupted`): the engine
+  // arms no restart continuation, whose pending state it never reports over
+  // the socket J3 Bots reads. **Read** at `db51b67`, `RestartContinuation.ts`.
+  continueThreadsAfterServerUpdate: false,
   // Also drops the engine's device instructions from every session.
   enableAgentDeviceAccess: false,
 } as const;
@@ -108,7 +112,7 @@ const DRIVERS = {
 } as const;
 
 /** Where the engine's secret store keeps one instance variable. **Read** at `db51b67`, `settingsSecrets.ts`. */
-export const secretFileName = (instanceId: string, variable: string) =>
+const secretFileName = (instanceId: string, variable: string) =>
   `provider-env-${Base64Url.encode(instanceId)}-${Base64Url.encode(variable)}.bin`;
 
 const JsonObject = Schema.Record(Schema.String, Schema.Unknown);
@@ -135,10 +139,7 @@ const instanceConfig = (input: ProvisionInput, spec: InstanceSpec) => {
 };
 
 /** The settings file with J3 Bots' keys and instances merged into what the engine keeps there. */
-export const engineSettings = (
-  input: ProvisionInput,
-  existing: Readonly<Record<string, unknown>>,
-) => ({
+const engineSettings = (input: ProvisionInput, existing: Readonly<Record<string, unknown>>) => ({
   ...existing,
   ...ENGINE_SETTINGS,
   providerInstances: Object.fromEntries(
@@ -164,7 +165,7 @@ export const engineSettings = (
 const tomlString = (value: string) => JSON.stringify(value);
 
 /** The J3-owned `config.toml` of a Codex instance. J3 Bots owns the whole file. */
-export const codexConfig = (input: ProvisionInput) =>
+const codexConfig = (input: ProvisionInput) =>
   [
     "# Written by J3 Bots. Changes here are overwritten.",
     `[mcp_servers.${TOOL_SERVER}]`,

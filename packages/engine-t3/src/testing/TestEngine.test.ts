@@ -235,37 +235,27 @@ describe("TestEngine", () => {
     }).pipe(Effect.provide(TestEngine.layer)),
   );
 
-  it.effect("holds a steer for a turn that has not started until that turn ends", () =>
+  it.effect("refuses a steer into a turn that waits, or that ended without completing", () =>
     Effect.gen(function* () {
       const engine = yield* Engine;
       const control = yield* TestEngine.TestEngineControl;
       const sessionId = yield* openSession;
-      const background = yield* control.startEngineTurn(sessionId);
+      const running = yield* control.startEngineTurn(sessionId);
       const waiting = yield* control.startEngineTurn(sessionId);
-      const [first] = yield* take(sessionId, null, 1);
+
+      const intoWaiting = yield* engine
+        .dispatch({ ...steer("dispatch-1", waiting), sessionId })
+        .pipe(Effect.flip);
+      yield* control.finishTurn({ sessionId, turnId: running, outcome: { _tag: "interrupted" } });
+      const intoInterrupted = yield* engine
+        .dispatch({ ...steer("dispatch-2", running), sessionId })
+        .pipe(Effect.flip);
 
       assert.deepStrictEqual(
-        yield* engine.dispatch({ ...steer("dispatch-1", waiting), sessionId }),
-        { _tag: "steered", turnId: waiting },
+        [intoWaiting, intoInterrupted].map((error) => error._tag),
+        ["DispatchRejected", "DispatchRejected"],
       );
-      yield* control.finishTurn({
-        sessionId,
-        turnId: background,
-        outcome: { _tag: "completed" },
-      });
-      yield* control.readSteers({ sessionId, turnId: waiting });
-      yield* control.finishTurn({ sessionId, turnId: waiting, outcome: { _tag: "completed" } });
-
-      const events = [...(yield* take(sessionId, cursorOf(first), 4))];
-      assert.deepStrictEqual(
-        events.map((event) => ("turnId" in event ? [event._tag, event.turnId] : event._tag)),
-        [
-          ["turn-finished", background],
-          ["turn-started", waiting],
-          ["turn-finished", waiting],
-          ["steered", waiting],
-        ],
-      );
+      assert.deepStrictEqual(yield* control.dispatches(sessionId), []);
     }).pipe(Effect.provide(TestEngine.layer)),
   );
 

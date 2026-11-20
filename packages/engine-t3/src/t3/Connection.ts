@@ -85,5 +85,3 @@ export const makeEngineRpc = Effect.fn("engine.makeEngineRpc")(function* (input:
   const context = yield* Layer.build(protocol);
   return yield* RpcClient.make(WsRpcGroup).pipe(Effect.provideContext(context));
 });
-
-export type EngineRpc = Effect.Success<ReturnType<typeof makeEngineRpc>>;

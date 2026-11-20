@@ -89,8 +89,9 @@ export class SessionBusy extends Schema.TaggedError<SessionBusy>()("SessionBusy"
  * The engine refused a dispatch and applied nothing: the key is spent, and
  * sending it again fails the same way. Returned for the first refusal and for
  * every repeat of the key. The engine refuses, for instance, a steer into a
- * turn that Stop already reached (**Read** at `db51b67`,
- * `dispatchSteerIntoRun`), or a message over a limit of its managed policy.
+ * turn that Stop already reached, that waits behind another turn, or that ended
+ * any way but completing (**Read** at `db51b67`, `dispatchSteerIntoRun`), or a
+ * message over a limit of its managed policy.
  */
 export class DispatchRejected extends Schema.TaggedError<DispatchRejected>()("DispatchRejected", {
   key: IdempotencyKey,

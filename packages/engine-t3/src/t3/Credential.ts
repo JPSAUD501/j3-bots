@@ -16,7 +16,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 // no person is involved, and it is kept next to that data with mode 0600.
 
 /** The scopes the adapter needs: read threads and projects, and operate them. */
-export const CREDENTIAL_SCOPES = ["orchestration:read", "orchestration:operate"] as const;
+const CREDENTIAL_SCOPES = ["orchestration:read", "orchestration:operate"] as const;
 
 /** Renew this long before the token expires, so a running engine never sees an expired one. */
 const RENEW_BEFORE = Duration.days(2);
@@ -44,7 +44,7 @@ export interface Credential {
 }
 
 /** The engine CLI could not mint a token. */
-export class CredentialMintFailed extends Schema.TaggedError<CredentialMintFailed>()(
+class CredentialMintFailed extends Schema.TaggedError<CredentialMintFailed>()(
   "CredentialMintFailed",
   { exitCode: Schema.Number },
 ) {
@@ -53,8 +53,7 @@ export class CredentialMintFailed extends Schema.TaggedError<CredentialMintFaile
   }
 }
 
-export const credentialFile = (path: Path.Path, home: string) =>
-  path.join(home, "j3", "credential.json");
+const credentialFile = (path: Path.Path, home: string) => path.join(home, "j3", "credential.json");
 
 const mint = Effect.fnUntraced(function* (executable: string, home: string) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;

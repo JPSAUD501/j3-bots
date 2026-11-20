@@ -67,8 +67,8 @@ import { toolInputDigest } from "../toolCaller.ts";
 // the first was accepted; dispositions that record acceptance, with delivery
 // reported by events; a start the engine queues behind a turn it began itself;
 // a steer that settles only when its turn ends (read, dropped by Stop, or
-// requeued as a follow-up turn), including one sent to a turn that has not
-// started; Stop as the engine's own stop followed by a cancel per waiting turn,
+// requeued as a follow-up turn), and one refused because its turn waits or did
+// not complete; Stop as the engine's own stop followed by a cancel per waiting turn,
 // with a message able to slip in between; queues the engine holds and the
 // adapter resumes once; turns that fail before they start; `j3` tool calls the
 // engine records after the bridge sees them; usage-limit continuations;
@@ -815,20 +815,25 @@ const make = Effect.gen(function* () {
             disposition = applyStart(session, key, at);
           } else {
             const target = session.turns.get(delivery.turnId);
-            if (target !== undefined && target.ended === null) {
-              // A turn that has not started takes the steer once it does.
+            if (target !== undefined && session.running === target.turnId) {
               target.steers.push({
                 key,
-                queuedAhead: session.waiting.filter((waiting) => waiting !== target.turnId),
+                queuedAhead: [...session.waiting],
                 state: "unread",
               });
               disposition = { _tag: "steered", turnId: delivery.turnId };
-            } else {
-              // The target turn already ended: the engine keeps the message as a turn of its own.
+            } else if (target?.ended?.outcome._tag === "completed") {
+              // Too late to steer: the engine keeps the message as a turn of its own.
               disposition = {
                 _tag: "new-turn",
                 turnId: addTurn(session, { _tag: "dispatch", key }, at).turnId,
               };
+            } else {
+              // A turn waiting behind another, or one that ended any way but
+              // completing, cannot be steered (**Read** at `db51b67`,
+              // `dispatchSteerIntoRun`).
+              keys.set(key, { command: "dispatch", sessionId, outcome: "rejected" });
+              return yield* new DispatchRejected({ key });
             }
           }
           keys.set(key, { command: "dispatch", sessionId, outcome: "applied" });

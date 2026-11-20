@@ -51,7 +51,7 @@ type Health =
   | { readonly _tag: "down" };
 
 /** What the engine on `port` answers at its environment descriptor. */
-export const probe = Effect.fn("engine.probe")(function* (port: number) {
+const probe = Effect.fn("engine.probe")(function* (port: number) {
   const client = yield* HttpClient.HttpClient;
   return yield* client.get(`${baseUrl(port)}/.well-known/t3/environment`).pipe(
     Effect.flatMap(HttpClientResponse.filterStatusOk),
@@ -168,5 +168,3 @@ export const supervise = Effect.fn("engine.supervise")(function* (input: Supervi
     changes: SubscriptionRef.changes(state).pipe(Stream.changesWith((a, b) => a._tag === b._tag)),
   };
 });
-
-export type Supervisor = Effect.Success<ReturnType<typeof supervise>>;

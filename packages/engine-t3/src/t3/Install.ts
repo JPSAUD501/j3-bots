@@ -51,14 +51,14 @@ const RELEASE_PLATFORMS: Record<string, Record<string, string>> = {
 };
 
 /** The release's name for a Node `process.platform` and `process.arch`, if it ships one. */
-export const releasePlatform = (platform: string, arch: string): Option.Option<string> =>
+const releasePlatform = (platform: string, arch: string): Option.Option<string> =>
   Option.fromNullishOr(RELEASE_PLATFORMS[platform]?.[arch]);
 
-export const runtimeDirectory = (path: Path.Path, home: string) =>
+const runtimeDirectory = (path: Path.Path, home: string) =>
   path.join(home, "j3", "runtime", pin.version);
 
 /** The digest `SHA256SUMS` lists for `file`. */
-export const checksumFor = (sums: string, file: string): Option.Option<string> => {
+const checksumFor = (sums: string, file: string): Option.Option<string> => {
   for (const line of sums.split("\n")) {
     const match = /^([0-9a-f]{64}) [ *](.+)$/.exec(line.trim());
     if (match?.[2] === file && match[1] !== undefined) return Option.some(match[1]);

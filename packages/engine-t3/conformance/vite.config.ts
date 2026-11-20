@@ -12,6 +12,8 @@ export default mergeConfig(
       include: ["**/*.conformance.ts"],
       // One engine at a time.
       fileParallelism: false,
+      // A real turn takes seconds, more on a loaded machine.
+      testTimeout: 60_000,
     },
   }),
 );

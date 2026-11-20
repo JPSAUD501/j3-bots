@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { EngineStatus, ModelChoice, PermissionMode } from "@j3-bots/contracts";
 import {
+  AttachmentCreateUploadUrlInput,
   CommandId,
   MessageId,
   type OrchestrationV2DispatchCommandError,
@@ -35,16 +36,17 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import { isInlineImage } from "../attachments.ts";
+import { isInlineImage, normalizeAttachmentMetadata } from "../attachments.ts";
 import {
   Engine,
-  type DispatchLookup,
+  type DispatchDisposition,
   type EngineOptions,
   type ProviderInstance,
   type RequestResponse,
   type SecretAnswer,
 } from "../Engine.ts";
 import {
+  DispatchRejected,
   EngineIncompatible,
   EngineIndeterminate,
   EngineUnavailable,
@@ -77,10 +79,15 @@ import {
   applyEvent,
   copyView,
   diff,
+  digestToolCalls,
   dispositionOf,
   emptyMirror,
   findRequest,
-  holdsDispatch,
+  isEnded,
+  isHeldByStop,
+  isQueueHeld,
+  isRetired,
+  knowsDispatch,
   mirrorOf,
   queuedRuns,
   replacement,
@@ -113,6 +120,16 @@ const APPROVAL_DECISIONS = {
 } as const;
 
 const decodeProjects = HttpClientResponse.schemaBodyJson(ProjectSnapshot);
+
+/** The engine errors whose reply proves a dispatch was refused and will be again. */
+const REJECTIONS: ReadonlySet<string> = new Set([
+  "OrchestratorCommandPreviouslyRejectedError",
+  "OrchestratorThreadAboveModeLimitError",
+  "OrchestratorRuntimeModeAboveCeilingError",
+]);
+/** A reply's cause carries the engine error's tag as its name. */
+const decodeErrorName = Schema.decodeUnknownOption(Schema.Struct({ name: Schema.String }));
+const decodeUploadInput = Schema.decodeUnknownEffect(AttachmentCreateUploadUrlInput);
 
 const PairingResult = Schema.Struct({ pairUrl: Schema.String });
 const decodePairing = Schema.decodeUnknownEffect(Schema.fromJsonString(PairingResult));
@@ -155,7 +172,7 @@ type LoopInput =
   | { readonly _tag: "missing" }
   | { readonly _tag: "sync"; readonly token: SyncToken };
 
-export const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
+const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -264,6 +281,15 @@ export const make = Effect.fn("engine.make")(function* (options: EngineOptions) 
         ),
       ),
       Effect.map(mirrorOf),
+    );
+
+  /** The state of a session that is still in use: a retired one is `SessionNotFound`. */
+  const liveProjection = (sessionId: SessionId) =>
+    projection(sessionId).pipe(
+      Effect.filterOrFail(
+        (mirror) => !isRetired(mirror),
+        () => new SessionNotFound({ sessionId }),
+      ),
     );
 
   /** An engine refusal the interface has no error for: a bug or a broken setup, not a state. */
@@ -416,7 +442,7 @@ export const make = Effect.fn("engine.make")(function* (options: EngineOptions) 
     readonly model?: ModelChoice;
     readonly permissionMode?: PermissionMode;
   }) {
-    yield* projection(input.sessionId);
+    yield* liveProjection(input.sessionId);
     const threadId = ThreadId.make(input.sessionId);
     if (input.model !== undefined) {
       yield* sendSessionCommand(input.sessionId, {
@@ -439,33 +465,65 @@ export const make = Effect.fn("engine.make")(function* (options: EngineOptions) 
   // ---------------------------------------------------------------------------
   // Stop
 
-  /** Sessions a Stop is working on: their held queues must not be resumed meanwhile. */
+  /** Sessions a Stop is working on: no held queue of theirs is resumed meanwhile. */
   const stopping = new Set<string>();
+
+  /**
+   * Sends one command of a Stop. The engine refuses a step that has become moot
+   * (the run it cancels already ended), which counts as done.
+   */
+  const sendStopStep = (
+    sessionId: SessionId,
+    input: OrchestrationV2Command,
+    isMoot: (mirror: Mirror) => boolean,
+  ) =>
+    command(input).pipe(
+      Effect.catchTags({
+        EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
+        OrchestrationV2DispatchCommandError: (error) =>
+          projection(sessionId).pipe(
+            Effect.flatMap((mirror) => (isMoot(mirror) ? Effect.void : refused(error))),
+          ),
+      }),
+      Effect.asVoid,
+    );
 
   const stop = Effect.fn("Engine.stop")(function* (input: {
     readonly key: IdempotencyKey;
     readonly sessionId: SessionId;
   }) {
-    const before = yield* projection(input.sessionId);
+    const before = yield* liveProjection(input.sessionId);
     if (Option.isNone(activeTurn(before))) return;
     const threadId = ThreadId.make(input.sessionId);
     stopping.add(input.sessionId);
     yield* Effect.gen(function* () {
-      yield* sendSessionCommand(input.sessionId, {
-        type: "thread.stop",
-        commandId: commandId("stop", input.key),
-        threadId,
-        stopDelegatedTasks: true,
-      });
-      // The engine's stop only holds the queue; J3 Bots' Stop ends what it dispatched.
+      // The engine's stop ends the running turn and only holds the queue.
+      yield* sendStopStep(
+        input.sessionId,
+        {
+          type: "thread.stop",
+          commandId: commandId("stop", input.key),
+          threadId,
+          stopDelegatedTasks: true,
+        },
+        (mirror) => Option.isNone(activeTurn(mirror)),
+      );
+      // J3 Bots' Stop also ends every turn that waits.
       const held = yield* projection(input.sessionId);
       for (const run of queuedRuns(held)) {
-        yield* sendSessionCommand(input.sessionId, {
-          type: "queued-run.cancel",
-          commandId: commandId(`cancel-${run.id}`, input.key),
-          threadId,
-          runId: RunId.make(run.id),
-        });
+        yield* sendStopStep(
+          input.sessionId,
+          {
+            type: "queued-run.cancel",
+            commandId: commandId(`cancel-${run.id}`, input.key),
+            threadId,
+            runId: RunId.make(run.id),
+          },
+          (mirror) => {
+            const now = mirror.runs.get(run.id);
+            return now === undefined || isEnded(now) || now.status === "running";
+          },
+        );
       }
     }).pipe(Effect.ensuring(Effect.sync(() => stopping.delete(input.sessionId))));
   });
@@ -487,6 +545,54 @@ export const make = Effect.fn("engine.make")(function* (options: EngineOptions) 
   // ---------------------------------------------------------------------------
   // Dispatch
 
+  /**
+   * Whether an error reply proves the engine refused the dispatch for good. It
+   * stores a rejected receipt for a command it refuses and answers every repeat
+   * of the command id with `OrchestratorCommandPreviouslyRejectedError`; a
+   * refusal under a mode limit or ceiling stores no receipt, since the operator
+   * can change the mode (**Read** at `db51b67`, `Orchestrator.ts`,
+   * `replayCommandReceipt` and `dispatchWithReceiptEffect`). The reply names
+   * the engine's error as its cause.
+   */
+  const isRejection = (error: OrchestrationV2DispatchCommandError) =>
+    Option.match(decodeErrorName(error.cause), {
+      onNone: () => false,
+      onSome: ({ name }) => REJECTIONS.has(name),
+    });
+
+  /**
+   * Sends a dispatch, and resends it once on an error reply: the engine can
+   * answer with an error after it applied a command, and a repeat of the
+   * command id then answers from its receipt. **Read** at `db51b67`,
+   * `dispatchWithReceiptEffect`.
+   */
+  const sendDispatch = Effect.fnUntraced(function* (
+    sessionId: SessionId,
+    key: IdempotencyKey,
+    input: OrchestrationV2Command,
+  ) {
+    const send = command(input).pipe(
+      Effect.as(Option.none<OrchestrationV2DispatchCommandError>()),
+      Effect.catchTags({
+        EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
+        OrchestrationV2DispatchCommandError: (error) => Effect.succeedSome(error),
+      }),
+    );
+    const first = yield* send;
+    if (Option.isNone(first)) return;
+    if (isRejection(first.value)) return yield* new DispatchRejected({ key });
+    const second = yield* send;
+    if (Option.isNone(second)) return;
+    if (isRejection(second.value)) return yield* new DispatchRejected({ key });
+    // Twice answered with an error that proves nothing, unless the session is gone.
+    yield* liveProjection(sessionId).pipe(
+      Effect.mapError((error) =>
+        error._tag === "SessionNotFound" ? error : new EngineIndeterminate(),
+      ),
+    );
+    return yield* new EngineIndeterminate();
+  });
+
   const dispatch = Effect.fn("Engine.dispatch")(function* (input: {
     readonly key: IdempotencyKey;
     readonly sessionId: SessionId;
@@ -501,10 +607,11 @@ export const make = Effect.fn("engine.make")(function* (options: EngineOptions) 
       | { readonly _tag: "start"; readonly freshContext: boolean }
       | { readonly _tag: "steer"; readonly turnId: TurnId };
   }) {
-    const before = yield* projection(input.sessionId);
-    // A retry of a dispatch the engine already applied returns its first answer.
-    const known = dispositionOf(before, input.key);
-    if (Option.isSome(known)) return known.value;
+    const before = yield* liveProjection(input.sessionId);
+    // A repeat of a key the engine applied: its record says so, not how it was accepted.
+    if (knowsDispatch(before, input.key)) {
+      return { _tag: "applied-earlier" } satisfies DispatchDisposition;
+    }
     if (input.delivery._tag === "start") {
       const busy = activeTurn(before);
       if (Option.isSome(busy)) {
@@ -519,13 +626,14 @@ export const make = Effect.fn("engine.make")(function* (options: EngineOptions) 
       mimeType: attachment.mediaType,
       sizeBytes: attachment.size,
     }));
-    yield* sendSessionCommand(input.sessionId, {
+    yield* sendDispatch(input.sessionId, input.key, {
       type: "message.dispatch",
       commandId: commandId("dispatch", input.key),
       threadId: ThreadId.make(input.sessionId),
       messageId: MessageId.make(messageIdFor(kind, input.key)),
       text: input.text,
       attachments,
+      // A server message never releases a queue the engine holds, as an operator's would.
       createdBy: "system",
       creationSource: "server",
       ...(input.delivery._tag === "start"
@@ -544,26 +652,9 @@ export const make = Effect.fn("engine.make")(function* (options: EngineOptions) 
       Effect.mapError(() => new EngineIndeterminate()),
     );
     const disposition = dispositionOf(after, input.key);
-    if (Option.isNone(disposition)) {
-      // Applied (the engine answered) but not visible: only a lookup can tell now.
-      return yield* new EngineIndeterminate();
-    }
+    // Accepted, yet not in the engine's record: nothing more can be said.
+    if (Option.isNone(disposition)) return yield* new EngineIndeterminate();
     return disposition.value;
-  });
-
-  const lookupDispatch = Effect.fn("Engine.lookupDispatch")(function* (input: {
-    readonly sessionId: SessionId;
-    readonly key: IdempotencyKey;
-  }) {
-    const mirror = yield* projection(input.sessionId).pipe(
-      Effect.asSome,
-      Effect.catchTag("SessionNotFound", () => Effect.succeed(Option.none<Mirror>())),
-    );
-    if (Option.isNone(mirror)) return { _tag: "unknown" } satisfies DispatchLookup;
-    const disposition = dispositionOf(mirror.value, input.key);
-    return Option.isSome(disposition)
-      ? ({ _tag: "applied", disposition: disposition.value } satisfies DispatchLookup)
-      : ({ _tag: "not-applied" } satisfies DispatchLookup);
   });
 
   // ---------------------------------------------------------------------------
@@ -576,16 +667,24 @@ export const make = Effect.fn("engine.make")(function* (options: EngineOptions) 
     readonly path: string;
   }) {
     yield* ready;
-    const upload = yield* rpc["attachments.createUploadUrl"](
-      isInlineImage(input.mediaType)
-        ? {
-            type: "image",
-            name: input.name,
-            mimeType: input.mediaType.toLowerCase() as "image/png",
-            sizeBytes: input.size,
-          }
-        : { type: "file", name: input.name, mimeType: input.mediaType, sizeBytes: input.size },
-    ).pipe(
+    // The server stages only metadata it normalized: anything else is its bug.
+    const metadata = normalizeAttachmentMetadata(input);
+    if (
+      metadata === undefined ||
+      metadata.name !== input.name ||
+      metadata.mediaType !== input.mediaType
+    ) {
+      return yield* Effect.die(
+        new Error(`Attachment metadata the engine would refuse: ${input.name}`),
+      );
+    }
+    const request = yield* decodeUploadInput({
+      type: isInlineImage(metadata.mediaType) ? "image" : "file",
+      name: metadata.name,
+      mimeType: metadata.mediaType,
+      sizeBytes: input.size,
+    }).pipe(Effect.orDie);
+    const upload = yield* rpc["attachments.createUploadUrl"](request).pipe(
       Effect.timeoutOrElse({
         duration: COMMAND_TIMEOUT,
         orElse: () => Effect.fail(new EngineIndeterminate()),
@@ -602,7 +701,7 @@ export const make = Effect.fn("engine.make")(function* (options: EngineOptions) 
       .execute(
         HttpClientRequest.post(`${baseUrl(options.port)}${upload.relativeUrl}`).pipe(
           HttpClientRequest.bearerToken(Redacted.value(token)),
-          HttpClientRequest.bodyUint8Array(bytes, input.mediaType),
+          HttpClientRequest.bodyUint8Array(bytes, metadata.mediaType),
         ),
       )
       .pipe(
@@ -621,7 +720,7 @@ export const make = Effect.fn("engine.make")(function* (options: EngineOptions) 
 
   /** The request an answer is for, open or not, or `RequestClosed` if the engine has none. */
   const knownRequest = Effect.fnUntraced(function* (sessionId: SessionId, requestId: RequestId) {
-    const found = findRequest(yield* projection(sessionId), requestId);
+    const found = findRequest(yield* liveProjection(sessionId), requestId);
     if (Option.isNone(found)) return yield* new RequestClosed({ requestId });
     return found.value;
   });
@@ -756,17 +855,33 @@ export const make = Effect.fn("engine.make")(function* (options: EngineOptions) 
   /** Open `events` streams per session, for `synchronize`. */
   const syncTargets = new Map<string, Set<Queue.Queue<LoopInput>>>();
 
-  const resumeHeldQueue = (sessionId: SessionId, mirror: Mirror, sequence: number) =>
-    holdsDispatch(mirror) && !stopping.has(sessionId)
-      ? command({
-          type: "queue.resume",
-          commandId: commandId("resume", `${sessionId}:${sequence}`),
-          threadId: ThreadId.make(sessionId),
-        }).pipe(
-          Effect.catch((error) => Effect.logWarning("Resuming a held queue failed", error)),
-          Effect.asVoid,
-        )
-      : Effect.void;
+  /**
+   * Whether each session's queue was held, as of the latest engine sequence any
+   * of its streams applied. Shared by the streams, so each hold is seen once.
+   */
+  const holds = new Map<string, { readonly held: boolean; readonly sequence: number }>();
+
+  /**
+   * Resumes a queue the engine has just held, once per hold: when the engine
+   * holds it again in answer, it stays held until the hold changes. Never a
+   * hold a Stop made, nor while a Stop of the session runs.
+   */
+  const resumeHeldQueue = Effect.fn("Engine.resumeHeldQueue")(function* (
+    sessionId: SessionId,
+    mirror: Mirror,
+    sequence: number,
+  ) {
+    const previous = holds.get(sessionId);
+    if (previous !== undefined && previous.sequence >= sequence) return;
+    const held = isQueueHeld(mirror);
+    holds.set(sessionId, { held, sequence });
+    if (!held || previous?.held === true || stopping.has(sessionId) || isHeldByStop(mirror)) return;
+    yield* command({
+      type: "queue.resume",
+      commandId: commandId("resume", `${sessionId}:${sequence}`),
+      threadId: ThreadId.make(sessionId),
+    }).pipe(Effect.catch((error) => Effect.logWarning("Resuming a held queue failed", error)));
+  });
 
   const events = (input: { readonly sessionId: SessionId; readonly after: EventCursor | null }) =>
     Stream.callback<SessionEvent, SessionNotFound | EngineIncompatible>((output) =>
@@ -850,8 +965,8 @@ export const make = Effect.fn("engine.make")(function* (options: EngineOptions) 
         });
         yield* Effect.forkScoped(pump);
 
-        /** Applies one engine stream item. Returns whether the mirror changed. */
-        const apply = (item: OrchestrationV2ThreadStreamItem) => {
+        /** Applies one engine stream item to the mirror. Returns whether it changed. */
+        const applyItem = (item: OrchestrationV2ThreadStreamItem) => {
           switch (item.kind) {
             case "snapshot":
               if (item.snapshotSequence < sequence) return false;
@@ -866,6 +981,13 @@ export const make = Effect.fn("engine.make")(function* (options: EngineOptions) 
               return false;
           }
         };
+
+        /** As `applyItem`, with the digests `diff` needs for new `j3` tool calls. */
+        const apply = (item: OrchestrationV2ThreadStreamItem) =>
+          Effect.suspend(() => {
+            const changed = applyItem(item);
+            return changed ? Effect.as(digestToolCalls(mirror), true) : Effect.succeed(false);
+          });
 
         while (true) {
           const next = yield* Queue.take(inputs);
@@ -886,7 +1008,7 @@ export const make = Effect.fn("engine.make")(function* (options: EngineOptions) 
               break;
             }
             case "item": {
-              const changed = apply(next.item);
+              const changed = yield* apply(next.item);
               if (view === undefined) {
                 if (next.item.kind === "snapshot") yield* begin();
               } else if (changed) {
@@ -901,7 +1023,7 @@ export const make = Effect.fn("engine.make")(function* (options: EngineOptions) 
                 Stream.takeUntil((item) => item.kind === "synchronized"),
                 Stream.runForEach((item) =>
                   Effect.gen(function* () {
-                    const changed = apply(item);
+                    const changed = yield* apply(item);
                     if (view === undefined) {
                       if (item.kind === "snapshot") yield* begin();
                     } else if (changed) {
@@ -929,7 +1051,7 @@ export const make = Effect.fn("engine.make")(function* (options: EngineOptions) 
     readonly sessionId: SessionId;
     readonly token: SyncToken;
   }) {
-    yield* projection(input.sessionId);
+    yield* liveProjection(input.sessionId);
     for (const target of syncTargets.get(input.sessionId) ?? []) {
       yield* Queue.offer(target, { _tag: "sync", token: input.token });
     }
@@ -994,7 +1116,6 @@ export const make = Effect.fn("engine.make")(function* (options: EngineOptions) 
     retireSession,
     dispatch,
     stageAttachment,
-    lookupDispatch,
     stop,
     respond,
     respondSecret,

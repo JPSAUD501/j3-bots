@@ -112,7 +112,20 @@ const steer = Effect.fnUntraced(function* (key: IdempotencyKey, act: Act, turnId
 const turnLevel = (events: ReadonlyArray<SessionEvent>) =>
   events.filter((event) => event._tag !== "step").map((event) => event._tag);
 
-const turnOf = (disposition: DispatchDisposition) => disposition.turnId;
+/** The turn a first submission's disposition names. A repeat names none. */
+export const turnOf = (disposition: DispatchDisposition): TurnId => {
+  if (disposition._tag === "applied-earlier") return assert.fail("a first dispatch named no turn");
+  return disposition.turnId;
+};
+
+/** Dispatches, and returns the turn the disposition names. */
+const dispatchTurn = Effect.fnUntraced(function* (
+  input: Parameters<Engine["Service"]["dispatch"]>[0],
+) {
+  const engine = yield* Engine;
+  const disposition = yield* engine.dispatch(input);
+  return { disposition, turnId: turnOf(disposition) };
+});
 
 const finished = (events: Watch, turnId: TurnId) =>
   events.next("turn-finished", (event) => event.turnId === turnId);
@@ -126,17 +139,18 @@ export const scenarios = (it: Methods) => {
 
       const first = yield* engine.dispatch(dispatch);
       const again = yield* engine.dispatch(dispatch);
-
-      assert.strictEqual(first._tag, "started");
-      assert.deepStrictEqual(again, first);
-      assert.deepStrictEqual(yield* engine.lookupDispatch({ sessionId, key: dispatch.key }), {
-        _tag: "applied",
-        disposition: first,
-      });
       const started = yield* events.next("turn-started");
-      assert.deepStrictEqual(started.cause, { _tag: "dispatch", key: dispatch.key });
       yield* engine.stop({ key: key("key-once-stop"), sessionId });
       yield* finished(events, turnOf(first));
+
+      assert.strictEqual(first._tag, "started");
+      assert.deepStrictEqual(again, { _tag: "applied-earlier" });
+      assert.deepStrictEqual(started.cause, { _tag: "dispatch", key: dispatch.key });
+      // One turn for the key, however often it was sent.
+      assert.lengthOf(
+        events.seen.filter((event) => event._tag === "turn-started"),
+        1,
+      );
     }),
   );
 
@@ -145,7 +159,7 @@ export const scenarios = (it: Methods) => {
       const engine = yield* Engine;
       const bench = yield* Bench;
       const { sessionId, events, key } = yield* session("busy");
-      const running = yield* engine.dispatch({
+      const running = yield* dispatchTurn({
         ...(yield* start(key("work"), { _tag: "work" })),
         sessionId,
       });
@@ -153,14 +167,18 @@ export const scenarios = (it: Methods) => {
 
       const second = { ...(yield* start(key("second"), { _tag: "reply" })), sessionId };
       const refused = yield* engine.dispatch(second).pipe(Effect.flip);
+      yield* engine.stop({ key: key("busy-stop"), sessionId });
+      yield* finished(events, running.turnId);
+      // Nothing was sent, so the key starts its turn once the session is idle.
+      const later = yield* engine.dispatch(second);
+      const started = yield* events.next("turn-started");
+      yield* bench.perform({ sessionId, turnId: started.turnId, act: { _tag: "reply" } });
+      yield* finished(events, started.turnId);
 
       assert.strictEqual(refused._tag, "SessionBusy");
       assert.isTrue(refused._tag === "SessionBusy" && refused.turnId === running.turnId);
-      assert.deepStrictEqual(yield* engine.lookupDispatch({ sessionId, key: second.key }), {
-        _tag: "not-applied",
-      });
-      yield* engine.stop({ key: key("busy-stop"), sessionId });
-      yield* finished(events, running.turnId);
+      assert.strictEqual(later._tag, "started");
+      assert.deepStrictEqual(started.cause, { _tag: "dispatch", key: second.key });
     }),
   );
 
@@ -177,18 +195,18 @@ export const scenarios = (it: Methods) => {
       const end = yield* finished(events, started.turnId);
 
       assert.strictEqual(disposition._tag, "started");
-      assert.strictEqual(started.turnId, disposition.turnId);
+      assert.strictEqual(started.turnId, turnOf(disposition));
       assert.deepStrictEqual(started.cause, { _tag: "dispatch", key: dispatch.key });
       assert.deepStrictEqual(end.outcome, { _tag: "completed" });
     }),
   );
 
-  it.effect("steers a running turn and reports the steer read", () =>
+  it.effect("steers a running turn, and reports the steer taken once the turn ends", () =>
     Effect.gen(function* () {
       const engine = yield* Engine;
       const bench = yield* Bench;
       const { sessionId, events, key } = yield* session("steer");
-      const running = yield* engine.dispatch({
+      const running = yield* dispatchTurn({
         ...(yield* start(key("work"), { _tag: "work" })),
         sessionId,
       });
@@ -200,24 +218,54 @@ export const scenarios = (it: Methods) => {
       };
       const disposition = yield* engine.dispatch(steering);
       yield* bench.readSteers({ sessionId, turnId: running.turnId });
-      const read = yield* events.next("steered");
       yield* bench.perform({ sessionId, turnId: running.turnId, act: { _tag: "reply" } });
       const end = yield* finished(events, running.turnId);
+      const read = yield* events.next("steered");
 
       assert.deepStrictEqual(disposition, { _tag: "steered", turnId: running.turnId });
-      assert.strictEqual(read.key, steering.key);
-      assert.strictEqual(read.turnId, running.turnId);
+      assert.deepStrictEqual([read.key, read.turnId], [steering.key, running.turnId]);
       assert.deepStrictEqual(end.outcome, { _tag: "completed" });
-      assert.notInclude(turnLevel(events.seen), "steer-dropped");
+      // One turn throughout: a provider that steers by restarting keeps the turn.
+      assert.deepStrictEqual(
+        events.seen.flatMap((event) => (event._tag === "turn-started" ? [event.cause] : [])),
+        [{ _tag: "dispatch", key: key("work") }],
+      );
     }),
   );
 
-  it.effect("makes a steer for a turn that already ended a turn of its own", () =>
+  it.effect("steers a turn the engine has only just begun", () =>
+    Effect.gen(function* () {
+      const engine = yield* Engine;
+      const bench = yield* Bench;
+      const { sessionId, events, key } = yield* session("early-steer");
+      const running = yield* dispatchTurn({
+        ...(yield* start(key("work"), { _tag: "work" })),
+        sessionId,
+      });
+      // Sent at once, perhaps before the provider turn starts: the engine keeps it aside until then.
+      const steering = {
+        ...(yield* steer(key("steer"), { _tag: "reply" }, running.turnId)),
+        sessionId,
+      };
+      const disposition = yield* engine.dispatch(steering);
+      yield* events.next("turn-started");
+      yield* bench.readSteers({ sessionId, turnId: running.turnId });
+      yield* bench.perform({ sessionId, turnId: running.turnId, act: { _tag: "reply" } });
+      const end = yield* finished(events, running.turnId);
+      const read = yield* events.next("steered");
+
+      assert.deepStrictEqual(disposition, { _tag: "steered", turnId: running.turnId });
+      assert.deepStrictEqual([read.key, read.turnId], [steering.key, running.turnId]);
+      assert.deepStrictEqual(end.outcome, { _tag: "completed" });
+    }),
+  );
+
+  it.effect("makes a steer for a turn that completed a turn of its own", () =>
     Effect.gen(function* () {
       const engine = yield* Engine;
       const bench = yield* Bench;
       const { sessionId, events, key } = yield* session("late-steer");
-      const first = yield* engine.dispatch({
+      const first = yield* dispatchTurn({
         ...(yield* start(key("reply"), { _tag: "reply" })),
         sessionId,
       });
@@ -232,18 +280,41 @@ export const scenarios = (it: Methods) => {
       yield* finished(events, started.turnId);
 
       assert.strictEqual(disposition._tag, "new-turn");
-      assert.notStrictEqual(disposition.turnId, first.turnId);
-      assert.strictEqual(started.turnId, disposition.turnId);
+      assert.notStrictEqual(turnOf(disposition), first.turnId);
+      assert.strictEqual(started.turnId, turnOf(disposition));
       assert.deepStrictEqual(started.cause, { _tag: "dispatch", key: late.key });
+    }),
+  );
+
+  it.effect("refuses a steer into a stopped turn on every repeat, applying nothing", () =>
+    Effect.gen(function* () {
+      const engine = yield* Engine;
+      const { sessionId, events, key } = yield* session("rejected-steer");
+      const running = yield* dispatchTurn({
+        ...(yield* start(key("work"), { _tag: "work" })),
+        sessionId,
+      });
+      yield* events.next("turn-started");
+      yield* engine.stop({ key: key("stop"), sessionId });
+      yield* finished(events, running.turnId);
+
+      const late = { ...(yield* steer(key("late"), { _tag: "reply" }, running.turnId)), sessionId };
+      const first = yield* engine.dispatch(late).pipe(Effect.flip);
+      const again = yield* engine.dispatch(late).pipe(Effect.flip);
+      const token = SyncToken.make("conformance-rejected-steer");
+      yield* engine.synchronize({ sessionId, token });
+      yield* events.next("synchronized", (event) => event.token === token);
+
+      assert.deepStrictEqual([first._tag, again._tag], ["DispatchRejected", "DispatchRejected"]);
+      assert.strictEqual(events.seen.filter((event) => event._tag === "turn-started").length, 1);
     }),
   );
 
   it.effect("stops a running turn, and does nothing to an idle session", () =>
     Effect.gen(function* () {
       const engine = yield* Engine;
-      const bench = yield* Bench;
       const { sessionId, events, key } = yield* session("stop");
-      const running = yield* engine.dispatch({
+      const running = yield* dispatchTurn({
         ...(yield* start(key("work"), { _tag: "work" })),
         sessionId,
       });
@@ -263,7 +334,7 @@ export const scenarios = (it: Methods) => {
       const engine = yield* Engine;
       const bench = yield* Bench;
       const { sessionId, events, key } = yield* session("approval");
-      const running = yield* engine.dispatch({
+      const running = yield* dispatchTurn({
         ...(yield* start(key("approval"), { _tag: "approval" })),
         sessionId,
       });
@@ -301,7 +372,7 @@ export const scenarios = (it: Methods) => {
       const engine = yield* Engine;
       const bench = yield* Bench;
       const { sessionId, events, key } = yield* session("question");
-      const running = yield* engine.dispatch({
+      const running = yield* dispatchTurn({
         ...(yield* start(key("question"), { _tag: "question" })),
         sessionId,
       });
@@ -338,7 +409,7 @@ export const scenarios = (it: Methods) => {
       const engine = yield* Engine;
       const bench = yield* Bench;
       const { sessionId, events, key } = yield* session("secret");
-      const running = yield* engine.dispatch({
+      const running = yield* dispatchTurn({
         ...(yield* start(key("secret"), { _tag: "secret" })),
         sessionId,
       });
@@ -366,11 +437,10 @@ export const scenarios = (it: Methods) => {
 
   it.effect("reports what the bot said through the engine's own tool", () =>
     Effect.gen(function* () {
-      const engine = yield* Engine;
       const bench = yield* Bench;
       const { sessionId, events, key } = yield* session("speech");
       const act = { _tag: "speak", text: "Back-in-five-minutes." } as const;
-      const running = yield* engine.dispatch({ ...(yield* start(key("speak"), act)), sessionId });
+      const running = yield* dispatchTurn({ ...(yield* start(key("speak"), act)), sessionId });
       yield* events.next("turn-started");
       yield* bench.perform({ sessionId, turnId: running.turnId, act });
       const speech = yield* events.next("host-speech");
@@ -384,7 +454,7 @@ export const scenarios = (it: Methods) => {
   it.effect("reports a turn nobody in J3 Bots dispatched as background", () =>
     Effect.gen(function* () {
       const bench = yield* Bench;
-      const { sessionId, events, key } = yield* session("foreign");
+      const { sessionId, events } = yield* session("foreign");
 
       yield* bench.startForeignTurn(sessionId);
       const started = yield* events.next("turn-started");
@@ -397,11 +467,10 @@ export const scenarios = (it: Methods) => {
 
   it.effect("resumes from a cursor without repeating or skipping events", () =>
     Effect.gen(function* () {
-      const engine = yield* Engine;
       const bench = yield* Bench;
       const { sessionId, events, key, start: cursor } = yield* session("resume");
       const dispatch = { ...(yield* start(key("reply"), { _tag: "reply" })), sessionId };
-      const disposition = yield* engine.dispatch(dispatch);
+      const disposition = yield* dispatchTurn(dispatch);
       yield* events.next("turn-started");
       yield* bench.perform({ sessionId, turnId: disposition.turnId, act: { _tag: "reply" } });
       yield* finished(events, disposition.turnId);
@@ -423,7 +492,7 @@ export const scenarios = (it: Methods) => {
   it.effect("marks a point in every open stream on request", () =>
     Effect.gen(function* () {
       const engine = yield* Engine;
-      const { sessionId, events, key } = yield* session("sync");
+      const { sessionId, events } = yield* session("sync");
       const token = SyncToken.make("conformance-sync");
 
       yield* engine.synchronize({ sessionId, token });

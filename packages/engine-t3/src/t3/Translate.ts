@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { FailureClass, Question, WorkStep } from "@j3-bots/contracts";
 import { WorkStepId } from "@j3-bots/contracts";
-import type {
-  OrchestrationV2DomainEvent,
-  OrchestrationV2Run,
-  OrchestrationV2RuntimeRequest,
-  OrchestrationV2ThreadProjection,
-  OrchestrationV2TurnItem,
+import {
+  OrchestrationV2AppThread,
+  type OrchestrationV2DomainEvent,
+  type OrchestrationV2ProviderFailureClass,
+  type OrchestrationV2Run,
+  type OrchestrationV2RuntimeRequest,
+  type OrchestrationV2ThreadProjection,
+  type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type { DispatchDisposition } from "../Engine.ts";
@@ -18,14 +21,25 @@ import type {
   HostSpeech,
   OpenRequest,
   OpenTurn,
+  PendingContinuation,
   RequestResolution,
   SessionEvent,
   SteerSettlement,
+  ToolCall,
   TurnCause,
   TurnOutcome,
 } from "../events.ts";
-import { HostSpeechId, IdempotencyKey, RequestId, TurnId } from "../ids.ts";
+import {
+  HostSpeechId,
+  IdempotencyKey,
+  RequestId,
+  ToolCallId,
+  type ToolInputDigest,
+  TurnId,
+} from "../ids.ts";
+import { toolInputDigest } from "../toolCaller.ts";
 import { dispatchOfMessage, localIdFor, messageIdFor } from "./Keys.ts";
+import { TOOL_SERVER } from "./Provision.ts";
 
 // The engine's thread, mirrored entity by entity, and the J3 Bots events it
 // means. Engine events carry whole entities and a snapshot carries all of
@@ -37,25 +51,39 @@ import { dispatchOfMessage, localIdFor, messageIdFor } from "./Keys.ts";
 type Run = OrchestrationV2Run;
 type Item = OrchestrationV2TurnItem;
 type RuntimeRequest = OrchestrationV2RuntimeRequest;
+type Thread = OrchestrationV2AppThread;
 
 /** The engine's state of one thread, as far as J3 Bots reads it. */
 export interface Mirror {
+  /** `undefined` until the engine has sent it. */
+  thread: Thread | undefined;
   readonly runs: Map<string, Run>;
   readonly items: Map<string, Item>;
   readonly requests: Map<string, RuntimeRequest>;
+  /**
+   * `toolInputDigest` of each `j3` tool call's input, by item id, with the
+   * input it was taken of. Kept by `digestToolCalls`, which `diff` relies on.
+   */
+  readonly toolDigests: Map<string, { readonly input: unknown; readonly digest: ToolInputDigest }>;
 }
 
 export const emptyMirror = (): Mirror => ({
+  thread: undefined,
   runs: new Map(),
   items: new Map(),
   requests: new Map(),
+  toolDigests: new Map(),
 });
 
 export const mirrorOf = (projection: OrchestrationV2ThreadProjection): Mirror => ({
+  thread: projection.thread,
   runs: new Map(projection.runs.map((run) => [run.id, run])),
   items: new Map(projection.turnItems.map((item) => [item.id, item])),
   requests: new Map(projection.runtimeRequests.map((request) => [request.id, request])),
+  toolDigests: new Map(),
 });
+
+const isThread = Schema.is(OrchestrationV2AppThread);
 
 /** Applies one engine event. Returns whether it touched anything J3 Bots reads. */
 export const applyEvent = (mirror: Mirror, event: OrchestrationV2DomainEvent): boolean => {
@@ -71,14 +99,22 @@ export const applyEvent = (mirror: Mirror, event: OrchestrationV2DomainEvent): b
       mirror.requests.set(event.payload.id, event.payload);
       return true;
     default:
+      // Every thread event carries the whole thread record.
+      if (event.type.startsWith("thread.") && isThread(event.payload)) {
+        mirror.thread = event.payload;
+        return true;
+      }
       return false;
   }
 };
 
+/** Whether the session was retired: the engine archived its thread. */
+export const isRetired = (mirror: Mirror) =>
+  mirror.thread !== undefined && mirror.thread.archivedAt !== null;
+
 // ---------------------------------------------------------------------------
 // Runs as turns
 
-const STARTED: ReadonlySet<Run["status"]> = new Set(["starting", "running", "waiting"]);
 const ENDED: ReadonlySet<Run["status"]> = new Set([
   "completed",
   "interrupted",
@@ -88,8 +124,14 @@ const ENDED: ReadonlySet<Run["status"]> = new Set([
 ]);
 
 export const isEnded = (run: Run) => ENDED.has(run.status);
+
+/**
+ * Whether the run's provider turn started. A run is `starting` before that,
+ * with no `startedAt`, and can still fail there (**Read** at `db51b67`,
+ * `Orchestrator.ts`).
+ */
 const hasStarted = (run: Run) =>
-  STARTED.has(run.status) || (isEnded(run) && run.startedAt !== null);
+  run.startedAt !== null || run.status === "running" || run.status === "waiting";
 
 const turnIdOf = (run: Run) => TurnId.make(run.id);
 
@@ -108,28 +150,39 @@ const STEER_INTENTS: ReadonlySet<UserMessage["inputIntent"]> = new Set([
   "promoted_queued_to_steer",
 ]);
 
+const isSteerItem = (item: Item): item is UserMessage =>
+  item.type === "user_message" && STEER_INTENTS.has(item.inputIntent);
+
 const userMessagesOf = (mirror: Mirror, run: Run) =>
   itemsOf(mirror, run).filter((item): item is UserMessage => item.type === "user_message");
 
 /**
- * The message a run was started for. Not `run.userMessageId`: the engine
- * moves that to a steer it restarts the run with (**Verified**). The run's own
- * message item keeps the message it opened with.
+ * The message a run was started for: what its first attempt ran. Not
+ * `run.userMessageId`, which the engine moves to a steer it restarts the run
+ * with (**Verified**). The run's own message items keep the message it opened
+ * with; a run with none yet opened with `userMessageId`.
  */
 const openingMessageOf = (mirror: Mirror, run: Run): string | undefined => {
   const messages = userMessagesOf(mirror, run);
-  if (messages.length === 0) return run.userMessageId;
-  return messages.find((item) => !STEER_INTENTS.has(item.inputIntent))?.messageId;
+  const opening = messages.find((item) => !STEER_INTENTS.has(item.inputIntent));
+  if (opening !== undefined) return opening.messageId;
+  return messages.length === 0 ? run.userMessageId : undefined;
 };
 
 /**
- * A steer waiting for its turn to be ready to read it. It is no turn: the
- * engine cancels it when it steers the message into that turn (**Read**,
- * `db51b67`, `Orchestrator.ts`), and it starts only as a follow-up.
+ * A steer the engine keeps aside until its target run's provider turn starts.
+ * It is no turn while it waits: when the target starts, the engine cancels it
+ * and steers its message into the target (**Read** at `db51b67`,
+ * `Orchestrator.ts`, `queued-message.promote-to-steer`). If the target ends
+ * first, it runs as the steer's follow-up turn.
  */
-const isWaitingSteer = (run: Run) => run.steerWhenReadyRunId !== undefined && !hasStarted(run);
+const isWaitingSteer = (mirror: Mirror, run: Run) => {
+  if (run.steerWhenReadyRunId === undefined || hasStarted(run)) return false;
+  const target = mirror.runs.get(run.steerWhenReadyRunId);
+  return target !== undefined && !isEnded(target);
+};
 
-export const causeOf = (mirror: Mirror, run: Run): TurnCause => {
+const causeOf = (mirror: Mirror, run: Run): TurnCause => {
   const continued =
     run.restartContinuationOfRunId ??
     run.usageLimitContinuationOfRunId ??
@@ -141,36 +194,40 @@ export const causeOf = (mirror: Mirror, run: Run): TurnCause => {
   return { _tag: "background" };
 };
 
-const FAILURES: Record<string, FailureClass> = {
+const FAILURES: Record<OrchestrationV2ProviderFailureClass, FailureClass> = {
   usage_limit: "usage-limit",
   provider_error: "provider-error",
   transport_error: "provider-error",
   permission_error: "permission-error",
+  validation_error: "provider-error",
+  unknown: "unknown",
 };
 
 const parseInstant = (value: string | null | undefined) =>
   value === null || value === undefined ? null : Option.getOrNull(DateTime.make(value));
 
-export const outcomeOf = (mirror: Mirror, run: Run): TurnOutcome => {
+const lastErrorOf = (mirror: Mirror, run: Run) =>
+  itemsOf(mirror, run)
+    .filter((item): item is Extract<Item, { type: "error" }> => item.type === "error")
+    .at(-1);
+
+const outcomeOf = (mirror: Mirror, run: Run): TurnOutcome => {
   switch (run.status) {
     case "completed":
       return { _tag: "completed" };
     case "failed": {
-      const error = itemsOf(mirror, run)
-        .filter((item) => item.type === "error")
-        .at(-1);
-      if (error === undefined || error.type !== "error") {
-        return { _tag: "failed", failure: "unknown", retryAt: null };
-      }
-      return {
-        _tag: "failed",
-        failure: FAILURES[error.failure.class] ?? "unknown",
-        retryAt: parseInstant(error.failure.resetAt),
-      };
+      const error = lastErrorOf(mirror, run);
+      return error === undefined
+        ? { _tag: "failed", failure: "unknown", retryAt: null }
+        : {
+            _tag: "failed",
+            failure: FAILURES[error.failure.class],
+            retryAt: parseInstant(error.failure.resetAt),
+          };
     }
     case "cancelled":
       // A queued turn cancelled before it began, or a running one an engine restart ended.
-      return run.startedAt === null ? { _tag: "cancelled" } : { _tag: "interrupted" };
+      return hasStarted(run) ? { _tag: "interrupted" } : { _tag: "cancelled" };
     default:
       return { _tag: "interrupted" };
   }
@@ -187,8 +244,40 @@ const hasBackgroundWork = (mirror: Mirror, run: Run) =>
         item.type === "subagent"),
   );
 
+/**
+ * The resume the engine will start on its own for an ended run, by its rule
+ * for a usage limit (**Read** at `db51b67`, `UsageLimitRecoveryWorker.ts`,
+ * `limitRecoveryCommand`): the thread's latest run failed at a usage limit
+ * whose reset comes after the failure, nothing resumed it yet, the thread is
+ * not archived, and the engine has not armed the recovery without an
+ * automatic resume. J3 Bots provisions automatic resume on.
+ */
+const continuationOf = (mirror: Mirror, run: Run): PendingContinuation | null => {
+  if (run.status !== "failed" || isRetired(mirror)) return null;
+  if (runsInOrder(mirror).at(-1)?.id !== run.id) return null;
+  const error = lastErrorOf(mirror, run);
+  if (error === undefined || error.failure.class !== "usage_limit") return null;
+  const resumesAt = parseInstant(error.failure.resetAt);
+  if (resumesAt === null) return null;
+  if (run.completedAt !== null && !DateTime.isGreaterThan(resumesAt, run.completedAt)) return null;
+  const armed = mirror.thread?.limitRecovery;
+  if (armed !== undefined && armed !== null && armed.runId === run.id && !armed.autoResume) {
+    return null;
+  }
+  return { resumesAt };
+};
+
+/** Whether a continuation run for `run` exists: its pending continuation ran. */
+const wasContinued = (mirror: Mirror, run: Run) =>
+  [...mirror.runs.values()].some(
+    (candidate) =>
+      candidate.usageLimitContinuationOfRunId === run.id ||
+      candidate.restartContinuationOfRunId === run.id ||
+      candidate.manualContinuationOfRunId === run.id,
+  );
+
 // ---------------------------------------------------------------------------
-// Steps
+// Steps, host speech and `j3` tool calls
 
 const label = (text: string | null | undefined, fallback: string) => {
   const line =
@@ -200,10 +289,50 @@ const label = (text: string | null | undefined, fallback: string) => {
   return chosen.length > 200 ? `${chosen.slice(0, 199)}…` : chosen;
 };
 
+type DynamicTool = Extract<Item, { type: "dynamic_tool" }>;
+
 const SEND_TO_USER = /(^|__|\/|\.)send_to_user$/;
 
-const isHostSpeech = (item: Item) =>
+const isHostSpeech = (item: Item): item is DynamicTool =>
   item.type === "dynamic_tool" && item.toolName !== null && SEND_TO_USER.test(item.toolName);
+
+/**
+ * How each harness names a `j3` tool on the engine's item: `mcp__j3__say` on
+ * Claude Code, `j3.say` on Codex and on ACP agents (**Read** at `db51b67`,
+ * `ensureToolCallStarted`; the ACP form **Verified** on the engine's own MCP
+ * server).
+ */
+const J3_TOOL = new RegExp(`^(?:mcp__${TOOL_SERVER}__|${TOOL_SERVER}[./])(.+)$`, "s");
+
+/** The bare `j3` tool name an item calls, if it calls one. */
+const j3ToolOf = (item: Item): string | undefined =>
+  item.type === "dynamic_tool" && item.toolName !== null
+    ? J3_TOOL.exec(item.toolName)?.[1]
+    : undefined;
+
+/** Takes the digest of every `j3` tool call input the mirror has not digested yet. */
+export const digestToolCalls = (mirror: Mirror): Effect.Effect<void> =>
+  Effect.forEach(
+    [...mirror.items.values()].filter(
+      (item): item is DynamicTool =>
+        item.type === "dynamic_tool" &&
+        j3ToolOf(item) !== undefined &&
+        mirror.toolDigests.get(item.id)?.input !== item.input,
+    ),
+    (item) =>
+      Effect.map(toolInputDigest(item.input), (digest) => {
+        mirror.toolDigests.set(item.id, { input: item.input, digest });
+      }),
+    { discard: true },
+  );
+
+const toolCallOf = (mirror: Mirror, item: Item): ToolCall | undefined => {
+  const tool = j3ToolOf(item);
+  const digested = mirror.toolDigests.get(item.id);
+  return tool === undefined || digested === undefined
+    ? undefined
+    : { callId: ToolCallId.make(localIdFor(item.id)), tool, inputDigest: digested.digest };
+};
 
 const stepKind = (item: Item): WorkStep["kind"] | undefined => {
   switch (item.type) {
@@ -218,7 +347,8 @@ const stepKind = (item: Item): WorkStep["kind"] | undefined => {
     case "subagent":
       return "delegation";
     case "dynamic_tool":
-      return isHostSpeech(item) ? undefined : "tool";
+      // Host speech and `j3` calls are events of their own.
+      return isHostSpeech(item) || j3ToolOf(item) !== undefined ? undefined : "tool";
     default:
       return undefined;
   }
@@ -268,14 +398,11 @@ const stepsOf = (mirror: Mirror, run: Run) =>
 const fingerprint = (step: WorkStep) =>
   `${step.status}|${step.label}|${step.finishedAt === null ? "" : DateTime.formatIso(step.finishedAt)}`;
 
-// ---------------------------------------------------------------------------
-// Host speech
-
 const SpeechInput = Schema.Struct({ message: Schema.String });
 const decodeSpeechInput = Schema.decodeUnknownOption(SpeechInput);
 
 const speechOf = (item: Item): HostSpeech | undefined => {
-  if (item.type !== "dynamic_tool" || !isHostSpeech(item) || item.runId === null) return undefined;
+  if (!isHostSpeech(item) || item.runId === null) return undefined;
   const input = decodeSpeechInput(item.input);
   if (Option.isNone(input) || input.value.message.trim().length === 0) return undefined;
   return {
@@ -316,7 +443,7 @@ const questionOf = (
 });
 
 /** Where the engine takes the answer to a request. */
-export type AnswerTarget =
+type AnswerTarget =
   | { readonly _tag: "runtime-request"; readonly requestId: string }
   | { readonly _tag: "secret"; readonly turnItemId: string };
 
@@ -366,8 +493,7 @@ const requestOf = (mirror: Mirror, item: Item): RequestState | undefined => {
   const turnId = TurnId.make(item.runId);
   const openedAt = item.startedAt ?? item.updatedAt;
   switch (item.type) {
-    case "approval_request": {
-      const runtime = mirror.requests.get(item.requestId);
+    case "approval_request":
       return {
         requestId: RequestId.make(localIdFor(item.requestId)),
         answerTo: { _tag: "runtime-request", requestId: item.requestId },
@@ -381,9 +507,8 @@ const requestOf = (mirror: Mirror, item: Item): RequestState | undefined => {
           allowsSession:
             item.options?.some((option) => option.decision === "acceptForSession") ?? false,
         },
-        resolution: runtimeResolution(runtime, item),
+        resolution: runtimeResolution(mirror.requests.get(item.requestId), item),
       };
-    }
     case "user_input_request": {
       const [first, ...rest] = item.questions.map(questionOf);
       if (first === undefined) return undefined;
@@ -441,76 +566,127 @@ const openRequestOf = (state: RequestState): OpenRequest => ({
 // ---------------------------------------------------------------------------
 // Steers and dispatches
 
-/** A J3 Bots steer the engine holds, by its key, with the turn it was sent to. */
+/**
+ * A J3 Bots steer the engine holds, by its key, with the run it was sent to:
+ * steered into that run (`item`), or kept aside until the run's provider turn
+ * starts (`waiting`). Steers are known by their message id, which the engine
+ * keeps through all of that.
+ */
 interface SteerRecord {
   readonly key: IdempotencyKey;
   readonly messageId: string;
   readonly target: string;
+  readonly item: UserMessage | undefined;
+  readonly waiting: Run | undefined;
 }
 
 const steersOf = (mirror: Mirror): ReadonlyArray<SteerRecord> => {
   const steers = new Map<string, SteerRecord>();
-  const add = (messageId: string, target: string) => {
-    const dispatch = dispatchOfMessage(messageId);
-    if (Option.isSome(dispatch) && dispatch.value.delivery === "steer" && !steers.has(messageId)) {
-      steers.set(messageId, { key: dispatch.value.key, messageId, target });
-    }
-  };
-  // The engine's own record of a steer in its turn comes first: it names the turn that has it.
+  const keyOf = (messageId: string) =>
+    Option.flatMap(dispatchOfMessage(messageId), (dispatch) =>
+      dispatch.delivery === "steer" ? Option.some(dispatch.key) : Option.none(),
+    );
+  // The engine's record of the steer in its run comes first: it names the run that has it.
   for (const item of mirror.items.values()) {
-    if (
-      item.type === "user_message" &&
-      STEER_INTENTS.has(item.inputIntent) &&
-      item.runId !== null
-    ) {
-      add(item.messageId, item.runId);
+    if (!isSteerItem(item) || item.runId === null || steers.has(item.messageId)) continue;
+    const key = keyOf(item.messageId);
+    if (Option.isSome(key)) {
+      steers.set(item.messageId, {
+        key: key.value,
+        messageId: item.messageId,
+        target: item.runId,
+        item,
+        waiting: undefined,
+      });
     }
   }
   for (const run of mirror.runs.values()) {
-    if (run.steerWhenReadyRunId !== undefined) add(run.userMessageId, run.steerWhenReadyRunId);
+    if (run.steerWhenReadyRunId === undefined || steers.has(run.userMessageId)) continue;
+    const key = keyOf(run.userMessageId);
+    if (Option.isSome(key)) {
+      steers.set(run.userMessageId, {
+        key: key.value,
+        messageId: run.userMessageId,
+        target: run.steerWhenReadyRunId,
+        item: undefined,
+        waiting: run,
+      });
+    }
   }
   return [...steers.values()];
 };
 
-const STOPPED: ReadonlySet<Run["status"]> = new Set(["interrupted", "cancelled"]);
+/** Whether Stop reached the run: the engine records its interrupt request in the run. */
+const wasStopped = (mirror: Mirror, run: Run) =>
+  itemsOf(mirror, run).some((item) => item.type === "run_interrupt_request");
+
+type Settlement =
+  | { readonly _tag: "read" }
+  | { readonly _tag: "dropped" }
+  | { readonly _tag: "requeued"; readonly followUp: Run };
 
 /**
- * How a steer settled, once that is final. It is read once the agent's turn
- * has its message, completed. Unread, it is dropped only when Stop ends its
- * turn; any other end makes it a follow-up turn of its own, which shows as
- * that turn's cause instead.
+ * How a steer settled, once its target run has ended and the engine has
+ * decided. **Read** at `db51b67`, `Orchestrator.ts`, `requeueUnreadSteers`:
+ * the run took the steer if its item completed; Stop marks an unread steer's
+ * item cancelled; any other end queues the steer as a run of its own, opened
+ * with the steer's message. A steer still kept aside when its target ends is
+ * dropped by a Stop and otherwise runs as that follow-up itself.
  */
-const settlementOf = (mirror: Mirror, steer: SteerRecord): SteerSettlement | undefined => {
-  for (const item of mirror.items.values()) {
-    if (
-      item.type === "user_message" &&
-      item.messageId === steer.messageId &&
-      STEER_INTENTS.has(item.inputIntent) &&
-      item.status === "completed" &&
-      item.runId !== null
-    ) {
-      return { key: steer.key, turnId: TurnId.make(item.runId), settlement: "read" };
-    }
-  }
+const settlementOf = (mirror: Mirror, steer: SteerRecord): Settlement | undefined => {
   const target = mirror.runs.get(steer.target);
-  if (target === undefined || !STOPPED.has(target.status)) return undefined;
-  const followedUp = [...mirror.runs.values()].some(
-    (run) => !isWaitingSteer(run) && openingMessageOf(mirror, run) === steer.messageId,
-  );
-  return followedUp
-    ? undefined
-    : { key: steer.key, turnId: TurnId.make(target.id), settlement: "dropped" };
+  if (target === undefined || !isEnded(target)) return undefined;
+  if (steer.item !== undefined) {
+    if (steer.item.status === "completed") return { _tag: "read" };
+    if (steer.item.status === "cancelled") return { _tag: "dropped" };
+    const followUp = runsInOrder(mirror).find(
+      (run) =>
+        run.id !== target.id &&
+        run.steerWhenReadyRunId === undefined &&
+        openingMessageOf(mirror, run) === steer.messageId,
+    );
+    return followUp === undefined ? undefined : { _tag: "requeued", followUp };
+  }
+  if (steer.waiting === undefined) return undefined;
+  if (
+    wasStopped(mirror, target) ||
+    (steer.waiting.status === "cancelled" && !hasStarted(steer.waiting))
+  ) {
+    return { _tag: "dropped" };
+  }
+  return { _tag: "requeued", followUp: steer.waiting };
 };
 
-const settlementsOf = (mirror: Mirror) =>
-  steersOf(mirror).flatMap((steer) => {
-    const settled = settlementOf(mirror, steer);
-    return settled === undefined ? [] : [settled];
-  });
+const steerEventOf = (steer: SteerRecord, settled: Settlement): EventBody => {
+  const turnId = TurnId.make(steer.target);
+  switch (settled._tag) {
+    case "read":
+      return { _tag: "steered", key: steer.key, turnId };
+    case "dropped":
+      return { _tag: "steer-dropped", key: steer.key, turnId };
+    case "requeued":
+      return {
+        _tag: "steer-requeued",
+        key: steer.key,
+        turnId,
+        followUpTurnId: turnIdOf(settled.followUp),
+      };
+  }
+};
+
+/** Whether the engine has any record of the dispatch with this key. */
+export const knowsDispatch = (mirror: Mirror, key: IdempotencyKey): boolean => {
+  const messages = new Set([messageIdFor("start", key), messageIdFor("steer", key)]);
+  for (const run of mirror.runs.values()) if (messages.has(run.userMessageId)) return true;
+  for (const item of mirror.items.values()) {
+    if (item.type === "user_message" && messages.has(item.messageId)) return true;
+  }
+  return false;
+};
 
 /**
- * How the engine accepted a dispatch, from its record of the dispatch's
- * message. `Option.none()` when the engine has no record of it.
+ * How the engine accepted a dispatch it applied just now, read from its record
+ * of the dispatch's message. `Option.none()` when it shows no record of it.
  */
 export const dispositionOf = (
   mirror: Mirror,
@@ -519,9 +695,10 @@ export const dispositionOf = (
   const start = messageIdFor("start", key);
   const steer = messageIdFor("steer", key);
   const steered = steersOf(mirror).find((record) => record.messageId === steer);
-  // A steer the engine added to a turn or holds for one, read or not.
-  if (steered !== undefined)
+  // A steer the engine added to a run or keeps aside for one, read or not.
+  if (steered !== undefined) {
     return Option.some({ _tag: "steered", turnId: TurnId.make(steered.target) });
+  }
   for (const run of runsInOrder(mirror)) {
     const opening = openingMessageOf(mirror, run);
     if (opening === steer) return Option.some({ _tag: "new-turn", turnId: turnIdOf(run) });
@@ -540,6 +717,8 @@ export const dispositionOf = (
 interface TurnView {
   started: boolean;
   finished: boolean;
+  /** Whether the subscriber was told of a continuation that has not run or been dropped. */
+  continuation: boolean;
 }
 
 /** What the subscriber has been told. Copied, never shared, between cursors. */
@@ -548,14 +727,17 @@ export interface View {
   readonly steps: Map<string, string>;
   readonly speech: Set<string>;
   readonly requests: Map<string, "open" | "closed">;
+  readonly toolCalls: Map<string, "open" | "closed">;
+  /** Steers whose settlement was reported, by message id. */
   readonly steers: Set<string>;
 }
 
-export const emptyView = (): View => ({
+const emptyView = (): View => ({
   turns: new Map(),
   steps: new Map(),
   speech: new Set(),
   requests: new Map(),
+  toolCalls: new Map(),
   steers: new Set(),
 });
 
@@ -564,6 +746,7 @@ export const copyView = (view: View): View => ({
   steps: new Map(view.steps),
   speech: new Set(view.speech),
   requests: new Map(view.requests),
+  toolCalls: new Map(view.toolCalls),
   steers: new Set(view.steers),
 });
 
@@ -577,62 +760,96 @@ export type EventBody = DistributiveOmit<SessionEvent, "cursor" | "at">;
  */
 export const diff = (mirror: Mirror, view: View): ReadonlyArray<EventBody> => {
   const events: Array<EventBody> = [];
-  const settlements = settlementsOf(mirror);
-  for (const run of runsInOrder(mirror)) {
+  const steers = steersOf(mirror);
+  const runs = runsInOrder(mirror);
+
+  // A newer run takes the place of a pending continuation before it starts.
+  for (const run of runs) {
+    const turn = view.turns.get(run.id);
+    if (turn === undefined || !turn.continuation || continuationOf(mirror, run) !== null) continue;
+    turn.continuation = false;
+    if (!wasContinued(mirror, run)) {
+      events.push({ _tag: "continuation-dropped", turnId: turnIdOf(run) });
+    }
+  }
+
+  for (const run of runs) {
     const turnId = turnIdOf(run);
-    const turn = view.turns.get(run.id) ?? { started: false, finished: false };
+    const turn = view.turns.get(run.id) ?? { started: false, finished: false, continuation: false };
     view.turns.set(run.id, turn);
-    if (turn.finished) continue;
-    if (isWaitingSteer(run)) continue;
-    if (!turn.started && hasStarted(run)) {
-      turn.started = true;
-      events.push({ _tag: "turn-started", turnId, cause: causeOf(mirror, run) });
-    }
-    for (const settled of settlements) {
-      if (settled.turnId !== turnId || view.steers.has(settled.key)) continue;
-      view.steers.add(settled.key);
-      events.push({
-        _tag: settled.settlement === "read" ? "steered" : "steer-dropped",
-        key: settled.key,
-        turnId,
-      });
-    }
-    for (const state of requestsOf(mirror, run)) {
-      if (state.resolution === undefined && !view.requests.has(state.requestId)) {
-        view.requests.set(state.requestId, "open");
-        events.push({ _tag: "request-opened", open: openRequestOf(state) });
+    if (isWaitingSteer(mirror, run)) continue;
+    if (!turn.finished) {
+      if (!turn.started && hasStarted(run)) {
+        turn.started = true;
+        events.push({ _tag: "turn-started", turnId, cause: causeOf(mirror, run) });
       }
-    }
-    for (const item of itemsOf(mirror, run)) {
-      const step = stepOf(item);
-      if (step !== undefined) {
-        const print = fingerprint(step);
-        if (view.steps.get(step.id) !== print) {
-          view.steps.set(step.id, print);
-          events.push({ _tag: "step", turnId, step });
+      const ended = isEnded(run);
+      for (const state of requestsOf(mirror, run)) {
+        if (state.resolution === undefined && !view.requests.has(state.requestId)) {
+          view.requests.set(state.requestId, "open");
+          events.push({ _tag: "request-opened", open: openRequestOf(state) });
         }
       }
-      const speech = speechOf(item);
-      if (speech !== undefined && !view.speech.has(speech.speechId)) {
-        view.speech.add(speech.speechId);
-        events.push({ _tag: "host-speech", ...speech });
+      for (const item of itemsOf(mirror, run)) {
+        const step = stepOf(item);
+        if (step !== undefined) {
+          const print = fingerprint(step);
+          if (view.steps.get(step.id) !== print) {
+            view.steps.set(step.id, print);
+            events.push({ _tag: "step", turnId, step });
+          }
+        }
+        const speech = speechOf(item);
+        if (speech !== undefined && !view.speech.has(speech.speechId)) {
+          view.speech.add(speech.speechId);
+          events.push({ _tag: "host-speech", ...speech });
+        }
+        const call = toolCallOf(mirror, item);
+        if (call !== undefined) {
+          const seen = view.toolCalls.get(call.callId);
+          if (seen === undefined) {
+            view.toolCalls.set(call.callId, "open");
+            events.push({ _tag: "tool-call", turnId, call, state: "open" });
+          }
+          // The turn's end closes its calls without a `closed` for each.
+          if (view.toolCalls.get(call.callId) === "open" && !LIVE_ITEM.has(item.status) && !ended) {
+            view.toolCalls.set(call.callId, "closed");
+            events.push({ _tag: "tool-call", turnId, call, state: "closed" });
+          }
+        }
+      }
+      for (const state of requestsOf(mirror, run)) {
+        const resolution = state.resolution ?? (ended ? ("expired" as const) : undefined);
+        if (resolution !== undefined && view.requests.get(state.requestId) === "open") {
+          view.requests.set(state.requestId, "closed");
+          events.push({ _tag: "request-closed", requestId: state.requestId, turnId, resolution });
+        }
+      }
+      if (ended) {
+        turn.finished = true;
+        for (const item of itemsOf(mirror, run)) {
+          const call = toolCallOf(mirror, item);
+          if (call !== undefined) view.toolCalls.set(call.callId, "closed");
+        }
+        const continuation = continuationOf(mirror, run);
+        turn.continuation = continuation !== null;
+        events.push({
+          _tag: "turn-finished",
+          turnId,
+          outcome: outcomeOf(mirror, run),
+          backgroundWork: hasBackgroundWork(mirror, run),
+          continuation,
+        });
       }
     }
-    for (const state of requestsOf(mirror, run)) {
-      const resolution = state.resolution ?? (isEnded(run) ? ("expired" as const) : undefined);
-      if (resolution !== undefined && view.requests.get(state.requestId) === "open") {
-        view.requests.set(state.requestId, "closed");
-        events.push({ _tag: "request-closed", requestId: state.requestId, turnId, resolution });
-      }
-    }
-    if (isEnded(run)) {
-      turn.finished = true;
-      events.push({
-        _tag: "turn-finished",
-        turnId,
-        outcome: outcomeOf(mirror, run),
-        backgroundWork: hasBackgroundWork(mirror, run),
-      });
+    // A steer settles only after its target's end, once the engine has decided.
+    if (!turn.finished) continue;
+    for (const steer of steers) {
+      if (steer.target !== run.id || view.steers.has(steer.messageId)) continue;
+      const settled = settlementOf(mirror, steer);
+      if (settled === undefined) continue;
+      view.steers.add(steer.messageId);
+      events.push(steerEventOf(steer, settled));
     }
   }
   return events;
@@ -656,9 +873,9 @@ export const replacement = (
     turnId: TurnId;
     resolution: RequestResolution;
   }> = [];
-  const steers: Array<SteerSettlement> = [];
+  const steerSettlements: Array<SteerSettlement> = [];
 
-  const settlements = settlementsOf(mirror);
+  const steers = steersOf(mirror);
   for (const run of runsInOrder(mirror)) {
     const turnId = turnIdOf(run);
     const ended = isEnded(run);
@@ -666,29 +883,44 @@ export const replacement = (
       !ended ||
       (since !== null &&
         (run.completedAt === null || DateTime.isGreaterThanOrEqualTo(run.completedAt, since)));
-    if (!listed || isWaitingSteer(run)) continue;
+    if (!listed || isWaitingSteer(mirror, run)) continue;
     if (!ended) {
       openTurns.push({
         turnId,
         cause: causeOf(mirror, run),
         startedAt: hasStarted(run) ? (run.startedAt ?? run.requestedAt) : null,
         steps: stepsOf(mirror, run),
+        toolCalls: itemsOf(mirror, run).flatMap((item) => {
+          const call = toolCallOf(mirror, item);
+          return call !== undefined && LIVE_ITEM.has(item.status) ? [call] : [];
+        }),
       });
     } else {
       endedTurns.push({
         turnId,
         cause: causeOf(mirror, run),
+        startedAt: hasStarted(run) ? (run.startedAt ?? run.requestedAt) : null,
+        finishedAt: run.completedAt ?? run.startedAt ?? run.requestedAt,
         outcome: outcomeOf(mirror, run),
         backgroundWork: hasBackgroundWork(mirror, run),
+        continuation: continuationOf(mirror, run),
         steps: stepsOf(mirror, run),
       });
+      // A requeued steer shows as its follow-up turn, whose cause is the dispatch.
+      for (const steer of steers) {
+        if (steer.target !== run.id) continue;
+        const settled = settlementOf(mirror, steer);
+        if (settled?._tag === "read" || settled?._tag === "dropped") {
+          steerSettlements.push({ key: steer.key, turnId, settlement: settled._tag });
+        }
+      }
     }
-    for (const settled of settlements) if (settled.turnId === turnId) steers.push(settled);
     for (const state of requestsOf(mirror, run)) {
       const resolution = state.resolution ?? (ended ? ("expired" as const) : undefined);
       if (resolution === undefined) openRequests.push(openRequestOf(state));
-      else if (since !== null)
+      else if (since !== null) {
         closedRequests.push({ requestId: state.requestId, turnId, resolution });
+      }
     }
     if (since !== null) {
       for (const item of itemsOf(mirror, run)) {
@@ -709,7 +941,7 @@ export const replacement = (
       endedTurns,
       hostSpeech,
       closedRequests,
-      steers,
+      steers: steerSettlements,
     },
     view,
   };
@@ -719,18 +951,22 @@ export const replacement = (
 export const activeTurn = (mirror: Mirror): Option.Option<TurnId> =>
   Option.map(Option.fromNullishOr(runsInOrder(mirror).find((run) => !isEnded(run))), turnIdOf);
 
-/** Runs waiting in the engine's queue. */
+/** Runs waiting in the engine's queue, steers kept aside included. */
 export const queuedRuns = (mirror: Mirror) =>
   runsInOrder(mirror).filter((run) => run.status === "queued" || run.status === "preparing");
 
-/** Whether the engine holds a queue that holds a J3 Bots dispatch. */
-export const holdsDispatch = (mirror: Mirror) =>
-  queuedRuns(mirror).some((run) => {
-    const opening = openingMessageOf(mirror, run);
-    return (
-      run.queueHeld === true && opening !== undefined && Option.isSome(dispatchOfMessage(opening))
-    );
-  });
+/** Whether the engine holds the session's queue: its waiting runs do not start on their own. */
+export const isQueueHeld = (mirror: Mirror) =>
+  queuedRuns(mirror).some((run) => run.queueHeld === true);
 
-export const runOf = (mirror: Mirror, turnId: TurnId) =>
-  Option.fromNullishOr(mirror.runs.get(turnId));
+/**
+ * Whether a Stop made the hold: the engine's stop holds the queue after the run
+ * it reached, which carries the interrupt request (**Read** at `db51b67`,
+ * `Orchestrator.ts`, `thread.stop`).
+ */
+export const isHeldByStop = (mirror: Mirror) => {
+  const lastRan = runsInOrder(mirror)
+    .filter((run) => hasStarted(run))
+    .at(-1);
+  return lastRan !== undefined && wasStopped(mirror, lastRan);
+};

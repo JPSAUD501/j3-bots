@@ -108,8 +108,7 @@ const bench = Layer.effect(
       prompt: (act) => `<j3-wake>${act._tag}</j3-wake>`,
       perform,
       readSteers: control.readSteers,
-      startForeignTurn: (sessionId) =>
-        control.startEngineTurn({ sessionId, cause: { _tag: "background" } }).pipe(Effect.asVoid),
+      startForeignTurn: (sessionId) => control.startEngineTurn(sessionId).pipe(Effect.asVoid),
     });
   }),
 );
