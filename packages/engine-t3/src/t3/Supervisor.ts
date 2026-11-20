@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { EngineStatus } from "@j3-bots/contracts";
 import { ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -290,8 +291,10 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
       return true;
     }),
   ).pipe(
-    Effect.catchCause((cause) =>
-      Effect.logWarning("The engine stopped", cause).pipe(Effect.as(true)),
+    // A failed run is restarted; an interrupt is the scope closing, and ends the loop.
+    Effect.catchCauseIf(
+      (cause) => !Cause.hasInterrupts(cause),
+      (cause) => Effect.logWarning("The engine stopped", cause).pipe(Effect.as(true)),
     ),
   );
 
