@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -8,6 +9,7 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Mime from "effect/http/Mime";
+import type { AdminStatus } from "../admin/protocol.ts";
 import { ServerConfig } from "../config.ts";
 import { isWithin } from "../paths.ts";
 import { containedFile, INDEX, isBuilt } from "./built.ts";
@@ -190,17 +192,36 @@ export const routes = (root: string) =>
   );
 
 /**
- * The configured web client's routes. A client configured by the operator
- * was checked when the configuration loaded; the one in this checkout is
- * served once it is built, and until then the server runs without it.
+ * Whether this server serves the configured web client, decided once as it
+ * starts. The routes and the admin socket's report both read this decision,
+ * so a client built while the server starts never shows as served when it
+ * is not.
  */
-export const layer = Layer.unwrap(
+export class WebClientStatus extends Context.Service<WebClientStatus, AdminStatus["webClient"]>()(
+  "@j3-bots/server/web/WebClient/WebClientStatus",
+) {}
+
+/**
+ * The decision. A client configured by the operator was checked when the
+ * configuration loaded; the one in this checkout is served once it is built,
+ * and until then the server runs without it.
+ */
+export const statusLayer = Layer.effect(
+  WebClientStatus,
   Effect.gen(function* () {
     const { webClient } = yield* ServerConfig;
-    if (yield* isBuilt(webClient.directory)) return routes(webClient.directory);
+    if (yield* isBuilt(webClient.directory)) return WebClientStatus.of("served");
     yield* Effect.logWarning("The web client is not built, so the server does not serve it", {
       directory: webClient.directory,
     });
-    return Layer.empty;
+    return WebClientStatus.of("not-built");
+  }),
+);
+
+/** The configured web client's routes, when `WebClientStatus` says it is served. */
+export const layer = Layer.unwrap(
+  Effect.gen(function* () {
+    const { webClient } = yield* ServerConfig;
+    return (yield* WebClientStatus) === "served" ? routes(webClient.directory) : Layer.empty;
   }),
 );

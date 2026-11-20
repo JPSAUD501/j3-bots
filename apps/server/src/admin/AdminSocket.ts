@@ -15,7 +15,7 @@ import { Devices } from "../devices/Devices.ts";
 import { EngineState } from "../engine/EngineState.ts";
 import { Listener } from "../listener.ts";
 import * as Ports from "../system/Ports.ts";
-import { isBuilt } from "../web/built.ts";
+import { WebClientStatus } from "../web/WebClient.ts";
 import { ADMIN_PATHS, AdminStatus, PairingGrant } from "./protocol.ts";
 
 // The admin socket: how `j3-bots pair` and `j3-bots doctor` reach the running
@@ -28,9 +28,9 @@ const routes = Layer.mergeAll(
   Layer.unwrap(
     Effect.gen(function* () {
       const startedAt = yield* DateTime.now;
-      const { webClient, toolPort, enginePort } = yield* ServerConfig;
+      const { toolPort, enginePort } = yield* ServerConfig;
       const listener = yield* Listener;
-      const served = yield* isBuilt(webClient.directory);
+      const webClient = yield* WebClientStatus;
       return HttpRouter.add(
         "GET",
         ADMIN_PATHS.status,
@@ -46,7 +46,7 @@ const routes = Layer.mergeAll(
             enginePort,
             engine: yield* engine.current,
             pairedDevices: yield* devices.pairedCount,
-            webClient: served ? "served" : "not-built",
+            webClient,
           };
           return yield* HttpServerResponse.schemaJson(AdminStatus)(status).pipe(Effect.orDie);
         }),

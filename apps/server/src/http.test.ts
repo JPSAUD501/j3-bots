@@ -13,6 +13,7 @@ import * as NetAddress from "effect/net/NetAddress";
 import * as Http from "./http.ts";
 import * as Ports from "./system/Ports.ts";
 import * as TestDomain from "./testing/domain.ts";
+import * as WebClient from "./web/WebClient.ts";
 
 /**
  * POSTs `body` to `path` and answers the status. `chunked` sends it in
@@ -55,6 +56,7 @@ const pairRequest = (name: string) => JSON.stringify({ code: "0000000000", name 
 
 it.layer(
   Ports.serve(Http.app, NodeHttpServer.layerTest, { logAddress: false }).pipe(
+    Layer.provide(WebClient.statusLayer),
     Layer.provide(TestDomain.layer),
   ),
 )("http", (it) => {

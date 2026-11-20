@@ -18,6 +18,7 @@ import * as Sqlite from "./persistence/Sqlite.ts";
 import * as Network from "./system/Network.ts";
 import * as Ports from "./system/Ports.ts";
 import * as ToolEndpoint from "./tools/ToolEndpoint.ts";
+import * as WebClient from "./web/WebClient.ts";
 
 const logShutdown = Layer.effectDiscard(Effect.addFinalizer(() => Effect.logInfo("Shutting down")));
 
@@ -63,6 +64,8 @@ const engine = Layer.unwrap(
  */
 export const layer = Layer.mergeAll(ToolEndpoint.layer, AdminSocket.layer, logShutdown).pipe(
   Layer.provide(Ports.serve(Http.app, Listener.layer, { logAddress: true })),
+  // One decision for the client routes and the admin socket's report.
+  Layer.provide(WebClient.statusLayer),
   Layer.provide(Domain.layer),
   Layer.provide(engine),
   Layer.provide(Sqlite.layer),
