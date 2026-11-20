@@ -18,6 +18,7 @@ import { Layout } from "../Layout.ts";
 import { Memory } from "../memory/Memory.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import * as TestDomain from "../testing/domain.ts";
+import { until } from "../testing/turns.ts";
 import { BotStore } from "./BotStore.ts";
 import { Bots } from "./Bots.ts";
 import { EngineSessions } from "./EngineSessions.ts";
@@ -284,20 +285,22 @@ it.effect(
         SELECT settings_pending = 0 AS aligned FROM sessions WHERE bot_id = ${botId}
       `.pipe(Effect.map((rows) => rows[0]?.aligned === 1));
 
-      // The session is aligned once it opened; the change commits meanwhile,
-      // and finds it unopened.
+      // The session is aligned once it opened, with the settings the bot had
+      // then; the change is made meanwhile, and waits for that alignment.
       const first = yield* control.holdNext("configureSession");
       const creating = yield* Effect.forkChild(createBot("Ana"));
       yield* first.entered;
       const [stored] = yield* store.list;
       if (stored === undefined) return assert.fail("The bot was not stored");
       const lowered = stored.bot.permissionMode === "supervised" ? "auto" : "supervised";
-      yield* bots.update({
-        commandId: command(),
-        botId: stored.bot.id,
-        changes: { permissionMode: lowered },
-      });
       const second = yield* control.holdNext("configureSession");
+      const updating = yield* Effect.forkChild(
+        bots.update({
+          commandId: command(),
+          botId: stored.bot.id,
+          changes: { permissionMode: lowered },
+        }),
+      );
       yield* first.release;
 
       // Aligned again before it takes work: it takes none meanwhile.
@@ -305,9 +308,10 @@ it.effect(
       assert.isFalse(yield* takesWork(stored.bot.id));
       yield* second.release;
       yield* Fiber.join(creating);
+      yield* Fiber.join(updating);
       const sessionId = yield* recorded(stored.bot.id);
       if (sessionId === null) return assert.fail("The session was not recorded");
-      assert.isTrue(yield* takesWork(stored.bot.id));
+      yield* until(takesWork(stored.bot.id));
       assert.strictEqual(yield* control.sessionPermissionMode(sessionId), lowered);
     }).pipe(Effect.provide(TestDomain.layer)),
 );
