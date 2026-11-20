@@ -26,7 +26,8 @@ J3 Bots also owns waiting and priority. A wake waits in J3 Bots' database until 
 
 - One place applies budgets, priority, coalescing and concurrency limits to every kind of wake. A private message never goes inside a room turn: the operator steers only a turn with the same audience. It can be queued behind one only when the engine began that turn on its own in the moment the message was on its way, such as a room turn's continuation after a usage limit; it keeps its own audience while it waits, and its turn speaks privately.
 - Every envelope is written by J3 Bots, in one format.
-- The engine surface J3 Bots depends on shrinks to: create a thread, start a turn or steer a running one, stream events, answer a request, stop.
+- The engine surface J3 Bots depends on shrinks to: create a thread, start a turn or steer a running one, stream events, answer a request, stop, and resume a held queue.
+- The engine still holds its queue after a restart, a provider error or a Stop. Releasing it is the server's decision too: it resumes each hold the adapter reports once, and never while a Stop of the session is unsettled.
 - The engine can still turn a steer into a new turn, when the steer arrives late or the provider cannot steer. The adapter reports what happened instead of assuming the steer landed.
 - J3 Bots has to build a scheduler and webhook handling, including signature checks, rate limits and deduplication.
 - Bots still see the engine's scheduling and messaging tools in their tool list. The base prompt tells them J3 Bots' replace those.

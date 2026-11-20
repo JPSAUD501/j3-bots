@@ -149,9 +149,9 @@ Bots act on J3 Bots through MCP tools. A tool's description is prompt text: it i
 
 | Tool | Parameters | Notes |
 | --- | --- | --- |
-| `say` | `text`; `attachments?` (paths in the workspace or URLs); `to?` (`"dm"` during a room turn); `done?` | The only way to speak. `done: true` marks the turn's delivery complete; the run is not interrupted, and the description tells the bot to end its turn after it unless it is still waiting on work it started. The description says it is for the bot itself: a subagent or delegated worker sees the tool but not the base prompt, and must report in its final reply instead. The same sentence goes in `ask` and `message_bot`. |
+| `say` | `text` (at most 4,000 characters); `attachments?` (paths in the workspace or URLs); `to?` (`"dm"` during a room turn); `done?` | The only way to speak. `done: true` marks the turn's delivery complete; the run is not interrupted, and the description tells the bot to end its turn after it unless it is still waiting on work it started. The description says it is for the bot itself: a subagent or delegated worker sees the tool but not the base prompt, and must report in its final reply instead. The same sentence goes in `ask` and `message_bot`, and the base prompt says a subagent cannot speak through the `j3` tools. |
 | `ask` | `prompt`; `options` (1 to 6, each with `label`, optional `value`, `description`, and `style`: `recommended` or `destructive`); `allow_custom?`; `multi_select?` | One question. Ends the turn. The answer arrives as the next `user` wake. A dismissed question is a "no". |
-| `message_bot` | `to` (bot id or room id); `text`; `urgent` (required) | Returns an acknowledgement only. Replies arrive as later wakes. |
+| `message_bot` | `to` (bot id or room id); `text` (at most 4,000 characters); `urgent` (required) | Returns an acknowledgement only. Replies arrive as later wakes. |
 | `remember` | `fact` (one self-contained sentence); `tier` (`pinned` or `log`, default `log`); `scope` (`bot` or `shared`, default `bot`) | Deduplicated. Refuses text that looks like a credential. |
 | `forget` | `fact` (the exact recorded text); `scope` | Pair with `remember` to correct a fact. |
 | `recall` | `query`; `scope?` (both when absent); `limit?` (default 10, at most 50) | Searches the log and the shared facts. |
@@ -161,6 +161,8 @@ Bots act on J3 Bots through MCP tools. A tool's description is prompt text: it i
 | `create_bot` | `name`, `title?`, `job?` | Offered to the primary bot. |
 | `update_bot` | `id`, `name?`, `title?`, `job?` | Offered to the primary bot. |
 | `update_profile` | `name?`, `title?`, `avatar?` | Only when the operator asks. |
+
+**Every call fits the engine.** The engine shows a tool input whose JSON exceeds 16,384 bytes only as a summary, which the server cannot match to the bridge's request ([Engine](../architecture/engine.md#behaviors-j3-bots-designs-around)). So every input schema refuses arguments over 12,288 bytes (`MAX_TOOL_INPUT_BYTES`), and the refusal tells the bot to split a long message, attach long content as a file, or shorten the field. A call the server cannot match to a running turn of the bot, which includes every call a subagent makes, is refused with `NO_TURN_REFUSAL`: the turn has ended, or the caller is a subagent and reports in its final reply.
 
 Tools J3 Bots deliberately does not add: anything that grants approval, raises a permission mode, changes a budget, or reads another bot's conversation.
 
@@ -184,7 +186,7 @@ Prompts are code and are tested like code, in `packages/prompts`.
 
 - the rendered instructions for a fixture bot hold the layers in order, with every placeholder filled, and the base prompt uses no placeholder but the operator's name; these are explicit assertions, because a full snapshot would be a second copy of the templates;
 - every envelope kind renders, as an inline snapshot of the format, and hostile content in every text slot (closing tags, guessed nonces, look-alike characters, nested blocks, attribute breaks) leaves the envelope's tag structure exactly as benign content does;
-- the tool schemas are plain objects MCP accepts, and decoding refuses what the server could not carry out;
+- the tool schemas are plain objects MCP accepts, and decoding refuses what the server could not carry out, including arguments too large for the engine to record;
 - the rendered base prompt stays within 3,000 words, a word being a run of non-whitespace that contains a letter or a digit.
 
 **Behavior evals** run a real model through fixed scenarios and score the transcript. They are slow and cost allowance, so they run on demand and before a release, not on every commit. The first set:

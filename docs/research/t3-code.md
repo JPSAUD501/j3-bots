@@ -142,6 +142,13 @@ Token counts are the `turnTokenUsage` the engine reported for a turn asking for 
 | At most 100 files per message; inline images (GIF, JPEG, PNG, WebP) at most 10 MiB each and 80 MiB together; other files 1 byte to 50 MiB (`db51b67`) | `packages/contracts/src/chatAttachment.ts` |
 | Secret requests: a `secret_request` turn item (label, reason, optional URL, placeholder and file delivery, status pending, saved, declined or cancelled), answered by the `secrets.answerRequest` RPC with `save`, `decline` or `reference`; a second answer fails as `already_answered` (`db51b67`) | `packages/contracts/src/secretRequest.ts`, `orchestrationV2.ts`, `rpc.ts`, `apps/server/src/ws.ts` |
 | `send_to_user` returns its input and does nothing else (`db51b67`) | `apps/server/src/mcp/toolkits/message/handlers.ts` |
+| A dispatch's error reply over `/ws` is an `OrchestrationV2DispatchCommandError` whose cause is a `Schema.Defect` keeping the engine error's class name and message (`db51b67`) | `apps/server/src/ws.ts` |
+| A command that leaves no receipt: `OrchestratorRuntimeModeAboveCeilingError` (managed policy) and `OrchestratorThreadAboveModeLimitError` (never met over `/ws`); `AttachmentClaimError` is raised before the receipt lookup (`db51b67`) | `Orchestrator.ts`, `CommandPolicy.ts`, `ThreadMessageIntake.ts` (`dispatchCommand`) |
+| `queue.resume` is refused on an archived thread, during a usage limit and while worktree setup is pending, and does nothing on an empty queue; whether a replaced provider session still has background work is a runtime probe, not projected (`db51b67`) | `Orchestrator.ts` (`queue.resume`, `startNextQueuedRun`, `sessionHasBackgroundWork`) |
+| `thread.stop` on a thread with no active run holds it and sets `limitRecovery.autoResume` to false (`db51b67`) | `Orchestrator.ts` (`holdStoppedThread`) |
+| A Codex steer is one `turn/steer` request, with no later confirmation that it was consumed; Claude Code marks a steer `completed` when offering it to the CLI fails (`db51b67`) | `CodexAdapterV2.ts`, `ClaudeAdapterV2.ts` (the steer offer's `onError`) |
+| A Claude Code subagent's tool call is recorded on the subagent's child thread with no run, never in the parent's turn (`db51b67`) | `ClaudeAdapterV2.ts` (`startSubagentToolCall`) |
+| A `dynamic_tool` input whose JSON exceeds 16,384 bytes is replaced on the wire by a one-line summary (`db51b67`) | `apps/server/src/orchestration-v2/WireProjection.ts` (`summarizeDynamicValue`) |
 | The WebSocket server authenticates once at the upgrade and builds one RPC server per connection, with fatal defects disabled (`db51b67`) | `apps/server/src/ws.ts` |
 
 ### Prompt levers
