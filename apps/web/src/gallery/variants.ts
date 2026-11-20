@@ -82,6 +82,10 @@ export function galleryVariants(now: DateTime.Utc) {
     unresolved: message("unresolved", { _tag: "operator" }, "And July, please", {
       delivery: { _tag: "failed", reason: "unresolved" },
     }),
+    // Shown while a retry is on its way.
+    retrying: message("retrying", { _tag: "operator" }, "And August, if it’s out", {
+      delivery: { _tag: "failed", reason: "unresolved" },
+    }),
     bot: message(
       "bot",
       scout,
@@ -208,7 +212,7 @@ export function galleryVariants(now: DateTime.Utc) {
     detail: null,
     reason: null,
     exact: true,
-    allowsSession: true,
+    sessionGrant: { covers: "every-command" },
     status: { _tag: "pending" },
     ...extra,
   });
@@ -227,7 +231,7 @@ export function galleryVariants(now: DateTime.Utc) {
     approval("approval-summary", {
       action: "Run the staging migration, then restart the billing API",
       exact: false,
-      allowsSession: false,
+      sessionGrant: null,
     }),
     approval("approval-file-change", {
       kind: "file-change",
@@ -245,16 +249,17 @@ export function galleryVariants(now: DateTime.Utc) {
         "+- [ ] Scan the pharmacy receipts",
         " - [ ] Fill in the donations section",
       ].join("\n"),
-      allowsSession: false,
+      sessionGrant: null,
     }),
     approval("approval-file-read", {
       kind: "file-read",
       action: "~/Documents/taxes-2026/receipts.csv",
-      allowsSession: false,
+      sessionGrant: null,
     }),
     approval("approval-submitting", {
       kind: "tool",
       action: "Add “Pick up the bike” to the shared calendar on Saturday at 10:00 AM",
+      sessionGrant: null,
     }),
     approval("approval-allowed", {
       action: "pnpm --filter site deploy --env staging",
@@ -264,7 +269,7 @@ export function galleryVariants(now: DateTime.Utc) {
       kind: "tool",
       action: "Send an email to the vendor list",
       exact: false,
-      allowsSession: false,
+      sessionGrant: null,
       status: { _tag: "decided", decision: "deny" },
     }),
     approval("approval-expired", { status: { _tag: "expired" } }),

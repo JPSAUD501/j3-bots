@@ -22,6 +22,7 @@ import {
   type Entry,
   type MemoryFile,
   type Mentions,
+  type MessageDelivery,
   type Room,
   type RosterItem,
   type Routine,
@@ -187,7 +188,7 @@ export function sampleTeam(now: DateTime.Utc) {
     text: string,
     options: {
       attachments?: Attachment[];
-      pending?: boolean;
+      delivery?: MessageDelivery;
       prefix?: string;
       mentions?: ReadonlyArray<BotId>;
     } = {},
@@ -200,7 +201,7 @@ export function sampleTeam(now: DateTime.Utc) {
       text,
       attachments: options.attachments ?? [],
       mentions: options.mentions ? { _tag: "bots", ids: options.mentions } : nobody,
-      delivery: { _tag: options.pending ? "pending" : "delivered" },
+      delivery: options.delivery ?? { _tag: "delivered" },
       commandId: null,
     };
   }
@@ -268,8 +269,12 @@ export function sampleTeam(now: DateTime.Utc) {
       ago(8),
       "Done, Wren has it. Meanwhile I’m checking which of the three the shop has in stock.",
     ),
-    message(operator, ago(1), "Also check whether any of them fold", { pending: true }),
-    message(operator, ago(1), "And which ones take a child seat", { pending: true }),
+    message(operator, ago(1), "Also check whether any of them fold", {
+      delivery: { _tag: "pending" },
+    }),
+    message(operator, ago(1), "And which ones take a child seat", {
+      delivery: { _tag: "pending" },
+    }),
   ];
 
   const step = (index: number, rest: Omit<WorkStep, "id">): WorkStep => ({
@@ -385,7 +390,7 @@ export function sampleTeam(now: DateTime.Utc) {
       detail: null,
       reason: "Needs network access to reach the staging database, which the sandbox blocks.",
       exact: true,
-      allowsSession: true,
+      sessionGrant: { covers: "every-command" },
       status: { _tag: "pending" },
     },
   ];
@@ -396,6 +401,9 @@ export function sampleTeam(now: DateTime.Utc) {
       ago(2),
       "Here’s the note for the bike shop, three lines as asked:\n\nHi, I’m comparing three e-bikes for a hilly commute and would love to try them. Could I come by on Saturday morning for a test ride? Any time before noon works.",
     ),
+    message(operator, ago(2), "Looks good, send it from my address", {
+      delivery: { _tag: "failed", reason: "rejected" },
+    }),
   ];
 
   const ledgerEntries: DraftEntry[] = [

@@ -36,8 +36,12 @@ const TIME_OF_DAY: ReadonlySet<Intl.DateTimeFormatPartTypes> = new Set([
   "dayPeriod",
 ]);
 
-/** A narrow no-break space, which Intl itself puts between "8:47" and "AM" in some runtimes. */
-const UNBREAKABLE = "\u202F";
+/**
+ * A no-break space. Some runtimes put a narrow one (U+202F) between "8:47" and
+ * "AM", but the interface font sets it so thin at small sizes that "2:31 PM"
+ * reads as one word; a full-width one keeps the gap and still never breaks.
+ */
+const UNBREAKABLE = "\u00A0";
 
 /**
  * A moment as `formatter` writes it, with every time of day in one piece: the

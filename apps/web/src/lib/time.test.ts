@@ -79,7 +79,8 @@ describe("times never break inside themselves", () => {
   });
 
   it("keeps the time whole inside longer phrases, which may still break elsewhere", () => {
-    const wholeAtEnd = /8:47[\u00A0\u202F]AM$/;
+    // A full no-break space: a narrow one is set too thin to read as a gap at small sizes.
+    const wholeAtEnd = /8:47\u00A0AM$/;
     expect(upcomingTime(at("2026-11-20T11:47:00Z"), ctx)).toMatch(wholeAtEnd);
     expect(fullTime(at("2026-11-23T11:47:00Z"), ctx)).toMatch(wholeAtEnd);
     expect(timeInSentence(at("2026-11-20T11:47:00Z"), ctx)).toMatch(wholeAtEnd);

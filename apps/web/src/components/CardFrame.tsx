@@ -1,29 +1,33 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { EntryId } from "@j3-bots/contracts";
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 import { cn } from "../lib/cn";
 
 /**
  * The frame of a card that asks the operator for something. `attention` marks
  * one still waiting; its header says so in words as well. On a phone the card
  * takes the full column. The frame can take focus, so "Waiting for you" in the
- * header can bring the operator to it.
+ * header can bring the operator to it, and so a card whose actions go away
+ * once answered can keep the keyboard's place.
  */
 export function CardFrame({
   icon,
   title,
   attention = false,
   entryId,
+  ref,
   children,
 }: {
   icon: ReactNode;
   title: string;
   attention?: boolean;
   entryId: EntryId;
+  ref?: Ref<HTMLElement>;
   children: ReactNode;
 }) {
   return (
     <section
+      ref={ref}
       aria-label={title}
       data-entry-id={entryId}
       tabIndex={-1}

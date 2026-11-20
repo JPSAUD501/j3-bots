@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { ApprovalDecision, ApprovalEntry } from "@j3-bots/contracts";
+import type { ApprovalDecision, ApprovalEntry, SessionGrant } from "@j3-bots/contracts";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { ChevronRightIcon, ShieldCheckIcon, ShieldXIcon, ShieldIcon } from "lucide-react";
+import { useId } from "react";
 import { useI18n } from "../app/context";
 import type { KeyWith } from "../i18n/i18n";
 import { cn } from "../lib/cn";
 import { touchTarget } from "../lib/touchTarget";
+import { useFocusAfterActions } from "../lib/useFocusAfterActions";
 import { CardFrame } from "./CardFrame";
-import { CodeLines, diffTone } from "./CodeLines";
+import { diffTones } from "../presentation/diff";
+import { CodeLines } from "./CodeLines";
 import { Button } from "./ui/button";
 
 const kindTitle: Record<ApprovalEntry["kind"], KeyWith> = {
@@ -32,6 +35,15 @@ const summaryOnly: Record<ApprovalEntry["kind"], KeyWith> = {
   other: "approval.summaryOnly.other",
 };
 
+// What "Allow for session" allows from then on, in words, next to the button and on the card once
+// it was chosen.
+const grantScope: Record<SessionGrant["covers"], KeyWith> = {
+  "every-command": "approval.grant.everyCommand",
+  "every-file-change": "approval.grant.everyFileChange",
+  "similar-commands": "approval.grant.similarCommands",
+  "similar-file-changes": "approval.grant.similarFileChanges",
+};
+
 const code = "font-mono text-xs leading-5 whitespace-pre-wrap wrap-anywhere";
 // A bounded area that shows, by a shade at its edge, that more lies past it, and that the keyboard
 // can scroll before deciding.
@@ -45,7 +57,8 @@ const scrolls =
  * asks, when the provider said, is a quiet line above, never mixed into it.
  * When the provider shared only a summary, the card says so in words and sets
  * the summary as prose, not code; it can still be allowed once, so a bot never
- * stalls on such a provider, but never for the whole session.
+ * stalls on such a provider, but never for the whole session. A grant for the
+ * session says, next to its button, what it will allow from then on.
  */
 export function ApprovalCard({
   entry,
@@ -58,8 +71,16 @@ export function ApprovalCard({
   submitting?: boolean;
 }) {
   const { t } = useI18n();
-  const { status, detail } = entry;
+  const { status, detail, sessionGrant } = entry;
   const pending = status._tag === "pending";
+  const scopeId = useId();
+  const scope = sessionGrant === null ? null : t(grantScope[sessionGrant.covers]);
+  // Answered, the buttons go; focus that was on one stays on the card.
+  const { target, actions } = useFocusAfterActions<HTMLElement>(pending);
+  // While a decision is on its way the buttons stay focusable but take no second one.
+  const decide = (decision: ApprovalDecision) => () => {
+    if (!submitting) onDecide(decision);
+  };
   const icon =
     status._tag === "decided" ? (
       status.decision === "deny" ? (
@@ -79,11 +100,17 @@ export function ApprovalCard({
         tabIndex={0}
         className={cn(code, scrolls, "py-2", className)}
       >
-        <CodeLines text={detail} tone={diffTone} inset />
+        <CodeLines text={detail} tones={diffTones} inset />
       </pre>
     );
   return (
-    <CardFrame icon={icon} title={t(kindTitle[entry.kind])} attention={pending} entryId={entry.id}>
+    <CardFrame
+      ref={target}
+      icon={icon}
+      title={t(kindTitle[entry.kind])}
+      attention={pending}
+      entryId={entry.id}
+    >
       {entry.reason !== null && (
         <p className="text-xs text-muted-foreground whitespace-pre-line">{entry.reason}</p>
       )}
@@ -154,45 +181,58 @@ export function ApprovalCard({
       {pending ? (
         // On a phone the buttons fill the row and share it; when they wrap, each row stays full, so
         // they still read as one group.
-        <div className="flex flex-wrap justify-end gap-2">
-          <Button
-            size="sm"
-            className="@max-tablet:grow"
-            disabled={submitting}
-            onClick={() => onDecide("deny")}
-          >
-            {t("approval.deny")}
-          </Button>
-          {entry.allowsSession && (
+        <div className="flex flex-col gap-2" {...actions}>
+          <div className="flex flex-wrap justify-end gap-2">
             <Button
               size="sm"
               className="@max-tablet:grow"
-              disabled={submitting}
-              onClick={() => onDecide("allow-session")}
+              aria-disabled={submitting}
+              onClick={decide("deny")}
             >
-              {t("approval.allowSession")}
+              {t("approval.deny")}
             </Button>
+            {scope !== null && (
+              <Button
+                size="sm"
+                className="@max-tablet:grow"
+                aria-disabled={submitting}
+                aria-describedby={scopeId}
+                onClick={decide("allow-session")}
+              >
+                {t("approval.allowSession")}
+              </Button>
+            )}
+            <Button
+              variant="primary"
+              size="sm"
+              className="@max-tablet:grow"
+              aria-disabled={submitting}
+              onClick={decide("allow-once")}
+            >
+              {t("approval.allowOnce")}
+            </Button>
+          </div>
+          {scope !== null && (
+            <p id={scopeId} className="text-end text-2xs text-muted-foreground">
+              {scope}
+            </p>
           )}
-          <Button
-            variant="primary"
-            size="sm"
-            className="@max-tablet:grow"
-            disabled={submitting}
-            onClick={() => onDecide("allow-once")}
-          >
-            {t("approval.allowOnce")}
-          </Button>
         </div>
       ) : (
-        <p
-          className={
-            status._tag === "decided" && status.decision === "deny"
-              ? "text-xs text-blocked"
-              : "text-xs text-muted-foreground"
-          }
-        >
-          {status._tag === "decided" ? t(decisionText[status.decision]) : t("approval.expired")}
-        </p>
+        <div className="flex flex-col gap-0.5">
+          <p
+            className={
+              status._tag === "decided" && status.decision === "deny"
+                ? "text-xs text-blocked"
+                : "text-xs text-muted-foreground"
+            }
+          >
+            {status._tag === "decided" ? t(decisionText[status.decision]) : t("approval.expired")}
+          </p>
+          {status._tag === "decided" && status.decision === "allow-session" && scope !== null && (
+            <p className="text-2xs text-muted-foreground">{scope}</p>
+          )}
+        </div>
       )}
     </CardFrame>
   );

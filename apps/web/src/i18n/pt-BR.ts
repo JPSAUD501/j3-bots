@@ -111,6 +111,14 @@ export const ptBR: Catalog = {
   "approval.allowOnce": "Permitir uma vez",
   "approval.allowSession": "Permitir nesta sessão",
   "approval.deny": "Negar",
+  "approval.grant.everyCommand":
+    "Os próximos pedidos de comando nesta sessão serão permitidos automaticamente",
+  "approval.grant.everyFileChange":
+    "Os próximos pedidos de alteração de arquivo nesta sessão serão permitidos automaticamente",
+  "approval.grant.similarCommands":
+    "Pedidos de comando parecidos nesta sessão serão permitidos automaticamente, possivelmente todos",
+  "approval.grant.similarFileChanges":
+    "Pedidos de alteração de arquivo parecidos nesta sessão serão permitidos automaticamente, possivelmente todos",
   "approval.allowedOnce": "Permitido uma vez",
   "approval.allowedSession": "Permitido nesta sessão",
   "approval.denied": "Negado",

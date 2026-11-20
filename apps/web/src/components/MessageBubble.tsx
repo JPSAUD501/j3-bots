@@ -3,6 +3,7 @@ import type { AttachmentId, Bot, MessageDelivery, MessageEntry } from "@j3-bots/
 import { usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
 import { clockTime } from "../lib/time";
+import { useFocusAfterActions } from "../lib/useFocusAfterActions";
 import type { GroupPosition } from "../presentation/timeline";
 import { AvatarShape } from "./BotAvatar";
 import { FileCard } from "./FileCard";
@@ -61,6 +62,19 @@ export function MessageBubble({
   const fromOperator = entry.author._tag === "operator";
   const startsGroup = position === "single" || position === "first";
   const time = clockTime(entry.createdAt, ctx);
+  const { delivery } = entry;
+  const failed = delivery._tag === "failed";
+  // A retry on its way reads as queued again, which it is about to be.
+  const deliveryText =
+    delivery._tag === "pending" || (failed && submitting)
+      ? t("message.queued")
+      : delivery._tag === "cancelled"
+        ? t("message.cancelled")
+        : failed
+          ? t(failedKeys[delivery.reason])
+          : null;
+  // Sent again, Send again goes; focus that was on it stays on the line.
+  const { target, actions } = useFocusAfterActions<HTMLDivElement>(failed);
   return (
     <div
       className={cn(
@@ -96,33 +110,40 @@ export function MessageBubble({
         />
       ))}
       {fromOperator && (
-        // How the operator's message fares. It is here from the moment the message is queued, so
-        // a change to it, such as a failure, is announced once; a delivered message leaves it
-        // empty, and empty it takes no room.
+        // How the operator's message fares. Its text is a live region from the moment the message
+        // is queued, so a change to it, such as a failure, is announced once, and Send again is not
+        // read as part of it. A delivered message leaves it empty, and empty it takes no room.
         <div
-          role="status"
-          className="flex max-w-(--layout-bubble-width) flex-wrap items-center justify-end gap-x-1 text-end text-2xs empty:absolute"
+          ref={target}
+          tabIndex={-1}
+          className={cn(
+            "flex max-w-(--layout-bubble-width) flex-wrap items-center justify-end gap-x-1 text-end text-2xs outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+            deliveryText === null && "absolute",
+          )}
         >
-          {entry.delivery._tag === "pending" && (
-            <span className="pe-1 text-muted-foreground">{t("message.queued")}</span>
-          )}
-          {entry.delivery._tag === "cancelled" && (
-            <span className="pe-1 text-muted-foreground">{t("message.cancelled")}</span>
-          )}
-          {entry.delivery._tag === "failed" && (
-            <>
-              <span className="text-blocked">{t(failedKeys[entry.delivery.reason])}</span>
-              {/* Its own end padding sets its text on the line the other delivery lines end on. */}
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 border-0 px-1 text-2xs"
-                disabled={submitting}
-                onClick={onRetry}
-              >
-                {t("message.retry")}
-              </Button>
-            </>
+          <span
+            role="status"
+            className={cn(
+              failed && !submitting ? "text-blocked" : "text-muted-foreground",
+              // Its end padding sets the text on the line Send again's text ends on.
+              !failed && "pe-1",
+            )}
+          >
+            {deliveryText}
+          </span>
+          {failed && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 border-0 px-1 text-2xs"
+              aria-disabled={submitting}
+              onClick={() => {
+                if (!submitting) onRetry();
+              }}
+              {...actions}
+            >
+              {t("message.retry")}
+            </Button>
           )}
         </div>
       )}
