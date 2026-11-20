@@ -13,7 +13,7 @@ import { replaceFile } from "../files.ts";
 import * as Home from "../home/Home.ts";
 import * as Installation from "../installation.ts";
 import { Host } from "../system/Host.ts";
-import { portAdvice } from "../system/Ports.ts";
+import { type PortState, portAdvice } from "../system/Ports.ts";
 import { type Linger, Systemd } from "../system/Systemd.ts";
 import { socketOwner } from "./owner.ts";
 import * as Unit from "./unit.ts";
@@ -96,6 +96,21 @@ const awaitServer = Effect.fn("service.awaitServer")(function* (socket: string) 
   return outcome.value.status;
 });
 
+/** Why listening on `host`, at a port the system picked, failed. */
+const addressRefusal = (
+  state: Exclude<PortState, { _tag: "free" | "not-local" }>,
+  host: string,
+) => {
+  switch (state._tag) {
+    case "denied":
+      return `This user may not listen on ${host}.`;
+    case "in-use":
+      return `No port on ${host} was free to listen on.`;
+    case "failed":
+      return `Listening on ${host} failed with ${state.code}.`;
+  }
+};
+
 /**
  * Writes the unit, whole, enables it and (re)starts it, then waits for the
  * server to answer. Checked first: the configuration, as the service will run
@@ -143,7 +158,7 @@ export const install = Effect.gen(function* () {
             config.configFile,
           )
         : {
-            summary: `Listening on ${config.host} failed (${address._tag === "failed" ? address.code : address._tag}).`,
+            summary: addressRefusal(address, config.host),
             fix: `Check "host" in ${config.configFile}.`,
           };
     return yield* new ServiceNotInstalled({ reason: "configuration", detail: `${summary} ${fix}` });
