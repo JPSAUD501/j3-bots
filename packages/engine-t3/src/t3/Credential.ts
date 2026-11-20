@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { AuthSessionState } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -8,6 +9,9 @@ import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -34,6 +38,7 @@ const StoredCredential = Schema.Struct({
   expiresAt: Schema.DateTimeUtcFromString,
 });
 
+const decodeSession = HttpClientResponse.schemaBodyJson(AuthSessionState);
 const decodeIssued = Schema.decodeUnknownEffect(Schema.fromJsonString(IssuedSession));
 const decodeStored = Schema.decodeUnknownOption(Schema.fromJsonString(StoredCredential));
 const encodeStored = Schema.encodeEffect(Schema.fromJsonString(StoredCredential));
@@ -43,13 +48,15 @@ export interface Credential {
   readonly expiresAt: DateTime.Utc;
 }
 
-/** The engine CLI could not mint a token. */
+/** A token could not be minted (the engine CLI failed) or stored (the disk refused it). */
 class CredentialMintFailed extends Schema.TaggedError<CredentialMintFailed>()(
   "CredentialMintFailed",
-  { exitCode: Schema.Number },
+  { stage: Schema.Literals(["mint", "store"]) },
 ) {
   override get message(): string {
-    return `The engine CLI could not mint a token (exit code ${this.exitCode}).`;
+    return this.stage === "mint"
+      ? "The engine CLI could not mint a token."
+      : "The engine token could not be stored.";
   }
 }
 
@@ -80,11 +87,38 @@ const mint = Effect.fnUntraced(function* (executable: string, home: string) {
       return { stdout, exitCode: Number(exitCode) };
     }),
   ).pipe(Effect.orElseSucceed(() => ({ stdout: "", exitCode: -1 })));
-  if (output.exitCode !== 0) return yield* new CredentialMintFailed({ exitCode: output.exitCode });
+  if (output.exitCode !== 0) return yield* new CredentialMintFailed({ stage: "mint" });
   const issued = yield* decodeIssued(output.stdout).pipe(
-    Effect.mapError(() => new CredentialMintFailed({ exitCode: output.exitCode })),
+    Effect.mapError(() => new CredentialMintFailed({ stage: "mint" })),
   );
   return issued;
+});
+
+/**
+ * Mints a new token and stores it in place of the old one, whatever the old
+ * one's state: for renewal, and when the engine refused the stored one.
+ */
+export const issueCredential = Effect.fn("engine.issueCredential")(function* (input: {
+  readonly executable: string;
+  readonly home: string;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const file = credentialFile(path, input.home);
+  const issued = yield* mint(input.executable, input.home);
+  const text = yield* encodeStored(issued).pipe(Effect.orDie);
+  const store = Effect.gen(function* () {
+    yield* fs.makeDirectory(path.dirname(file), { recursive: true, mode: 0o700 });
+    const temporary = `${file}.tmp`;
+    yield* fs.writeFileString(temporary, text, { mode: 0o600 });
+    yield* fs.chmod(temporary, 0o600);
+    yield* fs.rename(temporary, file);
+  });
+  yield* store.pipe(Effect.mapError(() => new CredentialMintFailed({ stage: "store" })));
+  return {
+    token: Redacted.make(issued.token),
+    expiresAt: issued.expiresAt,
+  } satisfies Credential;
 });
 
 /**
@@ -98,10 +132,8 @@ export const ensureCredential = Effect.fn("engine.ensureCredential")(function* (
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const file = credentialFile(path, input.home);
   const now = yield* DateTime.now;
-
-  const stored = yield* fs.readFileString(file).pipe(
+  const stored = yield* fs.readFileString(credentialFile(path, input.home)).pipe(
     Effect.map(decodeStored),
     Effect.orElseSucceed(() => Option.none()),
   );
@@ -112,20 +144,49 @@ export const ensureCredential = Effect.fn("engine.ensureCredential")(function* (
     return {
       token: Redacted.make(stored.value.token),
       expiresAt: stored.value.expiresAt,
-    };
+    } satisfies Credential;
   }
+  return yield* issueCredential(input);
+});
 
-  const issued = yield* mint(input.executable, input.home);
-  const text = yield* encodeStored(issued).pipe(Effect.orDie);
-  yield* fs.makeDirectory(path.dirname(file), { recursive: true, mode: 0o700 }).pipe(Effect.orDie);
-  const temporary = `${file}.tmp`;
-  yield* fs.writeFileString(temporary, text, { mode: 0o600 }).pipe(Effect.orDie);
-  yield* fs.chmod(temporary, 0o600).pipe(Effect.orDie);
-  yield* fs.rename(temporary, file).pipe(Effect.orDie);
-  return {
-    token: Redacted.make(issued.token),
-    expiresAt: issued.expiresAt,
-  } satisfies Credential;
+/** What the engine makes of a token. */
+export type Access = "granted" | "refused" | "unreachable";
+
+/**
+ * Whether the engine accepts `token` with both scopes the adapter needs. It
+ * answers `GET /api/auth/session` for any caller, with `authenticated: false`
+ * for a token it does not accept, so a refusal is definitive and a failed
+ * request only says the engine was not reached. **Read** at `db51b67`,
+ * `packages/contracts/src/environmentHttp.ts` (`session`, `OptionalBearerHeaders`).
+ */
+export const checkAccess = Effect.fn("engine.checkAccess")(function* (input: {
+  readonly baseUrl: string;
+  readonly token: Redacted.Redacted<string>;
+}) {
+  const http = yield* HttpClient.HttpClient;
+  return yield* http
+    .execute(
+      HttpClientRequest.get(`${input.baseUrl}/api/auth/session`).pipe(
+        HttpClientRequest.bearerToken(Redacted.value(input.token)),
+      ),
+    )
+    .pipe(
+      Effect.flatMap((response): Effect.Effect<Access, unknown> => {
+        if (response.status === 401 || response.status === 403) return Effect.succeed("refused");
+        return HttpClientResponse.filterStatusOk(response).pipe(
+          Effect.flatMap(decodeSession),
+          Effect.map((session): Access => {
+            const scopes = session.scopes ?? [];
+            return session.authenticated &&
+              CREDENTIAL_SCOPES.every((scope) => scopes.includes(scope))
+              ? "granted"
+              : "refused";
+          }),
+        );
+      }),
+      Effect.timeout(Duration.seconds(5)),
+      Effect.orElseSucceed((): Access => "unreachable"),
+    );
 });
 
 /** When the token must be renewed. */

@@ -311,6 +311,56 @@ describe("TestEngine", () => {
     }).pipe(Effect.provide(TestEngine.layer)),
   );
 
+  it.effect("settles a recovered dispatch that Stop cancels before it starts by its cause", () =>
+    Effect.gen(function* () {
+      const engine = yield* Engine;
+      const control = yield* TestEngine.TestEngineControl;
+      const sessionId = yield* openSession;
+      const [first] = yield* take(sessionId, null, 1);
+      yield* control.startEngineTurnDuringNextDispatch(sessionId);
+      yield* control.loseNextReply;
+
+      // Queued behind the engine's own turn, and its reply lost: only a resend tells it was taken.
+      const lost = yield* engine.dispatch({ ...start("dispatch-1"), sessionId }).pipe(Effect.flip);
+      yield* engine.redispatch({ ...start("dispatch-1"), sessionId });
+      yield* engine.stop({ key: key("stop-1"), sessionId });
+
+      assert.strictEqual(lost._tag, "EngineIndeterminate");
+      const events = [...(yield* take(sessionId, cursorOf(first), 4))];
+      assert.deepStrictEqual(
+        events.flatMap((event) =>
+          event._tag === "turn-finished" ? [[event.cause, event.outcome._tag]] : [],
+        ),
+        [
+          [{ _tag: "dispatch", key: key("dispatch-1") }, "cancelled"],
+          [{ _tag: "background" }, "interrupted"],
+        ],
+      );
+    }).pipe(Effect.provide(TestEngine.layer)),
+  );
+
+  it.effect("ends background work on Stop, also after the turn that started it ended", () =>
+    Effect.gen(function* () {
+      const engine = yield* Engine;
+      const control = yield* TestEngine.TestEngineControl;
+      const sessionId = yield* openSession;
+      const turnId = turnOf(yield* engine.dispatch({ ...start("dispatch-1"), sessionId }));
+      yield* control.startBackgroundWork({ sessionId, turnId });
+      yield* control.finishTurn({ sessionId, turnId, outcome: { _tag: "completed" } });
+      const before = yield* control.backgroundWorkRunning(sessionId);
+
+      yield* engine.stop({ key: key("stop-1"), sessionId });
+      // Stop takes effect after it answers.
+      const after = yield* Effect.yieldNow.pipe(
+        Effect.andThen(control.backgroundWorkRunning(sessionId)),
+        Effect.repeat({ until: (running) => !running, times: 10 }),
+      );
+
+      assert.isTrue(before);
+      assert.isFalse(after);
+    }).pipe(Effect.provide(TestEngine.layer)),
+  );
+
   it.effect("resumes by replaying the events after the cursor, and nothing else", () =>
     Effect.gen(function* () {
       const engine = yield* Engine;

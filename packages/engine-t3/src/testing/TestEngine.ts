@@ -186,6 +186,8 @@ export class TestEngineControl extends Context.Service<
       readonly sessionId: SessionId;
       readonly turnId: TurnId;
     }) => Effect.Effect<void>;
+    /** Whether background work some turn of the session started still runs. */
+    readonly backgroundWorkRunning: (sessionId: SessionId) => Effect.Effect<boolean>;
     /**
      * Ends a running turn the way the provider would. Its open requests expire,
      * and each steer it had not taken is requeued as a follow-up turn.
@@ -548,6 +550,7 @@ const make = Effect.gen(function* () {
       _tag: "turn-finished",
       ...stamp,
       turnId: turn.turnId,
+      cause: turn.cause,
       outcome,
       backgroundWork: turn.backgroundWork,
       continuation,
@@ -611,10 +614,12 @@ const make = Effect.gen(function* () {
   /**
    * Stop as it takes effect, after `stop` returned: the engine's own stop holds
    * the queue and disarms a pending continuation, each waiting turn is
-   * cancelled (taken off the queue first: cancelling one starts no other), and
-   * the provider's interrupt ends the running turn with its background work.
+   * cancelled (taken off the queue first: cancelling one starts no other), the
+   * provider's interrupt ends the running turn, and the background work every
+   * turn left running ends, also in a session whose last turn already ended.
    */
   const stopSession = (session: SessionRecord, at: DateTime.Utc) => {
+    for (const turn of session.turns.values()) turn.backgroundWork = false;
     holdWaiting(session, at);
     for (const turn of session.turns.values()) dropContinuation(session, turn, at);
     for (const turnId of session.waiting.splice(0)) {
@@ -624,7 +629,6 @@ const make = Effect.gen(function* () {
     clearEmptyHold(session);
     const running = session.running === null ? undefined : session.turns.get(session.running);
     if (running !== undefined) {
-      running.backgroundWork = false;
       endTurn(session, running, { _tag: "interrupted" }, at, "stop");
     }
   };
@@ -961,7 +965,9 @@ const make = Effect.gen(function* () {
           const fits =
             open.request._tag === "approval"
               ? response._tag === "approval"
-              : open.request._tag === "question" && response._tag !== "approval";
+              : open.request._tag === "question"
+                ? response._tag !== "approval"
+                : open.request._tag === "unsupported-question" && response._tag === "dismiss";
           if (!fits) return yield* misuse(`${response._tag} answer to a ${open.request._tag}`);
           keys.set(key, { command: "respond" });
           session.responses.push({ requestId, response });
@@ -1054,7 +1060,7 @@ const make = Effect.gen(function* () {
         reachable = value;
         yield* SubscriptionRef.update(status, (current): EngineStatus => ({
           ...current,
-          state: value ? { _tag: "ready" } : { _tag: "unavailable" },
+          state: value ? { _tag: "ready" } : { _tag: "unavailable", reason: "down" },
         }));
       }),
 
@@ -1195,6 +1201,11 @@ const make = Effect.gen(function* () {
         const turn = yield* runningTurn(session, turnId);
         turn.backgroundWork = true;
       }),
+
+    backgroundWorkRunning: (sessionId) =>
+      existingSession(sessionId).pipe(
+        Effect.map((session) => [...session.turns.values()].some((turn) => turn.backgroundWork)),
+      ),
 
     finishTurn: ({ sessionId, turnId, outcome, continuation }) =>
       Effect.gen(function* () {

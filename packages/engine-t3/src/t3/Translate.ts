@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { FailureClass, Question, WorkStep } from "@j3-bots/contracts";
-import { WorkStepId } from "@j3-bots/contracts";
+import type { FailureClass, Question, QuestionAnswers, WorkStep } from "@j3-bots/contracts";
+import { MAX_CARD_QUESTIONS, MAX_QUESTION_OPTIONS, WorkStepId } from "@j3-bots/contracts";
 import {
   OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
@@ -11,6 +11,7 @@ import {
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -73,6 +74,15 @@ export const emptyMirror = (): Mirror => ({
   items: new Map(),
   requests: new Map(),
   toolDigests: new Map(),
+});
+
+/** A copy of the mirror as it stands, for resuming from it later. Entities are never mutated, only replaced. */
+export const copyMirror = (mirror: Mirror): Mirror => ({
+  thread: mirror.thread,
+  runs: new Map(mirror.runs),
+  items: new Map(mirror.items),
+  requests: new Map(mirror.requests),
+  toolDigests: new Map(mirror.toolDigests),
 });
 
 export const mirrorOf = (projection: OrchestrationV2ThreadProjection): Mirror => ({
@@ -213,17 +223,38 @@ const FAILURES: Record<OrchestrationV2ProviderFailureClass, FailureClass> = {
 const parseInstant = (value: string | null | undefined) =>
   value === null || value === undefined ? null : Option.getOrNull(DateTime.make(value));
 
-const lastErrorOf = (mirror: Mirror, run: Run) =>
-  itemsOf(mirror, run)
-    .filter((item): item is Extract<Item, { type: "error" }> => item.type === "error")
-    .at(-1);
+type ErrorItem = Extract<Item, { type: "error" }>;
+
+const errorsOf = (mirror: Mirror, run: Run) =>
+  itemsOf(mirror, run).filter((item): item is ErrorItem => item.type === "error");
+
+/**
+ * The failure the engine holds against the run: the latest failed error item
+ * of its root node, by update time. **Read** at `db51b67`, `ProjectionStore.ts`
+ * (`getLimitRecoveryCandidates`) and `Orchestrator.ts`
+ * (`latestRootProviderFailure`).
+ */
+const rootFailureOf = (mirror: Mirror, run: Run): ErrorItem | undefined =>
+  errorsOf(mirror, run)
+    .filter((item) => item.status === "failed" && item.nodeId === run.rootNodeId)
+    .sort(
+      (a, b) =>
+        DateTime.toEpochMillis(b.updatedAt) - DateTime.toEpochMillis(a.updatedAt) ||
+        b.ordinal - a.ordinal ||
+        (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
+    )
+    .at(0);
+
+/** The run's failure: its root failure, or, if the engine recorded none, its last error. */
+const failureOf = (mirror: Mirror, run: Run) =>
+  rootFailureOf(mirror, run) ?? errorsOf(mirror, run).at(-1);
 
 const outcomeOf = (mirror: Mirror, run: Run): TurnOutcome => {
   switch (run.status) {
     case "completed":
       return { _tag: "completed" };
     case "failed": {
-      const error = lastErrorOf(mirror, run);
+      const error = failureOf(mirror, run);
       return error === undefined
         ? { _tag: "failed", failure: "unknown", retryAt: null }
         : {
@@ -251,32 +282,81 @@ const hasBackgroundWork = (mirror: Mirror, run: Run) =>
         item.type === "subagent"),
   );
 
+/** A run that executed, as the engine counts it: neither queued nor cancelled before it started. */
+const wasExecuted = (run: Run) =>
+  run.status !== "queued" && !(run.status === "cancelled" && run.startedAt === null);
+
+const completedMillis = (run: Run) =>
+  run.completedAt === null ? Number.POSITIVE_INFINITY : DateTime.toEpochMillis(run.completedAt);
+
+/**
+ * The run the engine's usage-limit recovery looks at: of the runs that
+ * executed, one that has not ended, else the one that ended last. **Read** at
+ * `db51b67`, `ProjectionStore.ts`, `getLimitRecoveryCandidates`
+ * (`latestExecutedRun`).
+ */
+const latestExecutedRun = (mirror: Mirror): Run | undefined =>
+  [...mirror.runs.values()]
+    .filter(wasExecuted)
+    .sort(
+      (a, b) =>
+        completedMillis(b) - completedMillis(a) ||
+        b.ordinal - a.ordinal ||
+        (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
+    )
+    .at(0);
+
+/** The engine arms no recovery for a reset more than a day past. **Read**, `MAX_OVERDUE_ARM_MS`. */
+const MAX_OVERDUE_ARM = Duration.days(1);
+
 /**
  * The resume the engine will start on its own for an ended run, by its rule
- * for a usage limit (**Read** at `db51b67`, `UsageLimitRecoveryWorker.ts`,
- * `limitRecoveryCommand`): the thread's latest run failed at a usage limit
- * whose reset comes after the failure, nothing resumed it yet, the thread is
- * not archived, and the engine has not armed the recovery without an
- * automatic resume. J3 Bots provisions automatic resume on.
+ * for a usage limit (**Read** at `db51b67`: `ProjectionStore.ts`,
+ * `getLimitRecoveryCandidates`, and `UsageLimitRecoveryWorker.ts`,
+ * `limitRecoveryCommand`): the run is the thread's latest executed run and
+ * failed, its root failure is a usage limit whose reset comes after the run
+ * ended, the thread is neither archived nor settled, and no runtime request
+ * of the thread is pending.
+ *
+ * The engine arms the resume asynchronously, so the prediction is reconciled
+ * with its record once it exists: an armed recovery for this run and reset
+ * resumes only with `autoResume`, which Stop turns off. Before it is armed,
+ * the engine arms it with automatic resume, which J3 Bots provisions on,
+ * unless the reset is more than a day past `now`.
  */
-const continuationOf = (mirror: Mirror, run: Run): PendingContinuation | null => {
-  if (run.status !== "failed" || isRetired(mirror)) return null;
-  if (runsInOrder(mirror).at(-1)?.id !== run.id) return null;
-  const error = lastErrorOf(mirror, run);
-  if (error === undefined || error.failure.class !== "usage_limit") return null;
-  const resumesAt = parseInstant(error.failure.resetAt);
-  if (resumesAt === null) return null;
-  if (run.completedAt !== null && !DateTime.isGreaterThan(resumesAt, run.completedAt)) return null;
-  const armed = mirror.thread?.limitRecovery;
-  if (armed !== undefined && armed !== null && armed.runId === run.id && !armed.autoResume) {
+const continuationOf = (
+  mirror: Mirror,
+  run: Run,
+  now: DateTime.Utc,
+): PendingContinuation | null => {
+  const thread = mirror.thread;
+  if (run.status !== "failed" || thread === undefined) return null;
+  if (thread.archivedAt !== null || thread.settledOverride === "settled") return null;
+  if (latestExecutedRun(mirror)?.id !== run.id) return null;
+  const failure = rootFailureOf(mirror, run)?.failure;
+  if (
+    failure?.class !== "usage_limit" ||
+    failure.resetAt === undefined ||
+    failure.resetAt === null
+  ) {
     return null;
   }
+  const resumesAt = parseInstant(failure.resetAt);
+  if (resumesAt === null) return null;
+  if (!DateTime.isGreaterThan(resumesAt, run.completedAt ?? thread.updatedAt)) return null;
+  for (const request of mirror.requests.values()) if (request.status === "pending") return null;
+  const armed = thread.limitRecovery;
+  if (
+    armed !== undefined &&
+    armed !== null &&
+    armed.runId === run.id &&
+    armed.resetAt === failure.resetAt
+  ) {
+    return armed.autoResume ? { resumesAt } : null;
+  }
+  if (DateTime.isGreaterThan(now, DateTime.addDuration(resumesAt, MAX_OVERDUE_ARM))) return null;
   return { resumesAt };
 };
-
-/** Whether a usage-limit continuation of an ended run is still to come. */
-export const hasPendingContinuation = (mirror: Mirror) =>
-  [...mirror.runs.values()].some((run) => continuationOf(mirror, run) !== null);
 
 /** Whether a continuation run for `run` exists: its pending continuation ran. */
 const wasContinued = (mirror: Mirror, run: Run) =>
@@ -438,24 +518,118 @@ const APPROVAL_KINDS: Record<
   permission: "other",
 };
 
-const questionOf = (
-  question: Extract<Item, { type: "user_input_request" }>["questions"][number],
-): Question => ({
-  id: label(question.id, "question"),
+type UserInputRequest = Extract<Item, { type: "user_input_request" }>;
+type EngineQuestion = UserInputRequest["questions"][number];
+
+// A card names questions and options by position, in J3 Bots' own ids: the
+// engine's keys and values are free text, which a card id cannot always hold
+// whole. An answer is mapped back to the engine's own keys and values.
+const QUESTION_ID = /^question-([1-9]\d*)$/;
+const OPTION_ID = /^option-([1-9]\d*)$/;
+const questionIdAt = (index: number) => `question-${index + 1}`;
+const optionIdAt = (index: number) => `option-${index + 1}`;
+const positionOf = (id: string, pattern: RegExp): number | undefined => {
+  const digits = pattern.exec(id)?.[1];
+  return digits === undefined ? undefined : Number(digits) - 1;
+};
+
+/**
+ * What the engine takes for an option: its value, or its label when it has
+ * none, exactly as the engine's own client sends it. **Read** at `db51b67`,
+ * `packages/client-runtime/src/state/pendingUserInput.ts`
+ * (`resolvePendingUserInputOptionValue`).
+ */
+const optionValueOf = (option: EngineQuestion["options"][number]) =>
+  option.value ?? option.label.trim();
+
+const questionOf = (question: EngineQuestion, index: number): Question => ({
+  id: questionIdAt(index),
   prompt: question.question.length > 2000 ? question.question.slice(0, 2000) : question.question,
-  options: question.options.slice(0, 6).map((option) => ({
-    id: label(option.value ?? option.label, "option"),
+  options: question.options.map((option, optionIndex) => ({
+    id: optionIdAt(optionIndex),
     label: label(option.label, "Option"),
     description: option.description.slice(0, 1000),
     style: "default" as const,
   })),
-  acceptsText: question.allowCustomAnswer ?? false,
+  // The engine's own client takes a typed answer unless the question refuses one.
+  acceptsText: question.allowCustomAnswer !== false,
   multiple: question.multiSelect ?? false,
 });
+
+/**
+ * The card for an engine question, or a notice when a card cannot hold it
+ * whole: a question is never shown with parts left out.
+ */
+const questionRequestOf = (item: UserInputRequest): EngineRequest | undefined => {
+  if (item.questions.length > MAX_CARD_QUESTIONS) {
+    return {
+      _tag: "unsupported-question",
+      exceeds: "questions",
+      count: item.questions.length,
+      max: MAX_CARD_QUESTIONS,
+    };
+  }
+  const widest = Math.max(0, ...item.questions.map((question) => question.options.length));
+  if (widest > MAX_QUESTION_OPTIONS) {
+    return {
+      _tag: "unsupported-question",
+      exceeds: "options",
+      count: widest,
+      max: MAX_QUESTION_OPTIONS,
+    };
+  }
+  const [first, ...rest] = item.questions.map(questionOf);
+  return first === undefined ? undefined : { _tag: "question", questions: [first, ...rest] };
+};
+
+/**
+ * The engine's answers for a card's answers, keyed by the engine's own
+ * question ids, or `undefined` when they do not fit the questions, which is
+ * the caller's bug. A typed answer is sent alone, as the engine's own client
+ * sends it; a question that takes several choices gets the list of their
+ * values, one that takes one choice the value itself. A question with neither
+ * is left unanswered. **Read** at `db51b67`, `pendingUserInput.ts`
+ * (`resolvePendingUserInputAnswer`).
+ */
+export const engineAnswersOf = (
+  questions: ReadonlyArray<EngineQuestion>,
+  answers: QuestionAnswers,
+): Record<string, string | ReadonlyArray<string>> | undefined => {
+  const result: Record<string, string | ReadonlyArray<string>> = {};
+  for (const [cardId, answer] of Object.entries(answers)) {
+    const position = positionOf(cardId, QUESTION_ID);
+    const question = position === undefined ? undefined : questions[position];
+    if (question === undefined) return undefined;
+    const typed = answer.text?.trim() ?? "";
+    if (typed.length > 0) {
+      if (question.allowCustomAnswer === false) return undefined;
+      result[question.id] = typed;
+      continue;
+    }
+    const values: Array<string> = [];
+    for (const optionId of answer.optionIds) {
+      const index = positionOf(optionId, OPTION_ID);
+      const option = index === undefined ? undefined : question.options[index];
+      if (option === undefined) return undefined;
+      values.push(optionValueOf(option));
+    }
+    const [single, ...others] = values;
+    if (single === undefined) continue;
+    if (question.multiSelect === true) result[question.id] = values;
+    else if (others.length === 0) result[question.id] = single;
+    else return undefined;
+  }
+  return result;
+};
 
 /** Where the engine takes the answer to a request. */
 type AnswerTarget =
   | { readonly _tag: "runtime-request"; readonly requestId: string }
+  | {
+      readonly _tag: "user-input";
+      readonly requestId: string;
+      readonly questions: ReadonlyArray<EngineQuestion>;
+    }
   | { readonly _tag: "secret"; readonly turnItemId: string };
 
 /** A request item, its state, and what the operator sees of it. */
@@ -521,14 +695,14 @@ const requestOf = (mirror: Mirror, item: Item): RequestState | undefined => {
         resolution: runtimeResolution(mirror.requests.get(item.requestId), item),
       };
     case "user_input_request": {
-      const [first, ...rest] = item.questions.map(questionOf);
-      if (first === undefined) return undefined;
+      const request = questionRequestOf(item);
+      if (request === undefined) return undefined;
       return {
         requestId: RequestId.make(localIdFor(item.requestId)),
-        answerTo: { _tag: "runtime-request", requestId: item.requestId },
+        answerTo: { _tag: "user-input", requestId: item.requestId, questions: item.questions },
         turnId,
         openedAt,
-        request: { _tag: "question", questions: [first, ...rest] },
+        request,
         resolution: runtimeResolution(mirror.requests.get(item.requestId), item),
       };
     }
@@ -856,7 +1030,7 @@ export type EventBody = DistributiveOmit<SessionEvent, "cursor" | "at">;
  * The events that bring a subscriber from `view` to `mirror`, in order, and
  * `view` updated to match. Applying them to `view` again yields nothing.
  */
-export const diff = (mirror: Mirror, view: View): ReadonlyArray<EventBody> => {
+export const diff = (mirror: Mirror, view: View, now: DateTime.Utc): ReadonlyArray<EventBody> => {
   const events: Array<EventBody> = [];
   const steers = steersOf(mirror);
   const runs = runsInOrder(mirror);
@@ -864,7 +1038,9 @@ export const diff = (mirror: Mirror, view: View): ReadonlyArray<EventBody> => {
   // A newer run takes the place of a pending continuation before it starts.
   for (const run of runs) {
     const turn = view.turns.get(run.id);
-    if (turn === undefined || !turn.continuation || continuationOf(mirror, run) !== null) continue;
+    if (turn === undefined || !turn.continuation || continuationOf(mirror, run, now) !== null) {
+      continue;
+    }
     turn.continuation = false;
     if (!wasContinued(mirror, run)) {
       events.push({ _tag: "continuation-dropped", turnId: turnIdOf(run) });
@@ -929,11 +1105,12 @@ export const diff = (mirror: Mirror, view: View): ReadonlyArray<EventBody> => {
           const call = toolCallOf(mirror, item);
           if (call !== undefined) view.toolCalls.set(call.callId, "closed");
         }
-        const continuation = continuationOf(mirror, run);
+        const continuation = continuationOf(mirror, run, now);
         turn.continuation = continuation !== null;
         events.push({
           _tag: "turn-finished",
           turnId,
+          cause: causeOf(mirror, run),
           outcome: outcomeOf(mirror, run),
           backgroundWork: hasBackgroundWork(mirror, run),
           continuation,
@@ -961,12 +1138,18 @@ export const diff = (mirror: Mirror, view: View): ReadonlyArray<EventBody> => {
 
 /**
  * The `replaced` event for a subscriber that resumes without a view, and the
- * view that matches it. `since` bounds the ended turns, speech and resolutions
- * it lists; null lists none, for a subscriber with no cursor.
+ * view that matches it. With `history`, it lists every ended turn of the
+ * session, every use of host speech, every request resolution and every steer
+ * settlement, whenever each happened: the engine keeps no sequence for a
+ * turn's end or a settlement, and a steer or a request can settle after its
+ * turn ended, so nothing narrower is safe. A session is rotated after a
+ * bounded number of turns, which bounds the list. Without `history`, for a
+ * subscriber with no cursor, it lists only what is open.
  */
 export const replacement = (
   mirror: Mirror,
-  since: DateTime.Utc | null,
+  history: boolean,
+  now: DateTime.Utc,
 ): { readonly event: EventBody & { _tag: "replaced" }; readonly view: View } => {
   const openTurns: Array<OpenTurn> = [];
   const openRequests: Array<OpenRequest> = [];
@@ -983,11 +1166,7 @@ export const replacement = (
   for (const run of runsInOrder(mirror)) {
     const turnId = turnIdOf(run);
     const ended = isEnded(run);
-    const listed =
-      !ended ||
-      (since !== null &&
-        (run.completedAt === null || DateTime.isGreaterThanOrEqualTo(run.completedAt, since)));
-    if (!listed || isSteerCarrier(mirror, run)) continue;
+    if ((ended && !history) || isSteerCarrier(mirror, run)) continue;
     if (!ended) {
       openTurns.push({
         turnId,
@@ -1007,7 +1186,7 @@ export const replacement = (
         finishedAt: run.completedAt ?? run.startedAt ?? run.requestedAt,
         outcome: outcomeOf(mirror, run),
         backgroundWork: hasBackgroundWork(mirror, run),
-        continuation: continuationOf(mirror, run),
+        continuation: continuationOf(mirror, run, now),
         steps: stepsOf(mirror, run),
       });
       // A requeued steer shows as its follow-up turn, whose cause is the dispatch.
@@ -1022,11 +1201,9 @@ export const replacement = (
     for (const state of requestsOf(mirror, run)) {
       const resolution = state.resolution ?? (ended ? ("expired" as const) : undefined);
       if (resolution === undefined) openRequests.push(openRequestOf(state));
-      else if (since !== null) {
-        closedRequests.push({ requestId: state.requestId, turnId, resolution });
-      }
+      else if (history) closedRequests.push({ requestId: state.requestId, turnId, resolution });
     }
-    if (since !== null) {
+    if (history) {
       for (const item of itemsOf(mirror, run)) {
         const speech = speechOf(item);
         if (speech !== undefined) hostSpeech.push(speech);
@@ -1036,7 +1213,7 @@ export const replacement = (
 
   // The subscriber now knows everything in the mirror.
   const view = emptyView();
-  diff(mirror, view);
+  diff(mirror, view, now);
   return {
     event: {
       _tag: "replaced",
