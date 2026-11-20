@@ -298,6 +298,18 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
     }).pipe(Effect.provide(client())),
   );
 
+  it.effect("goes offline when the platform loses the network, though the socket still works", () =>
+    Effect.gen(function* () {
+      yield* pairAndConnect;
+      const network = yield* TestPlatform.TestNetwork;
+      const connection = yield* Connection;
+      yield* network.set("offline");
+      yield* waitFor(connection.state, (state) => state._tag === "offline");
+      yield* network.set("online");
+      yield* waitFor(connection.state, (state) => state._tag === "connected");
+    }).pipe(Effect.provide(client())),
+  );
+
   it.effect("resyncs a conversation after a reconnect, never blank and never doubled", () =>
     Effect.gen(function* () {
       yield* pairAndConnect;

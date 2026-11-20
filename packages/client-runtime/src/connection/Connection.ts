@@ -163,7 +163,9 @@ type AttemptOutcome =
   | { readonly _tag: "dropped" }
   | { readonly _tag: "revoked" }
   | { readonly _tag: "incompatible"; readonly serverProtocol: number }
-  | { readonly _tag: "credential-changed" };
+  | { readonly _tag: "credential-changed" }
+  /** The platform reported the network gone. */
+  | { readonly _tag: "offline" };
 
 const isRpcClientError = Schema.is(RpcClientError);
 
@@ -315,6 +317,13 @@ export const layer = Layer.effect(
             (current) => current._tag !== "paired" || current.credential !== paired,
           ).pipe(Effect.as({ _tag: "credential-changed" } as const)),
         ),
+        // So does losing the network. A socket can outlive it for a long time
+        // without failing; the platform's word that it is gone is reliable.
+        Effect.raceFirst(
+          firstChange(networkStatus, (status) => status === "offline").pipe(
+            Effect.as({ _tag: "offline" } as const),
+          ),
+        ),
       );
 
     const load = Effect.gen(function* () {
@@ -358,6 +367,7 @@ export const layer = Layer.effect(
         const outcome = yield* attempt(current.credential);
         switch (outcome._tag) {
           case "credential-changed":
+          case "offline":
             failures = 0;
             continue;
           case "revoked":
