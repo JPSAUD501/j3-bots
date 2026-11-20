@@ -12,6 +12,9 @@ const GENERATED_AND_VENDORED = [
   "*.tsbuildinfo",
   // Upstream source, byte for byte. scripts/vendor-t3-contracts.sh replaces it.
   "packages/engine-t3/vendor/**",
+  // Written by the router plugin and the token generator.
+  "**/routeTree.gen.ts",
+  "packages/design-tokens/generated/**",
 ];
 
 export default defineConfig({
@@ -29,7 +32,7 @@ export default defineConfig({
   },
   lint: {
     ignorePatterns: GENERATED_AND_VENDORED,
-    plugins: ["eslint", "oxc", "unicorn", "typescript"],
+    plugins: ["eslint", "oxc", "react", "unicorn", "typescript"],
     categories: {
       correctness: "warn",
       suspicious: "warn",
@@ -63,6 +66,20 @@ export default defineConfig({
       "eslint/no-underscore-dangle": "off",
       "oxc/no-accumulating-spread": "error",
       "oxc/no-map-spread": "off",
+      "react/no-object-type-as-default-prop": "off",
+      "react/jsx-no-constructed-context-values": "off",
+      "react/memo-dependencies": "error",
+      "react/purity": "error",
+      "react/refs": "error",
+      "react/exhaustive-effect-dependencies": "error",
+      "react/set-state-in-effect": "error",
+      "react/immutability": "error",
+      "react/no-array-index-key": "error",
+      "react/no-unstable-nested-components": "error",
+      "react/static-components": "error",
+      "react/capitalized-calls": "error",
+      "react-in-jsx-scope": "off",
+      "react-hooks/exhaustive-deps": "off",
       "typescript/no-explicit-any": "error",
       "typescript/no-extraneous-class": "error",
       "typescript/no-this-alias": "off",
