@@ -201,9 +201,16 @@ export class Connection extends Context.Service<
       readonly deviceName: string;
     }) => Effect.Effect<void, PairingFailed>;
     /**
+     * The pairing this window follows: its device id, or null while the
+     * credential is read and when there is none. What the client keeps on the
+     * device belongs to the pairing that wrote it.
+     */
+    readonly pairing: Readable<DeviceId | null>;
+    /**
      * Deletes this device's credential from storage, then lets go of it, so a
      * failure leaves the device as it was. It revokes nothing: `reason` says
-     * whether the server still lists the device.
+     * whether the server still lists the device. A pairing another window
+     * made since is left in storage, and this window follows it.
      */
     readonly forget: (
       reason: Exclude<UnpairedReason, "new">,
@@ -255,6 +262,15 @@ export const layer = Layer.effect(
     const state = new Cell<ConnectionState>({ _tag: "starting" });
     const slot = yield* SubscriptionRef.make<Slot>({ _tag: "closed" });
     const credential = yield* SubscriptionRef.make<Credential>({ _tag: "loading" });
+    const pairing = new Cell<DeviceId | null>(null);
+    yield* SubscriptionRef.changes(credential).pipe(
+      Stream.runForEach((current) =>
+        Effect.sync(() =>
+          pairing.set(current._tag === "paired" ? current.credential.deviceId : null),
+        ),
+      ),
+      Effect.forkScoped,
+    );
     const networkStatus = yield* SubscriptionRef.make(yield* network.status);
     // Asks the supervisor to try now. One pending wake is enough.
     const wakes = yield* Queue.sliding<void>(1);
@@ -276,6 +292,26 @@ export const layer = Layer.effect(
 
     const sameCredential = (a: DeviceCredential, b: DeviceCredential) =>
       a.deviceId === b.deviceId && Redacted.value(a.token) === Redacted.value(b.token);
+
+    /**
+     * Deletes `ended` from storage and follows what is left: nothing, or a
+     * pairing another window made after this one last read the credential.
+     */
+    const end = (ended: DeviceCredential, reason: Exclude<UnpairedReason, "new">) =>
+      store.clear(ended).pipe(
+        Effect.flatMap((left) =>
+          SubscriptionRef.set(
+            credential,
+            Option.match(
+              Option.filter(left, (newer) => !sameCredential(newer, ended)),
+              {
+                onNone: (): Credential => ({ _tag: "none", reason }),
+                onSome: (newer): Credential => ({ _tag: "paired", credential: newer }),
+              },
+            ),
+          ),
+        ),
+      );
 
     // Another window paired or signed out: this one follows. A credential
     // that is gone was signed out; one that differs was paired anew.
@@ -421,10 +457,15 @@ export const layer = Layer.effect(
             failures = 0;
             continue;
           case "revoked":
-            yield* SubscriptionRef.set(credential, { _tag: "none", reason: "signed-out" });
-            yield* store.clear.pipe(
+            // The server refused this credential. The refusal may come late,
+            // after another window paired anew: that pairing stays.
+            yield* end(current.credential, "signed-out").pipe(
               Effect.catchTag("CredentialStorageError", (error) =>
-                Effect.logWarning("The revoked credential stays in storage", error),
+                Effect.logWarning("The revoked credential stays in storage", error).pipe(
+                  Effect.andThen(
+                    SubscriptionRef.set(credential, { _tag: "none", reason: "signed-out" }),
+                  ),
+                ),
               ),
             );
             continue;
@@ -492,7 +533,8 @@ export const layer = Layer.effect(
     const forget = Effect.fn("Connection.forget")(function* (
       reason: Exclude<UnpairedReason, "new">,
     ) {
-      yield* store.clear;
+      const current = yield* SubscriptionRef.get(credential);
+      if (current._tag === "paired") return yield* end(current.credential, reason);
       yield* SubscriptionRef.set(credential, { _tag: "none", reason });
     });
 
@@ -572,6 +614,7 @@ export const layer = Layer.effect(
 
     return Connection.of({
       state,
+      pairing,
       pair,
       forget,
       reconnectNow: Queue.offer(wakes, void 0).pipe(Effect.asVoid),

@@ -59,37 +59,41 @@ const credentials = Layer.effect(
     );
     // oxlint-disable-next-line unicorn/require-post-message-target-origin -- a BroadcastChannel stays within its origin and takes no target
     const announce = Effect.sync(() => channel.postMessage(null));
-    return CredentialStore.of({
-      load: Effect.tryPromise({
-        try: () => Idb.get("credentials", CREDENTIAL_KEY),
-        catch: () => new CredentialStorageError({ operation: "load" }),
-      }).pipe(
-        Effect.map((stored) =>
-          stored === undefined
-            ? Option.none()
-            : decodeCredential(stored).pipe(
-                Option.map(({ deviceId, token }) => ({ deviceId, token: Redacted.make(token) })),
-              ),
-        ),
+    const stored = (credential: DeviceCredential) =>
+      encodeCredential({ deviceId: credential.deviceId, token: Redacted.value(credential.token) });
+    const load = Effect.tryPromise({
+      try: () => Idb.get("credentials", CREDENTIAL_KEY),
+      catch: () => new CredentialStorageError({ operation: "load" }),
+    }).pipe(
+      Effect.map((value) =>
+        value === undefined
+          ? Option.none()
+          : decodeCredential(value).pipe(
+              Option.map(({ deviceId, token }) => ({ deviceId, token: Redacted.make(token) })),
+            ),
       ),
+    );
+    return CredentialStore.of({
+      load,
       save: Effect.fn("CredentialStore.save")((credential: DeviceCredential) =>
         Effect.tryPromise({
-          try: () =>
-            Idb.put(
-              "credentials",
-              CREDENTIAL_KEY,
-              encodeCredential({
-                deviceId: credential.deviceId,
-                token: Redacted.value(credential.token),
-              }),
-            ),
+          try: () => Idb.put("credentials", CREDENTIAL_KEY, stored(credential)),
           catch: () => new CredentialStorageError({ operation: "save" }),
         }).pipe(Effect.andThen(announce)),
       ),
-      clear: Effect.tryPromise({
-        try: () => Idb.remove("credentials", CREDENTIAL_KEY),
-        catch: () => new CredentialStorageError({ operation: "clear" }),
-      }).pipe(Effect.andThen(announce)),
+      clear: Effect.fn("CredentialStore.clear")((credential: DeviceCredential) =>
+        Effect.tryPromise({
+          try: () =>
+            Idb.commit(
+              [{ store: "credentials", key: CREDENTIAL_KEY, value: null }],
+              [{ store: "credentials", key: CREDENTIAL_KEY, value: stored(credential) }],
+            ),
+          catch: () => new CredentialStorageError({ operation: "clear" }),
+        }).pipe(
+          Effect.tap((cleared) => (cleared ? announce : Effect.void)),
+          Effect.andThen(load),
+        ),
+      ),
       changes: Stream.fromEventListener(channel, "message").pipe(Stream.as(undefined)),
     });
   }),

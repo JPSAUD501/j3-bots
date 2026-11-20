@@ -6,7 +6,7 @@ import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
-import * as Ref from "effect/Ref";
+import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -106,26 +106,71 @@ const network = Layer.effectContext(
   }),
 ).pipe(Layer.provide(Socket.layerWebSocketConstructorGlobal));
 
-const credentials = (stored: Option.Option<DeviceCredential>) =>
-  Layer.effect(
-    CredentialStore,
-    Effect.gen(function* () {
-      const ref = yield* Ref.make(stored);
-      return CredentialStore.of({
-        load: Ref.get(ref),
-        save: (credential) => Ref.set(ref, Option.some(credential)),
-        clear: Ref.set(ref, Option.none()),
-        changes: Stream.never,
-      });
-    }),
-  );
+/** One window's watch on the device's credential: what it is told when another window changes it. */
+interface CredentialWatcher {
+  readonly window: object;
+  readonly tell: () => void;
+}
+
+/**
+ * The device's credential storage, in memory, as each window sees it:
+ * `view(window)` tells every other window's watchers when it saves or clears
+ * the credential. A window given `heard` hears of each change only once that
+ * latch is open, as a tab that has not yet run the message a broadcast left it.
+ */
+const makeCredentials = () => {
+  let stored = Option.none<DeviceCredential>();
+  const watchers = new Set<CredentialWatcher>();
+  const changed = (window: object) =>
+    Effect.sync(() => {
+      for (const watcher of watchers) if (watcher.window !== window) watcher.tell();
+    });
+  return {
+    seed: (credential: DeviceCredential) => {
+      stored = Option.some(credential);
+    },
+    view: (window: object, heard?: Latch.Latch) =>
+      CredentialStore.of({
+        load: Effect.sync(() => stored),
+        save: (credential) =>
+          Effect.sync(() => {
+            stored = Option.some(credential);
+          }).pipe(Effect.andThen(changed(window))),
+        clear: (credential) =>
+          Effect.suspend(() => {
+            const held = Option.exists(
+              stored,
+              (current) =>
+                current.deviceId === credential.deviceId &&
+                Redacted.value(current.token) === Redacted.value(credential.token),
+            );
+            if (!held) return Effect.succeed(stored);
+            stored = Option.none();
+            return changed(window).pipe(Effect.as(stored));
+          }),
+        changes: Stream.callback<void>((queue) =>
+          Effect.acquireRelease(
+            Effect.sync(() => {
+              const watcher: CredentialWatcher = {
+                window,
+                tell: () => void Queue.offerUnsafe(queue, undefined),
+              };
+              watchers.add(watcher);
+              return watcher;
+            }),
+            (watcher) => Effect.sync(() => watchers.delete(watcher)),
+          ),
+        ).pipe(Stream.mapEffect(() => heard?.await ?? Effect.void)),
+      }),
+  };
+};
 
 interface StorageOptions {
   /** Fails every transaction while it says so, as a full disk would. */
   readonly refuseCommits?: () => boolean;
   /** Fails every attempt to empty a table. */
   readonly refuseClears?: boolean;
-  /** Holds every transaction until the latch opens. */
+  /** Holds every transaction until the latch opens, before it can fail. */
   readonly commitGate?: Latch.Latch;
   /** Receives one item as each transaction starts, before the gate. */
   readonly committing?: Queue.Queue<void>;
@@ -184,16 +229,16 @@ const makeStorage = (options: StorageOptions) => {
           ? Effect.fail(new LocalStorageError({ operation: "remove" }))
           : Effect.sync(() => table(name).clear()).pipe(Effect.andThen(changed([name]))),
       commit: (changes, expected = []) =>
-        Effect.suspend(() =>
-          options.refuseCommits?.() === true
-            ? Effect.fail(new LocalStorageError({ operation: "write" }))
-            : (options.committing === undefined
-                ? Effect.void
-                : Queue.offer(options.committing, undefined)
-              ).pipe(
-                Effect.andThen(options.commitGate?.await ?? Effect.void),
-                Effect.andThen(
-                  Effect.sync(() => {
+        (options.committing === undefined
+          ? Effect.void
+          : Queue.offer(options.committing, undefined)
+        ).pipe(
+          Effect.andThen(options.commitGate?.await ?? Effect.void),
+          Effect.andThen(
+            Effect.suspend(() =>
+              options.refuseCommits?.() === true
+                ? Effect.fail(new LocalStorageError({ operation: "write" }))
+                : Effect.sync(() => {
                     const holds = expected.every(
                       ({ table: name, key, value }) => (table(name).get(key) ?? null) === value,
                     );
@@ -203,12 +248,13 @@ const makeStorage = (options: StorageOptions) => {
                       else table(name).set(key, value);
                     }
                     return true;
-                  }),
-                ),
-                Effect.tap((applied) =>
-                  applied ? changed(changes.map((change) => change.table)) : Effect.void,
-                ),
-              ),
+                  }).pipe(
+                    Effect.tap((applied) =>
+                      applied ? changed(changes.map((change) => change.table)) : Effect.void,
+                    ),
+                  ),
+            ),
+          ),
         ),
       changes: Stream.callback<LocalTable>((queue) =>
         Effect.acquireRelease(
@@ -272,20 +318,30 @@ export interface TestDevice {
    */
   readonly unannounced: () => ClientStorage["Service"];
   readonly locks: WindowLocks["Service"];
+  /** Saves `credential` as the device's, as an earlier launch left it. */
+  readonly seed: (credential: DeviceCredential) => void;
+  /**
+   * The device's credential as one more window sees it. Given `heard`, the
+   * window hears of another window's change only once the latch is open.
+   */
+  readonly credentials: (heard?: Latch.Latch) => CredentialStore["Service"];
 }
 
 export const makeDevice = (options: StorageOptions = {}): TestDevice => {
   const view = makeStorage(options);
+  const credentials = makeCredentials();
   return {
     storage: view({}),
     window: () => view({}),
     unannounced: () => view({}, false),
     locks: makeInProcessLocks(),
+    seed: credentials.seed,
+    credentials: (heard) => credentials.view({}, heard),
   };
 };
 
 /**
- * A platform for tests: the credential in memory, a network the test turns
+ * A platform for tests: the device's credential in memory, `stored` when given, a network the test turns
  * off and on, Node's own `fetch` and `WebSocket`, and retries in milliseconds.
  * `http` stands between the client and the server, as a reverse proxy would,
  * for every HTTP request and upload.
@@ -298,7 +354,10 @@ export const layer = (
 ) =>
   Layer.mergeAll(
     Layer.succeed(ServerAddress, { origin }),
-    credentials(stored),
+    Layer.sync(CredentialStore, () => {
+      if (Option.isSome(stored)) device.seed(stored.value);
+      return device.credentials();
+    }),
     Layer.sync(ClientStorage, device.window),
     Layer.succeed(WindowLocks, device.locks),
     transfer.pipe(Layer.provide(http)),

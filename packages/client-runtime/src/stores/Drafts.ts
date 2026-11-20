@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { Attachment, type EntryTarget, type Mentions } from "@j3-bots/contracts";
+import { Attachment, DeviceId, type EntryTarget, type Mentions } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -22,7 +22,7 @@ import {
   type MessageProblem,
   normalizeMediaType,
 } from "../files/limits.ts";
-import { ClientStorage, type LocalStorageError } from "../ports.ts";
+import { ClientStorage, type LocalRecord, type LocalStorageError } from "../ports.ts";
 import { Cell, type Readable, waitFor } from "../Store.ts";
 import { Conversations, targetKey } from "./Conversations.ts";
 
@@ -80,17 +80,19 @@ export interface DraftChangedElsewhere {
 
 /**
  * A draft as the device keeps it: the text and the files already on the
- * server. Each write gives it a new `revision`, so a window can tell whether
- * the draft is still the one it read. The text is kept whatever its length:
- * the limit of a message applies when it is sent. A draft emptied or sent is
- * kept too, empty, with a revision of its own, so a window that read it
- * before still finds it changed; it reads as no draft, and there is at most
- * one record per conversation.
+ * server, and the pairing that wrote it. Each write gives it a new
+ * `revision`, so a window can tell whether the draft is still the one it
+ * read. The text is kept whatever its length: the limit of a message applies
+ * when it is sent. A draft emptied or sent is kept too, empty, with a
+ * revision of its own, so a window that read it before still finds it
+ * changed; it reads as no draft, and there is at most one record per
+ * conversation.
  */
 const StoredDraft = Schema.fromJsonString(
   Schema.toCodecJson(
     Schema.Struct({
       revision: Schema.String,
+      pairing: DeviceId,
       text: Schema.String,
       files: Schema.Array(Attachment),
     }),
@@ -160,6 +162,11 @@ const shown = (kept: Kept): Draft => ({
  * were never kept, and the offer keeps the older text, which the operator was
  * already shown and has not answered; the newer was typed over the draft the
  * other window had in front of it.
+ *
+ * Every draft belongs to the pairing that wrote it. When the pairing a window
+ * follows ends, the window drops its drafts and erases the device's records
+ * of that pairing, and only those: another window may have paired anew and
+ * written its own.
  */
 export class Drafts extends Context.Service<
   Drafts,
@@ -200,8 +207,8 @@ export class Drafts extends Context.Service<
      */
     readonly restore: (target: EntryTarget) => Effect.Effect<void>;
     /**
-     * Stops every upload and drops every draft, here and on the device. It
-     * happens by itself whenever the device has no credential.
+     * Stops every upload and drops every draft of this pairing, here and on
+     * the device. It happens by itself whenever the pairing ends.
      */
     readonly discardAll: Effect.Effect<void, LocalStorageError>;
   }
@@ -217,25 +224,26 @@ export const layer = Layer.effect(
     const random = yield* SecureRandom.SecureRandom;
     const scope = yield* Scope.Scope;
 
-    const stored = yield* storage
-      .readAll("drafts")
-      .pipe(
-        Effect.catchTag("LocalStorageError", (error) =>
-          Effect.logWarning("Drafts could not be read", error).pipe(
-            Effect.as(new Map<string, string>()),
-          ),
-        ),
-      );
-    const restored = new Map<string, Draft>();
     // Each draft's stored record, by key, as this window last read or wrote it.
     const known = new Map<string, string>();
-    for (const [key, value] of stored) {
-      // Even a record this window cannot read is the one its next write claims.
-      known.set(key, value);
-      const draft = Option.map(decodeStored(value), shown);
-      if (Option.isSome(draft) && !isEmpty(draft.value)) restored.set(key, draft.value);
-    }
-    const state = new Cell<ReadonlyMap<string, Draft>>(restored);
+    const state = new Cell<ReadonlyMap<string, Draft>>(new Map());
+
+    /** Shows the drafts the device keeps. Runs under the lock, or before anything else does. */
+    const readStored = Effect.gen(function* () {
+      const restored = new Map<string, Draft>();
+      for (const [key, value] of yield* storage.readAll("drafts")) {
+        // Even a record this window cannot read is the one its next write claims.
+        known.set(key, value);
+        const draft = Option.map(decodeStored(value), shown);
+        if (Option.isSome(draft) && !isEmpty(draft.value)) restored.set(key, draft.value);
+      }
+      state.set(restored);
+    });
+    yield* readStored.pipe(
+      Effect.catchTag("LocalStorageError", (error) =>
+        Effect.logWarning("Drafts could not be read", error),
+      ),
+    );
     const uploads = new Map<string, Fiber.Fiber<void>>();
     // Text on offer for `restore`, by key: text this window held, never kept,
     // when another window changed its draft.
@@ -340,15 +348,18 @@ export const layer = Layer.effect(
       );
     };
 
-    /** Writes the draft of `target` as it is now, unless the device keeps it so already. Runs under the lock. */
+    /**
+     * Writes the draft of `target` as it is now, as `pairing`'s, unless the
+     * device keeps it so already. Runs under the lock.
+     */
     const writeOne = Effect.fn("Drafts.write")(
-      function* (target: EntryTarget) {
+      function* (target: EntryTarget, pairing: DeviceId) {
         const key = targetKey(target);
         const record = keptOf(state.get().get(key) ?? empty);
         const expected = known.get(key);
         const stored = keptIn(expected);
         if (stored !== undefined && sameKept(record, stored)) return;
-        const value = yield* encodeStored({ revision: yield* revision, ...record });
+        const value = yield* encodeStored({ revision: yield* revision, pairing, ...record });
         const claimed = yield* storage.commit(
           [{ table: "drafts", key, value }],
           [{ table: "drafts", key, value: expected ?? null }],
@@ -366,7 +377,10 @@ export const layer = Layer.effect(
         yield* Queue.take(wake);
         const targets = [...unwritten.values()];
         unwritten.clear();
-        for (const target of targets) yield* locked(writeOne(target));
+        // Without a pairing, nothing is kept: no window could send it.
+        const pairing = yield* connection.deviceId.pipe(Effect.option);
+        if (Option.isNone(pairing)) continue;
+        for (const target of targets) yield* locked(writeOne(target, pairing.value));
       }
     }).pipe(Effect.forkIn(scope));
 
@@ -506,14 +520,21 @@ export const layer = Layer.effect(
       if (text === "" && attachments.length === 0) return "empty";
       const pressed: Draft = { ...draft, sending: true };
       show(key, pressed);
+      const pairing = yield* connection.deviceId.pipe(Effect.option);
       return yield* locked(
         Effect.gen(function* () {
           // A sending draft takes no change, so only another window's change
           // replaces it, and the notice of that change says why nothing went.
           if (state.get().get(key) !== pressed) return "changed-elsewhere";
+          // Without a pairing, the device keeps no message.
+          if (Option.isNone(pairing)) {
+            show(key, draft);
+            return "not-kept";
+          }
           // The draft is left empty with a revision of its own; nothing can fail to encode.
           const handedOver = yield* encodeStored({
             revision: yield* revision,
+            pairing: pairing.value,
             ...keptOf(empty),
           }).pipe(Effect.orDie);
           // The outbox holds the message from here; its delivery outlives the caller.
@@ -531,6 +552,8 @@ export const layer = Layer.effect(
                     "A message could not be kept; it stays in the draft",
                     error,
                   ).pipe(Effect.as("not-kept" as const)),
+                // The pairing ended while Send ran.
+                NotPaired: () => Effect.succeed("not-kept" as const),
                 InvalidMessage: (error) => Effect.succeed(error.problem),
               }),
             );
@@ -553,28 +576,66 @@ export const layer = Layer.effect(
       );
     });
 
+    /** Stops every upload and drops every draft this window holds. Runs under the lock. */
+    const dropAll = Effect.gen(function* () {
+      const running = [...uploads.values()];
+      uploads.clear();
+      yield* Fiber.interruptAll(running);
+      unwritten.clear();
+      known.clear();
+      displaced.clear();
+      state.set(new Map());
+    });
+
+    /**
+     * Erases the device's drafts of `pairing`, each claimed as read, so a
+     * record another window wrote meanwhile stays. Runs under the lock.
+     */
+    const erase = Effect.fn("Drafts.erase")(function* (pairing: DeviceId) {
+      while (true) {
+        const owned = [...(yield* storage.readAll("drafts"))].flatMap(
+          ([key, value]): ReadonlyArray<LocalRecord> =>
+            Option.exists(decodeStored(value), (draft) => draft.pairing === pairing)
+              ? [{ table: "drafts", key, value }]
+              : [],
+        );
+        if (owned.length === 0) return;
+        const erased = yield* storage.commit(
+          owned.map((record) => ({ ...record, value: null })),
+          owned,
+        );
+        if (erased) return;
+      }
+    });
+
     const discardAll = locked(
       Effect.gen(function* () {
-        const running = [...uploads.values()];
-        uploads.clear();
-        yield* Fiber.interruptAll(running);
-        unwritten.clear();
-        known.clear();
-        displaced.clear();
-        state.set(new Map());
-        yield* storage.clear("drafts");
+        yield* dropAll;
+        const pairing = connection.pairing.get();
+        if (pairing !== null) yield* erase(pairing);
       }),
     );
 
+    // When the pairing this window follows ends, its drafts go, here and on
+    // the device, and those another window kept since show.
     yield* Effect.gen(function* () {
+      let followed = connection.pairing.get();
       while (true) {
-        yield* waitFor(connection.state, (current) => current._tag === "unpaired");
-        yield* discardAll.pipe(
+        const next = yield* waitFor(connection.pairing, (current) => current !== followed);
+        const ended = followed;
+        followed = next;
+        if (ended === null) continue;
+        yield* locked(
+          Effect.gen(function* () {
+            yield* dropAll;
+            yield* erase(ended);
+            if (next !== null) yield* readStored;
+          }),
+        ).pipe(
           Effect.catchTag("LocalStorageError", (error) =>
-            Effect.logWarning("Drafts stay in local storage", error),
+            Effect.logWarning("Drafts of a pairing that ended stay in local storage", error),
           ),
         );
-        yield* waitFor(connection.state, (current) => current._tag !== "unpaired");
       }
     }).pipe(Effect.forkIn(scope));
 

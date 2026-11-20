@@ -52,7 +52,14 @@ export class CredentialStore extends Context.Service<
   {
     readonly load: Effect.Effect<Option.Option<DeviceCredential>, CredentialStorageError>;
     readonly save: (credential: DeviceCredential) => Effect.Effect<void, CredentialStorageError>;
-    readonly clear: Effect.Effect<void, CredentialStorageError>;
+    /**
+     * Deletes `credential`, unless storage holds another one: a pairing
+     * another window made since. The comparison and the deletion are one
+     * transaction. Succeeds with the credential storage holds afterwards.
+     */
+    readonly clear: (
+      credential: DeviceCredential,
+    ) => Effect.Effect<Option.Option<DeviceCredential>, CredentialStorageError>;
     /**
      * Emits each time another window of this client saved or cleared the
      * credential, so this one loads it again: a browser's other tabs of the
@@ -83,8 +90,8 @@ export class Network extends Context.Service<
  * What the client keeps on the device besides the credential: `drafts`, each
  * conversation's unsent text and the files already uploaded for it, and
  * `outbox`, messages the operator sent that the server has not accepted yet.
- * Neither holds a secret, but both hold conversation text, so signing out
- * clears them.
+ * Neither holds a secret, but both hold conversation text. Each record belongs
+ * to the pairing that wrote it, and goes when that pairing ends.
  */
 export const LocalTable = Schema.Literals(["drafts", "outbox"]);
 export type LocalTable = typeof LocalTable.Type;

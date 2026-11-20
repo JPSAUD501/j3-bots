@@ -4,6 +4,7 @@ import {
   Attachment,
   CommandError,
   CommandId,
+  DeviceId,
   type Entry,
   EntryId,
   type EntryOrder,
@@ -34,7 +35,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { RpcClientError } from "effect/rpc/RpcClientError";
-import { Connection, type J3RpcClient } from "../connection/Connection.ts";
+import { Connection, type J3RpcClient, NotPaired } from "../connection/Connection.ts";
 import { InvalidMessage, messageProblem } from "../files/limits.ts";
 import {
   Actions,
@@ -75,9 +76,10 @@ export interface OutgoingMessage {
    * `accepted` once it has, until its entry arrives, the conversation shows
    * history past it, or the conversation closes; `not-sent` when the server
    * refused it. `unrecorded` when the server answered and the device could
-   * not record the answer: this window keeps trying to record it, and sends
-   * nothing again. A message sent again after a reload leaves once accepted:
-   * its entry may be older than the history loaded, and shows where it belongs.
+   * not record the answer: this window tries again every `OutboxSweep`,
+   * connected or not, and sends nothing again. A message sent again after a
+   * reload leaves once accepted: its entry may be older than the history
+   * loaded, and shows where it belongs.
    */
   readonly status:
     | { readonly _tag: "sending" }
@@ -112,6 +114,9 @@ type Due = Held & {
   };
 };
 
+/** A due message the device keeps. */
+type KeptDue = Due & { readonly kept: NonNullable<Held["kept"]> };
+
 const isRpcClientError = Schema.is(RpcClientError);
 
 const IntentFailureSchema = Schema.Union([
@@ -120,8 +125,19 @@ const IntentFailureSchema = Schema.Union([
   Schema.TaggedStruct("unexpected", {}),
 ]);
 
+/**
+ * Why each earlier attempt to deliver a message failed, in order: the attempt
+ * under way, or the one that settled it, is the next. Each attempt is sent
+ * again only once it failed, so every attempt leaves its own record, and a
+ * window waiting on one still finds what became of it after another window
+ * sent the message again.
+ */
+const Failures = Schema.Array(IntentFailureSchema);
+
 const StoredMessage = Schema.TaggedStruct("message", {
   commandId: CommandId,
+  /** The pairing that kept it. */
+  pairing: DeviceId,
   target: EntryTarget,
   text: MessageText,
   attachments: Schema.Array(Attachment),
@@ -129,12 +145,7 @@ const StoredMessage = Schema.TaggedStruct("message", {
   createdAt: Schema.DateTimeUtc,
   /** Its place in the device's queue, given in the transaction that kept it. */
   sequence: NonNegativeInt,
-  /**
-   * Which attempt to deliver it this is: 0 when it was kept, one more with
-   * each Retry. A refusal records the attempt it answers, so two attempts
-   * never leave the same record.
-   */
-  attempt: NonNegativeInt,
+  failures: Failures,
   status: Schema.Union([
     Schema.TaggedStruct("sending", {}),
     Schema.TaggedStruct("not-sent", { failure: IntentFailureSchema }),
@@ -149,6 +160,9 @@ type StoredMessage = typeof StoredMessage.Type;
  */
 const StoredSettled = Schema.TaggedStruct("settled", {
   commandId: CommandId,
+  pairing: DeviceId,
+  /** For a discarded message, every attempt; for an accepted one, those before the one accepted. */
+  failures: Failures,
   outcome: Schema.Union([
     Schema.TaggedStruct("accepted", { entryId: EntryId }),
     Schema.TaggedStruct("discarded", {}),
@@ -181,7 +195,8 @@ const SETTLED_KEPT = Duration.minutes(10);
  * How a delivery tries again to record the server's answer when the device
  * fails to: three more times within about a seventh of a second, while it
  * holds the conversation's lock. After that, the window keeps the answer and
- * tries again at its next read of the outbox.
+ * tries again every `OutboxSweep`, connected or not: recording needs no
+ * socket.
  */
 const RECORD_RETRY = { schedule: Schedule.exponential("20 millis"), times: 3 };
 
@@ -190,7 +205,8 @@ const RECORD_RETRY = { schedule: Schedule.exponential("20 millis"), times: 3 };
  * top of being told by the window that changed it. A window can close between
  * keeping a message and telling the others, so this bounds how long such a
  * message waits. Five seconds costs one read of a small table, and nothing
- * else when nothing is due.
+ * else when nothing is due. A window holding an answer the device could not
+ * record tries again as often, connected or not.
  */
 export class OutboxSweep extends Context.Reference<Duration.Duration>(
   "@j3-bots/client-runtime/stores/Conversations/OutboxSweep",
@@ -274,14 +290,22 @@ export interface Conversation {
  * live connection, and holds a conversation's lock only while that
  * connection lives.
  *
- * Every attempt to deliver a message has its own persisted revision. A claim
- * (Retry, Discard, recording an answer) names the revision it expects. A
- * caller waiting on an attempt is answered only from storage that reflects
- * that attempt. The command id stays the same across attempts, so the server
- * applies the message once. Recording the server's answer is part of the
- * attempt: the delivery keeps the conversation's lock until the device holds
- * it, and a window that has an answer the device could not record records it
- * rather than send the attempt again.
+ * Every attempt to deliver a message has its own persisted revision, and its
+ * record keeps why each earlier attempt failed. A claim (Retry, Discard,
+ * recording an answer) names the revision it expects. A caller waiting on an
+ * attempt is answered only from storage that reflects that attempt, with what
+ * became of that attempt, even after another window sent the message again.
+ * The command id stays the same across attempts, so the server applies the
+ * message once. Recording the server's answer is part of the attempt: the
+ * delivery keeps the conversation's lock until the device holds it, and the
+ * list shows the outcome before the delivery ends, even when its socket
+ * closed meanwhile. A window that has an answer the device could not record
+ * records it rather than send the attempt again, and tries on its own
+ * schedule, without a socket.
+ *
+ * Every record belongs to the pairing that kept it. When the pairing a window
+ * follows ends, the window drops its messages and erases the device's
+ * records of that pairing, and only those.
  *
  * An accepted message leaves the list once the conversation shows its entry,
  * or once a read of the conversation started after this window knew the
@@ -310,8 +334,9 @@ export class Conversations extends Context.Service<
      * transaction, then shows it and starts sending it as `send` does, without
      * waiting for the server. Succeeds with `false`, keeping, showing and
      * sending nothing, when a record of `expected` no longer holds the value
-     * given; fails the same way when the device cannot keep it, or with
-     * `InvalidMessage` when it breaks a limit of `message.send`.
+     * given; fails the same way when the device cannot keep it, with
+     * `NotPaired` without a pairing, or with `InvalidMessage` when it breaks a
+     * limit of `message.send`.
      */
     readonly enqueue: (
       input: {
@@ -322,7 +347,7 @@ export class Conversations extends Context.Service<
       },
       alongside?: ReadonlyArray<LocalRecord>,
       expected?: ReadonlyArray<LocalRecord>,
-    ) => Effect.Effect<boolean, LocalStorageError | InvalidMessage>;
+    ) => Effect.Effect<boolean, LocalStorageError | InvalidMessage | NotPaired>;
     /**
      * Sends again, with its own command id, a message that was not sent. Does
      * nothing when the device no longer keeps it as not sent: another window
@@ -344,8 +369,8 @@ export class Conversations extends Context.Service<
      */
     readonly withSendingPaused: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
     /**
-     * Stops every delivery and drops the outbox, here and on the device. It
-     * happens by itself whenever the device has no credential: a message
+     * Stops every delivery and drops this pairing's outbox, here and on the
+     * device. It happens by itself whenever the pairing ends: a message
      * belongs to the pairing that wrote it.
      */
     readonly discardAll: Effect.Effect<void, LocalStorageError>;
@@ -581,7 +606,8 @@ export const layer = Layer.effect(
           for (const commandId of acceptedAt.keys()) {
             if (!accepted.has(commandId)) acceptedAt.delete(commandId);
           }
-          publish();
+          // One whose entry is already here goes now.
+          settle();
         };
         const unsubscribe = outbox.subscribe(onOutbox);
         const close = () => {
@@ -607,12 +633,14 @@ export const layer = Layer.effect(
     const stores = makeKeyed(scope, targetKey, openStore);
 
     /**
-     * A caller of `send` or `resend` waiting for its message's result. `after`
-     * is the number of outbox reads started when it began to wait, after its
-     * attempt was claimed: only a later read reflects that attempt.
+     * A caller of `send` or `resend` waiting for the result of its attempt,
+     * the `attempt`th to deliver the message. `after` is the number of outbox
+     * reads started when it began to wait, after its attempt was claimed:
+     * only a later read reflects that attempt.
      */
     interface Waiter {
       readonly commandId: CommandId;
+      readonly attempt: number;
       readonly after: number;
       readonly result: Deferred.Deferred<IntentResult<EntryId>>;
     }
@@ -630,19 +658,40 @@ export const layer = Layer.effect(
         { discard: true },
       );
     /** The result of the attempt to deliver `commandId` this caller just claimed, once it has one. */
-    const awaitResult = (commandId: CommandId) => {
-      const waiter: Waiter = { commandId, after: reads, result: Deferred.makeUnsafe() };
+    const awaitResult = (commandId: CommandId, attempt: number) => {
+      const waiter: Waiter = { commandId, attempt, after: reads, result: Deferred.makeUnsafe() };
       waiting.add(waiter);
       return Deferred.await(waiter.result);
     };
     const unexpected: IntentResult<EntryId> = { _tag: "failed", failure: { _tag: "unexpected" } };
 
+    /** What became of the `attempt`th attempt to deliver a message, by its record; null while under way. */
+    const outcomeOf = (
+      record: StoredRecord | undefined,
+      attempt: number,
+    ): IntentResult<EntryId> | null => {
+      if (record === undefined) return unexpected;
+      const failure = record.failures[attempt];
+      if (failure !== undefined) return { _tag: "failed", failure };
+      if (attempt !== record.failures.length) return unexpected;
+      if (record._tag === "message") {
+        return record.status._tag === "sending"
+          ? null
+          : { _tag: "failed", failure: record.status.failure };
+      }
+      return record.outcome._tag === "accepted"
+        ? { _tag: "done", value: record.outcome.entryId }
+        : unexpected;
+    };
+
     // Answers the server gave that the device could not record, by command id,
-    // with the stored value of the attempt each answers.
+    // with the attempt each answers.
     const unrecorded = new Map<
       CommandId,
-      { readonly value: string; readonly result: IntentResult<EntryId> }
+      { readonly due: KeptDue; readonly result: IntentResult<EntryId> }
     >();
+    // Asks this window to try again to record what `unrecorded` holds. One pending ask is enough.
+    const recordAgain = yield* Queue.sliding<void>(1);
 
     const queueOrder = (a: Held, b: Held) => {
       if (a.kept === null) return b.kept === null ? 0 : 1;
@@ -659,7 +708,8 @@ export const layer = Layer.effect(
         mentions: record.mentions,
         createdAt: record.createdAt,
         status:
-          record.status._tag === "sending" && unrecorded.get(record.commandId)?.value === value
+          record.status._tag === "sending" &&
+          unrecorded.get(record.commandId)?.due.kept.value === value
             ? { _tag: "unrecorded" }
             : record.status,
       },
@@ -667,15 +717,16 @@ export const layer = Layer.effect(
     });
     const isDue = (held: Held): held is Due =>
       held.message.status._tag === "sending" || held.message.status._tag === "unrecorded";
-    /** Changes the status of a message the device does not keep, which only this window holds. */
-    const setUnkeptStatus = (commandId: CommandId, status: OutgoingMessage["status"]) =>
+    /** Changes the status of the held messages `which` picks. */
+    const setStatus = (which: (held: Held) => boolean, status: OutgoingMessage["status"]) =>
       outbox.update((list) =>
         list.map((held) =>
-          held.message.commandId === commandId
-            ? { ...held, message: { ...held.message, status } }
-            : held,
+          which(held) ? { ...held, message: { ...held.message, status } } : held,
         ),
       );
+    /** Changes the status of a message the device does not keep, which only this window holds. */
+    const setUnkeptStatus = (commandId: CommandId, status: OutgoingMessage["status"]) =>
+      setStatus((held) => held.message.commandId === commandId, status);
 
     /**
      * Makes this window's list a projection of `stored`, the outbox as the
@@ -689,8 +740,8 @@ export const layer = Layer.effect(
       read: number,
     ) {
       // An answer the device holds now, or one for an attempt it no longer keeps, is done with.
-      for (const [commandId, { value }] of unrecorded) {
-        if (stored.get(commandId)?.value !== value) unrecorded.delete(commandId);
+      for (const [commandId, { due }] of unrecorded) {
+        if (stored.get(commandId)?.value !== due.kept.value) unrecorded.delete(commandId);
       }
       const held = outbox.get();
       const next: Array<Held> = [];
@@ -739,18 +790,8 @@ export const layer = Layer.effect(
       for (const waiter of waiting) {
         // A read started before the attempt was claimed knows nothing of it.
         if (read <= waiter.after || unkept.has(waiter.commandId)) continue;
-        const kept = stored.get(waiter.commandId)?.record;
-        if (kept === undefined) outcomes.push([waiter, unexpected]);
-        else if (kept._tag === "settled") {
-          outcomes.push([
-            waiter,
-            kept.outcome._tag === "accepted"
-              ? { _tag: "done", value: kept.outcome.entryId }
-              : unexpected,
-          ]);
-        } else if (kept.status._tag === "not-sent") {
-          outcomes.push([waiter, { _tag: "failed", failure: kept.status.failure }]);
-        }
+        const outcome = outcomeOf(stored.get(waiter.commandId)?.record, waiter.attempt);
+        if (outcome !== null) outcomes.push([waiter, outcome]);
       }
       yield* Effect.forEach(outcomes, ([waiter, result]) => answer(waiter, result), {
         discard: true,
@@ -824,6 +865,7 @@ export const layer = Layer.effect(
      */
     const keep = Effect.fnUntraced(function* (
       message: KeptMessage,
+      pairing: DeviceId,
       alongside: ReadonlyArray<LocalRecord>,
       expected: ReadonlyArray<LocalRecord>,
     ) {
@@ -840,8 +882,9 @@ export const layer = Layer.effect(
         const value = yield* encodeRecord({
           ...message,
           _tag: "message",
+          pairing,
           sequence,
-          attempt: 0,
+          failures: [],
         }).pipe(Effect.orDie);
         const claimed = yield* storage.commit(
           [
@@ -870,14 +913,19 @@ export const layer = Layer.effect(
       return { _tag: "failed", failure: { _tag: "refused", error: error.value } };
     };
 
+    /** The lock one window holds while it sends a conversation's messages, or records an answer to one. */
+    const lockOf = (key: string) => `j3-bots/outbox/${key}`;
+
     /**
      * Records what the server answered for `due`: on the device, claiming the
      * attempt it answers, or in memory for a message this window alone holds.
      * A device that fails to record it is asked again a few times; after
      * that, this window keeps the answer, shows the message as unrecorded,
-     * and records it at a later read instead of sending it again. The drain's
-     * next read shows the outcome and settles its callers. Runs to its end
-     * once started: the answer is part of the attempt.
+     * and tries again every `OutboxSweep`, instead of sending it again. Then
+     * it reads the outbox, which shows the outcome and settles its callers,
+     * and returns what is due. Runs to its end once started: the answer is
+     * part of the attempt, and the list shows it even when the delivery that
+     * asked ends with its socket.
      */
     const recordAnswer = (due: Due, result: IntentResult<EntryId>) =>
       Effect.uninterruptible(
@@ -891,17 +939,21 @@ export const layer = Layer.effect(
             } else {
               removeOutgoing(new Set([message.commandId]));
             }
-            return yield* settleWaiting(message.commandId, result);
+            yield* settleWaiting(message.commandId, result);
+            return yield* refresh;
           }
+          const { record } = kept;
           const outcome: StoredRecord =
             result._tag === "done"
               ? {
                   _tag: "settled",
                   commandId: message.commandId,
+                  pairing: record.pairing,
+                  failures: record.failures,
                   outcome: { _tag: "accepted", entryId: result.value },
                   at: yield* DateTime.now,
                 }
-              : { ...kept.record, status: { _tag: "not-sent", failure: result.failure } };
+              : { ...record, status: { _tag: "not-sent", failure: result.failure } };
           // It was read from the device, so it encodes again.
           const value = yield* encodeRecord(outcome).pipe(Effect.orDie);
           // Not holding means another window recorded this attempt, or moved on from it.
@@ -920,12 +972,22 @@ export const layer = Layer.effect(
                 ).pipe(Effect.as(false)),
               ),
             );
-          if (recorded) unrecorded.delete(message.commandId);
-          else unrecorded.set(message.commandId, { value: kept.value, result });
+          if (recorded) {
+            unrecorded.delete(message.commandId);
+          } else {
+            unrecorded.set(message.commandId, { due: { ...due, kept }, result });
+            // Shown at once: the read below may fail as the write did.
+            setStatus((held) => held.kept?.value === kept.value, { _tag: "unrecorded" });
+            yield* Queue.offer(recordAgain, undefined);
+          }
+          return yield* refresh;
         }),
       );
 
-    /** Sends `due` on `client`, and records the answer. Succeeds with `false` when the socket gave none. */
+    /**
+     * Sends `due` on `client`, records the answer, and returns what is due
+     * then; null when the socket gave no answer.
+     */
     const deliver = (due: Due, client: J3RpcClient) =>
       client["message.send"]({
         commandId: due.message.commandId,
@@ -937,9 +999,7 @@ export const layer = Layer.effect(
         Effect.exit,
         Effect.flatMap((exit) => {
           const answer = answerOf(exit);
-          return answer === "disconnected"
-            ? Effect.succeed(false)
-            : recordAnswer(due, answer).pipe(Effect.as(true));
+          return answer === "disconnected" ? Effect.succeed(null) : recordAnswer(due, answer);
         }),
       );
 
@@ -968,25 +1028,50 @@ export const layer = Layer.effect(
      */
     const drain = (key: string, session: Session) =>
       locks.withLock(
-        `j3-bots/outbox/${key}`,
+        lockOf(key),
         Effect.gen(function* () {
           const tried = new Set<CommandId>();
+          session.again.delete(key);
+          let due = yield* refresh;
           while (true) {
-            session.again.delete(key);
-            const next = (yield* refresh).find(
-              (due) => targetKey(due.message.target) === key && !tried.has(due.message.commandId),
+            const next = due.find(
+              (item) =>
+                targetKey(item.message.target) === key && !tried.has(item.message.commandId),
             );
             if (next === undefined) return true;
             tried.add(next.message.commandId);
+            // What is due is read again once the answer is recorded.
+            session.again.delete(key);
             const known = unrecorded.get(next.message.commandId);
-            if (known !== undefined && known.value === next.kept?.value) {
-              yield* recordAnswer(next, known.result);
-            } else if (!(yield* deliver(next, session.client))) {
-              return false;
-            }
+            const after =
+              known !== undefined && known.due.kept.value === next.kept?.value
+                ? yield* recordAnswer(next, known.result)
+                : yield* deliver(next, session.client);
+            if (after === null) return false;
+            due = after;
           }
         }),
       );
+
+    // Records, every `sweep`, the answers the device could not record. Each
+    // waits for its conversation's lock, so it never runs beside a delivery.
+    yield* Effect.gen(function* () {
+      while (true) {
+        yield* Queue.take(recordAgain);
+        yield* Effect.sleep(sweep);
+        yield* Effect.forEach(
+          [...unrecorded],
+          ([commandId, { due, result }]) =>
+            locks.withLock(
+              lockOf(targetKey(due.message.target)),
+              Effect.suspend(() =>
+                unrecorded.get(commandId)?.due === due ? recordAnswer(due, result) : Effect.void,
+              ),
+            ),
+          { concurrency: "unbounded", discard: true },
+        );
+      }
+    }).pipe(Effect.forkIn(scope));
 
     // What an earlier launch left unsent. Each goes once accepted: its entry
     // may be older than the history a conversation loads.
@@ -1100,15 +1185,18 @@ export const layer = Layer.effect(
 
     const send = Effect.fn("Conversations.send")(function* (input: Parameters<typeof outgoing>[0]) {
       const message = yield* outgoing(input);
-      // With nothing expected, only a storage failure leaves it unkept.
-      const kept = yield* keep(message, [], []).pipe(
-        Effect.catchTag("LocalStorageError", (error) =>
-          Effect.logWarning("An unsent message is kept in memory only", error).pipe(
-            Effect.as(false),
-          ),
-        ),
+      // With nothing expected, only a storage failure, or no pairing, leaves it unkept.
+      const kept = yield* connection.deviceId.pipe(
+        Effect.flatMap((pairing) => keep(message, pairing, [], [])),
+        Effect.catchTags({
+          NotPaired: () => Effect.succeed(false),
+          LocalStorageError: (error) =>
+            Effect.logWarning("An unsent message is kept in memory only", error).pipe(
+              Effect.as(false),
+            ),
+        }),
       );
-      const result = awaitResult(message.commandId);
+      const result = awaitResult(message.commandId, 0);
       if (kept) yield* refresh;
       else outbox.update((list) => [...list, { message, kept: null }]);
       yield* wake;
@@ -1121,7 +1209,7 @@ export const layer = Layer.effect(
       expected: ReadonlyArray<LocalRecord> = [],
     ) {
       const message = yield* outgoing(input);
-      const kept = yield* keep(message, alongside, expected);
+      const kept = yield* keep(message, yield* connection.deviceId, alongside, expected);
       if (kept) yield* refresh.pipe(Effect.andThen(wake));
       return kept;
     });
@@ -1132,15 +1220,16 @@ export const layer = Layer.effect(
       const { message, kept } = held;
       if (message.status._tag !== "not-sent") return unexpected;
       const status = { _tag: "sending" } as const;
+      let attempt = 0;
       if (kept === null) {
         setUnkeptStatus(commandId, status);
       } else {
+        const { record } = kept;
+        if (record.status._tag !== "not-sent") return unexpected;
         // A new attempt, claiming the one it follows. It was read from the device, so it encodes again.
-        const sending = yield* encodeRecord({
-          ...kept.record,
-          attempt: kept.record.attempt + 1,
-          status,
-        }).pipe(Effect.orDie);
+        const failures = [...record.failures, record.status.failure];
+        attempt = failures.length;
+        const sending = yield* encodeRecord({ ...record, failures, status }).pipe(Effect.orDie);
         const claimed = yield* storage
           .commit(
             [{ table: "outbox", key: commandId, value: sending }],
@@ -1156,7 +1245,7 @@ export const layer = Layer.effect(
           return unexpected;
         }
       }
-      const result = awaitResult(commandId);
+      const result = awaitResult(commandId, attempt);
       yield* refresh;
       yield* wake;
       return yield* result;
@@ -1166,9 +1255,13 @@ export const layer = Layer.effect(
       const held = outbox.get().find((candidate) => candidate.message.commandId === commandId);
       if (held?.message.status._tag !== "not-sent") return;
       if (held.kept === null) return removeOutgoing(new Set([commandId]));
+      const { record } = held.kept;
+      if (record.status._tag !== "not-sent") return;
       const settled = yield* encodeRecord({
         _tag: "settled",
         commandId,
+        pairing: record.pairing,
+        failures: [...record.failures, record.status.failure],
         outcome: { _tag: "discarded" },
         at: yield* DateTime.now,
       }).pipe(Effect.orDie);
@@ -1225,28 +1318,72 @@ export const layer = Layer.effect(
         connection.call((client) => client["secret.provide"]({ entryId, answer })),
       );
 
+    /** Drops every message this window holds, and answers whoever waits on one. */
+    const dropAll = Effect.suspend(() => {
+      outbox.set([]);
+      unrecorded.clear();
+      return Effect.forEach(
+        [...waiting],
+        (waiter) => answer(waiter, { _tag: "failed", failure: { _tag: "not-paired" } }),
+        { discard: true },
+      );
+    });
+
+    /**
+     * Erases the device's outbox records of `pairing`, each claimed as read,
+     * so a record another window wrote meanwhile stays.
+     */
+    /**
+     * Erases the device's records of `pairing`. The counter goes with the
+     * last of them: with no message left to order, the next one may start
+     * again from the first sequence.
+     */
+    const erase = Effect.fn("Conversations.erase")(function* (pairing: DeviceId) {
+      while (true) {
+        const records = yield* storage.readAll("outbox");
+        const owned = [...records].flatMap(([key, value]): ReadonlyArray<LocalRecord> =>
+          Option.exists(decodeRecord(value), (record) => record.pairing === pairing)
+            ? [{ table: "outbox", key, value }]
+            : [],
+        );
+        const counter = records.get(COUNTER_KEY);
+        if (counter !== undefined && owned.length === records.size - 1) {
+          owned.push({ table: "outbox", key: COUNTER_KEY, value: counter });
+        }
+        if (owned.length === 0) return;
+        const erased = yield* storage.commit(
+          owned.map((record) => ({ ...record, value: null })),
+          owned,
+        );
+        if (erased) return;
+      }
+    });
+
     const discardAll = withSendingPaused(
       Effect.gen(function* () {
-        outbox.set([]);
-        unrecorded.clear();
-        yield* Effect.forEach(
-          [...waiting],
-          (waiter) => answer(waiter, { _tag: "failed", failure: { _tag: "not-paired" } }),
-          { discard: true },
-        );
-        yield* storage.clear("outbox");
+        yield* dropAll;
+        const pairing = connection.pairing.get();
+        if (pairing !== null) yield* erase(pairing);
       }),
     );
 
+    // When the pairing this window follows ends, its messages go, here and
+    // on the device, and what is left is read again once sending resumes.
     yield* Effect.gen(function* () {
+      let followed = connection.pairing.get();
       while (true) {
-        yield* waitFor(connection.state, (state) => state._tag === "unpaired");
-        yield* discardAll.pipe(
+        const next = yield* waitFor(connection.pairing, (current) => current !== followed);
+        const ended = followed;
+        followed = next;
+        if (ended === null) continue;
+        yield* withSendingPaused(Effect.andThen(dropAll, erase(ended))).pipe(
           Effect.catchTag("LocalStorageError", (error) =>
-            Effect.logWarning("Unsent messages stay in local storage", error),
+            Effect.logWarning(
+              "Unsent messages of a pairing that ended stay in local storage",
+              error,
+            ),
           ),
         );
-        yield* waitFor(connection.state, (state) => state._tag !== "unpaired");
       }
     }).pipe(Effect.forkIn(scope));
 

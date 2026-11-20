@@ -225,6 +225,20 @@ const neverAnswers = (path: string, times = Number.POSITIVE_INFINITY) =>
     }),
   ).pipe(Layer.provide(FetchHttpClient.layer));
 
+/** Something between the client and the server that holds each request to `path` while `open` is closed. */
+const heldAt = (path: string, open: Latch.Latch) =>
+  Layer.effect(
+    HttpClient.HttpClient,
+    Effect.gen(function* () {
+      const server = yield* HttpClient.HttpClient;
+      return HttpClient.make((request, url) =>
+        url.pathname === path
+          ? open.await.pipe(Effect.andThen(server.execute(request)))
+          : server.execute(request),
+      );
+    }),
+  ).pipe(Layer.provide(FetchHttpClient.layer));
+
 /**
  * A reverse proxy in front of uploads whose own login has expired: it answers
  * the first with its sign-in page, as a 401, sends the second to that page,
@@ -1525,7 +1539,16 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         size: 1,
       }));
       yield* device.storage
-        .write("drafts", key, JSON.stringify({ revision: "earlier", text: "all of them", files }))
+        .write(
+          "drafts",
+          key,
+          JSON.stringify({
+            revision: "earlier",
+            pairing: Option.getOrThrow(first.credential).deviceId,
+            text: "all of them",
+            files,
+          }),
+        )
         .pipe(Effect.orDie);
 
       yield* Effect.gen(function* () {
@@ -2189,7 +2212,16 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       );
       assert.isAtMost(images.length, MAX_ATTACHMENTS_PER_MESSAGE);
       yield* device.storage
-        .write("drafts", key, JSON.stringify({ revision: "earlier", text: "", files: images }))
+        .write(
+          "drafts",
+          key,
+          JSON.stringify({
+            revision: "earlier",
+            pairing: Option.getOrThrow(credential).deviceId,
+            text: "",
+            files: images,
+          }),
+        )
         .pipe(Effect.orDie);
 
       yield* Effect.gen(function* () {
@@ -2210,6 +2242,167 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         assert.strictEqual(yield* Queue.size(sends), 0);
       }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
     }),
+  );
+
+  it.effect("keeps a newer pairing when a tab learns late that the old one ended", () =>
+    Effect.gen(function* () {
+      const { device, target, credential } = yield* pairedDevice("Paired twice");
+      const key = targetKey(target);
+      const tickets = yield* Latch.make(true);
+      const heard = yield* Latch.make(false);
+
+      // A slow tab: it runs other tabs' broadcasts late, and its next socket ticket waits.
+      yield* Effect.gen(function* () {
+        const slow = yield* Connection;
+        const slowDrafts = yield* Drafts;
+        yield* waitFor(slow.state, isConnected);
+        yield* tickets.close;
+
+        yield* Effect.gen(function* () {
+          const connection = yield* Connection;
+          yield* waitFor(connection.state, isConnected);
+          // This tab signs out, which closes the slow tab's socket, pairs again, and writes.
+          assert.strictEqual(yield* (yield* SignOut).run, "signed-out");
+          yield* pairAndConnect;
+          const paired = Option.map(yield* savedCredential, (stored) => stored.deviceId);
+          yield* (yield* Drafts).setText(target, "written after pairing again");
+          yield* whenStored(device.storage, "drafts", key, holds("written after pairing again"));
+
+          // Only now is the slow tab refused, for the pairing that ended.
+          yield* tickets.open;
+          const settled = yield* waitFor(
+            slow.state,
+            (state) => isConnected(state) || state._tag === "unpaired",
+          );
+          assert.strictEqual(settled._tag, "connected");
+          yield* waitFor(
+            slowDrafts.state,
+            (drafts) => drafts.get(key)?.text === "written after pairing again",
+          );
+          assert.deepStrictEqual(
+            Option.map(yield* savedCredential, (stored) => stored.deviceId),
+            paired,
+          );
+          assert.isTrue(isConnected(connection.state.get()));
+          yield* whenStored(device.storage, "drafts", key, holds("written after pairing again"));
+        }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+      }).pipe(
+        Effect.scoped,
+        Effect.ensuring(Effect.andThen(tickets.open, heard.open)),
+        Effect.provide(
+          client(
+            credential,
+            { ...device, credentials: () => device.credentials(heard) },
+            heldAt(HTTP_PATHS.socketTicket, tickets),
+          ),
+        ),
+      );
+    }),
+  );
+
+  it.effect("answers Send again with what became of its own attempt, not of a later one", () =>
+    Effect.gen(function* () {
+      const { sends, refusing } = yield* Fakes;
+      const { device, target, credential } = yield* pairedDevice("Superseded");
+      refusing.add("refused, then sent again");
+      const notSent = (state: ConversationState) =>
+        outgoingIn(state).some((message) => message.status._tag === "not-sent");
+
+      yield* Effect.gen(function* () {
+        const one = yield* Conversations;
+        const conversation = yield* one.open(target);
+        yield* one.enqueue({ target, text: "refused, then sent again" });
+        const commandId = yield* Queue.take(sends);
+        yield* waitFor(conversation.state, notSent);
+
+        // This tab sends it again offline, and hears nothing more for a while.
+        yield* goOffline;
+        const retrying = yield* one
+          .resend(commandId)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+
+        // A tab that tells nobody delivers that attempt, which the server refuses,
+        // then sends it again, and that attempt goes.
+        yield* Effect.gen(function* () {
+          const two = yield* Conversations;
+          assert.strictEqual(yield* Queue.take(sends), commandId);
+          yield* waitFor((yield* two.open(target)).state, notSent);
+          refusing.delete("refused, then sent again");
+          assert.strictEqual((yield* two.resend(commandId))._tag, "done");
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(client(credential, { ...device, window: device.unannounced })),
+        );
+        assert.strictEqual(yield* Queue.take(sends), commandId);
+
+        yield* (yield* TestPlatform.TestNetwork).set("online");
+        assert.deepStrictEqual(yield* Fiber.join(retrying), {
+          _tag: "failed",
+          failure: { _tag: "refused", error: new NotFound({ resource: "bot" }) },
+        });
+      }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+    }),
+  );
+
+  it.effect(
+    "shows a refusal it could not record as the socket closed, and records it offline",
+    () => {
+      let full = false;
+      return Effect.gen(function* () {
+        const { gate, sends, refusing } = yield* Fakes;
+        const commitGate = yield* Latch.make(true);
+        const committing = yield* Queue.unbounded<void>();
+        const { device, target, credential } = yield* pairedDevice("Cut off", {
+          refuseCommits: () => full,
+          commitGate,
+          committing,
+        });
+        refusing.add("refused as the socket closed");
+        const statusOf = (state: ConversationState) =>
+          outgoingIn(state).map((message) => messageStatus(message));
+
+        yield* Effect.gen(function* () {
+          const conversations = yield* Conversations;
+          const conversation = yield* conversations.open(target);
+          yield* gate.close;
+          yield* conversations.enqueue({ target, text: "refused as the socket closed" });
+          const commandId = yield* Queue.take(sends);
+
+          // The refusal reaches a full device, and the network goes while it tries to record it.
+          yield* commitGate.close;
+          yield* Queue.clear(committing);
+          full = true;
+          yield* gate.open;
+          yield* Queue.take(committing);
+          yield* goOffline;
+          yield* commitGate.open;
+
+          const shown = yield* waitFor(conversation.state, (state) =>
+            statusOf(state).some((status) => status._tag === "unrecorded"),
+          ).pipe(Effect.timeout("2 seconds"));
+          assert.deepStrictEqual(statusOf(shown), [{ _tag: "unrecorded" }]);
+
+          // Still offline, it is recorded once the device has room.
+          full = false;
+          const recorded = yield* waitFor(conversation.state, (state) =>
+            statusOf(state).some((status) => status._tag === "not-sent"),
+          ).pipe(Effect.timeout("2 seconds"));
+          assert.deepStrictEqual(statusOf(recorded), [
+            {
+              _tag: "not-sent",
+              failure: { _tag: "refused", error: new NotFound({ resource: "bot" }) },
+            },
+          ]);
+          assert.strictEqual((yield* Connection).state.get()._tag, "offline");
+          assert.deepStrictEqual(yield* unsent(device.storage), [commandId]);
+          assert.strictEqual(yield* Queue.size(sends), 0);
+        }).pipe(
+          Effect.scoped,
+          Effect.ensuring(Effect.andThen(gate.open, commitGate.open)),
+          Effect.provide(client(credential, device)),
+        );
+      });
+    },
   );
 
   it.effect("shows the settings the server holds after a save whose answer was lost", () =>
