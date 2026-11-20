@@ -598,4 +598,23 @@ export const scenarios = (it: Methods) => {
       yield* finished(events, running.turnId);
     }),
   );
+
+  it.effect("counts a stream as open from its subscription, before it emits anything", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const engine = yield* Engine;
+        const { sessionId, start: cursor } = yield* session("subscribed");
+        // Subscribed, and not read yet: the stream has emitted nothing.
+        const pull = yield* Stream.toPull(engine.events({ sessionId, after: cursor }));
+        const token = SyncToken.make("conformance-subscribed");
+        yield* engine.synchronize({ sessionId, token });
+        while (true) {
+          const batch = yield* pull.pipe(Effect.orDie);
+          if (batch.some((event) => event._tag === "synchronized" && event.token === token)) {
+            return;
+          }
+        }
+      }),
+    ),
+  );
 };

@@ -455,7 +455,9 @@ export class Engine extends Context.Service<
      * reconnects and resumes the same way, so within one stream no event is
      * delivered twice and none is skipped without a `replaced` covering it. It
      * fails only when the session no longer exists or the engine turns out not
-     * to be the pinned version.
+     * to be the pinned version. A stream counts as open from when it is
+     * subscribed (when it starts running), before it emits anything: a `synchronize`
+     * called after that reaches it.
      */
     readonly events: (input: {
       readonly sessionId: SessionId;
@@ -470,6 +472,8 @@ export class Engine extends Context.Service<
      * find the `tool-call` a tool request came from. Choose the token, and start
      * waiting for it, before calling.
      *
+     * A stream counts as open from when it is subscribed, so one subscribed
+     * before this call emits the event even if it has emitted nothing yet.
      * Each stream emits the event only once the engine's completion marker
      * reached it, and the call returns once every open stream has emitted it
      * or closed. A catch-up that fails or times out fails the call with

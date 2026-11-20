@@ -10,6 +10,7 @@ import type {
 import type * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -76,10 +77,21 @@ import { toolInputDigest } from "../toolCaller.ts";
 // after the bridge sees them; usage-limit continuations; requests that expire
 // with their turn, and whose card can change while they are open; host
 // speech; replies lost after a command was applied; staged files that expire;
-// synchronization markers; and resume by cursor with
+// calls held in flight, a Stop whose effects lag its acknowledgment and a
+// dispatch that waits in the startup queue and lands late; synchronization
+// markers; and resume by cursor with
 // replay or a replacement that repeats turns already seen end, as the real
 // engine may. The adapter's conformance suite runs the same scenarios against
 // the real engine, which keeps this double honest.
+
+/** The engine methods a test can hold in flight with `holdNext`. */
+export type HeldMethod = "dispatch" | "redispatch" | "stageAttachment" | "respondSecret" | "stop";
+
+/** A call held at the engine's door. */
+export interface Held {
+  readonly entered: Effect.Effect<void>;
+  readonly release: Effect.Effect<void>;
+}
 
 /** A dispatch the engine applied, as the test inspects it. */
 export interface ReceivedDispatch {
@@ -102,6 +114,25 @@ export class TestEngineControl extends Context.Service<
      * `EngineIndeterminate`.
      */
     readonly loseNextReply: Effect.Effect<void>;
+    /**
+     * The next call of `method` waits at the engine's door, before anything of
+     * it is applied, until `release`. `entered` succeeds once it waits there,
+     * so a test can act while the call is in flight.
+     */
+    readonly holdNext: (method: HeldMethod) => Effect.Effect<Held>;
+    /**
+     * The next `stop` is acknowledged at once, and its effects (the interrupt,
+     * the cancels, the disarmed continuation) wait until `release`, as when
+     * the provider's interrupt is slow.
+     */
+    readonly delayNextStopEffects: Effect.Effect<{ readonly release: Effect.Effect<void> }>;
+    /**
+     * The next dispatch the engine receives, first send or resend, waits in
+     * the engine's startup queue: it and every resend of its key fail with
+     * `EngineIndeterminate`, applying nothing, until `land` applies it as it
+     * was first sent. A resend after that is answered as the key's receipt.
+     */
+    readonly deferNextDispatch: Effect.Effect<{ readonly land: Effect.Effect<void> }>;
     /**
      * The engine refuses the next dispatch it receives, applying nothing and
      * keeping a rejected receipt: it fails with `DispatchRejected`, as does a
@@ -227,6 +258,11 @@ export class TestEngineControl extends Context.Service<
     readonly startEngineTurn: (sessionId: SessionId) => Effect.Effect<TurnId>;
     /** Forgets the session's event history, so a resume from any cursor gets a `replaced`. */
     readonly pruneHistory: (sessionId: SessionId) => Effect.Effect<void>;
+    /**
+     * The engine loses the session, as when its data is deleted: its streams
+     * end with `SessionNotFound`, and so does every command for it.
+     */
+    readonly loseSession: (sessionId: SessionId) => Effect.Effect<void>;
     readonly dispatches: (sessionId: SessionId) => Effect.Effect<ReadonlyArray<ReceivedDispatch>>;
     readonly responses: (
       sessionId: SessionId,
@@ -333,6 +369,14 @@ const make = Effect.gen(function* () {
   let reachable = true;
   let loseReply = false;
   let rejectDispatch = false;
+  const holds = new Map<
+    HeldMethod,
+    { readonly entered: Deferred.Deferred<void>; readonly release: Deferred.Deferred<void> }
+  >();
+  let stopEffects: Deferred.Deferred<void> | null = null;
+  let deferNext: Deferred.Deferred<void> | null = null;
+  /** Dispatches waiting in the startup queue, by key, until they land. */
+  const deferred = new Map<IdempotencyKey, Deferred.Deferred<void>>();
   // One counter for every session, as the real engine numbers its events.
   let sequence = 0;
   let nextId = 0;
@@ -358,6 +402,47 @@ const make = Effect.gen(function* () {
       if (!loseReply) return effect;
       loseReply = false;
       return effect.pipe(Effect.ignore, Effect.andThen(Effect.fail(new EngineIndeterminate())));
+    });
+
+  /** Waits at the door when the test holds the next call of `method`. */
+  const door = <A, E, R>(method: HeldMethod, effect: Effect.Effect<A, E, R>) =>
+    Effect.suspend(() => {
+      const hold = holds.get(method);
+      if (hold === undefined) return effect;
+      holds.delete(method);
+      return Deferred.succeed(hold.entered, undefined).pipe(
+        Effect.andThen(Deferred.await(hold.release)),
+        Effect.andThen(effect),
+      );
+    });
+
+  /**
+   * A dispatch the startup queue holds: the send waits there, so it answers
+   * `EngineIndeterminate` and applies nothing until the test lands it.
+   */
+  const startupQueue = (input: DispatchInput) =>
+    Effect.gen(function* () {
+      const waiting = deferred.get(input.key);
+      if (waiting !== undefined && !(yield* Deferred.isDone(waiting))) {
+        return yield* new EngineIndeterminate();
+      }
+      if (deferNext === null) return;
+      const land = deferNext;
+      deferNext = null;
+      deferred.set(input.key, land);
+      // Applied as first sent, once the test lands it.
+      yield* Effect.forkDetach(
+        Deferred.await(land).pipe(
+          Effect.andThen(
+            Effect.suspend(() => {
+              const session = sessions.get(input.sessionId);
+              return session === undefined ? Effect.void : applyDispatch(session, input);
+            }),
+          ),
+          Effect.ignore,
+        ),
+      );
+      return yield* new EngineIndeterminate();
     });
 
   /** Fails the test: the caller broke the contract, which no engine would tolerate. */
@@ -864,88 +949,104 @@ const make = Effect.gen(function* () {
       ),
 
     dispatch: (input) =>
-      command(
-        Effect.gen(function* () {
-          const { key, sessionId, delivery } = input;
-          yield* claimAttachments(input.attachments);
-          if (keys.has(key)) {
-            return yield* misuse(`dispatch key ${key} sent again without redispatch`);
-          }
-          // The adapter's checks, before anything is sent.
-          const session = yield* liveSession(sessionId);
-          if (delivery._tag === "start") {
-            const busyWith = session.running ?? session.waiting[0];
-            if (busyWith !== undefined) {
-              return yield* new SessionBusy({ sessionId, turnId: busyWith });
+      door(
+        "dispatch",
+        command(
+          Effect.gen(function* () {
+            const { key, sessionId, delivery } = input;
+            yield* claimAttachments(input.attachments);
+            if (keys.has(key)) {
+              return yield* misuse(`dispatch key ${key} sent again without redispatch`);
             }
-          }
-          if (rejectDispatch) {
-            rejectDispatch = false;
-            return yield* refuse(key, sessionId);
-          }
-          return yield* applyDispatch(session, input);
-        }),
+            // The adapter's checks, before anything is sent.
+            const session = yield* liveSession(sessionId);
+            if (delivery._tag === "start") {
+              const busyWith = session.running ?? session.waiting[0];
+              if (busyWith !== undefined) {
+                return yield* new SessionBusy({ sessionId, turnId: busyWith });
+              }
+            }
+            yield* startupQueue(input);
+            if (rejectDispatch) {
+              rejectDispatch = false;
+              return yield* refuse(key, sessionId);
+            }
+            return yield* applyDispatch(session, input);
+          }),
+        ),
       ),
 
     redispatch: (input) =>
-      command(
-        Effect.gen(function* () {
-          const { key, sessionId, text, delivery } = input;
-          // Staged ids may be fresh on a resend; the rest must match.
-          yield* claimAttachments(input.attachments);
-          const previous = yield* priorUse(key, "dispatch");
-          if (previous?.command === "dispatch") {
-            if (previous.sessionId !== sessionId) {
-              return yield* misuse(`dispatch key ${key} sent to a second session`);
+      door(
+        "redispatch",
+        command(
+          Effect.gen(function* () {
+            const { key, sessionId, text, delivery } = input;
+            // Staged ids may be fresh on a resend; the rest must match.
+            yield* claimAttachments(input.attachments);
+            yield* startupQueue(input);
+            const previous = yield* priorUse(key, "dispatch");
+            if (previous?.command === "dispatch") {
+              if (previous.sessionId !== sessionId) {
+                return yield* misuse(`dispatch key ${key} sent to a second session`);
+              }
+              if (previous.outcome === "rejected") return yield* new DispatchRejected({ key });
+              const first = sessions.get(sessionId)?.dispatches.get(key);
+              if (
+                first !== undefined &&
+                (first.text !== text || !sameDelivery(first.delivery, delivery))
+              ) {
+                return yield* misuse(`dispatch key ${key} repeated with another input`);
+              }
+              return;
             }
-            if (previous.outcome === "rejected") return yield* new DispatchRejected({ key });
-            const first = sessions.get(sessionId)?.dispatches.get(key);
-            if (
-              first !== undefined &&
-              (first.text !== text || !sameDelivery(first.delivery, delivery))
-            ) {
-              return yield* misuse(`dispatch key ${key} repeated with another input`);
+            // No local check: the engine plans the command itself.
+            const session = sessions.get(sessionId);
+            if (session === undefined || session.retired) {
+              // An inactive thread is refused while planning, with a rejected receipt.
+              return yield* refuse(key, sessionId);
             }
-            return;
-          }
-          // No local check: the engine plans the command itself.
-          const session = sessions.get(sessionId);
-          if (session === undefined || session.retired) {
-            // An inactive thread is refused while planning, with a rejected receipt.
-            return yield* refuse(key, sessionId);
-          }
-          if (rejectDispatch) {
-            rejectDispatch = false;
-            return yield* refuse(key, sessionId);
-          }
-          yield* applyDispatch(session, input);
-        }),
+            if (rejectDispatch) {
+              rejectDispatch = false;
+              return yield* refuse(key, sessionId);
+            }
+            yield* applyDispatch(session, input);
+          }),
+        ),
       ),
 
     stageAttachment: () =>
-      command(
-        Effect.gen(function* () {
-          const id = EngineAttachmentId.make(newId("attachment"));
-          const usableUntil = DateTime.addDuration(yield* DateTime.now, STAGED_USABLE_FOR);
-          staged.set(id, usableUntil);
-          return { id, usableUntil };
-        }),
+      door(
+        "stageAttachment",
+        command(
+          Effect.gen(function* () {
+            const id = EngineAttachmentId.make(newId("attachment"));
+            const usableUntil = DateTime.addDuration(yield* DateTime.now, STAGED_USABLE_FOR);
+            staged.set(id, usableUntil);
+            return { id, usableUntil };
+          }),
+        ),
       ),
 
     stop: ({ key, sessionId }) =>
-      command(
-        Effect.gen(function* () {
-          if ((yield* priorUse(key, "stop")) !== undefined) return;
-          const session = yield* liveSession(sessionId);
-          keys.set(key, { command: "stop" });
-          // The engine answers first; the stop takes effect after.
-          yield* Effect.forkDetach(
-            Effect.yieldNow.pipe(
-              Effect.andThen(DateTime.now),
-              Effect.map((at) => stopSession(session, at)),
-            ),
-          );
-        }),
+      door(
+        "stop",
+        command(
+          Effect.gen(function* () {
+            if ((yield* priorUse(key, "stop")) !== undefined) return;
+            const session = yield* liveSession(sessionId);
+            keys.set(key, { command: "stop" });
+            const delayed = stopEffects;
+            stopEffects = null;
+            // The engine answers first; the stop takes effect after.
+            yield* Effect.forkDetach(
+              (delayed === null ? Effect.yieldNow : Deferred.await(delayed)).pipe(
+                Effect.andThen(DateTime.now),
+                Effect.map((at) => stopSession(session, at)),
+              ),
+            );
+          }),
+        ),
       ),
 
     resumeQueue: ({ sessionId, hold }) =>
@@ -987,21 +1088,24 @@ const make = Effect.gen(function* () {
       ),
 
     respondSecret: ({ sessionId, requestId, answer }) =>
-      command(
-        Effect.gen(function* () {
-          const session = yield* liveSession(sessionId);
-          const open = session.requests.get(requestId);
-          if (open === undefined || open.request._tag !== "secret") {
-            return yield* new RequestClosed({ requestId });
-          }
-          session.secretAnswers.push({ requestId, answer });
-          closeRequest(
-            session,
-            open,
-            answer._tag === "provide" ? "provided" : "declined",
-            yield* DateTime.now,
-          );
-        }),
+      door(
+        "respondSecret",
+        command(
+          Effect.gen(function* () {
+            const session = yield* liveSession(sessionId);
+            const open = session.requests.get(requestId);
+            if (open === undefined || open.request._tag !== "secret") {
+              return yield* new RequestClosed({ requestId });
+            }
+            session.secretAnswers.push({ requestId, answer });
+            closeRequest(
+              session,
+              open,
+              answer._tag === "provide" ? "provided" : "declined",
+              yield* DateTime.now,
+            );
+          }),
+        ),
       ),
 
     events: ({ sessionId, after }) =>
@@ -1077,6 +1181,39 @@ const make = Effect.gen(function* () {
 
     loseNextReply: Effect.sync(() => {
       loseReply = true;
+    }),
+
+    holdNext: (method) =>
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        holds.set(method, { entered, release });
+        return {
+          entered: Deferred.await(entered),
+          release: Deferred.succeed(release, undefined).pipe(Effect.asVoid),
+        };
+      }),
+
+    delayNextStopEffects: Effect.gen(function* () {
+      const release = yield* Deferred.make<void>();
+      stopEffects = release;
+      return {
+        release: Deferred.succeed(release, undefined).pipe(
+          Effect.andThen(Effect.yieldNow),
+          Effect.asVoid,
+        ),
+      };
+    }),
+
+    deferNextDispatch: Effect.gen(function* () {
+      const land = yield* Deferred.make<void>();
+      deferNext = land;
+      return {
+        land: Deferred.succeed(land, undefined).pipe(
+          Effect.andThen(Effect.yieldNow),
+          Effect.asVoid,
+        ),
+      };
     }),
 
     rejectNextDispatch: Effect.sync(() => {
@@ -1276,6 +1413,15 @@ const make = Effect.gen(function* () {
         const session = yield* existingSession(sessionId);
         session.replayableFrom = sequence;
         session.log.length = 0;
+      }),
+
+    loseSession: (sessionId) =>
+      Effect.gen(function* () {
+        const session = yield* existingSession(sessionId);
+        session.retired = true;
+        for (const subscriber of session.subscribers.keys()) {
+          yield* Queue.fail(subscriber, new SessionNotFound({ sessionId }));
+        }
       }),
 
     dispatches: (sessionId) =>
