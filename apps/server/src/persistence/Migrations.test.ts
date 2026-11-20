@@ -12,20 +12,19 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { ServerConfig } from "../config.ts";
 import Migration0001 from "./migrations/0001_initial.ts";
 import Migration0002 from "./migrations/0002_operator_name.ts";
-import Migration0003 from "./migrations/0003_turns.ts";
 import * as Sqlite from "./Sqlite.ts";
 
 const now = "2026-11-20T09:00:00.000Z";
 
-it.effect("keeps every row that points at a dispatch when an upgrade rebuilds the table", () =>
+it.effect("upgrades a database the last release wrote, keeping its rows and their links", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const home = yield* fs.makeTempDirectoryScoped();
     const databasePath = path.join(home, "j3.sqlite");
 
-    // A database the release before the rebuild wrote, with a dispatch that
-    // a wake (set null on delete) and a staged file (deleted with it) point at.
+    // What the last release wrote: a bot with its session, a message in its
+    // conversation and the file the message carries.
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* sql`PRAGMA foreign_keys = ON`;
@@ -33,7 +32,6 @@ it.effect("keeps every row that points at a dispatch when an upgrade rebuilds th
         loader: SqliteMigrator.fromRecord({
           "1_initial": Migration0001,
           "2_operator_name": Migration0002,
-          "3_turns": Migration0003,
         }),
       });
       yield* sql`
@@ -45,55 +43,54 @@ it.effect("keeps every row that points at a dispatch when an upgrade rebuilds th
           ${now}, ${now}
         )
       `;
+      yield* sql`INSERT INTO conversations (bot_id, created_at) VALUES ('scout', ${now})`;
       yield* sql`
         INSERT INTO sessions (id, bot_id, purpose, engine_session_id, prompt_version, created_at)
         VALUES ('session-1', 'scout', 'main', 'engine-1', 'v1', ${now})
       `;
       yield* sql`
-        INSERT INTO dispatches (
-          id, bot_id, session_id, audience, delivery, envelope, status, disposition,
-          disposition_turn_id, engine_turn_id, attempts, created_at, updated_at
-        ) VALUES (
-          'dispatch-1', 'scout', 'session-1', 'conversation', 'start', '{}', 'finished',
-          'started', 'turn-1', 'turn-1', 1, ${now}, ${now}
-        )
-      `;
-      yield* sql`
-        INSERT INTO wakes (
-          id, bot_id, kind, priority, audience, payload_json, status, dispatch_id, created_at,
-          updated_at
-        ) VALUES (
-          'wake-1', 'scout', 'user', 0, 'conversation', '{}', 'cancelled', 'dispatch-1', ${now},
-          ${now}
-        )
+        INSERT INTO entries (
+          id, conversation_bot_id, position, kind, author_kind, body_json, created_at, updated_at
+        ) VALUES ('entry-1', 'scout', 0, 'message', 'operator', '{}', ${now}, ${now})
       `;
       yield* sql`
         INSERT INTO blobs (sha256, size, storage_path, created_at)
         VALUES ('abc', 1, 'blobs/abc', ${now})
       `;
       yield* sql`
-        INSERT INTO attachments (id, sha256, name, media_type, source, created_at)
-        VALUES ('file-1', 'abc', 'notes.txt', 'text/plain', 'operator', ${now})
-      `;
-      yield* sql`
-        INSERT INTO dispatch_attachments (dispatch_id, position, attachment_id)
-        VALUES ('dispatch-1', 0, 'file-1')
+        INSERT INTO attachments (id, sha256, name, media_type, source, entry_id, created_at)
+        VALUES ('file-1', 'abc', 'notes.txt', 'text/plain', 'operator', 'entry-1', ${now})
       `;
     }).pipe(Effect.provide(SqliteClient.layer({ filename: databasePath })));
 
     // This release opens it.
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      const wakes = yield* sql<{ readonly dispatch_id: string | null }>`
-        SELECT dispatch_id FROM wakes WHERE id = 'wake-1'
+      const sessions = yield* sql<{ readonly bot_id: string }>`
+        SELECT bot_id FROM sessions WHERE id = 'session-1'
       `;
-      assert.deepStrictEqual(wakes, [{ dispatch_id: "dispatch-1" }]);
-      const staged = yield* sql<{ readonly attachment_id: string }>`
-        SELECT attachment_id FROM dispatch_attachments WHERE dispatch_id = 'dispatch-1'
+      assert.deepStrictEqual(sessions, [{ bot_id: "scout" }]);
+      const files = yield* sql<{ readonly entry_id: string | null }>`
+        SELECT entry_id FROM attachments WHERE id = 'file-1'
       `;
-      assert.deepStrictEqual(staged, [{ attachment_id: "file-1" }]);
+      assert.deepStrictEqual(files, [{ entry_id: "entry-1" }]);
       const [foreignKeys] = yield* sql<{ readonly foreign_keys: number }>`PRAGMA foreign_keys`;
       assert.strictEqual(foreignKeys?.foreign_keys, 1);
+      assert.deepStrictEqual(yield* sql`PRAGMA foreign_key_check`, []);
+
+      // A dispatch's `seq` is never reused, also once the highest is deleted:
+      // a Stop's mark keeps meaning the dispatches written before it.
+      const dispatch = (id: string) => sql<{ readonly seq: number }>`
+        INSERT INTO dispatches (
+          id, bot_id, session_id, audience, delivery, envelope, status, created_at, updated_at
+        ) VALUES (${id}, 'scout', 'session-1', 'conversation', 'start', '{}', 'intended', ${now},
+          ${now})
+        RETURNING seq
+      `;
+      const first = yield* dispatch("dispatch-1");
+      yield* sql`DELETE FROM dispatches WHERE id = 'dispatch-1'`;
+      const second = yield* dispatch("dispatch-2");
+      assert.deepStrictEqual([...first, ...second], [{ seq: 1 }, { seq: 2 }]);
     }).pipe(
       Effect.provide(
         Sqlite.layer.pipe(

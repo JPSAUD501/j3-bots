@@ -9,17 +9,12 @@ import * as ServerConfig from "../config.ts";
 import { runMigrations } from "./Migrations.ts";
 
 // The client opens one connection in WAL mode with a busy timeout. Foreign keys
-// are a per-connection setting in SQLite, so they are turned on here, once the
-// migrations ran. They run with foreign keys off: a migration that rebuilds a
-// table, the only way SQLite changes a constraint, would otherwise cascade the
-// drop of the old table into its children. SQLite ignores the setting inside a
-// transaction, and the migrator runs every migration in one, so it is set
-// before. A rebuild checks its own foreign keys before it commits.
+// are a per-connection setting in SQLite, so they are turned on here.
 const setup = Layer.effectDiscard(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    yield* sql`PRAGMA foreign_keys = OFF`;
-    yield* runMigrations().pipe(Effect.ensuring(Effect.orDie(sql`PRAGMA foreign_keys = ON`)));
+    yield* sql`PRAGMA foreign_keys = ON`;
+    yield* runMigrations();
   }),
 );
 

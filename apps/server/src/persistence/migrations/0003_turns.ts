@@ -3,8 +3,9 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
 // What the turn machinery needs beyond the initial schema: the entry a wake
-// came from and the wake it retries, the recovery bound of a dispatch, its
-// staging retries and how its delivery closed, when a Stop round was issued,
+// came from and the wake it retries, the order dispatches were written in and
+// the dispatches a Stop covers, the recovery bound of a dispatch, its staging
+// retries and how its delivery closed, when a Stop round was issued,
 // acknowledged and observed, a session the engine no longer has or refused
 // as busy, a held queue's resume, the turns a session's events showed, their
 // work steps and `j3` tool calls, host speech already delivered, open cards,
@@ -22,22 +23,144 @@ export default Effect.gen(function* () {
   yield* sql`CREATE INDEX wakes_source ON wakes (source_entry_id) WHERE source_entry_id IS NOT NULL`;
   yield* sql`CREATE UNIQUE INDEX wakes_retried ON wakes (retry_of) WHERE retry_of IS NOT NULL`;
 
-  // A recovery's bound: how many answers left the dispatch undecided, and when
-  // it is tried next. `closed_by` says how the turn's delivery closed: `done`
-  // (a `say` with `done: true`), `ask` (the bot asked the operator) or
-  // `handoff` (the turn left background work running). A `user` dispatch that
-  // finishes with none wakes the bot once more (`undelivered`).
-  yield* sql`ALTER TABLE dispatches ADD COLUMN indeterminate_answers INTEGER NOT NULL DEFAULT 0`;
-  yield* sql`ALTER TABLE dispatches ADD COLUMN next_attempt_at TEXT`;
-  // How many times staging its files failed before its first send. Nothing was
-  // sent then, so the dispatch fails as `rejected` once the bound is reached.
+  // No release wrote a dispatch or a Stop: the turn machinery arrives with this
+  // migration. Both tables are created again in their final shape, which
+  // SQLite cannot reach by altering them.
+  const written = yield* sql`SELECT 1 FROM dispatches UNION ALL SELECT 1 FROM stops LIMIT 1`;
+  if (written.length > 0) {
+    return yield* Effect.die(new Error("Found dispatches or Stops that no release wrote"));
+  }
+  yield* sql`DROP TABLE dispatches`;
+  yield* sql`DROP TABLE stops`;
+
+  // A Stop, as the initial schema describes it. `dispatch_mark` is the highest
+  // dispatch `seq` when it was recorded: it covers the work of exactly the
+  // dispatches at or below it (`stopTargets.covers`).
   yield* sql`
-    ALTER TABLE dispatches ADD COLUMN staging_failures INTEGER NOT NULL DEFAULT 0
-      CHECK (staging_failures >= 0)
+    CREATE TABLE stops (
+      id TEXT PRIMARY KEY,
+      bot_id TEXT NOT NULL REFERENCES bots (id) ON DELETE CASCADE,
+      scope TEXT NOT NULL CHECK (scope IN ('bot', 'room')),
+      room_id TEXT REFERENCES rooms (id) ON DELETE SET NULL,
+      created_at TEXT NOT NULL,
+      dispatch_mark INTEGER NOT NULL,
+      CHECK (scope = 'room' OR room_id IS NULL)
+    )
+  `;
+
+  // A dispatch, as the initial schema describes it, with what the turn
+  // machinery adds.
+  //
+  // `seq` is the order it was written in: `AUTOINCREMENT`, so a number is never
+  // reused once its row is gone (deleting a bot deletes its dispatches).
+  // SQLite serializes writes, so this order is exact where two times in the
+  // same millisecond, or a clock stepped back, are not. `id` stays the key
+  // every other table points at.
+  //
+  // A dispatch the engine answered for (a disposition, a turn) may still fail
+  // as `unresolved`: its session was lost before the turn ran, so the recovery
+  // can never learn more. The engine's first answer stays immutable
+  // (`dispatches_first_disposition`); a dispatch it refused (`rejected`) never
+  // carries one.
+  //
+  // A recovery's bound: how many answers left the dispatch undecided, and when
+  // it is tried next. `staging_failures` is how many times staging its files
+  // failed before its first send. Nothing was sent then, so the dispatch fails
+  // as `rejected` once the bound is reached. `closed_by` says how the turn's
+  // delivery closed: `done` (a `say` with `done: true`), `ask` (the bot asked
+  // the operator) or `handoff` (the turn left background work running). A
+  // `user` dispatch that finishes with none wakes the bot once more
+  // (`undelivered`).
+  yield* sql`
+    CREATE TABLE dispatches (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT,
+      id TEXT NOT NULL UNIQUE,
+      bot_id TEXT NOT NULL REFERENCES bots (id) ON DELETE CASCADE,
+      session_id TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+      audience TEXT NOT NULL CHECK (audience IN ('conversation', 'room')),
+      audience_room_id TEXT REFERENCES rooms (id) ON DELETE SET NULL,
+      delivery TEXT NOT NULL CHECK (delivery IN ('start', 'steer')),
+      steer_turn_id TEXT,
+      fresh_context INTEGER NOT NULL DEFAULT 0 CHECK (fresh_context IN (0, 1)),
+      envelope TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (
+        status IN (
+          'intended', 'accepted', 'delivered', 'finished', 'dropped', 'released', 'failed'
+        )
+      ),
+      failure_reason TEXT CHECK (failure_reason IN ('rejected', 'unresolved')),
+      disposition TEXT CHECK (disposition IN ('started', 'queued', 'steered', 'new-turn')),
+      disposition_turn_id TEXT,
+      engine_turn_id TEXT,
+      continuation_resumes_at TEXT,
+      fenced_by_stop_id TEXT REFERENCES stops (id) ON DELETE SET NULL,
+      outcome_json TEXT,
+      attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      indeterminate_answers INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at TEXT,
+      staging_failures INTEGER NOT NULL DEFAULT 0 CHECK (staging_failures >= 0),
+      closed_by TEXT CHECK (closed_by IN ('done', 'ask', 'handoff')),
+      CHECK (audience = 'room' OR audience_room_id IS NULL),
+      CHECK ((delivery = 'steer') = (steer_turn_id IS NOT NULL)),
+      CHECK (delivery = 'start' OR fresh_context = 0),
+      CHECK (
+        disposition IS NULL
+        OR (delivery = 'start' AND disposition IN ('started', 'queued'))
+        OR (delivery = 'steer' AND disposition IN ('steered', 'new-turn'))
+      ),
+      CHECK ((status = 'failed') = (failure_reason IS NOT NULL)),
+      CHECK (disposition IS NULL OR status NOT IN ('intended', 'released')),
+      CHECK ((disposition IS NULL) = (disposition_turn_id IS NULL)),
+      CHECK (engine_turn_id IS NULL OR status NOT IN ('intended', 'released')),
+      CHECK (
+        failure_reason IS NOT 'rejected' OR (disposition IS NULL AND engine_turn_id IS NULL)
+      ),
+      CHECK (status NOT IN ('delivered', 'finished', 'dropped') OR engine_turn_id IS NOT NULL),
+      CHECK (continuation_resumes_at IS NULL OR status = 'delivered'),
+      CHECK (
+        continuation_resumes_at IS NULL
+        OR NOT (delivery = 'steer' AND engine_turn_id = steer_turn_id)
+      )
+    )
   `;
   yield* sql`
-    ALTER TABLE dispatches ADD COLUMN closed_by TEXT
-      CHECK (closed_by IN ('done', 'ask', 'handoff'))
+    CREATE TRIGGER dispatches_immutable_intent
+    BEFORE UPDATE OF session_id, audience, delivery, steer_turn_id, fresh_context, envelope
+    ON dispatches
+    BEGIN
+      SELECT RAISE(ABORT, 'a dispatch keeps the session, audience and envelope it was written with');
+    END
+  `;
+  yield* sql`
+    CREATE TRIGGER dispatches_first_disposition
+    BEFORE UPDATE OF disposition, disposition_turn_id ON dispatches
+    WHEN OLD.disposition IS NOT NULL
+      AND (NEW.disposition IS NOT OLD.disposition
+        OR NEW.disposition_turn_id IS NOT OLD.disposition_turn_id)
+    BEGIN
+      SELECT RAISE(ABORT, 'a dispatch keeps the engine''s first answer');
+    END
+  `;
+  yield* sql`
+    CREATE INDEX dispatches_open ON dispatches (session_id, status)
+    WHERE status IN ('intended', 'accepted', 'delivered')
+  `;
+  yield* sql`
+    CREATE TRIGGER dispatches_rider_keeps_turn
+    BEFORE UPDATE OF engine_turn_id ON dispatches
+    WHEN OLD.delivery = 'steer' AND OLD.engine_turn_id = OLD.steer_turn_id
+      AND OLD.status <> 'accepted'
+      AND NEW.engine_turn_id IS NOT OLD.engine_turn_id
+    BEGIN
+      SELECT RAISE(ABORT, 'a steer finishes with the turn it rode');
+    END
+  `;
+  yield* sql`
+    CREATE UNIQUE INDEX dispatches_turn ON dispatches (session_id, engine_turn_id)
+    WHERE engine_turn_id IS NOT NULL
+      AND NOT (delivery = 'steer' AND engine_turn_id = steer_turn_id)
   `;
 
   // When a Stop round was issued (`issued_at`, written before its commands
@@ -55,6 +178,9 @@ export default Effect.gen(function* () {
     ALTER TABLE stop_targets ADD COLUMN observed_at TEXT
       CHECK (observed_at IS NULL OR sent_at IS NOT NULL)
   `;
+  // When the Stop runner tries a session again after its work there failed
+  // unexpectedly: a durable deadline like every other worker's.
+  yield* sql`ALTER TABLE stop_targets ADD COLUMN retry_at TEXT`;
 
   // When the engine answered that it has no such session. Nothing is planned
   // into it or watched there again; part 2b gives the bot a new one.
