@@ -154,8 +154,36 @@ export const layer = Layer.effect(
       `,
     });
 
+    const runWithKey = SqlSchema.findOneOption({
+      Request: Schema.Struct({ routineId: RoutineId, key: Schema.String }),
+      Result: Schema.Struct({ id: RoutineRunId, status: RunStatus }),
+      execute: ({ routineId, key }) => sql`
+        SELECT id, status FROM routine_runs WHERE routine_id = ${routineId} AND request_key = ${key}
+      `,
+    });
+
+    const runsSince = SqlSchema.findAll({
+      Request: Schema.Struct({ routineId: RoutineId, since: Schema.String }),
+      Result: Schema.Struct({ started_at: Time }),
+      execute: ({ routineId, since }) => sql`
+        SELECT started_at FROM routine_runs
+        WHERE routine_id = ${routineId} AND started_at > ${since}
+        ORDER BY started_at
+      `,
+    });
+
     const recordChange = (botId: BotId, routineId: RoutineId) =>
       changes.record({ _tag: "routines", botId }, routineId);
+
+    /** Drops the routine's oldest settled runs past `RUN_HISTORY`; the run going stays. */
+    const prune = (routineId: RoutineId) => sql`
+      DELETE FROM routine_runs
+      WHERE routine_id = ${routineId} AND status <> 'running'
+        AND id NOT IN (
+          SELECT id FROM routine_runs WHERE routine_id = ${routineId} AND status <> 'running'
+          ORDER BY started_at DESC, id DESC LIMIT ${RUN_HISTORY}
+        )
+    `;
 
     /** Settles the runs whose wake ended: every routine's, or one routine's. */
     const settleEnded = Effect.fn("RoutineRuns.settleEnded")(function* (
@@ -170,19 +198,11 @@ export const layer = Layer.effect(
             finished_at = ${timeText(run.wake_updated_at ?? now)}
           WHERE id = ${run.id} AND status = 'running'
         `;
+        // The run just settled joins the routine's kept history: the cap holds there too.
+        yield* prune(run.routine_id);
         yield* recordChange(run.bot_id, run.routine_id);
       }
     }, Effect.orDie);
-
-    /** Drops the routine's oldest settled runs past `RUN_HISTORY`; the run going stays. */
-    const prune = (routineId: RoutineId) => sql`
-      DELETE FROM routine_runs
-      WHERE routine_id = ${routineId} AND status <> 'running'
-        AND id NOT IN (
-          SELECT id FROM routine_runs WHERE routine_id = ${routineId} AND status <> 'running'
-          ORDER BY started_at DESC, id DESC LIMIT ${RUN_HISTORY}
-        )
-    `;
 
     /**
      * Records a run of the routine, in the caller's transaction: skipped
@@ -288,18 +308,14 @@ export const layer = Layer.effect(
           if (Option.isNone(row) || secret === null || !matches) return yield* unknown;
           const routine = row.value;
           if (input.requestKey !== null) {
-            const [earlier] = yield* SqlSchema.findAll({
-              Request: Schema.String,
-              Result: Schema.Struct({ id: RoutineRunId, status: RunStatus }),
-              execute: (key) => sql`
-                SELECT id, status FROM routine_runs
-                WHERE routine_id = ${routine.id} AND request_key = ${key}
-              `,
-            })(input.requestKey).pipe(Effect.orDie);
-            if (earlier !== undefined) {
+            const earlier = yield* runWithKey({
+              routineId: routine.id,
+              key: input.requestKey,
+            }).pipe(Effect.orDie);
+            if (Option.isSome(earlier)) {
               return {
-                runId: earlier.id,
-                status: earlier.status,
+                runId: earlier.value.id,
+                status: earlier.value.status,
                 replayed: true,
               } satisfies RunReceipt;
             }
@@ -307,15 +323,10 @@ export const layer = Layer.effect(
           if (!routine.enabled) return yield* new WebhookRefused({ reason: "paused" });
           const now = yield* DateTime.now;
           const windowStart = DateTime.subtractDuration(now, Duration.minutes(1));
-          const recent = yield* SqlSchema.findAll({
-            Request: Schema.String,
-            Result: Schema.Struct({ started_at: Time }),
-            execute: (since) => sql`
-              SELECT started_at FROM routine_runs
-              WHERE routine_id = ${routine.id} AND started_at > ${since}
-              ORDER BY started_at
-            `,
-          })(timeText(windowStart)).pipe(Effect.orDie);
+          const recent = yield* runsSince({
+            routineId: routine.id,
+            since: timeText(windowStart),
+          }).pipe(Effect.orDie);
           const oldest = recent[0];
           if (recent.length >= WEBHOOK_RUNS_PER_MINUTE && oldest !== undefined) {
             return yield* new RateLimited({

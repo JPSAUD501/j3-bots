@@ -93,6 +93,24 @@ it.effect("records a run that came due with its routine wake, and moves on to th
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("runs the first schedule of a fresh install on its own, at its time", () =>
+  Effect.gen(function* () {
+    // The worker starts with no routine at all, and nothing here calls a pass.
+    const bot = yield* createBot("Ana");
+    const routine = yield* createRoutine(bot.id, {
+      _tag: "schedule",
+      cron: "10 * * * *",
+      timeZone: "UTC",
+    });
+    yield* TestClock.adjust("11 minutes");
+    assert.deepStrictEqual(
+      (yield* history(routine.id)).map((run) => run.status),
+      ["running"],
+    );
+    assert.deepStrictEqual((yield* current(routine)).nextRunAt, at("1970-01-01T01:10:00.000Z"));
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect(
   "runs a routine that missed runs while the server was down once, then keeps its schedule",
   () =>
@@ -223,6 +241,11 @@ it.effect("keeps a routine's newest settled runs and the one going", () =>
     // The run going is the oldest; the first skipped ones are gone.
     assert.strictEqual(runs.at(-1)?.status, "running");
     assert.deepStrictEqual(runs.at(-2)?.startedAt, at("1970-01-01T00:00:07.000Z"));
+
+    // Once the run going settles it is a settled run too, and the cap still holds.
+    yield* (yield* Stops).stopBot({ commandId: command(), botId: bot.id });
+    yield* pass;
+    assert.strictEqual((yield* history(routine.id)).length, RUN_HISTORY);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
