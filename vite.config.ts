@@ -100,6 +100,16 @@ export default defineConfig({
         files: ["packages/engine-t3/**"],
         rules: { "eslint/no-restricted-imports": "off" },
       },
+      {
+        // The client runtime's hooks were written before these React rules applied to them.
+        // `useHeld` opens a handle on the client in an effect and keeps it in state, and reopens
+        // it on `key` alone, on purpose. Reworking it under these rules is the runtime's to decide.
+        files: ["packages/client-runtime/src/react/index.ts"],
+        rules: {
+          "react/set-state-in-effect": "off",
+          "react/exhaustive-effect-dependencies": "off",
+        },
+      },
     ],
   },
 });
