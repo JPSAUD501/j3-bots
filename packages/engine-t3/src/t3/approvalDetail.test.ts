@@ -517,6 +517,7 @@ describe("an approval's card while it waits", () => {
   const emitted = () => {
     const batches = makeBatches(32);
     const sessionId = SessionId.make("thread-1");
+    batches.open(sessionId);
     let part = 0;
     const emit = (mirror: Mirror, view: View, bodies: ReadonlyArray<EventBody>) => {
       const place: BatchPlace = { sequence: 7, part: part++ };

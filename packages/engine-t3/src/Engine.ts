@@ -385,9 +385,9 @@ export class Engine extends Context.Service<
      * `synchronized` with no `pending` background work and no
      * `runnableTurns` for the background work of a turn that had already
      * ended and for a turn the engine started or queued on its own. An
-     * `undecidable` tool such a marker still shows was live when the engine
-     * accepted the stop, which covered it, or started in a turn that began
-     * after: a refusal with one live is never moot.
+     * acknowledged stop's interrupt can still fail and leave such work
+     * running (**Read**, `Orchestrator.ts`, L14183-14212): the marker reports
+     * it `pending` as long as the engine's own state holds it.
      *
      * A message the engine counts as a user's releases the hold Stop put on
      * the queue, so a dispatch sent between the stop and the cancels starts a
@@ -397,8 +397,8 @@ export class Engine extends Context.Service<
      * Every command is resolved by its key, as a dispatch is: an error reply
      * is answered by a resend of the same command, whose receipt says whether
      * the engine applied it. A refusal is moot, and counts as done, when
-     * nothing it targets can still run, nor may: background work the
-     * `synchronized` event would call `undecidable` keeps it from being moot.
+     * nothing it targets can still run, nor may: a live tool whose
+     * persistence the adapter could not read keeps it from being moot.
      * Otherwise it is `StopRejected`, and
      * the key is spent. `EngineIndeterminate` is resolved by calling again
      * with the same key.

@@ -3,7 +3,6 @@ import type { EngineStatus, ModelChoice, PermissionMode } from "@j3-bots/contrac
 import {
   AttachmentCreateUploadUrlInput,
   CommandId,
-  EnvironmentRequestInvalidReason,
   MessageId,
   type OrchestrationV2DispatchCommandError,
   type ProjectMutationError,
@@ -39,7 +38,6 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as HttpClient from "effect/http/HttpClient";
-import type { HttpClientError } from "effect/http/HttpClientError";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -64,7 +62,7 @@ import {
   SessionNotFound,
   StopRejected,
 } from "../errors.ts";
-import type { SessionEvent } from "../events.ts";
+import type { BackgroundWork, SessionEvent } from "../events.ts";
 import {
   EngineAttachmentId,
   EngineProjectId,
@@ -118,6 +116,7 @@ import {
   replacement,
   runnableTurns,
   toolsToResolve,
+  workInShell,
   type EventBody,
   type Mirror,
   type View,
@@ -125,9 +124,8 @@ import {
 import {
   type ItemRead,
   makeToolReads,
-  resolvePersistence,
+  persistenceOfRead,
   type ToolPersistence,
-  type WholeInput,
 } from "./toolPersistence.ts";
 
 // The `Engine` service over a real T3 Code server. See `Engine.ts` for the
@@ -139,11 +137,6 @@ const COMMAND_TIMEOUT = Duration.seconds(30);
 const SYNC_TIMEOUT = Duration.seconds(30);
 /** How long fetching an approval's file change may take; past it the card stays a summary. */
 const FETCH_TIMEOUT = Duration.seconds(10);
-/**
- * How long reading a session's transcript may take. The engine exports the
- * whole thread, up to 50 MiB, two exports at a time.
- */
-const TRANSCRIPT_TIMEOUT = Duration.seconds(30);
 /** Batches kept per session, for resuming an `events` stream by replay. */
 const BATCHES_KEPT = 32;
 /** How long a staged file stays usable: half the engine's 24-hour sweep. */
@@ -168,25 +161,6 @@ const APPROVAL_DECISIONS = {
 } as const;
 
 const decodeProjects = HttpClientResponse.schemaBodyJson(ProjectSnapshot);
-
-/** Of a transcript, only each item's id, type and input, which `wholeToolInput` reads. */
-const decodeTranscriptItems = HttpClientResponse.schemaBodyJson(
-  Schema.Struct({
-    items: Schema.Array(
-      Schema.Struct({
-        item: Schema.Struct({
-          id: Schema.String,
-          type: Schema.String,
-          input: Schema.optional(Schema.Unknown),
-        }),
-      }),
-    ),
-  }),
-);
-
-const decodeRefusal = HttpClientResponse.schemaBodyJson(
-  Schema.Struct({ reason: EnvironmentRequestInvalidReason }),
-);
 
 const isEngineDown = Schema.is(Schema.Union([EngineUnavailable, EngineIncompatible]));
 
@@ -240,10 +214,14 @@ type LoopInput =
   | { readonly _tag: "item"; readonly item: OrchestrationV2ThreadStreamItem }
   /** A file change an open approval holds, fetched whole. */
   | { readonly _tag: "fetched"; readonly item: FileChangeItem }
-  /** The persistence of a dynamic tool whose input the stream summarized, from its item fetched whole. */
+  /**
+   * The persistence of a dynamic tool whose input the stream summarized, from
+   * its item fetched again, by the read `ask` names.
+   */
   | {
       readonly _tag: "tool";
       readonly itemId: string;
+      readonly ask: number;
       readonly persistence: ToolPersistence;
     }
   /** The stream ended or a read failed: it is opened again once the engine is ready. */
@@ -481,69 +459,52 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     );
 
   /**
-   * A dynamic tool's input as the session's transcript holds it: whole, from
-   * the stored item, unlike `getTurnItem`'s (**Read** at `db51b67`,
-   * `ThreadManagementService.ts`, `getThreadTranscript`, L713-748, served at
-   * `GET /api/orchestration/threads/:threadId/transcript`, `http.ts`,
-   * L213-234). The engine exports every visible item of the thread, and
-   * refuses a thread past 50 MiB (`PROVIDER_SEND_TURN_MAX_FILE_BYTES`) with
-   * `thread_transcript_too_large`: then, or when the transcript does not list
-   * the tool, its input is unavailable.
-   */
-  const wholeToolInput = Effect.fn("Engine.wholeToolInput")(function* (
-    sessionId: SessionId,
-    itemId: string,
-  ): Effect.fn.Return<WholeInput, HttpClientError | Schema.SchemaError> {
-    const token = yield* currentToken;
-    const response = yield* http.execute(
-      HttpClientRequest.get(
-        `${baseUrl(options.port)}/api/orchestration/threads/${encodeURIComponent(sessionId)}/transcript`,
-      ).pipe(
-        HttpClientRequest.bearerToken(Redacted.value(token)),
-        HttpClientRequest.setHeader(ORCHESTRATION_PROTOCOL_HEADER, String(ORCHESTRATION_PROTOCOL)),
-      ),
-    );
-    if (response.status === 400) {
-      const refusal = yield* decodeRefusal(response);
-      if (refusal.reason === "thread_transcript_too_large") {
-        return { _tag: "unavailable" };
-      }
-    }
-    const transcript = yield* HttpClientResponse.filterStatusOk(response).pipe(
-      Effect.flatMap(decodeTranscriptItems),
-    );
-    const found = transcript.items.find((row) => row.item.id === itemId);
-    return found?.item.type === "dynamic_tool"
-      ? { _tag: "found", input: found.item.input }
-      : { _tag: "unavailable" };
-  }, Effect.timeout(TRANSCRIPT_TIMEOUT));
-
-  /**
-   * The persistence of a dynamic tool whose input the stream summarized
-   * (`resolvePersistence`): from the item, cut at 256 KiB, then, when the cut
-   * leaves it unknown, from the transcript. Through `toolReads`, shared by
-   * every reader of the session: none while a read runs, or while a failed
-   * read's backoff runs, and undecidable once too many failed in a row.
+   * The persistence of a dynamic tool whose input the stream summarized, from
+   * the item, which the engine cuts at 256 KiB (`persistenceOfRead`). Through
+   * `toolReads`, shared by every reader of the session: none while a read
+   * runs, or while a failed read's backoff runs, and undecidable once too many
+   * failed in a row.
    */
   const toolPersistence = (sessionId: SessionId, itemId: string) =>
     toolReads.resolve(
       sessionId,
       itemId,
-      resolvePersistence({
-        item: rpc["orchestration.getTurnItem"]({
-          threadId: ThreadId.make(sessionId),
-          itemId: TurnItemId.make(itemId),
-        }).pipe(
-          Effect.timeout(FETCH_TIMEOUT),
-          Effect.map(({ item }): ItemRead =>
-            item?.type === "dynamic_tool"
-              ? { _tag: "tool", input: item.input }
-              : { _tag: "not-a-tool" },
-          ),
+      rpc["orchestration.getTurnItem"]({
+        threadId: ThreadId.make(sessionId),
+        itemId: TurnItemId.make(itemId),
+      }).pipe(
+        Effect.timeout(FETCH_TIMEOUT),
+        Effect.map(({ item }): ItemRead =>
+          item?.type === "dynamic_tool"
+            ? { _tag: "tool", input: item.input }
+            : { _tag: "not-a-tool" },
         ),
-        whole: wholeToolInput(sessionId, itemId),
-      }),
+        Effect.map(persistenceOfRead),
+      ),
     );
+
+  /**
+   * The session's background work for a `synchronized` event: the mirror's,
+   * and for tools no read of the item could decide, the engine's own
+   * projection of the thread's pending work (`workInShell`), read with
+   * `getThreadFamily`, bounded at `FETCH_TIMEOUT`. A read that fails cannot
+   * say, so they count as pending: a Stop waits and synchronizes again.
+   */
+  const reportedWork = (sessionId: SessionId, mirror: Mirror) => {
+    const work = backgroundWorkOf(mirror);
+    if (work._tag !== "undecided") return Effect.succeed<BackgroundWork>(work._tag);
+    const threadId = ThreadId.make(sessionId);
+    return rpc["orchestration.getThreadFamily"]({ threadId }).pipe(
+      Effect.timeout(FETCH_TIMEOUT),
+      Effect.map(({ threads }) =>
+        workInShell(
+          threads.find((thread) => thread.id === threadId),
+          work.taskIds,
+        ),
+      ),
+      Effect.orElseSucceed((): BackgroundWork => "pending"),
+    );
+  };
 
   /**
    * Settles in `mirror` the persistence of each tool whose input the stream
@@ -794,8 +755,8 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
    * (the run it cancels already ended, nothing the engine's stop targets can
    * still run, nor may) counts as done; any other is `StopRejected`, keyed by
    * the round, whose key it spends. A refused stop interrupted nothing, so a
-   * live tool whose persistence no read could decide keeps it from being moot
-   * (`nothingToStop`), and the server sends a fresh round.
+   * live tool whose persistence no read of the item could decide keeps it
+   * from being moot (`nothingToStop`), and the server sends a fresh round.
    */
   const sendStopStep = Effect.fnUntraced(function* (
     round: { readonly key: IdempotencyKey; readonly sessionId: SessionId },
@@ -1201,6 +1162,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
           ),
         );
 
+        batches.open(input.sessionId);
         const resumed = batches.resume(input.sessionId, input.after);
         let mirror = resumed?.mirror ?? emptyMirror();
         /** What this stream has told; undefined until its first state went out. */
@@ -1275,6 +1237,13 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
 
         /** Held file changes asked for, by item id and version: each version is asked for once. */
         const asked = new Set<string>();
+        /**
+         * The read of each live tool's persistence this stream asked for, by
+         * item id, while the item stays live: a tool is asked for once at a
+         * time, and only the latest read's answer counts.
+         */
+        const toolAsks = new Map<string, number>();
+        let lastAsk = 0;
 
         /**
          * Fetches, off the loop, each file change an open approval holds back
@@ -1287,21 +1256,32 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
          * backoff passed, and until one succeeds or the reads give up the
          * tool counts as pending. The stream, which has every event in order,
          * is what prunes the session's reads, by what its mirror shows ended.
+         * A tool that ended, or left the mirror, loses what this stream
+         * learned of it and its read: should it be reopened, it is read again,
+         * and the answer of a read asked for before counts for nothing.
          */
         const fetchChanges = Effect.fnUntraced(function* () {
           yield* toolReads.prune(input.sessionId, sequence, (itemId) =>
             isEndedTool(mirror, itemId),
           );
+          const gone = (itemId: string) => !mirror.items.has(itemId) || isEndedTool(mirror, itemId);
+          for (const itemId of toolAsks.keys()) if (gone(itemId)) toolAsks.delete(itemId);
+          for (const itemId of mirror.toolPersistence.keys()) {
+            if (gone(itemId)) mirror.toolPersistence.delete(itemId);
+          }
           for (const itemId of toolsToResolve(mirror)) {
-            const key = `tool:${itemId}`;
-            if (asked.has(key)) continue;
-            asked.add(key);
+            if (toolAsks.has(itemId)) continue;
+            const ask = ++lastAsk;
+            toolAsks.set(itemId, ask);
             yield* toolPersistence(input.sessionId, itemId).pipe(
               Effect.flatMap(
                 Option.match({
-                  onNone: () => Effect.sync(() => asked.delete(key)),
+                  onNone: () =>
+                    Effect.sync(() => {
+                      if (toolAsks.get(itemId) === ask) toolAsks.delete(itemId);
+                    }),
                   onSome: (persistence) =>
-                    Queue.offer(inputs, { _tag: "tool", itemId, persistence }),
+                    Queue.offer(inputs, { _tag: "tool", itemId, ask, persistence }),
                 }),
               ),
               Effect.forkScoped,
@@ -1399,7 +1379,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
           yield* Queue.offer(output, {
             _tag: "synchronized",
             token,
-            backgroundWork: backgroundWorkOf(mirror),
+            backgroundWork: yield* reportedWork(input.sessionId, mirror),
             runnableTurns: runnableTurns(mirror),
             cursor: lastCursor,
             at: DateTime.makeUnsafe(yield* Clock.currentTimeMillis),
@@ -1442,6 +1422,9 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
               yield* fetchChanges();
               break;
             case "tool":
+              // Asked for before the tool ended, or before a later read: it
+              // says nothing of the tool as it is now.
+              if (toolAsks.get(next.itemId) !== next.ask) break;
               // No session event is made of it: only `backgroundWorkOf` reads it.
               mirror.toolPersistence.set(next.itemId, next.persistence);
               break;

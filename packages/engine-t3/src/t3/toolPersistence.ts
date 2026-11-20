@@ -6,22 +6,22 @@ import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 
-// Whether a live dynamic tool runs on purpose, which decides whether the
-// engine's stop counts it as pending (`Translate.ts`, `isUncountedTool`). The
-// stream drops the mark from an input above 16 KiB, so the adapter reads such
-// an input again: first the item alone, which the engine cuts at 256 KiB, and
-// when the cut leaves the mark unknown, the session's transcript, which
-// carries it whole. Reads that fail back off, and a tool no read decides in a
-// bounded number of tries is undecidable.
+// Whether a live dynamic tool runs on purpose, which decides how the
+// engine's stop counts it (`Translate.ts`, `toolWork`). The stream drops the
+// mark from an input above 16 KiB, so the adapter reads such an input again,
+// as the item alone, which the engine cuts at 256 KiB. Reads that fail back
+// off. A tool whose cut input leaves the mark unknown, or that no read
+// decides in a bounded number of tries, is undecidable: the engine's own
+// projection of its pending work decides it where it matters, when a
+// `synchronized` event reports the session's background work
+// (`Translate.ts`, `workInShell`).
 
 /**
  * What the input of a dynamic tool the stream summarized says of its
- * persistence. `undecidable`: no read the engine offers returned enough of it,
- * because its transcript is past the export limit, or reading it failed too
- * many times. Such a tool counts as not pending: the engine's own stop still
- * interrupts it unless it is persistent, so the cost is a Stop that may settle
- * a moment before a transient tool ends, never a Stop that waits for good on a
- * persistent one.
+ * persistence. `persistent`: the agent keeps it running on purpose, and it
+ * never counts as pending. `transient`: it counts as pending while it runs.
+ * `undecidable`: no read of the item returned enough of it, because the
+ * engine cut it where the mark may be, or reading it failed too many times.
  */
 export type ToolPersistence = "persistent" | "transient" | "undecidable";
 
@@ -44,8 +44,9 @@ export type ItemRead =
   | { readonly _tag: "not-a-tool" };
 
 /**
- * The persistence the input `getTurnItem` returned shows, or none when the
- * engine's cut leaves it unknown. Nothing the engine sends says whether a cut
+ * The persistence a `getTurnItem` read shows. An item that is no longer a
+ * dynamic tool is transient: nothing marks it persistent, and the engine's
+ * stop goes by its own state. Nothing the engine sends says whether a cut
  * input was a string or an object: it cuts a string as it is and an object as
  * its JSON text, and the stream's summary is the first line of either
  * (`WireProjection.ts`, `summarizeDynamicValue`, L69-107). A cut text that
@@ -53,46 +54,19 @@ export type ItemRead =
  * may be either, so it tells nothing: a string that opens with an object's
  * text is transient, whatever that text says.
  */
-export const persistenceInItem = (input: unknown): Option.Option<ToolPersistence> => {
+export const persistenceOfRead = (read: ItemRead): ToolPersistence => {
+  if (read._tag === "not-a-tool") return "transient";
+  const { input } = read;
   if (typeof input === "string" && input.endsWith(TRUNCATION_MARKER)) {
-    return input.startsWith("{") ? Option.none() : Option.some("transient");
+    return input.startsWith("{") ? "undecidable" : "transient";
   }
-  return Option.some(hasPersistentFlag(input) ? "persistent" : "transient");
+  return hasPersistentFlag(input) ? "persistent" : "transient";
 };
-
-/** What the session's transcript holds of a tool's input. */
-export type WholeInput =
-  | { readonly _tag: "found"; readonly input: unknown }
-  /** The transcript is past its export limit, or does not list the tool. */
-  | { readonly _tag: "unavailable" };
-
-/**
- * A tool's persistence, from the item read alone when it shows it, and from
- * the session's transcript otherwise. An item that is no longer a dynamic tool
- * is transient: nothing marks it persistent, and the engine's stop goes by
- * its own state. A failed read fails: nothing is known.
- */
-export const resolvePersistence = <EI, RI, EW, RW>(reads: {
-  readonly item: Effect.Effect<ItemRead, EI, RI>;
-  readonly whole: Effect.Effect<WholeInput, EW, RW>;
-}): Effect.Effect<ToolPersistence, EI | EW, RI | RW> =>
-  Effect.flatMap(reads.item, (read) => {
-    if (read._tag === "not-a-tool") return Effect.succeed<ToolPersistence>("transient");
-    return Option.match(persistenceInItem(read.input), {
-      onSome: Effect.succeed,
-      onNone: () =>
-        Effect.map(reads.whole, (whole): ToolPersistence => {
-          if (whole._tag === "unavailable") return "undecidable";
-          return hasPersistentFlag(whole.input) ? "persistent" : "transient";
-        }),
-    });
-  });
 
 /**
  * How long after its `n`th failed read in a row a tool is read again: from 2
- * seconds, doubling up to 10 minutes, as the server's recovery backs off. A
- * transcript read exports the whole thread, and the engine runs two at a time,
- * which can stall its other readers: it is not retried on every catch-up.
+ * seconds, doubling up to 10 minutes, as the server's recovery backs off, so
+ * an engine that fails the reads is not asked again on every catch-up.
  */
 export const toolReadBackoff = (n: number): Duration.Duration =>
   Duration.min(Duration.seconds(2 * 2 ** Math.max(0, n - 1)), Duration.minutes(10));
@@ -205,8 +179,9 @@ export const makeToolReads = (): ToolReads => {
     resolve,
     prune: (sessionId, sequence, ended) =>
       Effect.sync(() => {
-        const reads = readsOf(sessionId);
-        if (sequence < reads.prunedAt) return;
+        // A session forgotten meanwhile has nothing to prune: it is not made again.
+        const reads = sessions.get(sessionId);
+        if (reads === undefined || sequence < reads.prunedAt) return;
         reads.prunedAt = sequence;
         for (const itemId of reads.tools.keys()) if (ended(itemId)) reads.tools.delete(itemId);
       }),

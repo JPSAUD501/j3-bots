@@ -377,14 +377,8 @@ export const layer = Layer.effect(
           ({ backgroundWork, runnableTurns }) =>
             ({
               _tag: "synchronized",
-              // An undecidable tool is settled here, where every latest round
-              // was acknowledged: the engine accepted it, or found it moot
-              // with no undecidable tool live, which `Engine.stop` never
-              // does. An accepted stop interrupts every live tool the engine
-              // does not see as persistent, thread-wide, by its own rule over
-              // the stored input; one that started later belongs to a turn
-              // that started after the round was issued, which opened a
-              // fresh round (`openRound`).
+              // An acknowledged round proves no interrupt: the engine's state
+              // after it is what counts, also for work its interrupt missed.
               engineShows: backgroundWork === "pending" || runnableTurns.length > 0,
             }) as const,
         ),

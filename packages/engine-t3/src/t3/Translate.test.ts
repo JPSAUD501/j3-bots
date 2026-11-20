@@ -5,6 +5,7 @@ import {
   OrchestrationV2DomainEvent,
   OrchestrationV2Run,
   type OrchestrationV2UserInputQuestion,
+  RunId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -28,8 +29,8 @@ import {
   replacement,
   runnableTurns,
   toolsToResolve,
+  workInShell,
 } from "./Translate.ts";
-import { persistenceInItem } from "./toolPersistence.ts";
 
 const answers = Schema.decodeUnknownSync(QuestionAnswers);
 
@@ -288,14 +289,14 @@ describe("backgroundWorkOf", () => {
     const mirror = emptyMirror();
     applyEvent(mirror, run("completed", 1));
     applyEvent(mirror, command("running"));
-    assert.strictEqual(backgroundWorkOf(mirror), "pending");
+    assert.strictEqual(backgroundWorkOf(mirror)._tag, "pending");
 
     // A running run is the stop's target instead, and its turn is open.
     applyEvent(mirror, run("running", 2));
-    assert.strictEqual(backgroundWorkOf(mirror), "none");
+    assert.strictEqual(backgroundWorkOf(mirror)._tag, "none");
     applyEvent(mirror, run("interrupted", 2));
     applyEvent(mirror, command("interrupted"));
-    assert.strictEqual(backgroundWorkOf(mirror), "none");
+    assert.strictEqual(backgroundWorkOf(mirror)._tag, "none");
 
     // A tool the agent keeps running on purpose is never pending.
     applyEvent(
@@ -308,11 +309,11 @@ describe("backgroundWorkOf", () => {
         status: "running",
       }),
     );
-    assert.strictEqual(backgroundWorkOf(mirror), "none");
+    assert.strictEqual(backgroundWorkOf(mirror)._tag, "none");
 
     // A task only the provider thread reports.
     applyEvent(mirror, providerThread(["task-1"]));
-    assert.strictEqual(backgroundWorkOf(mirror), "pending");
+    assert.strictEqual(backgroundWorkOf(mirror)._tag, "pending");
   });
 
   // Claude Code reports a monitor the agent awaits as a task of its provider
@@ -341,6 +342,7 @@ describe("backgroundWorkOf", () => {
   it("keeps a turn's hand-off as its end told it, after the work has left the roster", () => {
     const session = SessionId.make("thread-1");
     const batches = makeBatches(32);
+    batches.open(session);
     const mirror = emptyMirror();
     applyEvent(mirror, run("running", 1));
     const { view } = replacement(mirror, false, at);
@@ -380,6 +382,68 @@ describe("backgroundWorkOf", () => {
     );
   });
 
+  // A stream that missed the turn's end, by a reconnect the engine answered
+  // with a snapshot, first hears of it in a replacement.
+  it("keeps a hand-off a replacement told first, and never over a live end's", () => {
+    const session = SessionId.make("thread-1");
+    const batches = makeBatches(32);
+    batches.open(session);
+    const keep = (place: number, bodies: ReadonlyArray<EventBody>) =>
+      batches.keep(
+        session,
+        "stream-1",
+        { sequence: place, part: 0 },
+        {
+          mirror: emptyMirror(),
+          view: replacement(emptyMirror(), false, at).view,
+          events: bodies.map((body, index) => ({
+            ...body,
+            cursor: EventCursor.make(`${place}.0.${index}.${bodies.length}.stream-1`),
+            at,
+          })),
+        },
+      );
+    const mirror = emptyMirror();
+    applyEvent(
+      mirror,
+      providerThread([], [{ taskId: "task-1", kind: "background_task" }], "run-1"),
+    );
+    applyEvent(mirror, run("completed", 1));
+    keep(3, [replacement(mirror, true, at, batches.toldHandoffs(session)).event]);
+
+    // The task ends and wakes the session; the next replacement repeats the
+    // hand-off as the first one told it.
+    applyEvent(mirror, providerThread([], [], "run-2"));
+    applyEvent(mirror, run("completed", 2));
+    const handoffs = () =>
+      replacement(mirror, true, at, batches.toldHandoffs(session)).event.endedTurns.map((turn) => [
+        turn.turnId,
+        turn.backgroundWork,
+      ]);
+    assert.deepStrictEqual(handoffs(), [
+      [TurnId.make("run-1"), true],
+      [TurnId.make("run-2"), false],
+    ]);
+
+    // A replacement that tells a turn otherwise than its live end did leaves
+    // the live end's word.
+    keep(4, [
+      {
+        _tag: "turn-finished",
+        turnId: TurnId.make("run-2"),
+        cause: { _tag: "background" },
+        outcome: { _tag: "completed" },
+        backgroundWork: true,
+        continuation: null,
+      },
+    ]);
+    keep(5, [replacement(mirror, true, at, new Map()).event]);
+    assert.deepStrictEqual(handoffs(), [
+      [TurnId.make("run-1"), true],
+      [TurnId.make("run-2"), true],
+    ]);
+  });
+
   it("leaves a monitor the agent does not await to wake the session on its own", () => {
     const mirror = emptyMirror();
     applyEvent(mirror, run("running", 1));
@@ -388,7 +452,7 @@ describe("backgroundWorkOf", () => {
     applyEvent(mirror, run("completed", 1));
     assert.deepStrictEqual(backgroundAtEnd(diff(mirror, view, at)), [false]);
     // The engine's stop still counts it.
-    assert.strictEqual(backgroundWorkOf(mirror), "pending");
+    assert.strictEqual(backgroundWorkOf(mirror)._tag, "pending");
   });
 
   // The stream sends a dynamic tool input above 16 KiB as `{summary, truncated}`
@@ -403,34 +467,60 @@ describe("backgroundWorkOf", () => {
         type: "dynamic_tool",
         toolName: "dev_server",
         input: { summary: '{"persistent":true,"script":"…', truncated: true },
+        nativeItemRef: { driver: "codex", nativeId: "call-7", strength: "strong" },
         status: "running",
       }),
     );
     // Pending until the fetch tells: the Stop waits that long.
     assert.deepStrictEqual(toolsToResolve(mirror), ["item-tool"]);
-    assert.strictEqual(backgroundWorkOf(mirror), "pending");
+    assert.strictEqual(backgroundWorkOf(mirror)._tag, "pending");
 
-    mirror.toolPersistence.set(
-      "item-tool",
-      Option.getOrThrow(persistenceInItem({ persistent: true, script: "x".repeat(20_000) })),
-    );
+    mirror.toolPersistence.set("item-tool", "persistent");
     assert.deepStrictEqual(toolsToResolve(mirror), []);
-    assert.strictEqual(backgroundWorkOf(mirror), "none");
+    assert.strictEqual(backgroundWorkOf(mirror)._tag, "none");
 
-    mirror.toolPersistence.set(
-      "item-tool",
-      Option.getOrThrow(persistenceInItem({ script: "x".repeat(20_000) })),
-    );
-    assert.strictEqual(backgroundWorkOf(mirror), "pending");
+    mirror.toolPersistence.set("item-tool", "transient");
+    assert.strictEqual(backgroundWorkOf(mirror)._tag, "pending");
 
-    // No read returned enough of the input to tell: the engine's own stop
-    // interrupts the tool unless it is persistent, so it is left to whoever
-    // knows whether the engine accepted a stop that covers it.
+    // No read of the item could tell: the engine's projection decides it, by
+    // the provider's id of the item, which is the engine's task id.
     mirror.toolPersistence.set("item-tool", "undecidable");
-    assert.strictEqual(backgroundWorkOf(mirror), "undecidable");
+    assert.deepStrictEqual(backgroundWorkOf(mirror), { _tag: "undecided", taskIds: ["call-7"] });
     // Work the engine counts outweighs it.
     applyEvent(mirror, command("running"));
-    assert.strictEqual(backgroundWorkOf(mirror), "pending");
+    assert.strictEqual(backgroundWorkOf(mirror)._tag, "pending");
+  });
+});
+
+// The engine's stop is acknowledged once queued; its interrupt can still fail
+// and leave the tool running (**Read** at `db51b67`, `Orchestrator.ts`,
+// L14183-14212). The engine's shell row lists it, from the stored input, for
+// as long as it runs and is not persistent.
+describe("workInShell", () => {
+  const settled = { activeRunId: null, status: "completed" } as const;
+  const listing = (taskIds: ReadonlyArray<string>) => ({
+    ...settled,
+    pendingBackgroundTasks: taskIds.map((taskId) => ({ taskId, kind: "background_task" as const })),
+  });
+
+  it("counts an undecided tool pending while the engine lists it", () => {
+    assert.strictEqual(workInShell(listing(["call-7"]), ["call-7"]), "pending");
+  });
+
+  it("settles an undecided tool the engine no longer lists, whatever else it lists", () => {
+    assert.strictEqual(workInShell(listing([]), ["call-7"]), "none");
+    assert.strictEqual(workInShell(listing(["pr-watch"]), ["call-7"]), "none");
+  });
+
+  // The shell lists nothing while its own run gate holds.
+  it("counts it pending when the shell cannot say", () => {
+    assert.strictEqual(workInShell(undefined, ["call-7"]), "pending");
+    assert.strictEqual(
+      workInShell({ ...listing([]), activeRunId: RunId.make("run-2") }, ["call-7"]),
+      "pending",
+    );
+    assert.strictEqual(workInShell({ ...listing([]), status: "queued" }, ["call-7"]), "pending");
+    assert.strictEqual(workInShell({ ...listing([]), status: "idle" }, ["call-7"]), "pending");
   });
 });
 

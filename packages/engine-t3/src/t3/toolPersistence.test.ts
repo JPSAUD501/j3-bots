@@ -9,95 +9,45 @@ import {
   type ItemRead,
   MAX_TOOL_READ_FAILURES,
   makeToolReads,
-  persistenceInItem,
-  resolvePersistence,
+  persistenceOfRead,
   type ToolPersistence,
   toolReadBackoff,
-  type WholeInput,
 } from "./toolPersistence.ts";
 
 /** An input as `getTurnItem` returns it past 256 KiB: its text, cut, with the engine's marker. */
 const cut = (text: string) => `${text}\n… output truncated for transport`;
+const tool = (input: unknown): ItemRead => ({ _tag: "tool", input });
 
-describe("persistenceInItem", () => {
+describe("persistenceOfRead", () => {
   it("reads the mark of an input the engine returned whole", () => {
-    assert.deepStrictEqual(
-      persistenceInItem({ persistent: true, script: "x".repeat(20_000) }),
-      Option.some("persistent"),
+    assert.strictEqual(
+      persistenceOfRead(tool({ persistent: true, script: "x".repeat(20_000) })),
+      "persistent",
     );
-    assert.deepStrictEqual(persistenceInItem("x".repeat(20_000)), Option.some("transient"));
+    assert.strictEqual(persistenceOfRead(tool("x".repeat(20_000))), "transient");
   });
 
   it("reads a cut input that opens no object as transient", () => {
-    assert.deepStrictEqual(
-      persistenceInItem(cut("run the dev server …")),
-      Option.some("transient"),
-    );
-    assert.deepStrictEqual(persistenceInItem(cut("[1,2,3")), Option.some("transient"));
+    assert.strictEqual(persistenceOfRead(tool(cut("run the dev server …"))), "transient");
+    assert.strictEqual(persistenceOfRead(tool(cut("[1,2,3"))), "transient");
   });
 
   // The cut text of an object and of a string that opens with an object's
-  // text are the same: only the transcript tells them apart.
-  it("leaves a cut input that opens an object to the transcript, whatever it says", () => {
-    assert.deepStrictEqual(persistenceInItem(cut('{"persistent":true,"script":"x')), Option.none());
-    assert.deepStrictEqual(
-      persistenceInItem(cut('{"script":"x","persistent":false')),
-      Option.none(),
+  // text are the same: the engine's projection of its pending work decides.
+  it("finds a cut input that opens an object undecidable, whatever it says", () => {
+    assert.strictEqual(
+      persistenceOfRead(tool(cut('{"persistent":true,"script":"x'))),
+      "undecidable",
+    );
+    assert.strictEqual(
+      persistenceOfRead(tool(cut('{"script":"x","persistent":false'))),
+      "undecidable",
     );
   });
-});
 
-describe("resolvePersistence", () => {
-  const item = (input: unknown) => Effect.succeed<ItemRead>({ _tag: "tool", input });
-  const whole = (input: WholeInput) => Effect.succeed(input);
-
-  it.effect("reads the transcript when the item's cut leaves the mark unknown", () =>
-    Effect.gen(function* () {
-      const hidden = item(cut('{"script":"x'));
-      const persistent = yield* resolvePersistence({
-        item: hidden,
-        whole: whole({ _tag: "found", input: { script: "x", persistent: true } }),
-      });
-      assert.strictEqual(persistent, "persistent");
-      const transient = yield* resolvePersistence({
-        item: hidden,
-        whole: whole({ _tag: "found", input: { script: "x" } }),
-      });
-      assert.strictEqual(transient, "transient");
-    }),
-  );
-
-  // A string is never persistent, though its cut text opens with a mark.
-  it.effect("finds a string input that reads as a persistent object transient", () =>
-    Effect.gen(function* () {
-      const text = `{"persistent":true,"script":"${"x".repeat(300_000)}"}`;
-      const persistence = yield* resolvePersistence({
-        item: item(cut(text.slice(0, 1_000))),
-        whole: whole({ _tag: "found", input: text }),
-      });
-      assert.strictEqual(persistence, "transient");
-    }),
-  );
-
-  it.effect("finds it undecidable when the transcript is past its export limit", () =>
-    Effect.gen(function* () {
-      const persistence = yield* resolvePersistence({
-        item: item(cut('{"script":"x')),
-        whole: whole({ _tag: "unavailable" }),
-      });
-      assert.strictEqual(persistence, "undecidable");
-    }),
-  );
-
-  it.effect("finds an item that is no longer a dynamic tool transient", () =>
-    Effect.gen(function* () {
-      const persistence = yield* resolvePersistence({
-        item: Effect.succeed<ItemRead>({ _tag: "not-a-tool" }),
-        whole: Effect.die("not read"),
-      });
-      assert.strictEqual(persistence, "transient");
-    }),
-  );
+  it("finds an item that is no longer a dynamic tool transient", () => {
+    assert.strictEqual(persistenceOfRead({ _tag: "not-a-tool" }), "transient");
+  });
 });
 
 describe("makeToolReads", () => {
@@ -149,8 +99,7 @@ describe("makeToolReads", () => {
     }),
   );
 
-  // A transcript read exports the whole thread: a second one at once could
-  // stall the engine's other readers.
+  // Each reader of the session shares the tool's read: one at a time.
   it.effect("starts no second read of a tool while one runs, whatever a stale view shows", () =>
     Effect.gen(function* () {
       const reads = makeToolReads();

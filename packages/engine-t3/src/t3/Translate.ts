@@ -11,6 +11,7 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -95,7 +96,7 @@ export interface Mirror {
   /**
    * Whether each live dynamic tool whose input the stream summarized runs on
    * purpose, as the adapter's reads of it settled it, by item id. See
-   * `isUncountedTool`.
+   * `toolWork`.
    */
   readonly toolPersistence: Map<string, ToolPersistence>;
 }
@@ -461,19 +462,19 @@ const isSummarizedInput = (input: unknown) =>
  * running on purpose never counts (**Read** at `db51b67`,
  * `orchestrationV2PendingBackgroundWork.ts`, `pendingBackgroundTurnItems`,
  * L242-258). For an input the stream summarized, the adapter's read of the
- * input tells (`toolPersistence.ts`): until a read settles it, the tool is
+ * item tells (`toolPersistence.ts`): until a read settles it, the tool is
  * pending, so a Stop waits on it and keeps sending fresh rounds while it does.
- * One no read can decide is `undecidable`: the engine's stop interrupts it
- * unless it is persistent, by its own rule over the stored input, so it is
- * settled only once the engine accepted a stop that covers it.
+ * One no read of the item can decide is `undecided`: the engine's own
+ * projection of its pending work, which reads the stored input, decides it
+ * (`workInShell`).
  */
-const toolWork = (mirror: Mirror, item: DynamicTool): BackgroundWork => {
+const toolWork = (mirror: Mirror, item: DynamicTool): "pending" | "undecided" | "none" => {
   if (!isSummarizedInput(item.input)) return hasPersistentFlag(item.input) ? "none" : "pending";
   switch (mirror.toolPersistence.get(item.id)) {
     case "persistent":
       return "none";
     case "undecidable":
-      return "undecidable";
+      return "undecided";
     case "transient":
     case undefined:
       return "pending";
@@ -518,6 +519,26 @@ const latestRun = (mirror: Mirror) =>
     .at(-1);
 
 /**
+ * The session's background work as the mirror shows it, by the rule the
+ * engine's stop counts it with: work it counts as pending, none, or nothing
+ * pending but live dynamic tools whose persistence no read of the item could
+ * decide (`toolWork`), by the engine's task id of each, which the engine's
+ * own projection decides (`workInShell`).
+ */
+export type MirroredWork =
+  | { readonly _tag: "pending" }
+  | { readonly _tag: "none" }
+  | { readonly _tag: "undecided"; readonly taskIds: ReadonlyArray<string> };
+
+/**
+ * The engine's id of the pending task a live item is listed as (**Read** at
+ * `db51b67`, `orchestrationV2PendingBackgroundWork.ts`,
+ * `nativeTaskIdFromTurnItem`, L234-240): the provider's id of the item, or the
+ * item's own.
+ */
+const taskIdOf = (item: Item) => item.nativeItemRef?.nativeId ?? item.id;
+
+/**
  * The session's background work as the engine's stop counts it: what
  * `thread.stop` interrupts in a session whose latest run has ended, an
  * interrupt that lands only after the stop answered. The engine's own rule
@@ -527,32 +548,70 @@ const latestRun = (mirror: Mirror) =>
  * applies it: with no run active and the latest run settled, a task the
  * active provider thread reports, or a live command, dynamic tool or subagent
  * item outside a rolled-back run. The rule is the session's: it does not ask
- * which run started the work. `undecidable` when nothing is pending but a
- * tool whose persistence no read could decide (`toolWork`): whoever decides
- * on it weighs whether the engine accepted a stop that covers it.
+ * which run started the work.
  */
-export const backgroundWorkOf = (mirror: Mirror): BackgroundWork => {
-  if ([...mirror.runs.values()].some((run) => ACTIVE_RUN.has(run.status))) return "none";
+export const backgroundWorkOf = (mirror: Mirror): MirroredWork => {
+  const none = { _tag: "none" } as const;
+  const pending = { _tag: "pending" } as const;
+  if ([...mirror.runs.values()].some((run) => ACTIVE_RUN.has(run.status))) return none;
   const latest = latestRun(mirror);
-  if (latest === undefined || !SETTLED_FOR_BACKGROUND.has(latest.status)) return "none";
+  if (latest === undefined || !SETTLED_FOR_BACKGROUND.has(latest.status)) return none;
   const active = mirror.thread?.activeProviderThreadId ?? null;
   const tasks = [...mirror.providerThreads.values()].some(
     (thread) =>
       (active === null || thread.id === active) && (thread.pendingBackgroundTasks?.length ?? 0) > 0,
   );
-  if (tasks) return "pending";
+  if (tasks) return pending;
   const rolledBack = new Set(
     [...mirror.runs.values()].flatMap((run) => (run.status === "rolled_back" ? [run.id] : [])),
   );
-  const counted = [...mirror.items.values()].flatMap((item) =>
-    BACKGROUND_ITEM.has(item.type) &&
-    isOrchestrationV2WorkActive(item.status) &&
-    (item.runId === null || !rolledBack.has(item.runId))
-      ? [item.type === "dynamic_tool" ? toolWork(mirror, item) : "pending"]
-      : [],
-  );
-  if (counted.includes("pending")) return "pending";
-  return counted.includes("undecidable") ? "undecidable" : "none";
+  const undecided: Array<string> = [];
+  for (const item of mirror.items.values()) {
+    if (
+      !BACKGROUND_ITEM.has(item.type) ||
+      !isOrchestrationV2WorkActive(item.status) ||
+      (item.runId !== null && rolledBack.has(item.runId))
+    ) {
+      continue;
+    }
+    const work = item.type === "dynamic_tool" ? toolWork(mirror, item) : "pending";
+    if (work === "pending") return pending;
+    if (work === "undecided") undecided.push(taskIdOf(item));
+  }
+  return undecided.length === 0 ? none : { _tag: "undecided", taskIds: undecided };
+};
+
+/**
+ * Whether tools the mirror could not decide (`MirroredWork`) are pending, by
+ * the engine's own projection of the thread's pending work: the shell row
+ * `getThreadFamily` returns, whose `pendingBackgroundTasks` the engine derives
+ * by the same rule over the stored items, inputs whole (**Read** at
+ * `db51b67`, `ProjectionStore.ts:9050-9064`, from
+ * `selectShellPendingTurnItemRows` at `:8609-8623`;
+ * `orchestrationV2PendingBackgroundWork.ts:243-258`). A tool it lists is
+ * pending; one it does not list ended, or runs on purpose. The shell lists
+ * nothing while its own run gate holds (`derivePendingBackgroundWork`,
+ * L270-285): a run active, or a latest run, which it picks by its own rule
+ * (`ProjectionStore.ts:8237-8264`), that has not settled. It cannot say then,
+ * and neither can a shell that is missing: the tools count as pending, and a
+ * Stop waits on them, sending fresh rounds, until a later read can say.
+ */
+export const workInShell = (
+  shell:
+    | Pick<OrchestrationV2ThreadShell, "activeRunId" | "status" | "pendingBackgroundTasks">
+    | undefined,
+  taskIds: ReadonlyArray<string>,
+): BackgroundWork => {
+  if (
+    shell === undefined ||
+    shell.activeRunId !== null ||
+    shell.status === "idle" ||
+    !SETTLED_FOR_BACKGROUND.has(shell.status)
+  ) {
+    return "pending";
+  }
+  const listed = new Set((shell.pendingBackgroundTasks ?? []).map((task) => task.taskId));
+  return taskIds.some((taskId) => listed.has(taskId)) ? "pending" : "none";
 };
 
 /** A run that executed, as the engine counts it: neither queued nor cancelled before it started. */
@@ -1628,9 +1687,9 @@ export const runnableTurns = (mirror: Mirror): ReadonlyArray<TurnId> =>
  * Whether nothing a Stop targets can still run in the session: no run that
  * has not ended, other than those waiting in the queue, which a Stop cancels
  * one by one; no background work the engine counts as pending, and none
- * it may count, a tool whose persistence no read could decide: the stop was
- * refused, so nothing covers it; no continuation the engine will start on its
- * own. A refusal of a Stop's command is moot only then.
+ * it may count, a tool whose persistence no read of the item could decide;
+ * no continuation the engine will start on its own. A refusal of a Stop's
+ * command is moot only then.
  */
 export const nothingToStop = (mirror: Mirror, now: DateTime.Utc): boolean => {
   const waiting = new Set(queuedRuns(mirror).map((run) => run.id));
@@ -1639,7 +1698,7 @@ export const nothingToStop = (mirror: Mirror, now: DateTime.Utc): boolean => {
       (run) =>
         (!isEnded(run) && !waiting.has(run.id)) ||
         (isEnded(run) && continuationOf(mirror, run, now) !== null),
-    ) && backgroundWorkOf(mirror) === "none"
+    ) && backgroundWorkOf(mirror)._tag === "none"
   );
 };
 
