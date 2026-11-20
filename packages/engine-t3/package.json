@@ -20,7 +20,9 @@
   },
   "dependencies": {
     "@j3-bots/contracts": "workspace:*",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "@t3tools/contracts": "workspace:*"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
