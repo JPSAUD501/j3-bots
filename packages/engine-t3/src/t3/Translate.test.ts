@@ -178,6 +178,18 @@ describe("a start the engine queues behind another turn", () => {
     assert.deepStrictEqual(diff(mirror, view, at), []);
     assert.deepStrictEqual(dispositionOf(mirror, key), Option.some({ _tag: "queued", turnId }));
   });
+
+  // Stop cancels the queued start between the engine's reply and the read
+  // that follows it: the run is cancelled, with no queue position and no item.
+  it("stays queued when the start was cancelled before it left the queue", () => {
+    const mirror = emptyMirror();
+    mirror.runs.set(running.id, running);
+    mirror.runs.set(
+      queued.id,
+      run({ ...queued, status: "cancelled", queuePosition: null, completedAt: at }),
+    );
+    assert.deepStrictEqual(dispositionOf(mirror, key), Option.some({ _tag: "queued", turnId }));
+  });
 });
 
 describe("backgroundWorkPending", () => {

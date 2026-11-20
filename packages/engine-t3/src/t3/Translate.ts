@@ -230,14 +230,17 @@ const openingMessageOf = (mirror: Mirror, run: Run): string | undefined => {
  * at `db51b67`, `Orchestrator.ts`: the queued run at L8012-8060, the start at
  * L8451-8461, the promotion at L3035-3097). A follow-up the engine queues for
  * an unread steer reuses the steer's item, marked `queued_turn` at once
- * (L8192-8215).
+ * (L8192-8215). A run cancelled while it waited keeps neither mark: the engine
+ * clears its queue position (L1216-1231), and its message was never recorded,
+ * which a start the engine begins at once always is, in the same command
+ * (L8555-8690).
  */
 const wasQueued = (mirror: Mirror, run: Run) => {
   if (run.status === "queued") return true;
+  const messages = userMessagesOf(mirror, run);
+  if (run.status === "cancelled" && !hasStarted(run) && messages.length === 0) return true;
   const opening = openingMessageOf(mirror, run);
-  return userMessagesOf(mirror, run).some(
-    (item) => item.messageId === opening && item.inputIntent === "queued_turn",
-  );
+  return messages.some((item) => item.messageId === opening && item.inputIntent === "queued_turn");
 };
 
 /**
