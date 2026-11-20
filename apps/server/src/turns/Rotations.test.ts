@@ -693,6 +693,47 @@ it.effect("ends a turn still open in a replaced session once the engine archives
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect(
+  "applies no event of a replaced session once the engine's archive of it is recorded",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const sql = yield* SqlClient.SqlClient;
+      const observer = yield* Observer;
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      const old = yield* mainSessionId(bot.id);
+      yield* reachRunLimit(old);
+
+      // The session is retired and still followed, its replacement opening,
+      // when the archive's settling commits and the engine starts a turn there
+      // that the stream still delivers.
+      const opening = yield* control.holdNext("configureSession");
+      const pass = yield* (yield* Rotations).rotateDue.pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* opening.entered;
+      yield* sql`
+      UPDATE sessions SET engine_retired_at = ${DateTime.formatIso(yield* DateTime.now)}
+      WHERE id = ${old}
+    `;
+      yield* control.startEngineTurn(session);
+      const openTurns = sql<{ readonly n: number }>`
+      SELECT COUNT(*) AS n FROM turns WHERE session_id = ${old} AND finished_at IS NULL
+    `.pipe(
+        Effect.orDie,
+        Effect.map(([row]) => row?.n ?? 0),
+      );
+      // Applied, or the stream let go of without applying it.
+      yield* until(
+        Effect.zipWith(openTurns, observer.ready(old), (open, ready) => open > 0 || !ready),
+      );
+      assert.strictEqual(yield* openTurns, 0);
+      yield* opening.release;
+      yield* Fiber.join(pass);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("reports each turn with its bot and provider, newest first", () =>
   Effect.gen(function* () {
     const ana = yield* createBot("Ana");

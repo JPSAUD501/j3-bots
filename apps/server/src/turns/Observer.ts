@@ -167,7 +167,8 @@ const changesWork = (event: SessionEvent): boolean => {
 };
 
 const SessionNow = Schema.Struct({
-  lost: Schema.BooleanFromBit,
+  /** Lost, or archived by the engine once J3 Bots retired it: nothing of it is applied. */
+  ended: Schema.BooleanFromBit,
   busy: Schema.BooleanFromBit,
 });
 
@@ -342,7 +343,8 @@ export const layer = Layer.effect(
       Request: SessionRowId,
       Result: SessionNow,
       execute: (sessionId) => sql`
-        SELECT lost_at IS NOT NULL AS lost, busy_until IS NOT NULL AS busy
+        SELECT lost_at IS NOT NULL OR engine_retired_at IS NOT NULL AS ended,
+          busy_until IS NOT NULL AS busy
         FROM sessions WHERE id = ${sessionId}
       `,
     });
@@ -1168,8 +1170,9 @@ export const layer = Layer.effect(
 
     /**
      * One event and its cursor, in one transaction, unless the session was
-     * recorded lost meanwhile: then nothing more of its stream is applied, and
-     * this says to stop reading it. Once an event commits the session's state
+     * recorded lost, or archived, meanwhile: what is open there was settled
+     * then, so nothing more of its stream is applied, and this says to stop
+     * reading it. Once an event commits the session's state
      * is known from here: it is marked ready before the change is published,
      * so whoever sees the change finds the session ready. A busy refusal's
      * deadline ends with it. Only then are the workers nudged, and only when
@@ -1188,7 +1191,7 @@ export const layer = Layer.effect(
       const applied = yield* transaction(
         Effect.gen(function* () {
           const now = yield* sessionNow(session.id);
-          if (now.lost) return null;
+          if (now.ended) return null;
           yield* applyEvent(session, follow, event);
           yield* sql`
             UPDATE sessions SET events_cursor = ${event.cursor}, busy_until = NULL,
@@ -1372,8 +1375,8 @@ export const layer = Layer.effect(
       if (session.events_cursor !== null) yield* Deferred.succeed(follow.caughtUp, undefined);
       yield* Stream.fromPull(Effect.succeed(pull)).pipe(
         Stream.interruptWhen(Deferred.await(follow.closed)),
-        // Read until the session is recorded lost: what is buffered after
-        // that is never applied.
+        // Read until the session is recorded lost or archived: what is
+        // buffered after that is never applied.
         Stream.runForEachWhile((event) => apply(session, follow, event)),
         Effect.onExit((exit) =>
           ended(session, follow, exit).pipe(Effect.ensuring(Scope.close(streamScope, Exit.void))),
