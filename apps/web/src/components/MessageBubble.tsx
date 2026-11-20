@@ -44,7 +44,12 @@ const statusKey = (status: MessageStatus, submitting: boolean): KeyWith | null =
     case "sending":
       return "message.sending";
     case "not-sent":
-      return notSentKeys[status.failure._tag];
+      // Too long for the bot's engine is the one refusal the client cannot foresee and the operator can act on.
+      return status.failure._tag === "refused" &&
+        status.failure.error._tag === "Invalid" &&
+        status.failure.error.reason === "message-length"
+        ? "message.notSent.tooLong"
+        : notSentKeys[status.failure._tag];
     case "unrecorded":
       return "message.unrecorded";
     case "queued":

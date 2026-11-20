@@ -311,8 +311,18 @@ function LiveShell({ children }: { children: ReactNode }) {
   const goToBot = (botId: BotId) => navigate({ to: "/bots/$botId", params: { botId } });
 
   const intents: ShellIntents = {
+    // An answer too long to reach the bot leaves the card open, with what was typed, to shorten.
     answerQuestion: (entryId, answers) =>
-      void j3.answerCard(entryId, { _tag: "question", answers }),
+      void j3.answerCard(entryId, { _tag: "question", answers }).then((result) => {
+        if (
+          result._tag === "failed" &&
+          result.failure._tag === "refused" &&
+          result.failure.error._tag === "Invalid" &&
+          result.failure.error.reason === "answer-length"
+        ) {
+          say(t("question.tooLong"));
+        }
+      }),
     dismissQuestion: (entryId) => void j3.answerCard(entryId, { _tag: "dismiss" }),
     decideApproval: (entryId, decision) =>
       void j3.answerCard(entryId, { _tag: "approval", decision }),

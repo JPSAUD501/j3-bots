@@ -84,6 +84,7 @@ export const en = {
   "question.answered": "Answered",
   "question.dismissed": "Dismissed. The bot reads this as a no.",
   "question.expired": "This question expired before it was answered.",
+  "question.tooLong": "Your answer is too long to reach the bot. Shorten it and send it again.",
 
   "secret.title": "Credential",
   "secret.pending": "Needs a credential",
@@ -288,6 +289,7 @@ export const en = {
 
   "message.sending": "Sending…",
   "message.notSent.refused": "Not sent: the server refused it",
+  "message.notSent.tooLong": "Not sent: too long for this bot’s engine to take in one message",
   "message.notSent.notPaired": "Not sent: this device is signed out",
   "message.notSent.unexpected": "Not sent: something went wrong on the server",
   "message.unrecorded": "This device couldn’t save the server’s answer yet.",

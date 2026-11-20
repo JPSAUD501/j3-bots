@@ -82,6 +82,7 @@ export const ptBR: Catalog = {
   "question.answered": "Respondida",
   "question.dismissed": "Dispensada. O bot entende isso como um não.",
   "question.expired": "Esta pergunta expirou antes de ser respondida.",
+  "question.tooLong": "Sua resposta é longa demais para chegar ao bot. Encurte e envie de novo.",
 
   "secret.title": "Credencial",
   "secret.pending": "Precisa de uma credencial",
@@ -289,6 +290,8 @@ export const ptBR: Catalog = {
 
   "message.sending": "Enviando…",
   "message.notSent.refused": "Não enviada: o servidor recusou",
+  "message.notSent.tooLong":
+    "Não enviada: longa demais para o motor deste bot receber numa mensagem só",
   "message.notSent.notPaired": "Não enviada: este dispositivo saiu da conta",
   "message.notSent.unexpected": "Não enviada: algo deu errado no servidor",
   "message.unrecorded": "Este dispositivo ainda não conseguiu guardar a resposta do servidor.",
