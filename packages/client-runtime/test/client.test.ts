@@ -1356,6 +1356,75 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
     }),
   );
 
+  it.effect("offers the newer of two texts another tab displaced", () =>
+    Effect.gen(function* () {
+      const device = TestPlatform.makeDevice();
+      const first = yield* Effect.gen(function* () {
+        yield* pairAndConnect;
+        const target: EntryTarget = { _tag: "conversation", botId: yield* createBot("Twice") };
+        yield* (yield* Drafts).setText(target, "shared");
+        yield* whenStored(device.storage, "drafts", targetKey(target), present);
+        return { target, credential: yield* savedCredential };
+      }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
+      const key = targetKey(first.target);
+
+      yield* Effect.gen(function* () {
+        const one = yield* Drafts;
+        yield* Effect.gen(function* () {
+          const two = yield* Drafts;
+          yield* one.setText(first.target, "from one");
+          yield* whenStored(device.storage, "drafts", key, holds("from one"));
+          yield* two.setText(first.target, "older, from two");
+          yield* waitFor(two.state, (state) => state.get(key)?.text === "from one");
+
+          yield* one.setText(first.target, "from one again");
+          yield* whenStored(device.storage, "drafts", key, holds("from one again"));
+          yield* two.setText(first.target, "newer, from two");
+          yield* waitFor(two.state, (state) => state.get(key)?.text === "from one again");
+
+          yield* two.restore(first.target);
+          yield* whenStored(device.storage, "drafts", key, holds("newer, from two"));
+        }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+      }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+    }),
+  );
+
+  it.effect("offers displaced text until it is restored or dismissed, not only when told", () =>
+    Effect.gen(function* () {
+      const device = TestPlatform.makeDevice();
+      const first = yield* Effect.gen(function* () {
+        yield* pairAndConnect;
+        const target: EntryTarget = { _tag: "conversation", botId: yield* createBot("Held") };
+        yield* (yield* Drafts).setText(target, "shared");
+        yield* whenStored(device.storage, "drafts", targetKey(target), present);
+        return { target, credential: yield* savedCredential };
+      }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
+      const key = targetKey(first.target);
+
+      yield* Effect.gen(function* () {
+        const one = yield* Drafts;
+        yield* Effect.gen(function* () {
+          const two = yield* Drafts;
+          yield* one.setText(first.target, "from one");
+          yield* whenStored(device.storage, "drafts", key, holds("from one"));
+          yield* two.setText(first.target, "from two");
+          yield* waitFor(two.state, (state) => state.get(key)?.text === "from one");
+          assert.isTrue(two.offers.get().has(key));
+
+          // Long after the notice, and after this tab writes something else, it is still on offer.
+          yield* two.setText(first.target, "from one, and two goes on");
+          yield* whenStored(device.storage, "drafts", key, holds("two goes on"));
+          assert.isTrue(two.offers.get().has(key));
+
+          yield* two.dismiss(first.target);
+          assert.isFalse(two.offers.get().has(key));
+          yield* two.restore(first.target);
+          assert.strictEqual(two.state.get().get(key)?.text, "from one, and two goes on");
+        }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+      }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+    }),
+  );
+
   it.effect(
     "keeps a draft longer than a message can hold through a reload, and does not send it",
     () =>

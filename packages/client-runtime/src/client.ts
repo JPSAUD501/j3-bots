@@ -180,8 +180,15 @@ export interface J3Client {
   readonly onDraftChangedElsewhere: (
     listener: (change: Drafts.DraftChangedElsewhere) => void,
   ) => () => void;
+  /**
+   * The drafts, by `targetKey`, whose text another window's change displaced:
+   * `restoreDraft` puts it back, `dismissDraftOffer` lets it go.
+   */
+  readonly draftOffers: Readable<ReadonlySet<string>>;
   /** Puts back the text this window held, never kept, when another window changed the draft. */
   readonly restoreDraft: (target: EntryTarget) => void;
+  /** Lets go of the text on offer for `restoreDraft`. */
+  readonly dismissDraftOffer: (target: EntryTarget) => void;
   /** A file's bytes, with this device's credential. */
   readonly download: (attachment: Attachment) => Promise<DownloadResult>;
 
@@ -352,7 +359,9 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     detachFile: (target, key) => fire(services.drafts.detach(target, key)),
     sendDraft: (target) => run.promise(services.drafts.send(target)),
     onDraftChangedElsewhere: (listener) => listen(services.drafts.changedElsewhere, listener),
+    draftOffers: services.drafts.offers,
     restoreDraft: (target) => fire(services.drafts.restore(target)),
+    dismissDraftOffer: (target) => fire(services.drafts.dismiss(target)),
     download: (attachment) =>
       run.promise(
         services.files.download(attachment).pipe(

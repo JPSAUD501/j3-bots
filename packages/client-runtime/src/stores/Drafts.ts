@@ -72,8 +72,8 @@ export interface DraftChangedElsewhere {
   /**
    * This window holds text the device never kept, which `restore` puts back:
    * from this change, or from an earlier one the operator has not restored
-   * yet. Text the device kept, the other window had in front of it when it
-   * sent or changed the draft, so there is nothing to put back.
+   * or dismissed. Text the device kept, the other window had in front of it
+   * when it sent or changed the draft, so there is nothing to put back.
    */
   readonly restorable: boolean;
 }
@@ -155,13 +155,11 @@ const shown = (kept: Kept): Draft => ({
  * decides.
  *
  * Text another window's change displaced stays on offer, one text per draft,
- * until the operator restores it or sends the draft, however many changes
- * come after. A later change that displaces no new text keeps the offer. One
- * that displaces new text replaces the offer only when nothing is lost by it:
- * the new text holds the offered one, or the device keeps it. Otherwise both
- * were never kept, and the offer keeps the older text, which the operator was
- * already shown and has not answered; the newer was typed over the draft the
- * other window had in front of it.
+ * until the operator restores it, dismisses it or sends the draft, however
+ * many changes come after. A later change that displaces no new text keeps
+ * the offer. One that displaces new text replaces it: that is the text the
+ * operator last saw in this window. When the device never kept the older
+ * text either, it is lost, the lesser loss while the offer stays in view.
  *
  * Every draft belongs to the pairing that wrote it. When the pairing a window
  * follows ends, the window drops its drafts and erases the device's records
@@ -202,10 +200,18 @@ export class Drafts extends Context.Service<
      */
     readonly changedElsewhere: Stream.Stream<DraftChangedElsewhere>;
     /**
+     * The drafts, by `targetKey`, whose text another window's change displaced
+     * and `restore` can put back. An offer stays until it is restored or
+     * dismissed, or the draft is sent.
+     */
+    readonly offers: Readable<ReadonlySet<string>>;
+    /**
      * Puts back the text this window held when another window changed the
      * draft, as a new change to the draft as it is now.
      */
     readonly restore: (target: EntryTarget) => Effect.Effect<void>;
+    /** Lets go of the text on offer for `restore`. */
+    readonly dismiss: (target: EntryTarget) => Effect.Effect<void>;
     /**
      * Stops every upload and drops every draft of this pairing, here and on
      * the device. It happens by itself whenever the pairing ends.
@@ -248,6 +254,12 @@ export const layer = Layer.effect(
     // Text on offer for `restore`, by key: text this window held, never kept,
     // when another window changed its draft.
     const displaced = new Map<string, string>();
+    const offers = new Cell<ReadonlySet<string>>(new Set());
+    const offer = (key: string, text: string | null) => {
+      if (text === null) displaced.delete(key);
+      else displaced.set(key, text);
+      offers.set(new Set(displaced.keys()));
+    };
     const changes = yield* PubSub.unbounded<DraftChangedElsewhere>();
     let nextKey = 0;
 
@@ -288,13 +300,9 @@ export const layer = Layer.effect(
         const held = state.get().get(key) ?? empty;
         const read = keptIn(known.get(key)) ?? keptOf(empty);
         const stored = shown(keptIn(value) ?? keptOf(empty));
-        const fresh = held.text !== "" && held.text !== stored.text && held.text !== read.text;
-        const offered = displaced.get(key);
-        if (
-          fresh &&
-          (offered === undefined || held.text.includes(offered) || stored.text.includes(offered))
-        ) {
-          displaced.set(key, held.text);
+        // Text the device never kept, which this window shows no more.
+        if (held.text !== "" && held.text !== stored.text && held.text !== read.text) {
+          offer(key, held.text);
         }
         const restorable = displaced.has(key);
         if (value === undefined) known.delete(key);
@@ -324,12 +332,12 @@ export const layer = Layer.effect(
             }),
           ],
         };
-        show(key, draft);
+        // What is left to write is settled before the draft shows: whoever sees
+        // it may change it at once.
         if (sameKept(keptOf(draft), keptOf(stored))) unwritten.delete(key);
-        else {
-          unwritten.set(key, target);
-          Queue.offerUnsafe(wake, void 0);
-        }
+        else unwritten.set(key, target);
+        show(key, draft);
+        if (unwritten.has(key)) Queue.offerUnsafe(wake, void 0);
         const stopped = [...refused.keys()].flatMap((fileKey) => {
           const upload = uploads.get(fileKey);
           uploads.delete(fileKey);
@@ -426,10 +434,13 @@ export const layer = Layer.effect(
           const key = targetKey(target);
           const text = displaced.get(key);
           if (text === undefined || state.get().get(key)?.sending === true) return;
-          displaced.delete(key);
+          offer(key, null);
           changeNow(target, withText(text));
         }),
       );
+
+    const dismiss = (target: EntryTarget) =>
+      locked(Effect.sync(() => offer(targetKey(target), null)));
 
     const attach = Effect.fn("Drafts.attach")(function* (
       target: EntryTarget,
@@ -560,7 +571,7 @@ export const layer = Layer.effect(
           switch (kept) {
             case "sent":
               unwritten.delete(key);
-              displaced.delete(key);
+              offer(key, null);
               known.set(key, handedOver);
               show(key, empty);
               break;
@@ -584,6 +595,7 @@ export const layer = Layer.effect(
       unwritten.clear();
       known.clear();
       displaced.clear();
+      offers.set(new Set());
       state.set(new Map());
     });
 
@@ -646,7 +658,9 @@ export const layer = Layer.effect(
       detach,
       send,
       changedElsewhere: Stream.fromPubSub(changes),
+      offers,
       restore,
+      dismiss,
       discardAll,
     });
   }),
