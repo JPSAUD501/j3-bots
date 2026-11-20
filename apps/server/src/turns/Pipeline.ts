@@ -519,23 +519,25 @@ export const layer = Layer.effect(
     });
 
     // Rows of one table are ordered by `rowid`, the order they were written in:
-    // wakes written in one transaction share their time.
+    // wakes written in one transaction share their time. A routine's wake is
+    // never planned into the main session: it waits for a side session of its
+    // own (`docs/architecture/server.md`, Sessions).
     const pendingOf = SqlSchema.findAll({
       Request: Schema.String,
       Result: WakeRow,
       execute: (botId) => sql`
         SELECT ${sql.literal(WAKE_COLUMNS)} FROM wakes
-        WHERE bot_id = ${botId} AND status = 'pending'
+        WHERE bot_id = ${botId} AND status = 'pending' AND kind <> 'routine'
         ORDER BY priority, rowid
       `,
     });
 
-    /** Each bot with a pending wake, the one with the most urgent wake first. */
+    /** Each bot with a pending wake for its main session, the one with the most urgent wake first. */
     const waitingBots = SqlSchema.findAll({
       Request: Schema.Void,
       Result: WaitingBot,
       execute: () => sql`
-        SELECT bot_id FROM wakes WHERE status = 'pending'
+        SELECT bot_id FROM wakes WHERE status = 'pending' AND kind <> 'routine'
         GROUP BY bot_id ORDER BY MIN(priority), MIN(rowid)
       `,
     })(undefined).pipe(Effect.orDie);

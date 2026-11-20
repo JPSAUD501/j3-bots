@@ -33,12 +33,14 @@ export interface NewWake {
   readonly retryOf: string | null;
   /**
    * What led to it: the operator, whose word a Stop never cancels ahead of
-   * time, or the bot's own work that began with the dispatch written at
+   * time; a routine's trigger, which carries the operator's saved word the
+   * same way; or the bot's own work that began with the dispatch written at
    * `seq`, which a Stop covering it ended (`stopTargets.covers`) and an
    * archived or deleted room left with nowhere to go.
    */
   readonly cause:
     | { readonly _tag: "operator" }
+    | { readonly _tag: "routine" }
     | { readonly _tag: "work"; readonly seq: DispatchSeq };
 }
 
@@ -81,12 +83,13 @@ export const layer = Layer.effect(
         const { audience, roomId } = audienceColumns(wake.audience);
         yield* sql`
           INSERT INTO wakes (
-            id, bot_id, kind, priority, audience, audience_room_id, hops, payload_json, status,
-            source_entry_id, retry_of, created_at, updated_at
+            id, bot_id, kind, priority, audience, audience_room_id, routine_id, hops,
+            payload_json, status, source_entry_id, retry_of, created_at, updated_at
           ) VALUES (
             ${id}, ${wake.botId}, ${wake.kind}, ${PRIORITY[wake.kind]}, ${audience}, ${roomId},
-            ${wake.hops}, ${yield* encodePayload(wake.payload)}, 'pending',
-            ${wake.sourceEntryId}, ${wake.retryOf}, ${at}, ${at}
+            ${wake.payload._tag === "routine" ? wake.payload.routineId : null}, ${wake.hops},
+            ${yield* encodePayload(wake.payload)}, 'pending', ${wake.sourceEntryId},
+            ${wake.retryOf}, ${at}, ${at}
           )
         `;
         written.push(id);

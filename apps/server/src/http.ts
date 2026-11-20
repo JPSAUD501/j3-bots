@@ -27,6 +27,7 @@ import { Attachments } from "./attachments/Attachments.ts";
 import { DeviceAuth } from "./auth/DeviceAuth.ts";
 import { readBody, readText } from "./body.ts";
 import { Devices } from "./devices/Devices.ts";
+import * as Webhook from "./routines/webhook.ts";
 import * as Rpc from "./rpc/handlers.ts";
 import * as RpcSocket from "./RpcSocket.ts";
 import * as WebClient from "./web/WebClient.ts";
@@ -165,7 +166,15 @@ const download = HttpRouter.add(
 );
 
 /** The routes outside the RPC socket. */
-export const routes = Layer.mergeAll(health, serverInfo, socketTicket, pair, upload, download);
+export const routes = Layer.mergeAll(
+  health,
+  serverInfo,
+  socketTicket,
+  pair,
+  upload,
+  download,
+  Webhook.route,
+);
 
 /** Every route, the RPC socket and the web client: what clients are served. */
 export const app = Layer.mergeAll(

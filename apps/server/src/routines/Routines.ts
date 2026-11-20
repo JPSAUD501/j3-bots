@@ -5,7 +5,6 @@ import {
   type CommandError,
   type CommandId,
   EntryId,
-  Invalid,
   NonNegativeInt,
   NotFound,
   Routine,
@@ -16,15 +15,14 @@ import {
   type Sequence,
 } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
-import * as Cron from "effect/Cron";
 import * as DateTime from "effect/DateTime";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as Base64Url from "effect/encoding/Base64Url";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { ServerConfig } from "../config.ts";
@@ -34,15 +32,14 @@ import { ChangeLog, scopeKey } from "../persistence/ChangeLog.ts";
 import { Flag, json, Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
+import { Ledger } from "../turns/Ledger.ts";
+import { RoutineRuns } from "./RoutineRuns.ts";
+import { plannedRun } from "./schedule.ts";
+import { Scheduler } from "./Scheduler.ts";
+import { WEBHOOK_PATH } from "./webhook.ts";
 
-/** The least time between two runs of a schedule (`docs/architecture/server.md`, Routines). */
-const MIN_SPACING = Duration.minutes(5);
-
-/** How many upcoming runs of a schedule are checked against `MIN_SPACING`: over a week of them. */
-const SPACING_CHECKS = 2_100;
-
-/** Where a webhook trigger is called, with its secret after it. */
-const WEBHOOK_PATH = "/hooks";
+/** The bytes of a webhook's secret: 256 bits, drawn once per webhook trigger. */
+const SECRET_BYTES = 32;
 
 const RoutineRow = Schema.Struct({
   id: RoutineId,
@@ -98,51 +95,10 @@ export interface RoutineChanges {
 }
 
 /**
- * The next time a trigger fires after `now`, or `None` when it never will
- * again. Fails with `Invalid` for a schedule that does not parse, names an
- * unknown time zone, or runs more often than every five minutes.
- */
-const nextRun = (
-  trigger: RoutineTrigger,
-  now: DateTime.Utc,
-): Effect.Effect<Option.Option<DateTime.Utc>, Invalid> => {
-  switch (trigger._tag) {
-    case "webhook":
-      return Effect.succeedNone;
-    case "once":
-      return Effect.succeed(
-        DateTime.isGreaterThan(trigger.at, now) ? Option.some(trigger.at) : Option.none(),
-      );
-    case "schedule": {
-      if (Option.isNone(DateTime.zoneMakeNamed(trigger.timeZone))) {
-        return Effect.fail(new Invalid({ reason: "time-zone" }));
-      }
-      const parsed = Cron.parse(trigger.cron, trigger.timeZone);
-      if (Result.isFailure(parsed)) return Effect.fail(new Invalid({ reason: "schedule" }));
-      let previous: DateTime.Utc | undefined;
-      let first: DateTime.Utc | undefined;
-      let checked = 0;
-      for (const date of Cron.sequence(parsed.success, now)) {
-        const at = DateTime.fromDateUnsafe(date);
-        if (previous !== undefined) {
-          if (Duration.isLessThan(DateTime.distance(previous, at), MIN_SPACING)) {
-            return Effect.fail(new Invalid({ reason: "schedule" }));
-          }
-        }
-        first ??= at;
-        previous = at;
-        if (++checked >= SPACING_CHECKS) break;
-      }
-      return Effect.succeed(Option.fromNullishOr(first));
-    }
-  }
-};
-
-/**
  * Routines, as the operator manages them. Running them is the scheduler's
- * (part of the wake pipeline): it reads `next_run_at` and records runs. Each
- * change made here is recorded in the routines' change history and shown in
- * the bot's conversation as a routine-change entry.
+ * (`Scheduler.ts`): it reads `next_run_at` and records runs. Each change made
+ * here is recorded in the routines' change history and shown in the bot's
+ * conversation as a routine-change entry.
  */
 export class Routines extends Context.Service<
   Routines,
@@ -173,6 +129,11 @@ export class Routines extends Context.Service<
       readonly routineId: RoutineId;
       readonly author: Author;
     }) => Effect.Effect<void, CommandError>;
+    /** Runs the routine now, as a test, also a paused one. Skipped if a run is still going. */
+    readonly run: (input: {
+      readonly commandId: CommandId;
+      readonly routineId: RoutineId;
+    }) => Effect.Effect<void, CommandError>;
     /** Resumes with `after` as `Entries.subscribe` does. */
     readonly subscribe: (
       botId: BotId,
@@ -191,6 +152,13 @@ export const layer = Layer.effect(
     const entries = yield* Entries;
     const receipts = yield* CommandReceipts;
     const ids = yield* Ids;
+    const random = yield* SecureRandom.SecureRandom;
+    const ledger = yield* Ledger;
+    const routineRuns = yield* RoutineRuns;
+    const scheduler = yield* Scheduler;
+
+    /** A new webhook secret, which goes in the address after the routine's id. */
+    const newSecret = Effect.map(random.randomBytes(SECRET_BYTES), Base64Url.encode);
 
     const origin = `${config.tls._tag === "Some" ? "https" : "http"}://${
       config.host.includes(":") ? `[${config.host}]` : config.host
@@ -267,7 +235,9 @@ export const layer = Layer.effect(
         trigger: row.trigger_json,
         enabled: row.enabled,
         webhookUrl:
-          row.webhook_secret === null ? null : `${origin}${WEBHOOK_PATH}/${row.webhook_secret}`,
+          row.webhook_secret === null
+            ? null
+            : `${origin}${WEBHOOK_PATH}/${row.id}/${row.webhook_secret}`,
         nextRunAt: row.next_run_at,
         lastRun: last === undefined ? null : yield* toRun(last),
         runCount: row.run_count,
@@ -331,9 +301,9 @@ export const layer = Layer.effect(
         apply: Effect.gen(function* () {
           yield* requireBot(input.botId);
           const now = yield* DateTime.now;
-          const next = yield* nextRun(input.draft.trigger, now);
+          const next = yield* plannedRun(input.draft.trigger, now);
           const id = RoutineId.make(yield* ids.make("routine"));
-          const secret = input.draft.trigger._tag === "webhook" ? yield* ids.make("hook") : null;
+          const secret = input.draft.trigger._tag === "webhook" ? yield* newSecret : null;
           const at = timeText(now);
           yield* sql`
             INSERT INTO routines (
@@ -347,6 +317,7 @@ export const layer = Layer.effect(
           `;
           const routine = yield* find(id);
           yield* announce(routine, "created", input.author);
+          yield* scheduler.nudge;
           return routine;
         }).pipe(Effect.catchTag(["SqlError", "SchemaError"], Effect.die)),
       });
@@ -371,10 +342,17 @@ export const layer = Layer.effect(
           const trigger = change.trigger ?? before.trigger;
           const enabled = change.enabled ?? before.enabled;
           const now = yield* DateTime.now;
-          const next = enabled ? yield* nextRun(trigger, now) : Option.none();
+          // The next run moves only with the trigger or the switch: an edit of
+          // the name or the instruction leaves a run that is due to happen.
+          const rescheduled = change.trigger !== undefined || enabled !== before.enabled;
+          const next = !enabled
+            ? Option.none()
+            : rescheduled
+              ? yield* plannedRun(trigger, now)
+              : Option.fromNullishOr(row.next_run_at);
           // A webhook keeps its address while it stays a webhook.
           const secret =
-            trigger._tag === "webhook" ? (row.webhook_secret ?? (yield* ids.make("hook"))) : null;
+            trigger._tag === "webhook" ? (row.webhook_secret ?? (yield* newSecret)) : null;
           yield* sql`
             UPDATE routines SET ${sql.update({
               name: change.name ?? before.name,
@@ -395,6 +373,7 @@ export const layer = Layer.effect(
                 : "paused"
               : "updated";
           yield* announce(routine, kind, input.author);
+          yield* scheduler.nudge;
           return routine;
         }).pipe(Effect.catchTag(["SqlError", "SchemaError"], Effect.die)),
       });
@@ -412,9 +391,27 @@ export const layer = Layer.effect(
         result: Schema.Void,
         apply: Effect.gen(function* () {
           const routine = yield* find(input.routineId);
+          // A run still waiting for its session has nothing left to run.
+          const waiting = yield* sql<{ readonly id: string }>`
+            SELECT id FROM wakes WHERE routine_id = ${routine.id} AND status = 'pending'
+          `.pipe(Effect.orDie);
+          yield* ledger.cancelWakes(waiting.map((wake) => wake.id));
           yield* sql`DELETE FROM routines WHERE id = ${routine.id}`.pipe(Effect.orDie);
           yield* announce(routine, "deleted", input.author);
         }),
+      });
+    });
+
+    const run = Effect.fn("Routines.run")(function* (input: {
+      readonly commandId: CommandId;
+      readonly routineId: RoutineId;
+    }) {
+      yield* receipts.once({
+        commandId: input.commandId,
+        method: "routine.run",
+        payload: { routineId: input.routineId },
+        result: Schema.Void,
+        apply: Effect.asVoid(routineRuns.runNow(input.routineId)),
       });
     });
 
@@ -508,6 +505,6 @@ export const layer = Layer.effect(
         }),
       );
 
-    return Routines.of({ list, runs, create, update, remove, subscribe });
+    return Routines.of({ list, runs, create, update, remove, run, subscribe });
   }),
-);
+).pipe(Layer.provide(SecureRandom.layerWebCrypto));

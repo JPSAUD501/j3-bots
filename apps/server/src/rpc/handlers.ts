@@ -21,12 +21,11 @@ import { Stops } from "../turns/Stops.ts";
 import { WorkSteps } from "../turns/WorkSteps.ts";
 
 /**
- * The RPCs this server answers: `J3Rpcs` without a fresh start, a routine run
- * on demand and turn usage, which come with session rotation, routines and
- * usage in part 2b of the server domain. Until then a client's call to one
- * fails as any unknown RPC does.
+ * The RPCs this server answers: `J3Rpcs` without a fresh start and turn
+ * usage, which come with session rotation and usage in part 2b of the server
+ * domain. Until then a client's call to one fails as any unknown RPC does.
  */
-export const ServedRpcs = J3Rpcs.omit("bot.freshStart", "routine.run", "usage.turns");
+export const ServedRpcs = J3Rpcs.omit("bot.freshStart", "usage.turns");
 
 const operator = { _tag: "operator" } as const;
 
@@ -92,6 +91,7 @@ export const handlers = ServedRpcs.toLayer(
         routines.update({ commandId, routineId, changes, author: operator }),
       "routine.delete": ({ commandId, routineId }) =>
         routines.remove({ commandId, routineId, author: operator }),
+      "routine.run": (input) => routines.run(input),
       "memory.list": ({ scope }) => memory.list(scope),
       "memory.read": ({ scope, path }) => memory.read(scope, path),
       "memory.write": (input) => memory.write(input),

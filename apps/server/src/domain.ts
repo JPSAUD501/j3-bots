@@ -19,7 +19,9 @@ import * as Presence from "./presence/Presence.ts";
 import * as RoomRouting from "./rooms/RoomRouting.ts";
 import * as Rooms from "./rooms/Rooms.ts";
 import * as Roster from "./roster/Roster.ts";
+import * as RoutineRuns from "./routines/RoutineRuns.ts";
 import * as Routines from "./routines/Routines.ts";
+import * as Scheduler from "./routines/Scheduler.ts";
 import * as SettingsService from "./settings/SettingsService.ts";
 import * as SettingsStore from "./settings/SettingsStore.ts";
 import * as BotTools from "./tools/BotTools.ts";
@@ -58,7 +60,8 @@ export const layer = Layer.mergeAll(BotTools.layer, Turns.layer).pipe(
       Routines.layer,
     ),
   ),
-  Layer.provideMerge(Layer.mergeAll(Workspaces.layer, Stops.roomWorkLayer)),
+  Layer.provideMerge(Layer.mergeAll(Workspaces.layer, Stops.roomWorkLayer, Scheduler.layer)),
+  Layer.provideMerge(RoutineRuns.layer),
   Layer.provideMerge(Layer.mergeAll(Stops.layer, HeldQueues.layer)),
   Layer.provideMerge(Sender.layer),
   Layer.provideMerge(Observer.layer),
