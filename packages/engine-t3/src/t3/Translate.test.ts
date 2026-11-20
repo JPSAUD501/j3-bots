@@ -18,6 +18,7 @@ import {
   dispositionOf,
   emptyMirror,
   engineAnswersOf,
+  isDeleted,
   nothingToStop,
   replacement,
   startingTurns,
@@ -348,5 +349,33 @@ describe("what a Stop leaves to run", () => {
     assert.deepStrictEqual(startingTurns(mirror), [TurnId.make("run-3")]);
     applyEvent(mirror, run("running", 3));
     assert.deepStrictEqual(startingTurns(mirror), []);
+  });
+
+  it("counts a thread the engine deleted as gone, though its record stays", () => {
+    const thread = {
+      id: "thread-1",
+      createdBy: "system",
+      creationSource: "server",
+      projectId: "project-1",
+      title: "Ana",
+      providerInstanceId: "codex",
+      modelSelection: { instanceId: "codex", model: "gpt-5" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: "thread-1" },
+      forkedFrom: null,
+      createdAt: at,
+      updatedAt: at,
+      archivedAt: null,
+      deletedAt: null,
+    };
+    const mirror = emptyMirror();
+    applyEvent(mirror, event("thread.created", thread));
+    assert.isFalse(isDeleted(mirror));
+    applyEvent(mirror, event("thread.deleted", { ...thread, deletedAt: at }));
+    assert.isTrue(isDeleted(mirror));
   });
 });

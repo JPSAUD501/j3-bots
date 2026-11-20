@@ -104,6 +104,7 @@ import {
   emptyMirror,
   engineAnswersOf,
   findRequest,
+  isDeleted,
   isEnded,
   isRetired,
   keepFetched,
@@ -439,6 +440,11 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
         ),
       ),
       Effect.map((projection) => mirrorOf(projection)),
+      // A thread the engine deleted keeps its projection: the session is gone all the same.
+      Effect.filterOrFail(
+        (mirror) => !isDeleted(mirror),
+        () => new SessionNotFound({ sessionId }),
+      ),
     );
 
   /**
@@ -1285,7 +1291,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
             ),
             Effect.orElseSucceed(() => "lost" as const),
           );
-          if (outcome === "missing") {
+          if (outcome === "missing" || isDeleted(mirror)) {
             return yield* new SessionNotFound({ sessionId: input.sessionId });
           }
           if (outcome !== "marked" || lastCursor === null) return yield* new EngineUnavailable();
@@ -1299,12 +1305,17 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
           });
         });
 
+        /** The engine has no record of the session's thread, or deleted it. */
+        const gone = Effect.suspend(() => {
+          batches.forget(input.sessionId);
+          return Queue.fail(output, new SessionNotFound({ sessionId: input.sessionId }));
+        });
+
         while (true) {
           const next = yield* Queue.take(inputs);
           switch (next._tag) {
             case "missing":
-              batches.forget(input.sessionId);
-              return yield* Queue.fail(output, new SessionNotFound({ sessionId: input.sessionId }));
+              return yield* gone;
             case "lost": {
               const current = yield* SubscriptionRef.get(state);
               if (current._tag === "incompatible") {
@@ -1320,6 +1331,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
             }
             case "item":
               yield* handle(next.item);
+              if (isDeleted(mirror)) return yield* gone;
               yield* fetchChanges();
               break;
             case "tool":
@@ -1344,6 +1356,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
                 }),
                 Effect.raceFirst(Deferred.await(next.abandoned)),
               );
+              if (isDeleted(mirror)) return yield* gone;
               yield* fetchChanges();
               break;
           }

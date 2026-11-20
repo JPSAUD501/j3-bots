@@ -185,6 +185,16 @@ export const applyEvent = (mirror: Mirror, event: OrchestrationV2DomainEvent): b
 export const isRetired = (mirror: Mirror) =>
   mirror.thread !== undefined && mirror.thread.archivedAt !== null;
 
+/**
+ * Whether the engine deleted the session's thread: the engine's word that the
+ * session is gone, as `isMissingThread` is for a thread it has no record of.
+ * A deletion keeps the thread's projection and only stamps `deletedAt` on it,
+ * in the `thread.deleted` event too, so a read still succeeds (**Read** at
+ * `db51b67`, `ThreadDeletion.ts`, L56-66).
+ */
+export const isDeleted = (mirror: Mirror) =>
+  mirror.thread !== undefined && mirror.thread.deletedAt !== null;
+
 // ---------------------------------------------------------------------------
 // Runs as turns
 
