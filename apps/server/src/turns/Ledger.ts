@@ -161,6 +161,13 @@ export class Ledger extends Context.Service<
      * fails as `unresolved`, as `fail` does. Whether it was still accepted.
      */
     readonly abandon: (dispatchId: DispatchRowId, wakes: WakesAfter) => Effect.Effect<boolean>;
+    /**
+     * Whether a notice that the dispatch was not delivered may send its answer
+     * again: the engine has not got the dispatch and never delivered it (it
+     * failed, or the engine dropped it before its turn started), and its
+     * answer failed and was not sent again yet.
+     */
+    readonly undeliveredRetryable: (dispatchId: DispatchRowId) => Effect.Effect<boolean>;
     /** Pending wakes stop waiting: a Stop or an archival ended what they asked for. */
     readonly cancelWakes: (wakeIds: ReadonlyArray<string>) => Effect.Effect<void>;
     /** Shows the delivery of each message the wakes came from, as their wakes now stand. */
@@ -257,6 +264,48 @@ export const layer = Layer.effect(
       }
     });
 
+    const undeliveredRetryable = Effect.fn("Ledger.undeliveredRetryable")(function* (
+      dispatchId: DispatchRowId,
+    ) {
+      const rows = yield* sql<{ readonly n: number }>`
+        SELECT 1 AS n FROM dispatches d
+        WHERE d.id = ${dispatchId} AND d.status IN ('failed', 'dropped')
+          AND EXISTS (
+            SELECT 1 FROM wakes w
+            WHERE w.dispatch_id = d.id AND w.status = 'failed'
+              AND json_extract(w.payload_json, '$._tag') = 'answer'
+              AND NOT EXISTS (SELECT 1 FROM wakes r WHERE r.retry_of = w.id)
+          )
+      `;
+      return rows.length > 0;
+    }, Effect.orDie);
+
+    /**
+     * A notice that the dispatch was not delivered offers a retry exactly
+     * while `undeliveredRetryable` holds, read again after every change to the
+     * dispatch or its wakes: never while the engine may still have the
+     * answer or once it delivered it, which would send it twice, and again
+     * once the engine dropped it undelivered.
+     */
+    const refreshNotices = Effect.fn("Ledger.refreshNotices")(function* (
+      dispatchId: DispatchRowId,
+    ) {
+      const rows = yield* sql<{ readonly entry_id: string }>`
+        SELECT entry_id FROM notice_retries
+        WHERE dispatch_id = ${dispatchId} AND reason = 'undelivered'
+      `;
+      if (rows.length === 0) return;
+      const retryable = yield* undeliveredRetryable(dispatchId);
+      for (const row of rows) {
+        const found = yield* entries.find(EntryId.make(row.entry_id));
+        if (Option.isSome(found) && found.value.entry._tag === "notice") {
+          if (found.value.entry.retryable !== retryable) {
+            yield* entries.update({ ...found.value.entry, retryable });
+          }
+        }
+      }
+    }, Effect.orDie);
+
     const failedWakes = SqlSchema.findAll({
       Request: Schema.Struct({ dispatchId: DispatchRowId, reason: WakeFailure, at: Schema.String }),
       Result: FailedWake,
@@ -306,6 +355,7 @@ export const layer = Layer.effect(
           break;
         }
       }
+      yield* refreshNotices(dispatchId);
       yield* refreshMessages(sources);
     }, Effect.orDie);
 
@@ -315,26 +365,6 @@ export const layer = Layer.effect(
     ) {
       yield* sql`UPDATE catch_up_notes SET consumed_dispatch_id = NULL WHERE consumed_dispatch_id = ${dispatchId}`;
       yield* sql`UPDATE held_messages SET consumed_dispatch_id = NULL WHERE consumed_dispatch_id = ${dispatchId}`;
-    }, Effect.orDie);
-
-    /**
-     * A notice that the dispatch was not delivered, which the engine turns out
-     * to have after all: it no longer offers a retry, which would deliver the
-     * same wakes twice.
-     */
-    const mootNotices = Effect.fn("Ledger.mootNotices")(function* (dispatchId: DispatchRowId) {
-      const rows = yield* sql<{ readonly entry_id: string }>`
-        SELECT entry_id FROM notice_retries
-        WHERE dispatch_id = ${dispatchId} AND reason = 'undelivered'
-      `;
-      for (const row of rows) {
-        const found = yield* entries.find(EntryId.make(row.entry_id));
-        if (Option.isSome(found) && found.value.entry._tag === "notice") {
-          if (found.value.entry.retryable) {
-            yield* entries.update({ ...found.value.entry, retryable: false });
-          }
-        }
-      }
     }, Effect.orDie);
 
     const accept = Effect.fn("Ledger.accept")(function* (
@@ -347,7 +377,7 @@ export const layer = Layer.effect(
           next_attempt_at = NULL, updated_at = ${at}
         WHERE id = ${dispatchId} AND status IN ('intended', 'failed')
       `;
-      yield* mootNotices(dispatchId);
+      yield* refreshNotices(dispatchId);
       if (disposition !== null) {
         // The first answer only, and only on a dispatch the engine has: the
         // events may already have moved the turn on, or a Stop ended it.
@@ -376,7 +406,7 @@ export const layer = Layer.effect(
         UPDATE wakes SET status = 'dispatched', failure_reason = NULL, updated_at = ${at}
         WHERE dispatch_id = ${dispatchId} AND status = 'failed'
       `;
-      yield* mootNotices(dispatchId);
+      yield* refreshNotices(dispatchId);
       yield* refreshMessages(yield* sourcesOf(dispatchId));
     }, Effect.orDie);
 
@@ -395,6 +425,7 @@ export const layer = Layer.effect(
         UPDATE wakes SET status = 'finished', failure_reason = NULL, updated_at = ${at}
         WHERE dispatch_id = ${dispatchId} AND status IN ('dispatched', 'failed')
       `;
+      yield* refreshNotices(dispatchId);
       yield* refreshMessages(yield* sourcesOf(dispatchId));
     }, Effect.orDie);
 
@@ -518,6 +549,7 @@ export const layer = Layer.effect(
       release,
       fail,
       abandon,
+      undeliveredRetryable,
       cancelWakes,
       refreshMessages,
     });

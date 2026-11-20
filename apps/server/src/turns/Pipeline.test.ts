@@ -562,3 +562,80 @@ it.effect("refuses to send an answer again once the engine applied it late", () 
     assert.strictEqual(yield* timesSent(session, "eu-west-1"), 1);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
+
+/** The bot asks in a turn that then ends, and the card it asked with. */
+const askedAndEnded = Effect.gen(function* () {
+  const control = yield* TestEngineControl;
+  const bot = yield* createBot("Ana");
+  const session = yield* engineSession(bot.id);
+  yield* sendToBot(bot.id, "Deploy it.");
+  const asking = yield* nextTurn(bot.id);
+  const card = yield* askRegion(bot.id, session, asking);
+  yield* control.finishTurn({ sessionId: session, turnId: asking, outcome: { _tag: "completed" } });
+  yield* turnEnded(bot.id);
+  return { bot, session, asking, card };
+});
+
+/** Waits until the engine's events settled the bot's only answer dispatch as dropped. */
+const answerDropped = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  while (true) {
+    const [row] = yield* sql<{ readonly n: number }>`
+      SELECT COUNT(*) AS n FROM dispatches d JOIN wakes w ON w.dispatch_id = d.id
+      WHERE d.status = 'dropped' AND json_extract(w.payload_json, '$._tag') = 'answer'
+    `.pipe(Effect.orDie);
+    if ((row?.n ?? 0) > 0) return;
+    yield* Effect.yieldNow;
+  }
+});
+
+it.effect("keeps an answer's notice retryable when the send's reply follows its failed start", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const { bot, session, asking, card } = yield* askedAndEnded;
+
+    // The answer's turn fails before the provider starts it, and the events
+    // say so before the send hears the engine took the key.
+    yield* control.failNextStart({ sessionId: session, failure: "provider-error" });
+    const reply = yield* control.holdNextAnswer("dispatch");
+    yield* answerFirstOption(card);
+    yield* reply.entered;
+    yield* awaitEntry(bot.id, "notice");
+    yield* reply.release;
+    yield* gateSettled(bot.id);
+
+    const notice = yield* awaitEntry(bot.id, "notice");
+    assert.isTrue(notice.retryable);
+    yield* (yield* Pipeline).retryNotice({ commandId: command(), entryId: notice.id });
+    yield* nextTurn(bot.id, asking);
+    assert.strictEqual(yield* timesSent(session, "eu-west-1"), 2);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "offers an answer's retry again when the engine drops it after its recovery gave up",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const { bot, session, asking, card } = yield* askedAndEnded;
+
+      // The answer's send is never answered, and its recovery gives up.
+      const deferred = yield* control.deferNextDispatch;
+      yield* answerFirstOption(card);
+      yield* flushed(bot.id);
+      yield* recoverTimes(MAX_INDETERMINATE_ANSWERS - 1);
+      yield* awaitEntry(bot.id, "notice");
+
+      // The engine applies it after all, and its turn fails before it starts:
+      // the bot never read the answer.
+      yield* control.failNextStart({ sessionId: session, failure: "provider-error" });
+      yield* deferred.land;
+      yield* answerDropped;
+
+      const notice = yield* awaitEntry(bot.id, "notice");
+      assert.isTrue(notice.retryable);
+      yield* (yield* Pipeline).retryNotice({ commandId: command(), entryId: notice.id });
+      yield* nextTurn(bot.id, asking);
+      assert.strictEqual(yield* timesSent(session, "eu-west-1"), 2);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);

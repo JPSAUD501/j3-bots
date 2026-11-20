@@ -356,20 +356,15 @@ export const layer = Layer.effect(
           if (!notice.retryable || link === undefined) {
             return yield* new Conflict({ reason: "not-retryable" });
           }
-          const sent = yield* ledger.wakesOf(link.dispatch_id);
           // A delivery that failed counts only while it still did not reach
-          // the bot: its wakes failed, and the engine neither took nor ran
-          // the dispatch after all (it failed, or the engine dropped its
-          // turn). What the engine accepted or delivered late must not go twice.
-          if (link.reason === "undelivered") {
-            const dispatch = yield* ledger.find(link.dispatch_id);
-            const ended =
-              Option.isSome(dispatch) &&
-              (dispatch.value.status === "failed" || dispatch.value.status === "dropped");
-            if (!ended || !sent.some((wake) => wake.status === "failed")) {
-              return yield* new Conflict({ reason: "not-retryable" });
-            }
+          // the bot: what the engine accepted or delivered late must not go twice.
+          if (
+            link.reason === "undelivered" &&
+            !(yield* ledger.undeliveredRetryable(link.dispatch_id))
+          ) {
+            return yield* new Conflict({ reason: "not-retryable" });
           }
+          const sent = yield* ledger.wakesOf(link.dispatch_id);
           const retried = new Set<string>();
           if (sent.length > 0) {
             const rows = yield* sql<{ readonly retry_of: string }>`
