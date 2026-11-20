@@ -172,7 +172,7 @@ export class Connection extends Context.Service<
   {
     readonly state: Readable<ConnectionState>;
     /**
-     * Pairs with a code from `j3 pair` or another client's Devices screen,
+     * Pairs with a code from `j3-bots pair` or another client's Devices screen,
      * typed in any case, with spaces or dashes.
      */
     readonly pair: (input: {

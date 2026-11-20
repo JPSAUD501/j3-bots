@@ -35,7 +35,7 @@ mkdir -p ~/.local/bin
 ln -sf ~/j3-bots/apps/server/dist/bin.mjs ~/.local/bin/j3-bots
 ```
 
-`pnpm build` builds the server into `apps/server/dist/` and builds the web client into `apps/web/dist/` once the repository has one. The server bundle carries every dependency it needs. You can drop the development tools with `pnpm install --prod --frozen-lockfile`, but building again then needs a full `pnpm install` first.
+`pnpm build` builds the server into `apps/server/dist/` and the web client into `apps/web/dist/`, which the server serves on its own address. The server bundle carries every dependency it needs. You can drop the development tools with `pnpm install --prod --frozen-lockfile`, but building again then needs a full `pnpm install` first.
 
 Most systems put `~/.local/bin` on `PATH` at the next login. Until then, run the commands as `~/.local/bin/j3-bots`.
 
@@ -195,4 +195,4 @@ Each line is ✓ (fine), `!` (a warning: the server runs, but something is missi
 - The server sets up no providers yet. `doctor` warns that no Claude Code or Codex provider is set up, and bots cannot run turns until a release that configures them.
 - The engine adapter does not yet read sign-in or usage state from the engine. For a configured provider it reports "ready", and `doctor` repeats what it reports (**Read** in `packages/engine-t3/src/t3/T3Engine.ts`).
 - `j3-bots pair` prints the code and the addresses but no QR code.
-- The repository has no web client yet, so the server serves only its API, and `doctor` warns about it.
+- The web client is served but not yet connected to the server: it opens on "Connecting to J3 Bots" and stays there, so it cannot take a pairing code or show bots until a release connects it.

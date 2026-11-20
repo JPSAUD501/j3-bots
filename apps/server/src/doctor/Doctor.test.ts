@@ -22,7 +22,11 @@ const provider = (harness: "claude-code" | "codex", status: string) => ({
   id: harness,
   name: harness === "codex" ? "Codex" : "Claude Code",
   harness,
-  status: { _tag: status, ...(status === "limited" ? { resetsAt: null } : {}) },
+  status: {
+    _tag: status,
+    ...(status === "limited" ? { resetsAt: null } : {}),
+    ...(status === "sign-in-required" ? { command: "claude auth login" } : {}),
+  },
   models: [],
   usage: [],
 });
@@ -345,7 +349,13 @@ it.layer(NodeServices.layer)("doctor", (it) => {
           }),
         ),
       });
-      assertFlagged(named(signedOut.checks, "Claude Code"), "problem");
+      const claude = named(signedOut.checks, "Claude Code");
+      assertFlagged(claude, "problem");
+      // The fix is the command the server says signs the provider in on the host.
+      assert.include(
+        Option.getOrElse(claude.fix, () => ""),
+        "`claude auth login`",
+      );
       // Found, but the server runs no Codex provider at all.
       assertFlagged(named(signedOut.checks, "Codex"), "warning", "no Codex provider");
     }),

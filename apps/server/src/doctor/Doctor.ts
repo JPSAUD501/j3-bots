@@ -310,14 +310,15 @@ const providerCheck = Effect.fn("doctor.provider")(function* (
       "This release of the server sets up no provider yet; one that does is needed to run bots.",
     );
   }
-  const signedOut = providers.find((provider) => provider.status._tag === "sign-in-required");
-  if (signedOut !== undefined) {
-    return check(
-      harness.name,
-      "problem",
-      `${signedOut.name} is not signed in.`,
-      `Sign in to ${harness.name} again for J3 Bots, then restart the service.`,
-    );
+  for (const provider of providers) {
+    if (provider.status._tag === "sign-in-required") {
+      return check(
+        harness.name,
+        "problem",
+        `${provider.name} is not signed in.`,
+        `Run \`${provider.status.command}\` as this user, then restart the service.`,
+      );
+    }
   }
   const unavailable = providers.find((provider) => provider.status._tag === "unavailable");
   if (unavailable !== undefined) {
@@ -349,7 +350,7 @@ const webClientCheck = Effect.fn("doctor.webClient")(function* (
       "Web client",
       "warning",
       `No web client is built in ${config.webClient.directory}, so the server serves only its API.`,
-      "This release ships no web client yet. Once the repository has one, `pnpm build` builds it; then restart the service.",
+      "Run `pnpm build` in this checkout, then restart the service: `systemctl --user restart j3-bots`.",
     );
   }
   if (Option.isSome(status) && status.value.webClient === "not-built") {
