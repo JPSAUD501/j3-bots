@@ -31,7 +31,10 @@ export function Toast({ notice, onDone }: { notice: Notice | null; onDone: () =>
 
 function Shown({ notice, onDone }: { notice: Notice; onDone: () => void }) {
   const { action } = notice;
-  const [held, setHeld] = useState(false);
+  // Each holds the notice on its own: leaving with the pointer keeps it while it has the focus.
+  const [pointed, setPointed] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const held = pointed || focused;
   // The notice keeps its time, however often `onDone` is a new function.
   const done = useEffectEvent(onDone);
   useEffect(() => {
@@ -45,10 +48,10 @@ function Shown({ notice, onDone }: { notice: Notice; onDone: () => void }) {
         "flex max-w-sm items-center gap-3 rounded-md bg-foreground px-3 py-2 text-sm text-background shadow-lg",
         action !== null && "pointer-events-auto",
       )}
-      onPointerEnter={() => setHeld(true)}
-      onPointerLeave={() => setHeld(false)}
-      onFocus={() => setHeld(true)}
-      onBlur={() => setHeld(false)}
+      onPointerEnter={() => setPointed(true)}
+      onPointerLeave={() => setPointed(false)}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
     >
       <p>{notice.text}</p>
       {action !== null && (
