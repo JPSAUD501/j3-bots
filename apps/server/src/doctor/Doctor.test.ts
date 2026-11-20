@@ -467,6 +467,11 @@ it.layer(NodeServices.layer)("doctor", (it) => {
         unit: { enabled: true, active: "failed", mainPid: Option.none() },
       });
       assertFlagged(named(failed.checks, "Service"), "problem");
+      // systemd refuses to restart a unit that hit its start limit until that is reset.
+      assert.match(
+        Option.getOrElse(named(failed.checks, "Service").fix, () => ""),
+        /`systemctl --user reset-failed j3-bots`.*`systemctl --user restart j3-bots`/,
+      );
       const disabled = yield* diagnoseIn({
         unit: { enabled: false, active: "active", mainPid: Option.some(4242) },
       });

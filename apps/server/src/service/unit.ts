@@ -187,7 +187,8 @@ export const render = Effect.fn("service.render")(function* (plan: UnitPlan) {
   return [
     "[Unit]",
     "Description=J3 Bots server",
-    // Five failed starts within five minutes stop the restarts; `doctor` says so.
+    // Five failed starts within five minutes stop the restarts; `doctor` says so,
+    // and how to clear the limit.
     "StartLimitIntervalSec=300",
     "StartLimitBurst=5",
     "",

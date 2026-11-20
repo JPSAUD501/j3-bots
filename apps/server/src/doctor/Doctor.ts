@@ -439,12 +439,15 @@ const serviceChecks = Effect.fn("doctor.service")(function* (unitText: Option.Op
   } else {
     const unit = yield* systemd.unitState(Unit.UNIT_NAME);
     checks.push(
+      // The unit restarts on failure, so one that stays `failed` is one systemd
+      // stopped restarting: it hit the start limit, and systemd refuses a
+      // restart within the limit's interval unless that is reset.
       unit.active === "failed"
         ? check(
             "Service",
             "problem",
-            "The service has failed.",
-            "Read why with `journalctl --user -u j3-bots -n 100`, then `systemctl --user restart j3-bots`.",
+            "The service has failed, and systemd has stopped restarting it.",
+            "Read why with `journalctl --user -u j3-bots -n 100`. Once the cause is fixed, clear systemd's start limit with `systemctl --user reset-failed j3-bots`, then run `systemctl --user restart j3-bots`.",
           )
         : unit.active === "activating"
           ? check(
