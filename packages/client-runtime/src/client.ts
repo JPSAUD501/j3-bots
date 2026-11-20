@@ -1,0 +1,269 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import type {
+  AttachmentId,
+  BotId,
+  CommandId,
+  Device,
+  DeviceId,
+  EngineStatus as EngineStatusValue,
+  EntryId,
+  EntryTarget,
+  Mentions,
+  Notification,
+  PairingCode,
+  RosterItem,
+  Settings as SettingsValue,
+} from "@j3-bots/contracts";
+import type * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as ManagedRuntime from "effect/ManagedRuntime";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
+import type * as SecureRandom from "effect/crypto/SecureRandom";
+import type * as HttpClient from "effect/http/HttpClient";
+import type { RpcClientError } from "effect/rpc/RpcClientError";
+import type * as Socket from "effect/socket/Socket";
+import * as Connection from "./connection/Connection.ts";
+import * as Actions from "./intents/Actions.ts";
+import type { CredentialStore, Network, ServerAddress } from "./ports.ts";
+import type { Readable } from "./Store.ts";
+import * as Conversations from "./stores/Conversations.ts";
+import * as Devices from "./stores/Devices.ts";
+import * as EngineStatus from "./stores/EngineStatus.ts";
+import * as Presence from "./stores/Presence.ts";
+import * as Roster from "./stores/Roster.ts";
+import * as Settings from "./stores/Settings.ts";
+import type { Synced } from "./stores/synced.ts";
+import * as WorkSteps from "./stores/WorkSteps.ts";
+
+/** What a platform provides to run the client. See `ports.ts`. */
+export type Platform =
+  | ServerAddress
+  | CredentialStore
+  | Network
+  | HttpClient.HttpClient
+  | Socket.WebSocketConstructor
+  | SecureRandom.SecureRandom;
+
+/** Every service of the client runtime, for applications that use Effect directly. */
+export const layer = Layer.mergeAll(
+  Roster.layer,
+  EngineStatus.layer,
+  Settings.layer,
+  Devices.layer,
+  Conversations.layer,
+  WorkSteps.layer,
+  Presence.layer,
+).pipe(Layer.provideMerge(Actions.layer), Layer.provideMerge(Connection.layer));
+
+export interface ConversationHandle {
+  readonly target: EntryTarget;
+  readonly state: Readable<Conversations.ConversationState>;
+  readonly loadOlder: () => void;
+  readonly markRead: () => void;
+  /** Lets go of the conversation. Its subscription ends when nobody else holds it. */
+  readonly release: () => void;
+}
+
+export interface WorkStepsHandle {
+  readonly state: Readable<WorkSteps.WorkStepsState>;
+  readonly release: () => void;
+}
+
+export type PairResult =
+  | { readonly _tag: "paired" }
+  | { readonly _tag: "failed"; readonly reason: Connection.PairingFailure };
+
+/**
+ * The client runtime for code that does not use Effect: state as `Readable`s,
+ * intents as functions. Intents never reject; each resolves with what
+ * happened. Create one per server with `createJ3Client`.
+ */
+export interface J3Client {
+  readonly connection: Readable<Connection.ConnectionState>;
+  readonly pair: (input: {
+    readonly code: string;
+    readonly deviceName: string;
+  }) => Promise<PairResult>;
+  /** Forgets this device's credential here. Resolves `false` if the storage could not be cleared. */
+  readonly forget: () => Promise<boolean>;
+  readonly reconnectNow: () => void;
+
+  readonly roster: Readable<Synced<ReadonlyArray<RosterItem>>>;
+  readonly engine: Readable<Synced<EngineStatusValue>>;
+  readonly settings: Readable<Synced<SettingsValue>>;
+  readonly devices: Readable<Synced<ReadonlyArray<Device>>>;
+  /** Actions in flight or just accepted, by `cardAction`, `retryAction` or `stopAction` key. */
+  readonly actions: Readable<ReadonlyMap<string, Actions.ActionState>>;
+
+  readonly openConversation: (target: EntryTarget) => ConversationHandle;
+  readonly openWorkSteps: (foldId: EntryId) => WorkStepsHandle;
+
+  readonly send: (input: {
+    readonly target: EntryTarget;
+    readonly text: string;
+    readonly attachments?: ReadonlyArray<AttachmentId>;
+    readonly mentions?: Mentions;
+  }) => Promise<Actions.IntentResult<EntryId>>;
+  readonly discard: (commandId: CommandId) => void;
+  readonly retryMessage: (entryId: EntryId) => Promise<Actions.IntentResult>;
+  readonly retryNotice: (entryId: EntryId) => Promise<Actions.IntentResult>;
+  readonly answerCard: (
+    entryId: EntryId,
+    answer: Conversations.CardAnswer,
+  ) => Promise<Actions.IntentResult>;
+  readonly provideSecret: (
+    entryId: EntryId,
+    answer: Conversations.SecretAnswer,
+  ) => Promise<Actions.IntentResult>;
+  readonly stopBot: (botId: BotId) => Promise<Actions.IntentResult>;
+
+  readonly updateSettings: (
+    changes: Settings.SettingsChanges,
+  ) => Promise<Actions.IntentResult<SettingsValue>>;
+  readonly refreshDevices: () => void;
+  readonly revokeDevice: (deviceId: DeviceId) => Promise<Actions.IntentResult>;
+  readonly startPairing: () => Promise<
+    Actions.IntentResult<{ readonly code: PairingCode; readonly expiresAt: DateTime.Utc }>
+  >;
+
+  readonly setView: (target: EntryTarget | null) => void;
+  /** Calls `listener` for each notification. Returns the function that stops it. */
+  readonly onNotification: (listener: (notification: Notification) => void) => () => void;
+
+  /**
+   * Any RPC of the contract, through the typed client: bots, rooms, routines,
+   * memory. `use` may run again on a new socket if the first one drops, so it
+   * must be a read or a command with a fixed command id.
+   */
+  readonly call: <A, E>(
+    use: (client: Connection.J3RpcClient) => Effect.Effect<A, E | RpcClientError>,
+  ) => Promise<Exit.Exit<A, Exclude<E, RpcClientError> | Connection.NotPaired>>;
+  /** A new command id, for `call`. */
+  readonly commandId: () => Promise<CommandId>;
+
+  /** Closes the socket and every subscription. */
+  readonly dispose: () => Promise<void>;
+}
+
+/** Starts the client runtime on `platform`. */
+export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Promise<J3Client> => {
+  const runtime = ManagedRuntime.make(layer.pipe(Layer.provide(platform)));
+  // Once built, the runtime cannot fail to build; run against what it built.
+  const context = await runtime.context();
+  const run = {
+    fork: Effect.runForkWith(context),
+    promise: Effect.runPromiseWith(context),
+    promiseExit: Effect.runPromiseExitWith(context),
+    sync: Effect.runSyncWith(context),
+  };
+  const services = run.sync(
+    Effect.gen(function* () {
+      return {
+        connection: yield* Connection.Connection,
+        actions: yield* Actions.Actions,
+        roster: yield* Roster.Roster,
+        engine: yield* EngineStatus.EngineStatus,
+        settings: yield* Settings.Settings,
+        devices: yield* Devices.Devices,
+        conversations: yield* Conversations.Conversations,
+        workSteps: yield* WorkSteps.WorkSteps,
+        presence: yield* Presence.Presence,
+      };
+    }),
+  );
+  const { connection, conversations } = services;
+
+  const fire = <E>(effect: Effect.Effect<void, E>) => {
+    run.fork(effect.pipe(Effect.ignore));
+  };
+
+  /** Runs `use` in a scope of its own, which `release` closes once. */
+  const hold = <A>(use: Effect.Effect<A, never, Scope.Scope>) => {
+    const scope = run.sync(Scope.make());
+    const value = run.sync(Scope.provide(use, scope));
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      fire(Scope.close(scope, Exit.void));
+    };
+    return { value, release };
+  };
+
+  return {
+    connection: connection.state,
+    pair: (input) =>
+      run.promise(
+        connection.pair(input).pipe(
+          Effect.as<PairResult>({ _tag: "paired" }),
+          Effect.catchTag("PairingFailed", (error) =>
+            Effect.succeed<PairResult>({ _tag: "failed", reason: error.reason }),
+          ),
+        ),
+      ),
+    forget: () =>
+      run.promise(
+        connection.forget.pipe(
+          Effect.as(true),
+          Effect.catchTag("CredentialStorageError", () => Effect.succeed(false)),
+        ),
+      ),
+    reconnectNow: () => fire(connection.reconnectNow),
+
+    roster: services.roster.state,
+    engine: services.engine.state,
+    settings: services.settings.state,
+    devices: services.devices.state,
+    actions: services.actions.state,
+
+    openConversation: (target) => {
+      const { value, release } = hold(conversations.open(target));
+      return {
+        target,
+        state: value.state,
+        loadOlder: () => fire(value.loadOlder),
+        markRead: () => fire(value.markRead),
+        release,
+      };
+    },
+    openWorkSteps: (foldId) => {
+      const { value, release } = hold(services.workSteps.open(foldId));
+      return { state: value, release };
+    },
+
+    send: (input) => run.promise(conversations.send(input)),
+    discard: (commandId) => fire(conversations.discard(commandId)),
+    retryMessage: (entryId) => run.promise(conversations.retryMessage(entryId)),
+    retryNotice: (entryId) => run.promise(conversations.retryNotice(entryId)),
+    answerCard: (entryId, answer) => run.promise(conversations.answerCard(entryId, answer)),
+    provideSecret: (entryId, answer) => run.promise(conversations.provideSecret(entryId, answer)),
+    stopBot: (botId) => run.promise(services.roster.stop(botId)),
+
+    updateSettings: (changes) => run.promise(services.settings.update(changes)),
+    refreshDevices: () => fire(services.devices.refresh),
+    revokeDevice: (deviceId) => run.promise(services.devices.revoke(deviceId)),
+    startPairing: () =>
+      run.promise(
+        services.devices.startPairing.pipe(Effect.exit, Effect.map(Actions.intentResult)),
+      ),
+
+    setView: (target) => fire(services.presence.setView(target)),
+    onNotification: (listener) => {
+      const fiber = run.fork(
+        services.presence.notifications.pipe(
+          Stream.runForEach((notification) => Effect.sync(() => listener(notification))),
+        ),
+      );
+      return () => fire(Fiber.interrupt(fiber));
+    },
+
+    call: <A, E>(use: (client: Connection.J3RpcClient) => Effect.Effect<A, E | RpcClientError>) =>
+      run.promiseExit(connection.call<A, E>(use)),
+    commandId: () => run.promise(services.actions.commandId),
+    dispose: () => runtime.dispose(),
+  };
+};
