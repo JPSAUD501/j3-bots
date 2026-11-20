@@ -81,7 +81,7 @@ export function MessageBubble({
       ref={target}
       tabIndex={-1}
       className={cn(
-        "flex flex-col gap-1 rounded-md outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+        "flex flex-col gap-1 rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
         fromOperator ? "items-end" : "items-start",
         startsGroup ? "mt-2" : "mt-0.5",
       )}

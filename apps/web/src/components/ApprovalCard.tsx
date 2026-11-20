@@ -64,7 +64,7 @@ const code = "font-mono text-xs leading-5 whitespace-pre-wrap wrap-anywhere";
 // A bounded area that shows, by a shade at its edge, that more lies past it, and that the keyboard
 // can scroll before deciding.
 const scrolls =
-  "code-scroll-shade max-h-64 overflow-auto outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent";
+  "code-scroll-shade max-h-64 overflow-auto focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent";
 
 /**
  * A bot asking to do one thing its permission mode does not allow outright.

@@ -36,7 +36,7 @@ export function CardFrame({
       data-entry-id={entryId}
       tabIndex={-1}
       className={cn(
-        "mt-2 w-full max-w-(--layout-card-width) scroll-my-4 @max-tablet:max-w-full self-start rounded-md border bg-surface outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+        "mt-2 w-full max-w-(--layout-card-width) scroll-my-4 @max-tablet:max-w-full self-start rounded-md border bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
         attention ? "border-waiting/45" : "border-border",
       )}
     >

@@ -224,7 +224,7 @@ function CreateFirstBot({ onCreateBot }: Pick<FirstRunProps, "onCreateBot">) {
           maxLength={40}
           onChange={(e) => setName(e.currentTarget.value)}
           placeholder={t("firstRun.create.placeholder")}
-          className="h-9 rounded-md border border-input bg-surface px-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:h-11"
+          className="h-9 rounded-md border border-input bg-surface px-3 text-sm placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:h-11"
         />
         <label className="flex items-start gap-2 text-xs text-muted-foreground">
           <span className="mt-px">
