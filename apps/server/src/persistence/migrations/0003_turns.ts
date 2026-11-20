@@ -4,11 +4,12 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 // What the turn machinery needs beyond the initial schema: the entry a wake
 // came from and the wake it retries, the recovery bound of a dispatch, its
-// staging retries and how its delivery closed, when a Stop round was sent and
-// observed, a session the engine no longer has, the turns a session's events
-// showed, their work steps and `j3` tool calls, host speech already
-// delivered, open cards, an operator's answer still to reach the engine, and
-// a submitted secret whose answer was lost. See `docs/architecture/server.md`.
+// staging retries and how its delivery closed, when a Stop round was issued,
+// acknowledged and observed, a session the engine no longer has or found
+// busy, a held queue's resume, the turns a session's events showed, their
+// work steps and `j3` tool calls, host speech already delivered, open cards,
+// an operator's answer still to reach the engine, and a submitted secret
+// whose answer was lost. See `docs/architecture/server.md`.
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -39,12 +40,17 @@ export default Effect.gen(function* () {
       CHECK (closed_by IN ('done', 'ask', 'handoff'))
   `;
 
-  // When a Stop round was acknowledged (`sent_at`), and when the session's
-  // events were caught up past that acknowledgment (`observed_at`, from a
-  // `synchronized` marker requested after it). A target is confirmed only from
-  // events applied once its latest round is observed. A restart sends the
-  // latest round again, with the same key, and observes it anew.
-  yield* sql`ALTER TABLE stop_targets ADD COLUMN sent_at TEXT`;
+  // When a Stop round was issued (`issued_at`, written before its commands
+  // are sent: a turn that starts after it may have been missed by them, and
+  // opens the next round), when the engine acknowledged it (`sent_at`), and
+  // when the session's events were caught up past that acknowledgment
+  // (`observed_at`, from a `synchronized` marker requested after it). A target
+  // is confirmed only from events applied once its latest round is observed.
+  yield* sql`ALTER TABLE stop_targets ADD COLUMN issued_at TEXT`;
+  yield* sql`
+    ALTER TABLE stop_targets ADD COLUMN sent_at TEXT
+      CHECK (sent_at IS NULL OR issued_at IS NOT NULL)
+  `;
   yield* sql`
     ALTER TABLE stop_targets ADD COLUMN observed_at TEXT
       CHECK (observed_at IS NULL OR sent_at IS NOT NULL)
@@ -53,6 +59,20 @@ export default Effect.gen(function* () {
   // When the engine answered that it has no such session. Nothing is planned
   // into it or watched there again; part 2b gives the bot a new one.
   yield* sql`ALTER TABLE sessions ADD COLUMN lost_at TEXT`;
+  // A first send was refused as busy: the adapter saw a turn the server has
+  // not applied yet, so nothing is planned into the session until its next
+  // event is applied, which clears this.
+  yield* sql`
+    ALTER TABLE sessions ADD COLUMN refused_busy INTEGER NOT NULL DEFAULT 0
+      CHECK (refused_busy IN (0, 1))
+  `;
+  // A held queue's resume whose reply was lost: how many times, and when it
+  // is tried next. Reset when a new hold is reported and at each ready edge.
+  yield* sql`
+    ALTER TABLE sessions ADD COLUMN queue_resume_failures INTEGER NOT NULL DEFAULT 0
+      CHECK (queue_resume_failures >= 0)
+  `;
+  yield* sql`ALTER TABLE sessions ADD COLUMN queue_resume_at TEXT`;
 
   // Every turn the session's events showed starting, with the audience it was
   // admitted with, applied once by its engine id: a replacement that repeats
@@ -121,6 +141,18 @@ export default Effect.gen(function* () {
   // it is sent, so it reaches the engine after a lost reply or a restart. It is
   // sent under a key derived from the card, so one card takes one answer.
   yield* sql`ALTER TABLE engine_requests ADD COLUMN response_json TEXT`;
+  // When the engine took that answer, and, while its replies are lost, how
+  // many times it was sent and when it is sent next. The request's events
+  // close the card.
+  yield* sql`
+    ALTER TABLE engine_requests ADD COLUMN response_sent_at TEXT
+      CHECK (response_sent_at IS NULL OR response_json IS NOT NULL)
+  `;
+  yield* sql`
+    ALTER TABLE engine_requests ADD COLUMN response_failures INTEGER NOT NULL DEFAULT 0
+      CHECK (response_failures >= 0)
+  `;
+  yield* sql`ALTER TABLE engine_requests ADD COLUMN response_retry_at TEXT`;
 
   // A `secret.provide` whose answer did not come back. It holds no value: only
   // that a submission may have reached the engine, so a later call learns the

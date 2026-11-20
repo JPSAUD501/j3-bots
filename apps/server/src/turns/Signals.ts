@@ -5,11 +5,12 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 
 /**
- * A nudge for a loop that reads its work from the database: firing it twice
- * before the loop looks is the same as firing it once, and firing it when
- * there is nothing to do costs one empty pass. A loop never depends on a nudge
- * for correctness, only for promptness: what it does is read from the
- * database, which is where the cause was written.
+ * A nudge for a worker that reads its work from the database: firing it twice
+ * before the worker looks is the same as firing it once. A worker never
+ * depends on a nudge for correctness, only for promptness: what it does is
+ * read from the database, which is where the cause was written, and it looks
+ * again on its own (`reconciler.ts`). A nudge is fired only when state
+ * changed, so a pass that changed nothing causes no other pass.
  */
 export interface Trigger {
   readonly fire: Effect.Effect<void>;
@@ -26,10 +27,10 @@ const makeTrigger = Effect.gen(function* () {
 });
 
 /**
- * The turn machinery's loops, and what wakes each: the dispatcher (a wake was
- * written, or a session may have become idle), the recovery of dispatches
- * whose answer was lost, the Stop runner, and the responder that sends the
- * operator's answers to engine requests.
+ * The turn machinery's workers, and what nudges each: the dispatcher (a wake
+ * was written, or a session may have become idle), the recovery of
+ * dispatches whose answer was lost, the Stop runner, the responder that sends
+ * the operator's answers to engine requests, and the resumer of held queues.
  */
 export class Signals extends Context.Service<
   Signals,
@@ -38,6 +39,7 @@ export class Signals extends Context.Service<
     readonly recovery: Trigger;
     readonly stops: Trigger;
     readonly responses: Trigger;
+    readonly resumes: Trigger;
   }
 >()("@j3-bots/server/turns/Signals") {}
 
@@ -49,6 +51,7 @@ export const layer = Layer.effect(
       recovery: yield* makeTrigger,
       stops: yield* makeTrigger,
       responses: yield* makeTrigger,
+      resumes: yield* makeTrigger,
     });
   }),
 );

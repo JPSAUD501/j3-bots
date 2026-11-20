@@ -33,6 +33,7 @@ import * as Sender from "./turns/Sender.ts";
 import * as SessionGate from "./turns/SessionGate.ts";
 import * as Signals from "./turns/Signals.ts";
 import * as Speech from "./turns/Speech.ts";
+import * as HeldQueues from "./turns/HeldQueues.ts";
 import * as Stops from "./turns/Stops.ts";
 import * as Turns from "./turns/Turns.ts";
 import * as Wakes from "./turns/Wakes.ts";
@@ -58,7 +59,7 @@ export const layer = Layer.mergeAll(BotTools.layer, Turns.layer).pipe(
     ),
   ),
   Layer.provideMerge(Layer.mergeAll(Workspaces.layer, Stops.roomWorkLayer)),
-  Layer.provideMerge(Stops.layer),
+  Layer.provideMerge(Layer.mergeAll(Stops.layer, HeldQueues.layer)),
   Layer.provideMerge(Sender.layer),
   Layer.provideMerge(Observer.layer),
   Layer.provideMerge(Layer.mergeAll(Ledger.layer, Wakes.layer, WorkSteps.layer)),

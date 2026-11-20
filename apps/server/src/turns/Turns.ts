@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import { BotStates } from "./BotStates.ts";
 import { Cards } from "./Cards.ts";
+import { HeldQueues } from "./HeldQueues.ts";
 import { Observer } from "./Observer.ts";
 import { Pipeline } from "./Pipeline.ts";
 import { Readiness } from "./Readiness.ts";
@@ -14,13 +15,14 @@ import { Stops } from "./Stops.ts";
 
 /**
  * Starts the turn machinery each time the engine becomes ready, in the order a
- * restart needs (`docs/architecture/server.md`, Failure handling): every
- * unconfirmed Stop round is sent again before any session's events are
- * opened, then the events resume from their cursors and the Stops observe
- * them, submissions and recoveries left undecided are settled, held queues
- * are resumed, and only then is the machinery released to send anything new.
- * While the engine is not ready it stays held, so no loop runs ahead of that
- * order.
+ * restart needs (`docs/architecture/server.md`, Failure handling): the
+ * sessions' events resume from their cursors, then one pass of each worker
+ * runs in order (the Stops, the secret submissions and the recoveries left
+ * undecided, the held queues, the answers), and only then are the workers
+ * released to send anything new. While the engine is not ready they stay
+ * held, so no worker runs ahead of that order. Each worker is a reconciler
+ * (`reconciler.ts`) supervised on its own: a defect in one never stops the
+ * others.
  */
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
@@ -30,10 +32,11 @@ export const layer = Layer.effectDiscard(
     const observer = yield* Observer;
     const pipeline = yield* Pipeline;
     const cards = yield* Cards;
+    const held = yield* HeldQueues;
     const states = yield* BotStates;
     const readiness = yield* Readiness;
 
-    /** One step's failure is logged and the sequence goes on: each step is retried by its loop. */
+    /** One step's failure is logged and the sequence goes on: each step is its worker's pass. */
     const step = (what: string, effect: Effect.Effect<unknown>) =>
       effect.pipe(
         Effect.catchCauseIf(
@@ -43,16 +46,23 @@ export const layer = Layer.effectDiscard(
       );
 
     const start = Effect.gen(function* () {
-      yield* step("Stop rounds could not be sent again", stops.resendUnconfirmed);
       yield* step("Sessions could not be followed", observer.watchAll);
       yield* step("Stops could not be observed", stops.runPending);
       yield* step("Secret submissions could not be checked", cards.checkSubmissions);
       yield* step("Undecided dispatches could not be recovered", pipeline.recoverDue);
-      yield* step("Held queues could not be resumed", observer.resumeAllHeld);
-      yield* step("Answers could not be sent", cards.respondPending);
+      yield* step(
+        "Held queues could not be resumed",
+        Effect.andThen(held.retryExhausted, held.resumePending),
+      );
+      yield* step(
+        "Answers could not be sent",
+        Effect.andThen(cards.retryExhausted, cards.respondPending),
+      );
       yield* readiness.release;
       yield* signals.stops.fire;
       yield* signals.recovery.fire;
+      yield* signals.resumes.fire;
+      yield* signals.responses.fire;
       yield* signals.dispatch.fire;
     }).pipe(Effect.withSpan("Turns.start"));
 
@@ -66,6 +76,7 @@ export const layer = Layer.effectDiscard(
         pipeline.run,
         stops.run,
         cards.run,
+        held.run,
         states.watchStalls,
       ],
       { concurrency: "unbounded", discard: true },

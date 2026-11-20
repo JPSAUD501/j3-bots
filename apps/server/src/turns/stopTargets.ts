@@ -15,7 +15,7 @@ import { type Audience, sameAudience, type SessionRowId } from "./model.ts";
 export const stopKey = (stopId: string, sessionId: string, round: number): IdempotencyKey =>
   IdempotencyKey.make(`${stopId}:${sessionId}:${round}`);
 
-const LatestStop = Schema.Struct({
+const StopScope = Schema.Struct({
   scope: Schema.Literals(["bot", "room"]),
   room_id: Schema.NullOr(RoomId),
 });
@@ -29,7 +29,7 @@ export const stopTargets = (sql: SqlClient.SqlClient) => {
 
   const latestStop = SqlSchema.findOneOption({
     Request: Schema.String,
-    Result: LatestStop,
+    Result: StopScope,
     execute: (sessionId) => sql`
       SELECT s.scope, s.room_id FROM stops s
       JOIN stop_targets t ON t.stop_id = s.id
@@ -38,7 +38,29 @@ export const stopTargets = (sql: SqlClient.SqlClient) => {
     `,
   });
 
+  const fenceOf = SqlSchema.findOneOption({
+    Request: Schema.String,
+    Result: StopScope,
+    execute: (stopId) => sql`SELECT scope, room_id FROM stops WHERE id = ${stopId}`,
+  });
+
   return {
+    /**
+     * Whether the Stop that fenced a dispatch stopped what it was for: every
+     * one of a bot Stop, and a room Stop's own room. A room's Stop also fences
+     * private work in a member's session, which the operator did not stop.
+     */
+    stoppedByFence: Effect.fn("stopTargets.stoppedByFence")(function* (dispatch: {
+      readonly fenced_by_stop_id: string | null;
+      readonly audience: "conversation" | "room";
+      readonly audience_room_id: RoomId | null;
+    }) {
+      if (dispatch.fenced_by_stop_id === null) return false;
+      const fence = yield* fenceOf(dispatch.fenced_by_stop_id).pipe(Effect.orDie);
+      if (Option.isNone(fence) || fence.value.scope === "bot") return true;
+      return dispatch.audience === "room" && dispatch.audience_room_id === fence.value.room_id;
+    }),
+
     /**
      * Confirms every unsettled target of the session once the latest round of
      * each was observed (the events were synchronized past its acknowledgment)
@@ -73,11 +95,12 @@ export const stopTargets = (sql: SqlClient.SqlClient) => {
     }, Effect.orDie),
 
     /**
-     * A turn started in the session after a round of its Stop was sent (a
-     * fenced dispatch the engine applied after all, a continuation): the round
-     * missed it, so each target still unsettled gets a new round, unsent. A
-     * turn delivering a dispatch the Stop fenced reopens that Stop's target
-     * even once confirmed: the engine applied the key after the Stop ended
+     * A turn started in the session after a round of its Stop was issued (a
+     * fenced dispatch the engine applied after all, a continuation, a run
+     * that began between the Stop's commands): the round may have missed it,
+     * so each target still unsettled gets a new round, not yet issued. A turn
+     * delivering a dispatch the Stop fenced reopens that Stop's target even
+     * once confirmed: the engine applied the key after the Stop ended
      * everything else. Whether one was opened.
      */
     openRound: Effect.fn("stopTargets.openRound")(function* (
@@ -92,7 +115,7 @@ export const stopTargets = (sql: SqlClient.SqlClient) => {
             WHERE u.stop_id = t.stop_id AND u.session_id = t.session_id
           )
           AND (
-            (t.stopped_at IS NULL AND t.sent_at IS NOT NULL)
+            (t.stopped_at IS NULL AND t.issued_at IS NOT NULL)
             OR (t.stopped_at IS NOT NULL AND t.stop_id = ${fencedBy})
           )
       `;

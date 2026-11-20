@@ -2,11 +2,13 @@
 import { AttachmentId, type BotId } from "@j3-bots/contracts";
 import {
   type DispatchAttachment,
+  type DispatchDisposition,
   type DispatchInput,
   Engine,
   EngineAttachmentId,
   SessionId,
 } from "@j3-bots/engine-t3";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -31,23 +33,33 @@ import {
   recoveryBackoff,
   type WakeFailure,
 } from "./model.ts";
-import { notices } from "./notices.ts";
 import { Observer } from "./Observer.ts";
+import { DEFECT_RETRY } from "./reconciler.ts";
 import { SessionGate } from "./SessionGate.ts";
+import { sessionLoss } from "./sessionRecords.ts";
 import { Signals } from "./Signals.ts";
+import { stopTargets } from "./stopTargets.ts";
+import { WorkSteps } from "./WorkSteps.ts";
 
 /** Where an operator's file is copied in the bot's workspace, relative to it. */
 export const inboxPath = (attachment: { readonly id: AttachmentId; readonly name: string }) =>
   `files/inbox/${attachment.id}/${attachment.name.replaceAll(/[/\\]/g, "_")}`;
 
-/** What a send learned. */
+/** What a send did. */
 export type SendResult =
-  /** The dispatch has an answer, or needs none from this send. */
+  /** The dispatch moved on: it has an answer, or it was released or failed. */
   | "settled"
-  /** Nothing was sent: the engine cannot take commands. Try again once it is ready. */
-  | "engine-unavailable"
   /** No answer yet: the recovery tries again at `next_attempt_at`. */
-  | "scheduled";
+  | "scheduled"
+  /**
+   * Nothing to do now: it is settled, not due before its deadline, held by a
+   * Stop whose confirmation nudges the workers, or another send took it.
+   */
+  | "none"
+  /** Its session cannot take it yet: a later pass tries again. */
+  | "skipped"
+  /** Nothing was sent: the engine cannot take commands. Try again once it is ready. */
+  | "engine-unavailable";
 
 const FileRow = Schema.Struct({
   position: Schema.Int,
@@ -58,13 +70,9 @@ const FileRow = Schema.Struct({
 
 const SessionState = Schema.Struct({
   engine_session_id: Schema.NullOr(SessionId),
+  lost: Schema.BooleanFromBit,
   gone: Schema.BooleanFromBit,
   stop_unsettled: Schema.BooleanFromBit,
-});
-
-const FenceRow = Schema.Struct({
-  scope: Schema.Literals(["bot", "room"]),
-  room_id: Schema.NullOr(Schema.String),
 });
 
 /** How staging a dispatch's files went. */
@@ -83,22 +91,26 @@ type Staging =
  * recovery (`redispatch`, the same key and input with none).
  *
  * The attempt is claimed durably, after staging and right before the call, by
- * one conditional update: still undecided, unchanged since it was read, and
- * either sent for delivery into a session no Stop holds, or, once a Stop
- * fenced it, resent only to learn the answer for a key already sent. That
- * claim is what makes a send a send: a Stop recorded before it fences the
- * dispatch, which is then never sent; one recorded after it finds the attempt
- * and waits for its answer. Every answer is recorded against the dispatch as
- * it stands then, so a fence that landed during the call decides where its
+ * one conditional update: still undecided and unchanged since it was read,
+ * and either a recovery of a key already sent, fenced or not, or a first send
+ * of an unfenced dispatch into a live session no Stop holds. That claim is
+ * what makes a send a send: a Stop recorded before it fences the dispatch,
+ * which is then never sent; one recorded after it finds the attempt, and the
+ * recovery learns its answer. Every answer is recorded against the dispatch
+ * as it stands then, so a fence that landed during the call decides where its
  * wakes go.
+ *
+ * A session that is gone is settled before anything waits on it, and one
+ * whose events are not known yet is skipped: neither holds up another
+ * session's sends.
  */
 export class Sender extends Context.Service<
   Sender,
   {
     /**
-     * Sends a dispatch for delivery, unless a Stop fenced it or a Stop of its
-     * session is unsettled; a fenced dispatch whose answer was lost is resent
-     * only to learn the answer for its key (step 2 of a Stop).
+     * Sends a dispatch if it is due: a first send unless a Stop fenced it or
+     * a Stop of its session is unsettled, a recovery of a key already sent in
+     * any case. A defect gives the dispatch a later deadline.
      */
     readonly send: (dispatchId: DispatchRowId) => Effect.Effect<SendResult>;
   }
@@ -118,7 +130,8 @@ export const layer = Layer.effect(
     const layout = yield* Layout;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const { sessionLost } = notices(sql, yield* Entries);
+    const targets = stopTargets(sql);
+    const { sessionLost } = sessionLoss(sql, yield* Entries, ledger, yield* WorkSteps, signals);
 
     const files = SqlSchema.findAll({
       Request: Schema.String,
@@ -133,7 +146,8 @@ export const layer = Layer.effect(
       Request: Schema.String,
       Result: SessionState,
       execute: (sessionId) => sql`
-        SELECT s.engine_session_id, (s.retired_at IS NOT NULL OR s.lost_at IS NOT NULL) AS gone,
+        SELECT s.engine_session_id, s.lost_at IS NOT NULL AS lost,
+          (s.retired_at IS NOT NULL OR s.lost_at IS NOT NULL) AS gone,
           EXISTS (
             SELECT 1 FROM stop_targets t WHERE t.session_id = s.id AND t.stopped_at IS NULL
           ) AS stop_unsettled
@@ -141,27 +155,9 @@ export const layer = Layer.effect(
       `,
     });
 
-    const fenceOf = SqlSchema.findOneOption({
-      Request: Schema.String,
-      Result: FenceRow,
-      execute: (stopId) => sql`SELECT scope, room_id FROM stops WHERE id = ${stopId}`,
-    });
-
-    /**
-     * Whether the Stop that fenced the dispatch stopped what it was for: every
-     * one of a bot Stop, and a room Stop's own room. A room's Stop also fences
-     * private work in a member's session, which the operator did not stop.
-     */
-    const stoppedByFence = Effect.fn("Sender.stoppedByFence")(function* (row: DispatchRow) {
-      if (row.fenced_by_stop_id === null) return false;
-      const fence = yield* fenceOf(row.fenced_by_stop_id).pipe(Effect.orDie);
-      if (Option.isNone(fence) || fence.value.scope === "bot") return true;
-      return row.audience === "room" && row.audience_room_id === fence.value.room_id;
-    });
-
     /** The engine certainly applied nothing: the wakes wait again, unless the operator stopped them. */
     const unsentWakes = (row: DispatchRow) =>
-      Effect.map(stoppedByFence(row), (stopped): WakesAfter =>
+      Effect.map(targets.stoppedByFence(row), (stopped): WakesAfter =>
         stopped ? { _tag: "cancelled" } : { _tag: "pending" },
       );
 
@@ -171,7 +167,7 @@ export const layer = Layer.effect(
      * them. They never wait again.
      */
     const sentWakes = (row: DispatchRow, reason: WakeFailure) =>
-      Effect.map(stoppedByFence(row), (stopped): WakesAfter =>
+      Effect.map(targets.stoppedByFence(row), (stopped): WakesAfter =>
         stopped ? { _tag: "cancelled" } : { _tag: "failed", reason },
       );
 
@@ -186,6 +182,36 @@ export const layer = Layer.effect(
           const row = yield* current(dispatchId);
           if (Option.isNone(row)) return;
           yield* ledger.release(dispatchId, yield* unsentWakes(row.value));
+        }),
+      );
+
+    /**
+     * The adapter saw a turn the server has not applied yet: nothing is
+     * planned into the session until its next event is.
+     */
+    const refusedBusy = (dispatchId: DispatchRowId, sessionId: string) =>
+      transaction(
+        Effect.gen(function* () {
+          yield* sql`
+            UPDATE sessions SET refused_busy = 1 WHERE id = ${sessionId}
+          `.pipe(Effect.orDie);
+          yield* releaseUnsent(dispatchId);
+        }),
+      );
+
+    /**
+     * The engine took the key. If its session was lost while the call was on
+     * its way, nothing will ever report the turn: it fails as `unresolved`.
+     */
+    const accepted = (row: DispatchRow, disposition: DispatchDisposition | null) =>
+      transaction(
+        Effect.gen(function* () {
+          yield* ledger.accept(row.id, disposition);
+          const session = yield* sessionState(row.session_id).pipe(Effect.orDie);
+          if (session.lost) {
+            yield* ledger.abandon(row.id, yield* sentWakes(row, "unresolved"));
+          }
+          return "settled" as const;
         }),
       );
 
@@ -361,7 +387,9 @@ export const layer = Layer.effect(
 
     /**
      * The send's claim: the attempt is counted only if the dispatch is still
-     * what was read, and still sendable. Whether it was claimed.
+     * what was read, and still this send's to make. A recovery owns every key
+     * already sent, fenced or not; a first send needs an unfenced dispatch in
+     * a live session no Stop holds. Whether it was claimed.
      */
     const claim = Effect.fn("Sender.claim")(function* (row: DispatchRow) {
       const at = timeText(yield* DateTime.now);
@@ -369,7 +397,8 @@ export const layer = Layer.effect(
         UPDATE dispatches SET attempts = attempts + 1, updated_at = ${at}
         WHERE id = ${row.id} AND status = 'intended' AND attempts = ${row.attempts}
           AND (
-            (
+            attempts > 0
+            OR (
               fenced_by_stop_id IS NULL
               AND NOT EXISTS (
                 SELECT 1 FROM stop_targets t
@@ -380,7 +409,6 @@ export const layer = Layer.effect(
                   AND (s.retired_at IS NOT NULL OR s.lost_at IS NOT NULL)
               )
             )
-            OR (fenced_by_stop_id IS NOT NULL AND attempts > 0)
           )
         RETURNING attempts
       `.pipe(Effect.orDie);
@@ -389,19 +417,26 @@ export const layer = Layer.effect(
 
     const sendInGate = Effect.fn("Sender.sendInGate")(function* (dispatchId: DispatchRowId) {
       const found = yield* ledger.find(dispatchId);
-      if (Option.isNone(found) || found.value.status !== "intended") return "settled" as const;
+      if (Option.isNone(found) || found.value.status !== "intended") return "none" as const;
       const row = found.value;
+      const now = yield* DateTime.now;
+      // Read again in the gate: another pass may have sent it meanwhile.
+      if (row.next_attempt_at !== null && DateTime.isGreaterThan(row.next_attempt_at, now)) {
+        return "none" as const;
+      }
       const session = yield* sessionState(row.session_id).pipe(Effect.orDie);
-      const fenced = row.fenced_by_stop_id !== null;
-      // A fenced dispatch never sent was released with its fence; a Stop of
-      // the session holds every other one.
-      if (fenced ? row.attempts === 0 : session.stop_unsettled) return "settled" as const;
       const firstSend = row.attempts === 0;
+      // A fenced dispatch never sent was released with its fence; a Stop of
+      // the session holds every other first send. A key already sent is the
+      // recovery's in any case.
+      if (firstSend && (row.fenced_by_stop_id !== null || session.stop_unsettled)) {
+        return "none" as const;
+      }
 
       // Ends with no answer: its session is gone, or the day's bound passed.
       const expired = DateTime.isLessThan(
         DateTime.addDuration(row.created_at, RECOVERY_WINDOW),
-        yield* DateTime.now,
+        now,
       );
       if (session.gone || session.engine_session_id === null || (!firstSend && expired)) {
         if (firstSend) yield* releaseUnsent(row.id);
@@ -415,16 +450,15 @@ export const layer = Layer.effect(
       if (staging._tag === "failed") return yield* stagingFailed(row.id);
       const input = inputOf(row, sessionId, staging.files);
 
-      if (!(yield* claim(row))) return "settled" as const;
+      if (!(yield* claim(row))) return "none" as const;
 
       if (firstSend) {
         return yield* engine.dispatch(input).pipe(
-          Effect.flatMap((disposition) =>
-            transaction(ledger.accept(row.id, disposition)).pipe(Effect.as("settled" as const)),
-          ),
+          Effect.flatMap((disposition) => accepted(row, disposition)),
           Effect.catchTags({
             // Refused before anything was sent.
-            SessionBusy: () => releaseUnsent(row.id).pipe(Effect.as("settled" as const)),
+            SessionBusy: () =>
+              refusedBusy(row.id, row.session_id).pipe(Effect.as("settled" as const)),
             SessionNotFound: () =>
               transaction(Effect.andThen(sessionLost(row.session_id), releaseUnsent(row.id))).pipe(
                 Effect.as("settled" as const),
@@ -438,9 +472,7 @@ export const layer = Layer.effect(
         );
       }
       return yield* engine.redispatch(input).pipe(
-        Effect.flatMap(() =>
-          transaction(ledger.accept(row.id, null)).pipe(Effect.as("settled" as const)),
-        ),
+        Effect.flatMap(() => accepted(row, null)),
         Effect.catchTags({
           DispatchRejected: () => failSent(row.id, "rejected").pipe(Effect.as("settled" as const)),
           // While the engine is unreachable the recovery waits, and counts nothing.
@@ -451,17 +483,52 @@ export const layer = Layer.effect(
       );
     });
 
+    /**
+     * A defect in one send is logged, and the dispatch is given a deadline:
+     * the recovery tries it again then, never at once.
+     */
+    const deferAfterDefect = Effect.fn("Sender.deferAfterDefect")(function* (
+      dispatchId: DispatchRowId,
+    ) {
+      const next = DateTime.addDuration(yield* DateTime.now, DEFECT_RETRY);
+      yield* sql`
+        UPDATE dispatches SET next_attempt_at = ${timeText(next)}
+        WHERE id = ${dispatchId} AND status = 'intended'
+      `.pipe(Effect.orDie);
+      return "scheduled" as const;
+    });
+
     const send = Effect.fn("Sender.send")(function* (dispatchId: DispatchRowId) {
       const found = yield* ledger.find(dispatchId);
-      if (Option.isNone(found)) return "settled" as const;
-      // Nothing is sent into a session before its events are followed and
-      // their first snapshot or cursor is committed.
-      if (!(yield* observer.ready(found.value.session_id))) return "engine-unavailable" as const;
-      const result = yield* gate.run(found.value.session_id)(sendInGate(dispatchId));
-      // The session's state changed, or a Stop may now proceed.
-      yield* signals.dispatch.fire;
-      yield* signals.stops.fire;
-      if (result === "scheduled") yield* signals.recovery.fire;
+      if (Option.isNone(found) || found.value.status !== "intended") return "none" as const;
+      const sessionId = found.value.session_id;
+      const session = yield* sessionState(sessionId).pipe(Effect.orDie);
+      // A session that is gone is settled in the gate without waiting on it.
+      // A live one takes nothing before its events are followed and known
+      // from a committed cursor or snapshot; until then it is skipped, and
+      // the event that makes it ready nudges the dispatcher.
+      if (!session.gone && session.engine_session_id !== null) {
+        if (!(yield* observer.ready(sessionId))) return "skipped" as const;
+      }
+      const result: SendResult = yield* gate
+        .run(sessionId)(sendInGate(dispatchId))
+        .pipe(
+          Effect.catchCauseIf(
+            (cause) => !Cause.hasInterruptsOnly(cause),
+            (cause) =>
+              Effect.logError("A dispatch could not be sent; it is tried again later", cause).pipe(
+                Effect.andThen(deferAfterDefect(dispatchId)),
+              ),
+          ),
+        );
+      // Only a change wakes anyone: the session may take its next wake, a
+      // Stop may proceed, or the recovery has a new deadline.
+      if (result === "settled") {
+        yield* signals.dispatch.fire;
+        yield* signals.stops.fire;
+      } else if (result === "scheduled") {
+        yield* signals.recovery.fire;
+      }
       return result;
     });
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
 import { type BotId, WorkStepId } from "@j3-bots/contracts";
-import { Engine, IdempotencyKey } from "@j3-bots/engine-t3";
+import { Engine, EventCursor, IdempotencyKey } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -33,6 +33,7 @@ import {
 } from "../testing/turns.ts";
 import { BotTools } from "../tools/BotTools.ts";
 import { BotStates } from "./BotStates.ts";
+import { HeldQueues } from "./HeldQueues.ts";
 import { recoveryBackoff, STALL_AFTER } from "./model.ts";
 import { Stops } from "./Stops.ts";
 import { WorkSteps } from "./WorkSteps.ts";
@@ -512,8 +513,12 @@ it.effect("retries a held queue's resume whose reply was lost", () =>
     yield* nextTurn(bot.id);
     yield* control.startEngineTurn(session);
 
-    yield* control.loseNextReply;
+    // The engine applies the resume, and its reply is lost.
+    const resuming = yield* control.holdNext("resumeQueue");
     yield* control.holdQueue({ sessionId: session, heldAgainOnResume: false });
+    yield* resuming.entered;
+    yield* control.loseNextReply;
+    yield* resuming.release;
     const resumed = sql<{ readonly n: number }>`
       SELECT COUNT(*) AS n FROM sessions
       WHERE queue_held_cursor IS NOT NULL AND queue_resumed_cursor = queue_held_cursor
@@ -521,9 +526,58 @@ it.effect("retries a held queue's resume whose reply was lost", () =>
     yield* gateSettled(bot.id);
     assert.isFalse(yield* resumed);
 
+    // Once the backoff passes it is resumed again, which the engine applies once.
     yield* TestClock.adjust(recoveryBackoff(1));
-    yield* until(resumed);
+    yield* (yield* HeldQueues).resumePending;
+    assert.isTrue(yield* resumed);
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("forgets a hold that the engine's replaced history no longer shows", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const sql = yield* SqlClient.SqlClient;
+    const holdOf = (botId: BotId) =>
+      sql<{ readonly cursor: string | null }>`
+        SELECT queue_held_cursor AS cursor FROM sessions WHERE bot_id = ${botId}
+      `.pipe(Effect.map(([row]) => row?.cursor ?? null));
+
+    const firstRun = Effect.gen(function* () {
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      yield* sendToBot(bot.id, "Build it.");
+      const running = yield* nextTurn(bot.id);
+      yield* control.startEngineTurn(session);
+
+      // The engine holds the queue, and the server goes down while its
+      // resume is still on the way.
+      const resuming = yield* control.holdNext("resumeQueue");
+      yield* control.holdQueue({ sessionId: session, heldAgainOnResume: false });
+      yield* resuming.entered;
+      const hold = yield* holdOf(bot.id);
+      return { bot, session, running, hold };
+    });
+    const { bot, session, running, hold } = yield* firstRun.pipe(Effect.provide(Domain.layer));
+    assert.isNotNull(hold);
+
+    // Meanwhile the queue is resumed from elsewhere, and the engine forgets
+    // the events that showed the hold.
+    if (hold !== null) {
+      yield* (yield* Engine).resumeQueue({ sessionId: session, hold: EventCursor.make(hold) });
+    }
+    yield* control.finishTurn({
+      sessionId: session,
+      turnId: running,
+      outcome: { _tag: "completed" },
+    });
+    yield* control.pruneHistory(session);
+
+    yield* Effect.gen(function* () {
+      yield* nextTurn(bot.id, running);
+      // The replacement shows nothing held: the hold recorded before is stale.
+      assert.isNull(yield* holdOf(bot.id));
+    }).pipe(Effect.provide(Domain.layer));
+  }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
 );
 
 it.effect("shows an event that cannot be applied once, and applies it when it can", () =>

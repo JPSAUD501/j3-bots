@@ -58,8 +58,9 @@ import {
 } from "./model.ts";
 import { inboxPath, Sender } from "./Sender.ts";
 import { isIdle, sessionWork } from "./sessionWork.ts";
-import { Signals } from "./Signals.ts";
 import { Readiness } from "./Readiness.ts";
+import { type Pass, onePassAtATime, passOutcome, reconcile } from "./reconciler.ts";
+import { Signals } from "./Signals.ts";
 import { Wakes } from "./Wakes.ts";
 
 const MainSession = Schema.Struct({
@@ -347,9 +348,22 @@ export const layer = Layer.effect(
             return yield* new Conflict({ reason: "not-retryable" });
           }
           const sent = yield* ledger.wakesOf(link.dispatch_id);
+          const retried = new Set<string>();
+          if (sent.length > 0) {
+            const rows = yield* sql<{ readonly retry_of: string }>`
+              SELECT retry_of FROM wakes
+              WHERE ${sql.in(
+                "retry_of",
+                sent.map((wake) => wake.id),
+              )}
+            `.pipe(Effect.orDie);
+            for (const row of rows) retried.add(row.retry_of);
+          }
+          // A failed wake is retried as such, so its message shows the retry;
+          // one a message retry already sent again is not sent a third time.
           yield* wakes.record(
             sent
-              .filter((wake) => wake.kind === "user")
+              .filter((wake) => wake.kind === "user" && !retried.has(wake.id))
               .map((wake) => ({
                 botId: wake.bot_id,
                 kind: wake.kind,
@@ -357,8 +371,11 @@ export const layer = Layer.effect(
                 payload: wake.payload_json,
                 sourceEntryId: wake.source_entry_id,
                 hops: wake.hops,
-                retryOf: null,
+                retryOf: wake.status === "failed" ? wake.id : null,
               })),
+          );
+          yield* ledger.refreshMessages(
+            sent.flatMap((wake) => (wake.source_entry_id === null ? [] : [wake.source_entry_id])),
           );
           yield* entries.update({ ...notice, retryable: false });
         }),
@@ -367,6 +384,10 @@ export const layer = Layer.effect(
 
     // ---- The dispatcher -----------------------------------------------------
 
+    /**
+     * The bot's main session, if it can be planned into: live, opened in the
+     * engine, and not refused as busy since its last applied event.
+     */
     const mainSession = SqlSchema.findOneOption({
       Request: Schema.String,
       Result: MainSession,
@@ -374,6 +395,7 @@ export const layer = Layer.effect(
         SELECT id, bot_id FROM sessions
         WHERE bot_id = ${botId} AND purpose = 'main' AND retired_at IS NULL
           AND lost_at IS NULL AND engine_session_id IS NOT NULL
+          AND refused_busy = 0
       `,
     });
 
@@ -416,17 +438,21 @@ export const layer = Layer.effect(
     );
 
     /**
-     * Written and never sent, not fenced, and not waiting to stage its files
-     * again: sent before anything new is written, whether or not its bot has
-     * a wake pending.
+     * Written and never sent, not fenced, not waiting to stage its files
+     * again, and in a session no Stop holds (as the send's claim requires):
+     * sent before anything new is written, whether or not its bot has a wake
+     * pending.
      */
     const unsent = SqlSchema.findAll({
       Request: Schema.Void,
       Result: Schema.Struct({ id: DispatchRowId }),
       execute: () => sql`
-        SELECT id FROM dispatches
+        SELECT id FROM dispatches d
         WHERE status = 'intended' AND attempts = 0 AND fenced_by_stop_id IS NULL
           AND next_attempt_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM stop_targets t WHERE t.session_id = d.session_id AND t.stopped_at IS NULL
+          )
         ORDER BY rowid
       `,
     })(undefined).pipe(Effect.orDie);
@@ -737,56 +763,53 @@ export const layer = Layer.effect(
     });
 
     /**
-     * One item's failure is logged and the pass goes on (as T3's workers do):
-     * a defect in one dispatch never stops the others. The dispatch stays as
-     * it was, for the next pass or the recovery and its bounds.
+     * A defect in planning one bot is logged and the pass goes on with the
+     * others; its wakes stay pending for a later pass. A defect in a send is
+     * the sender's, which gives the dispatch a later deadline.
      */
-    const supervised =
-      (what: string) =>
-      <A>(effect: Effect.Effect<A>, otherwise: A): Effect.Effect<A> =>
-        effect.pipe(
-          Effect.catchCauseIf(
-            (cause) => !Cause.hasInterruptsOnly(cause),
-            (cause) => Effect.as(Effect.logError(what, cause), otherwise),
-          ),
-        );
-    const sendOne = supervised("A dispatch could not be sent");
-    const planOne = supervised("A bot's wakes could not be planned");
+    const planOne = <A>(effect: Effect.Effect<A>, otherwise: A): Effect.Effect<A> =>
+      effect.pipe(
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.as(Effect.logError("A bot's wakes could not be planned", cause), otherwise),
+        ),
+      );
 
-    /** A pass of the dispatcher: whether the engine took what it was sent. */
-    const dispatchPass = Effect.gen(function* () {
-      let available = true;
-      const send = (dispatchId: DispatchRowId) =>
-        sendOne(
-          sender.send(dispatchId).pipe(
-            Effect.map((result) => {
-              if (result === "engine-unavailable") available = false;
+    /**
+     * A pass of the dispatcher. A session that is not ready only defers its
+     * own dispatch; only the engine refusing a command ends the pass.
+     */
+    const dispatchPass: Effect.Effect<Pass> = yield* onePassAtATime(
+      Effect.gen(function* () {
+        const outcome = passOutcome();
+        // A dispatch written before a crash, or while the engine was down, goes first.
+        for (const { id } of yield* unsent) {
+          const result = yield* sender.send(id);
+          if (result === "engine-unavailable") return { _tag: "unavailable" } as const;
+          if (result === "skipped") outcome.defer();
+        }
+        const { budgets } = yield* settings.get;
+        let slots = budgets.concurrentTurns - (yield* busySessions);
+        for (const { bot_id: botId } of yield* waitingBots) {
+          const planned = yield* planOne(
+            Effect.gen(function* () {
+              const plan = yield* planFor(botId, slots);
+              if (plan === null) return null;
+              const dispatchId = yield* writeDispatch(plan);
+              return dispatchId === null ? null : { plan, dispatchId };
             }),
-          ),
-          undefined,
-        );
-      // A dispatch written before a crash, or while the engine was down, goes first.
-      for (const { id } of yield* unsent) yield* send(id);
-      if (!available) return false;
-      const { budgets } = yield* settings.get;
-      let slots = budgets.concurrentTurns - (yield* busySessions);
-      for (const { bot_id: botId } of yield* waitingBots) {
-        const planned = yield* planOne(
-          Effect.gen(function* () {
-            const plan = yield* planFor(botId, slots);
-            if (plan === null) return null;
-            const dispatchId = yield* writeDispatch(plan);
-            return dispatchId === null ? null : { plan, dispatchId };
-          }),
-          null,
-        );
-        if (planned === null) continue;
-        if (planned.plan.delivery._tag === "start") slots--;
-        yield* send(planned.dispatchId);
-        if (!available) return false;
-      }
-      return true;
-    }).pipe(Effect.withSpan("Pipeline.dispatchPending"));
+            null,
+          );
+          if (planned === null) continue;
+          if (planned.plan.delivery._tag === "start") slots--;
+          const result = yield* sender.send(planned.dispatchId);
+          if (result === "engine-unavailable") return { _tag: "unavailable" } as const;
+          if (result === "skipped") outcome.defer();
+        }
+        return outcome.done();
+      }).pipe(Effect.withSpan("Pipeline.dispatchPending")),
+    );
 
     const dispatchPending = Effect.asVoid(dispatchPass);
 
@@ -795,70 +818,68 @@ export const layer = Layer.effect(
     /**
      * What the recovery owns: every undecided dispatch the engine may have
      * (sent at least once, fenced or not: a fenced one settles here, with the
-     * same backoff), and one whose files wait to be staged again.
+     * same backoff), and one whose files wait to be staged again in a session
+     * no Stop holds.
      */
     const dueRows = SqlSchema.findAll({
       Request: Schema.Void,
       Result: Schema.Struct({ id: DispatchRowId, next_attempt_at: Schema.NullOr(Time) }),
       execute: () => sql`
-        SELECT id, next_attempt_at FROM dispatches
-        WHERE status = 'intended' AND (attempts > 0 OR next_attempt_at IS NOT NULL)
+        SELECT id, next_attempt_at FROM dispatches d
+        WHERE status = 'intended' AND (
+          attempts > 0
+          OR (
+            next_attempt_at IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM stop_targets t
+              WHERE t.session_id = d.session_id AND t.stopped_at IS NULL
+            )
+          )
+        )
         ORDER BY rowid
       `,
     })(undefined).pipe(Effect.orDie);
 
-    /** A pass of the recovery over what is due: whether the engine took what it was sent. */
-    const recoveryPass = Effect.gen(function* () {
-      const now = yield* DateTime.now;
-      let available = true;
-      for (const row of yield* dueRows) {
-        if (row.next_attempt_at !== null && DateTime.isGreaterThan(row.next_attempt_at, now)) {
-          continue;
+    /** A pass of the recovery over what is due, which learns the next deadline. */
+    const recoveryPass: Effect.Effect<Pass> = yield* onePassAtATime(
+      Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        const outcome = passOutcome();
+        for (const row of yield* dueRows) {
+          if (row.next_attempt_at !== null && DateTime.isGreaterThan(row.next_attempt_at, now)) {
+            continue;
+          }
+          const result = yield* sender.send(row.id);
+          if (result === "engine-unavailable") return { _tag: "unavailable" } as const;
+          if (result === "skipped") outcome.defer();
         }
-        const result = yield* sendOne(sender.send(row.id), "settled" as const);
-        if (result === "engine-unavailable") {
-          available = false;
-          break;
-        }
-      }
-      return available;
-    }).pipe(Effect.withSpan("Pipeline.recoverDue"));
+        // The deadlines as the sends left them.
+        for (const row of yield* dueRows) outcome.until(row.next_attempt_at);
+        return outcome.done();
+      }).pipe(Effect.withSpan("Pipeline.recoverDue")),
+    );
 
     const recoverDue = Effect.asVoid(recoveryPass);
 
-    /** The earliest time a recovery is due, if one waits. */
-    const nextRecovery = Effect.gen(function* () {
-      let earliest: DateTime.Utc | null = null;
-      for (const row of yield* dueRows) {
-        if (row.next_attempt_at === null) return yield* DateTime.now;
-        if (earliest === null || DateTime.isLessThan(row.next_attempt_at, earliest)) {
-          earliest = row.next_attempt_at;
-        }
-      }
-      return earliest;
-    });
-
-    // Both loops wait for the startup or reconnect sequence (`Turns.ts`) to
-    // release them, and park after the engine refuses until it is ready again
-    // or the retry deadline passes, rather than spin on a status that trails.
-    const recoveryLoop = Effect.gen(function* () {
-      yield* readiness.released;
-      if (!(yield* recoveryPass)) return yield* readiness.changeOrRetry;
-      const next = yield* nextRecovery;
-      if (next === null) return yield* signals.recovery.next;
-      const wait = DateTime.distance(yield* DateTime.now, next);
-      yield* signals.recovery.next.pipe(Effect.timeoutOption(wait));
-    }).pipe(Effect.forever);
-
-    const dispatchLoop = Effect.gen(function* () {
-      yield* signals.dispatch.next;
-      yield* readiness.released;
-      if (!(yield* dispatchPass)) yield* readiness.changeOrRetry;
-    }).pipe(Effect.forever);
-
-    const run = Effect.all([dispatchLoop, recoveryLoop], { concurrency: "unbounded" }).pipe(
-      Effect.andThen(Effect.never),
-    );
+    // Both wait for the startup or reconnect sequence (`Turns.ts`) to release
+    // them, and park after the engine refuses until it is ready again.
+    const run = Effect.all(
+      [
+        reconcile({
+          name: "The dispatcher",
+          pass: dispatchPass,
+          signal: signals.dispatch,
+          readiness,
+        }),
+        reconcile({
+          name: "The recovery",
+          pass: recoveryPass,
+          signal: signals.recovery,
+          readiness,
+        }),
+      ],
+      { concurrency: "unbounded" },
+    ).pipe(Effect.andThen(Effect.never));
 
     return Pipeline.of({
       sendMessage,

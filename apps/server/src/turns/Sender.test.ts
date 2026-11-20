@@ -5,6 +5,7 @@ import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import { Attachments } from "../attachments/Attachments.ts";
 import * as Domain from "../domain.ts";
@@ -102,24 +103,46 @@ it.effect("stages a file again after its staging reply was lost, once the backof
 it.effect("stages an expired file again before recovering the dispatch that carries it", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;
+    const sql = yield* SqlClient.SqlClient;
     const bot = yield* createBot("Ana");
     const session = yield* engineSession(bot.id);
 
-    // The engine applies the start, and the answer is lost.
+    // The engine queues the start behind a turn of its own, and the answer is
+    // lost: the dispatch stays undecided while that turn runs.
+    yield* control.startEngineTurnDuringNextDispatch(session);
     const sending = yield* control.holdNext("dispatch");
     const message = yield* sendWithFile(bot.id, "Summarize the notes.");
     yield* sending.entered;
     yield* control.loseNextReply;
     yield* sending.release;
-    const turnId = yield* nextTurn(bot.id);
+    const ownTurn = yield* nextTurn(bot.id);
     yield* gateSettled(bot.id);
 
-    // The recovery comes after the staged file expired: the engine refuses
-    // an expired id, so it is staged again.
+    // The recovery comes only after the staged file expired. The engine
+    // refuses an expired id, so the file must be staged again for the resend
+    // to be taken.
+    yield* control.setReachable(false);
     yield* TestClock.adjust(Duration.hours(13));
+    yield* control.setReachable(true);
     yield* (yield* Pipeline).recoverDue;
+    const [row] = yield* sql<{ readonly status: string }>`
+      SELECT d.status FROM dispatches d JOIN wakes w ON w.dispatch_id = d.id
+      WHERE w.source_entry_id = ${message}
+    `;
+    assert.strictEqual(row?.status, "accepted");
+
+    yield* control.finishTurn({
+      sessionId: session,
+      turnId: ownTurn,
+      outcome: { _tag: "completed" },
+    });
+    const delivered = yield* nextTurn(bot.id, ownTurn);
     yield* deliveryIs(message, "delivered");
-    yield* control.finishTurn({ sessionId: session, turnId, outcome: { _tag: "completed" } });
+    yield* control.finishTurn({
+      sessionId: session,
+      turnId: delivered,
+      outcome: { _tag: "completed" },
+    });
     yield* turnEnded(bot.id);
     assert.strictEqual(yield* timesSent(session, "Summarize the notes."), 1);
   }).pipe(Effect.provide(TestDomain.layer)),
@@ -221,5 +244,26 @@ it.effect("shows a lost session once and plans nothing into it", () =>
     assert.strictEqual(notices.length, 1);
     yield* deliveryIs(message, "pending");
     assert.deepStrictEqual(yield* (yield* BotStates).of(bot.id), { _tag: "idle" });
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("settles a lost session's undecided send without holding up another bot", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const ana = yield* createBot("Ana");
+    const anaSession = yield* engineSession(ana.id);
+    const bia = yield* createBot("Bia");
+    yield* engineSession(bia.id);
+
+    // Ana's send stays undecided, and then the engine loses her session.
+    yield* control.deferNextDispatch;
+    const undecided = yield* sendToBot(ana.id, "Back up the database.");
+    yield* flushed(ana.id);
+    yield* control.loseSession(anaSession);
+    yield* deliveryIs(undecided, "failed");
+
+    const message = yield* sendToBot(bia.id, "Check the dashboards.");
+    yield* nextTurn(bia.id);
+    yield* deliveryIs(message, "delivered");
   }).pipe(Effect.provide(TestDomain.layer)),
 );

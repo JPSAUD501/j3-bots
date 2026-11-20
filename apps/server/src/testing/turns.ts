@@ -21,6 +21,8 @@ import { Bots } from "../bots/Bots.ts";
 import { Entries } from "../entries/Entries.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { Rooms } from "../rooms/Rooms.ts";
+import { SessionRowId } from "../turns/model.ts";
+import { Observer } from "../turns/Observer.ts";
 import { Pipeline } from "../turns/Pipeline.ts";
 import { SessionGate } from "../turns/SessionGate.ts";
 import { Wakes } from "../turns/Wakes.ts";
@@ -62,12 +64,13 @@ const sessionRow = Effect.fn(function* (botId: BotId) {
   return yield* SqlSchema.findOneOption({
     Request: Schema.String,
     Result: Schema.Struct({
-      id: Schema.String,
+      id: SessionRowId,
       engine_session_id: Schema.NullOr(SessionId),
       admitted_turn_id: Schema.NullOr(TurnId),
+      lost_at: Schema.NullOr(Schema.String),
     }),
     execute: (bot) => sql`
-      SELECT id, engine_session_id, admitted_turn_id FROM sessions
+      SELECT id, engine_session_id, admitted_turn_id, lost_at FROM sessions
       WHERE bot_id = ${bot} AND purpose = 'main' AND retired_at IS NULL
     `,
   })(botId).pipe(Effect.orDie);
@@ -94,11 +97,22 @@ export const gateSettled = (botId: BotId) =>
   });
 
 /**
- * Waits until every wake the bot can take now has reached the engine: one
- * pass of the dispatcher, then whatever send of the bot's still runs.
+ * Waits until every wake the bot can take now has reached the engine: its
+ * session's events are caught up (a session not caught up takes nothing),
+ * then one pass of the dispatcher, then whatever send of the bot's still runs.
  */
 export const flushed = (botId: BotId) =>
   Effect.gen(function* () {
+    const observer = yield* Observer;
+    yield* until(
+      sessionRow(botId).pipe(
+        Effect.flatMap((row) =>
+          Option.isNone(row) || row.value.lost_at !== null
+            ? Effect.succeed(true)
+            : observer.ready(row.value.id),
+        ),
+      ),
+    );
     yield* (yield* Pipeline).dispatchPending;
     yield* gateSettled(botId);
   });

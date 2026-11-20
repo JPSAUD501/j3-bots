@@ -11,8 +11,10 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Entries } from "../entries/Entries.ts";
 import { json, Time, timeText } from "../persistence/columns.ts";
+import { notices } from "./notices.ts";
 import {
   AudienceColumn,
+  audienceOf,
   DispatchRowId,
   DispatchStatus,
   SessionRowId,
@@ -80,6 +82,13 @@ export type WakesAfter =
   | { readonly _tag: "cancelled" }
   | { readonly _tag: "failed"; readonly reason: WakeFailure };
 
+const FailedWake = Schema.Struct({
+  bot_id: BotId,
+  audience: AudienceColumn,
+  audience_room_id: Schema.NullOr(RoomId),
+  payload_json: json(WakePayload),
+});
+
 const encodeOutcome = Schema.encodeEffect(json(TurnOutcome));
 
 const sameDelivery = (a: MessageDelivery, b: MessageDelivery): boolean =>
@@ -122,8 +131,9 @@ export class Ledger extends Context.Service<
     ) => Effect.Effect<void>;
     /**
      * A Stop ended it in the engine before delivery: a cancelled waiting turn
-     * (`turnId`), a dropped steer (the turn it was to ride). Whether it was
-     * still the engine's to drop.
+     * (`turnId`), a dropped steer (the turn it was to ride). The bot never
+     * read its envelope, so its catch-up notes and held messages go to the
+     * next one. Whether it was still the engine's to drop.
      */
     readonly drop: (
       dispatchId: DispatchRowId,
@@ -132,18 +142,25 @@ export class Ledger extends Context.Service<
     ) => Effect.Effect<boolean>;
     /**
      * The engine certainly applied nothing: it may be sent again as new
-     * dispatches. Whether it was still undecided.
+     * dispatches, and the catch-up notes and held messages its envelope
+     * carried go to the next one. Whether it was still undecided.
      */
     readonly release: (dispatchId: DispatchRowId, wakes: WakesAfter) => Effect.Effect<boolean>;
     /**
      * It will not be delivered. Terminal, until a late delivery shows
-     * otherwise. Whether it was still undecided.
+     * otherwise. The catch-up notes and held messages its envelope carried
+     * stay consumed: the engine may have them. Whether it was still undecided.
      */
     readonly fail: (
       dispatchId: DispatchRowId,
       reason: "rejected" | "unresolved",
       wakes: WakesAfter,
     ) => Effect.Effect<boolean>;
+    /**
+     * The engine had it and its session is gone before its turn started: it
+     * fails as `unresolved`, as `fail` does. Whether it was still accepted.
+     */
+    readonly abandon: (dispatchId: DispatchRowId, wakes: WakesAfter) => Effect.Effect<boolean>;
     /** Pending wakes stop waiting: a Stop or an archival ended what they asked for. */
     readonly cancelWakes: (wakeIds: ReadonlyArray<string>) => Effect.Effect<void>;
     /** Shows the delivery of each message the wakes came from, as their wakes now stand. */
@@ -156,6 +173,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const entries = yield* Entries;
+    const { notify } = notices(sql, entries);
 
     const findRow = SqlSchema.findOneOption({
       Request: DispatchRowId,
@@ -239,6 +257,16 @@ export const layer = Layer.effect(
       }
     });
 
+    const failedWakes = SqlSchema.findAll({
+      Request: Schema.Struct({ dispatchId: DispatchRowId, reason: WakeFailure, at: Schema.String }),
+      Result: FailedWake,
+      execute: ({ dispatchId, reason, at }) => sql`
+        UPDATE wakes SET status = 'failed', failure_reason = ${reason}, updated_at = ${at}
+        WHERE dispatch_id = ${dispatchId} AND status = 'dispatched'
+        RETURNING bot_id, audience, audience_room_id, payload_json
+      `,
+    });
+
     const setWakes = Effect.fn("Ledger.setWakes")(function* (
       dispatchId: DispatchRowId,
       after: WakesAfter,
@@ -259,12 +287,24 @@ export const layer = Layer.effect(
             WHERE dispatch_id = ${dispatchId} AND status IN ('dispatched', 'failed')
           `;
           break;
-        case "failed":
-          yield* sql`
-            UPDATE wakes SET status = 'failed', failure_reason = ${after.reason}, updated_at = ${at}
-            WHERE dispatch_id = ${dispatchId} AND status = 'dispatched'
-          `;
+        case "failed": {
+          const failed = yield* failedWakes({ dispatchId, reason: after.reason, at });
+          // An answer has no message of its own to show its failure on: a
+          // retryable notice does, where the answer was for.
+          const answer = failed.find((wake) => wake.payload_json._tag === "answer");
+          if (answer !== undefined) {
+            yield* notify(
+              answer.bot_id,
+              audienceOf(answer),
+              {
+                _tag: "turn-failed",
+                failure: after.reason === "unresolved" ? "engine-unavailable" : "unknown",
+              },
+              dispatchId,
+            );
+          }
           break;
+        }
       }
       yield* refreshMessages(sources);
     }, Effect.orDie);
@@ -411,7 +451,21 @@ export const layer = Layer.effect(
         RETURNING id
       `;
       if (failed.length === 0) return false;
-      yield* returnConsumed(dispatchId);
+      yield* setWakes(dispatchId, wakes);
+      return true;
+    }, Effect.orDie);
+
+    const abandon = Effect.fn("Ledger.abandon")(function* (
+      dispatchId: DispatchRowId,
+      wakes: WakesAfter,
+    ) {
+      const failed = yield* sql`
+        UPDATE dispatches SET status = 'failed', failure_reason = 'unresolved',
+          next_attempt_at = NULL, updated_at = ${yield* now}
+        WHERE id = ${dispatchId} AND status = 'accepted'
+        RETURNING id
+      `;
+      if (failed.length === 0) return false;
       yield* setWakes(dispatchId, wakes);
       return true;
     }, Effect.orDie);
@@ -441,6 +495,7 @@ export const layer = Layer.effect(
       drop,
       release,
       fail,
+      abandon,
       cancelWakes,
       refreshMessages,
     });

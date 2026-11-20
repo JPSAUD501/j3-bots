@@ -30,17 +30,25 @@ import { CommandReceipts } from "../commands/CommandReceipts.ts";
 import { Entries } from "../entries/Entries.ts";
 import { json, Time, timeText } from "../persistence/columns.ts";
 import { Ids } from "../Ids.ts";
+import { transactional } from "../persistence/transaction.ts";
 import { keyedLock } from "./keyedLock.ts";
+import { Ledger } from "./Ledger.ts";
 import {
   AudienceColumn,
   audienceOf,
+  MAX_RESPONSE_TRIES,
+  recoveryBackoff,
   SessionRowId,
   StoredResponse,
   TurnsInvariant,
 } from "./model.ts";
 import { Observer } from "./Observer.ts";
+import { Readiness } from "./Readiness.ts";
+import { type Pass, onePassAtATime, passOutcome, reconcile } from "./reconciler.ts";
+import { sessionLoss } from "./sessionRecords.ts";
 import { Signals } from "./Signals.ts";
 import { Wakes } from "./Wakes.ts";
+import { WorkSteps } from "./WorkSteps.ts";
 
 /** What `card.answer` carries. */
 export type CardAnswer =
@@ -70,9 +78,12 @@ type RequestRow = typeof RequestRow.Type;
 
 const PendingResponse = Schema.Struct({
   entry_id: EntryId,
+  session_id: SessionRowId,
   engine_session_id: SessionId,
   engine_request_id: RequestId,
   response_json: json(StoredResponse),
+  response_failures: Schema.Int,
+  response_retry_at: Schema.NullOr(Time),
 });
 
 const encodeResponse = Schema.encodeEffect(json(StoredResponse));
@@ -141,8 +152,10 @@ export class Cards extends Context.Service<
       readonly entryId: EntryId;
       readonly answer: SecretAnswer;
     }) => Effect.Effect<void, NotFound | Conflict | Invalid>;
-    /** Sends every recorded answer whose request is still open. */
+    /** Sends every recorded answer the engine has not taken, whose request is still open. */
     readonly respondPending: Effect.Effect<void>;
+    /** At a ready edge: every answer whose sends went unanswered is tried afresh. */
+    readonly retryExhausted: Effect.Effect<void>;
     /** Learns, for each submission marker a crash or a lost reply left, whether its card closed. */
     readonly checkSubmissions: Effect.Effect<void>;
     /** The responder, for as long as the scope lives. */
@@ -161,6 +174,9 @@ export const layer = Layer.effect(
     const observer = yield* Observer;
     const signals = yield* Signals;
     const wakes = yield* Wakes;
+    const readiness = yield* Readiness;
+    const transaction = transactional(sql);
+    const { sessionLost } = sessionLoss(sql, entries, yield* Ledger, yield* WorkSteps, signals);
 
     const askCard = SqlSchema.findOneOption({
       Request: EntryId,
@@ -279,28 +295,91 @@ export const layer = Layer.effect(
       Request: Schema.Void,
       Result: PendingResponse,
       execute: () => sql`
-        SELECT r.entry_id, s.engine_session_id, r.engine_request_id, r.response_json
+        SELECT r.entry_id, r.session_id, s.engine_session_id, r.engine_request_id,
+          r.response_json, r.response_failures, r.response_retry_at
         FROM engine_requests r JOIN sessions s ON s.id = r.session_id
-        WHERE r.closed_at IS NULL AND r.response_json IS NOT NULL
-          AND s.engine_session_id IS NOT NULL
+        WHERE r.closed_at IS NULL AND r.response_json IS NOT NULL AND r.response_sent_at IS NULL
+          AND r.response_failures < ${MAX_RESPONSE_TRIES}
+          AND s.engine_session_id IS NOT NULL AND s.lost_at IS NULL
+        ORDER BY r.rowid
       `,
+    })(undefined).pipe(Effect.orDie);
+
+    /** What one answer's send did. */
+    type Sent = "done" | "unavailable";
+
+    /** The engine took the answer, or the request is closed: nothing more to send. */
+    const taken = Effect.fn("Cards.taken")(function* (entryId: EntryId) {
+      yield* sql`
+        UPDATE engine_requests SET response_sent_at = ${timeText(yield* DateTime.now)},
+          response_retry_at = NULL
+        WHERE entry_id = ${entryId}
+      `.pipe(Effect.orDie);
+      return "done" satisfies Sent as Sent;
     });
 
-    const respondPending = Effect.gen(function* () {
-      for (const pending of yield* pendingResponses(undefined).pipe(Effect.orDie)) {
-        const response = pending.response_json;
-        // The request's events show how it closed; a refusal or a lost reply
-        // leaves it to the next ready edge.
-        yield* engine
-          .respond({
-            key: answerKey(pending.entry_id),
-            sessionId: pending.engine_session_id,
-            requestId: pending.engine_request_id,
-            response,
-          })
-          .pipe(Effect.ignore);
-      }
-    }).pipe(Effect.withSpan("Cards.respondPending"));
+    /** The reply was lost: sent again with backoff, and after the bound at the next ready edge. */
+    const unanswered = Effect.fn("Cards.unanswered")(function* (
+      pending: typeof PendingResponse.Type,
+    ) {
+      const failures = pending.response_failures + 1;
+      const next =
+        failures >= MAX_RESPONSE_TRIES
+          ? null
+          : timeText(DateTime.addDuration(yield* DateTime.now, recoveryBackoff(failures)));
+      yield* sql`
+        UPDATE engine_requests SET response_failures = ${failures}, response_retry_at = ${next}
+        WHERE entry_id = ${pending.entry_id}
+      `.pipe(Effect.orDie);
+      return "done" satisfies Sent as Sent;
+    });
+
+    /**
+     * The responder's pass: a reconciler over the answers the engine has not
+     * taken. The request's events show how it closed; the answer's key makes
+     * every send of it the same command.
+     */
+    const respondPass: Effect.Effect<Pass> = yield* onePassAtATime(
+      Effect.gen(function* () {
+        const outcome = passOutcome();
+        const now = yield* DateTime.now;
+        for (const pending of yield* pendingResponses) {
+          if (pending.response_retry_at !== null) {
+            if (DateTime.isGreaterThan(pending.response_retry_at, now)) continue;
+          }
+          const sent = yield* engine
+            .respond({
+              key: answerKey(pending.entry_id),
+              sessionId: pending.engine_session_id,
+              requestId: pending.engine_request_id,
+              response: pending.response_json,
+            })
+            .pipe(
+              Effect.andThen(taken(pending.entry_id)),
+              Effect.catchTags({
+                RequestClosed: () => taken(pending.entry_id),
+                SessionNotFound: () =>
+                  transaction(sessionLost(pending.session_id)).pipe(
+                    Effect.as("done" satisfies Sent as Sent),
+                  ),
+                EngineIndeterminate: () => unanswered(pending),
+                EngineUnavailable: () => Effect.succeed("unavailable" satisfies Sent as Sent),
+                EngineIncompatible: () => Effect.succeed("unavailable" satisfies Sent as Sent),
+              }),
+            );
+          if (sent === "unavailable") return { _tag: "unavailable" } as const;
+        }
+        for (const pending of yield* pendingResponses) outcome.until(pending.response_retry_at);
+        return outcome.done();
+      }).pipe(Effect.withSpan("Cards.respondPending")),
+    );
+
+    const respondPending = Effect.asVoid(respondPass);
+
+    const retryExhausted = sql`
+      UPDATE engine_requests SET response_failures = 0, response_retry_at = NULL
+      WHERE response_failures > 0 OR response_retry_at IS NOT NULL
+    `.pipe(Effect.orDie, Effect.asVoid);
 
     // ---- secret.provide -----------------------------------------------------------
 
@@ -411,11 +490,20 @@ export const layer = Layer.effect(
       }
     }).pipe(Effect.withSpan("Cards.checkSubmissions"));
 
-    const run = Effect.gen(function* () {
-      yield* signals.responses.next;
-      yield* respondPending;
-    }).pipe(Effect.forever);
+    const run = reconcile({
+      name: "The responder",
+      pass: respondPass,
+      signal: signals.responses,
+      readiness,
+    });
 
-    return Cards.of({ answer, provideSecret, respondPending, checkSubmissions, run });
+    return Cards.of({
+      answer,
+      provideSecret,
+      respondPending,
+      retryExhausted,
+      checkSubmissions,
+      run,
+    });
   }),
 );

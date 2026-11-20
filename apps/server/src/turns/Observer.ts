@@ -5,7 +5,6 @@ import {
   type EngineDown,
   type EngineIncompatible,
   type EngineRequest,
-  EngineUnavailable,
   EventCursor,
   type IdempotencyKey,
   type OpenRequest,
@@ -49,13 +48,13 @@ import {
   audienceOf,
   conversation,
   type DispatchRowId,
-  recoveryBackoff,
+  NotObserved,
   SessionRowId,
   StoredResponse,
   SYNC_DEADLINE,
 } from "./model.ts";
 import { notices } from "./notices.ts";
-import { SessionGate } from "./SessionGate.ts";
+import { endingOf, sessionLoss, sessionRecords } from "./sessionRecords.ts";
 import { Signals } from "./Signals.ts";
 import { stopTargets } from "./stopTargets.ts";
 import { Wakes } from "./Wakes.ts";
@@ -88,22 +87,11 @@ const RequestRow = Schema.Struct({
   response_json: Schema.NullOr(json(StoredResponse)),
 });
 
-const HoldRow = Schema.Struct({
-  lost: Schema.BooleanFromBit,
-  engine_session_id: Schema.NullOr(SessionId),
-  queue_held_cursor: Schema.NullOr(EventCursor),
-  queue_resumed_cursor: Schema.NullOr(EventCursor),
-  stop_unsettled: Schema.BooleanFromBit,
-});
-
 const encodeStep = Schema.encodeEffect(json(WorkStep));
 const encodeOutcome = Schema.encodeEffect(json(TurnOutcome));
 
 /** The longest message an entry holds; host speech past it is cut. */
 const MESSAGE_LIMIT = 100_000;
-
-/** A held queue whose resume got no answer is resumed again, with the same key, this many times. */
-const MAX_RESUME_TRIES = 5;
 
 /** How long a stream that ended waits before it is opened again: doubling, up to a minute. */
 const reopenAfter = (failures: number) =>
@@ -117,13 +105,9 @@ const reopenAfter = (failures: number) =>
  */
 interface Following {
   readonly opened: Deferred.Deferred<void>;
-  readonly caughtUp: Deferred.Deferred<void, EngineUnavailable>;
-  readonly tokens: Map<SyncToken, Deferred.Deferred<void, EngineUnavailable>>;
+  readonly caughtUp: Deferred.Deferred<void, NotObserved>;
+  readonly tokens: Map<SyncToken, Deferred.Deferred<void, NotObserved>>;
 }
-
-/** How a turn's end reads in its work fold. */
-const endingOf = (outcome: TurnOutcome) =>
-  outcome._tag === "completed" ? "completed" : outcome._tag === "failed" ? "failed" : "interrupted";
 
 /** A turn's end, as `turn-finished` and a replacement's ended turns tell it. */
 interface TurnEnd {
@@ -163,26 +147,23 @@ export class Observer extends Context.Service<
      */
     readonly watch: (sessionId: SessionRowId) => Effect.Effect<void>;
     /**
-     * Whether the session's events are followed and known from a committed
-     * snapshot or cursor, waiting for that within a deadline: nothing is sent
-     * into a session before.
+     * Follows the session's events, and says whether they are known now from
+     * a committed snapshot or cursor and every event so far could be applied:
+     * nothing is sent into a session before. It never waits for that; the
+     * event that makes a session ready nudges the dispatcher.
      */
     readonly ready: (sessionId: SessionRowId) => Effect.Effect<boolean>;
     /** Follows every session that is live or still has work to settle. */
     readonly watchAll: Effect.Effect<void>;
     /**
      * Returns once every event the engine had recorded for the session when it
-     * was called has been applied. Fails with `EngineUnavailable`, to be
-     * retried, when the stream closes first or the deadline passes.
+     * was called has been applied. Fails with `NotObserved`, to be retried,
+     * when the stream closes first or the deadline passes.
      */
     readonly synchronize: (
       sessionId: SessionRowId,
       engineSessionId: SessionId,
-    ) => Effect.Effect<void, EngineDown | SessionNotFound>;
-    /** Resumes the session's held queue, once per hold, unless a Stop of it is unsettled. */
-    readonly resumeHeld: (sessionId: SessionRowId) => Effect.Effect<void>;
-    /** `resumeHeld` for every session whose last hold was not resumed. */
-    readonly resumeAllHeld: Effect.Effect<void>;
+    ) => Effect.Effect<void, EngineDown | SessionNotFound | NotObserved>;
   }
 >()("@j3-bots/server/turns/Observer") {}
 
@@ -196,13 +177,14 @@ export const layer = Layer.effect(
     const ledger = yield* Ledger;
     const wakes = yield* Wakes;
     const signals = yield* Signals;
-    const gate = yield* SessionGate;
     const changes = yield* ChangeLog;
     const ids = yield* Ids;
     const workSteps = yield* WorkSteps;
     const scope = yield* Effect.scope;
     const stops = stopTargets(sql);
-    const { notify, sessionLost } = notices(sql, entries);
+    const { notify } = notices(sql, entries);
+    const { sessionLost } = sessionLoss(sql, entries, ledger, workSteps, signals);
+    const { finishFold, closeCard } = sessionRecords(sql, entries, workSteps);
 
     /**
      * Each followed session. The engine sends a `synchronized` only on the
@@ -365,20 +347,6 @@ export const layer = Layer.effect(
         WHERE session_id = ${session.id} AND engine_turn_id = ${turn.engine_turn_id}
       `.pipe(Effect.orDie);
       return entry.id;
-    });
-
-    const finishFold = Effect.fn("Observer.finishFold")(function* (
-      entryId: EntryId,
-      outcome: TurnOutcome,
-      at: DateTime.Utc,
-    ) {
-      const found = yield* entries.find(entryId);
-      if (Option.isNone(found) || found.value.entry._tag !== "work-fold") return;
-      yield* entries.update({
-        ...found.value.entry,
-        status: { _tag: "finished", finishedAt: at, ending: endingOf(outcome) },
-      });
-      yield* sql.afterCommit(workSteps.finished(entryId));
     });
 
     /** Something happened in a running turn: it is not stalled. */
@@ -773,10 +741,7 @@ export const layer = Layer.effect(
       yield* touchActivity(session.id, open.turnId, open.openedAt);
     }, Effect.orDie);
 
-    /**
-     * The card shows how its request closed: the operator's answer when it was
-     * theirs from J3 Bots, expired otherwise.
-     */
+    /** The card shows how its request closed, once. */
     const closeRequest = Effect.fn("Observer.closeRequest")(function* (
       session: Watched,
       requestId: RequestId,
@@ -784,48 +749,7 @@ export const layer = Layer.effect(
     ) {
       const known = yield* requestRow({ sessionId: session.id, requestId });
       if (Option.isNone(known) || known.value.closed_at !== null) return;
-      const row = known.value;
-      yield* sql`
-        UPDATE engine_requests SET closed_at = ${timeText(yield* DateTime.now)}
-        WHERE entry_id = ${row.entry_id}
-      `;
-      yield* sql`DELETE FROM secret_submissions WHERE entry_id = ${row.entry_id}`;
-      const found = yield* entries.find(row.entry_id);
-      if (Option.isNone(found)) return;
-      const card = found.value.entry;
-      const response = row.response_json;
-      const answered = resolution === "answered";
-      switch (card._tag) {
-        case "approval":
-          yield* entries.update({
-            ...card,
-            status:
-              answered && response?._tag === "approval"
-                ? { _tag: "decided", decision: response.decision }
-                : { _tag: "expired" },
-          });
-          return;
-        case "question":
-          yield* entries.update({
-            ...card,
-            status: !answered
-              ? { _tag: "expired" }
-              : response?._tag === "question"
-                ? { _tag: "answered", answers: response.answers }
-                : response?._tag === "dismiss"
-                  ? { _tag: "dismissed" }
-                  : { _tag: "expired" },
-          });
-          return;
-        case "secret-request":
-          yield* entries.update({
-            ...card,
-            status: resolution === "provided" || resolution === "declined" ? resolution : "expired",
-          });
-          return;
-        default:
-          return;
-      }
+      yield* closeCard(known.value, resolution);
     }, Effect.orDie);
 
     // ---- Replacement ----------------------------------------------------------------
@@ -932,7 +856,8 @@ export const layer = Layer.effect(
       } else {
         // Nothing is held any more: a hold recorded before is stale.
         yield* sql`
-          UPDATE sessions SET queue_held_cursor = NULL, queue_resumed_cursor = NULL
+          UPDATE sessions SET queue_held_cursor = NULL, queue_resumed_cursor = NULL,
+            queue_resume_failures = 0, queue_resume_at = NULL
           WHERE id = ${session.id}
         `;
       }
@@ -940,99 +865,18 @@ export const layer = Layer.effect(
 
     // ---- Held queues ------------------------------------------------------------------
 
-    const holdRow = SqlSchema.findOneOption({
-      Request: SessionRowId,
-      Result: HoldRow,
-      execute: (id) => sql`
-        SELECT lost_at IS NOT NULL AS lost, engine_session_id, queue_held_cursor,
-          queue_resumed_cursor,
-          EXISTS (
-            SELECT 1 FROM stop_targets t WHERE t.session_id = s.id AND t.stopped_at IS NULL
-          ) AS stop_unsettled
-        FROM sessions s WHERE s.id = ${id}
-      `,
-    });
-
-    /**
-     * One resume, inside the gate. `again` when the engine's reply was lost:
-     * the same hold is resumed again, which the engine applies once.
-     */
-    const resumeOnce = (sessionId: SessionRowId) =>
-      gate.run(sessionId)(
-        Effect.gen(function* () {
-          const row = yield* holdRow(sessionId).pipe(Effect.orDie);
-          if (
-            Option.isNone(row) ||
-            row.value.lost ||
-            row.value.engine_session_id === null ||
-            row.value.queue_held_cursor === null ||
-            row.value.queue_held_cursor === row.value.queue_resumed_cursor ||
-            row.value.stop_unsettled
-          ) {
-            return "done" as const;
-          }
-          const hold = row.value.queue_held_cursor;
-          const outcome = yield* engine
-            .resumeQueue({ sessionId: row.value.engine_session_id, hold })
-            .pipe(
-              Effect.as("resumed" as const),
-              Effect.catchTags({
-                SessionNotFound: () => Effect.succeed("lost" as const),
-                EngineIndeterminate: () => Effect.succeed("again" as const),
-                // Resumed on the engine's next ready edge.
-                EngineUnavailable: () => Effect.succeed("done" as const),
-                EngineIncompatible: () => Effect.succeed("done" as const),
-              }),
-            );
-          if (outcome === "resumed") {
-            yield* sql`UPDATE sessions SET queue_resumed_cursor = ${hold} WHERE id = ${sessionId}`.pipe(
-              Effect.orDie,
-            );
-          } else if (outcome === "lost") {
-            yield* transaction(sessionLost(sessionId)).pipe(Effect.orDie);
-          }
-          return outcome === "again" ? ("again" as const) : ("done" as const);
-        }),
-      );
-
-    /** Resumes once, and again with backoff, outside the gate, while the reply is lost. */
-    const resumeHeld = Effect.fn("Observer.resumeHeld")(function* (sessionId: SessionRowId) {
-      for (let tries = 1; tries <= MAX_RESUME_TRIES; tries++) {
-        if ((yield* resumeOnce(sessionId)) === "done") return;
-        yield* Effect.sleep(recoveryBackoff(tries));
-      }
-      yield* Effect.logWarning(
-        "A held queue's resume got no answer; it is resumed on the next ready edge",
-      );
-    });
-
-    const resumeLater = (sessionId: SessionRowId) =>
-      resumeHeld(sessionId).pipe(Effect.forkIn(scope), Effect.asVoid);
-
+    /** A new hold to resume once, by the resumer (`HeldQueues.ts`). */
     const queueHeld = Effect.fn("Observer.queueHeld")(function* (
       session: Watched,
       cursor: EventCursor,
     ) {
-      yield* sql`UPDATE sessions SET queue_held_cursor = ${cursor} WHERE id = ${session.id}`;
-      yield* sql.afterCommit(resumeLater(session.id));
+      yield* sql`
+        UPDATE sessions SET queue_held_cursor = ${cursor}, queue_resume_failures = 0,
+          queue_resume_at = NULL
+        WHERE id = ${session.id} AND queue_held_cursor IS NOT ${cursor}
+      `;
+      yield* sql.afterCommit(signals.resumes.fire);
     }, Effect.orDie);
-
-    const heldSessions = SqlSchema.findAll({
-      Request: Schema.Void,
-      Result: Schema.Struct({ id: SessionRowId }),
-      execute: () => sql`
-        SELECT id FROM sessions
-        WHERE queue_held_cursor IS NOT NULL AND lost_at IS NULL
-          AND queue_held_cursor IS NOT queue_resumed_cursor
-      `,
-    });
-
-    /** Each held queue, once: one whose reply was lost is retried in the background. */
-    const resumeAllHeld = Effect.gen(function* () {
-      for (const { id } of yield* heldSessions(undefined).pipe(Effect.orDie)) {
-        if ((yield* resumeOnce(id)) === "again") yield* resumeLater(id);
-      }
-    }).pipe(Effect.withSpan("Observer.resumeAllHeld"));
 
     // ---- Applying events --------------------------------------------------------------
 
@@ -1090,32 +934,35 @@ export const layer = Layer.effect(
       }
     });
 
-    /** One event and its cursor, in one transaction. */
+    /**
+     * One event and its cursor, in one transaction. Once it commits the
+     * session's state is known from here: it is marked ready before the change
+     * is published, so whoever sees the change finds the session ready. Only
+     * then are the workers nudged, so a pass they run finds it ready too: the
+     * dispatcher (the session may take its next wake) and the Stop runner (a
+     * Stop may be confirmed). Not the runner for a marker, which its own
+     * observation asked for.
+     */
     const apply = (session: Watched, follow: Following, event: SessionEvent) =>
       transaction(
         Effect.gen(function* () {
           yield* applyEvent(session, follow, event);
-          yield* sql`UPDATE sessions SET events_cursor = ${event.cursor} WHERE id = ${session.id}`;
-          yield* changes.touch({ _tag: "bot", botId: session.bot_id });
-          // The session may take its next wake, or a Stop may be confirmed:
-          // the Stop runner observes the session again. Not for a marker,
-          // which the runner's own observation asked for.
+          yield* sql`
+            UPDATE sessions SET events_cursor = ${event.cursor}, refused_busy = 0
+            WHERE id = ${session.id}
+          `;
           yield* sql.afterCommit(
-            event._tag === "synchronized"
-              ? signals.dispatch.fire
-              : Effect.andThen(signals.dispatch.fire, signals.stops.fire),
+            Effect.sync(() => {
+              failures.delete(session.id);
+              noticed.delete(session.id);
+            }).pipe(Effect.andThen(Deferred.succeed(follow.caughtUp, undefined))),
           );
+          yield* changes.touch({ _tag: "bot", botId: session.bot_id });
         }),
       ).pipe(
         Effect.orDie,
-        // Committed: the session's state is known from here.
-        Effect.andThen(
-          Effect.sync(() => {
-            failures.delete(session.id);
-            noticed.delete(session.id);
-          }),
-        ),
-        Effect.andThen(Deferred.succeed(follow.caughtUp, undefined)),
+        Effect.andThen(signals.dispatch.fire),
+        Effect.andThen(event._tag === "synchronized" ? Effect.void : signals.stops.fire),
       );
 
     // ---- Following sessions -----------------------------------------------------------
@@ -1143,7 +990,7 @@ export const layer = Layer.effect(
       exit: Exit.Exit<void, SessionNotFound | EngineIncompatible>,
     ) {
       if (following.get(session.id) === follow) following.delete(session.id);
-      const closed = new EngineUnavailable();
+      const closed = new NotObserved();
       yield* Deferred.fail(follow.caughtUp, closed);
       for (const waiting of follow.tokens.values()) yield* Deferred.fail(waiting, closed);
       if (Exit.isSuccess(exit)) {
@@ -1154,14 +1001,13 @@ export const layer = Layer.effect(
       const error = Cause.findErrorOption(exit.cause);
       if (Option.isSome(error) && error.value._tag === "SessionNotFound") {
         yield* Effect.logWarning("The engine no longer has a session", error.value);
-        const lost = yield* transaction(
+        yield* transaction(
           Effect.gen(function* () {
-            const marked = yield* sessionLost(session.id);
-            if (marked) yield* changes.touch({ _tag: "bot", botId: session.bot_id });
-            return marked;
+            if (yield* sessionLost(session.id)) {
+              yield* changes.touch({ _tag: "bot", botId: session.bot_id });
+            }
           }),
         ).pipe(Effect.orDie);
-        if (lost) yield* Effect.andThen(signals.dispatch.fire, signals.stops.fire);
         return;
       }
       if (Option.isSome(error)) {
@@ -1183,7 +1029,7 @@ export const layer = Layer.effect(
       if (Option.isNone(row)) {
         // Nothing to follow: not opened yet, retired or lost.
         if (following.get(sessionId) === follow) following.delete(sessionId);
-        yield* Deferred.fail(follow.caughtUp, new EngineUnavailable());
+        yield* Deferred.fail(follow.caughtUp, new NotObserved());
         return;
       }
       const session = row.value;
@@ -1213,7 +1059,7 @@ export const layer = Layer.effect(
         if (existing !== undefined) return Deferred.await(existing.opened);
         const follow: Following = {
           opened: Deferred.makeUnsafe<void>(),
-          caughtUp: Deferred.makeUnsafe<void, EngineUnavailable>(),
+          caughtUp: Deferred.makeUnsafe<void, NotObserved>(),
           tokens: new Map(),
         };
         following.set(sessionId, follow);
@@ -1225,12 +1071,11 @@ export const layer = Layer.effect(
     const ready = Effect.fn("Observer.ready")(function* (sessionId: SessionRowId) {
       yield* watch(sessionId);
       const follow = following.get(sessionId);
-      if (follow === undefined) return false;
-      return yield* Deferred.await(follow.caughtUp).pipe(
-        Effect.as(true),
-        Effect.orElseSucceed(() => false),
-        Effect.timeoutOrElse({ duration: SYNC_DEADLINE, orElse: () => Effect.succeed(false) }),
-      );
+      // An event that cannot be applied leaves what the server knows behind.
+      if (follow === undefined || noticed.has(sessionId)) return false;
+      const caughtUp = yield* Deferred.poll(follow.caughtUp);
+      if (Option.isNone(caughtUp)) return false;
+      return Exit.isSuccess(yield* Effect.exit(caughtUp.value));
     });
 
     const watchAll = Effect.gen(function* () {
@@ -1241,7 +1086,7 @@ export const layer = Layer.effect(
       function* (sessionId: SessionRowId, engineSessionId: SessionId) {
         yield* watch(sessionId);
         const token = SyncToken.make(yield* ids.make("sync"));
-        const applied = Deferred.makeUnsafe<void, EngineUnavailable>();
+        const applied = Deferred.makeUnsafe<void, NotObserved>();
         // Registered only on a stream still open: one that closed has failed
         // its waiters already and would never fail this one.
         const follow = yield* Effect.sync(() => {
@@ -1249,7 +1094,7 @@ export const layer = Layer.effect(
           current?.tokens.set(token, applied);
           return current;
         });
-        if (follow === undefined) return yield* new EngineUnavailable();
+        if (follow === undefined) return yield* new NotObserved();
         yield* engine
           .synchronize({ sessionId: engineSessionId, token })
           .pipe(
@@ -1259,7 +1104,7 @@ export const layer = Layer.effect(
       },
       Effect.timeoutOrElse({
         duration: SYNC_DEADLINE,
-        orElse: () => Effect.fail(new EngineUnavailable()),
+        orElse: () => Effect.fail(new NotObserved()),
       }),
     );
 
@@ -1268,8 +1113,6 @@ export const layer = Layer.effect(
       ready,
       watchAll,
       synchronize,
-      resumeHeld,
-      resumeAllHeld,
     });
   }),
 );

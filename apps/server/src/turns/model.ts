@@ -33,6 +33,13 @@ export class TurnsInvariant extends Schema.TaggedError<TurnsInvariant>()("TurnsI
 }) {}
 
 /**
+ * A session's events were not caught up in time: its stream closed, or the
+ * marker of a `synchronize` did not arrive within `SYNC_DEADLINE`. Only that
+ * session is skipped, and tried again; it says nothing about the engine.
+ */
+export class NotObserved extends Schema.TaggedError<NotObserved>()("NotObserved", {}) {}
+
+/**
  * Where a turn's speech goes: the bot's own conversation, or one room. A room
  * audience whose room was deleted keeps `room` with no id: nothing reaches it.
  */
@@ -152,8 +159,18 @@ export const MAX_STAGING_FAILURES = 5;
  */
 export const UNAVAILABLE_RETRY = Duration.seconds(30);
 
-/** The longest a `synchronize` waits for its marker before it fails retryably. */
+/**
+ * The longest a `synchronize` waits for its marker before it fails retryably.
+ * Shorter than the adapter's own wait for a marker, so the server gives up
+ * first and retries the session on its next pass (`docs/architecture/engine.md`).
+ */
 export const SYNC_DEADLINE = Duration.seconds(10);
+
+/** A held queue whose resume got no answer is resumed again this many times, then at the next ready edge. */
+export const MAX_RESUME_TRIES = 5;
+
+/** An answer to an engine request whose reply was lost is sent again this many times, then at the next ready edge. */
+export const MAX_RESPONSE_TRIES = 5;
 
 /** The longest a bot tool request spends being matched to its call. */
 export const ADMISSION_DEADLINE = Duration.seconds(15);

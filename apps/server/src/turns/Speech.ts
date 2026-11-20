@@ -153,6 +153,7 @@ export const layer = Layer.effect(
           Effect.catchTags({
             SessionNotFound: () => new TurnEnded(),
             // Nothing is pinned: the bridge forwards the request again.
+            NotObserved: () => new TurnToolRetry(),
             EngineUnavailable: () => new TurnToolRetry(),
             EngineIndeterminate: () => new TurnToolRetry(),
             EngineIncompatible: () => new TurnToolRetry(),
@@ -296,59 +297,63 @@ export const layer = Layer.effect(
       // `to: "dm"` speaks to the operator in private, also from a room turn.
       const audience = input.to === "dm" ? conversation : found.audience;
       const read = yield* workspaceFiles(found.botId, input.attachments ?? []);
-      return yield* transaction(
-        Effect.gen(function* () {
-          const pinned = yield* pin("say", found);
-          if (pinned._tag === "stored") return pinned.result;
-          const target = yield* requireTarget(found.botId, audience);
-          const files: Array<Attachment> = [];
-          for (const file of read) {
-            files.push(
-              yield* attachments
-                .store({ ...file, bot: found.botId })
-                .pipe(
+      // The file lock, then the transaction: the order every writer of the
+      // attachment store takes them in. Admission and publication stay one
+      // transaction.
+      return yield* attachments.withStore((put) =>
+        transaction(
+          Effect.gen(function* () {
+            const pinned = yield* pin("say", found);
+            if (pinned._tag === "stored") return pinned.result;
+            const target = yield* requireTarget(found.botId, audience);
+            const files: Array<Attachment> = [];
+            for (const file of read) {
+              files.push(
+                yield* put({ ...file, bot: found.botId }).pipe(
                   Effect.mapError(
                     () => new TurnToolRefused({ reason: `${file.name} cannot be attached.` }),
                   ),
                 ),
-            );
-          }
-          const entry = yield* entries.append({
-            target,
-            entry: {
-              _tag: "message",
-              author: { _tag: "bot", botId: found.botId },
-              text: input.text,
-              attachments: files,
-              mentions: { _tag: "bots", ids: [] },
-              delivery: { _tag: "delivered" },
-              commandId: null,
-            },
-          });
-          if (files.length > 0) {
-            yield* sql`
+              );
+            }
+            const entry = yield* entries.append({
+              target,
+              entry: {
+                _tag: "message",
+                author: { _tag: "bot", botId: found.botId },
+                text: input.text,
+                attachments: files,
+                mentions: { _tag: "bots", ids: [] },
+                delivery: { _tag: "delivered" },
+                commandId: null,
+              },
+            });
+            if (files.length > 0) {
+              yield* sql`
               UPDATE attachments SET entry_id = ${entry.id}
               WHERE ${sql.in(
                 "id",
                 files.map((file) => file.id),
               )}
             `.pipe(Effect.orDie);
-          }
-          if (target._tag === "room" && entry._tag === "message") {
-            yield* routing.botMessage({
-              roomId: target.roomId,
-              botId: found.botId,
-              message: entry,
-              hops: yield* hopsOf(found),
-            });
-          }
-          if (input.done === true) {
-            for (const { id } of yield* deliveredBy(found)) yield* ledger.closeDelivery(id, "done");
-          }
-          const result = { status: "recorded" } satisfies Schema.Json;
-          yield* store(found, result);
-          return result;
-        }),
+            }
+            if (target._tag === "room" && entry._tag === "message") {
+              yield* routing.botMessage({
+                roomId: target.roomId,
+                botId: found.botId,
+                message: entry,
+                hops: yield* hopsOf(found),
+              });
+            }
+            if (input.done === true) {
+              for (const { id } of yield* deliveredBy(found))
+                yield* ledger.closeDelivery(id, "done");
+            }
+            const result = { status: "recorded" } satisfies Schema.Json;
+            yield* store(found, result);
+            return result;
+          }),
+        ),
       );
     });
 

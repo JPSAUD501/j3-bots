@@ -4,10 +4,13 @@ import type { SessionId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as TestClock from "effect/testing/TestClock";
 import * as Domain from "../domain.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
+  admittedTurn,
   command,
   createBot,
   deliveryIs,
@@ -20,7 +23,11 @@ import {
   sendToBot,
   timesSent,
   turnEnded,
+  until,
 } from "../testing/turns.ts";
+import { MAX_INDETERMINATE_ANSWERS, recoveryBackoff, SYNC_DEADLINE } from "./model.ts";
+import { Pipeline } from "./Pipeline.ts";
+import { RETRY_TICK } from "./reconciler.ts";
 import { Stops } from "./Stops.ts";
 
 it.effect("cancels a message whose send was lost behind a turn when Stop races it", () =>
@@ -233,4 +240,134 @@ it.effect("ends the private work in a session when its room is archived", () =>
     });
     yield* turnEnded(bot.id);
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("stops a run that starts while the Stop's commands are on their way", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Index the repository.");
+    yield* nextTurn(bot.id);
+
+    // The Stop ends the turn, and background work starts another before the
+    // engine answers; the server sees that start before the acknowledgment.
+    const during = yield* control.startEngineTurnDuringNextStop(session);
+    yield* (yield* Stops).stopBot({ commandId: command(), botId: bot.id });
+    const slipped = yield* during.started;
+    yield* until(admittedTurn(bot.id).pipe(Effect.map(Option.contains(slipped))));
+    yield* during.reply;
+
+    // The round missed that run, so another round stops it.
+    yield* turnEnded(bot.id);
+    const after = yield* sendToBot(bot.id, "Then summarize it.");
+    yield* nextTurn(bot.id);
+    yield* deliveryIs(after, "delivered");
+    assert.deepStrictEqual(yield* deliveriesOf(session, "Then summarize it."), ["start"]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("sends a Stop again after its call timed out, with nothing else to wake it", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Crawl the site.");
+    yield* nextTurn(bot.id);
+
+    // The engine takes the Stop but its answer is lost, and its interrupt
+    // lags: no event follows that could nudge the runner.
+    const effects = yield* control.delayNextStopEffects;
+    const first = yield* control.holdNext("stop");
+    yield* (yield* Stops).stopBot({ commandId: command(), botId: bot.id });
+    yield* first.entered;
+    yield* control.loseNextReply;
+    yield* first.release;
+    yield* gateSettled(bot.id);
+
+    // A few seconds later the runner sends it again on its own.
+    const again = yield* control.holdNext("stop");
+    yield* TestClock.adjust(RETRY_TICK);
+    yield* again.entered;
+    yield* again.release;
+
+    yield* effects.release;
+    yield* turnEnded(bot.id);
+    const after = yield* sendToBot(bot.id, "Then list the broken links.");
+    yield* nextTurn(bot.id);
+    yield* deliveryIs(after, "delivered");
+    assert.deepStrictEqual(yield* deliveriesOf(session, "Then list the broken links."), ["start"]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "confirms a reopened Stop once the recovery settles a send of its session left undecided",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const bot = yield* createBot("Ana");
+      yield* engineSession(bot.id);
+      const pipeline = yield* Pipeline;
+      const recoverTimes = (times: number) =>
+        Effect.gen(function* () {
+          for (let answer = 1; answer <= times; answer++) {
+            yield* TestClock.adjust(recoveryBackoff(answer));
+            yield* pipeline.recoverDue;
+          }
+        });
+
+      // A Stop fences a message whose send stays undecided, and confirms once
+      // the recovery gives up on it.
+      const fenced = yield* control.deferNextDispatch;
+      const stopped = yield* sendToBot(bot.id, "Rotate the keys.");
+      yield* flushed(bot.id);
+      yield* (yield* Stops).stopBot({ commandId: command(), botId: bot.id });
+      yield* recoverTimes(MAX_INDETERMINATE_ANSWERS - 1);
+      yield* deliveryIs(stopped, "cancelled");
+
+      // The next message's send is undecided too, and is no Stop's.
+      yield* control.deferNextDispatch;
+      const unfenced = yield* sendToBot(bot.id, "Then rotate the certificates.");
+      yield* flushed(bot.id);
+
+      // The fenced key lands after all, which reopens the Stop. The Stop
+      // waits on the undecided send, which the recovery still settles.
+      yield* fenced.land;
+      yield* recoverTimes(MAX_INDETERMINATE_ANSWERS - 1);
+      yield* deliveryIs(unfenced, "failed");
+      yield* turnEnded(bot.id);
+      yield* deliveryIs(stopped, "cancelled");
+
+      const after = yield* sendToBot(bot.id, "Then report what changed.");
+      yield* nextTurn(bot.id);
+      yield* deliveryIs(after, "delivered");
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "gives up waiting on a marker that never comes, and confirms the Stop on a later pass",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const stops = yield* Stops;
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      yield* sendToBot(bot.id, "Render the video.");
+      yield* nextTurn(bot.id);
+
+      // The Stop is acknowledged and ends the turn, and the marker that would
+      // let it be confirmed is lost.
+      const dropped = yield* control.dropNextMarker;
+      yield* stops.stopBot({ commandId: command(), botId: bot.id });
+      yield* dropped.requested;
+      yield* turnEnded(bot.id);
+
+      // The wait is bounded: past it, the next pass observes the session again.
+      yield* TestClock.adjust(SYNC_DEADLINE);
+      yield* stops.runPending;
+      const after = yield* sendToBot(bot.id, "Then export the audio.");
+      yield* nextTurn(bot.id);
+      yield* deliveryIs(after, "delivered");
+      assert.deepStrictEqual(yield* deliveriesOf(session, "Then export the audio."), ["start"]);
+    }).pipe(Effect.provide(TestDomain.layer)),
 );

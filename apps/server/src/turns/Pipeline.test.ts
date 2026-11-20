@@ -22,6 +22,7 @@ import {
   nextTurn,
   sendToBot,
   timesSent,
+  turnEnded,
   until,
 } from "../testing/turns.ts";
 import { Cards } from "./Cards.ts";
@@ -229,6 +230,53 @@ it.effect("holds an answer until the turn that asked ends, then starts a turn wi
       ["start"],
     );
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "shows a retryable notice for an answer whose dispatch failed, and sends it on retry",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      yield* sendToBot(bot.id, "Deploy it.");
+      const turnId = yield* nextTurn(bot.id);
+      const args = { prompt: "Which region?", options: [{ label: "Europe", value: "eu-west-1" }] };
+      yield* control.toolCall({
+        sessionId: session,
+        turnId,
+        tool: "ask",
+        input: args,
+        recorded: "now",
+      });
+      yield* (yield* BotTools).call({
+        requestId: "call-1",
+        sessionId: session,
+        tool: "ask",
+        arguments: args,
+      });
+      const card = yield* awaitEntry(bot.id, "question");
+      yield* control.finishTurn({ sessionId: session, turnId, outcome: { _tag: "completed" } });
+      yield* turnEnded(bot.id);
+
+      // The engine refuses the turn the answer starts.
+      yield* control.rejectNextDispatch;
+      yield* (yield* Cards).answer({
+        commandId: command(),
+        entryId: card.id,
+        answer: {
+          _tag: "question",
+          answers: { [card.questions[0].id]: { optionIds: ["option-1"], text: null } },
+        },
+      });
+      const notice = yield* awaitEntry(bot.id, "notice");
+      assert.deepStrictEqual(notice.notice, { _tag: "turn-failed", failure: "unknown" });
+      assert.isTrue(notice.retryable);
+
+      yield* (yield* Pipeline).retryNotice({ commandId: command(), entryId: notice.id });
+      yield* nextTurn(bot.id, turnId);
+      assert.strictEqual(yield* timesSent(session, "eu-west-1"), 1);
+    }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect("sends a failed turn's message again when the operator retries its notice", () =>

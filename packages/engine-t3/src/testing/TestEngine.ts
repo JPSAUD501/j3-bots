@@ -85,7 +85,13 @@ import { toolInputDigest } from "../toolCaller.ts";
 // the real engine, which keeps this double honest.
 
 /** The engine methods a test can hold in flight with `holdNext`. */
-export type HeldMethod = "dispatch" | "redispatch" | "stageAttachment" | "respondSecret" | "stop";
+export type HeldMethod =
+  | "dispatch"
+  | "redispatch"
+  | "stageAttachment"
+  | "respondSecret"
+  | "resumeQueue"
+  | "stop";
 
 /** A call held at the engine's door. */
 export interface Held {
@@ -145,6 +151,22 @@ export class TestEngineControl extends Context.Service<
      * start behind that turn.
      */
     readonly startEngineTurnDuringNextDispatch: (sessionId: SessionId) => Effect.Effect<void>;
+    /**
+     * The next `synchronize` is answered, and its marker never reaches the
+     * session's streams, as when the stream stalls. `requested` succeeds once
+     * that `synchronize` arrived.
+     */
+    readonly dropNextMarker: Effect.Effect<{ readonly requested: Effect.Effect<void> }>;
+    /**
+     * The next `stop` takes effect before it answers, and then background
+     * work starts a turn in the session, which the stop missed: as when a run
+     * begins between a Stop's commands. `started` gives that turn once it
+     * started; the stop answers only after `reply`.
+     */
+    readonly startEngineTurnDuringNextStop: (sessionId: SessionId) => Effect.Effect<{
+      readonly started: Effect.Effect<TurnId>;
+      readonly reply: Effect.Effect<void>;
+    }>;
     /**
      * The engine holds the session's queue of waiting turns, which must not be
      * empty: as after an engine restart, or, with `heldAgainOnResume`, a model
@@ -374,6 +396,12 @@ const make = Effect.gen(function* () {
     { readonly entered: Deferred.Deferred<void>; readonly release: Deferred.Deferred<void> }
   >();
   let stopEffects: Deferred.Deferred<void> | null = null;
+  let droppedMarker: Deferred.Deferred<void> | null = null;
+  let turnDuringStop: {
+    readonly sessionId: SessionId;
+    readonly started: Deferred.Deferred<TurnId>;
+    readonly reply: Deferred.Deferred<void>;
+  } | null = null;
   let deferNext: Deferred.Deferred<void> | null = null;
   /** Dispatches waiting in the startup queue, by key, until they land. */
   const deferred = new Map<IdempotencyKey, Deferred.Deferred<void>>();
@@ -1036,6 +1064,15 @@ const make = Effect.gen(function* () {
             if ((yield* priorUse(key, "stop")) !== undefined) return;
             const session = yield* liveSession(sessionId);
             keys.set(key, { command: "stop" });
+            const during = turnDuringStop?.sessionId === sessionId ? turnDuringStop : null;
+            if (during !== null) {
+              turnDuringStop = null;
+              const at = yield* DateTime.now;
+              stopSession(session, at);
+              const turn = addTurn(session, { _tag: "background" }, at);
+              yield* Deferred.succeed(during.started, turn.turnId);
+              return yield* Deferred.await(during.reply);
+            }
             const delayed = stopEffects;
             stopEffects = null;
             // The engine answers first; the stop takes effect after.
@@ -1050,21 +1087,24 @@ const make = Effect.gen(function* () {
       ),
 
     resumeQueue: ({ sessionId, hold }) =>
-      command(
-        Effect.gen(function* () {
-          const session = yield* liveSession(sessionId);
-          if (!session.holdCursors.has(hold)) return yield* misuse(`no hold at ${hold}`);
-          if (session.resumedHolds.has(hold)) return;
-          session.resumedHolds.add(hold);
-          if (!session.held) return;
-          if (session.replacedSessionWorking) {
-            // Held again in answer, and not reported until the work ends.
-            session.unreportedHold = true;
-            return;
-          }
-          session.held = false;
-          startNext(session, yield* DateTime.now);
-        }),
+      door(
+        "resumeQueue",
+        command(
+          Effect.gen(function* () {
+            const session = yield* liveSession(sessionId);
+            if (!session.holdCursors.has(hold)) return yield* misuse(`no hold at ${hold}`);
+            if (session.resumedHolds.has(hold)) return;
+            session.resumedHolds.add(hold);
+            if (!session.held) return;
+            if (session.replacedSessionWorking) {
+              // Held again in answer, and not reported until the work ends.
+              session.unreportedHold = true;
+              return;
+            }
+            session.held = false;
+            startNext(session, yield* DateTime.now);
+          }),
+        ),
       ),
 
     respond: ({ key, sessionId, requestId, response }) =>
@@ -1141,6 +1181,9 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const session = yield* liveSession(sessionId);
           const at = yield* DateTime.now;
+          const dropped = droppedMarker;
+          droppedMarker = null;
+          if (dropped !== null) return yield* Deferred.succeed(dropped, undefined);
           // Every event is handed to the streams as it happens, so each stream
           // is already caught up: the marker follows what it was last given.
           for (const [subscriber, state] of session.subscribers) {
@@ -1224,6 +1267,27 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const session = yield* existingSession(sessionId);
         session.raceNextStart = true;
+      }),
+
+    dropNextMarker: Effect.gen(function* () {
+      const requested = yield* Deferred.make<void>();
+      droppedMarker = requested;
+      return { requested: Deferred.await(requested) };
+    }),
+
+    startEngineTurnDuringNextStop: (sessionId) =>
+      Effect.gen(function* () {
+        yield* existingSession(sessionId);
+        const started = yield* Deferred.make<TurnId>();
+        const reply = yield* Deferred.make<void>();
+        turnDuringStop = { sessionId, started, reply };
+        return {
+          started: Deferred.await(started),
+          reply: Deferred.succeed(reply, undefined).pipe(
+            Effect.andThen(Effect.yieldNow),
+            Effect.asVoid,
+          ),
+        };
       }),
 
     holdQueue: ({ sessionId, heldAgainOnResume }) =>

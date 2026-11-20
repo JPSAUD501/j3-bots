@@ -8,6 +8,7 @@ import {
   type RoomId,
 } from "@j3-bots/contracts";
 import { Engine, IdempotencyKey, SessionId } from "@j3-bots/engine-t3";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -25,12 +26,14 @@ import { transactional } from "../persistence/transaction.ts";
 import { RoomWork } from "../rooms/RoomWork.ts";
 import { Ledger } from "./Ledger.ts";
 import { DispatchRowId, SessionRowId } from "./model.ts";
-import { notices } from "./notices.ts";
 import { Observer } from "./Observer.ts";
 import { Readiness } from "./Readiness.ts";
+import { type Pass, onePassAtATime, passOutcome, reconcile } from "./reconciler.ts";
 import { SessionGate } from "./SessionGate.ts";
+import { sessionLoss } from "./sessionRecords.ts";
 import { Signals } from "./Signals.ts";
 import { stopKey, stopTargets } from "./stopTargets.ts";
+import { WorkSteps } from "./WorkSteps.ts";
 
 /** What a Stop ends: all of a bot's work, or only the work addressed to one room. */
 export type StopScope =
@@ -53,18 +56,23 @@ const Fenced = Schema.Struct({
   in_scope: Schema.BooleanFromBit,
 });
 
-/** How one session's Stop work went in a pass of the runner. */
-type Progress = "done" | "waiting" | "unavailable";
+/**
+ * How one session's Stop work went in a pass of the runner: done for now,
+ * waiting for the recovery (which nudges the runner), left for a later pass,
+ * or refused by the engine, which ends the pass.
+ */
+type Progress = "done" | "waiting" | "deferred" | "unavailable";
 
 /**
  * The operator's Stop (`docs/architecture/server.md`, Stop): recorded in one
  * transaction with its targets, fences and cancelled wakes. Then, per target
- * session: once recovery has settled its fenced dispatches, each latest round
- * is sent through the session's gate, which only acknowledges it; the
- * session's events are then synchronized past that acknowledgment, which
- * marks the round observed. A target is confirmed only from events applied
- * once all its latest rounds are observed, never from what the server knew
- * before.
+ * session: once the recovery has settled every dispatch whose answer was
+ * lost, each latest round is issued and sent through the session's gate,
+ * which only acknowledges it; the session's events are then synchronized past
+ * that acknowledgment, which marks the round observed. A target is confirmed
+ * only from events applied once all its latest rounds are observed, never
+ * from what the server knew before. The runner is a reconciler over the
+ * targets: a session that cannot go on now waits for a later pass alone.
  */
 export class Stops extends Context.Service<
   Stops,
@@ -76,15 +84,8 @@ export class Stops extends Context.Service<
       readonly commandId: CommandId;
       readonly botId: BotId;
     }) => Effect.Effect<void, NotFound | Conflict>;
-    /**
-     * Sends again the latest round of every unconfirmed target, with its key,
-     * before the sessions' events are opened: after either process restarted
-     * or the engine came back. Each is observed anew. Whether the engine took
-     * them all.
-     */
-    readonly resendUnconfirmed: Effect.Effect<boolean>;
-    /** One pass of the runner over every unsettled target. Whether the engine took it all. */
-    readonly runPending: Effect.Effect<boolean>;
+    /** One pass of the runner over every unsettled target. */
+    readonly runPending: Effect.Effect<void>;
     /** The runner, for as long as the scope lives. */
     readonly run: Effect.Effect<never>;
   }
@@ -105,7 +106,7 @@ export const layer = Layer.effect(
     const receipts = yield* CommandReceipts;
     const bots = yield* BotStore;
     const targets = stopTargets(sql);
-    const { sessionLost } = notices(sql, yield* Entries);
+    const { sessionLost } = sessionLoss(sql, yield* Entries, ledger, yield* WorkSteps, signals);
 
     /** Whether an audience column pair is in a Stop's scope. */
     const inScope = (scope: StopScope) =>
@@ -207,7 +208,7 @@ export const layer = Layer.effect(
 
     // ---- The runner -------------------------------------------------------------
 
-    /** The latest round of each unconfirmed target, sent or not. */
+    /** The latest round of each unconfirmed target, issued or not. */
     const latestRounds = SqlSchema.findAll({
       Request: Schema.Void,
       Result: Round,
@@ -224,62 +225,95 @@ export const layer = Layer.effect(
       `,
     });
 
-    /** Fenced dispatches whose answer is not known yet: recovery settles them first. */
-    const fencedInFlight = (sessionId: SessionRowId) =>
+    /**
+     * Dispatches of the session whose answer is not known yet, fenced or not:
+     * the recovery settles them first, as confirmation requires.
+     */
+    const inFlight = (sessionId: SessionRowId) =>
       sql<{ readonly n: number }>`
         SELECT COUNT(*) AS n FROM dispatches
         WHERE session_id = ${sessionId} AND status = 'intended' AND attempts > 0
-          AND fenced_by_stop_id IS NOT NULL
       `.pipe(
         Effect.orDie,
         Effect.map(([row]) => (row?.n ?? 0) > 0),
       );
 
-    const markSent = Effect.fn("Stops.markSent")(function* (round: Round) {
-      const at = timeText(yield* DateTime.now);
+    /**
+     * The round is issued before its commands go: a turn whose start the
+     * events show after this may have been missed by them, and opens the
+     * next round.
+     */
+    const issue = Effect.fn("Stops.issue")(function* (round: Round) {
       yield* sql`
-        UPDATE stop_targets SET sent_at = ${at},
-          observed_at = ${round.engine_session_id === null ? at : null}
+        UPDATE stop_targets SET issued_at = COALESCE(issued_at, ${timeText(yield* DateTime.now)})
         WHERE stop_id = ${round.stop_id} AND session_id = ${round.session_id}
           AND round = ${round.round}
       `;
     }, Effect.orDie);
 
+    /** The engine acknowledged the round's commands. */
+    const markSent = Effect.fn("Stops.markSent")(function* (round: Round) {
+      yield* sql`
+        UPDATE stop_targets SET sent_at = ${timeText(yield* DateTime.now)}
+        WHERE stop_id = ${round.stop_id} AND session_id = ${round.session_id}
+          AND round = ${round.round}
+      `;
+    }, Effect.orDie);
+
+    /** A session the engine never had runs nothing: its round counts as observed at once. */
+    const markNothingToStop = Effect.fn("Stops.markNothingToStop")(function* (round: Round) {
+      const at = timeText(yield* DateTime.now);
+      yield* sql`
+        UPDATE stop_targets SET issued_at = COALESCE(issued_at, ${at}),
+          sent_at = COALESCE(sent_at, ${at}), observed_at = COALESCE(observed_at, ${at})
+        WHERE stop_id = ${round.stop_id} AND session_id = ${round.session_id}
+          AND round = ${round.round}
+      `;
+    }, Effect.orDie);
+
+    /** What an engine call's failure means for one session's Stop work. */
+    const downProgress = {
+      // Nothing was sent: the engine cannot take commands, and the pass ends.
+      EngineUnavailable: () => Effect.succeed("unavailable" satisfies Progress as Progress),
+      EngineIncompatible: () => Effect.succeed("unavailable" satisfies Progress as Progress),
+      // No answer: this session is tried again on a later pass.
+      EngineIndeterminate: () => Effect.succeed("deferred" satisfies Progress as Progress),
+    };
+
     /**
      * Sends one round's commands through the gate, which only acknowledges
-     * them. A session the engine never had runs nothing, so its round counts
-     * as observed at once.
+     * them. The round is issued, durably, before the call.
      */
-    const sendRound = Effect.fn("Stops.sendRound")(function* (round: Round) {
-      const sessionId = round.engine_session_id;
-      if (sessionId === null) {
-        yield* markSent(round);
-        return "done" satisfies Progress;
-      }
+    const sendRound = Effect.fn("Stops.sendRound")(function* (
+      round: Round,
+      engineSessionId: SessionId,
+    ) {
       return yield* gate.run(round.session_id)(
-        engine.stop({ key: round.engine_key, sessionId }).pipe(
+        issue(round).pipe(
+          Effect.andThen(engine.stop({ key: round.engine_key, sessionId: engineSessionId })),
           Effect.andThen(markSent(round)),
           Effect.as("done" satisfies Progress as Progress),
           // The engine has no such session: nothing runs there.
           Effect.catchTag("SessionNotFound", () =>
             transaction(sessionLost(round.session_id)).pipe(Effect.as("done" satisfies Progress)),
           ),
-          // Sent again once the engine is ready.
-          Effect.catchTags({
-            EngineUnavailable: () => Effect.succeed("unavailable" satisfies Progress),
-            EngineIndeterminate: () => Effect.succeed("unavailable" satisfies Progress),
-            EngineIncompatible: () => Effect.succeed("unavailable" satisfies Progress),
-          }),
+          Effect.catchTags(downProgress),
         ),
       );
     });
 
+    /** A Stop of a session was confirmed: what it held back may go. */
+    const settledSession = Effect.all(
+      [signals.dispatch.fire, signals.recovery.fire, signals.resumes.fire],
+      { discard: true },
+    );
+
     /**
-     * The session's events are brought past every round sent so far: those
-     * rounds are observed, and the target is confirmed if the events now show
-     * nothing left running. Confirmation comes only from here, after a
-     * `synchronize`, never from one event as it is applied: the event after it
-     * may start a turn the engine had waiting.
+     * The session's events are brought past every round acknowledged so far:
+     * those rounds are observed, and the target is confirmed if the events
+     * now show nothing left running. Confirmation comes only from here, after
+     * a `synchronize`, never from one event as it is applied: the event after
+     * it may start a turn the engine had waiting.
      */
     const observe = Effect.fn("Stops.observe")(function* (
       sessionId: SessionRowId,
@@ -291,17 +325,17 @@ export const layer = Layer.effect(
       `.pipe(Effect.orDie);
       if (sent.length === 0) return "done" satisfies Progress;
       const synced = yield* observer.synchronize(sessionId, engineSessionId).pipe(
-        Effect.as(true),
-        Effect.catchTag("SessionNotFound", () =>
-          transaction(sessionLost(sessionId)).pipe(Effect.as(false)),
-        ),
+        Effect.as("done" satisfies Progress as Progress),
         Effect.catchTags({
-          EngineUnavailable: () => Effect.succeed(false),
-          EngineIndeterminate: () => Effect.succeed(false),
-          EngineIncompatible: () => Effect.succeed(false),
+          SessionNotFound: () =>
+            transaction(sessionLost(sessionId)).pipe(Effect.as("lost" as const)),
+          // The marker did not come in time: only this session waits.
+          NotObserved: () => Effect.succeed("deferred" satisfies Progress as Progress),
+          ...downProgress,
         }),
       );
-      if (!synced) return "unavailable" satisfies Progress;
+      if (synced === "lost") return "done" satisfies Progress;
+      if (synced !== "done") return synced;
       const confirmed = yield* transaction(
         Effect.gen(function* () {
           const at = timeText(yield* DateTime.now);
@@ -315,10 +349,7 @@ export const layer = Layer.effect(
           return yield* targets.confirm(sessionId);
         }),
       ).pipe(Effect.orDie);
-      if (confirmed) {
-        yield* observer.resumeHeld(sessionId);
-        yield* signals.dispatch.fire;
-      }
+      if (confirmed) yield* settledSession;
       return "done" satisfies Progress;
     });
 
@@ -326,21 +357,24 @@ export const layer = Layer.effect(
     const advance = Effect.fn("Stops.advance")(function* (rounds: ReadonlyArray<Round>) {
       const [first] = rounds;
       if (first === undefined) return "done" satisfies Progress;
-      // Recovery settles a fenced dispatch whose answer was lost, on its own
-      // backoff, so nothing the bot was sent lands behind the Stop.
-      if (yield* fencedInFlight(first.session_id)) return "waiting" satisfies Progress;
-      if (first.engine_session_id !== null) yield* observer.watch(first.session_id);
-      for (const round of rounds) {
-        if (round.sent) continue;
-        const progress = yield* sendRound(round);
-        if (progress !== "done") return progress;
-      }
-      if (first.engine_session_id === null) {
+      // The recovery settles every dispatch whose answer was lost, on its
+      // own backoff, so nothing the bot was sent lands behind the Stop; it
+      // nudges the runner when it does.
+      if (yield* inFlight(first.session_id)) return "waiting" satisfies Progress;
+      const engineSessionId = first.engine_session_id;
+      if (engineSessionId === null) {
+        for (const round of rounds) yield* markNothingToStop(round);
         const confirmed = yield* transaction(targets.confirm(first.session_id)).pipe(Effect.orDie);
-        if (confirmed) yield* signals.dispatch.fire;
+        if (confirmed) yield* settledSession;
         return "done" satisfies Progress;
       }
-      return yield* observe(first.session_id, first.engine_session_id);
+      yield* observer.watch(first.session_id);
+      for (const round of rounds) {
+        if (round.sent) continue;
+        const progress = yield* sendRound(round, engineSessionId);
+        if (progress !== "done") return progress;
+      }
+      return yield* observe(first.session_id, engineSessionId);
     });
 
     const bySession = (rounds: ReadonlyArray<Round>) => {
@@ -354,57 +388,43 @@ export const layer = Layer.effect(
     };
 
     /**
-     * Runs one session's Stop work, logging a failure and carrying on with the
-     * others, as T3 Code's effect worker does with each item.
+     * Runs one session's Stop work. A defect is logged and only that session
+     * waits for a later pass, as T3 Code's effect worker does with each item.
      */
     const supervised = (rounds: ReadonlyArray<Round>) =>
       advance(rounds).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logError("A Stop round failed; it is tried again", cause).pipe(
-            Effect.as("unavailable" satisfies Progress as Progress),
-          ),
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.logError("A Stop round failed; it is tried again", cause).pipe(
+              Effect.as("deferred" satisfies Progress as Progress),
+            ),
         ),
       );
 
-    const runPending = Effect.gen(function* () {
-      let available = true;
-      const rounds = yield* latestRounds(undefined).pipe(Effect.orDie);
-      for (const session of bySession(rounds)) {
-        if ((yield* supervised(session)) === "unavailable") available = false;
-      }
-      return available;
-    }).pipe(Effect.withSpan("Stops.runPending"));
-
-    const resendUnconfirmed = Effect.gen(function* () {
-      let available = true;
-      const rounds = yield* latestRounds(undefined).pipe(Effect.orDie);
-      for (const session of bySession(rounds)) {
-        const [first] = session;
-        if (first === undefined || (yield* fencedInFlight(first.session_id))) continue;
-        for (const round of session) {
-          // Replayed with its own key: the engine applies it once. Earlier
-          // rounds keep what they recorded; this one is observed anew.
-          const progress = yield* sendRound(round).pipe(
-            Effect.catchCause((cause) =>
-              Effect.logError("Sending a Stop round again failed", cause).pipe(
-                Effect.as("unavailable" satisfies Progress as Progress),
-              ),
-            ),
-          );
-          if (progress === "unavailable") available = false;
+    const runPass: Effect.Effect<Pass> = yield* onePassAtATime(
+      Effect.gen(function* () {
+        const outcome = passOutcome();
+        const rounds = yield* latestRounds(undefined).pipe(Effect.orDie);
+        for (const session of bySession(rounds)) {
+          const progress = yield* supervised(session);
+          if (progress === "unavailable") return { _tag: "unavailable" } as const;
+          if (progress === "deferred") outcome.defer();
         }
-      }
-      return available;
-    }).pipe(Effect.withSpan("Stops.resendUnconfirmed"));
+        return outcome.done();
+      }).pipe(Effect.withSpan("Stops.runPending")),
+    );
 
-    const run = Effect.gen(function* () {
-      yield* signals.stops.next;
-      yield* readiness.released;
-      // An engine that took nothing is not asked again until it is ready again.
-      if (!(yield* runPending)) yield* readiness.changeOrRetry;
-    }).pipe(Effect.forever);
+    const runPending = Effect.asVoid(runPass);
 
-    return Stops.of({ record, stopBot, resendUnconfirmed, runPending, run });
+    const run = reconcile({
+      name: "The Stop runner",
+      pass: runPass,
+      signal: signals.stops,
+      readiness,
+    });
+
+    return Stops.of({ record, stopBot, runPending, run });
   }),
 );
 
