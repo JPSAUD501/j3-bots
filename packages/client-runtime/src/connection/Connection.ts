@@ -109,6 +109,11 @@ export interface ReconnectSettings {
   readonly maxDelay: Duration.Duration;
   /** How long a socket may take to open. */
   readonly openTimeout: Duration.Duration;
+  /**
+   * How long an HTTP request may take to answer before the server counts as
+   * unreachable. An upload is also given time for its bytes: see `uploadDeadline`.
+   */
+  readonly requestTimeout: Duration.Duration;
   /** How long an open socket may stay silent before it counts as dropped. */
   readonly pingTimeout: Duration.Duration;
 }
@@ -121,6 +126,7 @@ export class ReconnectPolicy extends Context.Reference<ReconnectSettings>(
       initialDelay: Duration.millis(500),
       maxDelay: Duration.seconds(30),
       openTimeout: Duration.seconds(10),
+      requestTimeout: Duration.seconds(10),
       pingTimeout: Duration.seconds(15),
     }),
   },
@@ -244,7 +250,7 @@ export const layer = Layer.effect(
     const network = yield* Network;
     const makeWebSocket = yield* Socket.WebSocketConstructor;
     const policy = yield* ReconnectPolicy;
-    const http = yield* ServerHttp.make(origin);
+    const http = yield* ServerHttp.make(origin, policy.requestTimeout);
 
     const state = new Cell<ConnectionState>({ _tag: "starting" });
     const slot = yield* SubscriptionRef.make<Slot>({ _tag: "closed" });

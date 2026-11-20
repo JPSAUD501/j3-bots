@@ -195,6 +195,24 @@ const proxyLoginExpired = Layer.effect(
   }),
 ).pipe(Layer.provide(FetchHttpClient.layer));
 
+/**
+ * Something between the client and the server that takes the first `times`
+ * requests to `path` and never answers them, and passes the rest on.
+ */
+const neverAnswers = (path: string, times = Number.POSITIVE_INFINITY) =>
+  Layer.effect(
+    HttpClient.HttpClient,
+    Effect.gen(function* () {
+      const server = yield* HttpClient.HttpClient;
+      let held = 0;
+      return HttpClient.make((request, url) => {
+        if (url.pathname !== path || held >= times) return server.execute(request);
+        held += 1;
+        return Effect.never;
+      });
+    }),
+  ).pipe(Layer.provide(FetchHttpClient.layer));
+
 /** The credential the client saved, for the same device's next launch. */
 const savedCredential = Effect.gen(function* () {
   return yield* (yield* CredentialStore).load;
@@ -408,6 +426,47 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       const listed = yield* (yield* Server.Devices).list(deviceId);
       assert.isTrue(listed.some((device) => device.id === deviceId));
     }).pipe(Effect.provide(client())),
+  );
+
+  it.effect("counts a socket ticket that never comes as the server out of reach", () =>
+    Effect.gen(function* () {
+      const device = TestPlatform.makeDevice();
+      const credential = yield* Effect.gen(function* () {
+        yield* pairAndConnect;
+        return yield* savedCredential;
+      }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
+
+      yield* Effect.gen(function* () {
+        const waiting = yield* waitFor(
+          (yield* Connection).state,
+          (state) => state._tag === "waiting",
+        );
+        assert.strictEqual(waiting._tag === "waiting" && waiting.reason, "unreachable");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(client(credential, device, neverAnswers(HTTP_PATHS.socketTicket))),
+      );
+    }),
+  );
+
+  it.effect("uploads a file again when the first attempt never answers", () =>
+    Effect.gen(function* () {
+      yield* pairAndConnect;
+      const drafts = yield* Drafts;
+      const target: EntryTarget = { _tag: "conversation", botId: yield* createBot("Persistent") };
+      yield* drafts.attach(target, [
+        { name: "slow.txt", body: new Blob(["eventually"], { type: "text/plain" }) },
+      ]);
+
+      yield* waitFor(drafts.state, (state) =>
+        (state.get(targetKey(target))?.files ?? []).some((file) => file._tag === "ready"),
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        client(Option.none(), TestPlatform.makeDevice(), neverAnswers(HTTP_PATHS.attachments, 1)),
+      ),
+    ),
   );
 
   it.effect("updates the roster live", () =>

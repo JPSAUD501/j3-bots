@@ -130,8 +130,9 @@ const makeStorage = (options: StorageOptions) => {
 };
 
 /**
- * Uploads over the platform's `HttpClient`, which reports no progress until
- * the end. A failure on the way fails the transfer.
+ * Uploads over the platform's `HttpClient`, the same one every other request
+ * takes, which reports no progress until the end. A failure on the way fails
+ * the transfer.
  */
 const transfer = Layer.effect(
   FileTransfer,
@@ -156,7 +157,7 @@ const transfer = Layer.effect(
         }).pipe(Effect.mapError(() => new TransferFailed())),
     });
   }),
-).pipe(Layer.provide(FetchHttpClient.layer));
+);
 
 /**
  * What clients of one device share: a second client on it is the same device
@@ -175,7 +176,8 @@ export const makeDevice = (options: StorageOptions = {}): TestDevice => ({
 /**
  * A platform for tests: the credential in memory, a network the test turns
  * off and on, Node's own `fetch` and `WebSocket`, and retries in milliseconds.
- * `http` stands between the client and the server, as a reverse proxy would.
+ * `http` stands between the client and the server, as a reverse proxy would,
+ * for every HTTP request and upload.
  */
 export const layer = (
   origin: URL,
@@ -188,7 +190,7 @@ export const layer = (
     credentials(stored),
     Layer.succeed(ClientStorage, device.storage),
     Layer.succeed(WindowLocks, device.locks),
-    transfer,
+    transfer.pipe(Layer.provide(http)),
     network,
     http,
     SecureRandom.layerWebCrypto,
@@ -196,6 +198,7 @@ export const layer = (
       initialDelay: Duration.millis(5),
       maxDelay: Duration.millis(20),
       openTimeout: Duration.seconds(5),
+      requestTimeout: Duration.seconds(1),
       pingTimeout: Duration.seconds(15),
     }),
   );

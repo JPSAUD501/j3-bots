@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { backoffDelay, Connection, NotPaired, ReconnectPolicy } from "../connection/Connection.ts";
+import { uploadDeadline, within } from "../connection/http.ts";
 import { FileTransfer, ServerAddress } from "../ports.ts";
 import type { FileProblem } from "./limits.ts";
 
@@ -48,8 +49,9 @@ const decodeAttachment = Schema.decodeUnknownEffect(Schema.fromJsonString(Attach
 
 /**
  * File bytes over HTTP, with the device token as a bearer. An upload waits
- * for the server and tries again after a network failure, so a file the
- * operator attached while offline goes as soon as the server answers.
+ * for the server and tries again after a network failure, or after it took
+ * longer than its size allows, so a file the operator attached while offline
+ * goes as soon as the server answers.
  */
 export class Files extends Context.Service<
   Files,
@@ -99,7 +101,10 @@ export const layer = Layer.effect(
           body: input.body,
           onProgress: input.onProgress,
         })
-        .pipe(Effect.mapError(() => new Transient()));
+        .pipe(
+          Effect.mapError(() => new Transient()),
+          within(uploadDeadline(input.body.size, policy.requestTimeout), () => new Transient()),
+        );
       switch (response.status) {
         case 200:
           return yield* decodeAttachment(response.body).pipe(
