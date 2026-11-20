@@ -163,20 +163,20 @@ function sampleIntents({ get, update }: Store): ShellIntents {
     const botId = waitingOn(get(), entryId);
     if (botId !== null) replyLater(botId, `bot:${botId}`, text);
   };
-  /**
-   * An answer to a card: in flight for a moment, then applied, and the bot
-   * that waited on it carries on with `reply`.
-   */
-  const answer = (entryId: EntryId, change: (entry: Entry) => Entry, reply: string) => {
+  /** A command on an entry: in flight for a moment, then applied. */
+  const inFlight = (entryId: EntryId, change: (entry: Entry) => Entry, then = () => {}) => {
     update((s) => ({ ...s, inFlight: new Set([...s.inFlight, entryId]) }));
     window.setTimeout(() => {
       update((s) => ({
         ...updateEntry(s, entryId, change),
         inFlight: new Set([...s.inFlight].filter((id) => id !== entryId)),
       }));
-      resume(entryId, reply);
+      then();
     }, ANSWER_DELAY);
   };
+  /** An answer to a card; the bot that waited on it then carries on with `reply`. */
+  const answer = (entryId: EntryId, change: (entry: Entry) => Entry, reply: string) =>
+    inFlight(entryId, change, () => resume(entryId, reply));
   const nothing = () => {};
 
   return {
@@ -239,10 +239,8 @@ function sampleIntents({ get, update }: Store): ShellIntents {
         updateEntry(s, entryId, (e) => (e._tag === "notice" ? { ...e, retryable: false } : e)),
       ),
     retryMessage: (entryId) =>
-      update((s) =>
-        updateEntry(s, entryId, (e) =>
-          e._tag === "message" ? { ...e, delivery: { _tag: "pending" } } : e,
-        ),
+      inFlight(entryId, (e) =>
+        e._tag === "message" ? { ...e, delivery: { _tag: "pending" } } : e,
       ),
     stopBot: (botId) => update((s) => updateBot(s, botId, setState({ _tag: "idle" }))),
     setRoutineEnabled: (routineId, enabled) =>

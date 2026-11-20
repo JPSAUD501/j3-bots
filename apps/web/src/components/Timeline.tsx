@@ -67,6 +67,7 @@ export function Timeline({ entries, inRoom, workSteps, submitting, intents }: Ti
               mentionable={mentionable}
               onOpenAttachment={intents.openAttachment}
               onRetry={() => intents.retryMessage(item.entry.id)}
+              submitting={submitting(item.entry.id)}
             />
           );
         }

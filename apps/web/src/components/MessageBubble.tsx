@@ -42,6 +42,8 @@ interface MessageBubbleProps {
   readonly onOpenAttachment: (id: AttachmentId) => void;
   /** Sends a message whose delivery failed again. */
   readonly onRetry: () => void;
+  /** A retry is on its way: Send again takes no second one. */
+  readonly submitting?: boolean;
 }
 
 /** One message: the operator's on the right and dark, a bot's on the left and light. */
@@ -52,6 +54,7 @@ export function MessageBubble({
   mentionable,
   onOpenAttachment,
   onRetry,
+  submitting = false,
 }: MessageBubbleProps) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
@@ -92,18 +95,35 @@ export function MessageBubble({
           onOpen={() => onOpenAttachment(attachment.id)}
         />
       ))}
-      {fromOperator && entry.delivery._tag === "pending" && (
-        <span className="pe-1 text-2xs text-muted-foreground">{t("message.queued")}</span>
-      )}
-      {entry.delivery._tag === "cancelled" && (
-        <span className="pe-1 text-2xs text-muted-foreground">{t("message.cancelled")}</span>
-      )}
-      {fromOperator && entry.delivery._tag === "failed" && (
-        <div className="flex items-center gap-1 text-2xs text-blocked">
-          <span>{t(failedKeys[entry.delivery.reason])}</span>
-          <Button variant="ghost" size="sm" onClick={onRetry}>
-            {t("message.retry")}
-          </Button>
+      {fromOperator && (
+        // How the operator's message fares. It is here from the moment the message is queued, so
+        // a change to it, such as a failure, is announced once; a delivered message leaves it
+        // empty, and empty it takes no room.
+        <div
+          role="status"
+          className="flex max-w-(--layout-bubble-width) flex-wrap items-center justify-end gap-x-1 text-end text-2xs empty:absolute"
+        >
+          {entry.delivery._tag === "pending" && (
+            <span className="pe-1 text-muted-foreground">{t("message.queued")}</span>
+          )}
+          {entry.delivery._tag === "cancelled" && (
+            <span className="pe-1 text-muted-foreground">{t("message.cancelled")}</span>
+          )}
+          {entry.delivery._tag === "failed" && (
+            <>
+              <span className="text-blocked">{t(failedKeys[entry.delivery.reason])}</span>
+              {/* Its own end padding sets its text on the line the other delivery lines end on. */}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 border-0 px-1 text-2xs"
+                disabled={submitting}
+                onClick={onRetry}
+              >
+                {t("message.retry")}
+              </Button>
+            </>
+          )}
         </div>
       )}
     </div>

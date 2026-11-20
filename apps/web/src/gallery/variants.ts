@@ -79,6 +79,9 @@ export function galleryVariants(now: DateTime.Utc) {
     failed: message("failed", { _tag: "operator" }, "Also check June", {
       delivery: { _tag: "failed", reason: "rejected" },
     }),
+    unresolved: message("unresolved", { _tag: "operator" }, "And July, please", {
+      delivery: { _tag: "failed", reason: "unresolved" },
+    }),
     bot: message(
       "bot",
       scout,
@@ -224,11 +227,14 @@ export function galleryVariants(now: DateTime.Utc) {
     approval("approval-summary", {
       action: "Run the staging migration, then restart the billing API",
       exact: false,
+      allowsSession: false,
     }),
     approval("approval-file-change", {
       kind: "file-change",
       action: "notes/taxes-2026/checklist.md",
       detail: [
+        "--- a/notes/taxes-2026/checklist.md",
+        "+++ b/notes/taxes-2026/checklist.md",
         "@@ -3,5 +3,7 @@",
         " ## Before filing",
         " ",
@@ -258,6 +264,7 @@ export function galleryVariants(now: DateTime.Utc) {
       kind: "tool",
       action: "Send an email to the vendor list",
       exact: false,
+      allowsSession: false,
       status: { _tag: "decided", decision: "deny" },
     }),
     approval("approval-expired", { status: { _tag: "expired" } }),

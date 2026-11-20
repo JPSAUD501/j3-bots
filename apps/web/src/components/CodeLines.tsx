@@ -10,9 +10,13 @@ const toneClass: Record<CodeLineTone, string> = {
   quiet: "text-muted-foreground",
 };
 
-/** A unified diff's tones: `+` lines added, `-` lines removed, `@@` hunk headers quiet. */
+/**
+ * A unified diff's tones: `+` lines added, `-` lines removed; hunk headers
+ * (`@@`) and file headers (`---`, `+++`) quiet, which a single `-` or `+` would
+ * otherwise take.
+ */
 export function diffTone(line: string): CodeLineTone | undefined {
-  if (line.startsWith("@@")) return "quiet";
+  if (line.startsWith("@@") || line.startsWith("---") || line.startsWith("+++")) return "quiet";
   if (line.startsWith("+")) return "added";
   if (line.startsWith("-")) return "removed";
   return undefined;
@@ -29,9 +33,15 @@ export function diffTone(line: string): CodeLineTone | undefined {
 export function CodeLines({
   text,
   tone,
+  inset = false,
 }: {
   text: string;
   tone?: (line: string) => CodeLineTone | undefined;
+  /**
+   * The lines carry the block's side padding, so a tint spans its whole width.
+   * The block then sets only its padding above and below.
+   */
+  inset?: boolean;
 }) {
   return text.split("\n").map((line, index) => {
     const lineTone = tone?.(line);
@@ -40,7 +50,8 @@ export function CodeLines({
         // oxlint-disable-next-line react/no-array-index-key -- lines are positional: a line is its place in the text
         key={index}
         className={cn(
-          "block ps-[4ch] -indent-[4ch]",
+          "block -indent-[4ch]",
+          inset ? "ps-[calc(4ch+--spacing(2.5))] pe-2.5" : "ps-[4ch]",
           lineTone !== undefined && toneClass[lineTone],
         )}
       >

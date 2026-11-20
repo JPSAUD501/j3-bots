@@ -63,8 +63,8 @@ export const ptBR: Catalog = {
 
   "message.queued": "Na fila",
   "message.cancelled": "Não enviada: você parou o bot antes",
-  "message.failed.rejected": "Não entregue",
-  "message.failed.unresolved": "Pode não ter sido entregue",
+  "message.failed.rejected": "Não entregue: o motor recusou",
+  "message.failed.unresolved": "Pode ter sido entregue. Enviar de novo pode repetir o trabalho.",
   "message.failed.stopped": "Não entregue: você parou a sala",
   "message.retry": "Enviar de novo",
 
@@ -99,6 +99,8 @@ export const ptBR: Catalog = {
   "approval.kind.tool": "Quer usar uma ferramenta",
   "approval.kind.other": "Pede permissão",
   "approval.action": "Tudo o que vai fazer",
+  "approval.summary": "Resumo da aprovação",
+  "approval.summaryQualifier": "Resumo",
   "approval.change": "A alteração",
   "approval.showChange": "Mostrar a alteração",
   "approval.summaryOnly.command": "O comando exato não foi informado, só um resumo",

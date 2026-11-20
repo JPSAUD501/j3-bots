@@ -65,8 +65,8 @@ export const en = {
 
   "message.queued": "Queued",
   "message.cancelled": "Not sent: you stopped the bot first",
-  "message.failed.rejected": "Not delivered",
-  "message.failed.unresolved": "May not have been delivered",
+  "message.failed.rejected": "Not delivered: the engine refused it",
+  "message.failed.unresolved": "May have been delivered. Sending again may repeat the work.",
   "message.failed.stopped": "Not delivered: you stopped the room",
   "message.retry": "Send again",
 
@@ -101,6 +101,8 @@ export const en = {
   "approval.kind.tool": "Wants to use a tool",
   "approval.kind.other": "Wants permission",
   "approval.action": "Everything it will do",
+  "approval.summary": "Approval summary",
+  "approval.summaryQualifier": "Summary",
   "approval.change": "The change",
   "approval.showChange": "Show the change",
   "approval.summaryOnly.command": "The exact command wasn’t shared, only a summary",

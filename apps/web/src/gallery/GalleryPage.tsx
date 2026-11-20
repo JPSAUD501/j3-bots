@@ -307,7 +307,7 @@ function BubblesSection() {
   const { bubbles } = variants;
   return (
     <Section title="Bubbles">
-      <Labeled label="Single bubbles, with no tightened corner: the operator, queued, cancelled, not delivered, a bot with code, a bot with files">
+      <Labeled label="Single bubbles, with no tightened corner: the operator, queued, cancelled, refused, perhaps delivered and being sent again, a bot with code, a bot with files">
         <div className="flex flex-col gap-2">
           <MessageBubble
             entry={bubbles.operator}
@@ -332,6 +332,13 @@ function BubblesSection() {
             position="single"
             onOpenAttachment={nothing}
             onRetry={nothing}
+          />
+          <MessageBubble
+            entry={bubbles.unresolved}
+            position="single"
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+            submitting
           />
           <MessageBubble
             entry={bubbles.bot}

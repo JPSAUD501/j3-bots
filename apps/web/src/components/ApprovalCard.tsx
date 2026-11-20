@@ -77,9 +77,9 @@ export function ApprovalCard({
         role="region"
         aria-label={t("approval.change")}
         tabIndex={0}
-        className={cn(code, scrolls, "px-2.5 py-2", className)}
+        className={cn(code, scrolls, "py-2", className)}
       >
-        <CodeLines text={detail} tone={diffTone} />
+        <CodeLines text={detail} tone={diffTone} inset />
       </pre>
     );
   return (
@@ -89,10 +89,15 @@ export function ApprovalCard({
       )}
       {!entry.exact ? (
         <div className="flex flex-col gap-1.5">
-          {pending && <p className="text-xs font-medium">{t(summaryOnly[entry.kind])}</p>}
+          {pending ? (
+            <p className="text-xs font-medium">{t(summaryOnly[entry.kind])}</p>
+          ) : (
+            // Decided or expired, the record still says what was decided on.
+            <p className="text-2xs text-muted-foreground">{t("approval.summaryQualifier")}</p>
+          )}
           <p
             role="region"
-            aria-label={t("approval.action")}
+            aria-label={t("approval.summary")}
             tabIndex={0}
             className={cn(
               scrolls,
@@ -109,23 +114,23 @@ export function ApprovalCard({
           role="region"
           aria-label={t("approval.action")}
           tabIndex={0}
-          className={cn(code, scrolls, "rounded-md px-2.5 py-2")}
+          className={cn(code, scrolls, "rounded-md py-2")}
         >
-          <CodeLines text={entry.action} />
+          <CodeLines text={entry.action} inset />
         </pre>
       ) : pending ? (
         // One block in two parts, joined by a seam of the card's own surface. The paths stay put;
         // only the diff scrolls, so they never leave view.
         <div className="flex flex-col gap-px overflow-hidden rounded-md">
-          <pre className={cn(code, "bg-code-background px-2.5 py-2 font-medium")}>
-            <CodeLines text={entry.action} />
+          <pre className={cn(code, "bg-code-background py-2 font-medium")}>
+            <CodeLines text={entry.action} inset />
           </pre>
           {diff()}
         </div>
       ) : (
         <>
-          <pre className={cn(code, "rounded-md bg-code-background px-2.5 py-2")}>
-            <CodeLines text={entry.action} />
+          <pre className={cn(code, "rounded-md bg-code-background py-2")}>
+            <CodeLines text={entry.action} inset />
           </pre>
           <Collapsible.Root>
             <Collapsible.Trigger
@@ -158,8 +163,7 @@ export function ApprovalCard({
           >
             {t("approval.deny")}
           </Button>
-          {/* No blanket grant for an action nobody has seen exactly. */}
-          {entry.allowsSession && entry.exact && (
+          {entry.allowsSession && (
             <Button
               size="sm"
               className="@max-tablet:grow"
