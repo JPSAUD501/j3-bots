@@ -54,7 +54,7 @@ The calls a turn needs:
 | Watch | `orchestration.subscribeThread` `{threadId, afterSequence?}` | stream |
 | Read the whole thread | `orchestration.getThreadProjection` `{threadId}` | runs, messages, requests, sessions |
 
-The other dispatch modes, `queue_after_active`, `steer_active`, `restart_active` and `defer_start`, were not exercised.
+A message sent with `dispatchMode: {type: "queue_after_active"}` while a run was active became a `queued` run. `steer_active`, `restart_active` and `defer_start` were not exercised.
 
 `subscribeThread` without `afterSequence` sends a `snapshot` item first, then `event` items, each `{kind: "event", sequence, event: {type, threadId, runId, payload, …}}`. With `afterSequence` it sends only the events after it. The event types seen in a turn: `thread.create`, `message.dispatch`, `run.created`, `run.updated`, `run-attempt.created`, `run-attempt.updated`, `provider-session.attached`, `provider-session.updated`, `provider-session.detached`, `provider-thread.updated`, `provider-turn.updated`, `turn-item.updated`, `message.updated`, `node.updated`, `runtime-request.updated`, `runtime-request.respond`, `run.interrupt`, `queue.resume`, `checkpoint.captured`, `thread.metadata-updated` and `subagent.updated`. Each carries the whole entity.
 
