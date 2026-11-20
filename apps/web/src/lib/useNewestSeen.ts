@@ -9,12 +9,18 @@ const SEEN_ID = "data-seen-id";
  * an entry taller than the timeline, half the timeline's height. Such an entry
  * shows that much exactly when it crosses the timeline's middle line, which
  * one observer of that line sees at any height; a share of the entry could
- * not, as the share it takes grows with the entry.
+ * not, as the share it takes grows with the entry. An entry no taller than
+ * the timeline that crosses the line shows at least half of itself, so the
+ * line observer watches every entry.
  */
 const SEEN_SHARE = 0.5;
 
-/** The timeline narrowed to its middle line. */
-const MIDDLE_LINE = "-50% 0px -50% 0px";
+/**
+ * The timeline of `height` narrowed to its middle line. In pixels: a
+ * percentage in `rootMargin` resolves against the root's width, even above
+ * and below (Intersection Observer, "root intersection rectangle").
+ */
+const middleLine = (height: number) => `${-height / 2}px 0px ${-height / 2}px 0px`;
 
 /** A modal dialog hides what it covers from assistive technology; the details pane makes it inert. */
 const covered = (element: Element) => element.closest('[inert], [aria-hidden="true"]') !== null;
@@ -55,23 +61,39 @@ export function useNewestSeen(root: HTMLElement | null, onSeen: (id: string) => 
         },
         { root, ...options },
       );
-    const observers = [
+    const half = follow(
+      halfShown,
+      { threshold: [0, SEEN_SHARE] },
+      (change) => change.isIntersecting && change.intersectionRatio >= SEEN_SHARE,
+    );
+    const followMiddle = (timelineHeight: number) =>
       follow(
-        halfShown,
-        { threshold: [0, SEEN_SHARE] },
-        (change) => change.isIntersecting && change.intersectionRatio >= SEEN_SHARE,
-      ),
-      follow(onMiddle, { rootMargin: MIDDLE_LINE }, (change) => change.isIntersecting),
-    ];
+        onMiddle,
+        { rootMargin: middleLine(timelineHeight) },
+        (change) => change.isIntersecting,
+      );
+    let height = root.clientHeight;
+    let middle = followMiddle(height);
     // Observing an entry twice is a no-op, so every change observes whatever is new.
     const observeEntries = () => {
       for (const entry of root.querySelectorAll(`[${SEEN_ID}]`)) {
-        for (const observer of observers) observer.observe(entry);
+        half.observe(entry);
+        middle.observe(entry);
       }
     };
     observeEntries();
     const arrivals = new MutationObserver(observeEntries);
     arrivals.observe(root, { childList: true, subtree: true });
+    // A margin is fixed when its observer is made, so a new height takes a new one.
+    const resizes = new ResizeObserver(() => {
+      if (root.clientHeight === height) return;
+      height = root.clientHeight;
+      middle.disconnect();
+      onMiddle.clear();
+      middle = followMiddle(height);
+      observeEntries();
+    });
+    resizes.observe(root);
     // Closing a dialog or returning to the tab shows entries without a scroll.
     const covers = new MutationObserver(check);
     covers.observe(document.body, {
@@ -81,7 +103,9 @@ export function useNewestSeen(root: HTMLElement | null, onSeen: (id: string) => 
     });
     document.addEventListener("visibilitychange", check);
     return () => {
-      for (const observer of observers) observer.disconnect();
+      half.disconnect();
+      middle.disconnect();
+      resizes.disconnect();
       arrivals.disconnect();
       covers.disconnect();
       document.removeEventListener("visibilitychange", check);
