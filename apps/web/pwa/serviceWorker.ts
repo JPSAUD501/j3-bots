@@ -65,30 +65,36 @@ self.addEventListener("activate", (event) => {
 const keptPage = () => caches.match(CONFIG.page, { cacheName: CONFIG.cache });
 
 // The page from the network, headers and body, within CONFIG.navigationWait,
-// or a failure. Late, a body still arriving is cancelled, which stops its
-// download. The request itself goes as the browser made it: one sent with an
-// abort signal would no longer be a page load to the server or a proxy, so
-// one with no answer yet is left to end on its own.
+// or a failure. A copy of the answer is read to its end, and the answer itself
+// is what the page gets, its headers, status and URL as the network gave them.
+// Once the wait is over, a body still arriving is cancelled, and so is the body
+// of an answer whose headers come later, which stops its download. The request
+// itself goes as the browser made it: one sent with an abort signal would no
+// longer be a page load to the server or a proxy, so one with no answer yet is
+// left to end on its own.
 const loadPage = (request) =>
   new Promise((resolve, reject) => {
-    let reader = null;
+    let late = false;
+    let answer = null;
+    let copy = null;
     const timer = setTimeout(() => {
+      late = true;
       reject(new Error("The page did not arrive in time"));
-      reader?.cancel();
+      copy?.cancel();
+      answer?.body?.cancel();
     }, CONFIG.navigationWait);
     fetch(request)
-      .then(async (answer) => {
-        if (answer.body === null) return answer;
-        reader = answer.body.getReader();
-        const chunks = [];
-        for (let read = await reader.read(); !read.done; read = await reader.read()) {
-          chunks.push(read.value);
+      .then(async (got) => {
+        if (late) {
+          got.body?.cancel();
+          return got;
         }
-        return new Response(new Blob(chunks), {
-          status: answer.status,
-          statusText: answer.statusText,
-          headers: answer.headers,
-        });
+        answer = got;
+        if (got.body !== null) {
+          copy = got.clone().body.getReader();
+          while (!(await copy.read()).done);
+        }
+        return got;
       })
       .then(resolve, reject)
       .finally(() => clearTimeout(timer));
