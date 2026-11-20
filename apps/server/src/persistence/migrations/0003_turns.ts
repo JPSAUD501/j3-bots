@@ -10,11 +10,17 @@ import * as SqlClient from "effect/sql/SqlClient";
 // no longer has or refused as busy, a held queue's resume, the turns a
 // session's events showed, their work steps and `j3` tool calls, host speech
 // already delivered, open cards, an operator's answer still to reach the
-// engine, and a submitted secret whose answer was lost. See
+// engine, a submitted secret whose answer was lost, and where a bot's
+// workspace really was when it was provisioned. See
 // `docs/architecture/server.md`.
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+
+  // Where a bot's workspace really was when it was first provisioned: a file
+  // the bot attaches is read against it, never against `workspace_path`
+  // resolved again, which the bot can replace with a link.
+  yield* sql`ALTER TABLE bots ADD COLUMN workspace_root TEXT`;
 
   // `source_entry_id` is the operator's message or the answered card that
   // caused the wake. `retry_of` is the failed wake an operator's retry sent

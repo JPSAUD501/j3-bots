@@ -9,16 +9,23 @@ import * as Result from "effect/Result";
 import type * as Scope from "effect/Scope";
 
 // A file a bot names in its workspace, read for attaching (`docs/architecture/server.md`,
-// Attachments). The path is resolved and checked, and the file opened by the
+// Attachments). Keeping the read inside the workspace is a guardrail against
+// a bot attaching the wrong file, not a security boundary: the bot runs
+// commands as the same OS user as the server, so it can read any file the
+// server can and could copy one in (`docs/architecture/security.md`).
+//
+// The root is the workspace's real path kept from provisioning, never
+// resolved again, so a link the bot puts in its folder's place leads nowhere
+// inside it. The path is resolved and checked, and the file opened by the
 // resolved path; between the two the bot can swap a folder on the way for a
 // link that leads out. So the check that counts is made on the open
 // descriptor, after the open: on Linux, where the kernel names the descriptor's
 // file at `/proc/self/fd/<fd>`, by that name, which no later swap changes.
 // Elsewhere, by matching the descriptor's file to what the path resolves to
 // again, with no link on it: a folder swapped out and back between those two
-// reads could still pass it. Node has no `openat`, which would open each
-// folder without following a link, nor another way to name a descriptor's
-// file.
+// reads could still pass it, which the guardrail accepts. Node has no
+// `openat`, which would open each folder without following a link, nor
+// another way to name a descriptor's file.
 
 /** What reading a file the bot named in its workspace found. */
 export type WorkspaceRead =
@@ -101,9 +108,9 @@ type ReadWorkspaceFile = (
 ) => Effect.Effect<WorkspaceRead>;
 
 /**
- * Reads the file `given` names, relative to the workspace whose real path is
- * `root`, at most `limit` bytes of it. A link inside the workspace that leads
- * to a file inside it is followed.
+ * Reads the file `given` names, relative to the workspace whose real path,
+ * kept from provisioning, is `root`, at most `limit` bytes of it. A link
+ * inside the workspace that leads to a file inside it is followed.
  */
 export const workspaceReader = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;

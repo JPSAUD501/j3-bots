@@ -11,7 +11,6 @@ import type { ToolInput } from "@j3-bots/prompts";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -105,7 +104,6 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const transaction = transactional(sql);
-    const fs = yield* FileSystem.FileSystem;
     const observer = yield* Observer;
     const entries = yield* Entries;
     const ledger = yield* Ledger;
@@ -289,7 +287,12 @@ export const layer = Layer.effect(
       const bot = yield* bots.find(botId);
       if (Option.isNone(bot)) return yield* new TurnEnded();
       const refuse = (reason: string) => new TurnToolRefused({ reason });
-      const root = yield* fs.realPath(bot.value.workspacePath).pipe(Effect.orDie);
+      // The real path kept from provisioning: resolving `workspacePath` now
+      // would follow a link the bot put in its folder's place.
+      if (Option.isNone(bot.value.workspaceRoot)) {
+        return yield* refuse("Your workspace is not ready, so nothing can be attached yet.");
+      }
+      const root = bot.value.workspaceRoot.value;
       const files: Array<WorkspaceFile> = [];
       for (const given of paths) {
         if (/^[a-z][a-z0-9+.-]*:\/\//i.test(given)) {

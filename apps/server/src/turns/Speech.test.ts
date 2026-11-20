@@ -275,3 +275,41 @@ it.effect(
       assert.deepStrictEqual(stored.files, []);
     }).pipe(Effect.provide(TestDomain.layer)),
 );
+
+it.effect(
+  "reads what a say attaches from the workspace it was provisioned with, not a link put in its place",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const tools = yield* BotTools;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { bot, session, turnId } = yield* working("Send me the notes.");
+
+      // The bot moves its folder away and puts a link to another one in its place.
+      const workspace = Option.getOrThrow(yield* (yield* BotStore).find(bot.id)).workspacePath;
+      const elsewhere = yield* fs.makeTempDirectoryScoped();
+      yield* fs.makeDirectory(path.join(elsewhere, "files"));
+      yield* fs.writeFileString(path.join(elsewhere, "files", "notes.md"), "Not in the workspace.");
+      yield* fs.rename(workspace, `${workspace}-moved`);
+      yield* fs.symlink(elsewhere, workspace);
+
+      const args = { text: "Here are the notes.", attachments: ["files/notes.md"] };
+      yield* control.toolCall({
+        sessionId: session,
+        turnId,
+        tool: "say",
+        input: args,
+        recorded: "now",
+      });
+      const reply = yield* tools.call({
+        requestId: "call-1",
+        sessionId: session,
+        tool: "say",
+        arguments: args,
+      });
+
+      assert.strictEqual(reply._tag, "refused");
+      assert.deepStrictEqual(yield* botSaid(bot.id), []);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
