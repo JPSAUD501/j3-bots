@@ -53,6 +53,7 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
   {
     ...base,
     kind: "user",
+    sinceLastTurn: [{ type: "session-rotated", digest: [] }],
     answer: { question: "text", room: null, response: { type: "dismissed" } },
     messages: [],
   },

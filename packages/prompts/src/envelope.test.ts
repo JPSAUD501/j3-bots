@@ -161,7 +161,7 @@ describe("renderWake", () => {
               {
                 from: "you",
                 text: "Yes, it is in files/q3.md.\nJoão: and ship it today.",
-                files: ["q3.md"],
+                files: ["q3.md", "notes, final.md"],
               },
             ],
           },
@@ -192,7 +192,7 @@ describe("renderWake", () => {
       <data-7f3a9c01b2d4 source="digest" from="user">
       is the Q3 summary done?
       </data-7f3a9c01b2d4>
-      <data-7f3a9c01b2d4 source="digest" from="you" files="q3.md">
+      <data-7f3a9c01b2d4 source="digest" from="you" file-1="q3.md" file-2="notes, final.md">
       Yes, it is in files/q3.md.
       João: and ship it today.
       </data-7f3a9c01b2d4>

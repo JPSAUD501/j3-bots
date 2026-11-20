@@ -383,9 +383,7 @@ const writeSinceLastTurn = (w: EnvelopeWriter, items: ReadonlyArray<CatchUpItem>
         break;
       case "session-rotated":
         if (item.digest.length === 0) {
-          w.line(
-            "Your working session was replaced. Nothing had been said in the conversation yet.",
-          );
+          w.line("Your working session was replaced. No earlier messages are carried over to it.");
           break;
         }
         // One block per message, its author an attribute: no text of one can
@@ -398,7 +396,11 @@ const writeSinceLastTurn = (w: EnvelopeWriter, items: ReadonlyArray<CatchUpItem>
             [
               ["source", "digest"],
               ["from", message.from],
-              ["files", message.files.length === 0 ? null : message.files.join(", ")],
+              // One attribute per file: a name may hold any character, a comma too.
+              ...message.files.map((name, index): readonly [string, string] => [
+                `file-${index + 1}`,
+                name,
+              ]),
             ],
             message.text,
           );
