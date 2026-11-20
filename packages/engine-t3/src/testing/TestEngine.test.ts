@@ -431,6 +431,8 @@ describe("TestEngine", () => {
           kind: "command",
           action: "pnpm deploy",
           detail: null,
+          reason: null,
+          exact: true,
           allowsSession: false,
         },
       });
@@ -505,6 +507,8 @@ describe("TestEngine", () => {
           kind: "command",
           action: "rm -rf build",
           detail: null,
+          reason: null,
+          exact: true,
           allowsSession: true,
         },
       });

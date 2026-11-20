@@ -53,6 +53,8 @@ export const EngineRequest = Schema.Union([
     kind: ApprovalEntry.fields.kind,
     action: ApprovalEntry.fields.action,
     detail: ApprovalEntry.fields.detail,
+    reason: ApprovalEntry.fields.reason,
+    exact: ApprovalEntry.fields.exact,
     allowsSession: ApprovalEntry.fields.allowsSession,
   }),
   /**

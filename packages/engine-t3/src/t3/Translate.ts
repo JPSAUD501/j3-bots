@@ -39,7 +39,7 @@ import {
   TurnId,
 } from "../ids.ts";
 import { toolInputDigest } from "../toolCaller.ts";
-import { approvalDetail } from "./approvalDetail.ts";
+import { approvalOf } from "./approvalDetail.ts";
 import { dispatchOfMessage, localIdFor, messageIdFor } from "./Keys.ts";
 import { TOOL_SERVER } from "./Provision.ts";
 
@@ -508,17 +508,6 @@ const speechOf = (item: Item): HostSpeech | undefined => {
 // ---------------------------------------------------------------------------
 // Requests
 
-const APPROVAL_KINDS: Record<
-  Extract<Item, { type: "approval_request" }>["requestKind"],
-  Extract<EngineRequest, { _tag: "approval" }>["kind"]
-> = {
-  command: "command",
-  "file-change": "file-change",
-  "file-read": "file-read",
-  "mcp-elicitation": "tool",
-  permission: "other",
-};
-
 type UserInputRequest = Extract<Item, { type: "user_input_request" }>;
 type EngineQuestion = UserInputRequest["questions"][number];
 
@@ -680,21 +669,18 @@ const requestOf = (mirror: Mirror, item: Item): RequestState | undefined => {
   const openedAt = item.startedAt ?? item.updatedAt;
   switch (item.type) {
     case "approval_request": {
-      const action = label(item.title ?? item.prompt, "Approval");
+      // The engine records the request beside the item, in either order. The request is what
+      // takes the answer and tells which part of the item is asked about, so the approval opens
+      // once both are here.
+      const request = mirror.requests.get(item.requestId);
+      if (request === undefined && LIVE_ITEM.has(item.status)) return undefined;
       return {
         requestId: RequestId.make(localIdFor(item.requestId)),
         answerTo: { _tag: "runtime-request", requestId: item.requestId },
         turnId,
         openedAt,
-        request: {
-          _tag: "approval",
-          kind: APPROVAL_KINDS[item.requestKind],
-          action,
-          detail: approvalDetail(action, [item.prompt, item.reason]),
-          allowsSession:
-            item.options?.some((option) => option.decision === "acceptForSession") ?? false,
-        },
-        resolution: runtimeResolution(mirror.requests.get(item.requestId), item),
+        request: approvalOf(item, request, mirror.items.values()),
+        resolution: runtimeResolution(request, item),
       };
     }
     case "user_input_request": {

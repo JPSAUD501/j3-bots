@@ -156,25 +156,52 @@ export type QuestionEntry = typeof QuestionEntry.Type;
 export const ApprovalDecision = Schema.Literals(["allow-once", "allow-session", "deny"]);
 export type ApprovalDecision = typeof ApprovalDecision.Type;
 
+/** The most an approval's action or detail carries. */
+export const APPROVAL_TEXT_LENGTH = 100_000;
+
+/**
+ * Text an approval shows as given, whitespace and all: never trimmed, so a
+ * command's indentation and a diff's context lines reach the operator intact.
+ * Never blank, and it ends with no line break.
+ */
+const ApprovalText = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(APPROVAL_TEXT_LENGTH),
+  Schema.isPattern(/\S/),
+  Schema.isPattern(/[^\r\n]$/),
+);
+
 /** The engine holds a running turn on it. It expires when that turn ends. */
 export const ApprovalEntry = Schema.TaggedStruct("approval", {
   ...entry,
   kind: Schema.Literals(["command", "file-change", "file-read", "tool", "other"]),
   /**
-   * The exact action, in one line: the command, the file's path, the tool call.
-   * The card always shows it.
+   * What the operator decides on. When `exact`, the engine's own record of it:
+   * the whole command, every line; or the changed files' paths, one per line.
+   * Otherwise the provider's summary of it, which may leave things out. The
+   * card always shows it.
    */
-  action: Label,
+  action: ApprovalText,
   /**
-   * What the card shows under the action, never a repeat of it: for a command,
-   * what it will do or its lines past the first; for a file change, the unified
-   * diff, from its first hunk header. Null when there is nothing to add; never
-   * empty or padded with whitespace.
+   * Only with an exact file change: its unified diff, as the engine gives it.
+   * Null otherwise.
    */
-  detail: Schema.NullOr(
-    Schema.String.check(Schema.isMinLength(1), Schema.isTrimmed(), Schema.isMaxLength(20_000)),
+  detail: Schema.NullOr(ApprovalText),
+  /**
+   * Why the bot or its provider asks, such as the escalation a sandboxed
+   * command needs. Never the action itself. Null when nothing was said.
+   */
+  reason: Schema.NullOr(
+    Schema.String.check(Schema.isMinLength(1), Schema.isTrimmed(), Schema.isMaxLength(2_000)),
   ),
-  /** Whether "Allow for session" is offered. */
+  /**
+   * Whether `action` and `detail` are exactly what will run or change, taken
+   * from the engine's structured record. False when the provider shared only a
+   * summary: the card says so, shows it as prose, and offers no grant for the
+   * session, so nothing unseen is allowed beyond this once.
+   */
+  exact: Schema.Boolean,
+  /** Whether the engine offers "Allow for session". The card offers it only when `exact`. */
   allowsSession: Schema.Boolean,
   status: Schema.Union([
     Schema.TaggedStruct("pending", {}),

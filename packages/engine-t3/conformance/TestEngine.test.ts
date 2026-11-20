@@ -23,6 +23,8 @@ const REQUESTS = {
     kind: "file-change",
     action: "Write notes.txt",
     detail: null,
+    reason: null,
+    exact: false,
     allowsSession: false,
   }),
   question: request({
