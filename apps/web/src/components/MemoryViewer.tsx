@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Dialog } from "@base-ui/react/dialog";
 import type { MemoryEdit, Save } from "@j3-bots/client-runtime";
-import type { MemoryDocument } from "@j3-bots/contracts";
+import { MEMORY_TEXT_LIMIT, type MemoryDocument, MemoryText } from "@j3-bots/contracts";
+import * as Schema from "effect/Schema";
 import { XIcon } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { useI18n } from "../app/context";
+import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
 import { shownSaveProblem } from "../presentation/saves";
 import { Button } from "./ui/button";
 
@@ -27,10 +29,11 @@ export interface MemoryFileProps {
   /** The operator gave up on an edit whose save failed. */
   readonly onDiscard: () => void;
   /**
-   * Reads the file again, after it changed on the server. The conflict holds,
-   * and the edit stays, until the read succeeds.
+   * Reads the file again, after it changed on the server, and resolves with
+   * whether the read succeeded. The conflict holds, and the edit stays, until
+   * it does.
    */
-  readonly onLoadNewer: () => void;
+  readonly onLoadNewer: () => Promise<boolean>;
   readonly onClose: () => void;
   /** Told when the view starts and stops holding an edit. */
   readonly onEditingChange?: (editing: boolean) => void;
@@ -39,6 +42,8 @@ export interface MemoryFileProps {
 }
 
 const pre = "font-mono text-xs whitespace-pre-wrap wrap-anywhere";
+
+const fits = Schema.is(MemoryText);
 
 /**
  * One memory file as the bot wrote it, which the operator can correct. Save
@@ -74,25 +79,41 @@ export function MemoryFile({
       setFailureShown(true);
     }
   }
+  const endEdit = () => {
+    setEditing(null);
+    setFailureShown(false);
+  };
   // A new version of the file, saved or read again, ends the edit. The first
   // read does not: an edit kept from a failed save waits for it. A read that
   // fails in between keeps the edit.
   const [lastRead, setLastRead] = useState(document);
   if (document !== null && lastRead !== document) {
     setLastRead(document);
-    if (lastRead !== null) {
-      setEditing(null);
-      setFailureShown(false);
-    }
+    if (lastRead !== null) endEdit();
   }
+
+  // Loading the newer version takes one read at a time, and no edit meanwhile.
+  const [reloading, setReloading] = useState(false);
+  const loadNewer = () => {
+    if (reloading || !connected) return;
+    setReloading(true);
+    void onLoadNewer().then((read) => {
+      setReloading(false);
+      // The operator asked for the newer version: it replaces the edit, even
+      // when it is the first version this view could read.
+      if (read) endEdit();
+    });
+  };
 
   const saving = save?._tag === "saving";
   const text = saving ? save.changes.text : editing?.text;
   const problem = shownSaveProblem(save, !failureShown);
   const reloadFailed = problem === "stale" && reading._tag === "failed";
+  const tooLong = editing !== null && !fits(editing.text);
   const canSave =
     editing !== null &&
     problem !== "stale" &&
+    !tooLong &&
     !saving &&
     connected &&
     (document === null || editing.text !== document.text);
@@ -100,6 +121,7 @@ export function MemoryFile({
   // The text takes focus when an edit starts, and Edit file gets it back when the edit ends.
   const isEditing = text !== undefined;
   const textArea = useRef<HTMLTextAreaElement>(null);
+  const alertId = useId();
   const editButton = useRef<HTMLButtonElement>(null);
   const wasEditing = useRef(isEditing);
   useEffect(() => {
@@ -151,8 +173,10 @@ export function MemoryFile({
           <textarea
             ref={textArea}
             value={text}
-            readOnly={saving}
+            readOnly={saving || reloading}
             aria-label={t("memory.text", { file: title })}
+            aria-invalid={tooLong || undefined}
+            aria-describedby={tooLong ? alertId : undefined}
             onChange={(event) => {
               const value = event.currentTarget.value;
               setEditing((current) => current && { ...current, text: value });
@@ -172,27 +196,37 @@ export function MemoryFile({
       </div>
       {text !== undefined && (
         <footer className="flex shrink-0 flex-col gap-2 border-t border-border px-4 py-3">
-          <p role="alert" className="text-xs text-blocked empty:hidden">
-            {reloadFailed
-              ? t("memory.reloadFailed")
-              : problem === null
-                ? null
-                : t(problemText[problem])}
+          {/* Exposed while empty, so a problem that arrives later is announced. */}
+          <p id={alertId} role="alert" className="text-xs text-blocked empty:sr-only">
+            {tooLong
+              ? t("memory.tooLong", { max: MEMORY_TEXT_LIMIT })
+              : reloadFailed
+                ? t("memory.reloadFailed")
+                : problem === null
+                  ? null
+                  : t(problemText[problem])}
           </p>
           {!connected && (
             <p className="text-xs text-muted-foreground">{t("settings.save.offline")}</p>
           )}
           <div className="flex flex-wrap justify-end gap-2">
             {problem === "stale" && (
-              <Button className="me-auto" onClick={onLoadNewer}>
-                {reloadFailed ? t("memory.loadNewer.retry") : t("memory.loadNewer")}
+              <Button
+                className="me-auto"
+                onClick={loadNewer}
+                aria-disabled={reloading || !connected}
+              >
+                {reloading
+                  ? t("memory.loadNewer.loading")
+                  : reloadFailed
+                    ? t("memory.loadNewer.retry")
+                    : t("memory.loadNewer")}
               </Button>
             )}
             <Button
               onClick={() => {
                 if (saving) return;
-                setEditing(null);
-                setFailureShown(false);
+                endEdit();
                 onDiscard();
               }}
               aria-disabled={saving}
@@ -217,22 +251,29 @@ const problemText = {
   failed: "memory.saveFailed",
 } as const;
 
-interface MemoryViewerProps extends Omit<MemoryFileProps, "title" | "titleId" | "onEditingChange"> {
-  /** The file's name as the details list shows it. Null closes the viewer. */
-  readonly title: string | null;
+interface MemoryViewerProps extends Omit<
+  MemoryFileProps,
+  "title" | "reading" | "titleId" | "onEditingChange"
+> {
+  /** The file open in the viewer, as state holds it; null closes the viewer. */
+  readonly file: { readonly title: string; readonly reading: MemoryReading } | null;
 }
 
 /** `MemoryFile` as a dialog: the whole screen on a phone, a sheet over the app on wider ones. */
-export function MemoryViewer({ title, onClose, ...view }: MemoryViewerProps) {
+export function MemoryViewer({ file, onClose, ...view }: MemoryViewerProps) {
   const titleId = useId();
   // A click outside does not throw away an edit; Escape and the close button still close.
   const [editing, setEditing] = useState(false);
+  const { held, closed } = useHeldWhileClosing(file);
   return (
     <Dialog.Root
-      open={title !== null}
+      open={file !== null}
       disablePointerDismissal={editing}
       onOpenChange={(open) => {
         if (!open) onClose();
+      }}
+      onOpenChangeComplete={(open) => {
+        if (!open) closed();
       }}
     >
       <Dialog.Portal>
@@ -241,10 +282,12 @@ export function MemoryViewer({ title, onClose, ...view }: MemoryViewerProps) {
           aria-labelledby={titleId}
           className="fixed inset-0 z-40 flex flex-col bg-background pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] text-foreground outline-none transition-opacity duration-(--duration-slow) data-ending-style:opacity-0 data-starting-style:opacity-0 tablet:inset-x-4 tablet:top-12 tablet:bottom-12 tablet:mx-auto tablet:max-w-2xl tablet:rounded-lg tablet:border tablet:border-border tablet:shadow-xl"
         >
-          {/* Mounted with the popup, so each opening starts from the file as read. */}
-          {title !== null && (
+          {/* Mounted afresh with each opening, so it starts from the file as read. */}
+          {held !== null && (
             <MemoryFile
-              title={title}
+              key={held.opening}
+              title={held.value.title}
+              reading={held.value.reading}
               onClose={onClose}
               onEditingChange={setEditing}
               titleId={titleId}

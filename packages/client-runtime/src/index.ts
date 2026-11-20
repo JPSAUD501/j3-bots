@@ -81,6 +81,7 @@ export {
   type MemoryEdit,
   memorySaveKey,
   type Save,
+  type SaveResult,
 } from "./stores/Details.ts";
 export { Devices, type RevokeResult } from "./stores/Devices.ts";
 export {

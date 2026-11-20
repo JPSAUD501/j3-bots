@@ -412,8 +412,7 @@ export const en = {
   "editBot.model.notOffered": "{model} (not offered by the engine now)",
   "editBot.model.someNotReady":
     "Providers that can’t run a bot right now aren’t listed. Settings shows why.",
-  "editBot.model.refused": "The engine no longer offers this model. Choose another.",
-  "editBot.model.unavailable": "The engine stopped offering this model. Choose another to save.",
+  "editBot.model.unavailable": "The engine no longer offers this model. Choose another to save.",
   "editBot.permissionMode": "Permission mode",
   "editBot.nextTurn": "{name} uses the new settings from its next turn.",
   "editBot.cancel": "Cancel",
@@ -431,11 +430,14 @@ export const en = {
     "This file changed since you opened it, so your edit wasn’t saved. Loading the newer version replaces your edit: copy anything you want to keep first.",
   "memory.loadNewer": "Load the newer version",
   "memory.loadNewer.retry": "Try again",
+  "memory.loadNewer.loading": "Loading…",
   "memory.reloadFailed": "The newer version couldn’t be read, so your edit is still here.",
   "memory.privateLocation":
     "Nothing was saved: this memory folder is linked outside J3 Bots’ private data on the server. Remove the link to save again.",
   "memory.gone": "This file no longer exists, so your edit wasn’t saved.",
   "memory.saveFailed": "Your edit wasn’t saved. Try again.",
+  "memory.tooLong":
+    "This edit is too long to save: a memory file holds {max} characters at most. Shorten it to save.",
   "memory.failedClosed": "Your edit to {file} wasn’t saved. Open it to see why.",
 
   "settings.close": "Close settings",

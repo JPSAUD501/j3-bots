@@ -779,6 +779,8 @@ const profileNote = {
   text: "# Profile\n\n- Prefers short answers.\n- Ships on Thursdays; no deploys on Fridays.\n- Time zone: America/Sao_Paulo.\n",
 };
 const editedNote = `${profileNote.text}- Reviews pull requests in the morning.\n`;
+/** A read that never answers, so the gallery keeps showing the newer version loading. */
+const neverRead = () => new Promise<boolean>(() => {});
 
 /** A memory file as the viewer holds it, in a frame the size of a sheet. */
 function MemoryVariant({
@@ -796,7 +798,7 @@ function MemoryVariant({
           connected
           onSave={nothing}
           onDiscard={nothing}
-          onLoadNewer={nothing}
+          onLoadNewer={neverRead}
           onClose={nothing}
           titleId={titleId}
           {...props}

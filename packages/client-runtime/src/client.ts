@@ -225,7 +225,7 @@ export interface J3Client {
     scope: MemoryScope,
     path: MemoryPath,
     edit: Details.MemoryEdit,
-  ) => Promise<Actions.IntentResult<MemoryDocument>>;
+  ) => Promise<Details.SaveResult<MemoryDocument>>;
   /** The latest write of each memory file, by `memorySaveKey`, while under way or once failed. */
   readonly memorySaves: Readable<ReadonlyMap<string, Details.Save<Details.MemoryEdit>>>;
   readonly dismissMemorySave: (scope: MemoryScope, path: MemoryPath) => void;
@@ -239,7 +239,7 @@ export interface J3Client {
   readonly updateBot: (
     botId: BotId,
     changes: Details.BotChanges,
-  ) => Promise<Actions.IntentResult<Bot>>;
+  ) => Promise<Details.SaveResult<Bot>>;
   /** The latest update of each bot, while under way or once failed. */
   readonly botSaves: Readable<ReadonlyMap<BotId, Details.Save<Details.BotChanges>>>;
   readonly dismissBotSave: (botId: BotId) => void;

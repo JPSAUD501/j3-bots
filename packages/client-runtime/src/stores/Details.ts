@@ -68,6 +68,12 @@ export type Save<C> =
   | { readonly _tag: "saving"; readonly changes: C }
   | { readonly _tag: "failed"; readonly changes: C; readonly failure: IntentFailure };
 
+/**
+ * How a save ended, or `pairing-changed`: the window follows another pairing
+ * than the one the save started under, or none, so nothing of it shows.
+ */
+export type SaveResult<A> = IntentResult<A> | { readonly _tag: "pairing-changed" };
+
 /** A memory file's key in `memorySaves`. */
 export const memorySaveKey = (scope: MemoryScope, path: MemoryPath) =>
   `${memoryKey(scope)}/${path}`;
@@ -114,14 +120,18 @@ export class Details extends Context.Service<
       scope: MemoryScope,
       path: MemoryPath,
       edit: MemoryEdit,
-    ) => Effect.Effect<IntentResult<MemoryDocument>>;
-    /** The latest write of each memory file, by `memorySaveKey`, while under way or once failed. */
+    ) => Effect.Effect<SaveResult<MemoryDocument>>;
+    /**
+     * The latest write of each memory file, by `memorySaveKey`, while under
+     * way or once failed. Like `botSaves`, it holds only the saves of the
+     * pairing this window follows, and empties when that pairing changes.
+     */
     readonly memorySaves: Readable<ReadonlyMap<string, Save<MemoryEdit>>>;
     /** Lets go of a failed write the operator gave up on. One under way stays. */
     readonly dismissMemorySave: (scope: MemoryScope, path: MemoryPath) => void;
     readonly createBot: (draft: BotDraft) => Effect.Effect<IntentResult<Bot>>;
     /** Changes a bot's profile, model or permission mode. The roster shows the result. */
-    readonly updateBot: (botId: BotId, changes: BotChanges) => Effect.Effect<IntentResult<Bot>>;
+    readonly updateBot: (botId: BotId, changes: BotChanges) => Effect.Effect<SaveResult<Bot>>;
     /**
      * The latest update of each bot, while under way or once failed. It
      * outlives the form that started it, which can close before the answer.
@@ -203,6 +213,17 @@ export const layer = Layer.effect(
 
     const memorySaves = new Cell<ReadonlyMap<string, Save<MemoryEdit>>>(new Map());
     const botSaves = new Cell<ReadonlyMap<BotId, Save<BotChanges>>>(new Map());
+    // A save belongs to the pairing it started under, and a window shows only
+    // those of the pairing it follows: they go in the step the pairing changes.
+    yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        connection.pairing.subscribe(() => {
+          memorySaves.set(new Map());
+          botSaves.set(new Map());
+        }),
+      ),
+      (stop) => Effect.sync(stop),
+    );
 
     const dismissFailed = <K, C>(saves: Cell<ReadonlyMap<K, Save<C>>>, key: K) => {
       if (saves.get().get(key)?._tag !== "failed") return;
@@ -213,16 +234,25 @@ export const layer = Layer.effect(
       });
     };
 
-    /** Runs `command` as the latest save of `key` in `saves`, and records how it ended. */
+    /**
+     * Runs `command` as the latest save of `key` in `saves`, and records how it
+     * ended, unless the pairing changed meanwhile.
+     */
     const tracked = Effect.fn("Details.tracked")(function* <K, C, A>(
       saves: Cell<ReadonlyMap<K, Save<C>>>,
       key: K,
       changes: C,
       command: Effect.Effect<IntentResult<A>>,
     ) {
+      const pairing = connection.pairing.get();
       const saving: Save<C> = { _tag: "saving", changes };
       saves.update((current) => new Map(current).set(key, saving));
       const result = yield* command;
+      // A pairing never returns once it ended, and its saves went with it.
+      if (connection.pairing.get() !== pairing) {
+        const changed: SaveResult<A> = { _tag: "pairing-changed" };
+        return changed;
+      }
       // A later save of the same thing speaks for itself.
       if (saves.get().get(key) === saving) {
         saves.update((current) => {

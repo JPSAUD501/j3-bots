@@ -3331,4 +3331,38 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       assert.strictEqual(kept._tag === "done" && kept.value.text, "two");
     }).pipe(Effect.scoped, Effect.provide(client())),
   );
+
+  it.effect("shows no save of a pairing that ended, nor how it ended, under the next one", () =>
+    Effect.gen(function* () {
+      yield* pairAndConnect;
+      const botId = yield* createBot("Scout");
+      const details = yield* Details;
+      const scope = { _tag: "bot", botId } as const;
+      const path = MemoryPath.make("notes.md");
+      const refused = yield* details.updateBot(botId, {
+        model: { providerId: ProviderId.make("nowhere"), modelId: ModelId.make("none") },
+      });
+      assert.strictEqual(refused._tag, "failed");
+      assert.isTrue(details.botSaves.get().has(botId));
+
+      // A write that waits for the network when the pairing ends.
+      const network = yield* TestPlatform.TestNetwork;
+      yield* goOffline;
+      const writing = yield* details
+        .writeMemory(scope, path, { text: "never sent", revision: null })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      assert.strictEqual(details.memorySaves.get().get(memorySaveKey(scope, path))?._tag, "saving");
+      // Long enough for the client to settle into waiting for the network.
+      yield* Effect.sleep("50 millis");
+      assert.deepStrictEqual(yield* (yield* SignOut).run, { _tag: "still-listed" });
+
+      assert.deepStrictEqual(yield* Fiber.join(writing), { _tag: "pairing-changed" });
+      assert.strictEqual(details.botSaves.get().size, 0);
+      assert.strictEqual(details.memorySaves.get().size, 0);
+      yield* network.set("online");
+      yield* pairAndConnect;
+      assert.strictEqual(details.botSaves.get().size, 0);
+      assert.strictEqual(details.memorySaves.get().size, 0);
+    }).pipe(Effect.scoped, Effect.provide(client())),
+  );
 });

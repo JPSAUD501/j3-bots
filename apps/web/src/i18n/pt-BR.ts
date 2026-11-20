@@ -417,8 +417,7 @@ export const ptBR: Catalog = {
   "editBot.model.notOffered": "{model} (o motor não oferece agora)",
   "editBot.model.someNotReady":
     "Provedores que não podem rodar um bot agora não aparecem. As Configurações mostram o motivo.",
-  "editBot.model.refused": "O motor não oferece mais este modelo. Escolha outro.",
-  "editBot.model.unavailable": "O motor deixou de oferecer este modelo. Escolha outro para salvar.",
+  "editBot.model.unavailable": "O motor não oferece mais este modelo. Escolha outro para salvar.",
   "editBot.permissionMode": "Modo de permissão",
   "editBot.nextTurn": "{name} usa as novas configurações a partir do próximo turno.",
   "editBot.cancel": "Cancelar",
@@ -437,11 +436,14 @@ export const ptBR: Catalog = {
     "Este arquivo mudou depois que você o abriu, então sua edição não foi salva. Carregar a versão mais nova substitui sua edição: copie antes o que quiser manter.",
   "memory.loadNewer": "Carregar a versão mais nova",
   "memory.loadNewer.retry": "Tentar de novo",
+  "memory.loadNewer.loading": "Carregando…",
   "memory.reloadFailed": "Não deu para ler a versão mais nova, então sua edição continua aqui.",
   "memory.privateLocation":
     "Nada foi salvo: a pasta desta memória aponta para fora dos dados privados do J3 Bots no servidor. Remova esse link para salvar de novo.",
   "memory.gone": "Este arquivo não existe mais, então sua edição não foi salva.",
   "memory.saveFailed": "Sua edição não foi salva. Tente de novo.",
+  "memory.tooLong":
+    "Esta edição é longa demais para salvar: um arquivo de memória tem no máximo {max} caracteres. Encurte-a para salvar.",
   "memory.failedClosed": "Sua edição em {file} não foi salva. Abra o arquivo para ver o motivo.",
 
   "settings.close": "Fechar configurações",

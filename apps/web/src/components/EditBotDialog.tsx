@@ -9,6 +9,7 @@ import { XIcon } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
+import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
 import {
   type BotEdits,
   botPatch,
@@ -108,11 +109,7 @@ export function EditBotForm({
   const problem = shownSaveProblem(save, !failureShown);
   const choices = modelChoices(engine, bot.model, edits.model);
   const modelMessage =
-    problem === "model"
-      ? t("editBot.model.refused")
-      : choices.pickUnavailable
-        ? t("editBot.model.unavailable")
-        : null;
+    problem === "model" || choices.pickUnavailable ? t("editBot.model.unavailable") : null;
   const settingsChange = !sameModel(model, bot.model) || mode !== bot.permissionMode;
   const canSave = patch._tag === "changes" && !choices.pickUnavailable && !saving && connected;
 
@@ -222,11 +219,10 @@ export function EditBotForm({
           <select
             id={ids.model}
             value={keyOf(model)}
-            aria-readonly={saving}
+            disabled={saving}
             aria-invalid={modelMessage !== null || undefined}
             aria-describedby={modelMessage === null ? undefined : errorIds.model}
             onChange={(event) => {
-              if (saving) return;
               const key = event.currentTarget.value;
               const picked = [
                 ...choices.unoffered,
@@ -234,7 +230,7 @@ export function EditBotForm({
               ].find((choice) => keyOf(choice) === key);
               edit({ model: picked ?? bot.model });
             }}
-            className={cn(fieldClass, "h-9 pointer-coarse:h-11")}
+            className={cn(fieldClass, "h-9 pointer-coarse:h-11 disabled:text-muted-foreground")}
           >
             {choices.unoffered.map((choice) => (
               <option key={keyOf(choice)} value={keyOf(choice)}>
@@ -253,8 +249,8 @@ export function EditBotForm({
               </optgroup>
             ))}
           </select>
-          {/* Always mounted, so a refusal that arrives later is announced. */}
-          <p id={errorIds.model} role="alert" className="text-xs text-blocked empty:hidden">
+          {/* Exposed while empty, so a refusal that arrives later is announced. */}
+          <p id={errorIds.model} role="alert" className="text-xs text-blocked empty:sr-only">
             {modelMessage}
           </p>
           {choices.someNotReady && (
@@ -307,7 +303,7 @@ export function EditBotForm({
       </div>
 
       <footer className="flex shrink-0 flex-col gap-2 border-t border-border px-4 py-3">
-        <p role="alert" className="text-xs text-blocked empty:hidden">
+        <p role="alert" className="text-xs text-blocked empty:sr-only">
           {problem === "gone"
             ? t("editBot.gone", { name: bot.profile.name })
             : problem !== null && problem !== "model"
@@ -338,12 +334,16 @@ export function EditBotDialog({ bot, onClose, ...form }: EditBotDialogProps) {
   const titleId = useId();
   // A click outside does not throw away unsaved edits; Escape and the close button still close.
   const [unsaved, setUnsaved] = useState(false);
+  const { held, closed } = useHeldWhileClosing(bot);
   return (
     <Dialog.Root
       open={bot !== null}
       disablePointerDismissal={unsaved}
       onOpenChange={(open) => {
         if (!open) onClose();
+      }}
+      onOpenChangeComplete={(open) => {
+        if (!open) closed();
       }}
     >
       <Dialog.Portal>
@@ -352,10 +352,11 @@ export function EditBotDialog({ bot, onClose, ...form }: EditBotDialogProps) {
           aria-labelledby={titleId}
           className="fixed inset-0 z-40 flex flex-col bg-background pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] text-foreground outline-none transition-opacity duration-(--duration-slow) data-ending-style:opacity-0 data-starting-style:opacity-0 tablet:inset-x-4 tablet:top-12 tablet:bottom-12 tablet:mx-auto tablet:max-w-lg tablet:rounded-lg tablet:border tablet:border-border tablet:shadow-xl"
         >
-          {/* Mounted with the popup, so each opening starts from the bot as saved. */}
-          {bot !== null && (
+          {/* Mounted afresh with each opening, so it starts from the bot as saved. */}
+          {held !== null && (
             <EditBotForm
-              bot={bot}
+              key={held.opening}
+              bot={held.value}
               onClose={onClose}
               onUnsavedChange={setUnsaved}
               titleId={titleId}

@@ -9,6 +9,7 @@ import {
 } from "@j3-bots/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import type * as Types from "effect/Types";
 
 /** What the operator changed in the form and has not saved: null for a field they left alone. */
 export interface BotEdits {
@@ -63,11 +64,7 @@ export function botPatch(bot: Bot, edits: BotEdits): BotPatch {
     else profile[field] = decoded.value;
   }
   if (invalid.size > 0) return { _tag: "invalid", fields: invalid };
-  const changes: {
-    profile?: NonNullable<BotChanges["profile"]>;
-    model?: ModelChoice;
-    permissionMode?: PermissionMode;
-  } = {};
+  const changes: Types.Mutable<BotChanges> = {};
   if (Object.keys(profile).length > 0) changes.profile = profile;
   if (edits.model !== null && !sameModel(edits.model, bot.model)) changes.model = edits.model;
   if (edits.permissionMode !== null && edits.permissionMode !== bot.permissionMode) {

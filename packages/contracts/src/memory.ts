@@ -31,7 +31,10 @@ export const MemoryRevision = Schema.String.check(
 ).pipe(Schema.brand("MemoryRevision"));
 export type MemoryRevision = typeof MemoryRevision.Type;
 
-export const MemoryText = Schema.String.check(Schema.isMaxLength(200_000));
+/** The longest text a memory file takes, in UTF-16 code units. */
+export const MEMORY_TEXT_LIMIT = 200_000;
+
+export const MemoryText = Schema.String.check(Schema.isMaxLength(MEMORY_TEXT_LIMIT));
 
 export const MemoryFile = Schema.Struct({
   path: MemoryPath,

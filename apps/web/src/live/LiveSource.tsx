@@ -255,8 +255,13 @@ function LiveShell({ children }: { children: ReactNode }) {
   const [editingBot, setEditingBot] = useState<BotId | null>(null);
   const botSaves = useReadable(j3.botSaves);
   const memorySaves = useReadable(j3.memorySaves);
+  const openMemoryKey =
+    memoryView === null ? null : memorySaveKey(memoryScopeOf(memoryView), memoryView.path);
   // What is open now, for a save that ends after its form closed.
   const open = useRef<{ bot: BotId | null; memory: string | null }>({ bot: null, memory: null });
+  useEffect(() => {
+    open.current = { bot: editingBot, memory: openMemoryKey };
+  }, [editingBot, openMemoryKey]);
   const say = useSay();
 
   const view: ConversationView =
@@ -312,7 +317,7 @@ function LiveShell({ children }: { children: ReactNode }) {
 
   /**
    * Reads a memory file into the viewer, unless the viewer has moved on to
-   * another one, and says whether the read succeeded.
+   * another one, and resolves with whether the read succeeded.
    */
   const readMemoryFile = (botId: BotId, path: MemoryPath) =>
     // Two files can share a title, and two bots a path: a late answer for another file is dropped.
@@ -333,14 +338,12 @@ function LiveShell({ children }: { children: ReactNode }) {
 
   const openMemoryFile = (botId: BotId, path: MemoryPath) => {
     const title = memoryLabel(path, t);
-    open.current.memory = memorySaveKey({ _tag: "bot", botId }, path);
     setMemoryView({ botId, path, title, reading: { _tag: "reading" } });
     void readMemoryFile(botId, path);
   };
 
   const closeMemoryFile = () => {
     if (memoryView !== null) j3.dismissMemorySave(memoryScopeOf(memoryView), memoryView.path);
-    open.current.memory = null;
     setMemoryView(null);
   };
 
@@ -354,7 +357,7 @@ function LiveShell({ children }: { children: ReactNode }) {
             ? current
             : { ...current, reading: { _tag: "read", document: result.value } },
         );
-      } else if (open.current.memory !== key) {
+      } else if (result._tag === "failed" && open.current.memory !== key) {
         say(t("memory.failedClosed", { file: view.title }));
       }
     });
@@ -369,7 +372,6 @@ function LiveShell({ children }: { children: ReactNode }) {
 
   const closeBotEditor = () => {
     if (editingBot !== null) j3.dismissBotSave(editingBot);
-    open.current.bot = null;
     setEditingBot(null);
   };
 
@@ -377,18 +379,12 @@ function LiveShell({ children }: { children: ReactNode }) {
   // closes the editor for good. Its save is not dismissed: the operator did not
   // give up on it, so a failure is announced, and kept to show if they reopen it.
   if (editingBot !== null && roster !== null && editingBotValue === null) setEditingBot(null);
-  useEffect(() => {
-    if (editingBot === null) open.current.bot = null;
-  }, [editingBot]);
 
   const updateBot = (bot: Bot, changes: BotChanges) =>
     void j3.updateBot(bot.id, changes).then((result) => {
       if (open.current.bot !== bot.id) {
         if (result._tag === "failed") say(t("editBot.failedClosed", { name: bot.profile.name }));
-        return;
-      }
-      if (result._tag === "done") {
-        open.current.bot = null;
+      } else if (result._tag === "done") {
         setEditingBot(null);
       }
     });
@@ -477,10 +473,7 @@ function LiveShell({ children }: { children: ReactNode }) {
         return result.value.id;
       }),
     newBot: () => setNewBot(true),
-    editProfile: (botId) => {
-      open.current.bot = botId;
-      setEditingBot(botId);
-    },
+    editProfile: setEditingBot,
     openMemoryFile,
     freshStart: (botId, name) =>
       void j3
@@ -556,13 +549,8 @@ function LiveShell({ children }: { children: ReactNode }) {
         onClose={closeBotEditor}
       />
       <MemoryViewer
-        title={memoryView?.title ?? null}
-        reading={memoryView?.reading ?? { _tag: "reading" }}
-        save={
-          memoryView === null
-            ? undefined
-            : memorySaves.get(memorySaveKey(memoryScopeOf(memoryView), memoryView.path))
-        }
+        file={memoryView}
+        save={openMemoryKey === null ? undefined : memorySaves.get(openMemoryKey)}
         connected={data.connected}
         onSave={(edit) => {
           if (memoryView !== null) writeMemoryFile(memoryView, edit);
@@ -571,11 +559,12 @@ function LiveShell({ children }: { children: ReactNode }) {
           if (memoryView !== null) j3.dismissMemorySave(memoryScopeOf(memoryView), memoryView.path);
         }}
         onLoadNewer={() => {
-          if (memoryView === null) return;
+          if (memoryView === null) return Promise.resolve(false);
           const { botId, path } = memoryView;
           // The conflict holds until the newer version is in hand.
-          void readMemoryFile(botId, path).then((read) => {
+          return readMemoryFile(botId, path).then((read) => {
             if (read) j3.dismissMemorySave(memoryScopeOf(memoryView), path);
+            return read;
           });
         }}
         onClose={closeMemoryFile}
