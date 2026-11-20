@@ -36,6 +36,8 @@ export interface ConversationView {
 export interface ShellData {
   /** Null until the server has reported the engine's status. */
   readonly engine: EngineStatus | null;
+  /** `engine` is what the server last reported, before this device lost the connection. */
+  readonly engineStale: boolean;
   /** Null until the roster first loads. */
   readonly roster: ReadonlyArray<RosterItem> | null;
   readonly conversation: (target: EntryTarget) => ConversationView;

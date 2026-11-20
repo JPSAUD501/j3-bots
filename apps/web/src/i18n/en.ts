@@ -384,6 +384,7 @@ export const en = {
   "settings.close": "Close settings",
   "settings.engine": "Engine",
   "settings.engine.ready": "Running, version {version}",
+  "settings.engine.lastKnown": "Last known. This device isn’t connected to J3 Bots right now.",
   "settings.you": "You",
   "settings.name": "What bots call you",
   "settings.name.placeholder": "Your name",

@@ -387,6 +387,8 @@ export const ptBR: Catalog = {
   "settings.close": "Fechar configurações",
   "settings.engine": "Motor",
   "settings.engine.ready": "Rodando, versão {version}",
+  "settings.engine.lastKnown":
+    "Último estado conhecido. Este dispositivo não está conectado ao J3 Bots agora.",
   "settings.you": "Você",
   "settings.name": "Como os bots chamam você",
   "settings.name.placeholder": "Seu nome",

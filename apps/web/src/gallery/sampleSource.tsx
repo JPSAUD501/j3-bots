@@ -389,6 +389,7 @@ function sampleIntents({ get, update }: Store): ShellIntents {
 function toData(state: State): ShellData {
   return {
     engine: state.engine,
+    engineStale: false,
     roster: state.roster,
     conversation: (target) => ({
       phase: "ready",

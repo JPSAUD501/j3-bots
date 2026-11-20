@@ -151,8 +151,17 @@ export function ConversationGone({ onBack }: { onBack: () => void }) {
   );
 }
 
-/** One provider: its name, its state in words, and the command that signs it in when it needs one. */
-export function ProviderRow({ provider }: { provider: ProviderStatus }) {
+/**
+ * One provider: its name, its state in words, and the command that signs it in
+ * when it needs one. `stale` mutes a state reported before a disconnection.
+ */
+export function ProviderRow({
+  provider,
+  stale = false,
+}: {
+  provider: ProviderStatus;
+  stale?: boolean;
+}) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
   const { status } = provider;
@@ -172,7 +181,7 @@ export function ProviderRow({ provider }: { provider: ProviderStatus }) {
     <li className="flex flex-col gap-2 rounded-md border border-border px-3 py-2">
       <span className="flex flex-wrap items-baseline justify-between gap-x-3">
         <span>{provider.name}</span>
-        <span className={cn("text-xs", tone)}>{label}</span>
+        <span className={cn("text-xs", stale ? "text-muted-foreground" : tone)}>{label}</span>
       </span>
       {status._tag === "sign-in-required" && (
         <CommandLine

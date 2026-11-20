@@ -35,7 +35,7 @@ type SettingsIntents = Pick<
 >;
 
 interface SettingsButtonProps {
-  readonly data: Pick<ShellData, "engine" | "settings" | "devices" | "connected">;
+  readonly data: Pick<ShellData, "engine" | "engineStale" | "settings" | "devices" | "connected">;
   readonly intents: SettingsIntents;
 }
 
@@ -80,7 +80,7 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
               </Dialog.Close>
             </header>
             <div className="min-h-0 flex-1 overflow-y-auto">
-              <EngineSection engine={data.engine} />
+              <EngineSection engine={data.engine} stale={data.engineStale} />
               <YouSection settings={data.settings} onSave={intents.updateSettings} />
               <DevicesSection
                 devices={data.devices}
@@ -114,8 +114,11 @@ function Loading() {
 const fieldClass =
   "h-9 w-full rounded-md border border-input bg-surface px-3 text-sm placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:h-11";
 
-/** Whether the engine runs, and if not, why and what to do; then each provider. */
-function EngineSection({ engine }: { engine: EngineStatus | null }) {
+/**
+ * Whether the engine runs, and if not, why and what to do; then each provider.
+ * Disconnected, it is what the server last reported, muted and said to be so.
+ */
+function EngineSection({ engine, stale }: { engine: EngineStatus | null; stale: boolean }) {
   const { t } = useI18n();
   if (engine === null) {
     return (
@@ -127,18 +130,25 @@ function EngineSection({ engine }: { engine: EngineStatus | null }) {
   const problem = engineProblem(engine, t);
   return (
     <Section title={t("settings.engine")}>
+      {stale && <p className="text-xs text-muted-foreground">{t("settings.engine.lastKnown")}</p>}
       {problem === null ? (
-        <p className="text-sm">{t("settings.engine.ready", { version: engine.pinnedVersion })}</p>
+        <p className={cn("text-sm", stale && "text-muted-foreground")}>
+          {t("settings.engine.ready", { version: engine.pinnedVersion })}
+        </p>
       ) : (
         <div className="flex flex-col gap-1">
-          <p className="text-sm font-medium text-blocked">{problem.title}</p>
+          <p
+            className={cn("text-sm font-medium", stale ? "text-muted-foreground" : "text-blocked")}
+          >
+            {problem.title}
+          </p>
           <p className="text-sm text-muted-foreground">{problem.body}</p>
         </div>
       )}
       {engine.providers.length > 0 && (
         <ul className="flex flex-col gap-1.5 text-sm">
           {engine.providers.map((provider) => (
-            <ProviderRow key={provider.id} provider={provider} />
+            <ProviderRow key={provider.id} provider={provider} stale={stale} />
           ))}
         </ul>
       )}

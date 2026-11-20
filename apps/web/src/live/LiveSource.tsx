@@ -232,6 +232,7 @@ function LiveShell({ children }: { children: ReactNode }) {
 
   const data: ShellData = {
     engine: engine._tag === "ready" ? engine.value : null,
+    engineStale: engine._tag === "ready" && engine.stale,
     roster: roster?.rows ?? null,
     conversation: (asked) =>
       viewKey !== null && targetKey(asked) === viewKey ? view : loadingView,
