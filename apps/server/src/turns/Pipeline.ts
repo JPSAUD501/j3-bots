@@ -44,7 +44,7 @@ import { transactional } from "../persistence/transaction.ts";
 import { RoomRouting } from "../rooms/RoomRouting.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import { SettingsStore } from "../settings/SettingsStore.ts";
-import { Ledger, WAKE_COLUMNS, WakeRow } from "./Ledger.ts";
+import { Ledger, UNDELIVERED, WAKE_COLUMNS, WakeRow } from "./Ledger.ts";
 import {
   type Audience,
   audienceColumns,
@@ -280,7 +280,10 @@ export const layer = Layer.effect(
       });
     });
 
-    /** A message's failed wakes that no retry has sent again yet. */
+    /**
+     * A message's failed wakes that no retry has sent again yet, and that the
+     * engine certainly does not have, as its delivery counts them.
+     */
     const failedWakes = (entryId: EntryId) =>
       SqlSchema.findAll({
         Request: EntryId,
@@ -288,6 +291,10 @@ export const layer = Layer.effect(
         execute: (id) => sql`
           SELECT ${sql.literal(WAKE_COLUMNS)} FROM wakes w
           WHERE source_entry_id = ${id} AND status = 'failed'
+            AND EXISTS (
+              SELECT 1 FROM dispatches d
+              WHERE d.id = w.dispatch_id AND ${sql.in("d.status", UNDELIVERED)}
+            )
             AND NOT EXISTS (SELECT 1 FROM wakes r WHERE r.retry_of = w.id)
           ORDER BY w.rowid
         `,

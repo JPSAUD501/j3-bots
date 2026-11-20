@@ -194,6 +194,46 @@ it.effect("keeps a refused message failed until the operator retries it, then de
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("refuses to send a message again once the engine accepted it late", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    // The message's send is never answered, and its recovery gives up.
+    const { session, deferred, message } = yield* Effect.gen(function* () {
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      const deferred = yield* control.deferNextDispatch;
+      const message = yield* sendToBot(bot.id, "Ship the report.");
+      yield* flushed(bot.id);
+      yield* recoverTimes(MAX_INDETERMINATE_ANSWERS - 1);
+      yield* deliveryIs(message, "failed");
+      return { session, deferred, message };
+    }).pipe(Effect.provide(Domain.layer));
+
+    // While the server is down the engine applies it after all, behind a turn
+    // of its own, and forgets the history the server's cursor names: the
+    // replacement shows it waiting, accepted.
+    yield* control.startEngineTurn(session);
+    yield* deferred.land;
+    yield* control.pruneHistory(session);
+
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* until(
+        sql<{ readonly status: string }>`SELECT status FROM dispatches`.pipe(
+          Effect.orDie,
+          Effect.map(([row]) => row?.status === "accepted"),
+        ),
+      );
+      const refused = yield* (yield* Pipeline)
+        .retryMessage({ commandId: command(), entryId: message })
+        .pipe(Effect.flip);
+      assert.strictEqual(refused._tag, "Conflict");
+      yield* deliveryIs(message, "pending");
+      assert.strictEqual(yield* timesSent(session, "Ship the report."), 1);
+    }).pipe(Effect.provide(Domain.layer));
+  }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
+);
+
 it.effect("holds an answer until the turn that asked ends, then starts a turn with it", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;

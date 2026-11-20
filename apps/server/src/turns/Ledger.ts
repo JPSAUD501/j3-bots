@@ -91,6 +91,13 @@ const FailedWake = Schema.Struct({
 
 const encodeOutcome = Schema.encodeEffect(json(TurnOutcome));
 
+/**
+ * The dispatches whose failed wakes the engine certainly does not have: a
+ * failed wake of any other (one the engine accepted late) may still reach the
+ * bot, so its message is not failed, and a retry would send it twice.
+ */
+export const UNDELIVERED: ReadonlyArray<DispatchStatus> = ["failed", "dropped", "released"];
+
 const sameDelivery = (a: MessageDelivery, b: MessageDelivery): boolean =>
   a._tag === "failed" ? b._tag === "failed" && a.reason === b.reason : a._tag === b._tag;
 
@@ -234,7 +241,12 @@ export const layer = Layer.effect(
       let delivered = 0;
       let cancelled = 0;
       for (const row of rows) {
-        if (row.status === "failed" && row.failure_reason !== null) {
+        if (
+          row.status === "failed" &&
+          row.failure_reason !== null &&
+          row.dispatch_status !== null &&
+          UNDELIVERED.includes(row.dispatch_status)
+        ) {
           return { _tag: "failed", reason: row.failure_reason };
         }
         if (row.status === "cancelled") cancelled++;
@@ -378,6 +390,7 @@ export const layer = Layer.effect(
         WHERE id = ${dispatchId} AND status IN ('intended', 'failed')
       `;
       yield* refreshNotices(dispatchId);
+      yield* refreshMessages(yield* sourcesOf(dispatchId));
       if (disposition !== null) {
         // The first answer only, and only on a dispatch the engine has: the
         // events may already have moved the turn on, or a Stop ended it.
