@@ -434,13 +434,25 @@ export const layer = Layer.effect(
      * a live session no Stop holds, and a first start a turn slot, by the
      * budget as it stands now: it may have changed while the files staged.
      * One the budget refuses stays unsent, for the dispatcher's next pass.
-     * Whether it was claimed.
+     * A first steer needs the turn it was planned for to be still the
+     * admitted one: if that turn ended while the files staged, the engine
+     * would start a turn with it, outside the budget, so it is released and
+     * its wakes go through a start's admission.
      */
     const claim = (row: DispatchRow) =>
       transaction(
         Effect.gen(function* () {
           if (row.attempts === 0 && row.delivery === "start") {
-            if (!(yield* admitsStart(row.session_id))) return false;
+            if (!(yield* admitsStart(row.session_id))) return "refused" as const;
+          }
+          if (row.attempts === 0 && row.delivery === "steer") {
+            const session = yield* sessionState(row.session_id).pipe(Effect.orDie);
+            if (session.admitted_turn_id !== row.steer_turn_id) {
+              const current = yield* ledger.find(row.id);
+              if (Option.isNone(current) || current.value.attempts > 0) return "refused" as const;
+              const released = yield* ledger.release(row.id, yield* unsentWakes(current.value));
+              return released ? ("released" as const) : ("refused" as const);
+            }
           }
           const at = timeText(yield* DateTime.now);
           const claimed = yield* sql<{ readonly attempts: number }>`
@@ -462,7 +474,7 @@ export const layer = Layer.effect(
               )
             RETURNING attempts
           `;
-          return claimed.length > 0;
+          return claimed.length > 0 ? ("claimed" as const) : ("refused" as const);
         }),
       ).pipe(Effect.withSpan("Sender.claim"));
 
@@ -574,7 +586,9 @@ export const layer = Layer.effect(
       if (staging._tag === "failed") return yield* stagingFailed(row.id);
       const input = inputOf(row, sessionId, staging.files);
 
-      if (!(yield* claim(row))) return "none" as const;
+      const claimed = yield* claim(row);
+      if (claimed === "released") return "settled" as const;
+      if (claimed === "refused") return "none" as const;
       return { row, input, firstSend };
     });
 

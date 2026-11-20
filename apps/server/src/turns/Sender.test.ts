@@ -58,6 +58,33 @@ it.effect("never sends a message a Stop fenced while its send was staging in the
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("sends as a start a steer whose turn ended while its file was staging", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Review the PR.");
+    const turnId = yield* nextTurn(bot.id);
+
+    const staging = yield* control.holdNext("stageAttachment");
+    const message = yield* sendWithFile(bot.id, "Also read the notes.");
+    yield* staging.entered;
+    yield* control.finishTurn({ sessionId: session, turnId, outcome: { _tag: "completed" } });
+    yield* turnEnded(bot.id);
+    yield* staging.release;
+
+    yield* nextTurn(bot.id);
+    yield* deliveryIs(message, "delivered");
+    const sent = (yield* control.dispatches(session)).filter((dispatch) =>
+      dispatch.text.includes("Also read the notes."),
+    );
+    assert.deepStrictEqual(
+      sent.map((dispatch) => dispatch.delivery._tag),
+      ["start"],
+    );
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("stages a file again after its staging reply was lost, once the backoff passes", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;
