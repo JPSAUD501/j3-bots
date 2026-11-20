@@ -48,7 +48,10 @@ export const FailureClass = Schema.Literals([
   "engine-unavailable",
   /** The bot's working context could not be resumed. */
   "session-lost",
-  /** The room was closed (archived or deleted), which ended the work before it reached the bot. */
+  /**
+   * A Stop that does not cover the work ended it before it reached the bot: a
+   * room's archival or deletion, or a stop from the engine's own console.
+   */
   "stopped",
   "unknown",
 ]);
