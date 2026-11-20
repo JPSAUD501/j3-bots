@@ -10,8 +10,9 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { IdempotencyKey, TurnId } from "../ids.ts";
+import { EventCursor, IdempotencyKey, SessionId, TurnId } from "../ids.ts";
 import { toolInputDigest } from "../toolCaller.ts";
+import { makeBatches } from "./Batches.ts";
 import { messageIdFor } from "./Keys.ts";
 import {
   applyEvent,
@@ -333,6 +334,50 @@ describe("backgroundWorkOf", () => {
     diff(mirror, view, at);
     applyEvent(mirror, run("completed", 2));
     assert.deepStrictEqual(backgroundAtEnd(diff(mirror, view, at)), [false]);
+  });
+
+  // A replacement comes once the stream lost replay coverage: by then the
+  // task may have woken the session and left the roster.
+  it("keeps a turn's hand-off as its end told it, after the work has left the roster", () => {
+    const session = SessionId.make("thread-1");
+    const batches = makeBatches(32);
+    const mirror = emptyMirror();
+    applyEvent(mirror, run("running", 1));
+    const { view } = replacement(mirror, false, at);
+    applyEvent(
+      mirror,
+      providerThread([], [{ taskId: "task-1", kind: "background_task" }], "run-1"),
+    );
+    applyEvent(mirror, run("completed", 1));
+    const told = diff(mirror, view, at);
+    assert.deepStrictEqual(backgroundAtEnd(told), [true]);
+    batches.keep(
+      session,
+      "stream-1",
+      { sequence: 3, part: 0 },
+      {
+        mirror,
+        view,
+        events: told.map((body, index) => ({
+          ...body,
+          cursor: EventCursor.make(`3.0.${index}.${told.length}.stream-1`),
+          at,
+        })),
+      },
+    );
+
+    // The task ends after the turn did, and wakes the session.
+    applyEvent(mirror, providerThread([], [], "run-2"));
+    applyEvent(mirror, run("running", 2));
+    applyEvent(mirror, run("completed", 2));
+    const { event } = replacement(mirror, true, at, batches.toldHandoffs(session));
+    assert.deepStrictEqual(
+      event.endedTurns.map((turn) => [turn.turnId, turn.backgroundWork]),
+      [
+        [TurnId.make("run-1"), true],
+        [TurnId.make("run-2"), false],
+      ],
+    );
   });
 
   it("leaves a monitor the agent does not await to wake the session on its own", () => {

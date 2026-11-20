@@ -1515,6 +1515,8 @@ export const replacement = (
   mirror: Mirror,
   history: boolean,
   now: DateTime.Utc,
+  /** Whether each turn handed off, as a stream told it at the turn's end (`Batches`). */
+  toldHandoffs: ReadonlyMap<string, boolean> = new Map(),
 ): { readonly event: EventBody & { _tag: "replaced" }; readonly view: View } => {
   const openTurns: Array<OpenTurn> = [];
   const openRequests: Array<OpenRequest> = [];
@@ -1550,7 +1552,9 @@ export const replacement = (
         startedAt: hasStarted(run) ? (run.startedAt ?? run.requestedAt) : null,
         finishedAt: run.completedAt ?? run.startedAt ?? run.requestedAt,
         outcome: outcomeOf(mirror, run),
-        backgroundWork: hasBackgroundWork(mirror, run),
+        // As told at its end: the work may have woken the session and left
+        // the roster since. Recomputed only for an end no stream told.
+        backgroundWork: toldHandoffs.get(turnId) ?? hasBackgroundWork(mirror, run),
         continuation: continuationOf(mirror, run, now),
         steps: stepsOf(mirror, run),
       });

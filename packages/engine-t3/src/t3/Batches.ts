@@ -74,9 +74,14 @@ export interface Resume {
   readonly lastCursor: EventCursor;
 }
 
-/** The batches the streams of every session emitted, `limit` per session, the newest last. */
+/**
+ * The batches the streams of every session emitted, `limit` per session, the
+ * newest last, and what each turn's end told of its hand-off, for as long as
+ * the session lives.
+ */
 export const makeBatches = (limit: number) => {
   const sessions = new Map<SessionId, Map<string, Batch>>();
+  const handoffs = new Map<SessionId, Map<string, boolean>>();
 
   const keep = (sessionId: SessionId, stream: string, place: BatchPlace, batch: Batch) => {
     const kept = sessions.get(sessionId) ?? new Map<string, Batch>();
@@ -86,7 +91,23 @@ export const makeBatches = (limit: number) => {
       kept.delete(oldest);
     }
     sessions.set(sessionId, kept);
+    for (const event of batch.events) {
+      if (event._tag !== "turn-finished") continue;
+      const told = handoffs.get(sessionId) ?? new Map<string, boolean>();
+      told.set(event.turnId, event.backgroundWork);
+      handoffs.set(sessionId, told);
+    }
   };
+
+  /**
+   * Whether each turn handed off, as its `turn-finished` told it, by turn id.
+   * A hand-off is what the turn's end showed: work it started was still
+   * running then. A replacement repeats it, also once the batches that told it
+   * are gone, rather than recompute it from a roster the work has left since,
+   * after it woke the session.
+   */
+  const toldHandoffs = (sessionId: SessionId): ReadonlyMap<string, boolean> =>
+    handoffs.get(sessionId) ?? new Map();
 
   /**
    * Where a stream resumed from `after` starts, when the batch `after` is in
@@ -125,10 +146,11 @@ export const makeBatches = (limit: number) => {
     };
   };
 
-  /** Forgets a session's batches: nothing resumes its streams by replay any more. */
+  /** Forgets a session's batches: nothing resumes its streams any more. */
   const forget = (sessionId: SessionId) => {
     sessions.delete(sessionId);
+    handoffs.delete(sessionId);
   };
 
-  return { keep, resume, forget };
+  return { keep, resume, toldHandoffs, forget };
 };

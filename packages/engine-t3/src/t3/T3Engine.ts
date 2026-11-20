@@ -394,7 +394,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
 
   const rpc = yield* makeEngineRpc({ port: options.port, token: currentToken });
 
-  /** The batches every session's streams emitted, for resuming one by replay. */
+  /** What every session's streams emitted, for resuming one by replay or by replacement. */
   const batches = makeBatches(BATCHES_KEPT);
   const toolReads = makeToolReads();
 
@@ -1244,7 +1244,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
          */
         const replace = Effect.fnUntraced(function* (history: boolean) {
           const now = DateTime.makeUnsafe(yield* Clock.currentTimeMillis);
-          const replaced = replacement(mirror, history, now);
+          const replaced = replacement(mirror, history, now, batches.toldHandoffs(input.sessionId));
           view = replaced.view;
           yield* emit([replaced.event]);
         });
