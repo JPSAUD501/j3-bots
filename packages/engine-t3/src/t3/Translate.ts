@@ -210,10 +210,17 @@ const openingMessageOf = (mirror: Mirror, run: Run): string | undefined => {
 };
 
 /**
- * Whether the engine queued the message a run opened with behind another turn
- * rather than starting it at once: it marks that message `queued_turn`.
+ * Whether the engine queued the run behind another turn rather than starting
+ * it at once. It creates such a run `queued`, with no item for its message,
+ * where a start it begins at once is `starting` from the outset; it records
+ * the message, marked `queued_turn`, only as the run leaves the queue (**Read**
+ * at `db51b67`, `Orchestrator.ts`: the queued run at L8012-8060, the start at
+ * L8451-8461, the promotion at L3035-3097). A follow-up the engine queues for
+ * an unread steer reuses the steer's item, marked `queued_turn` at once
+ * (L8192-8215).
  */
 const wasQueued = (mirror: Mirror, run: Run) => {
+  if (run.status === "queued") return true;
   const opening = openingMessageOf(mirror, run);
   return userMessagesOf(mirror, run).some(
     (item) => item.messageId === opening && item.inputIntent === "queued_turn",

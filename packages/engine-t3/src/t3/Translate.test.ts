@@ -1,9 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { QuestionAnswers } from "@j3-bots/contracts";
 import { assert, describe, it } from "@effect/vitest";
-import type { OrchestrationV2UserInputQuestion } from "@t3tools/contracts";
+import {
+  OrchestrationV2DomainEvent,
+  OrchestrationV2Run,
+  type OrchestrationV2UserInputQuestion,
+} from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { engineAnswersOf } from "./Translate.ts";
+import { IdempotencyKey, TurnId } from "../ids.ts";
+import { messageIdFor } from "./Keys.ts";
+import {
+  applyEvent,
+  diff,
+  dispositionOf,
+  emptyMirror,
+  engineAnswersOf,
+  replacement,
+} from "./Translate.ts";
 
 const answers = Schema.decodeUnknownSync(QuestionAnswers);
 
@@ -73,5 +88,93 @@ describe("engineAnswersOf", () => {
     assert.isUndefined(
       engineAnswersOf([colour], answers({ "question-2": { optionIds: ["option-1"], text: null } })),
     );
+  });
+});
+
+describe("a start the engine queues behind another turn", () => {
+  const at = DateTime.makeUnsafe("2026-11-20T12:00:00Z");
+  const key = IdempotencyKey.make("dispatch-2");
+  const decodeEvent = Schema.decodeUnknownSync(OrchestrationV2DomainEvent);
+  const event = (type: string, payload: unknown) =>
+    decodeEvent({ id: `event-${type}`, threadId: "thread-1", occurredAt: at, type, payload });
+  const run = (fields: Record<string, unknown>) =>
+    Schema.decodeUnknownSync(OrchestrationV2Run)({
+      threadId: "thread-1",
+      providerInstanceId: "codex",
+      modelSelection: { instanceId: "codex", model: "gpt-5" },
+      providerThreadId: null,
+      rootNodeId: null,
+      activeAttemptId: null,
+      requestedAt: at,
+      startedAt: null,
+      completedAt: null,
+      checkpointId: null,
+      contextHandoffId: null,
+      ...fields,
+    });
+  const running = run({
+    id: "run-1",
+    ordinal: 1,
+    userMessageId: "message-1",
+    status: "running",
+    startedAt: at,
+  });
+  const queued = run({
+    id: "run-2",
+    ordinal: 2,
+    userMessageId: messageIdFor("start", key),
+    status: "queued",
+    queuePosition: 1,
+  });
+
+  const turnId = TurnId.make(queued.id);
+
+  // The pinned engine creates the queued run, with no item for its message,
+  // and records the message as `queued_turn` only when the run leaves the queue
+  // (**Read** at `db51b67`, `Orchestrator.ts`, L8012-8060 and L3035-3097).
+  it("is queued from its run, before the engine records its message", () => {
+    const mirror = emptyMirror();
+    mirror.runs.set(running.id, running);
+    const { view } = replacement(mirror, false, at);
+
+    applyEvent(mirror, event("run.created", queued));
+    assert.deepStrictEqual(diff(mirror, view, at), [
+      { _tag: "turn-queued", turnId, cause: { _tag: "dispatch", key } },
+    ]);
+    assert.deepStrictEqual(dispositionOf(mirror, key), Option.some({ _tag: "queued", turnId }));
+
+    // Leaving the queue: the run is starting, and its message is recorded.
+    applyEvent(
+      mirror,
+      event("run.updated", { ...queued, status: "starting", queuePosition: null }),
+    );
+    applyEvent(
+      mirror,
+      event("turn-item.updated", {
+        id: "item-message-2",
+        threadId: "thread-1",
+        runId: queued.id,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 200,
+        status: "completed",
+        title: null,
+        type: "user_message",
+        messageId: queued.userMessageId,
+        createdBy: "user",
+        creationSource: "server",
+        inputIntent: "queued_turn",
+        text: "<j3-wake>dispatch-2</j3-wake>",
+        attachments: [],
+        startedAt: at,
+        completedAt: at,
+        updatedAt: at,
+      }),
+    );
+    assert.deepStrictEqual(diff(mirror, view, at), []);
+    assert.deepStrictEqual(dispositionOf(mirror, key), Option.some({ _tag: "queued", turnId }));
   });
 });
