@@ -13,7 +13,7 @@ Exit criteria:
 3. A full turn is driven over the client RPC from outside: create project and thread, dispatch, stream, answer an approval, answer a question, interrupt, resume after a dropped socket and after an engine restart.
 4. The first behavior evals run and give a number for: acknowledgement first, reply length, silence on an empty routine, no reply to a teammate's FYI, refusing an injected instruction.
 5. Measured on the target host: memory per idle and per active bot, cold-start time of a turn, tokens per turn for the base prompt plus the host's own text.
-6. A decision on [0007](decisions/0007-client-and-server-stack.md): Effect with T3 Code's contracts, or a hand-written client.
+6. The adapter's first slice builds and runs against T3 Code's contracts, vendored at the pinned commit, outside T3 Code's monorepo.
 7. A way to run the engine conformance suite without spending subscription allowance.
 
 If criterion 1 fails on a harness, that harness is not supported, or the design changes. Everything else depends on it.
@@ -54,7 +54,7 @@ Done when a conversation started on one device continues on the others with noth
 
 ## M5: Public
 
-- An install path a stranger can follow: one command to install Roster and its pinned engine as a service, a check that tells them what is missing.
+- An install path a stranger can follow: one command to install J3 Bots and its pinned engine as a service, a check that tells them what is missing.
 - The engine upgrade path with backup and rollback, exercised on at least three engine versions.
 - A security review of the tool bridge, pairing and webhooks.
 - Contribution policy, license settled, names settled.

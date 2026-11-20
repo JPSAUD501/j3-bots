@@ -1,6 +1,6 @@
 # Clients
 
-Roster has three clients: a web app, a desktop app and a mobile app. All three show the same conversations and none of them runs a bot. A bot keeps working with every client closed.
+J3 Bots has three clients: a web app, a desktop app and a mobile app. All three show the same conversations and none of them runs a bot. A bot keeps working with every client closed.
 
 ## What clients share
 
@@ -15,11 +15,11 @@ Roster has three clients: a web app, a desktop app and a mobile app. All three s
 
 **`packages/design-tokens`** holds colors, type sizes, spacing, radii and motion timings as data, so the web stylesheet and the mobile theme are generated from one source.
 
-The rule from T3 Code that Roster adopts as is: **the UI stays dumb.** A component receives state and emits intent. If two clients need the same decision, the decision lives in `client-runtime`.
+The rule from T3 Code that J3 Bots adopts as is: **the UI stays dumb.** A component receives state and emits intent. If two clients need the same decision, the decision lives in `client-runtime`.
 
 ## Web
 
-The reference client. It is served by the Roster server itself, so pointing a browser at the server is enough to use Roster.
+The reference client. It is served by the J3 Bots server itself, so pointing a browser at the server is enough to use J3 Bots.
 
 - React with the React Compiler, TanStack Router, Tailwind CSS v4 with tokens as CSS variables.
 - Component primitives on Base UI, in a local `components/ui` layer whose components own their look: callers pick a variant, they do not restyle.
@@ -31,8 +31,8 @@ The reference client. It is served by the Roster server itself, so pointing a br
 An Electron shell around the web client.
 
 - Loads the built web client from a privileged custom scheme, not from a dev server or a `file://` path.
-- Adds what a browser tab cannot do: a global shortcut to open the composer, native notifications with actions, a menu-bar presence that shows which bots need the operator, deep links (`roster://bot/<id>`), auto-update.
-- Connects to a Roster server the operator points it at. Bundling a server and an engine inside the desktop app, for people who have no always-on machine, is a later step and not part of the first versions.
+- Adds what a browser tab cannot do: a global shortcut to open the composer, native notifications with actions, a menu-bar presence that shows which bots need the operator, deep links (`j3bots://bot/<id>`), auto-update.
+- Connects to a J3 Bots server the operator points it at. Bundling a server and an engine inside the desktop app, for people who have no always-on machine, is a later step and not part of the first versions.
 
 ## Mobile
 
@@ -47,7 +47,7 @@ Mobile uses its own components. Web and mobile share logic, tokens and vocabular
 
 ## Reaching the server
 
-The server listens on an address the operator chooses. Roster does not run a relay.
+The server listens on an address the operator chooses. J3 Bots does not run a relay.
 
 | Where the client is | How it reaches the server |
 | --- | --- |
@@ -61,11 +61,11 @@ Plain HTTP is accepted only on loopback and private address ranges. Everything e
 
 A new client is paired with a one-time code.
 
-1. The operator runs `roster pair` on the host, or opens Devices in an already paired client. Either shows a short code and a QR code that expire in a few minutes.
+1. The operator runs `j3 pair` on the host, or opens Devices in an already paired client. Either shows a short code and a QR code that expire in a few minutes.
 2. The new client sends the code and receives a device token. The server stores only a hash.
 3. Devices are listed in settings with their last activity, and can be revoked. Revoking closes that device's connection immediately.
 
-A device token grants everything the operator can do in Roster. There are no narrower roles in the first versions.
+A device token grants everything the operator can do in J3 Bots. There are no narrower roles in the first versions.
 
 ## Behavior every client must get right
 

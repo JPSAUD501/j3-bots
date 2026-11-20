@@ -1,12 +1,12 @@
 # Server
 
-The Roster server is the product. It owns what the operator sees and decides what every bot does next. This document describes its data, its one central mechanism (the wake pipeline) and the features built on it.
+The J3 Bots server is the product. It owns what the operator sees and decides what every bot does next. This document describes its data, its one central mechanism (the wake pipeline) and the features built on it.
 
 ## Data
 
-Roster keeps two kinds of state, in two places, for two different readers.
+J3 Bots keeps two kinds of state, in two places, for two different readers.
 
-**The database** (`<ROSTER_HOME>/roster.sqlite`) holds what the server needs to query and what clients render:
+**The database** (`<J3_HOME>/j3.sqlite`) holds what the server needs to query and what clients render:
 
 | Entity | What it holds |
 | --- | --- |
@@ -19,11 +19,11 @@ Roster keeps two kinds of state, in two places, for two different readers.
 | Routine | Bot, name, instruction, trigger, enabled, next run, recent runs |
 | Device | A paired client: its token hash, its push token, its notification preferences |
 
-**The filesystem** (`<ROSTER_HOME>/bots/<bot>/`) holds what a bot reads and writes with its own tools, and what the operator may want to open in an editor:
+**The filesystem** (`<J3_HOME>/bots/<bot>/`) holds what a bot reads and writes with its own tools, and what the operator may want to open in an editor:
 
 ```
 bots/scout/
-  .roster/
+  .j3/
     system.md        generated: base prompt + profile + pinned memory
   AGENTS.md          generated: the same identity for harnesses that read it
   memory/
@@ -38,7 +38,7 @@ shared/
 
 Generated files are written by the server from the database and the memory files. A bot never edits them by hand, and the server rewrites them whenever their inputs change.
 
-Memory lives in files and not in the database because the bot's own tools can read, search and quote files, and because the operator can read, edit, diff and back them up without Roster. See [decision 0006](../decisions/0006-memory-is-files.md).
+Memory lives in files and not in the database because the bot's own tools can read, search and quote files, and because the operator can read, edit, diff and back them up without J3 Bots. See [decision 0006](../decisions/0006-memory-is-files.md).
 
 ## The wake pipeline
 
@@ -81,7 +81,7 @@ How the message is delivered depends on the kind:
 
 The adapter streams the session's events and the server derives the bot's state from them: thinking, working, waiting on a request, blocked, finished. The operator's clients see that state live.
 
-What the bot *says* does not come from that stream. It comes from the bot calling Roster's `say` tool, which appends an entry and returns. If a turn started by the operator ends without any `say`, the server delivers the turn's final text as a message, so a bot that forgets the tool still answers.
+What the bot *says* does not come from that stream. It comes from the bot calling J3 Bots' `say` tool, which appends an entry and returns. If a turn started by the operator ends without any `say`, the server delivers the turn's final text as a message, so a bot that forgets the tool still answers.
 
 ### 5. The outcome closes the wake
 
@@ -99,7 +99,7 @@ Because the main session does not see what a side session did, the server keeps 
 
 ## Bot tools
 
-Bots act on Roster through a small MCP server named `roster`. The harness starts it as a local stdio process; that process forwards each call to the Roster server over loopback.
+Bots act on J3 Bots through a small MCP server named `j3`. The harness starts it as a local stdio process; that process forwards each call to the J3 Bots server over loopback.
 
 The bridge identifies its caller from `T3CODE_THREAD_ID`, an environment variable the engine sets for the Claude Code process and for each stdio MCP server Codex starts. The server maps that thread id to a session and a bot. A call from an unknown thread is refused. **Read** in the engine source; to be verified end to end.
 
@@ -118,7 +118,7 @@ The complete parameter schemas and the wording of each description are part of t
 
 ## Rooms
 
-A room is Roster data: members, host, entries. There is no engine object behind it.
+A room is J3 Bots data: members, host, entries. There is no engine object behind it.
 
 When an entry is added to a room, the server decides who wakes:
 
@@ -151,7 +151,7 @@ The prompt tells bots not to acknowledge acknowledgements. The hop budget enforc
 A routine is a row with an instruction and a trigger. The server's scheduler owns it; the engine's scheduled tasks are not used.
 
 - **Schedule triggers** are five-field cron expressions evaluated in the operator's time zone, with a five-minute minimum spacing.
-- **Webhook triggers** are an HTTP endpoint on the Roster server with a secret in the path and an optional HMAC signature. The request body reaches the bot as data inside a nonce-tagged block.
+- **Webhook triggers** are an HTTP endpoint on the J3 Bots server with a secret in the path and an optional HMAC signature. The request body reaches the bot as data inside a nonce-tagged block.
 - A run that comes due while the previous run of the same routine is still going is skipped and recorded as skipped.
 - Runs missed while the server was down are not replayed, except that each routine runs once on return if it missed at least one.
 - A routine run ends in one of three ways: it said something (`say`), it finished silently with a result recorded in its history, or it failed.

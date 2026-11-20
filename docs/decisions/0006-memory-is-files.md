@@ -4,7 +4,7 @@
 
 ## Context
 
-A bot's memory could live in Roster's database behind tools, in a vector store, or in files in the bot's workspace.
+A bot's memory could live in J3 Bots' database behind tools, in a vector store, or in files in the bot's workspace.
 
 ## Decision
 
@@ -13,8 +13,8 @@ Memory is Markdown files in the bot's workspace: a small pinned note and a dated
 ## Consequences
 
 - The operator can read, edit, diff, back up and version a bot's memory with ordinary tools.
-- A bot can read its own memory with the harness's file tools if a Roster tool is unavailable.
-- Memory survives any change to Roster's database, its engine or its model.
+- A bot can read its own memory with the harness's file tools if a J3 Bots tool is unavailable.
+- Memory survives any change to J3 Bots' database, its engine or its model.
 - No embedding model, no extra service.
 - Text search finds what shares words with the query and misses paraphrases. If that proves limiting, an index can be built from the files without changing where the truth lives.
 - Files are readable by anything running as the same user. Memory is not a place for secrets.

@@ -1,6 +1,6 @@
 # T3 Code as an engine
 
-What Roster knows about T3 Code, how it knows it, and where to look. Source references are to `pingdotgg/t3code` at commit `9bb92a4` (2026-11-19). Paths are relative to that repository.
+What J3 Bots knows about T3 Code, how it knows it, and where to look. Source references are to `pingdotgg/t3code` at commit `9bb92a4` (2026-11-19). Paths are relative to that repository.
 
 ## Verified on a running server
 
@@ -73,8 +73,8 @@ Relevant upstream work, as of 2026-11-20:
 
 - **Home** (pull request 15975, open since October, no commits since): one agent thread that manages threads across the user's machines. The closest upstream idea to a primary bot. Stalled.
 - **T3 Work** (pull request 4604): a projectless assistant experience built on a third-party agent gateway. Closed, with the direction abandoned.
-- **Linked environments** (several open pull requests): reading and driving threads on other machines through one. Infrastructure Roster could use later to run bots on more than one host.
-- **Durable workflows** (pull requests 38874, 38882, 38884): TypeScript-defined workflows with agent steps, schedules, webhooks and human questions. An automation system, not a teammate product; complementary to Roster.
-- **Outbound thread events for outside agents** (pull request 22595): closed. This is why Roster uses the client RPC.
+- **Linked environments** (several open pull requests): reading and driving threads on other machines through one. Infrastructure J3 Bots could use later to run bots on more than one host.
+- **Durable workflows** (pull requests 38874, 38882, 38884): TypeScript-defined workflows with agent steps, schedules, webhooks and human questions. An automation system, not a teammate product; complementary to J3 Bots.
+- **Outbound thread events for outside agents** (pull request 22595): closed. This is why J3 Bots uses the client RPC.
 
-If upstream ships a first-party persistent-bot product, Roster's reason to exist should be re-examined against it.
+If upstream ships a first-party persistent-bot product, J3 Bots' reason to exist should be re-examined against it.

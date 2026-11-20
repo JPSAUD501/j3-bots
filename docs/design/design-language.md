@@ -4,7 +4,7 @@
 
 ## Two references, one product
 
-Roster's interface is a deliberate mix of two existing designs. Both are described here in words; neither's assets are reproduced.
+J3 Bots' interface is a deliberate mix of two existing designs. Both are described here in words; neither's assets are reproduced.
 
 **From persistent-agent products (xAI's Grok Bot is the clearest example):** the interface of a messaging app, organized around who you are talking to.
 
@@ -26,7 +26,7 @@ Roster's interface is a deliberate mix of two existing designs. Both are describ
 - Components in a `ui` layer own their look; callers choose a variant.
 - No animation that repaints continuously.
 
-**The synthesis.** Roster looks like a messaging app and behaves like a professional tool. Messaging gives the structure: roster, bubbles, presence. The developer tool gives the manner: density, restraint, keyboard reach, and work that is always inspectable but never in the way.
+**The synthesis.** J3 Bots looks like a messaging app and behaves like a professional tool. Messaging gives the structure: roster, bubbles, presence. The developer tool gives the manner: density, restraint, keyboard reach, and work that is always inspectable but never in the way.
 
 ## Principles
 
@@ -88,7 +88,7 @@ Requirements:
 - Works as a still image for notifications and for reduced-motion settings; state is then shown by a small mark.
 - An operator may replace it with an image; state then falls back to the small mark.
 
-Roster needs **its own** avatar system. Existing products use friendly blob characters with eyes; Roster must not resemble them. The direction to explore first is abstract and geometric: a solid shape in the bot's color with a single inner mark, where state changes the mark (a slow pulse for thinking, a rotating segment for working, a notch for waiting, a break for blocked). This needs real exploration at small sizes before it is settled.
+J3 Bots needs **its own** avatar system. Existing products use friendly blob characters with eyes; J3 Bots must not resemble them. The direction to explore first is abstract and geometric: a solid shape in the bot's color with a single inner mark, where state changes the mark (a slow pulse for thinking, a rotating segment for working, a notch for waiting, a break for blocked). This needs real exploration at small sizes before it is settled.
 
 ## Typography
 

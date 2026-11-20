@@ -6,10 +6,10 @@ This document describes what the operator does and sees. It is written from thei
 
 ### First run
 
-The operator installs Roster on a machine that stays on, and opens the web client.
+The operator installs J3 Bots on a machine that stays on, and opens the web client.
 
-1. Roster checks that the engine is running and that at least one provider is signed in. If none is, it says which command signs one in and waits. It does not ask for API keys.
-2. The operator creates their first bot by giving it a name. Roster suggests making it the primary bot.
+1. J3 Bots checks that the engine is running and that at least one provider is signed in. If none is, it says which command signs one in and waits. It does not ask for API keys.
+2. The operator creates their first bot by giving it a name. J3 Bots suggests making it the primary bot.
 3. The conversation opens and **the bot speaks first**. It asks what the operator wants it for, one question at a time, and saves the answers as its job and its first memories. There is no settings form to fill in.
 4. The moment the operator hands it something real, the bot drops the questions and does the work.
 

@@ -2,7 +2,7 @@
 
 ## How to read these documents
 
-Roster depends on the behavior of another project's server. Each claim about that server carries one of three labels:
+J3 Bots depends on the behavior of another project's server. Each claim about that server carries one of three labels:
 
 | Label | Meaning |
 | --- | --- |
@@ -14,14 +14,14 @@ Decisions marked **Proposed** are recommendations waiting for the project owner'
 
 ## Product
 
-- [Vision and principles](vision.md): what Roster is for and what it refuses to become.
+- [Vision and principles](vision.md): what J3 Bots is for and what it refuses to become.
 - [Concepts](product/concepts.md): the vocabulary. Read this before anything else.
 - [Experience](product/experience.md): the flows a user goes through and the screens that serve them.
 
 ## Architecture
 
 - [Overview](architecture/overview.md): the pieces and the boundaries between them.
-- [Engine](architecture/engine.md): how Roster runs and drives T3 Code without modifying it.
+- [Engine](architecture/engine.md): how J3 Bots runs and drives T3 Code without modifying it.
 - [Server](architecture/server.md): the domain model, the wake pipeline, rooms, memory and routines.
 - [Clients](architecture/clients.md): web, desktop and mobile.
 - [Security](architecture/security.md): trust boundaries and what protects them.
@@ -46,7 +46,7 @@ Decisions marked **Proposed** are recommendations waiting for the project owner'
 ## Research
 
 - [T3 Code as an engine](research/t3-code.md): what was read and what was verified, with sources.
-- [Prior art](research/prior-art.md): the products Roster learns from, and how that material is handled.
+- [Prior art](research/prior-art.md): the products J3 Bots learns from, and how that material is handled.
 
 ## Planning
 

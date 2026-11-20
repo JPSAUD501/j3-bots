@@ -1,6 +1,6 @@
 # Working in this repository
 
-Roster is in its design phase. The deliverable right now is documentation that is correct enough to build from.
+J3 Bots is in its design phase. The deliverable right now is documentation that is correct enough to build from.
 
 ## What this project is
 
@@ -11,9 +11,9 @@ Persistent AI teammates ("bots") on the user's own machine and subscriptions, bu
 Use the terms in [docs/product/concepts.md](docs/product/concepts.md) exactly. The ones people most often mix up:
 
 - **Bot**: the persistent teammate the user talks to. Not "agent", not "assistant".
-- **Conversation**: what the user sees. Roster owns it.
+- **Conversation**: what the user sees. J3 Bots owns it.
 - **Session**: an engine thread that gives a bot working context. Replaceable. The user never sees one.
-- **Engine**: the T3 Code server Roster drives. Never "backend" or "T3" alone in user-facing text.
+- **Engine**: the T3 Code server J3 Bots drives. Never "backend" or "T3" alone in user-facing text.
 - **Wake**: anything that starts a bot turn (a message from the user, a routine, another bot, a room, a system event).
 
 ## Rules for documentation
@@ -30,7 +30,7 @@ These are settled before the first line is written. Details are in [docs/enginee
 
 - TypeScript, strict. `any` is not allowed; neither are unchecked casts at a boundary. Decode external data with a schema.
 - Only `packages/engine-t3` may know anything about T3 Code: its protocol, its types, its file layout.
-- Clients talk only to the Roster server, through `packages/contracts`.
+- Clients talk only to the J3 Bots server, through `packages/contracts`.
 - Test behavior that can break. No tests for what types already guarantee, and no tests that assert something removed stays removed.
 - Fix the cause. No workarounds that leave the underlying problem in place.
 
@@ -38,4 +38,4 @@ These are settled before the first line is written. Details are in [docs/enginee
 
 - Prompts in this repository are original text. Third-party system prompts, including unofficial captures of commercial products, are never copied or committed here. See [docs/research/prior-art.md](docs/research/prior-art.md).
 - Do not reproduce another product's brand assets, character art or screenshots. Visual references are described in words.
-- T3 Code source may be studied and, under its MIT license, reused with attribution. Roster does not fork it.
+- T3 Code source may be studied and, under its MIT license, reused with attribution. J3 Bots does not fork it.

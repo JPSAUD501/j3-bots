@@ -1,6 +1,6 @@
 # Engineering standards
 
-Roster aims for the quality bar of the project it builds on. This document records what Roster adopts from T3 Code's practices, what it adapts, and what it leaves until the project is large enough to need it.
+J3 Bots aims for the quality bar of the project it builds on. This document records what J3 Bots adopts from T3 Code's practices, what it adapts, and what it leaves until the project is large enough to need it.
 
 ## Toolchain
 
@@ -32,7 +32,7 @@ The compiler runs with `strict`, `noUncheckedIndexedAccess`, `exactOptionalPrope
 
 **Contracts are the only wire boundary.** `packages/contracts` defines every request, event, entity and error exchanged between the server and its clients. It contains schemas and types, and no logic.
 
-**One package knows the engine.** `packages/engine-t3` implements the engine adapter. Nothing outside it imports a T3 Code type, a T3 Code path or a T3 Code identifier format. The rest of the server speaks to an interface in Roster's own terms. This is what keeps an engine upgrade a contained change.
+**One package knows the engine.** `packages/engine-t3` implements the engine adapter. Nothing outside it imports a T3 Code type, a T3 Code path or a T3 Code identifier format. The rest of the server speaks to an interface in J3 Bots' own terms. This is what keeps an engine upgrade a contained change.
 
 **Server features are services; transports are thin.** A capability is a method on its domain's service. A handler for a client request, a bot tool call or a webhook does three things: decode, call one service method, map the typed errors. That way every entry point reaches the same behavior.
 
@@ -88,10 +88,10 @@ Two suites matter more than the rest:
 
 ## Not adopted yet
 
-T3 Code runs machinery that is right for its size and too much for a new project. Roster starts without it and adds each piece when its absence starts to cost something:
+T3 Code runs machinery that is right for its size and too much for a new project. J3 Bots starts without it and adds each piece when its absence starts to cost something:
 
-- a full event-sourced core with projections and replay; Roster uses plain tables plus a durable queue for the few things that need it;
-- dozens of custom lint rules; Roster starts with a handful (suppression reasons, wall-clock use in tests, restyling of `ui` components, untranslated text);
+- a full event-sourced core with projections and replay; J3 Bots uses plain tables plus a durable queue for the few things that need it;
+- dozens of custom lint rules; J3 Bots starts with a handful (suppression reasons, wall-clock use in tests, restyling of `ui` components, untranslated text);
 - a compiler-coverage gate, a remote task cache, multiple release channels;
 - contribution automation (size labels, limits, vouching).
 

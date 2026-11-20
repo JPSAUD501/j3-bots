@@ -1,6 +1,6 @@
 # Prior art
 
-Roster is not the first product of its kind. This document records what it learns from, and how that material is handled.
+J3 Bots is not the first product of its kind. This document records what it learns from, and how that material is handled.
 
 ## xAI's Grok Bot
 
@@ -31,9 +31,9 @@ The clearest existing design for persistent AI teammates. What follows comes fro
 - Fifty bots and group chats together; fifty routines per bot; schedules at least five minutes apart; twenty run records kept per routine.
 - Its documentation warns that frequent routines can spend a week of usage in a day.
 
-**Where Roster differs on purpose**
+**Where J3 Bots differs on purpose**
 
-| Grok Bot | Roster |
+| Grok Bot | J3 Bots |
 | --- | --- |
 | Hosted, with its own subscription | Self-hosted, on subscriptions the operator already has |
 | The model is not selectable | A model per bot |
@@ -50,14 +50,14 @@ It was read once during research, to understand which mechanisms such a product 
 
 How it is handled in this project:
 
-- **No text from it is copied** into Roster's prompts, tool descriptions or documentation. Roster's prompts are written from scratch, in different words, for different tools and constraints.
+- **No text from it is copied** into J3 Bots' prompts, tool descriptions or documentation. J3 Bots' prompts are written from scratch, in different words, for different tools and constraints.
 - **It is not stored in this repository**, and must not be added.
-- Mechanisms are not anyone's property: marking who started a turn, delivering speech through a tool, keeping a small pinned memory. Roster adopts mechanisms. It does not adopt wording, product-specific rules or names.
-- Contributors should write prompt changes from Roster's own behavior evals and their own judgment, not from that capture.
+- Mechanisms are not anyone's property: marking who started a turn, delivering speech through a tool, keeping a small pinned memory. J3 Bots adopts mechanisms. It does not adopt wording, product-specific rules or names.
+- Contributors should write prompt changes from J3 Bots' own behavior evals and their own judgment, not from that capture.
 
 ## T3 Code
 
-Roster's engine, and its reference for engineering practice. See [T3 Code as an engine](t3-code.md) and [Engineering standards](../engineering/standards.md). Its interface is one of Roster's two design references; see [Design language](../design/design-language.md).
+J3 Bots' engine, and its reference for engineering practice. See [T3 Code as an engine](t3-code.md) and [Engineering standards](../engineering/standards.md). Its interface is one of J3 Bots' two design references; see [Design language](../design/design-language.md).
 
 ## Others worth studying
 

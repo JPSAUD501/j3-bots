@@ -6,9 +6,9 @@ Persistent AI teammates exist today as hosted products. You pay a second subscri
 
 Meanwhile the hard part of running an agent on your own subscription is solved. T3 Code runs Claude Code, Codex and other harnesses on the user's machine, keeps their threads durable across restarts, queues and steers turns, and brokers approvals. It is built for supervising coding work, and its interface shows that: projects, worktrees, diffs, pull requests.
 
-Nothing joins the two. Roster does.
+Nothing joins the two. J3 Bots does.
 
-## What Roster is
+## What J3 Bots is
 
 A self-hosted product that turns the subscriptions you already pay for into a small team of persistent bots:
 
@@ -22,26 +22,26 @@ A self-hosted product that turns the subscriptions you already pay for into a sm
 
 **The bot is the object, not the chat.** A conversation list invites disposable sessions. A roster of named teammates invites delegation. Every surface is organized around who you are talking to.
 
-**The interface should ask less as bots do more.** Each control has to earn its place by helping someone delegate. Dashboards, assignment boards and manual handoff controls are coordination work pushed onto the user, and Roster does not add them.
+**The interface should ask less as bots do more.** Each control has to earn its place by helping someone delegate. Dashboards, assignment boards and manual handoff controls are coordination work pushed onto the user, and J3 Bots does not add them.
 
 **Quiet by default.** A bot that wakes on its own speaks only when the result is worth the interruption. Silence is a valid outcome of a routine, a room turn and a message from another bot.
 
-**Your subscriptions, your machine, your files.** No Roster account, no hosted relay in the core path, no telemetry by default. Memory and instructions are files in a folder the user owns.
+**Your subscriptions, your machine, your files.** No J3 Bots account, no hosted relay in the core path, no telemetry by default. Memory and instructions are files in a folder the user owns.
 
 **Every wake costs the user's allowance.** A subscription has weekly limits. Routing, routines and group chats are designed so that the smallest number of bots wake for each event, and the user can see what is spending their allowance.
 
-**The engine stays unmodified.** Roster drives T3 Code through the same protocol T3 Code's own clients use, pinned to an exact version. Upgrading the engine is a version bump and a conformance run, never a merge.
+**The engine stays unmodified.** J3 Bots drives T3 Code through the same protocol T3 Code's own clients use, pinned to an exact version. Upgrading the engine is a version bump and a conformance run, never a merge.
 
 **Honest about what it is.** A bot says which model it runs on when asked. It never claims an action succeeded that it did not verify, and never treats text it read somewhere as an instruction.
 
 ## Non-goals
 
-- **A hosted service.** Roster is software you run.
-- **A general coding interface.** T3 Code is already that. A bot can do coding work, but Roster's clients do not show diffs, worktrees or pull requests.
-- **A marketplace of connectors.** Bots get the tools the underlying harness already has, plus whatever MCP servers and skills the operator installs. Roster does not build integrations for third-party services.
-- **A hosted computer with a browser the user watches.** Bots work on the machine Roster runs on. A managed desktop per bot is out of scope.
+- **A hosted service.** J3 Bots is software you run.
+- **A general coding interface.** T3 Code is already that. A bot can do coding work, but J3 Bots' clients do not show diffs, worktrees or pull requests.
+- **A marketplace of connectors.** Bots get the tools the underlying harness already has, plus whatever MCP servers and skills the operator installs. J3 Bots does not build integrations for third-party services.
+- **A hosted computer with a browser the user watches.** Bots work on the machine J3 Bots runs on. A managed desktop per bot is out of scope.
 - **Multi-tenant teams.** One operator, their bots. Sharing a bot with other people is not planned for the first versions.
-- **Hiding the technology.** Roster does not pretend the bot is a person or conceal the model behind it.
+- **Hiding the technology.** J3 Bots does not pretend the bot is a person or conceal the model behind it.
 
 ## What success looks like
 

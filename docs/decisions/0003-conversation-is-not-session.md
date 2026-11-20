@@ -1,4 +1,4 @@
-# 0003: Conversations belong to Roster, sessions to the engine
+# 0003: Conversations belong to J3 Bots, sessions to the engine
 
 **Status:** Proposed
 
@@ -14,14 +14,14 @@ The obvious mapping is one bot, one engine thread, and the thread is the convers
 
 ## Decision
 
-Roster stores conversations and rooms itself, as its own data. An engine thread is a **session**: replaceable working context for the model. A bot has one main session and short-lived side sessions for routine runs. Roster may rotate the main session at any time and seeds the new one from memory and the recent conversation.
+J3 Bots stores conversations and rooms itself, as its own data. An engine thread is a **session**: replaceable working context for the model. A bot has one main session and short-lived side sessions for routine runs. J3 Bots may rotate the main session at any time and seeds the new one from memory and the recent conversation.
 
 ## Consequences
 
 - The conversation survives model changes, session loss and engine upgrades.
-- Roster needs a store, a history API and search of its own.
+- J3 Bots needs a store, a history API and search of its own.
 - What a bot says has to be captured explicitly, which leads to [0004](0004-speech-is-a-tool.md).
-- The main session does not see what side sessions did, so Roster adds a catch-up note to the next wake.
+- The main session does not see what side sessions did, so J3 Bots adds a catch-up note to the next wake.
 - A rotated session loses detail the digest does not carry. Memory is what a bot is expected to rely on across rotations, which is the right dependency.
 
 ## Rejected

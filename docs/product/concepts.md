@@ -1,22 +1,22 @@
 # Concepts
 
-These are the words Roster uses in its interface, its prompts, its code and its documentation. Each has one meaning.
+These are the words J3 Bots uses in its interface, its prompts, its code and its documentation. Each has one meaning.
 
 ## People and bots
 
-**Operator.** The person who runs Roster and owns its bots. There is exactly one. Prompts and the interface call them "the user".
+**Operator.** The person who runs J3 Bots and owns its bots. There is exactly one. Prompts and the interface call them "the user".
 
 **Bot.** A persistent teammate. A bot has a profile, one conversation with the operator, a memory, a workspace folder, routines, and a model it runs on. A bot is not a chat session: it exists before the first message and after the thousandth.
 
 **Profile.** What makes a bot recognizable: its name, a short title ("Research", "Inbox"), an avatar (a shape and a color), and its **job**, a few sentences in plain language saying what the bot is for and where its limits are. The job is the only per-bot instruction text. Everything else a bot learns goes to memory.
 
-**Primary bot.** The one bot the operator treats as their default contact. New requests that belong to nobody go to it. It may create other bots, hand work to them, and check in on its own. Roster works without one.
+**Primary bot.** The one bot the operator treats as their default contact. New requests that belong to nobody go to it. It may create other bots, hand work to them, and check in on its own. J3 Bots works without one.
 
 **Teammate.** From one bot's point of view, any other bot of the same operator.
 
 ## Conversations
 
-**Conversation.** The single ongoing exchange between the operator and one bot. It is what the operator scrolls, searches and reads on every device. Roster stores it. A conversation survives model changes, engine upgrades and session replacement.
+**Conversation.** The single ongoing exchange between the operator and one bot. It is what the operator scrolls, searches and reads on every device. J3 Bots stores it. A conversation survives model changes, engine upgrades and session replacement.
 
 **Message.** One entry in a conversation or a room, written by the operator or by a bot. Bot messages are short by design.
 
@@ -36,7 +36,7 @@ These are the words Roster uses in its interface, its prompts, its code and its 
 | `room` | Something was said in a room and this bot should respond |
 | `bot` | A teammate sent this bot a message |
 | `routine` | One of the bot's routines came due or its trigger fired |
-| `system` | Roster itself has something to tell the bot (it was just created, a background job finished, a setting changed) |
+| `system` | J3 Bots itself has something to tell the bot (it was just created, a background job finished, a setting changed) |
 
 Only a `user` wake carries the operator's instructions. Every other kind is labeled so the bot never mistakes it for the operator typing.
 
@@ -44,7 +44,7 @@ Only a `user` wake carries the operator's instructions. Every other kind is labe
 
 **Session.** The engine thread that holds a bot's working context for the model. A session is an implementation detail: it can be compacted, replaced or lost without the conversation or the bot's identity changing. The operator never sees sessions.
 
-**Engine.** The T3 Code server that Roster runs and drives. It owns model processes, subscriptions, tool execution and approvals.
+**Engine.** The T3 Code server that J3 Bots runs and drives. It owns model processes, subscriptions, tool execution and approvals.
 
 **Model.** What the bot runs on: a provider instance and a model slug from the engine, such as Claude Code with a specific Claude model. Chosen per bot and changeable.
 
