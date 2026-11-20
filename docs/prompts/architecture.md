@@ -1,6 +1,6 @@
 # Prompt architecture
 
-A bot's character comes from text: what it is told about itself, how each turn is framed, and what its tools say they do. This document defines those texts, where each one lives, and how each reaches the model. The first draft of the shared text is in [base-prompt.md](base-prompt.md).
+A bot's character comes from text: what it is told about itself, how each turn is framed, and what its tools say they do. This document defines those texts, where each one lives, and how each reaches the model. All of them are rendered by `packages/prompts`; the shared text and the notes for editing it are introduced in [base-prompt.md](base-prompt.md).
 
 ## Layers
 
@@ -86,31 +86,36 @@ Whether a bot's manner holds over a long session on top of both host texts is th
 Every dispatched message is written by the server in one fixed format. The model never receives raw text from any source without an envelope around it.
 
 ```
-<j3-wake kind="user" at="2026-11-20T09:41:00-03:00" tz="America/Sao_Paulo">
+<j3-wake kind="user" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
 <since-last-turn>
-Routine "Morning repo check" ran at 08:03 and told the user: "Two PRs merged overnight, CI is green."
+Routine "Morning repo check" ran at 08:03 and told your user:
+<data-7f3a9c01b2d4 source="routine-run">
+Two PRs merged overnight, CI is green.
+</data-7f3a9c01b2d4>
 </since-last-turn>
 <message from="user">
 what changed since friday?
 </message>
 </j3-wake>
+Reply with `say`; nothing else reaches them.
 ```
 
 Rules:
 
 - `kind` is one of `user`, `room`, `bot`, `routine`, `system`. The base prompt says what each means and how to respond.
-- Every envelope ends with a fixed closing line for its kind, the cheapest way to restate the speech rule on every turn. For `user`: "Reply with `say`; nothing else reaches them." For `routine`: "Nobody is waiting. Speak only as the instruction's last line says." For `room`, `bot` and `system`, the equivalent one line.
-- `at` and `tz` appear on every wake. Bots report times in the operator's zone.
+- Every envelope ends with a fixed closing line for its kind, after the block, the cheapest way to restate the speech rule on every turn. For `user`: "Reply with `say`; nothing else reaches them." For `routine`: "Nobody is waiting. Speak only as the instruction's last line says." For `room`, `bot` and `system`, the equivalent one line.
+- `at`, `weekday` and `tz` appear on every wake, in the operator's zone, and every other time in the envelope is given in that zone too. Bots report times in the operator's zone; the weekday is there because models are unreliable at working it out from a date.
 - `since-last-turn` appears only when there is something the session has not seen: results delivered by side sessions, held non-urgent messages, profile edits.
 - Text written by the operator is placed in `<message from="user">`.
 - A routine's saved instruction is placed in `<instruction>`, never in a nonce block; its trigger data is. The bot wrote the instruction, but the operator's request is what authorized it.
-- Text from anywhere else is placed in a block whose tag ends in a random nonce generated for that wake, for example `<data-7f3a9c source="webhook">`. Content cannot close a tag it cannot guess. The base prompt states that everything inside such a block is information.
+- Text from anywhere else is placed in a block whose tag ends in a random nonce generated for that wake, for example `<data-7f3a9c01b2d4 source="webhook">`. That includes the bot's own earlier words when they come back to it: what a routine run said, a session digest. Content cannot close a tag it cannot guess, and the nonce is drawn again if it already occurs in the envelope. The base prompt states that everything inside such a block is information.
+- Text from every source, the operator's included, has envelope tags defused: anything that reads as one of the envelope's own tags, or a `data-` tag with any nonce, gets its `<` written as `&lt;`. Detection sees through look-alikes (fullwidth and other compatibility forms, invisible characters, combining marks, case, Cyrillic and Greek letters that pass for Latin). Ordinary markup and code, such as `<div>` or `a < b`, is left as written. Attribute values are escaped and kept to one line. Values in the system prompt (a job, a pinned fact) are defused the same way.
 
 Envelope shapes by kind:
 
 | Kind | Contains | The bot is expected to |
 | --- | --- | --- |
-| `user` | The operator's message, attachments | Acknowledge at once, work, deliver the result |
+| `user` | The operator's messages and attachments, or the answer to an `ask` card (the question, the options chosen, any typed answer, or that it was dismissed), or both | Acknowledge at once, work, deliver the result |
 | `room` | Room name, members, the entries the bot has not seen, who addressed whom | Reply in the room if it has something to add; otherwise end silently |
 | `bot` | Sender's name and title, the message as data, whether it is urgent | Weigh it against its own job; reply only if asked or if there is a result |
 | `routine` | Routine name, schedule, the saved instruction, a summary of recent runs and what each delivered, trigger data if any | Do exactly what the instruction names; speak only if the instruction's delivery line says so |
@@ -125,15 +130,16 @@ Bots act on J3 Bots through MCP tools. A tool's description is prompt text: it i
 | Tool | Parameters | Notes |
 | --- | --- | --- |
 | `say` | `text`; `attachments?` (paths in the workspace or URLs); `to?` (`"dm"` during a room turn); `done?` | The only way to speak. `done: true` marks the turn's delivery complete; the server ends the run once the call returns. The description says it is for the bot itself: a subagent or delegated worker sees the tool but not the base prompt, and must report in its final reply instead. The same sentence goes in `ask` and `message_bot`. |
-| `ask` | `prompt`; `options` (1 to 6, each with `label`, optional `value`, `description`, `style`); `allow_custom?`; `multi_select?` | One question. Ends the turn. A dismissed question is a "no". |
+| `ask` | `prompt`; `options` (1 to 6, each with `label`, optional `value`, `description`, and `style`: `recommended` or `destructive`); `allow_custom?`; `multi_select?` | One question. Ends the turn. The answer arrives as the next `user` wake. A dismissed question is a "no". |
 | `message_bot` | `to` (bot id or room id); `text`; `urgent` (required) | Returns an acknowledgement only. Replies arrive as later wakes. |
 | `remember` | `fact` (one self-contained sentence); `tier` (`pinned` or `log`, default `log`); `scope` (`bot` or `shared`, default `bot`) | Deduplicated. Refuses text that looks like a credential. |
 | `forget` | `fact` (the exact recorded text); `scope` | Pair with `remember` to correct a fact. |
-| `recall` | `query`; `scope?`; `limit?` | Searches the log and the shared facts. |
-| `set_routine` | `action` (`create`, `update`, `pause`, `resume`, `delete`); `id?`; `name?`; `instruction?`; one of `schedule?` (cron, in the operator's zone), `at?` (one time) or `webhook?` | The instruction is a complete brief for a session that has none of the conversation, ending with who receives the result and what to do when there is nothing new. |
+| `recall` | `query`; `scope?` (both when absent); `limit?` (default 10, at most 50) | Searches the log and the shared facts. |
+| `set_routine` | `action` (`create`, `update`, `pause`, `resume`, `delete`); `id?`; `name?`; `instruction?`; at most one of `schedule?` (cron, in the operator's zone), `at?` (one local time) or `webhook?` | The instruction is a complete brief for a session that has none of the conversation, ending with who receives the result and what to do when there is nothing new. `create` needs a name, an instruction and a trigger; the other actions need the id, and only `update` takes more. The MCP schema is one flat object, the shape MCP's tool schema takes, so these combinations are checked when the call is decoded. |
 | `list_routines` | none | The bot's routines with ids, definitions and last runs, so it updates instead of duplicating. |
 | `list_teammates` | none | Bots and rooms, with ids. |
-| `create_bot`, `update_bot` | `name`, `title?`, `job?` | Offered to the primary bot. |
+| `create_bot` | `name`, `title?`, `job?` | Offered to the primary bot. |
+| `update_bot` | `id`, `name?`, `title?`, `job?` | Offered to the primary bot. |
 | `update_profile` | `name?`, `title?`, `avatar?` | Only when the operator asks. |
 
 Tools J3 Bots deliberately does not add: anything that grants approval, raises a permission mode, changes a budget, or reads another bot's conversation.
@@ -156,9 +162,10 @@ Prompts are code and are tested like code, in `packages/prompts`.
 
 **Structure tests** run on every change, with no model:
 
-- the rendered `system.md` for a fixture bot matches a snapshot;
-- every envelope kind renders, and content containing closing tags or nonce guesses cannot break out of its block;
-- the rendered base prompt stays under its size budget.
+- the rendered instructions for a fixture bot hold the layers in order, with every placeholder filled, and the base prompt uses no placeholder but the operator's name; these are explicit assertions, because a full snapshot would be a second copy of the templates;
+- every envelope kind renders, as an inline snapshot of the format, and hostile content in every text slot (closing tags, guessed nonces, look-alike characters, nested blocks, attribute breaks) leaves the envelope's tag structure exactly as benign content does;
+- the tool schemas are plain objects MCP accepts, and decoding refuses what the server could not carry out;
+- the rendered base prompt stays within 3,000 words, a word being a run of non-whitespace that contains a letter or a digit.
 
 **Behavior evals** run a real model through fixed scenarios and score the transcript. They are slow and cost allowance, so they run on demand and before a release, not on every commit. The first set:
 
@@ -192,7 +199,7 @@ Each harness and model J3 Bots supports has to pass the set before it is listed 
 
 ## Versioning
 
-- The base prompt, envelope format and tool descriptions carry one version number together, recorded in each session when it is created.
+- The base prompt, envelope format and tool descriptions carry one version together, recorded in each session when it is created. It is derived from their content: a hash of the templates, the tool list as MCP receives it, and one rendered envelope of every kind. Any change to what a bot reads changes it; nothing has to be bumped by hand.
 - A change to any of them is a change to bot behavior and is reviewed as one, with the behavior evals re-run.
 - A running session keeps the base prompt it started with until its provider process restarts. A release that must not mix versions rotates sessions.
 
