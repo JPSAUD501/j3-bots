@@ -33,7 +33,7 @@ export function Centered({ children }: { children: ReactNode }) {
   );
 }
 
-export function Heading({ title, body }: { title: string; body: string }) {
+export function Heading({ title, body }: { title: string; body: ReactNode }) {
   return (
     <div className="flex max-w-sm flex-col gap-1.5">
       <h1 className="text-lg font-medium">{title}</h1>

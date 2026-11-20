@@ -323,7 +323,7 @@ export const en = {
 
   "pairing.title": "Pair this device",
   "pairing.body":
-    "On the machine that runs J3 Bots, run j3-bots pair, or open Settings on a device that’s already paired, and enter the code it shows.",
+    "On the machine that runs J3 Bots, run {command}, or open Settings on a device that’s already paired, and enter the code it shows.",
   "pairing.signedOut": "This device was signed out. Pair it again to carry on.",
   "pairing.stillListed":
     "This device is signed out, but J3 Bots couldn’t be reached, so it stays listed until you sign it out in Settings on another device.",

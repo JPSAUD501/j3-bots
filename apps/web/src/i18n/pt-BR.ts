@@ -325,7 +325,7 @@ export const ptBR: Catalog = {
 
   "pairing.title": "Parear este dispositivo",
   "pairing.body":
-    "Na máquina que roda o J3 Bots, execute j3-bots pair, ou abra Configurações num dispositivo já pareado, e digite o código que aparecer.",
+    "Na máquina que roda o J3 Bots, execute {command}, ou abra Configurações num dispositivo já pareado, e digite o código que aparecer.",
   "pairing.signedOut": "Este dispositivo saiu da conta. Pareie de novo para continuar.",
   "pairing.stillListed":
     "Este dispositivo saiu da conta, mas o J3 Bots não respondeu, então ele continua na lista até você desconectá-lo nas Configurações de outro dispositivo.",

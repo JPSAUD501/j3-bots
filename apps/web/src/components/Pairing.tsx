@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { PairingFailure, PairResult, UnpairedReason } from "@j3-bots/client-runtime";
 import * as DateTime from "effect/DateTime";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactElement } from "react";
 import { useI18n, usePresentation } from "../app/context";
 import { clockTime } from "../lib/time";
 import { Centered, Ensemble, Heading } from "./EmptyStates";
@@ -54,7 +54,7 @@ interface PairingProps {
  */
 export function Pairing({ reason, onPair, defaultName }: PairingProps) {
   const ctx = usePresentation();
-  const { t } = ctx.i18n;
+  const { t, parts } = ctx.i18n;
   const codeId = useId();
   const nameId = useId();
   const errorId = useId();
@@ -97,7 +97,16 @@ export function Pairing({ reason, onPair, defaultName }: PairingProps) {
   return (
     <Centered>
       <Ensemble />
-      <Heading title={t("pairing.title")} body={t("pairing.body")} />
+      <Heading
+        title={t("pairing.title")}
+        body={parts<"pairing.body", ReactElement>("pairing.body", {
+          command: (
+            <code key="command" className="font-mono text-foreground">
+              j3-bots pair
+            </code>
+          ),
+        })}
+      />
       {reason !== "new" && (
         <p className="max-w-sm rounded-md bg-muted px-3 py-2 text-sm">
           {reason === "signed-out" ? t("pairing.signedOut") : t("pairing.stillListed")}

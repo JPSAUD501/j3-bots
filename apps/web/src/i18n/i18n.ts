@@ -62,6 +62,14 @@ export interface I18n {
   readonly locale: Locale;
   /** A sentence from the catalog, with its placeholders filled in. */
   t<K extends MessageKey>(key: K, ...args: Args<K>): string;
+  /**
+   * A sentence split around its placeholders, whose values stay as given: for
+   * a value drawn apart from the words around it, such as a command.
+   */
+  parts<K extends MessageKey, V extends object>(
+    key: K,
+    values: Readonly<Record<Params<K>, V>>,
+  ): ReadonlyArray<string | V>;
   /** A sentence that depends on a count, which fills `{count}`. */
   plural<B extends PluralKey>(key: B, count: number, ...args: PluralArgs<B>): string;
   /**
@@ -92,6 +100,18 @@ export function createI18n(locale: Locale): I18n {
     if (!isKey(key)) throw new Error(`Missing message: ${key}`);
     return catalog[key];
   };
+  const split = <V extends object>(text: string, values: Readonly<Record<string, V>>) => {
+    const parts: Array<string | V> = [];
+    let from = 0;
+    for (const match of text.matchAll(PLACEHOLDER)) {
+      const value = match[1] === undefined ? undefined : values[match[1]];
+      if (value === undefined) continue;
+      parts.push(text.slice(from, match.index), value);
+      from = match.index + match[0].length;
+    }
+    parts.push(text.slice(from));
+    return parts.filter((part) => part !== "");
+  };
   const pluralText = (key: string, count: number) => {
     const one = `${key}.one`;
     return lookup(pluralRules.select(count) === "one" && one in catalog ? one : `${key}.other`);
@@ -99,24 +119,14 @@ export function createI18n(locale: Locale): I18n {
   return {
     locale,
     t: (key, ...args) => fill(catalog[key], args[0]),
+    parts: <V extends object>(key: MessageKey, values: Readonly<Record<string, V>>) =>
+      split(catalog[key], values),
     plural: (key, count, ...args) => fill(pluralText(key, count), { ...args[0], count }),
     pluralParts: <V extends object>(
       key: string,
       count: number,
       values: Readonly<Record<string, V>>,
-    ) => {
-      const text = fill(pluralText(key, count), { count });
-      const parts: Array<string | V> = [];
-      let from = 0;
-      for (const match of text.matchAll(PLACEHOLDER)) {
-        const value = match[1] === undefined ? undefined : values[match[1]];
-        if (value === undefined) continue;
-        parts.push(text.slice(from, match.index), value);
-        from = match.index + match[0].length;
-      }
-      parts.push(text.slice(from));
-      return parts.filter((part) => part !== "");
-    },
+    ) => split(fill(pluralText(key, count), { count }), values),
   };
 }
 
