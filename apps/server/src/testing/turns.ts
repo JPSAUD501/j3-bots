@@ -295,10 +295,10 @@ export const sendInRoom = (botId: BotId, roomId: RoomId, text: string) =>
   });
 
 /** The operator writes to the bot with a file attached. */
-export const sendWithFile = (botId: BotId, text: string) =>
+export const sendWithFile = (botId: BotId, text: string, name = "notes.txt") =>
   Effect.gen(function* () {
     const file = yield* (yield* Attachments).store({
-      name: "notes.txt",
+      name,
       mediaType: "text/plain",
       bytes: new TextEncoder().encode("Release notes."),
     });

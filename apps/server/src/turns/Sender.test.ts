@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
+import type { BotId, EntryId } from "@j3-bots/contracts";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import * as Domain from "../domain.ts";
+import { Layout } from "../Layout.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
@@ -104,6 +108,72 @@ it.effect("stages a file again after its staging reply was lost, once the backof
     yield* nextTurn(bot.id);
     yield* deliveryIs(message, "delivered");
     assert.strictEqual(yield* timesSent(session, "Read the notes."), 1);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+/** The folder of the bot's inbox the message's file is copied into. */
+const inboxOf = (botId: BotId, message: EntryId) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const [row] = yield* sql<{ readonly attachment_id: string }>`
+      SELECT a.attachment_id FROM dispatch_attachments a
+      JOIN wakes w ON w.dispatch_id = a.dispatch_id
+      WHERE w.source_entry_id = ${message}
+    `.pipe(Effect.orDie);
+    assert.isDefined(row);
+    return (yield* Path.Path).join(
+      (yield* Layout).workspace(botId),
+      "files",
+      "inbox",
+      row.attachment_id,
+    );
+  });
+
+it.effect("copies a file named only of dots into its own inbox folder", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const bot = yield* createBot("Ana");
+    yield* engineSession(bot.id);
+
+    const message = yield* sendWithFile(bot.id, "Read the notes.", "..");
+    yield* nextTurn(bot.id);
+    yield* deliveryIs(message, "delivered");
+    const folder = yield* inboxOf(bot.id, message);
+    assert.deepStrictEqual(yield* fs.readDirectory(folder), ["_"]);
+    assert.strictEqual(yield* fs.readFileString(path.join(folder, "_")), "Release notes.");
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("resends a message without copying its file into the inbox again", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const fs = yield* FileSystem.FileSystem;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+
+    // The first send copies the file, then dies after its claim, applying
+    // nothing: only the recovery can send it again.
+    yield* control.breakDispatches(true);
+    const sending = yield* control.holdNext("dispatch");
+    const message = yield* sendWithFile(bot.id, "Summarize the notes.");
+    yield* sending.entered;
+    yield* sending.release;
+    yield* gateSettled(bot.id);
+    yield* control.breakDispatches(false);
+
+    // Meanwhile the bot moved the copy away and left a link out of the home
+    // in its place, which a copy would refuse.
+    const folder = yield* inboxOf(bot.id, message);
+    const outside = yield* fs.makeTempDirectoryScoped();
+    yield* fs.remove(folder, { recursive: true });
+    yield* fs.symlink(outside, folder);
+
+    yield* recoverTimes(1);
+    yield* nextTurn(bot.id);
+    yield* deliveryIs(message, "delivered");
+    assert.strictEqual(yield* timesSent(session, "Summarize the notes."), 1);
+    assert.deepStrictEqual(yield* fs.readDirectory(outside), []);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

@@ -45,9 +45,14 @@ import { Signals } from "./Signals.ts";
 import { stopTargets } from "./stopTargets.ts";
 import { WorkSteps } from "./WorkSteps.ts";
 
-/** Where an operator's file is copied in the bot's workspace, relative to it. */
-export const inboxPath = (attachment: { readonly id: AttachmentId; readonly name: string }) =>
-  `files/inbox/${attachment.id}/${attachment.name.replaceAll(/[/\\]/g, "_")}`;
+/**
+ * Where an operator's file is copied in the bot's workspace, relative to it:
+ * its name made one path segment, never one that names a folder (`.`, `..`).
+ */
+export const inboxPath = (attachment: { readonly id: AttachmentId; readonly name: string }) => {
+  const name = attachment.name.replaceAll(/[/\\]/g, "_");
+  return `files/inbox/${attachment.id}/${/^\.+$/.test(name) ? "_" : name}`;
+};
 
 /** What a send did. */
 export type SendResult =
@@ -340,10 +345,10 @@ export const layer = Layer.effect(
       );
 
     /**
-     * Copies an operator's file into the bot's `files/inbox/`, unless it is
-     * there. `files/` is the bot's, links included, so the copy goes through
-     * the home's containment check like every private write: it never follows
-     * a link out of private state.
+     * Copies an operator's file into the bot's `files/inbox/`, replacing
+     * whatever is at its place. `files/` is the bot's, links included, so the
+     * copy goes through the home's containment check like every private
+     * write: it never follows a link out of private state.
      */
     const copyToWorkspace = Effect.fn("Sender.copyToWorkspace")(function* (
       botId: BotId,
@@ -351,13 +356,15 @@ export const layer = Layer.effect(
       source: string,
     ) {
       const target = path.join(layout.workspace(botId), inboxPath(attachment));
-      if (yield* fs.exists(target)) return;
       yield* layout.writeFile(target, yield* fs.readFile(source));
     });
 
     /**
      * Each file staged and still usable, staging again those whose staged copy
-     * expired, and copied into the bot's workspace where its envelope names it.
+     * expired. Before the first send, each is copied into the bot's workspace
+     * where its envelope names it. A resend carries the same envelope, which
+     * the engine applies at most once, so it copies nothing: what the bot made
+     * of its inbox since is its own.
      */
     const stage = Effect.fn("Sender.stage")(function* (row: DispatchRow) {
       const now = yield* DateTime.now;
@@ -367,15 +374,17 @@ export const layer = Layer.effect(
         // A file the store no longer has cannot be sent, now or later.
         if (Option.isNone(stored)) return { _tag: "failed" } satisfies Staging;
         const { attachment } = stored.value;
-        const copied = yield* copyToWorkspace(row.bot_id, attachment, stored.value.path).pipe(
-          Effect.as(true),
-          Effect.catch((error) =>
-            Effect.logWarning("Copying a dispatched file into the workspace failed", error).pipe(
-              Effect.as(false),
+        if (row.attempts === 0) {
+          const copied = yield* copyToWorkspace(row.bot_id, attachment, stored.value.path).pipe(
+            Effect.as(true),
+            Effect.catch((error) =>
+              Effect.logWarning("Copying a dispatched file into the workspace failed", error).pipe(
+                Effect.as(false),
+              ),
             ),
-          ),
-        );
-        if (!copied) return { _tag: "failed" } satisfies Staging;
+          );
+          if (!copied) return { _tag: "failed" } satisfies Staging;
+        }
         let stagedId = file.engine_attachment_id;
         if (
           stagedId === null ||
