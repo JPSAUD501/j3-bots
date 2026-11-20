@@ -82,11 +82,13 @@ import {
 import { EngineInstallFailed, ensureInstalled } from "./Install.ts";
 import { commandIdFor, messageIdFor, projectIdFor, threadIdFor } from "./Keys.ts";
 import { ORCHESTRATION_PROTOCOL, pin } from "./Pin.ts";
+import type { FileChangeItem } from "./approvalDetail.ts";
 import { instanceIdFor, provision, type InstanceSpec } from "./Provision.ts";
 import { baseUrl, stateChanges, supervise, type ProcessState } from "./Supervisor.ts";
 import {
   activeTurn,
   applyEvent,
+  changesToFetch,
   copyMirror,
   copyView,
   diff,
@@ -97,6 +99,7 @@ import {
   findRequest,
   isEnded,
   isRetired,
+  keepFetched,
   knowsDispatch,
   mirrorOf,
   queuedRuns,
@@ -113,6 +116,8 @@ import {
 const COMMAND_TIMEOUT = Duration.seconds(30);
 /** How long `synchronize` waits for the engine's marker on each stream. */
 const SYNC_TIMEOUT = Duration.seconds(30);
+/** How long fetching an approval's file change may take; past it the card stays a summary. */
+const FETCH_TIMEOUT = Duration.seconds(10);
 /** Batches kept per session, for resuming an `events` stream by replay. */
 const BATCHES_KEPT = 32;
 /** How long a staged file stays usable: half the engine's 24-hour sweep. */
@@ -177,22 +182,35 @@ const decodePairing = Schema.decodeUnknownEffect(Schema.fromJsonString(PairingRe
  * kept: a resume replays from a kept batch, which only the process that
  * emitted it holds, and is a replacement otherwise.
  */
-const CURSOR = /^(\d+)\.(\d+)\.(\d+)\.([0-9a-z]+)$/;
+const CURSOR = /^(\d+)\.(\d+)\.(\d+)\.(\d+)\.([0-9a-z]+)$/;
 
-const cursorFor = (sequence: number, index: number, count: number, stream: string) =>
-  EventCursor.make(`${sequence}.${index}.${count}.${stream}`);
+/**
+ * A batch's place: the engine sequence it was emitted at, and its part, which
+ * counts the batches the stream emitted at that sequence before it. Only a
+ * fetched file change emits a batch between two engine events.
+ */
+interface BatchPlace {
+  readonly sequence: number;
+  readonly part: number;
+}
+
+const batchKey = (stream: string, place: BatchPlace) => `${stream}.${place.sequence}.${place.part}`;
+
+const cursorFor = (place: BatchPlace, index: number, count: number, stream: string) =>
+  EventCursor.make(`${place.sequence}.${place.part}.${index}.${count}.${stream}`);
 
 const parseCursor = (cursor: EventCursor) => {
   const match = CURSOR.exec(cursor);
   if (match === null) return Option.none();
-  const [, sequence, index, count, stream] = match;
+  const [, sequence, part, index, count, stream] = match;
   return sequence === undefined ||
+    part === undefined ||
     index === undefined ||
     count === undefined ||
     stream === undefined
     ? Option.none()
     : Option.some({
-        sequence: Number(sequence),
+        place: { sequence: Number(sequence), part: Number(part) },
         index: Number(index),
         count: Number(count),
         stream,
@@ -225,6 +243,8 @@ const instanceSpecOf = (provider: ProviderInstance): InstanceSpec => {
 /** Input to one session's event loop: an engine stream item, a lost stream, or a synchronize call. */
 type LoopInput =
   | { readonly _tag: "item"; readonly item: OrchestrationV2ThreadStreamItem }
+  /** A file change an open approval holds, fetched whole. */
+  | { readonly _tag: "fetched"; readonly item: FileChangeItem }
   | { readonly _tag: "lost" }
   | { readonly _tag: "missing" }
   | {
@@ -354,7 +374,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   const rpc = yield* makeEngineRpc({ port: options.port, token: currentToken });
 
   /**
-   * The batches emitted per session, by `<stream>.<sequence>`, the newest
+   * The batches emitted per session, by `<stream>.<sequence>.<part>`, the newest
    * last. A cursor resumes by replay only from a batch kept here: the engine
    * replays entities as they are after a sequence, not what changed, so the
    * events after a cursor follow only from what the stream had told at it
@@ -376,11 +396,11 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     return Option.match(parseCursor(after), {
       onNone: () => undefined,
       onSome: (cursor) => {
-        const batch = batches.get(sessionId)?.get(`${cursor.stream}.${cursor.sequence}`);
+        const batch = batches.get(sessionId)?.get(batchKey(cursor.stream, cursor.place));
         return batch !== undefined &&
           batch.events.length === cursor.count &&
           cursor.index < cursor.count
-          ? { batch, sequence: cursor.sequence, index: cursor.index }
+          ? { batch, sequence: cursor.place.sequence, index: cursor.index }
           : undefined;
       },
     });
@@ -455,7 +475,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
           }),
         ),
       ),
-      Effect.map(mirrorOf),
+      Effect.map((projection) => mirrorOf(projection)),
     );
 
   /** The state of a session that is still in use: a retired one is `SessionNotFound`. */
@@ -1093,17 +1113,24 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
         /** The engine sequence the mirror is at. */
         let sequence = resumed === undefined ? -1 : resumed.sequence;
         let lastCursor: EventCursor | null = resumed === undefined ? null : input.after;
+        /** Where the last batch this stream emitted stands. */
+        let lastPlace: BatchPlace | undefined;
 
         const emit = Effect.fnUntraced(function* (bodies: ReadonlyArray<EventBody>) {
           if (bodies.length === 0 || view === undefined) return;
           const at = DateTime.makeUnsafe(yield* Clock.currentTimeMillis);
           const position = Math.max(sequence, 0);
+          const place: BatchPlace = {
+            sequence: position,
+            part: lastPlace?.sequence === position ? lastPlace.part + 1 : 0,
+          };
+          lastPlace = place;
           const emitted = bodies.map((body, index): SessionEvent => ({
             ...body,
-            cursor: cursorFor(position, index, bodies.length, stream),
+            cursor: cursorFor(place, index, bodies.length, stream),
             at,
           }));
-          keepBatch(input.sessionId, `${stream}.${position}`, {
+          keepBatch(input.sessionId, batchKey(stream, place), {
             mirror: copyMirror(mirror),
             view: copyView(view),
             events: emitted,
@@ -1132,7 +1159,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
           switch (item.kind) {
             case "snapshot": {
               if (item.snapshotSequence <= sequence && view !== undefined) return;
-              mirror = mirrorOf(item.projection);
+              mirror = mirrorOf(item.projection, mirror.fetched);
               sequence = item.snapshotSequence;
               yield* digestToolCalls(mirror);
               yield* replace(view !== undefined || input.after !== null);
@@ -1148,6 +1175,34 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
             }
             default:
               return;
+          }
+        });
+
+        /** Held file changes asked for, by item id and version: each version is asked for once. */
+        const asked = new Set<string>();
+
+        /**
+         * Fetches, off the loop, each file change an open approval holds back
+         * without its diff, once per version of the item. Only a fetched item
+         * comes back to the loop: a fetch that fails or takes longer than
+         * `FETCH_TIMEOUT` leaves the card a summary, and is not tried again.
+         */
+        const fetchChanges = Effect.fnUntraced(function* () {
+          for (const change of changesToFetch(mirror)) {
+            const key = `${change.id}@${DateTime.toEpochMillis(change.updatedAt)}`;
+            if (asked.has(key)) continue;
+            asked.add(key);
+            yield* rpc["orchestration.getTurnItem"]({ threadId, itemId: change.id }).pipe(
+              Effect.timeoutOption(FETCH_TIMEOUT),
+              Effect.flatMap((fetched) => {
+                const item = Option.getOrUndefined(fetched)?.item;
+                return item?.type === "file_change"
+                  ? Queue.offer(inputs, { _tag: "fetched", item })
+                  : Effect.void;
+              }),
+              Effect.ignore,
+              Effect.forkScoped,
+            );
           }
         });
 
@@ -1249,6 +1304,17 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
             }
             case "item":
               yield* handle(next.item);
+              yield* fetchChanges();
+              break;
+            case "fetched":
+              // The approval may have closed, or its item moved on, since it was asked for: the
+              // card changes only while the approval is open and the item at that version.
+              keepFetched(mirror, next.item);
+              if (view !== undefined) {
+                yield* emit(
+                  diff(mirror, view, DateTime.makeUnsafe(yield* Clock.currentTimeMillis)),
+                );
+              }
               break;
             case "sync":
               yield* catchUp(next.token).pipe(
@@ -1257,6 +1323,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
                   onSuccess: () => Deferred.succeed(next.done, undefined),
                 }),
               );
+              yield* fetchChanges();
               break;
           }
         }

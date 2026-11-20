@@ -428,14 +428,25 @@ describe("TestEngine", () => {
         turnId: open,
         request: {
           _tag: "approval",
-          kind: "command",
-          action: "pnpm deploy",
+          kind: "file-change",
+          action: "Adds notes.md",
           detail: null,
           reason: null,
-          exact: true,
+          exact: false,
           sessionGrant: null,
         },
       });
+      // The held change reached the adapter after the approval opened.
+      const fetched = {
+        _tag: "approval",
+        kind: "file-change",
+        action: "notes.md",
+        detail: { operation: "add", text: "- Keep this list item" },
+        reason: "Adds notes.md",
+        exact: true,
+        sessionGrant: { covers: "every-file-change" },
+      } as const;
+      yield* control.updateRequest({ sessionId, requestId: approvalId, request: fetched });
       yield* control.pruneHistory(sessionId);
 
       const [replaced] = yield* take(sessionId, cursor, 1);
@@ -454,9 +465,10 @@ describe("TestEngine", () => {
         replaced.openTurns.map((turn) => [turn.turnId, turn.steps]),
         [[open, [step]]],
       );
+      // An open request comes as it shows now.
       assert.deepStrictEqual(
-        replaced.openRequests.map((request) => request.requestId),
-        [approvalId],
+        replaced.openRequests.map((request) => [request.requestId, request.request]),
+        [[approvalId, fetched]],
       );
       assert.deepStrictEqual(
         replaced.hostSpeech.map((speech) => [speech.speechId, speech.text]),

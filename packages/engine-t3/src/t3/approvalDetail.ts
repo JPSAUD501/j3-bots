@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { APPROVAL_TEXT_LENGTH, type SessionGrant } from "@j3-bots/contracts";
+import { APPROVAL_TEXT_LENGTH, type ApprovalChange, type SessionGrant } from "@j3-bots/contracts";
 import type { OrchestrationV2RuntimeRequest, OrchestrationV2TurnItem } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import type { EngineRequest } from "../events.ts";
 
 // What an approval card shows, from the engine's records. The approval item
@@ -20,6 +21,16 @@ import type { EngineRequest } from "../events.ts";
 // id of its own, so the item is taken only for the approval whose request id
 // is the item's.
 //
+// A file change's diff does not reach the adapter with the item. The engine
+// strips `diffStr`, `oldStr` and `newStr` from every `file_change` it sends on
+// a thread's stream, live or in a snapshot, unless the change failed (Read at
+// db51b67, `WireProjection.ts`, `projectTurnItemForWire`, used by `ws.ts` for
+// replays and snapshots and by `EventSink.ts` for live events). So an approval
+// whose held file change came without its diff is first a summary, and the
+// adapter fetches the item whole with `orchestration.getTurnItem`, which keeps
+// the diff (`projectTurnItemForDetail`, through `ThreadManagementService`). The
+// fetched item counts only for the version of the item it was fetched for.
+//
 // Read at db51b67: Claude Code's command item is not the command as it runs.
 // `commandInputFromClaudeTool` records the Bash tool's `command` trimmed, so a
 // trailing escaped space (`echo a\ `) is lost from it. Its approval prompt is
@@ -33,6 +44,7 @@ import type { EngineRequest } from "../events.ts";
 type Item = OrchestrationV2TurnItem;
 type ApprovalItem = Extract<Item, { type: "approval_request" }>;
 type GatedItem = Extract<Item, { type: "command_execution" | "file_change" }>;
+export type FileChangeItem = Extract<Item, { type: "file_change" }>;
 type RuntimeRequest = OrchestrationV2RuntimeRequest;
 export type Approval = Extract<EngineRequest, { _tag: "approval" }>;
 
@@ -75,13 +87,24 @@ const verbatim = (text: string | null | undefined) => {
 
 /**
  * Characters the card cannot draw as they act: a carriage return, drawn like a
- * space or a line break though it is neither, and the bidi embedding, override
- * and isolate controls, which reorder the text around them on screen.
+ * space or a line break though it is neither, and every bidi control (the
+ * marks, embeddings, overrides and isolates), which reorder the text around
+ * them on screen or draw as nothing.
  */
-const UNSHOWABLE = /[\r\u202A-\u202E\u2066-\u2069]/;
+const UNSHOWABLE = /[\r\p{Bidi_Control}]/u;
 
 /** As `UNSHOWABLE`, except a carriage return that, with the line feed after it, ends a line. */
-const UNSHOWABLE_BUT_CRLF = /\r(?!\n)|[\u202A-\u202E\u2066-\u2069]/;
+const UNSHOWABLE_BUT_CRLF = /\r(?!\n)|\p{Bidi_Control}/u;
+
+/**
+ * What the engine appends to a text it cut: at 32 KiB when it stores a file
+ * change's diff, and at 256 KiB when `getTurnItem` returns it (Read at db51b67,
+ * `WireProjection.ts`, `truncateDetail`, called by `boundFileChangeForStorage`
+ * from `ProviderEventIngestor.ts` and by `projectTurnItemForDetail`). A diff
+ * that ends with it is not the whole change. A diff that happens to end with
+ * these words is taken for a cut one, which only costs it its exactness.
+ */
+const TRUNCATED = "\n… output truncated for transport";
 
 const trimmed = (text: string | null | undefined) => {
   const kept = text?.trim() ?? "";
@@ -140,9 +163,44 @@ const gatedItem = (
   return undefined;
 };
 
+/** Held file changes fetched whole from the engine, by item id. */
+export type FetchedChanges = ReadonlyMap<string, FileChangeItem>;
+
+/** Whether `fetched` is `held` as the engine recorded it at the same update. */
+const sameVersion = (held: FileChangeItem, fetched: FileChangeItem) =>
+  fetched.id === held.id &&
+  DateTime.toEpochMillis(fetched.updatedAt) === DateTime.toEpochMillis(held.updatedAt);
+
+/** The held item, or, for a file change that came without its diff, the one fetched for it. */
+const wholeItem = (gated: GatedItem, fetched: FetchedChanges): GatedItem => {
+  if (gated.type !== "file_change" || gated.diffStr !== undefined) return gated;
+  const whole = fetched.get(gated.id);
+  return whole !== undefined && sameVersion(gated, whole) ? whole : gated;
+};
+
+/**
+ * The file change `approval` holds back, when it came without its diff and the
+ * card could show it whole with one: the item to fetch for the approval's card.
+ * A fetched item answers it once `fetched` holds it for the same version.
+ */
+export function fileChangeToFetch(
+  approval: ApprovalItem,
+  request: RuntimeRequest | undefined,
+  items: Iterable<Item>,
+  fetched: FetchedChanges,
+): FileChangeItem | undefined {
+  if (KINDS[approval.requestKind] !== "file-change") return undefined;
+  const gated = gatedItem(approval, request, items);
+  if (gated?.type !== "file_change" || gated.diffStr !== undefined) return undefined;
+  // A diff covers one file, so a change of several is never exact.
+  if ((gated.changes?.length ?? 0) > 1) return undefined;
+  const whole = fetched.get(gated.id);
+  return whole !== undefined && sameVersion(gated, whole) ? undefined : gated;
+}
+
 interface Shown {
   readonly action: string;
-  readonly detail: string | null;
+  readonly detail: ApprovalChange | null;
   readonly exact: boolean;
   /** Whether the approval's prompt gave the action, so it is no reason. */
   readonly fromPrompt: boolean;
@@ -166,10 +224,23 @@ const commandOf = (approval: ApprovalItem, gated: GatedItem & { type: "command_e
  * trailing line break is content the card leaves out: a file that ends in
  * none, one or two line breaks would look the same.
  */
-const diffShown = (operation: string | undefined, given: string, kept: string) =>
+const diffShown = (operation: ApprovalChange["operation"], given: string, kept: string) =>
   operation === "update"
     ? !UNSHOWABLE_BUT_CRLF.test(given)
     : kept === given && !UNSHOWABLE_BUT_CRLF.test(given);
+
+const OPERATIONS: ReadonlySet<string> = new Set(["add", "delete", "update"]);
+const isOperation = (operation: string): operation is NonNullable<ApprovalChange["operation"]> =>
+  OPERATIONS.has(operation);
+
+/**
+ * A change's operation as the card names it, or `null` when the engine names
+ * none or one the card does not know. Codex names `add`, `delete` and
+ * `update`, a move being an update (Read at db51b67, `CodexAdapterV2.ts`,
+ * `buildFileChangeArtifacts`).
+ */
+const operationOf = (operation: string | undefined): ApprovalChange["operation"] =>
+  operation !== undefined && isOperation(operation) ? operation : null;
 
 /** What the held item says exactly, or `undefined` when it does not say what was asked. */
 const exactOf = (
@@ -204,16 +275,19 @@ const exactOf = (
     );
     if (paths === undefined) return undefined;
     // A diff covers one file, so with several changes it shows only part of them.
-    const diff = changes.length <= 1 ? verbatim(gated.diffStr) : undefined;
+    const given = gated.diffStr ?? "";
+    const diff = changes.length <= 1 ? verbatim(given) : undefined;
+    const operation = operationOf(changes[0]?.operation);
     return {
       action: paths.text,
-      detail: diff?.text ?? null,
+      detail: diff === undefined ? null : { operation, text: diff.text },
       exact:
         diff !== undefined &&
         diff.whole &&
+        !given.endsWith(TRUNCATED) &&
         paths.whole &&
         !UNSHOWABLE.test(paths.text) &&
-        diffShown(changes[0]?.operation, gated.diffStr ?? "", diff.text),
+        diffShown(operation, given, diff.text),
       fromPrompt: false,
     };
   }
@@ -240,16 +314,18 @@ const sessionGrantOf = (kind: Approval["kind"], approval: ApprovalItem): Session
  * The approval card's content for an engine approval item and the runtime
  * request it answers, when the engine has recorded it. `items` are the other
  * items of its thread, among which the provider may have recorded the action
- * it holds back.
+ * it holds back, and `fetched` the file changes fetched whole for approvals.
  */
 export function approvalOf(
   approval: ApprovalItem,
   request: RuntimeRequest | undefined,
   items: Iterable<Item>,
+  fetched: FetchedChanges,
 ): Approval {
   const kind = KINDS[approval.requestKind];
   const gated = gatedItem(approval, request, items);
-  const exact = gated === undefined ? undefined : exactOf(kind, approval, gated);
+  const exact =
+    gated === undefined ? undefined : exactOf(kind, approval, wholeItem(gated, fetched));
   const prompt = verbatim(approval.prompt);
   const summary = prompt ?? verbatim(approval.title);
   // A held file change with no diff gives its paths, but not the change: the

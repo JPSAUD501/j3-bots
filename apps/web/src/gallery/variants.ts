@@ -236,20 +236,52 @@ export function galleryVariants(now: DateTime.Utc) {
     approval("approval-file-change", {
       kind: "file-change",
       action: "notes/taxes-2026/checklist.md",
-      detail: [
-        "--- a/notes/taxes-2026/checklist.md",
-        "+++ b/notes/taxes-2026/checklist.md",
-        "@@ -3,5 +3,7 @@",
-        " ## Before filing",
-        " ",
-        " - [x] Download the bank statements for 2026",
-        "-- [ ] Ask the accountant about the home office",
-        "+- [x] Ask the accountant about the home office",
-        "+  Answer: deductible up to the share of floor area used only for work; keep the floor plan and the electricity bills with the return.",
-        "+- [ ] Scan the pharmacy receipts",
-        " - [ ] Fill in the donations section",
-      ].join("\n"),
+      detail: {
+        operation: "update",
+        text: [
+          "--- a/notes/taxes-2026/checklist.md",
+          "+++ b/notes/taxes-2026/checklist.md",
+          "@@ -3,5 +3,7 @@",
+          " ## Before filing",
+          " ",
+          " - [x] Download the bank statements for 2026",
+          "-- [ ] Ask the accountant about the home office",
+          "+- [x] Ask the accountant about the home office",
+          "+  Answer: deductible up to the share of floor area used only for work; keep the floor plan and the electricity bills with the return.",
+          "+- [ ] Scan the pharmacy receipts",
+          " - [ ] Fill in the donations section",
+        ].join("\n"),
+      },
       // The longest scope line, so the narrowest width shows it wrapped in every language.
+      sessionGrant: { covers: "every-file-change" },
+    }),
+    // New files whose lines start with "-" and "+": contents, not a diff, so nothing is tinted.
+    approval("approval-new-file", {
+      kind: "file-change",
+      action: "notes/trip-lisbon/packing.md",
+      detail: {
+        operation: "add",
+        text: [
+          "- Keep this list item",
+          "- Passport and the printed boarding passes",
+          "- Adapter for the Type F sockets",
+        ].join("\n"),
+      },
+      sessionGrant: { covers: "every-file-change" },
+    }),
+    approval("approval-new-file-plus", {
+      kind: "file-change",
+      action: "notes/contacts/building.txt",
+      detail: {
+        operation: "add",
+        text: ["+55 11 5555-0100  Front desk", "+55 11 5555-0142  Maintenance"].join("\n"),
+      },
+      sessionGrant: { covers: "every-file-change" },
+    }),
+    approval("approval-deleted-file", {
+      kind: "file-change",
+      action: "notes/drafts/old-budget.md",
+      detail: { operation: "delete", text: "- Rent\n- Groceries" },
       sessionGrant: { covers: "every-file-change" },
     }),
     approval("approval-file-read", {

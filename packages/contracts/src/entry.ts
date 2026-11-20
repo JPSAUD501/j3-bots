@@ -172,6 +172,23 @@ const ApprovalText = Schema.String.check(
 );
 
 /**
+ * An exact file change's text, with what the change does to the file, which
+ * decides what the text is:
+ * - `update`: the file changes in place, or moves; `text` is a unified diff.
+ * - `add`: a new file; `text` is its contents.
+ * - `delete`: the file goes; `text` is the contents it had.
+ * - `null`: the engine did not say; `text` is shown as the provider gave it.
+ *
+ * Only a `update` is read as a diff: the contents of a file can start lines
+ * with `+` or `-` too.
+ */
+export const ApprovalChange = Schema.Struct({
+  operation: Schema.NullOr(Schema.Literals(["add", "delete", "update"])),
+  text: ApprovalText,
+});
+export type ApprovalChange = typeof ApprovalChange.Type;
+
+/**
  * What a grant for the session allows without asking again, for the rest of
  * the session, as the provider applies it: every later request of that kind,
  * whatever it runs or changes.
@@ -193,10 +210,10 @@ export const ApprovalEntry = Schema.TaggedStruct("approval", {
    */
   action: ApprovalText,
   /**
-   * Only with an exact file change: its unified diff, as the engine gives it.
-   * Null otherwise.
+   * Only with an exact file change of one file: the change, as the engine
+   * gives it. Null otherwise.
    */
-  detail: Schema.NullOr(ApprovalText),
+  detail: Schema.NullOr(ApprovalChange),
   /**
    * Why the bot or its provider asks, such as the escalation a sandboxed
    * command needs. Never the action itself. Null when nothing was said.

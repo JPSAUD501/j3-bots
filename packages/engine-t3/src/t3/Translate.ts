@@ -39,7 +39,7 @@ import {
   TurnId,
 } from "../ids.ts";
 import { toolInputDigest } from "../toolCaller.ts";
-import { approvalOf } from "./approvalDetail.ts";
+import { approvalOf, fileChangeToFetch, type FileChangeItem } from "./approvalDetail.ts";
 import { dispatchOfMessage, localIdFor, messageIdFor } from "./Keys.ts";
 import { TOOL_SERVER } from "./Provision.ts";
 
@@ -67,6 +67,12 @@ export interface Mirror {
    * input it was taken of. Kept by `digestToolCalls`, which `diff` relies on.
    */
   readonly toolDigests: Map<string, { readonly input: unknown; readonly digest: ToolInputDigest }>;
+  /**
+   * File changes held by approvals, fetched whole because the stream sends
+   * them without their diff, by item id. Each counts only while the item is
+   * at the version it was fetched for. See `approvalDetail.ts`.
+   */
+  readonly fetched: Map<string, FileChangeItem>;
 }
 
 export const emptyMirror = (): Mirror => ({
@@ -75,6 +81,7 @@ export const emptyMirror = (): Mirror => ({
   items: new Map(),
   requests: new Map(),
   toolDigests: new Map(),
+  fetched: new Map(),
 });
 
 /** A copy of the mirror as it stands, for resuming from it later. Entities are never mutated, only replaced. */
@@ -84,14 +91,23 @@ export const copyMirror = (mirror: Mirror): Mirror => ({
   items: new Map(mirror.items),
   requests: new Map(mirror.requests),
   toolDigests: new Map(mirror.toolDigests),
+  fetched: new Map(mirror.fetched),
 });
 
-export const mirrorOf = (projection: OrchestrationV2ThreadProjection): Mirror => ({
+/**
+ * The mirror of a snapshot. File changes fetched before it still count for
+ * the items the snapshot has at the same version.
+ */
+export const mirrorOf = (
+  projection: OrchestrationV2ThreadProjection,
+  fetched: ReadonlyMap<string, FileChangeItem> = new Map(),
+): Mirror => ({
   thread: projection.thread,
   runs: new Map(projection.runs.map((run) => [run.id, run])),
   items: new Map(projection.turnItems.map((item) => [item.id, item])),
   requests: new Map(projection.runtimeRequests.map((request) => [request.id, request])),
   toolDigests: new Map(),
+  fetched: new Map(fetched),
 });
 
 const isThread = Schema.is(OrchestrationV2AppThread);
@@ -679,7 +695,7 @@ const requestOf = (mirror: Mirror, item: Item): RequestState | undefined => {
         answerTo: { _tag: "runtime-request", requestId: item.requestId },
         turnId,
         openedAt,
-        request: approvalOf(item, request, mirror.items.values()),
+        request: approvalOf(item, request, mirror.items.values(), mirror.fetched),
         resolution: runtimeResolution(request, item),
       };
     }
@@ -720,6 +736,24 @@ const requestsOf = (mirror: Mirror, run: Run) =>
     const state = requestOf(mirror, item);
     return state === undefined ? [] : [state];
   });
+
+/**
+ * The file changes to fetch whole for approvals still open, each held back by
+ * an approval and sent on the stream without its diff.
+ */
+export const changesToFetch = (mirror: Mirror): ReadonlyArray<FileChangeItem> =>
+  [...mirror.items.values()].flatMap((item) => {
+    if (item.type !== "approval_request" || !LIVE_ITEM.has(item.status)) return [];
+    const request = mirror.requests.get(item.requestId);
+    if (request?.status !== "pending") return [];
+    const change = fileChangeToFetch(item, request, mirror.items.values(), mirror.fetched);
+    return change === undefined ? [] : [change];
+  });
+
+/** Keeps a file change fetched whole for an approval's card. */
+export const keepFetched = (mirror: Mirror, item: FileChangeItem): void => {
+  mirror.fetched.set(item.id, item);
+};
 
 /** The engine's own request behind a J3 Bots request id, for answering it. */
 export const findRequest = (mirror: Mirror, requestId: RequestId): Option.Option<RequestState> => {
@@ -915,12 +949,24 @@ type HoldView =
   | { readonly state: "none" | "reported" | "released" }
   | { readonly state: "unreported"; readonly background: ReadonlySet<string> };
 
+/**
+ * A request as the subscriber knows it: open, with the card it was last told
+ * of as JSON, or closed.
+ */
+type OpenView = { readonly _tag: "open"; readonly shown: string };
+type RequestView = OpenView | { readonly _tag: "closed" };
+
+const shownOf = (state: RequestState): OpenView => ({
+  _tag: "open",
+  shown: JSON.stringify(state.request),
+});
+
 /** What the subscriber has been told. Copied, never shared, between cursors. */
 export interface View {
   readonly turns: Map<string, TurnView>;
   readonly steps: Map<string, string>;
   readonly speech: Set<string>;
-  readonly requests: Map<string, "open" | "closed">;
+  readonly requests: Map<string, RequestView>;
   readonly toolCalls: Map<string, "open" | "closed">;
   /** Steers whose settlement was reported, by message id. */
   readonly steers: Set<string>;
@@ -1048,9 +1094,21 @@ export const diff = (mirror: Mirror, view: View, now: DateTime.Utc): ReadonlyArr
       }
       const ended = isEnded(run);
       for (const state of requestsOf(mirror, run)) {
-        if (state.resolution === undefined && !view.requests.has(state.requestId)) {
-          view.requests.set(state.requestId, "open");
+        if (state.resolution !== undefined) continue;
+        const seen = view.requests.get(state.requestId);
+        const shown = shownOf(state);
+        if (seen === undefined) {
+          view.requests.set(state.requestId, shown);
           events.push({ _tag: "request-opened", open: openRequestOf(state) });
+        } else if (seen._tag === "open" && seen.shown !== shown.shown && !ended) {
+          // Only a request still waiting on the operator changes its card.
+          view.requests.set(state.requestId, shown);
+          events.push({
+            _tag: "request-updated",
+            requestId: state.requestId,
+            turnId,
+            request: state.request,
+          });
         }
       }
       for (const item of itemsOf(mirror, run)) {
@@ -1083,8 +1141,8 @@ export const diff = (mirror: Mirror, view: View, now: DateTime.Utc): ReadonlyArr
       }
       for (const state of requestsOf(mirror, run)) {
         const resolution = state.resolution ?? (ended ? ("expired" as const) : undefined);
-        if (resolution !== undefined && view.requests.get(state.requestId) === "open") {
-          view.requests.set(state.requestId, "closed");
+        if (resolution !== undefined && view.requests.get(state.requestId)?._tag === "open") {
+          view.requests.set(state.requestId, { _tag: "closed" });
           events.push({ _tag: "request-closed", requestId: state.requestId, turnId, resolution });
         }
       }

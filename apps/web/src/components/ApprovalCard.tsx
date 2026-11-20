@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { ApprovalDecision, ApprovalEntry, SessionGrant } from "@j3-bots/contracts";
+import type {
+  ApprovalChange,
+  ApprovalDecision,
+  ApprovalEntry,
+  SessionGrant,
+} from "@j3-bots/contracts";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { ChevronRightIcon, ShieldCheckIcon, ShieldXIcon, ShieldIcon } from "lucide-react";
 import { useId } from "react";
@@ -48,6 +53,13 @@ const grantedScope: Record<SessionGrant["covers"], KeyWith> = {
   "every-file-change": "approval.granted.everyFileChange",
 };
 
+// A new or deleted file is said beside its path; an update needs no word.
+const operationLabel: Record<NonNullable<ApprovalChange["operation"]>, KeyWith | null> = {
+  add: "approval.operation.add",
+  delete: "approval.operation.delete",
+  update: null,
+};
+
 const code = "font-mono text-xs leading-5 whitespace-pre-wrap wrap-anywhere";
 // A bounded area that shows, by a shade at its edge, that more lies past it, and that the keyboard
 // can scroll before deciding.
@@ -57,7 +69,8 @@ const scrolls =
 /**
  * A bot asking to do one thing its permission mode does not allow outright.
  * What it asks is always on the card, exactly as the engine recorded it: the
- * whole command, or a file change's path and diff, coloured by line. Why it
+ * whole command, or a file change's path and its diff, coloured by line, or a
+ * new or deleted file's contents, set plain and labelled beside the path. Why it
  * asks, when the provider said, is a quiet line above, never mixed into it.
  * When the provider shared only a summary, the card says so in words and sets
  * the summary as prose, not code; it can still be allowed once, so a bot never
@@ -98,19 +111,49 @@ export function ApprovalCard({
     ) : (
       <ShieldIcon />
     );
-  // A file change's diff, focusable so the keyboard can scroll it.
+  // A file change's text, focusable so the keyboard can scroll it. Only an update's is a diff: a
+  // new file's contents can start lines with `-` or `+` too.
   const diff = (className?: string) =>
     detail !== null && (
       <pre
         role="region"
-        aria-label={t("approval.change")}
+        aria-label={t(
+          detail.operation === "add" || detail.operation === "delete"
+            ? "approval.contents"
+            : "approval.change",
+        )}
         tabIndex={0}
         className={cn(code, scrolls, "py-2", className)}
         {...(pending ? actions : {})}
       >
-        <CodeLines text={detail} tones={diffTones} inset />
+        <CodeLines
+          text={detail.text}
+          {...(detail.operation === "update" ? { tones: diffTones } : {})}
+          inset
+        />
       </pre>
     );
+  const operation =
+    detail === null || detail.operation === null ? null : operationLabel[detail.operation];
+  // The changed file's path, with what happens to it when that is more than a change in place:
+  // beside the path, or under it on a phone, where beside it would squeeze the path.
+  const paths = (className?: string) => (
+    <div
+      className={cn(
+        "flex items-start gap-2 bg-code-background @max-tablet:flex-col @max-tablet:gap-0",
+        className,
+      )}
+    >
+      <pre className={cn(code, "min-w-0 flex-1 py-2", pending && "font-medium")}>
+        <CodeLines text={entry.action} inset />
+      </pre>
+      {operation !== null && (
+        <span className="shrink-0 py-2 pe-2.5 text-2xs leading-5 text-muted-foreground @max-tablet:ps-2.5 @max-tablet:pt-0">
+          {t(operation)}
+        </span>
+      )}
+    </div>
+  );
   return (
     <CardFrame
       ref={target}
@@ -159,16 +202,12 @@ export function ApprovalCard({
         // One block in two parts, joined by a seam of the card's own surface. The paths stay put;
         // only the diff scrolls, so they never leave view.
         <div className="flex flex-col gap-px overflow-hidden rounded-md">
-          <pre className={cn(code, "bg-code-background py-2 font-medium")}>
-            <CodeLines text={entry.action} inset />
-          </pre>
+          {paths()}
           {diff()}
         </div>
       ) : (
         <>
-          <pre className={cn(code, "rounded-md bg-code-background py-2")}>
-            <CodeLines text={entry.action} inset />
-          </pre>
+          {paths("rounded-md")}
           <Collapsible.Root>
             <Collapsible.Trigger
               className={cn(
