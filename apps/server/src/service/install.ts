@@ -98,12 +98,12 @@ const awaitServer = Effect.fn("service.awaitServer")(function* (socket: string) 
 
 /**
  * Writes the unit, whole, enables it and (re)starts it, then waits for the
- * server to answer. The configuration is checked first as the service will
- * run it (the home, its `config.json` and the service's `PATH`, none of this
- * shell's overrides), and so are the admin socket's path and that `host` is
- * an address of this machine; anything the server would refuse at start
- * leaves the installed unit untouched, and a refused configuration leaves the
- * home as it was.
+ * server to answer. Checked first: the configuration, as the service will run
+ * it (the home, its `config.json` and the service's `PATH`, none of this
+ * shell's overrides); the home, as the server checks it at start; the admin
+ * socket's path; and that this user can listen on `host`. A refusal by any of
+ * these leaves the installed unit untouched, and a refused configuration
+ * leaves the home as it was.
  */
 export const install = Effect.gen(function* () {
   const systemd = yield* Systemd;
@@ -134,18 +134,18 @@ export const install = Effect.gen(function* () {
   // service's to hold, so a free one the system picks stands in for it.
   const address = yield* host.portState(config.host, 0);
   if (address._tag !== "free") {
-    // A failure the check cannot name is the address's: the configured port was never tried.
+    // Only the address was tried, never the configured port, so only the address is named.
     const { summary, fix } =
-      address._tag === "failed"
-        ? {
-            summary: `Listening on ${config.host} failed with ${address.code}.`,
-            fix: `Check "host" in ${config.configFile}.`,
-          }
-        : portAdvice(
+      address._tag === "not-local"
+        ? portAdvice(
             address,
             { label: "the server", setting: "port", host: config.host, port: config.port },
             config.configFile,
-          );
+          )
+        : {
+            summary: `Listening on ${config.host} failed (${address._tag === "failed" ? address.code : address._tag}).`,
+            fix: `Check "host" in ${config.configFile}.`,
+          };
     return yield* new ServiceNotInstalled({ reason: "configuration", detail: `${summary} ${fix}` });
   }
 

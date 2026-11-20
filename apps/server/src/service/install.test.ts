@@ -216,6 +216,12 @@ it.layer(NodeServices.layer)("service install", (it) => {
         );
         assert.deepStrictEqual(calls, []);
         assert.strictEqual(unit, "previous unit");
+
+        // Any other refusal names the address too, never the port the check did not try.
+        const denied = yield* installOn({ ...HEALTHY, address: { _tag: "denied" } });
+        const message = failure(denied.exit)?.toString() ?? "";
+        assert.include(message, "Listening on 0.0.0.0 failed");
+        assert.notInclude(message, "3737");
       }),
   );
 
