@@ -13,7 +13,7 @@ import {
   MAX_MESSAGE_LENGTH,
 } from "@j3-bots/contracts";
 import { ArrowUpIcon, FileIcon, MicIcon, PlusIcon, XIcon } from "lucide-react";
-import { useId, useRef, type Ref } from "react";
+import { useId, useRef, useState, type Ref } from "react";
 import { useI18n } from "../app/context";
 import type { I18n } from "../i18n/i18n";
 import { cn } from "../lib/cn";
@@ -89,8 +89,9 @@ const nameOf = (file: DraftFile) => (file._tag === "ready" ? file.attachment.nam
  * trailing button dictates where dictation exists. A message over a limit
  * of `message.send` is kept, and says why instead of sending. While Send hands
  * the draft over, the field stays focused but read-only, and attaching and
- * removing files show as unavailable. The field draws no ring of its own: the
- * pill takes the focus outline.
+ * removing files show as unavailable; files dropped or pasted meanwhile are not
+ * taken, and the composer asks for them again. The field draws no ring of its
+ * own: the pill takes the focus outline.
  */
 export function Composer({
   recipient,
@@ -117,11 +118,15 @@ export function Composer({
     files.flatMap((file) => (file._tag === "ready" ? [file.attachment] : [])),
   );
   const ready = !sending && !empty && !uploading && !blocked && problem === null;
+  // Files dropped or pasted while Send hands the draft over, which the draft did not take.
+  const [notTaken, setNotTaken] = useState(false);
   const send = () => {
     if (ready) onSend();
   };
   const attach = (list: FileList | null) => {
-    if (!sending && onAttachFiles && list !== null && list.length > 0) onAttachFiles([...list]);
+    if (!onAttachFiles || list === null || list.length === 0) return;
+    setNotTaken(sending);
+    if (!sending) onAttachFiles([...list]);
   };
   const detach = (key: string) => {
     if (!sending) onDetachFile?.(key);
@@ -200,7 +205,10 @@ export function Composer({
           rows={1}
           value={value}
           readOnly={sending}
-          onChange={(event) => onValueChange(event.currentTarget.value)}
+          onChange={(event) => {
+            setNotTaken(false);
+            onValueChange(event.currentTarget.value);
+          }}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
               event.preventDefault();
@@ -243,7 +251,11 @@ export function Composer({
         {t("composer.stillUploading")}
       </span>
       <p role="alert" className="px-3 text-xs text-blocked empty:hidden">
-        {problem === null ? null : messageProblemText(problem, i18n)}
+        {notTaken
+          ? t("composer.waitToAttach")
+          : problem === null
+            ? null
+            : messageProblemText(problem, i18n)}
       </p>
     </form>
   );

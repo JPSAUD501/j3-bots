@@ -558,10 +558,12 @@ function ComposerDemo({
   initial,
   recipient,
   files: initialFiles = [],
+  sending = false,
 }: {
   initial: string;
   recipient: string;
   files?: ReadonlyArray<DraftFile>;
+  sending?: boolean;
 }) {
   const [value, setValue] = useState(initial);
   const [files, setFiles] = useState(initialFiles);
@@ -571,6 +573,7 @@ function ComposerDemo({
       value={value}
       onValueChange={setValue}
       files={files}
+      sending={sending}
       onAttachFiles={nothing}
       onDetachFile={(key) => setFiles((current) => current.filter((file) => file.key !== key))}
       onSend={() => setValue("")}
@@ -607,7 +610,7 @@ function ComposerSection() {
           ))}
         </div>
       </Labeled>
-      <Labeled label="Composer: empty, with a draft, and with files uploading, ready and refused">
+      <Labeled label="Composer: empty, with a draft, with files uploading, ready and refused, and handing a draft over, which takes no files dropped on it">
         <div className="flex max-w-(--layout-text-column) flex-col gap-3">
           <ComposerDemo initial="" recipient={team.bots.scout.profile.name} />
           <ComposerDemo
@@ -620,6 +623,11 @@ function ComposerSection() {
             initial="The brief and the photo for Friday."
             recipient={team.bots.scout.profile.name}
             files={draftFiles}
+          />
+          <ComposerDemo
+            initial="On its way to the outbox."
+            recipient={team.bots.scout.profile.name}
+            sending
           />
         </div>
       </Labeled>

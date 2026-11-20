@@ -319,6 +319,7 @@ export const en = {
   "composer.changedElsewhereWhileSending":
     "This draft changed in another tab. This tab now shows it as it is there, and sent nothing.",
   "composer.restoreMine": "Restore my text",
+  "composer.waitToAttach": "Wait a moment, then add the files again.",
 
   "file.gone": "{name} is no longer on the server.",
   "file.unreachable": "{name} couldn’t be opened. Check the connection and try again.",
