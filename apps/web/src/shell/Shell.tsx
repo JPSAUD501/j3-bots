@@ -17,7 +17,7 @@ import { FirstRun, NoSelection, QuietConversation } from "../components/EmptySta
 import { Roster } from "../components/Roster";
 import { SettingsMenu } from "../components/SettingsMenu";
 import { Timeline } from "../components/Timeline";
-import { filterRoster, orderRoster } from "../presentation/roster";
+import { filterRoster, orderRoster, rosterKeyOf, rosterKeyText } from "../presentation/roster";
 import type { ShellData, ShellIntents } from "./data";
 import { useShellLayout } from "./layout";
 import { isEditable, shellShortcuts } from "./shortcuts";
@@ -31,18 +31,10 @@ interface ShellNavigation {
   readonly rowLink: (item: RosterItem) => ReactElement;
 }
 
-const keyOf = (item: RosterItem): RosterItemKey =>
-  item._tag === "bot"
-    ? { _tag: "bot", botId: item.bot.id }
-    : { _tag: "room", roomId: item.room.id };
-
 const targetOf = (key: RosterItemKey): EntryTarget =>
   key._tag === "bot"
     ? { _tag: "conversation", botId: key.botId }
     : { _tag: "room", roomId: key.roomId };
-
-const draftKey = (key: RosterItemKey) =>
-  key._tag === "bot" ? `bot:${key.botId}` : `room:${key.roomId}`;
 
 function modelName(engine: EngineStatus | null, bot: Bot): string | null {
   const provider = engine?.providers.find((p) => p.id === bot.model.providerId);
@@ -71,6 +63,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
   const detailsHeadingRef = useRef<HTMLHeadingElement>(null);
   const detailsHeadingId = useId();
   const timelineRef = useRef<HTMLDivElement>(null);
+  const rosterRef = useRef<HTMLElement>(null);
   const [containerRef, layout] = useShellLayout();
 
   const bots = data.roster.flatMap((item) => (item._tag === "bot" ? [item.bot] : []));
@@ -88,12 +81,16 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
   const detailsModal = layout === "phone" || layout === "tablet";
   const detailsCover = item !== null && detailsOpen && detailsModal;
 
-  const selectionKey = item === null ? null : draftKey(keyOf(item));
+  const selectionKey = item === null ? null : rosterKeyText(rosterKeyOf(item));
   // Moving to another conversation with a mouse or keyboard puts the cursor in its
   // composer; opening or closing the details beside the conversation moves focus
   // with them, as the dialog does below `wide`. When the details close because the
   // conversation changed, the change wins: focus goes where any move would send it,
   // and the title takes it only when the details close on the same conversation.
+  // Leaving a conversation for the roster, as Back does on a phone, puts focus on
+  // the row of the conversation left, so the operator carries on from there. When
+  // that row is gone, or a search hides it, the search takes focus, except on a
+  // touch screen, where it would raise the keyboard: there the roster does.
   // None of this happens on the first render, so loading a page never scrolls or
   // steals focus.
   const shown = useRef({ selectionKey, detailsOpen });
@@ -107,6 +104,15 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
       else titleRef.current?.focus();
     } else if (moved && selectionKey !== null && !coarsePointer()) {
       composerRef.current?.focus();
+    } else if (moved && selectionKey === null && before.selectionKey !== null) {
+      const roster = rosterRef.current;
+      const row = roster?.querySelector<HTMLElement>(
+        `[data-roster-row="${CSS.escape(before.selectionKey)}"]`,
+      );
+      const search = coarsePointer()
+        ? null
+        : roster?.querySelector<HTMLElement>("[data-roster-search]");
+      (row ?? search ?? roster)?.focus();
     }
   }, [selectionKey, detailsOpen, detailsModal]);
 
@@ -132,7 +138,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
       const next = rows[nextIndex];
       if (next) {
         event.preventDefault();
-        navigation.select(keyOf(next));
+        navigation.select(rosterKeyOf(next));
       }
     } else if (shortcuts.focusComposer.matches(event) && !isEditable(event.target)) {
       event.preventDefault();
@@ -175,16 +181,17 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
       onNewBot={intents.newBot}
       onNewRoom={intents.newRoom}
       footer={<SettingsMenu />}
+      ref={rosterRef}
     />
   );
 
   let conversation: ReactElement = <NoSelection nextShortcut={shortcuts.nextBot.label} />;
   let details: ReactElement | null = null;
   if (item !== null) {
-    const key = keyOf(item);
+    const key = rosterKeyOf(item);
     const target = targetOf(key);
     const entries = data.entries(target);
-    const draft = drafts[draftKey(key)] ?? "";
+    const draft = drafts[rosterKeyText(key)] ?? "";
     const recipient = item._tag === "bot" ? item.bot.profile.name : item.room.name;
     const toggleDetails = () => navigation.setDetailsOpen(!detailsOpen);
     const goToEntry = (entryId: EntryId) => {
@@ -198,7 +205,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
       <>
         <ConversationHeader
           // One header per conversation: moving to another announces nothing.
-          key={draftKey(key)}
+          key={rosterKeyText(key)}
           subject={
             item._tag === "bot" ? { _tag: "bot", bot: item.bot } : { _tag: "room", room: item.room }
           }
@@ -218,7 +225,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
           // Reversed, so the view stays pinned to the newest entry as entries arrive. One per
           // conversation, so each opens at its own end rather than where the last one was left.
           <div
-            key={`timeline:${draftKey(key)}`}
+            key={`timeline:${rosterKeyText(key)}`}
             ref={timelineRef}
             className="flex min-h-0 flex-1 flex-col-reverse overflow-y-auto [overflow-anchor:auto]"
           >
@@ -237,10 +244,10 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
           <Composer
             recipient={recipient}
             value={draft}
-            onValueChange={(value) => setDrafts((d) => ({ ...d, [draftKey(key)]: value }))}
+            onValueChange={(value) => setDrafts((d) => ({ ...d, [rosterKeyText(key)]: value }))}
             onSend={() => {
               intents.sendMessage(target, draft.trim());
-              setDrafts((d) => ({ ...d, [draftKey(key)]: "" }));
+              setDrafts((d) => ({ ...d, [rosterKeyText(key)]: "" }));
             }}
             onAttach={() => intents.attach(target)}
             onDictate={() => intents.dictate(target)}

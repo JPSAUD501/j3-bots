@@ -8,7 +8,13 @@ import { cn } from "../lib/cn";
 import type { DataAttributes } from "../lib/dataAttributes";
 import { activityTime } from "../lib/time";
 import { avatarAppearance } from "../presentation/avatar";
-import { needsOperator, rosterLine, type LineTone } from "../presentation/roster";
+import {
+  needsOperator,
+  rosterKeyOf,
+  rosterKeyText,
+  rosterLine,
+  type LineTone,
+} from "../presentation/roster";
 import { BotAvatar, RoomAvatar } from "./BotAvatar";
 
 export const toneClass: Record<LineTone, string> = {
@@ -92,7 +98,8 @@ export function RosterRow({
     type: render ? undefined : "button",
     "data-selected": selected ? "" : undefined,
     "aria-current": selected ? "page" : undefined,
-    "data-roster-row": "",
+    // Which bot or room the row is, so focus can come back to it.
+    "data-roster-row": rosterKeyText(rosterKeyOf(item)),
     children: content,
   };
   return useRender({

@@ -7,6 +7,7 @@ import type {
   FailureClass,
   Room,
   RosterItem,
+  RosterItemKey,
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import { millisBetween, shortDuration, timeInSentence, type TimeContext } from "../lib/time";
@@ -234,6 +235,19 @@ export function memberList(room: Room, ctx: PresentationContext): string {
   const names = room.members.map((id) => ctx.botName(id) ?? ctx.i18n.t("bot.unknown"));
   return new Intl.ListFormat(ctx.i18n.locale, { type: "conjunction" }).format(names);
 }
+
+/** Which bot or room a roster item is. */
+export const rosterKeyOf = (item: RosterItem): RosterItemKey =>
+  item._tag === "bot"
+    ? { _tag: "bot", botId: item.bot.id }
+    : { _tag: "room", roomId: item.room.id };
+
+/**
+ * A bot or room as one string: what a roster row is marked with, and what the
+ * shell keeps a conversation's draft and timeline under.
+ */
+export const rosterKeyText = (key: RosterItemKey): string =>
+  key._tag === "bot" ? `bot:${key.botId}` : `room:${key.roomId}`;
 
 /** A pending question or approval, or a result not yet read. */
 export function needsOperator(item: RosterItem): boolean {

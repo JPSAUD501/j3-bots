@@ -1,15 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { RosterItem, RosterItemKey } from "@j3-bots/contracts";
 import { PlusIcon, SearchIcon } from "lucide-react";
-import { useState, type KeyboardEvent, type ReactElement, type ReactNode } from "react";
+import { useState, type KeyboardEvent, type ReactElement, type ReactNode, type Ref } from "react";
 import { useBots, useI18n } from "../app/context";
-import { filterRoster, orderRoster } from "../presentation/roster";
+import { filterRoster, orderRoster, rosterKeyOf, rosterKeyText } from "../presentation/roster";
 import { RosterRow } from "./RosterRow";
 import { Button } from "./ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
-
-const keyOf = (item: RosterItem): string =>
-  item._tag === "bot" ? `bot:${item.bot.id}` : `room:${item.room.id}`;
 
 const sameKey = (item: RosterItem, key: RosterItemKey | null) =>
   key !== null &&
@@ -58,18 +55,33 @@ interface RosterProps {
   readonly onNewBot: () => void;
   readonly onNewRoom: () => void;
   readonly footer?: ReactNode;
+  /**
+   * The roster's landmark. It takes focus only from code, where neither a row
+   * nor the search should: see `Shell`.
+   */
+  readonly ref?: Ref<HTMLElement>;
 }
 
 /** Answers: who do I have, who needs me, what is each of them doing. */
-export function Roster({ items, selected, rowLink, onNewBot, onNewRoom, footer }: RosterProps) {
+export function Roster({
+  items,
+  selected,
+  rowLink,
+  onNewBot,
+  onNewRoom,
+  footer,
+  ref,
+}: RosterProps) {
   const { t } = useI18n();
   const bots = useBots();
   const [query, setQuery] = useState("");
   const rows = orderRoster(filterRoster(items, query));
   return (
     <nav
+      ref={ref}
       aria-label={t("roster.label")}
-      className="flex min-h-0 flex-1 flex-col"
+      tabIndex={-1}
+      className="flex min-h-0 flex-1 flex-col outline-none"
       onKeyDown={moveFocus}
     >
       <div className="flex items-center gap-2 px-3 pt-3 pb-2">
@@ -103,7 +115,7 @@ export function Roster({ items, selected, rowLink, onNewBot, onNewRoom, footer }
         ) : (
           <ul className="flex flex-col gap-px">
             {rows.map((item) => (
-              <li key={keyOf(item)}>
+              <li key={rosterKeyText(rosterKeyOf(item))}>
                 <RosterRow
                   item={item}
                   selected={sameKey(item, selected)}
