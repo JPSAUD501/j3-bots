@@ -81,6 +81,13 @@ describe("plannedRun", () => {
       // Every five minutes is the closest allowed.
       const run = yield* plannedRun(schedule("*/5 * * * *", "UTC"), now);
       assert.deepStrictEqual(run, Option.some(at("2026-11-20T10:05:00.000Z")));
+      // On 2026-03-08 New York skips 02:00-02:59: 02:00 and 02:30 land on
+      // 03:00 and 03:30, which run anyway. One run each, not two too close.
+      const skipped = yield* plannedRun(
+        schedule("0,30 2,3 * * *", "America/New_York"),
+        at("2026-03-05T12:00:00.000Z"),
+      );
+      assert.deepStrictEqual(skipped, Option.some(at("2026-03-06T07:00:00.000Z")));
     }),
   );
 

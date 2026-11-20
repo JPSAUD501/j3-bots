@@ -106,17 +106,50 @@ const firstAfter = (compiled: Compiled, after: DateTime.Utc) =>
     ),
   );
 
-/** The schedule's runs strictly after `after` and up to `until`, in order, each once. */
-const runsWithin = (compiled: Compiled, after: DateTime.Utc, until: DateTime.Utc) =>
+/** Where `value` goes in `sorted`, ascending: the index of the first element not below it. */
+const insertionIndex = (sorted: ReadonlyArray<number>, value: number) => {
+  let low = 0;
+  let high = sorted.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if ((sorted[middle] ?? value) < value) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+};
+
+/**
+ * Whether two of the schedule's runs strictly after `after` and up to `until`
+ * fall within `MIN_SPACING` of each other. Two wall-clock times that resolve
+ * to one instant are one run. The runs come in the order of their wall-clock
+ * times, which across a skipped stretch is not quite the order of their
+ * instants, so each is checked against its neighbours among the instants found
+ * so far, kept sorted; the search ends at the first pair too close.
+ */
+const crowded = (compiled: Compiled, after: DateTime.Utc, until: DateTime.Utc) =>
   search(() => {
     const from = DateTime.toEpochMillis(after);
     const to = DateTime.toEpochMillis(until);
-    const found = new Set<number>();
+    const spacing = Duration.toMillis(MIN_SPACING);
+    const found: Array<number> = [];
+    let tooClose = false;
     for (const run of wallRuns(compiled, from - WALL_MARGIN_MILLIS)) {
       if (run.wall > to + WALL_MARGIN_MILLIS) break;
-      if (run.at > from && run.at <= to) found.add(run.at);
+      if (run.at <= from || run.at > to) continue;
+      const index = insertionIndex(found, run.at);
+      const next = found[index];
+      if (next === run.at) continue;
+      const previous = found[index - 1];
+      if (
+        (previous !== undefined && run.at - previous < spacing) ||
+        (next !== undefined && next - run.at < spacing)
+      ) {
+        tooClose = true;
+        break;
+      }
+      found.splice(index, 0, run.at);
     }
-    return [...found].sort((a, b) => a - b).map((at) => DateTime.makeUnsafe(at));
+    return tooClose;
   });
 
 /**
@@ -146,8 +179,8 @@ export const nextRun = (
 /**
  * The next run of a trigger an enabled routine is saved with, checked as a
  * command must check it: a schedule must parse, name a date that exists and a
- * known zone, and never run twice within five minutes, and a one-time trigger
- * must lie ahead of `now`.
+ * known zone, and have no two runs within five minutes of each other over the
+ * next eight days, and a one-time trigger must lie ahead of `now`.
  */
 export const plannedRun = Effect.fnUntraced(function* (
   trigger: RoutineTrigger,
@@ -158,18 +191,8 @@ export const plannedRun = Effect.fnUntraced(function* (
   }
   if (trigger._tag !== "schedule") return yield* Effect.fromResult(nextRun(trigger, now));
   const compiled = yield* Effect.fromResult(compile(trigger));
-  const first = yield* Effect.fromResult(firstAfter(compiled, now));
-  const upcoming = yield* Effect.fromResult(
-    runsWithin(compiled, now, DateTime.addDuration(now, SPACING_WINDOW)),
-  );
-  for (const [index, at] of upcoming.entries()) {
-    const previous = upcoming[index - 1];
-    if (
-      previous !== undefined &&
-      Duration.isLessThan(DateTime.distance(previous, at), MIN_SPACING)
-    ) {
-      return yield* new Invalid({ reason: "schedule" });
-    }
+  if (yield* Effect.fromResult(crowded(compiled, now, DateTime.addDuration(now, SPACING_WINDOW)))) {
+    return yield* new Invalid({ reason: "schedule" });
   }
-  return Option.some(first);
+  return Option.some(yield* Effect.fromResult(firstAfter(compiled, now)));
 });
