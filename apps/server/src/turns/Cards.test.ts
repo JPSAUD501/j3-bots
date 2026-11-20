@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import type { BotId } from "@j3-bots/contracts";
+import type { BotId, Conflict, Invalid, NotFound } from "@j3-bots/contracts";
 import { Engine } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
@@ -49,8 +50,8 @@ const submittedThenStopped = Effect.gen(function* () {
   });
   const card = yield* awaitEntry(bot.id, "secret-request");
   yield* sql`
-    INSERT INTO secret_submissions (entry_id, submitted_at)
-    VALUES (${card.id}, ${timeText(yield* DateTime.now)})
+    INSERT INTO secret_submissions (entry_id, submission_id, submitted_at)
+    VALUES (${card.id}, 'submission-before-restart', ${timeText(yield* DateTime.now)})
   `;
   return { bot, session, requestId, card };
 });
@@ -95,4 +96,49 @@ it.effect("takes a value again after a restart when the submission never landed"
       assert.strictEqual((yield* control.secretAnswers(session)).length, 1);
     }).pipe(Effect.provide(Domain.layer));
   }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
+);
+
+it.effect("lets one submission at a time reach a card, when the first one's reply is lost", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const cards = yield* Cards;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Publish the package.");
+    const turnId = yield* nextTurn(bot.id);
+    yield* control.openRequest({
+      sessionId: session,
+      turnId,
+      request: {
+        _tag: "secret",
+        label: "npm token",
+        reason: "To publish.",
+        url: null,
+        placeholder: null,
+      },
+    });
+    const card = yield* awaitEntry(bot.id, "secret-request");
+
+    const sending = yield* control.holdNext("respondSecret");
+    const first = yield* Effect.forkChild(
+      cards.provideSecret({ entryId: card.id, answer: value }).pipe(Effect.exit),
+    );
+    yield* sending.entered;
+    const second = yield* Effect.forkChild(
+      cards.provideSecret({ entryId: card.id, answer: value }).pipe(Effect.exit),
+    );
+    yield* control.loseNextReply;
+    yield* sending.release;
+
+    const reasonOf = (exit: Exit.Exit<void, Conflict | Invalid | NotFound>) =>
+      Exit.findErrorOption(exit).pipe(
+        Option.map((error) => (error._tag === "Conflict" ? error.reason : error._tag)),
+      );
+    // The first went through and its answer was lost; the second waited for
+    // it, learned the card closed, and sent nothing.
+    assert.deepStrictEqual(reasonOf(yield* Fiber.join(first)), Option.some("engine-unavailable"));
+    assert.deepStrictEqual(reasonOf(yield* Fiber.join(second)), Option.some("card-closed"));
+    assert.strictEqual((yield* control.secretAnswers(session)).length, 1);
+    yield* until(secretStatus(bot.id).pipe(Effect.map((status) => status === "provided")));
+  }).pipe(Effect.provide(TestDomain.layer)),
 );

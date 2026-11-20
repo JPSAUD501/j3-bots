@@ -3,12 +3,16 @@ import { assert, it } from "@effect/vitest";
 import type { BotId, EntryTarget } from "@j3-bots/contracts";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
+import * as Domain from "../domain.ts";
 import { Entries } from "../entries/Entries.ts";
 import { Rooms } from "../rooms/Rooms.ts";
+import { BotTools } from "../tools/BotTools.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
+  awaitEntry,
   command,
   createBot,
   deliveryIs,
@@ -20,7 +24,8 @@ import {
   timesSent,
   until,
 } from "../testing/turns.ts";
-import { recoveryBackoff } from "./model.ts";
+import { Cards } from "./Cards.ts";
+import { DispatchRowId, recoveryBackoff } from "./model.ts";
 import { Pipeline } from "./Pipeline.ts";
 import { Wakes } from "./Wakes.ts";
 
@@ -121,7 +126,7 @@ it.effect("coalesces waiting wakes only with wakes of the same kind and audience
           audience: { _tag: "conversation" },
         },
         {
-          ...wake({ _tag: "undelivered", dispatchId: "earlier" }),
+          ...wake({ _tag: "undelivered", dispatchId: DispatchRowId.make("earlier") }),
           kind: "system",
           audience: { _tag: "conversation" },
         },
@@ -177,4 +182,114 @@ it.effect("keeps a refused message failed until the operator retries it, then de
     yield* deliveryIs(message, "delivered");
     assert.strictEqual(yield* timesSent(session, "Draft the plan."), 1);
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("holds an answer until the turn that asked ends, then starts a turn with it", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Deploy it.");
+    const turnId = yield* nextTurn(bot.id);
+    const args = { prompt: "Which region?", options: [{ label: "Europe", value: "eu-west-1" }] };
+    yield* control.toolCall({
+      sessionId: session,
+      turnId,
+      tool: "ask",
+      input: args,
+      recorded: "now",
+    });
+    yield* (yield* BotTools).call({
+      requestId: "call-1",
+      sessionId: session,
+      tool: "ask",
+      arguments: args,
+    });
+    const card = yield* awaitEntry(bot.id, "question");
+
+    // The operator answers before the bot ends the turn that asked.
+    yield* (yield* Cards).answer({
+      commandId: command(),
+      entryId: card.id,
+      answer: {
+        _tag: "question",
+        answers: { [card.questions[0].id]: { optionIds: ["option-1"], text: null } },
+      },
+    });
+    yield* flushed(bot.id);
+    assert.strictEqual(yield* timesSent(session, "eu-west-1"), 0);
+
+    yield* control.finishTurn({ sessionId: session, turnId, outcome: { _tag: "completed" } });
+    yield* nextTurn(bot.id, turnId);
+    const answered = (yield* control.dispatches(session)).filter((dispatch) =>
+      dispatch.text.includes("eu-west-1"),
+    );
+    assert.deepStrictEqual(
+      answered.map((dispatch) => dispatch.delivery._tag),
+      ["start"],
+    );
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("sends a failed turn's message again when the operator retries its notice", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    const message = yield* sendToBot(bot.id, "Compile the report.");
+    const turnId = yield* nextTurn(bot.id);
+    yield* control.finishTurn({
+      sessionId: session,
+      turnId,
+      outcome: { _tag: "failed", failure: "provider-error", retryAt: null },
+    });
+    const notice = yield* awaitEntry(bot.id, "notice");
+    assert.deepStrictEqual(notice.notice, { _tag: "turn-failed", failure: "provider-error" });
+
+    yield* (yield* Pipeline).retryNotice({ commandId: command(), entryId: notice.id });
+    yield* nextTurn(bot.id, turnId);
+    yield* deliveryIs(message, "delivered");
+    assert.strictEqual(yield* timesSent(session, "Compile the report."), 2);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("sends an engine card's answer again after a restart, once", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const firstRun = Effect.gen(function* () {
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      yield* sendToBot(bot.id, "Clean the build folder.");
+      const turnId = yield* nextTurn(bot.id);
+      yield* control.openRequest({
+        sessionId: session,
+        turnId,
+        request: {
+          _tag: "approval",
+          kind: "command",
+          action: "rm -rf build",
+          detail: null,
+          allowsSession: false,
+        },
+      });
+      const card = yield* awaitEntry(bot.id, "approval");
+      // The answer is recorded, and the engine is gone before it is sent.
+      yield* control.setReachable(false);
+      yield* (yield* Cards).answer({
+        commandId: command(),
+        entryId: card.id,
+        answer: { _tag: "approval", decision: "allow-once" },
+      });
+      return { bot, session };
+    });
+    const { bot, session } = yield* firstRun.pipe(Effect.provide(Domain.layer));
+
+    yield* control.setReachable(true);
+    yield* Effect.gen(function* () {
+      yield* until(
+        awaitEntry(bot.id, "approval").pipe(Effect.map((card) => card.status._tag === "decided")),
+      );
+      assert.strictEqual((yield* control.responses(session)).length, 1);
+    }).pipe(Effect.provide(Domain.layer));
+  }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
 );

@@ -9,7 +9,7 @@ import type * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { timeText } from "../persistence/columns.ts";
 import type { WakesAfter } from "./Ledger.ts";
-import { type Audience, sameAudience } from "./model.ts";
+import { type Audience, sameAudience, type SessionRowId } from "./model.ts";
 
 /** The engine key of one round of a Stop of one session. */
 export const stopKey = (stopId: string, sessionId: string, round: number): IdempotencyKey =>
@@ -40,17 +40,22 @@ export const stopTargets = (sql: SqlClient.SqlClient) => {
 
   return {
     /**
-     * Confirms every unsettled target of the session once its rounds were all
-     * sent and its events show nothing left running: no turn, no dispatch the
-     * engine has not settled, no continuation pending. Whether one was confirmed.
+     * Confirms every unsettled target of the session once the latest round of
+     * each was observed (the events were synchronized past its acknowledgment)
+     * and the events show nothing left running: no turn, no dispatch the engine
+     * has not settled, no continuation pending. Whether one was confirmed.
      */
-    confirm: Effect.fn("stopTargets.confirm")(function* (sessionId: string) {
+    confirm: Effect.fn("stopTargets.confirm")(function* (sessionId: SessionRowId) {
       const rows = yield* sql<{ readonly n: number }>`
         UPDATE stop_targets SET stopped_at = ${yield* now}
         WHERE session_id = ${sessionId} AND stopped_at IS NULL
           AND NOT EXISTS (
             SELECT 1 FROM stop_targets u
-            WHERE u.session_id = ${sessionId} AND u.stopped_at IS NULL AND u.sent_at IS NULL
+            WHERE u.session_id = ${sessionId} AND u.stopped_at IS NULL AND u.observed_at IS NULL
+              AND u.round = (
+                SELECT MAX(v.round) FROM stop_targets v
+                WHERE v.stop_id = u.stop_id AND v.session_id = u.session_id
+              )
           )
           AND NOT EXISTS (
             SELECT 1 FROM turns t WHERE t.session_id = ${sessionId} AND t.finished_at IS NULL
@@ -70,16 +75,25 @@ export const stopTargets = (sql: SqlClient.SqlClient) => {
     /**
      * A turn started in the session after a round of its Stop was sent (a
      * fenced dispatch the engine applied after all, a continuation): the round
-     * missed it, so each target still unsettled gets a new round, unsent.
-     * Whether one was opened.
+     * missed it, so each target still unsettled gets a new round, unsent. A
+     * turn delivering a dispatch the Stop fenced reopens that Stop's target
+     * even once confirmed: the engine applied the key after the Stop ended
+     * everything else. Whether one was opened.
      */
-    openRound: Effect.fn("stopTargets.openRound")(function* (sessionId: string) {
+    openRound: Effect.fn("stopTargets.openRound")(function* (
+      sessionId: SessionRowId,
+      fencedBy: string | null,
+    ) {
       const targets = yield* sql<{ readonly stop_id: string; readonly round: number }>`
         SELECT t.stop_id, t.round FROM stop_targets t
-        WHERE t.session_id = ${sessionId} AND t.stopped_at IS NULL AND t.sent_at IS NOT NULL
+        WHERE t.session_id = ${sessionId}
           AND t.round = (
             SELECT MAX(u.round) FROM stop_targets u
             WHERE u.stop_id = t.stop_id AND u.session_id = t.session_id
+          )
+          AND (
+            (t.stopped_at IS NULL AND t.sent_at IS NOT NULL)
+            OR (t.stopped_at IS NOT NULL AND t.stop_id = ${fencedBy})
           )
       `;
       for (const target of targets) {
@@ -99,7 +113,7 @@ export const stopTargets = (sql: SqlClient.SqlClient) => {
      * the bot in private.
      */
     wakesAfterStop: Effect.fn("stopTargets.wakesAfterStop")(function* (
-      sessionId: string,
+      sessionId: SessionRowId,
       audience: Audience,
     ) {
       const stop = yield* latestStop(sessionId).pipe(Effect.orDie);
@@ -113,7 +127,7 @@ export const stopTargets = (sql: SqlClient.SqlClient) => {
 
     /** Whether a Stop recorded since `since` reached the session in the dispatch's scope. */
     stoppedSince: Effect.fn("stopTargets.stoppedSince")(function* (
-      sessionId: string,
+      sessionId: SessionRowId,
       since: DateTime.Utc,
       audience: Audience,
     ) {

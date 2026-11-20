@@ -29,8 +29,15 @@ import * as SqlSchema from "effect/sql/SqlSchema";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
 import { Entries } from "../entries/Entries.ts";
 import { json, Time, timeText } from "../persistence/columns.ts";
-import { transactional } from "../persistence/transaction.ts";
-import { AudienceColumn, audienceOf, StoredResponse } from "./model.ts";
+import { Ids } from "../Ids.ts";
+import { keyedLock } from "./keyedLock.ts";
+import {
+  AudienceColumn,
+  audienceOf,
+  SessionRowId,
+  StoredResponse,
+  TurnsInvariant,
+} from "./model.ts";
 import { Observer } from "./Observer.ts";
 import { Signals } from "./Signals.ts";
 import { Wakes } from "./Wakes.ts";
@@ -52,7 +59,7 @@ const AskCardRow = Schema.Struct({
 
 const RequestRow = Schema.Struct({
   entry_id: EntryId,
-  session_id: Schema.String,
+  session_id: SessionRowId,
   engine_session_id: Schema.NullOr(SessionId),
   engine_request_id: RequestId,
   closed_at: Schema.NullOr(Time),
@@ -147,8 +154,8 @@ export const layer = Layer.effect(
   Cards,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    const transaction = transactional(sql);
     const engine = yield* Engine;
+    const ids = yield* Ids;
     const entries = yield* Entries;
     const receipts = yield* CommandReceipts;
     const observer = yield* Observer;
@@ -198,7 +205,9 @@ export const layer = Layer.effect(
             ? { _tag: "answered", answers: answer.answers }
             : { _tag: "dismissed" },
       });
-      if (card.author._tag !== "bot") return yield* Effect.die("An ask card is a bot's");
+      if (card.author._tag !== "bot") {
+        return yield* Effect.die(new TurnsInvariant({ invariant: "An ask card is a bot's" }));
+      }
       const [wakeId] = yield* wakes.record([
         {
           botId: card.author.botId,
@@ -235,8 +244,8 @@ export const layer = Layer.effect(
       if (response === "closed") return yield* new Conflict({ reason: "card-closed" });
       if (response === "invalid") return yield* new Invalid({ reason: "answer" });
       yield* sql`
-        UPDATE engine_requests SET response_key = ${commandId},
-          response_json = ${yield* encodeResponse(response).pipe(Effect.orDie)}
+        UPDATE engine_requests
+        SET response_json = ${yield* encodeResponse(response).pipe(Effect.orDie)}
         WHERE entry_id = ${entryId}
       `.pipe(Effect.orDie);
       yield* sql.afterCommit(signals.responses.fire);
@@ -319,10 +328,19 @@ export const layer = Layer.effect(
         .pipe(Effect.mapError(() => new Conflict({ reason: "engine-unavailable" })));
     });
 
-    const clearMarker = (entryId: EntryId) =>
-      sql`DELETE FROM secret_submissions WHERE entry_id = ${entryId}`.pipe(Effect.orDie);
+    /**
+     * Each card's secret lifecycle runs alone: a submission, and the startup
+     * check of an earlier one, never interleave on one card. The marker names
+     * its submission too, so a cleanup removes only the marker it read.
+     */
+    const perCard = keyedLock();
 
-    const provideSecret = Effect.fn("Cards.provideSecret")(function* (input: {
+    const clearMarker = (entryId: EntryId, submissionId: string) =>
+      sql`
+        DELETE FROM secret_submissions WHERE entry_id = ${entryId} AND submission_id = ${submissionId}
+      `.pipe(Effect.orDie);
+
+    const submit = Effect.fn("Cards.submit")(function* (input: {
       readonly entryId: EntryId;
       readonly answer: SecretAnswer;
     }) {
@@ -334,57 +352,62 @@ export const layer = Layer.effect(
       }
       const sessionId = row.engine_session_id;
       if (sessionId === null) return yield* new Conflict({ reason: "card-closed" });
+      const submissionId = yield* ids.make("submission");
       yield* sql`
-        INSERT INTO secret_submissions (entry_id, submitted_at)
-        VALUES (${input.entryId}, ${timeText(yield* DateTime.now)})
-        ON CONFLICT (entry_id) DO UPDATE SET submitted_at = excluded.submitted_at
+        INSERT INTO secret_submissions (entry_id, submission_id, submitted_at)
+        VALUES (${input.entryId}, ${submissionId}, ${timeText(yield* DateTime.now)})
+        ON CONFLICT (entry_id) DO UPDATE
+        SET submission_id = excluded.submission_id, submitted_at = excluded.submitted_at
       `.pipe(Effect.orDie);
+      const cleared = clearMarker(input.entryId, submissionId);
       yield* engine
         .respondSecret({ sessionId, requestId: row.engine_request_id, answer: input.answer })
         .pipe(
-          Effect.tap(() => clearMarker(input.entryId)),
+          Effect.tap(() => cleared),
           Effect.catchTags({
             // Another answer, or the turn's end, closed it first.
-            RequestClosed: () =>
-              Effect.andThen(clearMarker(input.entryId), new Conflict({ reason: "card-closed" })),
-            SessionNotFound: () =>
-              Effect.andThen(clearMarker(input.entryId), new Conflict({ reason: "card-closed" })),
+            RequestClosed: () => Effect.andThen(cleared, new Conflict({ reason: "card-closed" })),
+            SessionNotFound: () => Effect.andThen(cleared, new Conflict({ reason: "card-closed" })),
             // Nothing was sent.
             EngineUnavailable: () =>
-              Effect.andThen(
-                clearMarker(input.entryId),
-                new Conflict({ reason: "engine-unavailable" }),
-              ),
+              Effect.andThen(cleared, new Conflict({ reason: "engine-unavailable" })),
             EngineIncompatible: () =>
-              Effect.andThen(
-                clearMarker(input.entryId),
-                new Conflict({ reason: "engine-unavailable" }),
-              ),
+              Effect.andThen(cleared, new Conflict({ reason: "engine-unavailable" })),
             // It may have landed: the marker stays, and the next call learns.
             EngineIndeterminate: () => new Conflict({ reason: "engine-unavailable" }),
           }),
         );
     });
 
+    const provideSecret = (input: { readonly entryId: EntryId; readonly answer: SecretAnswer }) =>
+      perCard(input.entryId)(submit(input));
+
     const markers = SqlSchema.findAll({
       Request: Schema.Void,
-      Result: Schema.Struct({ entry_id: EntryId }),
-      execute: () => sql`SELECT entry_id FROM secret_submissions`,
+      Result: Schema.Struct({ entry_id: EntryId, submission_id: Schema.String }),
+      execute: () => sql`SELECT entry_id, submission_id FROM secret_submissions`,
+    });
+
+    /** Settles one marker left by a submission whose answer was lost. */
+    const checkSubmission = Effect.fn("Cards.checkSubmission")(function* (
+      entryId: EntryId,
+      submissionId: string,
+    ) {
+      const row = yield* requestOf(entryId).pipe(Effect.orDie);
+      if (Option.isNone(row)) return;
+      // Bounded: `synchronize` fails at its deadline, and the marker stays.
+      const learned = yield* learn(row.value).pipe(Effect.option);
+      if (Option.isNone(learned)) return;
+      // Applying the events closed it if it closed; one still open takes a value again.
+      const now = yield* requestOf(entryId).pipe(Effect.orDie);
+      if (Option.isSome(now) && now.value.closed_at === null) {
+        yield* clearMarker(entryId, submissionId);
+      }
     });
 
     const checkSubmissions = Effect.gen(function* () {
-      for (const { entry_id } of yield* markers(undefined).pipe(Effect.orDie)) {
-        const row = yield* requestOf(entry_id).pipe(Effect.orDie);
-        if (Option.isNone(row)) continue;
-        const learned = yield* learn(row.value).pipe(Effect.option);
-        if (Option.isNone(learned)) continue;
-        // Applying the events closed it if it closed; one still open takes a value again.
-        yield* transaction(
-          Effect.gen(function* () {
-            const now = yield* requestOf(entry_id).pipe(Effect.orDie);
-            if (Option.isSome(now) && now.value.closed_at === null) yield* clearMarker(entry_id);
-          }),
-        ).pipe(Effect.orDie);
+      for (const { entry_id, submission_id } of yield* markers(undefined).pipe(Effect.orDie)) {
+        yield* perCard(entry_id)(checkSubmission(entry_id, submission_id));
       }
     }).pipe(Effect.withSpan("Cards.checkSubmissions"));
 

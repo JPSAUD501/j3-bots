@@ -31,11 +31,14 @@ import { Ledger } from "./Ledger.ts";
 import { liveTarget } from "./liveTarget.ts";
 import { mediaTypeOf } from "./mediaTypes.ts";
 import {
+  ADMISSION_DEADLINE,
   type Audience,
   AudienceColumn,
   audienceColumns,
   audienceOf,
   conversation,
+  DispatchRowId,
+  SessionRowId,
 } from "./model.ts";
 import { Observer } from "./Observer.ts";
 
@@ -46,7 +49,7 @@ const MATCH_WITHIN = Duration.seconds(2);
 /** A request pinned to the engine's record of its call, and so to a turn and an audience. */
 interface Pin {
   readonly requestId: string;
-  readonly sessionId: string;
+  readonly sessionId: SessionRowId;
   readonly botId: BotId;
   readonly turnId: TurnId;
   readonly callId: string;
@@ -61,7 +64,7 @@ const Candidate = Schema.Struct({
 });
 
 const CallKey = Schema.Struct({
-  sessionId: Schema.String,
+  sessionId: SessionRowId,
   tool: Schema.String,
   digest: ToolInputDigest,
 });
@@ -69,6 +72,13 @@ const CallKey = Schema.Struct({
 const StoredResult = Schema.Struct({ result_json: Schema.NullOr(json(Schema.Json)) });
 
 const encodeResult = Schema.encodeEffect(json(Schema.Json));
+
+/** A file a `say` attaches, read from the workspace and stored once the request is pinned. */
+interface WorkspaceFile {
+  readonly name: string;
+  readonly mediaType: string;
+  readonly bytes: Uint8Array;
+}
 
 /**
  * `say` and `ask`: the turn tools that speak (`docs/architecture/server.md`,
@@ -133,12 +143,13 @@ export const layer = Layer.effect(
      * bounded number of times.
      */
     const match = Effect.fn("Speech.match")(function* (call: TurnToolCall, caller: BotSession) {
-      const session = yield* engineSessionOf(caller.id).pipe(Effect.orDie);
+      const sessionId = SessionRowId.make(caller.id);
+      const session = yield* engineSessionOf(sessionId).pipe(Effect.orDie);
       if (Option.isNone(session)) return yield* new TurnEnded();
       const digest = yield* toolInputDigest(call.arguments);
       const started = yield* DateTime.now;
       for (let attempt = 0; attempt <= MATCH_RETRIES; attempt++) {
-        yield* observer.synchronize(caller.id, session.value.engine_session_id).pipe(
+        yield* observer.synchronize(sessionId, session.value.engine_session_id).pipe(
           Effect.catchTags({
             SessionNotFound: () => new TurnEnded(),
             // Nothing is pinned: the bridge forwards the request again.
@@ -147,13 +158,11 @@ export const layer = Layer.effect(
             EngineIncompatible: () => new TurnToolRetry(),
           }),
         );
-        const found = yield* candidate({ sessionId: caller.id, tool: call.tool, digest }).pipe(
-          Effect.orDie,
-        );
+        const found = yield* candidate({ sessionId, tool: call.tool, digest }).pipe(Effect.orDie);
         if (Option.isSome(found)) {
           return {
             requestId: call.requestId,
-            sessionId: caller.id,
+            sessionId,
             botId: caller.botId,
             turnId: found.value.engine_turn_id,
             callId: found.value.engine_call_id,
@@ -166,16 +175,38 @@ export const layer = Layer.effect(
       return yield* new TurnEnded();
     });
 
+    /** The call is still open in the session's admitted turn, and that turn has not finished. */
+    const stillAdmitted = (found: Pin) =>
+      sql<{ readonly n: number }>`
+        SELECT COUNT(*) AS n FROM engine_tool_calls c
+        JOIN sessions s ON s.id = c.session_id AND s.admitted_turn_id = c.engine_turn_id
+        JOIN turns t ON t.session_id = c.session_id AND t.engine_turn_id = c.engine_turn_id
+        WHERE c.session_id = ${found.sessionId} AND c.engine_call_id = ${found.callId}
+          AND c.engine_turn_id = ${found.turnId} AND c.open = 1 AND t.finished_at IS NULL
+          AND s.retired_at IS NULL AND s.lost_at IS NULL
+      `.pipe(
+        Effect.orDie,
+        Effect.map(([row]) => (row?.n ?? 0) > 0),
+      );
+
     /**
-     * Pins the request in the caller's transaction: the call must still be
-     * unclaimed, since another request may have matched it meanwhile.
+     * Admits the request in the caller's transaction, from what is committed
+     * there and not from what `match` read: the call must still be open and
+     * unclaimed in the running admitted turn, and the room the turn speaks
+     * for still live (also for a `say` to the operator, which a room's work
+     * makes). A retry of a request already admitted gets its stored result.
      */
     const pin = Effect.fn("Speech.pin")(function* (tool: "say" | "ask", found: Pin) {
+      const stored = yield* storedResult(found.requestId).pipe(Effect.orDie);
+      if (Option.isSome(stored) && stored.value.result_json !== null) {
+        return { _tag: "stored", result: stored.value.result_json } as const;
+      }
       const claimed = yield* sql`
         SELECT 1 FROM tool_calls WHERE session_id = ${found.sessionId}
           AND engine_call_id = ${found.callId}
       `.pipe(Effect.orDie);
-      if (claimed.length > 0) return yield* new TurnEnded();
+      if (claimed.length > 0 || !(yield* stillAdmitted(found))) return yield* new TurnEnded();
+      yield* requireTarget(found.botId, found.audience);
       const columns = audienceColumns(found.audience);
       yield* sql`
         INSERT INTO tool_calls (
@@ -186,15 +217,21 @@ export const layer = Layer.effect(
           ${columns.audience}, ${columns.roomId}, ${tool}, ${timeText(yield* DateTime.now)}
         )
       `.pipe(Effect.orDie);
+      return { _tag: "pinned" } as const;
     });
 
     /** The dispatches the pinned turn delivers: its owner and the steers riding it. */
-    const turnDispatches = (found: Pin) =>
-      sql<{ readonly id: string }>`
+    const turnDispatches = SqlSchema.findAll({
+      Request: Schema.Struct({ sessionId: SessionRowId, turnId: TurnId }),
+      Result: Schema.Struct({ id: DispatchRowId }),
+      execute: ({ sessionId, turnId }) => sql`
         SELECT id FROM dispatches
-        WHERE session_id = ${found.sessionId} AND engine_turn_id = ${found.turnId}
+        WHERE session_id = ${sessionId} AND engine_turn_id = ${turnId}
           AND status IN ('accepted', 'delivered')
-      `.pipe(Effect.orDie);
+      `,
+    });
+    const deliveredBy = (found: Pin) =>
+      turnDispatches({ sessionId: found.sessionId, turnId: found.turnId }).pipe(Effect.orDie);
 
     /** How far from the operator the wake behind the turn came. */
     const hopsOf = (found: Pin) =>
@@ -217,9 +254,10 @@ export const layer = Layer.effect(
     });
 
     /**
-     * Copies the files a `say` attaches from the bot's workspace into the
-     * attachment store, so the operator can open them after the bot changes
-     * or removes its copy. Paths outside the workspace are refused.
+     * Reads the files a `say` attaches from the bot's workspace; they are
+     * copied into the attachment store once the request is admitted, so the
+     * operator can open them after the bot changes or removes its copy. Paths
+     * outside the workspace, and empty files, are refused.
      */
     const workspaceFiles = Effect.fn("Speech.workspaceFiles")(function* (
       botId: BotId,
@@ -230,7 +268,7 @@ export const layer = Layer.effect(
       if (Option.isNone(bot)) return yield* new TurnEnded();
       const refuse = (reason: string) => new TurnToolRefused({ reason });
       const root = yield* fs.realPath(bot.value.workspacePath).pipe(Effect.orDie);
-      const files: Array<Attachment> = [];
+      const files: Array<WorkspaceFile> = [];
       for (const given of paths) {
         if (/^[a-z][a-z0-9+.-]*:\/\//i.test(given)) {
           return yield* refuse(
@@ -247,11 +285,9 @@ export const layer = Layer.effect(
         const bytes = yield* fs
           .readFile(real)
           .pipe(Effect.mapError(() => refuse(`${given} could not be read.`)));
+        if (bytes.length === 0) return yield* refuse(`${given} cannot be attached: it is empty.`);
         const name = path.basename(real);
-        const stored = yield* attachments
-          .store({ name, mediaType: mediaTypeOf(name), bytes, bot: botId })
-          .pipe(Effect.mapError(() => refuse(`${given} cannot be attached: it is empty.`)));
-        files.push(stored);
+        files.push({ name, mediaType: mediaTypeOf(name), bytes });
       }
       return files;
     });
@@ -259,11 +295,24 @@ export const layer = Layer.effect(
     const say = Effect.fn("Speech.say")(function* (found: Pin, input: ToolInput<"say">) {
       // `to: "dm"` speaks to the operator in private, also from a room turn.
       const audience = input.to === "dm" ? conversation : found.audience;
-      const target = yield* requireTarget(found.botId, audience);
-      const files = yield* workspaceFiles(found.botId, input.attachments ?? []);
+      const read = yield* workspaceFiles(found.botId, input.attachments ?? []);
       return yield* transaction(
         Effect.gen(function* () {
-          yield* pin("say", found);
+          const pinned = yield* pin("say", found);
+          if (pinned._tag === "stored") return pinned.result;
+          const target = yield* requireTarget(found.botId, audience);
+          const files: Array<Attachment> = [];
+          for (const file of read) {
+            files.push(
+              yield* attachments
+                .store({ ...file, bot: found.botId })
+                .pipe(
+                  Effect.mapError(
+                    () => new TurnToolRefused({ reason: `${file.name} cannot be attached.` }),
+                  ),
+                ),
+            );
+          }
           const entry = yield* entries.append({
             target,
             entry: {
@@ -294,8 +343,7 @@ export const layer = Layer.effect(
             });
           }
           if (input.done === true) {
-            for (const { id } of yield* turnDispatches(found))
-              yield* ledger.closeDelivery(id, "done");
+            for (const { id } of yield* deliveredBy(found)) yield* ledger.closeDelivery(id, "done");
           }
           const result = { status: "recorded" } satisfies Schema.Json;
           yield* store(found, result);
@@ -305,7 +353,6 @@ export const layer = Layer.effect(
     });
 
     const ask = Effect.fn("Speech.ask")(function* (found: Pin, input: ToolInput<"ask">) {
-      const target = yield* requireTarget(found.botId, found.audience);
       const options = input.options.map((option, index) => ({
         id: `option-${index + 1}`,
         label: option.label,
@@ -317,7 +364,9 @@ export const layer = Layer.effect(
       );
       return yield* transaction(
         Effect.gen(function* () {
-          yield* pin("ask", found);
+          const pinned = yield* pin("ask", found);
+          if (pinned._tag === "stored") return pinned.result;
+          const target = yield* requireTarget(found.botId, found.audience);
           const card = yield* entries.append({
             target,
             entry: {
@@ -351,7 +400,7 @@ export const layer = Layer.effect(
             )
           `.pipe(Effect.orDie);
           // The bot ends its turn after asking; the answer wakes it again.
-          for (const { id } of yield* turnDispatches(found)) yield* ledger.closeDelivery(id, "ask");
+          for (const { id } of yield* deliveredBy(found)) yield* ledger.closeDelivery(id, "ask");
           const result = {
             status: "asked",
             note: "Your user's answer arrives as your next turn. End this turn now.",
@@ -386,6 +435,20 @@ export const layer = Layer.effect(
       return call.tool === "say" ? yield* say(found, call.input) : yield* ask(found, call.input);
     });
 
-    return TurnTools.of({ call });
+    /**
+     * Admission has an end-to-end deadline: past it nothing was admitted (an
+     * interrupted transaction commits nothing) and the bridge forwards the
+     * request again, which returns the stored result if the admission did
+     * commit.
+     */
+    const admitted = (request: TurnToolCall) =>
+      call(request).pipe(
+        Effect.timeoutOrElse({
+          duration: ADMISSION_DEADLINE,
+          orElse: () => Effect.fail(new TurnToolRetry()),
+        }),
+      );
+
+    return TurnTools.of({ call: admitted });
   }),
 );

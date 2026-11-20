@@ -61,7 +61,7 @@ export const layer = Layer.effect(
       Result: Card,
       execute: (botId) => sql`
         SELECT r.entry_id FROM engine_requests r JOIN sessions s ON s.id = r.session_id
-        WHERE s.bot_id = ${botId} AND r.closed_at IS NULL
+        WHERE s.bot_id = ${botId} AND s.lost_at IS NULL AND r.closed_at IS NULL
         ORDER BY r.rowid LIMIT 1
       `,
     });
@@ -73,17 +73,21 @@ export const layer = Layer.effect(
         SELECT t.started_at, t.last_activity_at, t.work_fold_entry_id
         FROM sessions s JOIN turns t
           ON t.session_id = s.id AND t.engine_turn_id = s.admitted_turn_id
-        WHERE s.bot_id = ${botId} AND t.finished_at IS NULL
+        WHERE s.bot_id = ${botId} AND s.lost_at IS NULL AND t.finished_at IS NULL
         ORDER BY t.started_at DESC LIMIT 1
       `,
     });
 
-    const latestStep = SqlSchema.findOneOption({
+    /**
+     * The step the roster shows: the newest one still running, since steps run
+     * in parallel and a later one may finish first; else the newest.
+     */
+    const shownStep = SqlSchema.findOneOption({
       Request: EntryId,
       Result: StepRow,
       execute: (foldId) => sql`
         SELECT step_json FROM work_steps WHERE entry_id = ${foldId}
-        ORDER BY position DESC LIMIT 1
+        ORDER BY json_extract(step_json, '$.status') = 'running' DESC, position DESC LIMIT 1
       `,
     });
 
@@ -126,7 +130,7 @@ export const layer = Layer.effect(
         );
         const since = turn.value.started_at;
         const fold = turn.value.work_fold_entry_id;
-        const step = fold === null ? Option.none() : yield* latestStep(fold);
+        const step = fold === null ? Option.none() : yield* shownStep(fold);
         if (Option.isNone(step)) return { _tag: "thinking", since, stalled } as const;
         const latest = step.value.step_json;
         return {
@@ -170,7 +174,7 @@ export const layer = Layer.effect(
       execute: (before) => sql`
         SELECT DISTINCT s.bot_id FROM sessions s JOIN turns t
           ON t.session_id = s.id AND t.engine_turn_id = s.admitted_turn_id
-        WHERE t.finished_at IS NULL AND t.last_activity_at < ${before}
+        WHERE s.lost_at IS NULL AND t.finished_at IS NULL AND t.last_activity_at < ${before}
       `,
     });
 

@@ -3,11 +3,12 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
 // What the turn machinery needs beyond the initial schema: the entry a wake
-// came from and the wake it retries, the recovery bound of a dispatch and how
-// its delivery closed, the turns a session's events showed, their work steps
-// and `j3` tool calls, host speech already delivered, open cards, an
-// operator's answer still to reach the engine, and a submitted secret whose
-// answer was lost. See `docs/architecture/server.md`.
+// came from and the wake it retries, the recovery bound of a dispatch, its
+// staging retries and how its delivery closed, when a Stop round was sent and
+// observed, a session the engine no longer has, the turns a session's events
+// showed, their work steps and `j3` tool calls, host speech already
+// delivered, open cards, an operator's answer still to reach the engine, and
+// a submitted secret whose answer was lost. See `docs/architecture/server.md`.
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -27,14 +28,31 @@ export default Effect.gen(function* () {
   // finishes with none wakes the bot once more (`undelivered`).
   yield* sql`ALTER TABLE dispatches ADD COLUMN indeterminate_answers INTEGER NOT NULL DEFAULT 0`;
   yield* sql`ALTER TABLE dispatches ADD COLUMN next_attempt_at TEXT`;
+  // How many times staging its files failed before its first send. Nothing was
+  // sent then, so the dispatch fails as `rejected` once the bound is reached.
+  yield* sql`
+    ALTER TABLE dispatches ADD COLUMN staging_failures INTEGER NOT NULL DEFAULT 0
+      CHECK (staging_failures >= 0)
+  `;
   yield* sql`
     ALTER TABLE dispatches ADD COLUMN closed_by TEXT
       CHECK (closed_by IN ('done', 'ask', 'handoff'))
   `;
 
-  // When a Stop round was sent. A round is sent once, then again only after a
-  // restart of either process, before the session's events are opened.
+  // When a Stop round was acknowledged (`sent_at`), and when the session's
+  // events were caught up past that acknowledgment (`observed_at`, from a
+  // `synchronized` marker requested after it). A target is confirmed only from
+  // events applied once its latest round is observed. A restart sends the
+  // latest round again, with the same key, and observes it anew.
   yield* sql`ALTER TABLE stop_targets ADD COLUMN sent_at TEXT`;
+  yield* sql`
+    ALTER TABLE stop_targets ADD COLUMN observed_at TEXT
+      CHECK (observed_at IS NULL OR sent_at IS NOT NULL)
+  `;
+
+  // When the engine answered that it has no such session. Nothing is planned
+  // into it or watched there again; part 2b gives the bot a new one.
+  yield* sql`ALTER TABLE sessions ADD COLUMN lost_at TEXT`;
 
   // Every turn the session's events showed starting, with the audience it was
   // admitted with, applied once by its engine id: a replacement that repeats
@@ -100,17 +118,19 @@ export default Effect.gen(function* () {
   yield* sql`ALTER TABLE ask_cards ADD COLUMN closed_at TEXT`;
   yield* sql`ALTER TABLE engine_requests ADD COLUMN closed_at TEXT`;
   // The operator's answer to an approval or an engine question, written before
-  // it is sent, under the answering command's key, so it reaches the engine
-  // after a lost reply or a restart.
-  yield* sql`ALTER TABLE engine_requests ADD COLUMN response_key TEXT`;
+  // it is sent, so it reaches the engine after a lost reply or a restart. It is
+  // sent under a key derived from the card, so one card takes one answer.
   yield* sql`ALTER TABLE engine_requests ADD COLUMN response_json TEXT`;
 
   // A `secret.provide` whose answer did not come back. It holds no value: only
   // that a submission may have reached the engine, so a later call learns the
   // card's state from the engine before it sends anything, also after a restart.
+  // `submission_id` is opaque and new for every submission: a marker is
+  // cleared only by the submission, or the check, that read that id.
   yield* sql`
     CREATE TABLE secret_submissions (
       entry_id TEXT PRIMARY KEY REFERENCES entries (id) ON DELETE CASCADE,
+      submission_id TEXT NOT NULL,
       submitted_at TEXT NOT NULL
     )
   `;

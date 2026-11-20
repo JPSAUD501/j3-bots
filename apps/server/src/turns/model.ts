@@ -10,8 +10,27 @@ import {
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 
-// The shapes the turn machinery shares: audiences, wake payloads, and the rows
-// it reads back from the database, decoded like any other boundary.
+// The shapes the turn machinery shares: row ids, audiences, wake payloads, and
+// the rows it reads back from the database, decoded like any other boundary.
+
+/**
+ * J3 Bots' own id of a dispatch row, which is also the dispatch's engine key.
+ * Branded so it is never mixed with an engine id.
+ */
+export const DispatchRowId = Schema.String.pipe(Schema.brand("DispatchRowId"));
+export type DispatchRowId = typeof DispatchRowId.Type;
+
+/** J3 Bots' own id of a session row; the engine's id for it is a `SessionId`. */
+export const SessionRowId = Schema.String.pipe(Schema.brand("SessionRowId"));
+export type SessionRowId = typeof SessionRowId.Type;
+
+/**
+ * A broken invariant of the turn machinery: a bug, never a state a caller
+ * handles. Raised as a defect.
+ */
+export class TurnsInvariant extends Schema.TaggedError<TurnsInvariant>()("TurnsInvariant", {
+  invariant: Schema.String,
+}) {}
 
 /**
  * Where a turn's speech goes: the bot's own conversation, or one room. A room
@@ -70,7 +89,7 @@ export const WakePayload = Schema.Union([
   /** The operator's answer to an `ask` card, read from the card. */
   Schema.TaggedStruct("answer", { cardId: EntryId }),
   /** The `user` dispatch this one follows up, whose turn delivered nothing. */
-  Schema.TaggedStruct("undelivered", { dispatchId: Schema.String }),
+  Schema.TaggedStruct("undelivered", { dispatchId: DispatchRowId }),
 ]);
 export type WakePayload = typeof WakePayload.Type;
 
@@ -123,6 +142,21 @@ export const MAX_INDETERMINATE_ANSWERS = 10;
 
 /** A dispatch older than this fails as `unresolved` instead of being recovered. */
 export const RECOVERY_WINDOW = Duration.days(1);
+
+/** How many times staging a dispatch's files may fail before it fails as `rejected`. */
+export const MAX_STAGING_FAILURES = 5;
+
+/**
+ * How long a loop that found the engine unreachable waits for a readiness
+ * change before it looks again anyway: the engine's status can trail it.
+ */
+export const UNAVAILABLE_RETRY = Duration.seconds(30);
+
+/** The longest a `synchronize` waits for its marker before it fails retryably. */
+export const SYNC_DEADLINE = Duration.seconds(10);
+
+/** The longest a bot tool request spends being matched to its call. */
+export const ADMISSION_DEADLINE = Duration.seconds(15);
 
 /** A turn with no activity for this long is shown as possibly stalled. */
 export const STALL_AFTER = Duration.minutes(10);

@@ -13,7 +13,9 @@ import { Entries } from "../entries/Entries.ts";
 import { json, Time, timeText } from "../persistence/columns.ts";
 import {
   AudienceColumn,
+  DispatchRowId,
   DispatchStatus,
+  SessionRowId,
   WakeFailure,
   WakeKind,
   WakePayload,
@@ -21,9 +23,9 @@ import {
 } from "./model.ts";
 
 export const DispatchRow = Schema.Struct({
-  id: Schema.String,
+  id: DispatchRowId,
   bot_id: BotId,
-  session_id: Schema.String,
+  session_id: SessionRowId,
   audience: AudienceColumn,
   audience_room_id: Schema.NullOr(RoomId),
   delivery: Schema.Literals(["start", "steer"]),
@@ -38,6 +40,7 @@ export const DispatchRow = Schema.Struct({
   outcome_json: Schema.NullOr(json(TurnOutcome)),
   attempts: Schema.Int,
   indeterminate_answers: Schema.Int,
+  staging_failures: Schema.Int,
   next_attempt_at: Schema.NullOr(Time),
   closed_by: Schema.NullOr(Schema.Literals(["done", "ask", "handoff"])),
   created_at: Time,
@@ -47,7 +50,8 @@ export type DispatchRow = typeof DispatchRow.Type;
 export const DISPATCH_COLUMNS = `
   id, bot_id, session_id, audience, audience_room_id, delivery, steer_turn_id, fresh_context,
   envelope, status, disposition, engine_turn_id, continuation_resumes_at, fenced_by_stop_id,
-  outcome_json, attempts, indeterminate_answers, next_attempt_at, closed_by, created_at
+  outcome_json, attempts, indeterminate_answers, staging_failures, next_attempt_at, closed_by,
+  created_at
 `;
 
 export const WakeRow = Schema.Struct({
@@ -89,39 +93,57 @@ const sameDelivery = (a: MessageDelivery, b: MessageDelivery): boolean =>
 export class Ledger extends Context.Service<
   Ledger,
   {
-    readonly find: (dispatchId: string) => Effect.Effect<Option.Option<DispatchRow>>;
-    readonly wakesOf: (dispatchId: string) => Effect.Effect<ReadonlyArray<WakeRow>>;
-    /** The engine took the key. A first answer's disposition is kept, and only the first. */
+    readonly find: (dispatchId: DispatchRowId) => Effect.Effect<Option.Option<DispatchRow>>;
+    readonly wakesOf: (dispatchId: DispatchRowId) => Effect.Effect<ReadonlyArray<WakeRow>>;
+    /**
+     * The engine took the key: an undecided dispatch, or a failed one the
+     * engine turns out to have applied, becomes accepted. A first answer's
+     * disposition is kept, and only the first, on a dispatch the engine has.
+     */
     readonly accept: (
-      dispatchId: string,
+      dispatchId: DispatchRowId,
       disposition: DispatchDisposition | null,
     ) => Effect.Effect<void>;
     /** Its turn started (or, for a steer, it was taken): also after it failed, which a late delivery undoes. */
-    readonly deliver: (dispatchId: string, turnId: TurnId) => Effect.Effect<void>;
+    readonly deliver: (dispatchId: DispatchRowId, turnId: TurnId) => Effect.Effect<void>;
     /** Its work is over, with the turn's outcome; its wakes finish. */
-    readonly finish: (dispatchId: string, outcome: TurnOutcome) => Effect.Effect<void>;
+    readonly finish: (dispatchId: DispatchRowId, outcome: TurnOutcome) => Effect.Effect<void>;
     /**
-     * The bot closed the delivery of the turn it was delivered by (`say` with
-     * `done`, or `ask`): its wakes are finished, and no `undelivered` wake
-     * follows its turn. The dispatch itself finishes with that turn.
+     * The bot closed the delivery of the turn a delivered dispatch owns (`say`
+     * with `done`, or `ask`): its wakes are finished, and no `undelivered`
+     * wake follows its turn. The dispatch itself finishes with that turn.
      */
-    readonly closeDelivery: (dispatchId: string, by: "done" | "ask") => Effect.Effect<void>;
+    readonly closeDelivery: (dispatchId: DispatchRowId, by: "done" | "ask") => Effect.Effect<void>;
     /** Delivered, with the turn's work not over: the engine will continue it at `resumesAt`. */
     readonly awaitContinuation: (
-      dispatchId: string,
+      dispatchId: DispatchRowId,
       outcome: TurnOutcome,
       resumesAt: DateTime.Utc,
     ) => Effect.Effect<void>;
-    /** A Stop ended it before delivery. */
-    readonly drop: (dispatchId: string, wakes: WakesAfter) => Effect.Effect<void>;
-    /** The engine certainly applied nothing: it may be sent again as new dispatches. */
-    readonly release: (dispatchId: string, wakes: WakesAfter) => Effect.Effect<void>;
-    /** It will not be delivered. Terminal, until a late delivery shows otherwise. */
+    /**
+     * A Stop ended it in the engine before delivery: a cancelled waiting turn
+     * (`turnId`), a dropped steer (the turn it was to ride). Whether it was
+     * still the engine's to drop.
+     */
+    readonly drop: (
+      dispatchId: DispatchRowId,
+      turnId: TurnId,
+      wakes: WakesAfter,
+    ) => Effect.Effect<boolean>;
+    /**
+     * The engine certainly applied nothing: it may be sent again as new
+     * dispatches. Whether it was still undecided.
+     */
+    readonly release: (dispatchId: DispatchRowId, wakes: WakesAfter) => Effect.Effect<boolean>;
+    /**
+     * It will not be delivered. Terminal, until a late delivery shows
+     * otherwise. Whether it was still undecided.
+     */
     readonly fail: (
-      dispatchId: string,
+      dispatchId: DispatchRowId,
       reason: "rejected" | "unresolved",
       wakes: WakesAfter,
-    ) => Effect.Effect<void>;
+    ) => Effect.Effect<boolean>;
     /** Pending wakes stop waiting: a Stop or an archival ended what they asked for. */
     readonly cancelWakes: (wakeIds: ReadonlyArray<string>) => Effect.Effect<void>;
     /** Shows the delivery of each message the wakes came from, as their wakes now stand. */
@@ -136,26 +158,26 @@ export const layer = Layer.effect(
     const entries = yield* Entries;
 
     const findRow = SqlSchema.findOneOption({
-      Request: Schema.String,
+      Request: DispatchRowId,
       Result: DispatchRow,
       execute: (id) =>
         sql`SELECT ${sql.literal(DISPATCH_COLUMNS)} FROM dispatches WHERE id = ${id}`,
     });
-    const find = (dispatchId: string) => findRow(dispatchId).pipe(Effect.orDie);
+    const find = (dispatchId: DispatchRowId) => findRow(dispatchId).pipe(Effect.orDie);
 
     const wakeRows = SqlSchema.findAll({
-      Request: Schema.String,
+      Request: DispatchRowId,
       Result: WakeRow,
       execute: (id) => sql`
         SELECT ${sql.literal(WAKE_COLUMNS)} FROM wakes WHERE dispatch_id = ${id}
         ORDER BY priority, rowid
       `,
     });
-    const wakesOf = (dispatchId: string) => wakeRows(dispatchId).pipe(Effect.orDie);
+    const wakesOf = (dispatchId: DispatchRowId) => wakeRows(dispatchId).pipe(Effect.orDie);
 
     const now = Effect.map(DateTime.now, timeText);
 
-    const sourcesOf = Effect.fn("Ledger.sourcesOf")(function* (dispatchId: string) {
+    const sourcesOf = Effect.fn("Ledger.sourcesOf")(function* (dispatchId: DispatchRowId) {
       const rows = yield* sql<{ readonly source_entry_id: string }>`
         SELECT DISTINCT source_entry_id FROM wakes
         WHERE dispatch_id = ${dispatchId} AND source_entry_id IS NOT NULL
@@ -218,7 +240,7 @@ export const layer = Layer.effect(
     });
 
     const setWakes = Effect.fn("Ledger.setWakes")(function* (
-      dispatchId: string,
+      dispatchId: DispatchRowId,
       after: WakesAfter,
     ) {
       const at = yield* now;
@@ -248,13 +270,15 @@ export const layer = Layer.effect(
     }, Effect.orDie);
 
     /** The catch-up notes and held messages its envelope carried go to the next one. */
-    const returnConsumed = Effect.fn("Ledger.returnConsumed")(function* (dispatchId: string) {
+    const returnConsumed = Effect.fn("Ledger.returnConsumed")(function* (
+      dispatchId: DispatchRowId,
+    ) {
       yield* sql`UPDATE catch_up_notes SET consumed_dispatch_id = NULL WHERE consumed_dispatch_id = ${dispatchId}`;
       yield* sql`UPDATE held_messages SET consumed_dispatch_id = NULL WHERE consumed_dispatch_id = ${dispatchId}`;
     }, Effect.orDie);
 
     const accept = Effect.fn("Ledger.accept")(function* (
-      dispatchId: string,
+      dispatchId: DispatchRowId,
       disposition: DispatchDisposition | null,
     ) {
       const at = yield* now;
@@ -264,17 +288,22 @@ export const layer = Layer.effect(
         WHERE id = ${dispatchId} AND status IN ('intended', 'failed')
       `;
       if (disposition !== null) {
-        // The first answer only; the events may already have moved the turn on.
+        // The first answer only, and only on a dispatch the engine has: the
+        // events may already have moved the turn on, or a Stop ended it.
         yield* sql`
           UPDATE dispatches SET disposition = ${disposition._tag},
             disposition_turn_id = ${disposition.turnId},
             engine_turn_id = COALESCE(engine_turn_id, ${disposition.turnId})
           WHERE id = ${dispatchId} AND disposition IS NULL
+            AND status IN ('accepted', 'delivered', 'finished', 'dropped')
         `;
       }
     }, Effect.orDie);
 
-    const deliver = Effect.fn("Ledger.deliver")(function* (dispatchId: string, turnId: TurnId) {
+    const deliver = Effect.fn("Ledger.deliver")(function* (
+      dispatchId: DispatchRowId,
+      turnId: TurnId,
+    ) {
       const at = yield* now;
       yield* sql`
         UPDATE dispatches SET status = 'delivered', failure_reason = NULL, engine_turn_id = ${turnId},
@@ -289,7 +318,10 @@ export const layer = Layer.effect(
       yield* refreshMessages(yield* sourcesOf(dispatchId));
     }, Effect.orDie);
 
-    const finish = Effect.fn("Ledger.finish")(function* (dispatchId: string, outcome: TurnOutcome) {
+    const finish = Effect.fn("Ledger.finish")(function* (
+      dispatchId: DispatchRowId,
+      outcome: TurnOutcome,
+    ) {
       const at = yield* now;
       const encoded = yield* encodeOutcome(outcome);
       yield* sql`
@@ -305,14 +337,17 @@ export const layer = Layer.effect(
     }, Effect.orDie);
 
     const closeDelivery = Effect.fn("Ledger.closeDelivery")(function* (
-      dispatchId: string,
+      dispatchId: DispatchRowId,
       by: "done" | "ask",
     ) {
       const at = yield* now;
-      yield* sql`
+      // Only a delivered dispatch: a steer still riding undecided may yet be dropped.
+      const closed = yield* sql`
         UPDATE dispatches SET closed_by = COALESCE(closed_by, ${by}), updated_at = ${at}
-        WHERE id = ${dispatchId}
+        WHERE id = ${dispatchId} AND status = 'delivered'
+        RETURNING id
       `;
+      if (closed.length === 0) return;
       yield* sql`
         UPDATE wakes SET status = 'finished', failure_reason = NULL, updated_at = ${at}
         WHERE dispatch_id = ${dispatchId} AND status IN ('dispatched', 'failed')
@@ -321,7 +356,7 @@ export const layer = Layer.effect(
     }, Effect.orDie);
 
     const awaitContinuation = Effect.fn("Ledger.awaitContinuation")(function* (
-      dispatchId: string,
+      dispatchId: DispatchRowId,
       outcome: TurnOutcome,
       resumesAt: DateTime.Utc,
     ) {
@@ -332,36 +367,53 @@ export const layer = Layer.effect(
       `;
     }, Effect.orDie);
 
-    const drop = Effect.fn("Ledger.drop")(function* (dispatchId: string, wakes: WakesAfter) {
-      yield* sql`
-        UPDATE dispatches SET status = 'dropped', next_attempt_at = NULL, updated_at = ${yield* now}
-        WHERE id = ${dispatchId} AND engine_turn_id IS NOT NULL
+    const drop = Effect.fn("Ledger.drop")(function* (
+      dispatchId: DispatchRowId,
+      turnId: TurnId,
+      wakes: WakesAfter,
+    ) {
+      const dropped = yield* sql`
+        UPDATE dispatches SET status = 'dropped', engine_turn_id = COALESCE(engine_turn_id, ${turnId}),
+          next_attempt_at = NULL, updated_at = ${yield* now}
+        WHERE id = ${dispatchId} AND status IN ('accepted', 'delivered')
+        RETURNING id
       `;
+      if (dropped.length === 0) return false;
       yield* returnConsumed(dispatchId);
       yield* setWakes(dispatchId, wakes);
+      return true;
     }, Effect.orDie);
 
-    const release = Effect.fn("Ledger.release")(function* (dispatchId: string, wakes: WakesAfter) {
-      yield* sql`
+    const release = Effect.fn("Ledger.release")(function* (
+      dispatchId: DispatchRowId,
+      wakes: WakesAfter,
+    ) {
+      const released = yield* sql`
         UPDATE dispatches SET status = 'released', next_attempt_at = NULL, updated_at = ${yield* now}
         WHERE id = ${dispatchId} AND status = 'intended'
+        RETURNING id
       `;
+      if (released.length === 0) return false;
       yield* returnConsumed(dispatchId);
       yield* setWakes(dispatchId, wakes);
+      return true;
     }, Effect.orDie);
 
     const fail = Effect.fn("Ledger.fail")(function* (
-      dispatchId: string,
+      dispatchId: DispatchRowId,
       reason: "rejected" | "unresolved",
       wakes: WakesAfter,
     ) {
-      yield* sql`
+      const failed = yield* sql`
         UPDATE dispatches SET status = 'failed', failure_reason = ${reason}, next_attempt_at = NULL,
           updated_at = ${yield* now}
         WHERE id = ${dispatchId} AND status = 'intended'
+        RETURNING id
       `;
+      if (failed.length === 0) return false;
       yield* returnConsumed(dispatchId);
       yield* setWakes(dispatchId, wakes);
+      return true;
     }, Effect.orDie);
 
     const cancelWakes = Effect.fn("Ledger.cancelWakes")(function* (wakeIds: ReadonlyArray<string>) {
@@ -396,4 +448,10 @@ export const layer = Layer.effect(
 );
 
 /** The engine key of a dispatch: its id, which the adapter derives every engine id from. */
-export const keyOf = (dispatchId: string): IdempotencyKey => IdempotencyKey.make(dispatchId);
+export const keyOf = (dispatchId: DispatchRowId): IdempotencyKey => IdempotencyKey.make(dispatchId);
+
+/**
+ * The dispatch a key the engine reports names, if it is one: keys are global,
+ * so a key that is not a dispatch id finds no row.
+ */
+export const dispatchOfKey = (key: IdempotencyKey): DispatchRowId => DispatchRowId.make(key);

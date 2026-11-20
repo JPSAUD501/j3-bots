@@ -2,6 +2,7 @@
 import {
   type BotId,
   CommandId,
+  type RoomId,
   type Entry,
   type EntryId,
   EntryOrder,
@@ -19,8 +20,10 @@ import * as TestClock from "effect/testing/TestClock";
 import { Bots } from "../bots/Bots.ts";
 import { Entries } from "../entries/Entries.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
+import { Rooms } from "../rooms/Rooms.ts";
 import { Pipeline } from "../turns/Pipeline.ts";
 import { SessionGate } from "../turns/SessionGate.ts";
+import { Wakes } from "../turns/Wakes.ts";
 
 let commands = 0;
 /** A fresh operator command id. */
@@ -176,4 +179,52 @@ export const timesSent = (sessionId: SessionId, text: string) =>
   Effect.gen(function* () {
     const received = yield* (yield* TestEngineControl).dispatches(sessionId);
     return received.filter((dispatch) => dispatch.text.includes(text)).length;
+  });
+
+/** A room of the bot and a second member, which the bot hosts. */
+export const roomOf = (botId: BotId) =>
+  Effect.gen(function* () {
+    const other = yield* createBot("Bia");
+    return yield* (yield* Rooms).create({
+      commandId: command(),
+      name: "Launch",
+      members: [botId, other.id],
+      hostId: botId,
+    });
+  });
+
+/**
+ * The operator writes in a room and the bot is woken for it, as room routing
+ * will once it addresses members (part 2b).
+ */
+export const sendInRoom = (botId: BotId, roomId: RoomId, text: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const entry = yield* (yield* Entries).append({
+      target: { _tag: "room", roomId },
+      entry: {
+        _tag: "message",
+        author: { _tag: "operator" },
+        text,
+        attachments: [],
+        mentions: { _tag: "bots", ids: [botId] },
+        delivery: { _tag: "pending" },
+        commandId: null,
+      },
+    });
+    yield* sql.withTransaction(
+      (yield* Wakes).record([
+        {
+          botId,
+          kind: "user",
+          audience: { _tag: "room", roomId },
+          payload: { _tag: "message", entryId: entry.id },
+          sourceEntryId: entry.id,
+          hops: 0,
+          retryOf: null,
+        },
+      ]),
+    );
+    yield* (yield* Pipeline).dispatchPending;
+    return entry.id;
   });

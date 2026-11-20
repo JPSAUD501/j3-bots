@@ -5,7 +5,12 @@ import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import { NO_TURN_REFUSAL } from "@j3-bots/prompts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import { Attachments } from "../attachments/Attachments.ts";
+import { BotStore } from "../bots/BotStore.ts";
+import { Rooms } from "../rooms/Rooms.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
   admittedTurn,
@@ -17,6 +22,8 @@ import {
   engineSession,
   flushed,
   nextTurn,
+  roomOf,
+  sendInRoom,
   sendToBot,
   timesSent,
   turnEnded,
@@ -187,4 +194,55 @@ it.effect("closes delivery with an ask card, whose answer wakes the bot", () =>
       Option.some("Conflict"),
     );
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "refuses a say to the operator from a turn whose room was archived, storing none of its files",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const tools = yield* BotTools;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      const room = yield* roomOf(bot.id);
+      yield* sendInRoom(bot.id, room.id, "Plan the launch.");
+      const turnId = yield* nextTurn(bot.id);
+
+      const workspace = Option.getOrThrow(yield* (yield* BotStore).find(bot.id)).workspacePath;
+      yield* fs.makeDirectory(path.join(workspace, "files"), { recursive: true });
+      yield* fs.writeFileString(path.join(workspace, "files", "plan.md"), "The plan.");
+      const args = { text: "Here is the plan.", to: "dm", attachments: ["files/plan.md"] };
+      yield* control.toolCall({
+        sessionId: session,
+        turnId,
+        tool: "say",
+        input: args,
+        recorded: "now",
+      });
+
+      // The room is archived while its turn is still being stopped.
+      yield* control.delayNextStopEffects;
+      yield* (yield* Rooms).update({
+        commandId: command(),
+        roomId: room.id,
+        changes: { archived: true },
+      });
+      const reply = yield* tools.call({
+        requestId: "call-1",
+        sessionId: session,
+        tool: "say",
+        arguments: args,
+      });
+
+      assert.strictEqual(reply._tag, "refused");
+      assert.deepStrictEqual(yield* botSaid(bot.id), []);
+      const stored = yield* (yield* Attachments).botFiles({
+        botId: bot.id,
+        before: null,
+        limit: 10,
+      });
+      assert.deepStrictEqual(stored.files, []);
+    }).pipe(Effect.provide(TestDomain.layer)),
 );

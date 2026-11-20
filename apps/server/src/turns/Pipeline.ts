@@ -14,7 +14,7 @@ import {
   type QuestionEntry,
   RoomId,
 } from "@j3-bots/contracts";
-import { attachmentLimitViolation, Engine, type TurnId } from "@j3-bots/engine-t3";
+import { attachmentLimitViolation, type TurnId } from "@j3-bots/engine-t3";
 import type {
   AskAnswer,
   CatchUpItem,
@@ -23,13 +23,13 @@ import type {
   Wake,
 } from "@j3-bots/prompts";
 import { renderWake } from "@j3-bots/prompts";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
@@ -51,16 +51,19 @@ import {
   audienceOf,
   CatchUpNote,
   conversation,
+  DispatchRowId,
   sameAudience,
+  SessionRowId,
+  TurnsInvariant,
 } from "./model.ts";
 import { inboxPath, Sender } from "./Sender.ts";
 import { isIdle, sessionWork } from "./sessionWork.ts";
-import { Observer } from "./Observer.ts";
 import { Signals } from "./Signals.ts";
+import { Readiness } from "./Readiness.ts";
 import { Wakes } from "./Wakes.ts";
 
 const MainSession = Schema.Struct({
-  id: Schema.String,
+  id: SessionRowId,
   bot_id: Schema.String,
 });
 
@@ -81,7 +84,7 @@ const HeldRow = Schema.Struct({
 
 /** One planned dispatch: the wakes it carries, into which session, and how. */
 interface Plan {
-  readonly sessionId: string;
+  readonly sessionId: SessionRowId;
   readonly botId: BotId;
   readonly wakes: ReadonlyArray<WakeRow>;
   readonly audience: Audience;
@@ -134,7 +137,6 @@ export const layer = Layer.effect(
     const transaction = transactional(sql);
     const ids = yield* Ids;
     const wakes = yield* Wakes;
-    const observer = yield* Observer;
     const entries = yield* Entries;
     const ledger = yield* Ledger;
     const sender = yield* Sender;
@@ -145,9 +147,10 @@ export const layer = Layer.effect(
     const routing = yield* RoomRouting;
     const bots = yield* BotStore;
     const attachments = yield* Attachments;
-    const engine = yield* Engine;
     const engineState = yield* EngineState;
     const workOf = sessionWork(sql);
+    const readiness = yield* Readiness;
+    const random = yield* SecureRandom.SecureRandom;
 
     // ---- Operator commands ------------------------------------------------
 
@@ -248,7 +251,9 @@ export const layer = Layer.effect(
               )}
             `.pipe(Effect.orDie);
           }
-          if (entry._tag !== "message") return yield* Effect.die("A message was appended");
+          if (entry._tag !== "message") {
+            return yield* Effect.die(new TurnsInvariant({ invariant: "A message was appended" }));
+          }
           if (input.target._tag === "conversation") {
             yield* wakes.record([
               {
@@ -331,9 +336,13 @@ export const layer = Layer.effect(
             return yield* new NotFound({ resource: "entry" });
           }
           const notice = found.value.entry;
-          const [link] = yield* sql<{ readonly dispatch_id: string }>`
-            SELECT dispatch_id FROM notice_retries WHERE entry_id = ${notice.id}
-          `.pipe(Effect.orDie);
+          const [link] = yield* SqlSchema.findAll({
+            Request: EntryId,
+            Result: Schema.Struct({ dispatch_id: DispatchRowId }),
+            execute: (entryId) => sql`
+              SELECT dispatch_id FROM notice_retries WHERE entry_id = ${entryId}
+            `,
+          })(notice.id).pipe(Effect.orDie);
           if (!notice.retryable || link === undefined) {
             return yield* new Conflict({ reason: "not-retryable" });
           }
@@ -364,7 +373,7 @@ export const layer = Layer.effect(
       execute: (botId) => sql`
         SELECT id, bot_id FROM sessions
         WHERE bot_id = ${botId} AND purpose = 'main' AND retired_at IS NULL
-          AND engine_session_id IS NOT NULL
+          AND lost_at IS NULL AND engine_session_id IS NOT NULL
       `,
     });
 
@@ -393,7 +402,7 @@ export const layer = Layer.effect(
     /** Sessions with work across every bot: what the concurrency budget counts. */
     const busySessions = sql<{ readonly n: number }>`
       SELECT COUNT(*) AS n FROM sessions s
-      WHERE s.retired_at IS NULL AND (
+      WHERE s.retired_at IS NULL AND s.lost_at IS NULL AND (
         s.admitted_turn_id IS NOT NULL
         OR EXISTS (SELECT 1 FROM turns t WHERE t.session_id = s.id AND t.finished_at IS NULL)
         OR EXISTS (
@@ -406,14 +415,21 @@ export const layer = Layer.effect(
       Effect.map((rows) => rows[0]?.n ?? 0),
     );
 
-    /** Written and never sent, and not fenced: sent before anything new is written. */
-    const unsentOf = (sessionId: string) =>
-      sql<{ readonly id: string }>`
+    /**
+     * Written and never sent, not fenced, and not waiting to stage its files
+     * again: sent before anything new is written, whether or not its bot has
+     * a wake pending.
+     */
+    const unsent = SqlSchema.findAll({
+      Request: Schema.Void,
+      Result: Schema.Struct({ id: DispatchRowId }),
+      execute: () => sql`
         SELECT id FROM dispatches
-        WHERE session_id = ${sessionId} AND status = 'intended' AND attempts = 0
-          AND fenced_by_stop_id IS NULL
+        WHERE status = 'intended' AND attempts = 0 AND fenced_by_stop_id IS NULL
+          AND next_attempt_at IS NULL
         ORDER BY rowid
-      `.pipe(Effect.orDie);
+      `,
+    })(undefined).pipe(Effect.orDie);
 
     /** Whether the bot's provider is at its usage limit, which holds automated wakes. */
     const providerLimited = Effect.fn("Pipeline.providerLimited")(function* (botId: BotId) {
@@ -436,9 +452,12 @@ export const layer = Layer.effect(
     /**
      * The head wake and the pending wakes of the same kind and audience after
      * it, oldest first, up to the engine's limits for one message. One answer
-     * per envelope; a system event is never coalesced.
+     * per envelope, and none in a steer; a system event is never coalesced.
      */
-    const coalesce = Effect.fn("Pipeline.coalesce")(function* (pending: ReadonlyArray<WakeRow>) {
+    const coalesce = Effect.fn("Pipeline.coalesce")(function* (
+      pending: ReadonlyArray<WakeRow>,
+      delivery: Plan["delivery"],
+    ) {
       const [head] = pending;
       if (head === undefined) return [];
       const audience = audienceOf(head);
@@ -448,7 +467,9 @@ export const layer = Layer.effect(
       for (const wake of pending) {
         if (wake.kind !== head.kind || !sameAudience(audienceOf(wake), audience)) continue;
         if (head.kind === "system" && group.length > 0) break;
-        if (wake.payload_json._tag === "answer" && answers > 0) continue;
+        if (wake.payload_json._tag === "answer" && (answers > 0 || delivery._tag === "steer")) {
+          continue;
+        }
         const more = yield* filesOfWake(wake);
         if (group.length > 0 && attachmentLimitViolation([...files, ...more]) !== undefined) break;
         group.push(wake);
@@ -478,7 +499,9 @@ export const layer = Layer.effect(
         if (work.continuations === 0 && slots <= 0) return null;
         delivery = { _tag: "start" };
       } else if (
+        // An answer waits for the turn that asked to finish: it starts the next.
         head.kind === "user" &&
+        head.payload_json._tag !== "answer" &&
         work.admitted !== null &&
         work.unsent === 0 &&
         sameAudience(work.admitted.audience, audience)
@@ -487,7 +510,7 @@ export const layer = Layer.effect(
       } else {
         return null;
       }
-      const group = yield* coalesce(pending);
+      const group = yield* coalesce(pending, delivery);
       return {
         sessionId: session.value.id,
         botId,
@@ -618,13 +641,17 @@ export const layer = Layer.effect(
     ) {
       const base = { at: yield* DateTime.now, timeZone: yield* zoneOf, sinceLastTurn: since };
       const [head] = plan.wakes;
-      if (head === undefined) return yield* Effect.die("A plan carries a wake");
+      if (head === undefined) {
+        return yield* Effect.die(new TurnsInvariant({ invariant: "A plan carries a wake" }));
+      }
       if (head.kind === "system") {
         return { ...base, kind: "system", event: { name: "undelivered" } } satisfies Wake;
       }
       if (head.kind !== "user") {
         // Room, teammate and routine envelopes come with their wakes in part 2b.
-        return yield* Effect.die(`No envelope for ${head.kind} wakes yet`);
+        return yield* Effect.die(
+          new TurnsInvariant({ invariant: `No envelope for ${head.kind} wakes yet` }),
+        );
       }
       const messages: Array<OperatorMessage> = [];
       let answer: AskAnswer | null = null;
@@ -667,9 +694,9 @@ export const layer = Layer.effect(
             return null;
           }
           const envelope = yield* renderWake(wake).pipe(
-            Effect.provide(SecureRandom.layerWebCrypto),
+            Effect.provideService(SecureRandom.SecureRandom, random),
           );
-          const id = yield* ids.make("dispatch");
+          const id = DispatchRowId.make(yield* ids.make("dispatch"));
           const at = timeText(yield* DateTime.now);
           const { audience, roomId } = audienceColumns(plan.audience);
           yield* sql`
@@ -709,67 +736,114 @@ export const layer = Layer.effect(
       ).pipe(Effect.orDie);
     });
 
-    const dispatchPending = Effect.gen(function* () {
+    /**
+     * One item's failure is logged and the pass goes on (as T3's workers do):
+     * a defect in one dispatch never stops the others. The dispatch stays as
+     * it was, for the next pass or the recovery and its bounds.
+     */
+    const supervised =
+      (what: string) =>
+      <A>(effect: Effect.Effect<A>, otherwise: A): Effect.Effect<A> =>
+        effect.pipe(
+          Effect.catchCauseIf(
+            (cause) => !Cause.hasInterruptsOnly(cause),
+            (cause) => Effect.as(Effect.logError(what, cause), otherwise),
+          ),
+        );
+    const sendOne = supervised("A dispatch could not be sent");
+    const planOne = supervised("A bot's wakes could not be planned");
+
+    /** A pass of the dispatcher: whether the engine took what it was sent. */
+    const dispatchPass = Effect.gen(function* () {
+      let available = true;
+      const send = (dispatchId: DispatchRowId) =>
+        sendOne(
+          sender.send(dispatchId).pipe(
+            Effect.map((result) => {
+              if (result === "engine-unavailable") available = false;
+            }),
+          ),
+          undefined,
+        );
+      // A dispatch written before a crash, or while the engine was down, goes first.
+      for (const { id } of yield* unsent) yield* send(id);
+      if (!available) return false;
       const { budgets } = yield* settings.get;
       let slots = budgets.concurrentTurns - (yield* busySessions);
       for (const { bot_id: botId } of yield* waitingBots) {
-        const session = yield* mainSession(botId).pipe(Effect.orDie);
-        if (Option.isSome(session)) {
-          // Its events are followed before anything is sent to it.
-          yield* observer.watch(session.value.id);
-          // A dispatch written before a crash, or while the engine was down, goes first.
-          for (const { id } of yield* unsentOf(session.value.id)) yield* sender.send(id, "deliver");
-        }
-        const plan = yield* planFor(botId, slots);
-        if (plan === null) continue;
-        const dispatchId = yield* writeDispatch(plan);
-        if (dispatchId === null) continue;
-        if (plan.delivery._tag === "start") slots--;
-        yield* sender.send(dispatchId, "deliver");
+        const planned = yield* planOne(
+          Effect.gen(function* () {
+            const plan = yield* planFor(botId, slots);
+            if (plan === null) return null;
+            const dispatchId = yield* writeDispatch(plan);
+            return dispatchId === null ? null : { plan, dispatchId };
+          }),
+          null,
+        );
+        if (planned === null) continue;
+        if (planned.plan.delivery._tag === "start") slots--;
+        yield* send(planned.dispatchId);
+        if (!available) return false;
       }
+      return true;
     }).pipe(Effect.withSpan("Pipeline.dispatchPending"));
+
+    const dispatchPending = Effect.asVoid(dispatchPass);
 
     // ---- Recovery -------------------------------------------------------------
 
-    const dueRows = sql<{ readonly id: string; readonly next_attempt_at: string | null }>`
-      SELECT id, next_attempt_at FROM dispatches
-      WHERE status = 'intended' AND attempts > 0 AND fenced_by_stop_id IS NULL
-      ORDER BY rowid
-    `.pipe(Effect.orDie);
+    /**
+     * What the recovery owns: every undecided dispatch the engine may have
+     * (sent at least once, fenced or not: a fenced one settles here, with the
+     * same backoff), and one whose files wait to be staged again.
+     */
+    const dueRows = SqlSchema.findAll({
+      Request: Schema.Void,
+      Result: Schema.Struct({ id: DispatchRowId, next_attempt_at: Schema.NullOr(Time) }),
+      execute: () => sql`
+        SELECT id, next_attempt_at FROM dispatches
+        WHERE status = 'intended' AND (attempts > 0 OR next_attempt_at IS NOT NULL)
+        ORDER BY rowid
+      `,
+    })(undefined).pipe(Effect.orDie);
 
-    const recoverDue = Effect.gen(function* () {
+    /** A pass of the recovery over what is due: whether the engine took what it was sent. */
+    const recoveryPass = Effect.gen(function* () {
       const now = yield* DateTime.now;
+      let available = true;
       for (const row of yield* dueRows) {
-        const due =
-          row.next_attempt_at === null ||
-          !DateTime.isGreaterThan(
-            yield* Schema.decodeEffect(Time)(row.next_attempt_at).pipe(Effect.orDie),
-            now,
-          );
-        if (due) yield* sender.send(row.id, "deliver");
+        if (row.next_attempt_at !== null && DateTime.isGreaterThan(row.next_attempt_at, now)) {
+          continue;
+        }
+        const result = yield* sendOne(sender.send(row.id), "settled" as const);
+        if (result === "engine-unavailable") {
+          available = false;
+          break;
+        }
       }
+      return available;
     }).pipe(Effect.withSpan("Pipeline.recoverDue"));
+
+    const recoverDue = Effect.asVoid(recoveryPass);
 
     /** The earliest time a recovery is due, if one waits. */
     const nextRecovery = Effect.gen(function* () {
       let earliest: DateTime.Utc | null = null;
       for (const row of yield* dueRows) {
         if (row.next_attempt_at === null) return yield* DateTime.now;
-        const at = yield* Schema.decodeEffect(Time)(row.next_attempt_at).pipe(Effect.orDie);
-        if (earliest === null || DateTime.isLessThan(at, earliest)) earliest = at;
+        if (earliest === null || DateTime.isLessThan(row.next_attempt_at, earliest)) {
+          earliest = row.next_attempt_at;
+        }
       }
       return earliest;
     });
 
-    const awaitReady = engine.status.pipe(
-      Stream.filter((status) => status.state._tag === "ready"),
-      Stream.runHead,
-      Effect.asVoid,
-    );
-
+    // Both loops wait for the startup or reconnect sequence (`Turns.ts`) to
+    // release them, and park after the engine refuses until it is ready again
+    // or the retry deadline passes, rather than spin on a status that trails.
     const recoveryLoop = Effect.gen(function* () {
-      yield* awaitReady;
-      yield* recoverDue;
+      yield* readiness.released;
+      if (!(yield* recoveryPass)) return yield* readiness.changeOrRetry;
       const next = yield* nextRecovery;
       if (next === null) return yield* signals.recovery.next;
       const wait = DateTime.distance(yield* DateTime.now, next);
@@ -778,8 +852,8 @@ export const layer = Layer.effect(
 
     const dispatchLoop = Effect.gen(function* () {
       yield* signals.dispatch.next;
-      yield* awaitReady;
-      yield* dispatchPending;
+      yield* readiness.released;
+      if (!(yield* dispatchPass)) yield* readiness.changeOrRetry;
     }).pipe(Effect.forever);
 
     const run = Effect.all([dispatchLoop, recoveryLoop], { concurrency: "unbounded" }).pipe(
@@ -795,4 +869,4 @@ export const layer = Layer.effect(
       run,
     });
   }),
-);
+).pipe(Layer.provide(SecureRandom.layerWebCrypto));

@@ -28,6 +28,7 @@ import * as Cards from "./turns/Cards.ts";
 import * as Ledger from "./turns/Ledger.ts";
 import * as Observer from "./turns/Observer.ts";
 import * as Pipeline from "./turns/Pipeline.ts";
+import * as Readiness from "./turns/Readiness.ts";
 import * as Sender from "./turns/Sender.ts";
 import * as SessionGate from "./turns/SessionGate.ts";
 import * as Signals from "./turns/Signals.ts";
@@ -58,7 +59,8 @@ export const layer = Layer.mergeAll(BotTools.layer, Turns.layer).pipe(
   ),
   Layer.provideMerge(Layer.mergeAll(Workspaces.layer, Stops.roomWorkLayer)),
   Layer.provideMerge(Stops.layer),
-  Layer.provideMerge(Layer.mergeAll(Sender.layer, Observer.layer)),
+  Layer.provideMerge(Sender.layer),
+  Layer.provideMerge(Observer.layer),
   Layer.provideMerge(Layer.mergeAll(Ledger.layer, Wakes.layer, WorkSteps.layer)),
   Layer.provideMerge(
     Layer.mergeAll(
@@ -82,6 +84,7 @@ export const layer = Layer.mergeAll(BotTools.layer, Turns.layer).pipe(
       Presence.layer,
       Signals.layer,
       SessionGate.layer,
+      Readiness.layer,
       DeviceAuth.layer,
     ),
   ),
