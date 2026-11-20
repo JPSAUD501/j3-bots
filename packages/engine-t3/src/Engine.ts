@@ -136,7 +136,8 @@ export interface StagedAttachment {
    * removes an upload no message names after 24 hours, and a claimed one stays
    * as the source of copies until then (**Read** at `db51b67`,
    * `apps/server/src/attachmentStore.ts`); the adapter reports half of that.
-   * Past it, stage the file again before the next send.
+   * Past it, stage the file again before the next send, first send or
+   * recovery alike.
    */
   readonly usableUntil: DateTime.Utc;
 }
@@ -144,7 +145,10 @@ export interface StagedAttachment {
 export type RequestResponse =
   | { readonly _tag: "approval"; readonly decision: ApprovalDecision }
   | { readonly _tag: "question"; readonly answers: QuestionAnswers }
-  /** The operator dismissed the question; the bot reads it as "no". */
+  /**
+   * The operator dismissed the question; the bot reads it as "no". The only
+   * answer to an `unsupported-question`.
+   */
   | { readonly _tag: "dismiss" };
 
 export type SecretAnswer =
@@ -223,8 +227,9 @@ export interface EngineOptions {
  * Contract for every method:
  * - It fails with `EngineDown` when the engine cannot answer. `EngineUnavailable`
  *   and `EngineIncompatible` mean nothing was sent. `EngineIndeterminate` means
- *   the command was sent and its reply lost: it may have been applied, and
- *   never counts as "not applied".
+ *   a command was sent and no reply settled it: it may have been applied, and
+ *   never counts as "not applied". Once a call has sent a command, any later
+ *   failure of the call is `EngineIndeterminate`, except `DispatchRejected`.
  * - Methods that take a `key` apply it once, even across engine and server
  *   restarts: calling again with the same key and input applies nothing new.
  *   After `EngineIndeterminate`, that is how the caller learns what happened;
@@ -337,9 +342,10 @@ export class Engine extends Context.Service<
 
     /**
      * Uploads a file for a later dispatch. The engine mints the id; the caller
-     * stores it with the dispatch before dispatching, and stages again only if
-     * the dispatch is still unsent when `usableUntil` passes. Not keyed: a retry
-     * after a lost reply stages a second copy, which the engine removes unused.
+     * stores it with the dispatch before dispatching, and stages the file again
+     * whenever `usableUntil` has passed before a send of the dispatch, the
+     * first send or a recovery. Not keyed: a retry after a lost reply stages a
+     * second copy, which the engine removes unused.
      */
     readonly stageAttachment: (input: {
       readonly name: string;
@@ -353,9 +359,12 @@ export class Engine extends Context.Service<
     /**
      * The operator's Stop, for one session: the engine's own stop, which
      * interrupts the running turn and the background work the engine can
-     * reach (delegated tasks) and holds the queue, then a cancel for each turn
-     * waiting in the engine's queue. It also disarms a pending usage-limit
-     * continuation. Does nothing to an idle session.
+     * reach (delegated tasks, and pending work of a turn that already ended)
+     * and holds the queue, then a cancel for each turn waiting in the engine's
+     * queue. It also disarms a pending usage-limit continuation. The engine's
+     * stop is always sent, also to a session with no running turn, since
+     * background work can outlive its turn (**Read** at `db51b67`,
+     * `Orchestrator.ts`, `dispatchThreadStop`).
      *
      * Success acknowledges the commands; it does not mean they took effect.
      * The engine interrupts a provider turn asynchronously (**Read** at
@@ -407,7 +416,9 @@ export class Engine extends Context.Service<
     /**
      * Answers a secret request. The value goes to the engine's secret store and
      * reaches the command that asked, never the model. Applied once by nature:
-     * the request closes, and answering again fails with `RequestClosed`.
+     * the request closes, and answering again fails with `RequestClosed`. The
+     * adapter submits one answer per request at a time, so of two concurrent
+     * calls the second waits and then fails with `RequestClosed`.
      *
      * Success is the only proof that this call's answer was the one applied.
      * After `EngineIndeterminate`, a retry that fails with `RequestClosed` says
@@ -423,8 +434,12 @@ export class Engine extends Context.Service<
 
     /**
      * The session's events. With `after`, either every event after that cursor,
-     * in order, or a single `replaced` when the engine can no longer replay
-     * from there; never both. With `after: null`, a `replaced` first: use it only
+     * in order, or a single `replaced` when the adapter can no longer replay
+     * from there; never both. A cursor names the engine's position, and the
+     * adapter replays only from a batch the same process emitted and still
+     * keeps. A `replaced` lists every turn that ended, not only those after
+     * the cursor. A stream that reconnects and gets a snapshot from the engine
+     * continues with a `replaced` too, never with a diff of it. With `after: null`, a `replaced` first: use it only
      * for a session nothing has been dispatched to yet, and store its cursor
      * before the first dispatch.
      *
@@ -446,6 +461,11 @@ export class Engine extends Context.Service<
      * knows the session's state as of this call: the bot tool bridge uses it to
      * find the `tool-call` a tool request came from. Choose the token, and start
      * waiting for it, before calling.
+     *
+     * Each stream emits the event only once the engine's completion marker
+     * reached it, and the call returns once every open stream has emitted it
+     * or closed. A catch-up that fails or times out fails the call with
+     * `EngineUnavailable`; retry it.
      */
     readonly synchronize: (input: {
       readonly sessionId: SessionId;

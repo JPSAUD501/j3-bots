@@ -30,8 +30,18 @@ export const EngineStatus = Schema.Struct({
   state: Schema.Union([
     Schema.TaggedStruct("starting", {}),
     Schema.TaggedStruct("ready", {}),
-    /** Not running or not reachable; the server keeps trying. */
-    Schema.TaggedStruct("unavailable", {}),
+    /**
+     * Not running or not reachable; the server keeps trying. `reason` says why:
+     * - `down`: the engine is not running or not answering, and is being restarted;
+     * - `port-in-use`: another program listens on the engine's port, which J3
+     *   Bots leaves alone;
+     * - `install-failed`: the pinned engine could not be downloaded or checked;
+     * - `credential-refused`: the engine refused J3 Bots' credential, also after
+     *   a fresh one was minted.
+     */
+    Schema.TaggedStruct("unavailable", {
+      reason: Schema.Literals(["down", "port-in-use", "install-failed", "credential-refused"]),
+    }),
     /** Running, but not the engine version this release of J3 Bots is pinned to. */
     Schema.TaggedStruct("incompatible", { runningVersion: Label }),
   ]),

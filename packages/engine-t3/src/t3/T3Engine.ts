@@ -20,6 +20,7 @@ import {
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -27,10 +28,14 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
+import * as Random from "effect/Random";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -67,22 +72,29 @@ import {
   type SyncToken,
 } from "../ids.ts";
 import { makeEngineRpc } from "./Connection.ts";
-import { ensureCredential, renewalDue } from "./Credential.ts";
-import { ensureInstalled } from "./Install.ts";
+import {
+  checkAccess,
+  ensureCredential,
+  issueCredential,
+  renewalDue,
+  type Credential,
+} from "./Credential.ts";
+import { EngineInstallFailed, ensureInstalled } from "./Install.ts";
 import { commandIdFor, messageIdFor, projectIdFor, threadIdFor } from "./Keys.ts";
 import { ORCHESTRATION_PROTOCOL, pin } from "./Pin.ts";
 import { instanceIdFor, provision, type InstanceSpec } from "./Provision.ts";
-import { baseUrl, supervise } from "./Supervisor.ts";
+import { baseUrl, stateChanges, supervise, type ProcessState } from "./Supervisor.ts";
 import {
   activeTurn,
   applyEvent,
+  copyMirror,
   copyView,
   diff,
   digestToolCalls,
   dispositionOf,
   emptyMirror,
+  engineAnswersOf,
   findRequest,
-  hasPendingContinuation,
   isEnded,
   isRetired,
   knowsDispatch,
@@ -99,10 +111,17 @@ import {
 
 /** A command that has had no reply for this long counts as lost. */
 const COMMAND_TIMEOUT = Duration.seconds(30);
-/** Views kept per session, for resuming an `events` stream without a replacement. */
-const VIEWS_KEPT = 32;
+/** How long `synchronize` waits for the engine's marker on each stream. */
+const SYNC_TIMEOUT = Duration.seconds(30);
+/** Batches kept per session, for resuming an `events` stream by replay. */
+const BATCHES_KEPT = 32;
 /** How long a staged file stays usable: half the engine's 24-hour sweep. */
 const STAGED_LIFETIME = Duration.hours(12);
+/** Retrying a failed install: from a minute, doubling up to half an hour. */
+const INSTALL_RETRY = Schedule.min([
+  Schedule.exponential(Duration.minutes(1)),
+  Schedule.spaced(Duration.minutes(30)),
+]);
 
 const RUNTIME_MODES = {
   supervised: "approval-required",
@@ -118,6 +137,8 @@ const APPROVAL_DECISIONS = {
 } as const;
 
 const decodeProjects = HttpClientResponse.schemaBodyJson(ProjectSnapshot);
+
+const isEngineDown = Schema.is(Schema.Union([EngineUnavailable, EngineIncompatible]));
 
 /**
  * The engine errors whose reply proves a dispatch was refused, applying
@@ -148,20 +169,42 @@ const decodeUploadInput = Schema.decodeUnknownEffect(AttachmentCreateUploadUrlIn
 const PairingResult = Schema.Struct({ pairUrl: Schema.String });
 const decodePairing = Schema.decodeUnknownEffect(Schema.fromJsonString(PairingResult));
 
-/** `<sequence>.<index>.<count>@<epoch ms>`: an engine sequence, an event within it, and when. */
-const CURSOR = /^(\d+)\.(\d+)\.(\d+)@(\d+)$/;
+/**
+ * `<sequence>.<index>.<count>.<stream>`: the engine sequence a batch of events
+ * brings the session to, which is the engine's own position, the event's place
+ * in that batch, and the stream that emitted it. A batch is what one engine
+ * stream item, or a snapshot, turns into. The stream names where the batch is
+ * kept: a resume replays from a kept batch, which only the process that
+ * emitted it holds, and is a replacement otherwise.
+ */
+const CURSOR = /^(\d+)\.(\d+)\.(\d+)\.([0-9a-z]+)$/;
 
-const cursorFor = (sequence: number, index: number, count: number, at: number) =>
-  EventCursor.make(`${sequence}.${index}.${count}@${at}`);
+const cursorFor = (sequence: number, index: number, count: number, stream: string) =>
+  EventCursor.make(`${sequence}.${index}.${count}.${stream}`);
 
 const parseCursor = (cursor: EventCursor) => {
   const match = CURSOR.exec(cursor);
   if (match === null) return Option.none();
-  const [, sequence, index, count, at] = match.map(Number);
-  return sequence === undefined || index === undefined || count === undefined || at === undefined
+  const [, sequence, index, count, stream] = match;
+  return sequence === undefined ||
+    index === undefined ||
+    count === undefined ||
+    stream === undefined
     ? Option.none()
-    : Option.some({ sequence, complete: index === count - 1, at });
+    : Option.some({
+        sequence: Number(sequence),
+        index: Number(index),
+        count: Number(count),
+        stream,
+      });
 };
+
+/** One batch as it was emitted: the engine's state after it, what the stream had told, and its events. */
+interface Batch {
+  readonly mirror: Mirror;
+  readonly view: View;
+  readonly events: ReadonlyArray<SessionEvent>;
+}
 
 const instanceSpecOf = (provider: ProviderInstance): InstanceSpec => {
   const common = {
@@ -184,7 +227,19 @@ type LoopInput =
   | { readonly _tag: "item"; readonly item: OrchestrationV2ThreadStreamItem }
   | { readonly _tag: "lost" }
   | { readonly _tag: "missing" }
-  | { readonly _tag: "sync"; readonly token: SyncToken };
+  | {
+      readonly _tag: "sync";
+      readonly token: SyncToken;
+      /** Settled once the marker went out, or the catch-up failed. */
+      readonly done: Deferred.Deferred<void, EngineUnavailable | SessionNotFound>;
+    };
+
+/** One open `events` stream, as `synchronize` reaches it. */
+interface SyncTarget {
+  readonly inputs: Queue.Queue<LoopInput>;
+  /** Completed when the stream closes: no marker is owed to it any more. */
+  readonly closed: Deferred.Deferred<void>;
+}
 
 const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   const fs = yield* FileSystem.FileSystem;
@@ -192,14 +247,25 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const http = yield* HttpClient.HttpClient;
 
-  yield* fs.makeDirectory(options.home, { recursive: true, mode: 0o700 }).pipe(Effect.orDie);
-  const executable = Option.isSome(options.binaryOverride)
-    ? options.binaryOverride.value
-    : yield* ensureInstalled({
-        home: options.home,
-        platform: process.platform,
-        arch: process.arch,
-      }).pipe(Effect.orDie);
+  const state = yield* SubscriptionRef.make<ProcessState>({ _tag: "starting" });
+  /** The engine executable, once installed. */
+  const installed = yield* Deferred.make<string>();
+  /** The credential, once minted; read on every dial and request. */
+  const credential = yield* Ref.make(Option.none<Credential>());
+  const minted = yield* Deferred.make<void>();
+  const currentToken = Deferred.await(minted).pipe(
+    Effect.andThen(Ref.get(credential)),
+    Effect.flatMap((current) =>
+      Option.match(current, {
+        onNone: () => Effect.die(new Error("The engine credential vanished")),
+        onSome: (value) => Effect.succeed(value.token),
+      }),
+    ),
+  );
+  const storeCredential = (fresh: Credential) =>
+    Ref.set(credential, Option.some(fresh)).pipe(
+      Effect.andThen(Deferred.succeed(minted, undefined)),
+    );
 
   const providerIds = new Set(options.providers.map((provider) => provider.id));
   const provisionEngine = provision({
@@ -207,61 +273,156 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     instances: options.providers.map(instanceSpecOf),
     toolBridge: options.toolBridge,
     systemPromptFile: options.systemPromptFile,
-  }).pipe(
-    Effect.orDie,
-    Effect.provideService(FileSystem.FileSystem, fs),
-    Effect.provideService(Path.Path, path),
-  );
-  yield* provisionEngine;
+  }).pipe(Effect.provideService(FileSystem.FileSystem, fs), Effect.provideService(Path.Path, path));
 
-  const credential = yield* Ref.make(
-    yield* ensureCredential({ executable, home: options.home }).pipe(Effect.orDie),
-  );
-  const renewCredential = ensureCredential({ executable, home: options.home }).pipe(
-    Effect.flatMap((fresh) => Ref.set(credential, fresh)),
-    Effect.catch((error) => Effect.logWarning("Renewing the engine token failed", error)),
-  );
-  // Renew ahead of expiry, for as long as the engine lives.
-  yield* Effect.forkScoped(
-    Effect.forever(
-      Effect.gen(function* () {
-        const due = renewalDue(yield* Ref.get(credential));
-        const now = yield* DateTime.now;
-        yield* Effect.sleep(
-          Duration.millis(
-            Math.max(60_000, DateTime.toEpochMillis(due) - DateTime.toEpochMillis(now)),
+  const platformServices = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(HttpClient.HttpClient, http),
+    );
+
+  /**
+   * Installs the pinned engine, unless overridden. A failed install is a
+   * state, never a crash: the engine is `unavailable` with the reason while
+   * the install is retried.
+   */
+  const install = Option.isSome(options.binaryOverride)
+    ? Effect.succeed(options.binaryOverride.value)
+    : fs.makeDirectory(options.home, { recursive: true, mode: 0o700 }).pipe(
+        Effect.mapError(() => new EngineInstallFailed({ reason: "storage", version: pin.version })),
+        Effect.andThen(
+          ensureInstalled({ home: options.home, platform: process.platform, arch: process.arch }),
+        ),
+        Effect.tapError((error) =>
+          Effect.logWarning("Installing the engine failed", error).pipe(
+            Effect.andThen(
+              SubscriptionRef.set(state, { _tag: "unavailable", reason: "install-failed" }),
+            ),
           ),
-        );
-        yield* renewCredential;
-      }),
-    ),
+        ),
+        Effect.retry(INSTALL_RETRY),
+        platformServices,
+      );
+
+  // Everything that needs the executable starts once it is installed.
+  yield* Effect.forkScoped(
+    Effect.gen(function* () {
+      const executable = yield* install;
+      yield* Deferred.succeed(installed, executable);
+      const ensure = platformServices(ensureCredential({ executable, home: options.home }));
+      const reissue = platformServices(issueCredential({ executable, home: options.home })).pipe(
+        Effect.flatMap(storeCredential),
+        Effect.catch((error) => Effect.logWarning("Minting a fresh engine token failed", error)),
+      );
+      // Renew ahead of expiry, for as long as the engine lives.
+      yield* Effect.forkScoped(
+        Effect.forever(
+          Effect.gen(function* () {
+            yield* Deferred.await(minted);
+            const current = yield* Ref.get(credential);
+            const due = Option.match(current, {
+              onNone: () => DateTime.makeUnsafe(0),
+              onSome: renewalDue,
+            });
+            const now = yield* DateTime.now;
+            yield* Effect.sleep(
+              Duration.millis(
+                Math.max(60_000, DateTime.toEpochMillis(due) - DateTime.toEpochMillis(now)),
+              ),
+            );
+            yield* reissue;
+          }),
+        ),
+      );
+      yield* supervise({
+        executable,
+        home: options.home,
+        port: options.port,
+        state,
+        beforeStart: provisionEngine.pipe(Effect.andThen(ensure), Effect.flatMap(storeCredential)),
+        checkAccess: currentToken.pipe(
+          Effect.flatMap((token) => checkAccess({ baseUrl: baseUrl(options.port), token })),
+          platformServices,
+        ),
+        reissueCredential: reissue,
+      }).pipe(platformServices);
+    }),
   );
 
-  const supervisor = yield* supervise({
-    executable,
-    home: options.home,
-    port: options.port,
-    beforeStart: provisionEngine,
-  });
-  const rpc = yield* makeEngineRpc({
-    port: options.port,
-    token: Ref.get(credential).pipe(Effect.map((current) => current.token)),
-  });
+  const rpc = yield* makeEngineRpc({ port: options.port, token: currentToken });
+
+  /**
+   * The batches emitted per session, by `<stream>.<sequence>`, the newest
+   * last. A cursor resumes by replay only from a batch kept here: the engine
+   * replays entities as they are after a sequence, not what changed, so the
+   * events after a cursor follow only from what the stream had told at it
+   * (**Read** at `db51b67`, `ws.ts`, `subscribeThread`: replay coalesces the
+   * events after `afterSequence`).
+   */
+  const batches = new Map<string, Map<string, Batch>>();
+  const keepBatch = (sessionId: SessionId, key: string, batch: Batch) => {
+    const kept = batches.get(sessionId) ?? new Map<string, Batch>();
+    kept.set(key, batch);
+    for (const oldest of kept.keys()) {
+      if (kept.size <= BATCHES_KEPT) break;
+      kept.delete(oldest);
+    }
+    batches.set(sessionId, kept);
+  };
+  const keptBatch = (sessionId: SessionId, after: EventCursor | null) => {
+    if (after === null) return undefined;
+    return Option.match(parseCursor(after), {
+      onNone: () => undefined,
+      onSome: (cursor) => {
+        const batch = batches.get(sessionId)?.get(`${cursor.stream}.${cursor.sequence}`);
+        return batch !== undefined &&
+          batch.events.length === cursor.count &&
+          cursor.index < cursor.count
+          ? { batch, sequence: cursor.sequence, index: cursor.index }
+          : undefined;
+      },
+    });
+  };
 
   // ---------------------------------------------------------------------------
   // Sending
 
   /** Fails without sending when the engine cannot take commands. */
   const ready = Effect.gen(function* () {
-    const state = yield* supervisor.current;
-    if (state._tag === "incompatible") {
+    const current = yield* SubscriptionRef.get(state);
+    if (current._tag === "incompatible") {
       return yield* new EngineIncompatible({
-        runningVersion: state.runningVersion,
+        runningVersion: current.runningVersion,
         pinnedVersion: pin.version,
       });
     }
-    if (state._tag !== "ready") return yield* new EngineUnavailable();
+    if (current._tag !== "ready") return yield* new EngineUnavailable();
   });
+
+  /**
+   * After a command has gone out, nothing that follows proves it was not
+   * applied: an engine that becomes unreachable or incompatible, or refuses
+   * the credential, before the next step says nothing about the step already
+   * sent. Such a failure is indeterminate.
+   */
+  const afterSending = <A, E, R>(
+    effect: Effect.Effect<A, E | EngineUnavailable | EngineIncompatible, R>,
+  ): Effect.Effect<
+    A,
+    Exclude<E, EngineUnavailable | EngineIncompatible> | EngineIndeterminate,
+    R
+  > =>
+    effect.pipe(
+      Effect.catchIf<
+        E | EngineUnavailable | EngineIncompatible,
+        EngineUnavailable | EngineIncompatible,
+        never,
+        EngineIndeterminate,
+        never
+      >(isEngineDown, () => Effect.fail(new EngineIndeterminate())),
+    );
 
   /** A command that changes state: a lost reply is indeterminate. */
   const command = (input: OrchestrationV2Command) =>
@@ -333,7 +494,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   }) {
     yield* ready;
     // The engine allows one live project per folder, whoever made it.
-    const token = (yield* Ref.get(credential)).token;
+    const token = yield* currentToken;
     const snapshot = yield* http
       .execute(
         HttpClientRequest.get(`${baseUrl(options.port)}/api/projects`).pipe(
@@ -446,7 +607,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
         EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
         // A refusal for a missing thread is `SessionNotFound`; anything else is a bug.
         OrchestrationV2DispatchCommandError: (error) =>
-          projection(sessionId).pipe(Effect.andThen(refused(error))),
+          afterSending(projection(sessionId)).pipe(Effect.andThen(refused(error))),
       }),
       Effect.asVoid,
     );
@@ -458,21 +619,23 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   }) {
     yield* liveProjection(input.sessionId);
     const threadId = ThreadId.make(input.sessionId);
-    if (input.model !== undefined) {
+    const selection = input.model === undefined ? undefined : yield* modelSelection(input.model);
+    if (selection !== undefined) {
       yield* sendSessionCommand(input.sessionId, {
         type: "thread.model-selection.set",
         commandId: commandId("model", `${input.sessionId}:${yield* uniqueKey}`),
         threadId,
-        modelSelection: yield* modelSelection(input.model),
+        modelSelection: selection,
       });
     }
     if (input.permissionMode !== undefined) {
-      yield* sendSessionCommand(input.sessionId, {
+      const send = sendSessionCommand(input.sessionId, {
         type: "thread.runtime-mode.set",
         commandId: commandId("mode", `${input.sessionId}:${yield* uniqueKey}`),
         threadId,
         runtimeMode: RUNTIME_MODES[input.permissionMode],
       });
+      yield* selection === undefined ? send : afterSending(send);
     }
   });
 
@@ -492,7 +655,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       Effect.catchTags({
         EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
         OrchestrationV2DispatchCommandError: (error) =>
-          projection(sessionId).pipe(
+          afterSending(projection(sessionId)).pipe(
             Effect.flatMap((mirror) => (isMoot(mirror) ? Effect.void : refused(error))),
           ),
       }),
@@ -502,16 +665,21 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   /**
    * The engine's stop, then a cancel per waiting run. Each command is answered
    * once the engine recorded it: the provider's interrupt runs after (**Read**
-   * at `db51b67`, `dispatchThreadStop`), and the events say when it took. The
-   * engine's stop also disarms a pending usage-limit continuation, idle
-   * session or not (`holdStoppedThread`), so a session with one is stopped too.
+   * at `db51b67`, `dispatchThreadStop`), and the events say when it took.
+   *
+   * The engine's stop is sent whatever the session looks like: the server
+   * stops every session it recorded as a target, and the engine's stop
+   * reaches what the adapter cannot see whole. With no turn running, it
+   * interrupts the latest run while that run's background work is pending,
+   * stops the thread's delegated tasks, disarms a pending usage-limit
+   * continuation and holds the queue (**Read**, `dispatchThreadStop`,
+   * `derivePendingBackgroundWork`, `holdStoppedThread`).
    */
   const stop = Effect.fn("Engine.stop")(function* (input: {
     readonly key: IdempotencyKey;
     readonly sessionId: SessionId;
   }) {
-    const before = yield* liveProjection(input.sessionId);
-    if (Option.isNone(activeTurn(before)) && !hasPendingContinuation(before)) return;
+    yield* liveProjection(input.sessionId);
     const threadId = ThreadId.make(input.sessionId);
     // The engine's stop ends the running turn and only holds the queue.
     yield* sendStopStep(
@@ -525,22 +693,26 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       (mirror) => Option.isNone(activeTurn(mirror)),
     );
     // J3 Bots' Stop also ends every turn that waits.
-    const held = yield* projection(input.sessionId);
-    for (const run of queuedRuns(held)) {
-      yield* sendStopStep(
-        input.sessionId,
-        {
-          type: "queued-run.cancel",
-          commandId: commandId(`cancel-${run.id}`, input.key),
-          threadId,
-          runId: RunId.make(run.id),
-        },
-        (mirror) => {
-          const now = mirror.runs.get(run.id);
-          return now === undefined || isEnded(now) || now.status === "running";
-        },
-      );
-    }
+    yield* afterSending(
+      Effect.gen(function* () {
+        const held = yield* projection(input.sessionId);
+        for (const run of queuedRuns(held)) {
+          yield* sendStopStep(
+            input.sessionId,
+            {
+              type: "queued-run.cancel",
+              commandId: commandId(`cancel-${run.id}`, input.key),
+              threadId,
+              runId: RunId.make(run.id),
+            },
+            (mirror) => {
+              const now = mirror.runs.get(run.id);
+              return now === undefined || isEnded(now) || now.status === "running";
+            },
+          );
+        }
+      }),
+    );
   });
 
   /**
@@ -561,7 +733,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     }).pipe(
       Effect.catchTags({
         EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
-        OrchestrationV2DispatchCommandError: () => liveProjection(input.sessionId),
+        OrchestrationV2DispatchCommandError: () => afterSending(liveProjection(input.sessionId)),
       }),
       Effect.asVoid,
     );
@@ -570,15 +742,19 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   const retireSession = Effect.fn("Engine.retireSession")(function* (sessionId: SessionId) {
     const retire = stop({ key: IdempotencyKey.make(`retire:${sessionId}`), sessionId }).pipe(
       Effect.andThen(
-        sendSessionCommand(sessionId, {
-          type: "thread.archive",
-          commandId: commandId("archive", sessionId),
-          threadId: ThreadId.make(sessionId),
-        }),
+        afterSending(
+          sendSessionCommand(sessionId, {
+            type: "thread.archive",
+            commandId: commandId("archive", sessionId),
+            threadId: ThreadId.make(sessionId),
+          }),
+        ),
       ),
     );
     // Already gone counts as retired.
     yield* retire.pipe(Effect.catchTag("SessionNotFound", () => Effect.void));
+    // A retired session's streams end, and nothing resumes them.
+    batches.delete(sessionId);
   });
 
   // ---------------------------------------------------------------------------
@@ -636,7 +812,9 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       }),
     );
     for (let attempt = 0; attempt < 2; attempt++) {
-      const refusal = yield* send;
+      // Once the first send went out, no failure but a named refusal proves
+      // that nothing was applied: the engine may have taken the first one.
+      const refusal = yield* attempt === 0 ? send : afterSending(send);
       if (Option.isNone(refusal)) return;
       if (REJECTIONS.has(refusal.value)) return yield* new DispatchRejected({ key: input.key });
       if (refusal.value === CLAIM_ERROR) {
@@ -712,7 +890,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       }),
     );
     const bytes = yield* fs.readFile(input.path).pipe(Effect.orDie);
-    const token = (yield* Ref.get(credential)).token;
+    const token = yield* currentToken;
     yield* http
       .execute(
         HttpClientRequest.post(`${baseUrl(options.port)}${upload.relativeUrl}`).pipe(
@@ -753,7 +931,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       Effect.catchTags({
         EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
         OrchestrationV2DispatchCommandError: (error) =>
-          projection(sessionId).pipe(
+          afterSending(projection(sessionId)).pipe(
             Effect.flatMap((mirror) => {
               const now = findRequest(mirror, requestId);
               return Option.isSome(now) && now.value.resolution === undefined
@@ -773,82 +951,111 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   }) {
     const { answerTo, request } = yield* knownRequest(input.sessionId, input.requestId);
     const response = input.response;
-    const fits =
-      response._tag === "approval" ? request._tag === "approval" : request._tag === "question";
-    if (answerTo._tag !== "runtime-request" || !fits) {
-      // The caller's bug, not the engine's.
-      return yield* Effect.die(
-        new Error(`A ${response._tag} response cannot answer request ${input.requestId}`),
-      );
-    }
+    // The caller's bug, not the engine's.
+    const misuse = () =>
+      Effect.die(new Error(`A ${response._tag} response cannot answer request ${input.requestId}`));
     const threadId = ThreadId.make(input.sessionId);
-    const requestId = RuntimeRequestId.make(answerTo.requestId);
     const commandIdOf = commandId("respond", input.key);
     switch (response._tag) {
       case "approval":
+        if (answerTo._tag !== "runtime-request" || request._tag !== "approval")
+          return yield* misuse();
         return yield* sendAnswer(input.sessionId, input.requestId, {
           type: "runtime-request.respond",
           commandId: commandIdOf,
           threadId,
-          requestId,
+          requestId: RuntimeRequestId.make(answerTo.requestId),
           decision: APPROVAL_DECISIONS[response.decision],
         });
       case "question": {
-        const answers: Record<string, string | ReadonlyArray<string>> = {};
-        for (const [questionId, answer] of Object.entries(response.answers)) {
-          const chosen =
-            answer.text === null ? answer.optionIds : [...answer.optionIds, answer.text];
-          answers[questionId] = chosen.length === 1 && chosen[0] !== undefined ? chosen[0] : chosen;
-        }
+        if (answerTo._tag !== "user-input" || request._tag !== "question") return yield* misuse();
+        const answers = engineAnswersOf(answerTo.questions, response.answers);
+        if (answers === undefined) return yield* misuse();
         return yield* sendAnswer(input.sessionId, input.requestId, {
           type: "runtime-request.respond",
           commandId: commandIdOf,
           threadId,
-          requestId,
+          requestId: RuntimeRequestId.make(answerTo.requestId),
           answers,
         });
       }
       case "dismiss":
+        if (answerTo._tag !== "user-input") return yield* misuse();
         return yield* sendAnswer(input.sessionId, input.requestId, {
           type: "thread.user-input.dismiss",
           commandId: commandIdOf,
           threadId,
-          requestId,
+          requestId: RuntimeRequestId.make(answerTo.requestId),
         });
     }
   });
+
+  /**
+   * One secret submission per request at a time. The engine does not order
+   * two answers to one request: both can pass its pending check, and the
+   * second then finds the first's value stored and reports success too
+   * (**Read** at `db51b67`, `SecretRequests.answer`: the store ignores an
+   * existing value, and both record the same command id). J3 Bots is the only
+   * client of its engine, so serializing here makes a second submission see
+   * the request closed.
+   */
+  const secretLocks = new Map<string, { readonly lock: Semaphore.Semaphore; holders: number }>();
+  const withSecretLock = <A, E, R>(key: string, effect: Effect.Effect<A, E, R>) =>
+    Effect.acquireUseRelease(
+      Effect.gen(function* () {
+        const existing = secretLocks.get(key);
+        if (existing !== undefined) {
+          existing.holders += 1;
+          return existing;
+        }
+        const created = { lock: yield* Semaphore.make(1), holders: 1 };
+        secretLocks.set(key, created);
+        return created;
+      }),
+      (entry) => entry.lock.withPermit(effect),
+      (entry) =>
+        Effect.sync(() => {
+          entry.holders -= 1;
+          if (entry.holders === 0) secretLocks.delete(key);
+        }),
+    );
 
   const respondSecret = Effect.fn("Engine.respondSecret")(function* (input: {
     readonly sessionId: SessionId;
     readonly requestId: RequestId;
     readonly answer: SecretAnswer;
   }) {
-    const state = yield* knownRequest(input.sessionId, input.requestId);
-    // A secret is answered once by nature: an answered request, or one that is no secret, is closed to it.
-    if (state.answerTo._tag !== "secret" || state.resolution !== undefined) {
-      return yield* new RequestClosed({ requestId: input.requestId });
-    }
-    yield* rpc["secrets.answerRequest"]({
-      threadId: ThreadId.make(input.sessionId),
-      turnItemId: TurnItemId.make(state.answerTo.turnItemId),
-      answer:
-        input.answer._tag === "provide"
-          ? { type: "save", secret: Redacted.value(input.answer.value) }
-          : { type: "decline" },
-    }).pipe(
-      Effect.timeoutOrElse({
-        duration: COMMAND_TIMEOUT,
-        orElse: () => Effect.fail(new EngineIndeterminate()),
-      }),
-      Effect.catchTags({
-        RpcClientError: () => Effect.fail(new EngineIndeterminate()),
-        EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
-        SecretRequestError: (error) =>
-          error.reason === "already_answered" ||
-          error.reason === "not_found" ||
-          error.reason === "agent_stopped"
-            ? Effect.fail(new RequestClosed({ requestId: input.requestId }))
-            : refused(error),
+    yield* withSecretLock(
+      `${input.sessionId}:${input.requestId}`,
+      Effect.gen(function* () {
+        const found = yield* knownRequest(input.sessionId, input.requestId);
+        // Answered once by nature: an answered request, or one that is no secret, is closed to it.
+        if (found.answerTo._tag !== "secret" || found.resolution !== undefined) {
+          return yield* new RequestClosed({ requestId: input.requestId });
+        }
+        yield* rpc["secrets.answerRequest"]({
+          threadId: ThreadId.make(input.sessionId),
+          turnItemId: TurnItemId.make(found.answerTo.turnItemId),
+          answer:
+            input.answer._tag === "provide"
+              ? { type: "save", secret: Redacted.value(input.answer.value) }
+              : { type: "decline" },
+        }).pipe(
+          Effect.timeoutOrElse({
+            duration: COMMAND_TIMEOUT,
+            orElse: () => Effect.fail(new EngineIndeterminate()),
+          }),
+          Effect.catchTags({
+            RpcClientError: () => Effect.fail(new EngineIndeterminate()),
+            EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
+            SecretRequestError: (error) =>
+              error.reason === "already_answered" ||
+              error.reason === "not_found" ||
+              error.reason === "agent_stopped"
+                ? Effect.fail(new RequestClosed({ requestId: input.requestId }))
+                : refused(error),
+          }),
+        );
       }),
     );
   });
@@ -856,82 +1063,105 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   // ---------------------------------------------------------------------------
   // Events
 
-  /** The last views handed out per session, by the cursor of the last event of their batch. */
-  const views = new Map<string, Map<string, View>>();
-  const keepView = (sessionId: SessionId, cursor: EventCursor, view: View) => {
-    const kept = views.get(sessionId) ?? new Map<string, View>();
-    kept.set(cursor, copyView(view));
-    for (const oldest of kept.keys()) {
-      if (kept.size <= VIEWS_KEPT) break;
-      kept.delete(oldest);
-    }
-    views.set(sessionId, kept);
-  };
-
   /** Open `events` streams per session, for `synchronize`. */
-  const syncTargets = new Map<string, Set<Queue.Queue<LoopInput>>>();
+  const syncTargets = new Map<string, Set<SyncTarget>>();
 
   const events = (input: { readonly sessionId: SessionId; readonly after: EventCursor | null }) =>
     Stream.callback<SessionEvent, SessionNotFound | EngineIncompatible>((output) =>
       Effect.gen(function* () {
         const threadId = ThreadId.make(input.sessionId);
-        const inputs = yield* Queue.unbounded<LoopInput>();
-        const targets = syncTargets.get(input.sessionId) ?? new Set();
-        targets.add(inputs);
+        const stream = (yield* Random.nextIntBetween(0, 2 ** 31 - 1)).toString(36);
+        const target: SyncTarget = {
+          inputs: yield* Queue.unbounded<LoopInput>(),
+          closed: yield* Deferred.make<void>(),
+        };
+        const inputs = target.inputs;
+        const targets = syncTargets.get(input.sessionId) ?? new Set<SyncTarget>();
+        targets.add(target);
         syncTargets.set(input.sessionId, targets);
-        yield* Effect.addFinalizer(() => Effect.sync(() => targets.delete(inputs)));
+        yield* Effect.addFinalizer(() =>
+          Deferred.succeed(target.closed, undefined).pipe(
+            Effect.andThen(Effect.sync(() => targets.delete(target))),
+          ),
+        );
 
-        let mirror = emptyMirror();
-        let view: View | undefined;
-        let sequence = -1;
-        let lastCursor: EventCursor | null = input.after;
+        const resumed = keptBatch(input.sessionId, input.after);
+        let mirror = resumed === undefined ? emptyMirror() : copyMirror(resumed.batch.mirror);
+        /** What this stream has told; undefined until its first state went out. */
+        let view: View | undefined =
+          resumed === undefined ? undefined : copyView(resumed.batch.view);
+        /** The engine sequence the mirror is at. */
+        let sequence = resumed === undefined ? -1 : resumed.sequence;
+        let lastCursor: EventCursor | null = resumed === undefined ? null : input.after;
 
         const emit = Effect.fnUntraced(function* (bodies: ReadonlyArray<EventBody>) {
           if (bodies.length === 0 || view === undefined) return;
-          const now = yield* Clock.currentTimeMillis;
-          const at = DateTime.makeUnsafe(now);
-          for (const [index, body] of bodies.entries()) {
-            const cursor = cursorFor(Math.max(sequence, 0), index, bodies.length, now);
-            lastCursor = cursor;
-            const event: SessionEvent = { ...body, cursor, at };
+          const at = DateTime.makeUnsafe(yield* Clock.currentTimeMillis);
+          const position = Math.max(sequence, 0);
+          const emitted = bodies.map((body, index): SessionEvent => ({
+            ...body,
+            cursor: cursorFor(position, index, bodies.length, stream),
+            at,
+          }));
+          keepBatch(input.sessionId, `${stream}.${position}`, {
+            mirror: copyMirror(mirror),
+            view: copyView(view),
+            events: emitted,
+          });
+          for (const event of emitted) {
+            lastCursor = event.cursor;
             yield* Queue.offer(output, event);
           }
-          if (lastCursor !== null) keepView(input.sessionId, lastCursor, view);
         });
 
-        /** The first state of the stream: a replay from a kept view, or one `replaced`. */
-        const begin = Effect.fnUntraced(function* () {
-          const parsed = input.after === null ? Option.none() : parseCursor(input.after);
-          const kept =
-            input.after === null ? undefined : views.get(input.sessionId)?.get(input.after);
-          if (kept !== undefined && Option.isSome(parsed) && parsed.value.complete) {
-            view = copyView(kept);
-            yield* emit(diff(mirror, view));
-            return;
-          }
-          const since = Option.match(parsed, {
-            onNone: () => null,
-            onSome: (cursor) => DateTime.makeUnsafe(cursor.at),
-          });
-          const replaced = replacement(
-            mirror,
-            input.after === null ? null : (since ?? DateTime.makeUnsafe(0)),
-          );
+        /**
+         * A whole state in one `replaced`. The first of a stream that cannot
+         * replay carries history when the caller had a cursor; any later one,
+         * a reconnect the engine answered with a snapshot, always does: the
+         * caller cannot tell what the gap held.
+         */
+        const replace = Effect.fnUntraced(function* (history: boolean) {
+          const now = DateTime.makeUnsafe(yield* Clock.currentTimeMillis);
+          const replaced = replacement(mirror, history, now);
           view = replaced.view;
           yield* emit([replaced.event]);
         });
 
-        const subscribe = (afterSequence: number | undefined, marker: boolean) =>
+        /** Applies one engine stream item to the mirror and tells what changed. */
+        const handle = Effect.fnUntraced(function* (item: OrchestrationV2ThreadStreamItem) {
+          switch (item.kind) {
+            case "snapshot": {
+              if (item.snapshotSequence <= sequence && view !== undefined) return;
+              mirror = mirrorOf(item.projection);
+              sequence = item.snapshotSequence;
+              yield* digestToolCalls(mirror);
+              yield* replace(view !== undefined || input.after !== null);
+              return;
+            }
+            case "event": {
+              if (item.sequence <= sequence) return;
+              sequence = item.sequence;
+              if (!applyEvent(mirror, item.event) || view === undefined) return;
+              yield* digestToolCalls(mirror);
+              yield* emit(diff(mirror, view, DateTime.makeUnsafe(yield* Clock.currentTimeMillis)));
+              return;
+            }
+            default:
+              return;
+          }
+        });
+
+        const subscribe = (marker: boolean) =>
           rpc["orchestration.subscribeThread"]({
             threadId,
-            ...(afterSequence === undefined ? {} : { afterSequence }),
+            ...(sequence < 0 ? {} : { afterSequence: sequence }),
             ...(marker ? { requestCompletionMarker: true } : {}),
           });
 
         /** Feeds the main engine subscription into the loop, resubscribing after a loss. */
         const pump = Effect.gen(function* () {
           while (true) {
-            const lost = yield* subscribe(sequence < 0 ? undefined : sequence, false).pipe(
+            const lost = yield* subscribe(false).pipe(
               Stream.runForEach((item) => Queue.offer(inputs, { _tag: "item", item })),
               Effect.as<LoopInput>({ _tag: "lost" }),
               Effect.catchTags({
@@ -944,91 +1174,90 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
             if (lost._tag === "missing") return;
             // Wait for the engine before asking again; the socket reconnects on its own.
             yield* Effect.sleep(Duration.millis(500));
-            yield* supervisor.changes.pipe(
-              Stream.filter((state) => state._tag !== "starting" && state._tag !== "unavailable"),
+            yield* stateChanges(state).pipe(
+              Stream.filter(
+                (current) => current._tag === "ready" || current._tag === "incompatible",
+              ),
               Stream.take(1),
               Stream.runDrain,
             );
           }
         });
+
+        // A resume from a kept batch tells the rest of that batch first.
+        if (resumed !== undefined) {
+          for (const event of resumed.batch.events.slice(resumed.index + 1)) {
+            lastCursor = event.cursor;
+            yield* Queue.offer(output, event);
+          }
+        }
         yield* Effect.forkScoped(pump);
 
-        /** Applies one engine stream item to the mirror. Returns whether it changed. */
-        const applyItem = (item: OrchestrationV2ThreadStreamItem) => {
-          switch (item.kind) {
-            case "snapshot":
-              if (item.snapshotSequence < sequence) return false;
-              mirror = mirrorOf(item.projection);
-              sequence = item.snapshotSequence;
-              return true;
-            case "event":
-              if (item.sequence <= sequence) return false;
-              sequence = item.sequence;
-              return applyEvent(mirror, item.event);
-            default:
-              return false;
+        /**
+         * Catches up to the engine's completion marker on a second
+         * subscription. Without the marker in time, the catch-up failed: no
+         * `synchronized` goes out.
+         */
+        const catchUp = Effect.fnUntraced(function* (token: SyncToken) {
+          let marked = false;
+          const outcome = yield* subscribe(true).pipe(
+            Stream.takeUntil((item) => item.kind === "synchronized"),
+            Stream.runForEach((item) =>
+              item.kind === "synchronized"
+                ? Effect.sync(() => {
+                    marked = true;
+                  })
+                : handle(item),
+            ),
+            Effect.timeoutOption(SYNC_TIMEOUT),
+            Effect.map((caught) => (Option.isSome(caught) && marked ? "marked" : "late")),
+            Effect.catchTag("OrchestrationV2GetThreadProjectionError", () =>
+              Effect.succeed("missing" as const),
+            ),
+            Effect.orElseSucceed(() => "lost" as const),
+          );
+          if (outcome === "missing") {
+            return yield* new SessionNotFound({ sessionId: input.sessionId });
           }
-        };
-
-        /** As `applyItem`, with the digests `diff` needs for new `j3` tool calls. */
-        const apply = (item: OrchestrationV2ThreadStreamItem) =>
-          Effect.suspend(() => {
-            const changed = applyItem(item);
-            return changed ? Effect.as(digestToolCalls(mirror), true) : Effect.succeed(false);
+          if (outcome !== "marked" || lastCursor === null) return yield* new EngineUnavailable();
+          yield* Queue.offer(output, {
+            _tag: "synchronized",
+            token,
+            cursor: lastCursor,
+            at: DateTime.makeUnsafe(yield* Clock.currentTimeMillis),
           });
+        });
 
         while (true) {
           const next = yield* Queue.take(inputs);
           switch (next._tag) {
             case "missing":
+              batches.delete(input.sessionId);
               return yield* Queue.fail(output, new SessionNotFound({ sessionId: input.sessionId }));
             case "lost": {
-              const state = yield* supervisor.current;
-              if (state._tag === "incompatible") {
+              const current = yield* SubscriptionRef.get(state);
+              if (current._tag === "incompatible") {
                 return yield* Queue.fail(
                   output,
                   new EngineIncompatible({
-                    runningVersion: state.runningVersion,
+                    runningVersion: current.runningVersion,
                     pinnedVersion: pin.version,
                   }),
                 );
               }
               break;
             }
-            case "item": {
-              const changed = yield* apply(next.item);
-              if (view === undefined) {
-                if (next.item.kind === "snapshot") yield* begin();
-              } else if (changed) {
-                yield* emit(diff(mirror, view));
-              }
+            case "item":
+              yield* handle(next.item);
               break;
-            }
-            case "sync": {
-              // A second subscription from where this one is, up to the engine's marker.
-              yield* subscribe(sequence < 0 ? undefined : sequence, true).pipe(
-                Stream.takeUntil((item) => item.kind === "synchronized"),
-                Stream.runForEach((item) =>
-                  Effect.gen(function* () {
-                    const changed = yield* apply(item);
-                    if (view === undefined) {
-                      if (item.kind === "snapshot") yield* begin();
-                    } else if (changed) {
-                      yield* emit(diff(mirror, view));
-                    }
-                  }),
-                ),
-                Effect.ignore,
+            case "sync":
+              yield* catchUp(next.token).pipe(
+                Effect.matchEffect({
+                  onFailure: (error) => Deferred.fail(next.done, error),
+                  onSuccess: () => Deferred.succeed(next.done, undefined),
+                }),
               );
-              const now = yield* Clock.currentTimeMillis;
-              yield* Queue.offer(output, {
-                _tag: "synchronized",
-                token: next.token,
-                cursor: lastCursor ?? cursorFor(Math.max(sequence, 0), 0, 1, now),
-                at: DateTime.makeUnsafe(now),
-              });
               break;
-            }
           }
         }
       }),
@@ -1039,9 +1268,23 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     readonly token: SyncToken;
   }) {
     yield* liveProjection(input.sessionId);
-    for (const target of syncTargets.get(input.sessionId) ?? []) {
-      yield* Queue.offer(target, { _tag: "sync", token: input.token });
-    }
+    yield* Effect.forEach(
+      [...(syncTargets.get(input.sessionId) ?? [])],
+      (target) =>
+        Effect.gen(function* () {
+          const done = yield* Deferred.make<void, EngineUnavailable | SessionNotFound>();
+          yield* Queue.offer(target.inputs, { _tag: "sync", token: input.token, done });
+          // A stream that closes owes no marker any more.
+          yield* Effect.raceFirst(Deferred.await(done), Deferred.await(target.closed));
+        }),
+      { concurrency: "unbounded", discard: true },
+    ).pipe(
+      // Past its own catch-up, a stream may be behind on what it emits.
+      Effect.timeoutOrElse({
+        duration: Duration.sum(SYNC_TIMEOUT, SYNC_TIMEOUT),
+        orElse: () => Effect.fail(new EngineUnavailable()),
+      }),
+    );
   });
 
   // ---------------------------------------------------------------------------
@@ -1056,23 +1299,32 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     usage: [],
   }));
 
-  const status = supervisor.changes.pipe(
-    Stream.map((state): EngineStatus => ({
-      state:
-        state._tag === "ready"
-          ? { _tag: "ready" }
-          : state._tag === "incompatible"
-            ? { _tag: "incompatible", runningVersion: state.runningVersion }
-            : state._tag === "starting"
-              ? { _tag: "starting" }
-              : { _tag: "unavailable" },
-      pinnedVersion: pin.version,
-      providers: state._tag === "ready" ? providers : [],
-    })),
+  const status = stateChanges(state).pipe(
+    Stream.map((current): EngineStatus => {
+      switch (current._tag) {
+        case "ready":
+          return { state: { _tag: "ready" }, pinnedVersion: pin.version, providers };
+        case "starting":
+          return { state: { _tag: "starting" }, pinnedVersion: pin.version, providers: [] };
+        case "incompatible":
+          return {
+            state: { _tag: "incompatible", runningVersion: current.runningVersion },
+            pinnedVersion: pin.version,
+            providers: [],
+          };
+        case "unavailable":
+          return {
+            state: { _tag: "unavailable", reason: current.reason },
+            pinnedVersion: pin.version,
+            providers: [],
+          };
+      }
+    }),
   );
 
   const consoleLink = Effect.gen(function* () {
     yield* ready;
+    const executable = yield* Deferred.await(installed);
     const output = yield* spawner
       .string(
         ChildProcess.make(executable, [

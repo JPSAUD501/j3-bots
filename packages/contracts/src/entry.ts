@@ -99,10 +99,15 @@ export const QuestionOption = Schema.Struct({
 });
 export type QuestionOption = typeof QuestionOption.Type;
 
+/** The most options one question shows. */
+export const MAX_QUESTION_OPTIONS = 6;
+/** The most questions one card holds. */
+export const MAX_CARD_QUESTIONS = 4;
+
 export const Question = Schema.Struct({
   id: Label,
   prompt: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2_000)),
-  options: Schema.Array(QuestionOption).check(Schema.isMaxLength(6)),
+  options: Schema.Array(QuestionOption).check(Schema.isMaxLength(MAX_QUESTION_OPTIONS)),
   /** Whether a typed answer is accepted besides the options. */
   acceptsText: Schema.Boolean,
   /** Whether more than one option may be chosen. */
@@ -133,7 +138,7 @@ export type QuestionAnswers = typeof QuestionAnswers.Type;
 export const QuestionEntry = Schema.TaggedStruct("question", {
   ...entry,
   origin: Schema.Literals(["ask", "engine"]),
-  questions: Schema.NonEmptyArray(Question).check(Schema.isMaxLength(4)),
+  questions: Schema.NonEmptyArray(Question).check(Schema.isMaxLength(MAX_CARD_QUESTIONS)),
   status: Schema.Union([
     Schema.TaggedStruct("pending", {}),
     Schema.TaggedStruct("answered", { answers: QuestionAnswers }),

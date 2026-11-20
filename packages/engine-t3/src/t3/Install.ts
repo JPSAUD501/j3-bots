@@ -23,11 +23,15 @@ import { archiveName, pin, releaseUrl } from "./Pin.ts";
 // updater, so J3 Bots keeps its copy under `j3/`, which the engine never reads.
 // The owner's own `t3` on the PATH is never used.
 
-/** Why the pinned engine could not be installed. Retrying may help for every reason but `unsupported-platform`. */
+/**
+ * Why the pinned engine could not be installed. Retrying may help for every
+ * reason but `unsupported-platform`. `storage`: a file under the engine's data
+ * directory could not be written, as on a full disk.
+ */
 export class EngineInstallFailed extends Schema.TaggedError<EngineInstallFailed>()(
   "EngineInstallFailed",
   {
-    reason: Schema.Literals(["unsupported-platform", "download", "checksum", "extract"]),
+    reason: Schema.Literals(["unsupported-platform", "download", "checksum", "extract", "storage"]),
     version: Schema.String,
   },
 ) {
@@ -41,6 +45,8 @@ export class EngineInstallFailed extends Schema.TaggedError<EngineInstallFailed>
         return `The T3 Code ${this.version} download does not match the release's checksum.`;
       case "extract":
         return `Unpacking T3 Code ${this.version} failed.`;
+      case "storage":
+        return `Writing T3 Code ${this.version} to disk failed.`;
     }
   }
 }
@@ -82,6 +88,7 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
   const path = yield* Path.Path;
   const fail = (reason: EngineInstallFailed["reason"]) =>
     new EngineInstallFailed({ reason, version: pin.version });
+  const storage = () => fail("storage");
 
   const target = runtimeDirectory(path, input.home);
   const executable = path.join(target, "t3");
@@ -106,7 +113,7 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
   const expected = checksumFor(sums, archive);
   if (Option.isNone(expected)) return yield* fail("unsupported-platform");
 
-  yield* fs.makeDirectory(path.dirname(target), { recursive: true }).pipe(Effect.orDie);
+  yield* fs.makeDirectory(path.dirname(target), { recursive: true }).pipe(Effect.mapError(storage));
   const partial = `${target}.partial`;
   const have = yield* fs.stat(partial).pipe(
     Effect.map((info) => Number(info.size)),
@@ -135,7 +142,7 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
   const hash = NodeCrypto.createHash("sha256");
   yield* fs.stream(partial).pipe(
     Stream.runForEach((chunk) => Effect.sync(() => hash.update(chunk))),
-    Effect.orDie,
+    Effect.mapError(storage),
   );
   if (hash.digest("hex") !== expected.value) {
     // A corrupt partial would fail the same way forever; start over next time.
@@ -145,7 +152,7 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
 
   const staging = `${target}.staging`;
   yield* fs.remove(staging, { recursive: true }).pipe(Effect.ignore);
-  yield* fs.makeDirectory(staging, { recursive: true }).pipe(Effect.orDie);
+  yield* fs.makeDirectory(staging, { recursive: true }).pipe(Effect.mapError(storage));
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const exit = yield* spawner
     .exitCode(ChildProcess.make("tar", ["-xzf", partial, "-C", staging]))
@@ -153,7 +160,7 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
   if (exit !== 0) return yield* fail("extract");
 
   // The archive holds the server either at its root or in one top-level folder.
-  const entries = yield* fs.readDirectory(staging).pipe(Effect.orDie);
+  const entries = yield* fs.readDirectory(staging).pipe(Effect.mapError(storage));
   const root =
     entries.includes("t3") || entries.length !== 1 || entries[0] === undefined
       ? staging
@@ -163,9 +170,9 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
   }
   yield* fs
     .writeFileString(path.join(root, INSTALLED_MARKER), `${expected.value}\n`)
-    .pipe(Effect.orDie);
+    .pipe(Effect.mapError(storage));
   yield* fs.remove(target, { recursive: true }).pipe(Effect.ignore);
-  yield* fs.rename(root, target).pipe(Effect.orDie);
+  yield* fs.rename(root, target).pipe(Effect.mapError(storage));
   yield* fs.remove(staging, { recursive: true }).pipe(Effect.ignore);
   yield* fs.remove(partial).pipe(Effect.ignore);
   return executable;

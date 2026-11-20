@@ -18,7 +18,7 @@ import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { Engine, type EngineOptions } from "../src/Engine.ts";
 import type { SessionEvent } from "../src/events.ts";
-import { IdempotencyKey } from "../src/ids.ts";
+import { IdempotencyKey, type TurnId } from "../src/ids.ts";
 import { makeEngineRpc } from "../src/t3/Connection.ts";
 import { ensureCredential } from "../src/t3/Credential.ts";
 import { ensureInstalled } from "../src/t3/Install.ts";
@@ -194,8 +194,8 @@ const openWatched = Effect.fnUntraced(function* (name: string) {
   const queue = yield* engine
     .events({ sessionId, after: null })
     .pipe(Stream.orDie, Stream.toQueue({ capacity: "unbounded" }));
-  yield* until(queue, "replaced");
-  return { sessionId, queue };
+  const first = yield* until(queue, "replaced");
+  return { sessionId, queue, start: first.cursor };
 });
 
 describe("Engine conformance, real engine only", () => {
@@ -258,6 +258,47 @@ describe("Engine conformance, real engine only", () => {
         Effect.provide(bench.pipe(Layer.provideMerge(realEngine), Layer.provideMerge(platform))),
       ),
     { timeout: 180_000 },
+  );
+
+  it.live(
+    "tells a replay the engine answers with a snapshot as a replacement with its history",
+    () =>
+      Effect.gen(function* () {
+        const engine = yield* Engine;
+        const bench = yield* Bench;
+        const { sessionId, queue, start } = yield* openWatched("snapshot-resume");
+        // More stored events than the engine replays (128, **Read** at
+        // `db51b67`, `ThreadStream.ts`): a resume from before them gets a
+        // snapshot. A short turn stores about 30; streamed text adds none.
+        const turns: Array<TurnId> = [];
+        for (let index = 0; index < 6; index++) {
+          const reply = yield* engine.dispatch({
+            key: bench.key(`snapshot-resume-reply-${index}`),
+            sessionId,
+            text: directive({ _tag: "reply" }),
+            attachments: [],
+            delivery: { _tag: "start", freshContext: false },
+          });
+          yield* until(queue, "turn-finished", (event) => event.turnId === turnOf(reply));
+          turns.push(turnOf(reply));
+        }
+
+        const resumed = yield* engine
+          .events({ sessionId, after: start })
+          .pipe(Stream.orDie, Stream.toQueue({ capacity: "unbounded" }));
+        const first = yield* take(resumed);
+
+        assert.strictEqual(first._tag, "replaced");
+        if (first._tag !== "replaced") return;
+        assert.deepStrictEqual(first.openTurns, []);
+        assert.deepStrictEqual(
+          turns.filter((turnId) => first.endedTurns.some((turn) => turn.turnId === turnId)),
+          turns,
+        );
+      }).pipe(
+        Effect.provide(bench.pipe(Layer.provideMerge(realEngine), Layer.provideMerge(platform))),
+      ),
+    { timeout: 120_000 },
   );
 
   it.live(

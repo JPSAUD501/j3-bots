@@ -230,6 +230,43 @@ export const scenarios = (it: Methods) => {
     }),
   );
 
+  it.effect("resumes from inside the batch that ended a steered turn, keeping the steer", () =>
+    Effect.gen(function* () {
+      const engine = yield* Engine;
+      const bench = yield* Bench;
+      const { sessionId, events, key } = yield* session("steer-resume");
+      const running = yield* dispatchTurn({
+        ...(yield* start(key("work"), { _tag: "work" })),
+        sessionId,
+      });
+      yield* events.next("turn-started");
+      const steering = {
+        ...(yield* steer(key("steer"), { _tag: "reply" }, running.turnId)),
+        sessionId,
+      };
+      yield* engine.dispatch(steering);
+      yield* bench.readSteers({ sessionId, turnId: running.turnId });
+      yield* bench.perform({ sessionId, turnId: running.turnId, act: { _tag: "reply" } });
+      const end = yield* finished(events, running.turnId);
+      yield* events.next("steered");
+
+      // The cursor of the turn's end: the steer settles after it, in the same batch or later.
+      const resumed = yield* watch(sessionId, end.cursor);
+      const first = yield* resumed.take;
+
+      if (first._tag === "replaced") {
+        assert.deepStrictEqual(
+          first.steers.filter((settled) => settled.key === steering.key),
+          [{ key: steering.key, turnId: running.turnId, settlement: "read" }],
+        );
+      } else {
+        const read = first._tag === "steered" ? first : yield* resumed.next("steered");
+        assert.deepStrictEqual([read.key, read.turnId], [steering.key, running.turnId]);
+        assert.isFalse(resumed.seen.some((event) => event.cursor === end.cursor));
+      }
+    }),
+  );
+
   it.effect("steers a turn the engine has only just begun, with no turn for the carrier", () =>
     Effect.gen(function* () {
       const engine = yield* Engine;
@@ -330,6 +367,36 @@ export const scenarios = (it: Methods) => {
 
       assert.deepStrictEqual(end.outcome, { _tag: "interrupted" });
       assert.isFalse(end.backgroundWork);
+    }),
+  );
+
+  it.effect("settles a recovered dispatch that Stop cancels before it starts by its cause", () =>
+    Effect.gen(function* () {
+      const engine = yield* Engine;
+      const { sessionId, events, key } = yield* session("recovered-cancel");
+      const running = yield* dispatchTurn({
+        ...(yield* start(key("work"), { _tag: "work" })),
+        sessionId,
+      });
+      yield* events.next("turn-started");
+      // A start whose first answer was lost: the resend reaches the engine, which queues it.
+      const recovered = { ...(yield* start(key("recovered"), { _tag: "reply" })), sessionId };
+      yield* engine.redispatch(recovered);
+
+      yield* engine.stop({ key: key("stop"), sessionId });
+      const cancelled = yield* events.next(
+        "turn-finished",
+        (event) => event.cause._tag === "dispatch" && event.cause.key === recovered.key,
+      );
+      const end = yield* finished(events, running.turnId);
+
+      assert.deepStrictEqual(cancelled.outcome, { _tag: "cancelled" });
+      assert.deepStrictEqual(end.outcome, { _tag: "interrupted" });
+      assert.isFalse(
+        events.seen.some(
+          (event) => event._tag === "turn-started" && event.turnId === cancelled.turnId,
+        ),
+      );
     }),
   );
 
@@ -493,16 +560,42 @@ export const scenarios = (it: Methods) => {
     }),
   );
 
-  it.effect("marks a point in every open stream on request", () =>
+  it.effect("marks every open stream only after what the engine had recorded", () =>
     Effect.gen(function* () {
       const engine = yield* Engine;
-      const { sessionId, events } = yield* session("sync");
+      const bench = yield* Bench;
+      const { sessionId, events, key, start: cursor } = yield* session("sync");
+      const other = yield* watch(sessionId, cursor);
+      const running = yield* dispatchTurn({
+        ...(yield* start(key("approval"), { _tag: "approval" })),
+        sessionId,
+      });
+      yield* events.next("turn-started");
+      yield* bench.perform({ sessionId, turnId: running.turnId, act: { _tag: "approval" } });
+      const opened = yield* events.next("request-opened");
       const token = SyncToken.make("conformance-sync");
 
+      // Recorded by the engine before `synchronize` is called: both streams tell it first.
+      yield* engine.respond({
+        key: key("allow"),
+        sessionId,
+        requestId: opened.open.requestId,
+        response: { _tag: "approval", decision: "allow-once" },
+      });
       yield* engine.synchronize({ sessionId, token });
-      const marker = yield* events.next("synchronized");
 
-      assert.strictEqual(marker.token, token);
+      for (const stream of [events, other]) {
+        yield* stream.next("synchronized", (event) => event.token === token);
+        const closed = stream.seen.findIndex(
+          (event) => event._tag === "request-closed" && event.requestId === opened.open.requestId,
+        );
+        const marker = stream.seen.findIndex(
+          (event) => event._tag === "synchronized" && event.token === token,
+        );
+        assert.isAtLeast(closed, 0);
+        assert.isBelow(closed, marker);
+      }
+      yield* finished(events, running.turnId);
     }),
   );
 };

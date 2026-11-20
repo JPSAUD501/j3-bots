@@ -2,6 +2,7 @@
 import {
   ApprovalEntry,
   FailureClass,
+  MAX_CARD_QUESTIONS,
   Question,
   SecretRequestEntry,
   WorkStep,
@@ -54,8 +55,26 @@ export const EngineRequest = Schema.Union([
     detail: ApprovalEntry.fields.detail,
     allowsSession: ApprovalEntry.fields.allowsSession,
   }),
-  /** The harness's own question tool, not the bot's `ask`. */
-  Schema.TaggedStruct("question", { questions: Schema.NonEmptyArray(Question) }),
+  /**
+   * The harness's own question tool, not the bot's `ask`. Question and option
+   * ids are J3 Bots' own, stable for the request; the adapter maps an answer
+   * back to the engine's exact question keys and option values.
+   */
+  Schema.TaggedStruct("question", {
+    questions: Schema.NonEmptyArray(Question).check(Schema.isMaxLength(MAX_CARD_QUESTIONS)),
+  }),
+  /**
+   * A question from the harness's own tool that a card cannot show whole: more
+   * questions than one card holds, or a question with more options than one
+   * shows. Nothing of it is dropped silently: the server shows a notice saying
+   * why, and the only answer is `dismiss`, which the bot reads as "no".
+   * `count` is how many the engine asked for, `max` how many a card shows.
+   */
+  Schema.TaggedStruct("unsupported-question", {
+    exceeds: Schema.Literals(["questions", "options"]),
+    count: Schema.Int,
+    max: Schema.Int,
+  }),
   /** A credential only the operator can give. Answered with `Engine.respondSecret`. */
   Schema.TaggedStruct("secret", {
     label: SecretRequestEntry.fields.label,
@@ -125,13 +144,17 @@ export type ToolCall = typeof ToolCall.Type;
  * and the engine arms a resume for the reset. The resumed turn is a
  * `continuation` of it.
  *
- * The engine arms the resume asynchronously, so the adapter predicts it when
- * the turn ends, from the same conditions the engine's worker checks on the
- * session (the turn is the latest and failed at the limit, the reset is known
- * and less than a day past, the session is not archived and waits on no
- * request), and then follows the engine's own record of it: the armed
- * recovery and its `autoResume`. A snooze only delays a continuation; it never
- * prevents one. **Read** at `db51b67`, `UsageLimitRecoveryWorker.ts`
+ * The engine arms the resume asynchronously, so the adapter predicts it from
+ * the conditions the engine's worker checks, and then follows the engine's own
+ * record of it, the armed recovery and its `autoResume`. The conditions: the
+ * session's latest executed turn (queued turns and turns cancelled before they
+ * started do not count) failed; its root failure, the latest failed error on
+ * the turn's root node, is a usage limit whose reset lies after the turn's
+ * end; the session is not archived or settled and waits on no request; and
+ * the recovery is armed for that turn and reset, or not armed yet with the
+ * reset less than a day past. A snooze only delays a continuation; it never
+ * prevents one. **Read** at `db51b67`: `ProjectionStore.ts`
+ * (`getLimitRecoveryCandidates`), `UsageLimitRecoveryWorker.ts`
  * (`limitRecoveryCommand`, `MAX_OVERDUE_ARM_MS`).
  */
 export const PendingContinuation = Schema.Struct({ resumesAt: Schema.DateTimeUtc });
@@ -330,6 +353,15 @@ export const SessionEvent = Schema.Union([
   Schema.TaggedStruct("turn-finished", {
     ...at,
     turnId: TurnId,
+    /**
+     * Why the turn started, as `turn-started` says it, and the same when the
+     * turn never started: a waiting turn that `stop` cancelled, or one that
+     * failed before its provider took it, has no `turn-started`. A turn caused
+     * by a dispatch settles that dispatch by its key here, also when the
+     * server learned of the dispatch only through `redispatch`, which has no
+     * disposition.
+     */
+    cause: TurnCause,
     outcome: TurnOutcome,
     /**
      * Background work the bot started in this turn (delegated tasks, background
