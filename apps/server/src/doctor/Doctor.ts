@@ -98,11 +98,12 @@ const homeCheck = Effect.fn("doctor.home")(function* (home: string) {
   }
   const writability = yield* Home.checkWritable(home).pipe(Effect.result);
   if (writability._tag === "Failure") {
+    const { summary, fix } = writability.failure;
     return check(
       "Data directory",
       "problem",
-      `This user cannot write to ${home}. The server refuses to start until it can.`,
-      writability.failure.fix,
+      `${summary} The server refuses to start until it can write there.`,
+      fix,
     );
   }
   return check("Data directory", "ok", `${home}, open to this user only.`);

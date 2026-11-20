@@ -6,6 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import type * as PlatformError from "effect/PlatformError";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Socket from "../admin/socket.ts";
@@ -81,16 +82,46 @@ export const checkPrivate = Effect.fn("Home.checkPrivate")(function* (home: stri
 /** The home exists, but this user cannot create files in it. */
 class HomeNotWritable extends Schema.TaggedError<HomeNotWritable>()("HomeNotWritable", {
   home: Schema.String,
+  reason: Schema.Literals(["denied", "read-only", "other"]),
+  /** What the system reported, for a reason this module does not name. */
+  detail: Schema.String,
 }) {
-  override get message(): string {
-    return `This user cannot write to ${this.home}, where the server keeps its database and admin socket. ${this.fix}`;
+  /** The problem, without the fix. */
+  get summary(): string {
+    switch (this.reason) {
+      case "denied":
+        return `This user cannot write to ${this.home}, where the server keeps its database and admin socket.`;
+      case "read-only":
+        return `${this.home} is on a file system mounted read-only, so the server cannot keep its database there.`;
+      case "other":
+        return `The server cannot write to ${this.home}: ${this.detail}`;
+    }
   }
 
-  /** The command that repairs it, for the operator to run. */
-  get fix(): string {
-    return `Run \`chmod 700 ${shellWord(this.home)}\`.`;
+  override get message(): string {
+    return this.fix === undefined ? this.summary : `${this.summary} ${this.fix}`;
+  }
+
+  /** What repairs it, for the operator to do, when this module knows. */
+  get fix(): string | undefined {
+    switch (this.reason) {
+      case "denied":
+        return `Run \`chmod 700 ${shellWord(this.home)}\`.`;
+      case "read-only":
+        // A disk that reports errors is remounted read-only, as SD cards often are.
+        return "Check the disk for errors, and the system journal (`journalctl -k`) for why it was mounted read-only.";
+      case "other":
+        return undefined;
+    }
   }
 }
+
+/** Why the system refused to let this user write to the home. */
+const writeRefusal = (error: PlatformError.PlatformError): HomeNotWritable["reason"] => {
+  if (error.reason._tag === "PermissionDenied") return "denied";
+  const { cause } = error;
+  return Predicate.hasProperty(cause, "code") && cause.code === "EROFS" ? "read-only" : "other";
+};
 
 /**
  * Whether this user can create files in `home`. A home that does not exist
@@ -98,12 +129,18 @@ class HomeNotWritable extends Schema.TaggedError<HomeNotWritable>()("HomeNotWrit
  */
 export const checkWritable = Effect.fn("Home.checkWritable")(function* (home: string) {
   const fs = yield* FileSystem.FileSystem;
-  const writable = yield* fs.access(home, { writable: true }).pipe(
-    Effect.as(true),
-    Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(true)),
-    Effect.orElseSucceed(() => false),
+  yield* fs.access(home, { writable: true }).pipe(
+    Effect.catchReason("PlatformError", "NotFound", () => Effect.void),
+    Effect.catchTag("PlatformError", (error) =>
+      Effect.fail(
+        new HomeNotWritable({
+          home,
+          reason: writeRefusal(error),
+          detail: Predicate.isError(error.cause) ? error.cause.message : error.message,
+        }),
+      ),
+    ),
   );
-  if (!writable) return yield* new HomeNotWritable({ home });
 });
 
 /**

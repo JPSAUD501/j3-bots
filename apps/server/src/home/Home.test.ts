@@ -8,6 +8,7 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import { ServerConfig, type ServerConfigShape } from "../config.ts";
 import * as Home from "./Home.ts";
@@ -123,5 +124,38 @@ it.layer(NodeServices.layer)("home", (it) => {
       assert.strictEqual(error.reason, "closed-to-owner");
       assert.include(error.fix, "chmod 700");
     }).pipe(Effect.scoped),
+  );
+
+  it.effect("advises chmod only when a permission keeps this user from writing", () =>
+    Effect.gen(function* () {
+      // How Node reports each refusal of `access(home, W_OK)`.
+      const refusal = (code: string, tag: PlatformError.SystemErrorTag) =>
+        Home.checkWritable("/srv/j3").pipe(
+          Effect.flip,
+          Effect.provide(
+            FileSystem.layerNoop({
+              access: (path) =>
+                Effect.fail(
+                  PlatformError.systemError({
+                    _tag: tag,
+                    module: "FileSystem",
+                    method: "access",
+                    pathOrDescriptor: path,
+                    cause: Object.assign(new Error(`${code}: access '${path}'`), { code }),
+                  }),
+                ),
+            }),
+          ),
+        );
+      const denied = yield* refusal("EACCES", "PermissionDenied");
+      assert.include(denied.message, "chmod 700");
+      const readOnly = yield* refusal("EROFS", "Unknown");
+      assert.include(readOnly.message, "read-only");
+      assert.include(readOnly.message, "journalctl");
+      assert.notInclude(readOnly.message, "chmod");
+      const failing = yield* refusal("EIO", "Unknown");
+      assert.include(failing.message, "EIO: access '/srv/j3'");
+      assert.isUndefined(failing.fix);
+    }),
   );
 });
