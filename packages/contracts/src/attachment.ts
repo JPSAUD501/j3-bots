@@ -6,10 +6,21 @@ import { AttachmentId, EntryId, Label, NonNegativeInt } from "./base.ts";
  * A file the operator sent or a bot produced. Its bytes are served to paired
  * devices at `GET /attachments/<id>` (see `http.ts`).
  */
+/**
+ * A media type as `POST /attachments` stores it: lowercase, without
+ * parameters, at most 100 characters, as the engine takes it.
+ */
+export const AttachmentMediaType = Schema.String.check(
+  Schema.isMinLength(3),
+  Schema.isMaxLength(100),
+);
+export type AttachmentMediaType = typeof AttachmentMediaType.Type;
+
 export const Attachment = Schema.Struct({
   id: AttachmentId,
+  /** Trimmed. */
   name: Label,
-  mediaType: Label,
+  mediaType: AttachmentMediaType,
   /** Bytes. */
   size: NonNegativeInt,
 });
