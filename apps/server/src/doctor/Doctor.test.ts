@@ -419,7 +419,12 @@ it.layer(NodeServices.layer)("doctor", (it) => {
   it.effect("checks whether a device is paired, which only the running server knows", () =>
     Effect.gen(function* () {
       const none = yield* diagnoseIn({ server: Option.some(running({ pairedDevices: 0 })) });
-      assertFlagged(named(none.checks, "Pairing"), "warning");
+      const unpaired = named(none.checks, "Pairing");
+      assertFlagged(unpaired, "warning");
+      assert.include(
+        Option.getOrElse(unpaired.fix, () => ""),
+        "`j3-bots pair`",
+      );
       const stopped = yield* diagnoseIn({ server: Option.none() });
       assert.strictEqual(named(stopped.checks, "Pairing").status, "skipped");
       assertFlagged(named(stopped.checks, "Server"), "warning");

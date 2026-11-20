@@ -50,7 +50,3 @@ export const PairingGrant = Schema.Struct({
   expiresAt: Schema.DateTimeUtc,
 });
 export type PairingGrant = typeof PairingGrant.Type;
-
-/** What a code can be entered in, in this release: nothing yet. `pair` and `doctor` both say so. */
-export const PAIRING_CAVEAT =
-  "In this release the web client cannot complete pairing yet: a code from `j3-bots pair` has nowhere to be entered.";

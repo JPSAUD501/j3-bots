@@ -7,7 +7,7 @@ import * as Option from "effect/Option";
 import { Command } from "effect/cli";
 import * as NetAddress from "effect/net/NetAddress";
 import { AdminClient } from "../admin/AdminClient.ts";
-import { type ListenerStatus, PAIRING_CAVEAT } from "../admin/protocol.ts";
+import type { ListenerStatus } from "../admin/protocol.ts";
 import * as ServerConfig from "../config.ts";
 import { isPrivateAddress, Network } from "../system/Network.ts";
 import { refuse, userFacing } from "./errors.ts";
@@ -19,17 +19,29 @@ const NOT_RUNNING =
   "The server is not running, and pairing codes live in the running server. Start it with `systemctl --user start j3-bots` (or `j3-bots serve`), then run `j3-bots pair` again.";
 
 /**
- * Where a new device reaches the running server, as it listens. Over HTTPS a
- * browser accepts only a name on the certificate, so no bare address is
- * offered; plain HTTP is offered on the private addresses it serves.
+ * Where a new device reaches the running server, as it listens, and what to
+ * do there. Over HTTPS a browser accepts only a name on the certificate, so
+ * no bare address is offered; plain HTTP is offered on the private addresses
+ * it serves.
  */
 const whereToOpen = Effect.fn("pair.whereToOpen")(function* (listener: ListenerStatus) {
   const url = (host: string) =>
     `${listener.scheme}://${NetAddress.formatUrlHostString(host)}:${listener.port}`;
+  const listing = (addresses: ReadonlyArray<string>) =>
+    addresses.length === 0
+      ? ["On the new device, open J3 Bots and enter the code."]
+      : [
+          "The server listens at:",
+          ...addresses.map((address) => `  ${url(address)}`),
+          "On the new device, open J3 Bots at one of these addresses and enter the code.",
+        ];
   if (listener.scheme === "https") {
     return listener.names.length === 0
-      ? [`The server listens at https://<a name the server's certificate covers>:${listener.port}.`]
-      : ["The server listens at:", ...listener.names.map((name) => `  ${url(name)}`)];
+      ? [
+          `The server listens at https://<a name the server's certificate covers>:${listener.port}.`,
+          "On the new device, open J3 Bots there and enter the code.",
+        ]
+      : listing(listener.names);
   }
   let hosts = [listener.address];
   if (listener.address === "0.0.0.0") {
@@ -43,9 +55,7 @@ const whereToOpen = Effect.fn("pair.whereToOpen")(function* (listener: ListenerS
       )
       .map((entry) => entry.address);
   }
-  return hosts.length === 0
-    ? []
-    : ["The server listens at:", ...hosts.map((host) => `  ${url(host)}`)];
+  return listing(hosts);
 });
 
 /** `ABCDE-FGHJK`: two halves, easier to read out and type. */
@@ -74,7 +84,6 @@ export const pairCommand = Command.make("pair").pipe(
           "",
           `It works once, for the next ${minutes} minute${minutes === 1 ? "" : "s"}.`,
           ...(yield* whereToOpen(status.value.listener)),
-          PAIRING_CAVEAT,
         ].join("\n"),
       );
     }),
