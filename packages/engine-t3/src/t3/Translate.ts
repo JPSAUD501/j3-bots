@@ -1245,7 +1245,11 @@ export interface View {
   readonly steps: Map<string, string>;
   readonly speech: Set<string>;
   readonly requests: Map<string, RequestView>;
-  readonly toolCalls: Map<string, "open" | "closed">;
+  /** Each `j3` call told, open with the digest it was last told with, or closed. */
+  readonly toolCalls: Map<
+    string,
+    { readonly _tag: "open"; readonly inputDigest: ToolInputDigest } | { readonly _tag: "closed" }
+  >;
   /** Steers whose settlement was reported, by message id. */
   readonly steers: Set<string>;
   hold: HoldView;
@@ -1416,13 +1420,26 @@ export const diff = (mirror: Mirror, view: View, now: DateTime.Utc): ReadonlyArr
         const call = toolCallOf(mirror, item);
         if (call !== undefined) {
           const seen = view.toolCalls.get(call.callId);
-          if (seen === undefined) {
-            view.toolCalls.set(call.callId, "open");
+          // A call the engine records again with other input while it is open
+          // is told again: an ACP agent can report a call before its
+          // arguments, and the call runs, and reaches the bridge, with them.
+          if (
+            seen === undefined ||
+            (seen._tag === "open" &&
+              seen.inputDigest !== call.inputDigest &&
+              LIVE_ITEM.has(item.status) &&
+              !ended)
+          ) {
+            view.toolCalls.set(call.callId, { _tag: "open", inputDigest: call.inputDigest });
             events.push({ _tag: "tool-call", turnId, call, state: "open" });
           }
           // The turn's end closes its calls without a `closed` for each.
-          if (view.toolCalls.get(call.callId) === "open" && !LIVE_ITEM.has(item.status) && !ended) {
-            view.toolCalls.set(call.callId, "closed");
+          if (
+            view.toolCalls.get(call.callId)?._tag === "open" &&
+            !LIVE_ITEM.has(item.status) &&
+            !ended
+          ) {
+            view.toolCalls.set(call.callId, { _tag: "closed" });
             events.push({ _tag: "tool-call", turnId, call, state: "closed" });
           }
         }
@@ -1438,7 +1455,7 @@ export const diff = (mirror: Mirror, view: View, now: DateTime.Utc): ReadonlyArr
         turn.finished = true;
         for (const item of itemsOf(mirror, run)) {
           const call = toolCallOf(mirror, item);
-          if (call !== undefined) view.toolCalls.set(call.callId, "closed");
+          if (call !== undefined) view.toolCalls.set(call.callId, { _tag: "closed" });
         }
         const continuation = continuationOf(mirror, run, now);
         turn.continuation = continuation !== null;

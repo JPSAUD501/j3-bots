@@ -259,6 +259,16 @@ export class TestEngineControl extends Context.Service<
       readonly input: unknown;
       readonly recorded: "now" | "after-next-synchronize";
     }) => Effect.Effect<ToolCallId>;
+    /**
+     * The engine records an open `j3` tool call again with other input, as it
+     * does for an ACP agent that reported the call before its arguments.
+     */
+    readonly recordToolInput: (input: {
+      readonly sessionId: SessionId;
+      readonly turnId: TurnId;
+      readonly callId: ToolCallId;
+      readonly input: unknown;
+    }) => Effect.Effect<void>;
     /** A `j3` tool call returns. */
     readonly closeToolCall: (input: {
       readonly sessionId: SessionId;
@@ -354,7 +364,7 @@ interface SteerRecord {
 }
 
 interface ToolCallRecord {
-  readonly call: ToolCall;
+  call: ToolCall;
   state: "unrecorded" | "open" | "closed";
 }
 
@@ -1546,6 +1556,23 @@ const make = Effect.gen(function* () {
           turn.toolCalls.set(call.callId, { call, state: "unrecorded" });
         }
         return call.callId;
+      }),
+
+    recordToolInput: ({ sessionId, turnId, callId, input }) =>
+      Effect.gen(function* () {
+        const session = yield* existingSession(sessionId);
+        const turn = yield* runningTurn(session, turnId);
+        const record = turn.toolCalls.get(callId);
+        if (record?.state !== "open") return yield* misuse(`tool call ${callId} is not open`);
+        record.call = { ...record.call, inputDigest: yield* toolInputDigest(input) };
+        const call = record.call;
+        emit(session, yield* DateTime.now, (stamp) => ({
+          _tag: "tool-call",
+          ...stamp,
+          turnId,
+          call,
+          state: "open",
+        }));
       }),
 
     closeToolCall: ({ sessionId, turnId, callId }) =>

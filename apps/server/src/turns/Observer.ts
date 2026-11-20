@@ -808,7 +808,13 @@ export const layer = Layer.effect(
       `;
     }, Effect.orDie);
 
-    /** The engine's record of a `j3` tool call, which a bot tool request is matched against. */
+    /**
+     * The engine's record of a `j3` tool call, which a bot tool request is
+     * matched against. A call told open again carries the input the engine
+     * recorded last, which the bridge's request has: it replaces the digest
+     * while the call is open and no request claimed it. A claimed or closed
+     * call keeps what it was matched or ended with.
+     */
     const toolCall = Effect.fn("Observer.toolCall")(function* (
       session: Watched,
       turnId: TurnId,
@@ -823,7 +829,16 @@ export const layer = Layer.effect(
           ${session.id}, ${call.callId}, ${turnId}, ${call.tool}, ${call.inputDigest},
           ${open ? 1 : 0}, ${timeText(at)}
         )
-        ON CONFLICT (session_id, engine_call_id) DO UPDATE SET open = min(open, excluded.open)
+        ON CONFLICT (session_id, engine_call_id) DO UPDATE SET
+          input_digest = CASE
+            WHEN engine_tool_calls.open = 1 AND excluded.open = 1 AND NOT EXISTS (
+              SELECT 1 FROM tool_calls p
+              WHERE p.session_id = engine_tool_calls.session_id
+                AND p.engine_call_id = engine_tool_calls.engine_call_id
+            ) THEN excluded.input_digest
+            ELSE engine_tool_calls.input_digest
+          END,
+          open = min(engine_tool_calls.open, excluded.open)
       `;
       yield* touchActivity(session.id, turnId, at);
     }, Effect.orDie);

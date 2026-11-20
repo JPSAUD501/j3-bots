@@ -105,6 +105,35 @@ it.effect(
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+// An ACP agent can report a call before its arguments: the engine records
+// it with `{}`, then again with the arguments the bridge receives.
+it.effect("matches a call the engine recorded again with its arguments", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const tools = yield* BotTools;
+    const { bot, session, message, turnId } = yield* working("Check the build.");
+    const args = { text: "The build is green.", done: true };
+
+    const callId = yield* control.toolCall({
+      sessionId: session,
+      turnId,
+      tool: "say",
+      input: {},
+      recorded: "now",
+    });
+    yield* control.recordToolInput({ sessionId: session, turnId, callId, input: args });
+    const reply = yield* tools.call({
+      requestId: "call-1",
+      sessionId: session,
+      tool: "say",
+      arguments: args,
+    });
+    assert.deepStrictEqual(reply, { _tag: "result", value: { status: "recorded" } });
+    assert.deepStrictEqual(yield* botSaid(bot.id), ["The build is green."]);
+    yield* deliveryIs(message, "delivered");
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("refuses a call of a turn that ended, even one the next turn could match", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;

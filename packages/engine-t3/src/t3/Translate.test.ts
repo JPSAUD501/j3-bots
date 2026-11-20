@@ -7,17 +7,21 @@ import {
   type OrchestrationV2UserInputQuestion,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { IdempotencyKey, TurnId } from "../ids.ts";
+import { toolInputDigest } from "../toolCaller.ts";
 import { messageIdFor } from "./Keys.ts";
 import {
   applyEvent,
   backgroundWorkOf,
   diff,
+  digestToolCalls,
   dispositionOf,
   emptyMirror,
   engineAnswersOf,
+  type EventBody,
   isDeleted,
   nothingToStop,
   replacement,
@@ -457,4 +461,50 @@ describe("what a Stop leaves to run", () => {
     applyEvent(mirror, event("thread.deleted", { ...thread, deletedAt: at }));
     assert.isTrue(isDeleted(mirror));
   });
+});
+
+// The pinned ACP adapter records a call the agent reported without
+// arguments as `{}`, then records it again with them once it runs (**Read**
+// at `db51b67`, `provider-acp/src/server/adapter.ts`, L4657-4658, L4711).
+describe("a `j3` call recorded before its arguments", () => {
+  const say = (input: unknown, status: string) =>
+    item({ id: "item-say", type: "dynamic_tool", toolName: "j3.say", input, status });
+  const told = (events: ReadonlyArray<EventBody>) =>
+    events.flatMap((event) =>
+      event._tag === "tool-call" ? [{ state: event.state, digest: event.call.inputDigest }] : [],
+    );
+
+  it.effect("is told again with its arguments while it is open, and not once it returned", () =>
+    Effect.gen(function* () {
+      const args = { text: "The build is green.", done: true };
+      const mirror = emptyMirror();
+      applyEvent(mirror, run("running", 1));
+      const { view } = replacement(mirror, false, at);
+
+      applyEvent(mirror, say({}, "running"));
+      yield* digestToolCalls(mirror);
+      assert.deepStrictEqual(told(diff(mirror, view, at)), [
+        { state: "open", digest: yield* toolInputDigest({}) },
+      ]);
+
+      applyEvent(mirror, say(args, "running"));
+      yield* digestToolCalls(mirror);
+      assert.deepStrictEqual(told(diff(mirror, view, at)), [
+        { state: "open", digest: yield* toolInputDigest(args) },
+      ]);
+      // A subscriber that starts now is told the arguments at once.
+      assert.deepStrictEqual(
+        replacement(mirror, false, at).event.openTurns.flatMap((turn) =>
+          turn.toolCalls.map((call) => call.inputDigest),
+        ),
+        [yield* toolInputDigest(args)],
+      );
+
+      applyEvent(mirror, say({ text: "Another." }, "completed"));
+      yield* digestToolCalls(mirror);
+      assert.deepStrictEqual(told(diff(mirror, view, at)), [
+        { state: "closed", digest: yield* toolInputDigest({ text: "Another." }) },
+      ]);
+    }),
+  );
 });

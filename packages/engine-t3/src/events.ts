@@ -136,7 +136,7 @@ export const ToolCall = Schema.Struct({
   callId: ToolCallId,
   /** The bare tool name (`say`), whatever name the harness gives it. */
   tool: Schema.String,
-  /** `toolInputDigest` of the input the engine recorded. */
+  /** `toolInputDigest` of the input the engine recorded last. */
   inputDigest: ToolInputDigest,
 });
 export type ToolCall = typeof ToolCall.Type;
@@ -355,8 +355,12 @@ export const SessionEvent = Schema.Union([
   /**
    * The bot called a `j3` tool (`open`), or the call returned (`closed`). The
    * engine records a call apart from the request the `j3` bridge receives for
-   * it, so this can arrive after that request. A turn's end closes every call
-   * of the turn still open, without a `closed` for each.
+   * it, so this can arrive after that request. An `open` call can be told
+   * again, with the digest of other input: the engine may record a call
+   * before its arguments and record it again with them once it runs, as an
+   * ACP agent reports it (**Read** at `db51b67`,
+   * `provider-acp/src/server/adapter.ts`, L4657-4658, L4711). A turn's end
+   * closes every call of the turn still open, without a `closed` for each.
    */
   Schema.TaggedStruct("tool-call", {
     ...at,
