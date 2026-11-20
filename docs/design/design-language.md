@@ -57,7 +57,7 @@ Three regions, the same on every surface.
 
 | Action | Keys |
 | --- | --- |
-| Next and previous bot or room, in roster order | `Alt+↓`, `Alt+↑` (`⌥↓`, `⌥↑` on macOS) |
+| Next and previous bot or room, in roster order; with none open, the first or the last | `Alt+↓`, `Alt+↑` (`⌥↓`, `⌥↑` on macOS) |
 | Put the cursor in the composer | `/` |
 | Stop the bot that is working | `Ctrl+.` (`⌘.` on macOS) |
 | Close the details pane, before anything else | `Escape` |
@@ -65,7 +65,8 @@ Three regions, the same on every surface.
 
 - Shortcut hints are shown where the action is: on the Stop button, and on the empty screen for the next-bot shortcut. Touch screens show neither. Only a coarse pointer hides anything: with no pointer at all, as with a keyboard alone or a TV remote, every hint and the inline "Waiting for you" stay.
 - The roster's arrow keys are unmodified ones; `Alt+↑` and `Alt+↓` pass through it to the shell.
-- Opening the details pane moves focus to its heading; closing it, by any route, returns focus to the conversation title. Choosing another conversation with a mouse or keyboard puts the cursor in its composer; on touch screens it does not, so the keyboard does not cover the conversation. Loading a page moves focus nowhere.
+- Opening the details pane moves focus to its heading; closing it on the same conversation, by any route, returns focus to the conversation title. Choosing another conversation with a mouse or keyboard puts the cursor in its composer; on touch screens it does not, so the keyboard does not cover the conversation. When the details close because another conversation was chosen, the move wins and focus follows it. Loading a page moves focus nowhere.
+- Each conversation opens at its own newest entry, never where the previous one was scrolled to.
 - A command palette (`Cmd/Ctrl+K`) that reaches every action is planned and not built yet.
 
 ## Color
@@ -171,7 +172,7 @@ J3 Bots has **its own** avatar system. Existing products use friendly blob chara
 - A 4 px spacing grid.
 - Radii: 4 for badges and a bubble's tightened corner, 8 for controls and cards, 12 for popovers and sheets, 16 for bubbles, and a pill for the composer and round buttons.
 - Consecutive bubbles from one speaker within five minutes form a group: the corners where two bubbles meet, on the speaker's side, tighten to 4. A bubble on its own keeps all four corners round. A pause of more than fifteen minutes puts a time between entries.
-- Entry widths are layout tokens: a bubble takes up to 36 rem or 85% of the column, a card up to 36 rem or 92%, and the compact handoff and routine-change cards up to 28 rem. The composer grows with its text up to 15 rem, then scrolls.
+- Entry widths are layout tokens: a bubble takes up to 36 rem or 85% of the column, a card up to 36 rem or 92%, and the compact handoff and routine-change cards up to 28 rem. On a phone a card that asks the operator for something (a question, an approval, a credential) takes the full column. The composer grows with its text up to 15 rem, then scrolls.
 - Borders are hairlines. Elevation is used for popovers and sheets only.
 - A filled area inside a bordered box, such as the header of a card awaiting the operator, rounds its corners to the box's radius less the border, so the fill follows the box's outline.
 - Roster rows are 52 px on pointer devices and 64 px on touch.
@@ -191,9 +192,9 @@ J3 Bots has **its own** avatar system. Existing products use friendly blob chara
 | Bubble | Operator and bot variants; groups; link and code styling. In a room, a bot's group is labeled with its name beside a 20 px drawing of its shape, which carries identity only, never state. Under each of the operator's messages the bot has not received yet, "Queued", or why it never will |
 | Composer | Pill, labeled "Message {name}", attachment and dictation; sends on Enter. While its field has keyboard focus, the whole pill carries the `accent` focus outline |
 | Work fold | "Worked for {duration}"; opens to steps: commands, edits, searches, delegated tasks. Long commands wrap; nothing is shown only in a hover title |
-| Code block | In the approval card and the work fold, each line of code is its own block with a hanging indent: leading spaces stay, a wrapped line continues indented under itself, and selecting the block copies the text exactly as given. Long words break anywhere rather than overflow |
-| Question card | On a phone it takes the full column. Prompt, up to six options, optional free text; resolved state. Once an option is chosen, the text field reads "Add a note to your answer", because both are sent. A single question with one choice and no typed answer is answered by tapping an option; anything else is a form of radios, checkboxes and text, sent with "Send answer". An option the bot recommends says "Recommended"; one that loses something is drawn in `blocked` and says "Loses something". Dismissing reads "Dismiss as a no", because that is what the bot receives |
-| Approval card | Allow once (primary), Allow for session, Deny (outline, as neutral as Allow for session). The exact action (the command, the file's path, the tool call) is always on the card. While pending, the card shows one block: the action first, then, past a seam of the card's surface, what the bot added, which never repeats the action: what a command will do or its lines past the first, or a file change's diff under its path. Only that second part scrolls, within a bounded area the keyboard can scroll, so the action stays in view. Once decided, the card shows the action, and the rest folds away. On a phone the card takes the full column, and the buttons share each row they wrap onto, so they read as one group |
+| Code block | In the approval card and the work fold, each line of code is its own block with a hanging indent: leading spaces stay, a wrapped line continues indented under itself, and selecting the block copies the text exactly as given. Long words break anywhere rather than overflow. In a file change's diff, added lines take a `success` tint, removed lines a `blocked` tint and hunk headers are muted; the `+` and `-` stay, so the tint is never the only mark, and the text is untouched, so copying is too. A block that scrolls shows a soft shade at each edge with more past it, in CSS alone, so touch screens, which hide scroll bars, show it too |
+| Question card | Prompt, up to six options, optional free text; resolved state. Once an option is chosen, the text field reads "Add a note to your answer", because both are sent. A single question with one choice and no typed answer is answered by tapping an option; anything else is a form of radios, checkboxes and text, sent with "Send answer". An option the bot recommends says "Recommended"; one that loses something is drawn in `blocked` and says "Loses something". Dismissing reads "Dismiss as a no", because that is what the bot receives |
+| Approval card | Allow once (primary), Allow for session, Deny (outline, as neutral as Allow for session). What the bot asks is always on the card, exactly as the engine recorded it: the whole command, every line and its indentation, in a block that scrolls when long; or a file change's path, then, past a seam of the card's surface, its diff, which alone scrolls, so the path stays in view. Every scrolling block can be scrolled from the keyboard. Why it asks, when the provider said (an escalation out of the sandbox, say), is a quiet line above, never mixed into the action. When the provider shared only a summary, the card says so ("The exact command wasn't shared, only a summary"), sets the summary as prose rather than code, and offers Deny and Allow once but not Allow for session: a bot never stalls on such a provider, and nothing unseen is granted beyond once. Once decided, the card keeps the action, and a diff folds away. On a phone the buttons share each row they wrap onto, so they read as one group |
 | Credential card | What is asked for and why, a masked field, a link to get one when the bot gives a web address, Provide and Decline. Says the value is not kept; the typed value exists only while the card is pending, and once answered only what happened remains |
 | File card | Name, type, size; opens a preview |
 | Handoff card | "Asked Scout about …"; opens the exchange |
@@ -213,7 +214,7 @@ Interface text follows the same rules as bot messages: plain, short, literal.
 - Sentence case everywhere.
 - A button says what it does to what: "Pause routine", not "Pause".
 - Schedules are written out: "Weekdays at 8:47 AM", not a cron expression. An interval reads as one ("Every 15 minutes", "Every 6 hours at minute 00") only when it divides the hour or the day evenly; `*/7` minutes runs at :56 and again at :00, so it is not "every 7 minutes". A schedule with no plain sentence shows its expression. A schedule kept in another time zone names it, hourly ones included: "Every Monday and Thursday at 9:00 AM (Western European Time)", "Every hour at minute 15 (India Standard Time)". A single run gives its full date and time in the operator's time zone, and "Next run" is always in the operator's time zone.
-- Times use the language's own short style ("8:47 AM" in English, "08:47" in Portuguese) and the operator's time zone. A time standing alone reads "Yesterday at 1:40 PM"; inside a sentence it has its own form ("yesterday at 1:40 PM", "at 8:47 AM", "on Nov 13, 2026, 4:30 PM"), so no capital lands mid-sentence.
+- Times use the language's own short style ("8:47 AM" in English, "08:47" in Portuguese) and the operator's time zone. A time of day never breaks across lines: the space inside "8:47 AM" is a no-break space wherever a time appears, in rosters, schedules, last runs and notices. A time standing alone reads "Yesterday at 1:40 PM"; inside a sentence it has its own form ("yesterday at 1:40 PM", "at 8:47 AM", "on Nov 13, 2026, 4:30 PM"), so no capital lands mid-sentence.
 - Errors say what happened and what the operator can do.
 - No exclamation marks, no mascot voice.
 
@@ -226,7 +227,7 @@ Every interface sentence goes through the translation layer as a whole sentence 
 - Text contrast of at least 4.5:1, and 3:1 for large text and interface marks, in both themes.
 - State is never carried by color alone: the avatar's form or a mark changes too.
 - Every action is reachable by keyboard on desktop and by screen reader on every platform, with the same name it has on screen.
-- Touch targets are at least 44 px. On touch screens a compact control grows to a real 44 px box, so controls that sit side by side or wrap onto a second line never cover one another; pointer devices keep the compact size.
+- Touch targets are at least 44 px. On touch screens a compact control grows to a real 44 px box, so controls that sit side by side or wrap onto a second line never cover one another; pointer devices keep the compact size. Menu rows, such as New and the Settings choices, do the same.
 - Light and dark follow the system unless the operator picks one in Settings. The choice is applied before the first paint.
 
 ## Next steps for design
