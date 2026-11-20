@@ -381,9 +381,10 @@ export function sampleTeam(now: DateTime.Utc) {
       author: by(ids.atlas),
       createdAt: ago(12),
       kind: "command",
-      action: "pnpm db:migrate --env staging --to 0042_invoice_totals",
-      detail:
-        "→ adds the column invoices.total_cents\n→ fills it for 18,204 invoices, 500 at a time\n→ keeps the billing API read-only for about 40 s\n→ writes the migration log to logs/migrate-0042.txt",
+      action: "pnpm db:migrate --env staging \\\n  --to 0042_invoice_totals \\\n  --batch-size 500",
+      detail: null,
+      reason: "Needs network access to reach the staging database, which the sandbox blocks.",
+      exact: true,
       allowsSession: true,
       status: { _tag: "pending" },
     },

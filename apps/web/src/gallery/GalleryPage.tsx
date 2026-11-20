@@ -351,7 +351,7 @@ function CardsSection() {
           ))}
         </div>
       </Labeled>
-      <Labeled label="Approval: a command, then what it will do; a file change, its path above the diff; a file read, the action alone; a decision on its way; allowed (what it does, folded away); denied; expired">
+      <Labeled label="Approval: a whole command, indentation kept; one with the reason it asks; a summary only, with no grant for the session; a file change, its path above the coloured diff; a file read; a decision on its way; allowed; denied; expired">
         <div className="flex flex-col gap-3">
           {variants.approvals.map(({ entry, submitting }) => (
             <ApprovalCard key={entry.id} entry={entry} onDecide={nothing} submitting={submitting} />

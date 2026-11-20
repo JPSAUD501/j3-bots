@@ -200,16 +200,27 @@ export function galleryVariants(now: DateTime.Utc) {
     kind: "command",
     action: "rm -rf build/ && pnpm build",
     detail: null,
+    reason: null,
+    exact: true,
     allowsSession: true,
     status: { _tag: "pending" },
     ...extra,
   });
   const approvalEntries: ReadonlyArray<ApprovalEntry> = [
     approval("approval", {
-      detail: [
-        "Removes the 214 files in build/, then rebuilds every package in the workspace from a clean tree, which takes about 40 s.",
-        "Nothing outside build/ is touched.",
+      action: [
+        "pnpm db:migrate --env staging \\",
+        "  --to 0042_invoice_totals \\",
+        "  --batch-size 500",
       ].join("\n"),
+    }),
+    approval("approval-with-reason", {
+      action: "pnpm install --frozen-lockfile",
+      reason: "Needs network access to fetch packages, which the sandbox blocks.",
+    }),
+    approval("approval-summary", {
+      action: "Run the staging migration, then restart the billing API",
+      exact: false,
     }),
     approval("approval-file-change", {
       kind: "file-change",
@@ -238,17 +249,12 @@ export function galleryVariants(now: DateTime.Utc) {
     }),
     approval("approval-allowed", {
       action: "pnpm --filter site deploy --env staging",
-      detail: [
-        "builds apps/site for production (about 1 min)",
-        "uploads 38 files to the staging bucket",
-        "invalidates the staging CDN cache",
-        "posts the preview link to the #site channel",
-      ].join("\n"),
       status: { _tag: "decided", decision: "allow-session" },
     }),
     approval("approval-denied", {
       kind: "tool",
       action: "Send an email to the vendor list",
+      exact: false,
       status: { _tag: "decided", decision: "deny" },
     }),
     approval("approval-expired", { status: { _tag: "expired" } }),

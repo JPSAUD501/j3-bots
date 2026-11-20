@@ -2,7 +2,17 @@
 import { describe, expect, it } from "vite-plus/test";
 import { createI18n } from "../i18n/i18n";
 import { at, context, plain } from "../test/fixtures";
-import { activityTime, dividerTime, shortDuration, timeInSentence, upcomingTime } from "./time";
+import { scheduleInWords } from "./schedule";
+import {
+  activityTime,
+  clockTime,
+  dividerTime,
+  formatMoment,
+  fullTime,
+  shortDuration,
+  timeInSentence,
+  upcomingTime,
+} from "./time";
 
 // 23:30 on Thursday, November 19 in São Paulo, already Friday in UTC.
 const ctx = context("2026-11-20T02:30:00Z");
@@ -44,6 +54,39 @@ describe("timeInSentence", () => {
     const pt = context("2026-11-20T02:30:00Z", "pt-BR");
     expect(words("2026-11-18T19:12:00Z", pt)).toBe("ontem às 16:12");
     expect(words("2026-11-20T11:47:00Z", pt)).toBe("amanhã às 08:47");
+  });
+});
+
+describe("times never break inside themselves", () => {
+  /** A space a line may end at. No-break spaces are not. */
+  const breakable = /[^\S\u00A0\u202F]/;
+
+  it("keeps every clock time in one piece, in every language and at every hour", () => {
+    for (const locale of ["en", "pt-BR"] as const) {
+      const c = context("2026-11-20T02:30:00Z", locale);
+      for (let hour = 0; hour < 24; hour++) {
+        const moment = at(`2026-11-19T${String(hour).padStart(2, "0")}:47:00Z`);
+        expect(clockTime(moment, c)).not.toMatch(breakable);
+      }
+    }
+    // A period written with spaces of its own, as Spanish does.
+    const es = new Intl.DateTimeFormat("es", {
+      timeStyle: "short",
+      hour12: true,
+      timeZone: "UTC",
+    });
+    expect(formatMoment(es, Date.UTC(2026, 10, 19, 20, 47))).not.toMatch(breakable);
+  });
+
+  it("keeps the time whole inside longer phrases, which may still break elsewhere", () => {
+    const wholeAtEnd = /8:47[\u00A0\u202F]AM$/;
+    expect(upcomingTime(at("2026-11-20T11:47:00Z"), ctx)).toMatch(wholeAtEnd);
+    expect(fullTime(at("2026-11-23T11:47:00Z"), ctx)).toMatch(wholeAtEnd);
+    expect(timeInSentence(at("2026-11-20T11:47:00Z"), ctx)).toMatch(wholeAtEnd);
+    expect(dividerTime(at("2026-11-17T11:47:00Z"), ctx)).toMatch(wholeAtEnd);
+    expect(
+      scheduleInWords({ _tag: "schedule", cron: "47 8 * * 1-5", timeZone: ctx.timeZone }, ctx),
+    ).toMatch(wholeAtEnd);
   });
 });
 

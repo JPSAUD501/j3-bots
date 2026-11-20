@@ -150,12 +150,15 @@ function ProviderRow({ provider }: { provider: ProviderStatus }) {
 function CommandLine({ command, copyLabel }: { command: string; copyLabel: string }) {
   const { t } = useI18n();
   const [result, setResult] = useState<"none" | "copied" | "selected">("none");
+  // Counts presses, so the sentence is a new one each time and is announced again.
+  const [attempt, setAttempt] = useState(0);
   const codeRef = useRef<HTMLElement>(null);
   const select = () => {
     if (codeRef.current) window.getSelection()?.selectAllChildren(codeRef.current);
     setResult("selected");
   };
   const copy = () => {
+    setAttempt((count) => count + 1);
     if (!("clipboard" in navigator)) {
       select();
       return;
@@ -180,9 +183,10 @@ function CommandLine({ command, copyLabel }: { command: string; copyLabel: strin
           {result === "copied" ? <CheckIcon /> : <CopyIcon />}
         </Button>
       </span>
-      {/* Present, though empty, from the start, so the sentence is announced when it appears. */}
+      {/* Present, though empty, from the start, so the sentence is announced when it appears. Keyed
+          by the press, so pressing again replaces it and it is announced again. */}
       <span role="status" className="text-xs text-muted-foreground not-empty:mt-1">
-        {result === "selected" && t("firstRun.signIn.selected")}
+        {result === "selected" && <span key={attempt}>{t("firstRun.signIn.selected")}</span>}
       </span>
     </span>
   );

@@ -2,6 +2,14 @@
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { CheckIcon } from "lucide-react";
 import type { ReactNode } from "react";
+import { cn } from "../../lib/cn";
+import { touchTarget } from "../../lib/touchTarget";
+
+/** A menu row: compact for a mouse, the full touch target on a touch screen. */
+const item = cn(
+  "flex h-8 cursor-default items-center gap-2 rounded-md px-2 outline-none data-highlighted:bg-muted",
+  touchTarget,
+);
 
 export const Menu = MenuPrimitive.Root;
 export const MenuTrigger = MenuPrimitive.Trigger;
@@ -26,6 +34,14 @@ export function MenuPopup({
         </MenuPrimitive.Popup>
       </MenuPrimitive.Positioner>
     </MenuPrimitive.Portal>
+  );
+}
+
+export function MenuItem({ onClick, children }: { onClick: () => void; children: ReactNode }) {
+  return (
+    <MenuPrimitive.Item onClick={onClick} className={item}>
+      {children}
+    </MenuPrimitive.Item>
   );
 }
 
@@ -62,7 +78,7 @@ export function MenuRadioGroup<V extends string>({
           key={option.value}
           value={option.value}
           closeOnClick
-          className="flex h-8 cursor-default items-center gap-2 rounded-md px-2 outline-none data-highlighted:bg-muted"
+          className={item}
         >
           <span className="flex size-4 items-center justify-center">
             <MenuPrimitive.RadioItemIndicator>

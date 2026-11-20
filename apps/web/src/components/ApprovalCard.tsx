@@ -7,7 +7,7 @@ import type { KeyWith } from "../i18n/i18n";
 import { cn } from "../lib/cn";
 import { touchTarget } from "../lib/touchTarget";
 import { CardFrame } from "./CardFrame";
-import { CodeLines } from "./CodeLines";
+import { CodeLines, diffTone } from "./CodeLines";
 import { Button } from "./ui/button";
 
 const kindTitle: Record<ApprovalEntry["kind"], KeyWith> = {
@@ -24,16 +24,28 @@ const decisionText: Record<ApprovalDecision, KeyWith> = {
   deny: "approval.denied",
 };
 
+const summaryOnly: Record<ApprovalEntry["kind"], KeyWith> = {
+  command: "approval.summaryOnly.command",
+  "file-change": "approval.summaryOnly.fileChange",
+  "file-read": "approval.summaryOnly.fileRead",
+  tool: "approval.summaryOnly.tool",
+  other: "approval.summaryOnly.other",
+};
+
 const code = "font-mono text-xs leading-5 whitespace-pre-wrap wrap-anywhere";
+// A bounded area that shows, by a shade at its edge, that more lies past it, and that the keyboard
+// can scroll before deciding.
 const scrolls =
-  "max-h-64 overflow-auto outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent";
+  "code-scroll-shade max-h-64 overflow-auto outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent";
 
 /**
- * A bot asking to do one exact thing its permission mode does not allow
- * outright. The exact action is always on the card. While it waits, the card
- * shows one block: the action, then, past a seam, whatever the bot added (what
- * a command will do, a file change's diff), so nobody approves from a summary.
- * A decided card shows the action and folds the rest.
+ * A bot asking to do one thing its permission mode does not allow outright.
+ * What it asks is always on the card, exactly as the engine recorded it: the
+ * whole command, or a file change's path and diff, coloured by line. Why it
+ * asks, when the provider said, is a quiet line above, never mixed into it.
+ * When the provider shared only a summary, the card says so in words and sets
+ * the summary as prose, not code; it can still be allowed once, so a bot never
+ * stalls on such a provider, but never for the whole session.
  */
 export function ApprovalCard({
   entry,
@@ -48,8 +60,6 @@ export function ApprovalCard({
   const { t } = useI18n();
   const { status, detail } = entry;
   const pending = status._tag === "pending";
-  const detailLabel =
-    entry.kind === "file-change" ? t("approval.detail.fileChange") : t("approval.detail");
   const icon =
     status._tag === "decided" ? (
       status.decision === "deny" ? (
@@ -60,66 +70,80 @@ export function ApprovalCard({
     ) : (
       <ShieldIcon />
     );
+  // A file change's diff, focusable so the keyboard can scroll it.
+  const diff = (className?: string) =>
+    detail !== null && (
+      <pre
+        role="region"
+        aria-label={t("approval.change")}
+        tabIndex={0}
+        className={cn(code, scrolls, "px-2.5 py-2", className)}
+      >
+        <CodeLines text={detail} tone={diffTone} />
+      </pre>
+    );
   return (
-    <CardFrame
-      icon={icon}
-      title={t(kindTitle[entry.kind])}
-      attention={pending}
-      entryId={entry.id}
-      className="@max-tablet:max-w-full"
-    >
-      {pending ? (
-        // One block in two parts, joined by a seam of the card's own surface. The action stays put;
-        // only what follows it scrolls, so the action never leaves view.
+    <CardFrame icon={icon} title={t(kindTitle[entry.kind])} attention={pending} entryId={entry.id}>
+      {entry.reason !== null && (
+        <p className="text-xs text-muted-foreground whitespace-pre-line">{entry.reason}</p>
+      )}
+      {!entry.exact ? (
+        <div className="flex flex-col gap-1.5">
+          {pending && <p className="text-xs font-medium">{t(summaryOnly[entry.kind])}</p>}
+          <p
+            role="region"
+            aria-label={t("approval.action")}
+            tabIndex={0}
+            className={cn(
+              scrolls,
+              "rounded-md px-2.5 py-2 text-sm whitespace-pre-wrap wrap-anywhere",
+            )}
+          >
+            {entry.action}
+          </p>
+        </div>
+      ) : detail === null ? (
+        // The action alone, such as a whole command: it scrolls when long, and the keyboard can
+        // scroll it.
+        <pre
+          role="region"
+          aria-label={t("approval.action")}
+          tabIndex={0}
+          className={cn(code, scrolls, "rounded-md px-2.5 py-2")}
+        >
+          <CodeLines text={entry.action} />
+        </pre>
+      ) : pending ? (
+        // One block in two parts, joined by a seam of the card's own surface. The paths stay put;
+        // only the diff scrolls, so they never leave view.
         <div className="flex flex-col gap-px overflow-hidden rounded-md">
           <pre className={cn(code, "bg-code-background px-2.5 py-2 font-medium")}>
             <CodeLines text={entry.action} />
           </pre>
-          {detail !== null && (
-            // Focusable, so the keyboard can scroll a long plan or diff before deciding.
-            <pre
-              role="region"
-              aria-label={detailLabel}
-              tabIndex={0}
-              className={cn(code, scrolls, "bg-code-background px-2.5 py-2")}
-            >
-              <CodeLines text={detail} />
-            </pre>
-          )}
+          {diff()}
         </div>
       ) : (
         <>
           <pre className={cn(code, "rounded-md bg-code-background px-2.5 py-2")}>
             <CodeLines text={entry.action} />
           </pre>
-          {detail !== null && (
-            <Collapsible.Root>
-              <Collapsible.Trigger
-                className={cn(
-                  "group inline-flex items-center gap-1 rounded-sm text-xs text-muted-foreground hover:text-foreground",
-                  touchTarget,
-                )}
-              >
-                <ChevronRightIcon
-                  className="size-3.5 transition-transform duration-(--duration-state) group-data-panel-open:rotate-90"
-                  aria-hidden
-                />
-                {entry.kind === "file-change"
-                  ? t("approval.showDetail.fileChange")
-                  : t("approval.showDetail")}
-              </Collapsible.Trigger>
-              <Collapsible.Panel className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-(--duration-slow) ease-standard data-ending-style:h-0 data-starting-style:h-0">
-                <pre
-                  role="region"
-                  aria-label={detailLabel}
-                  tabIndex={0}
-                  className={cn(code, scrolls, "mt-2 rounded-md bg-code-background px-2.5 py-2")}
-                >
-                  <CodeLines text={detail} />
-                </pre>
-              </Collapsible.Panel>
-            </Collapsible.Root>
-          )}
+          <Collapsible.Root>
+            <Collapsible.Trigger
+              className={cn(
+                "group inline-flex items-center gap-1 rounded-sm text-xs text-muted-foreground hover:text-foreground",
+                touchTarget,
+              )}
+            >
+              <ChevronRightIcon
+                className="size-3.5 transition-transform duration-(--duration-state) group-data-panel-open:rotate-90"
+                aria-hidden
+              />
+              {t("approval.showChange")}
+            </Collapsible.Trigger>
+            <Collapsible.Panel className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-(--duration-slow) ease-standard data-ending-style:h-0 data-starting-style:h-0">
+              {diff("mt-2 rounded-md")}
+            </Collapsible.Panel>
+          </Collapsible.Root>
         </>
       )}
       {pending ? (
@@ -134,7 +158,8 @@ export function ApprovalCard({
           >
             {t("approval.deny")}
           </Button>
-          {entry.allowsSession && (
+          {/* No blanket grant for an action nobody has seen exactly. */}
+          {entry.allowsSession && entry.exact && (
             <Button
               size="sm"
               className="@max-tablet:grow"

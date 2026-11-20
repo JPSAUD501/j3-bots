@@ -6,8 +6,7 @@ import { useBots, useI18n } from "../app/context";
 import { filterRoster, orderRoster } from "../presentation/roster";
 import { RosterRow } from "./RosterRow";
 import { Button } from "./ui/button";
-import { Menu, MenuPopup, MenuTrigger } from "./ui/menu";
-import { Menu as MenuPrimitive } from "@base-ui/react/menu";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
 
 const keyOf = (item: RosterItem): string =>
   item._tag === "bot" ? `bot:${item.bot.id}` : `room:${item.room.id}`;
@@ -91,18 +90,8 @@ export function Roster({ items, selected, rowLink, onNewBot, onNewRoom, footer }
             <PlusIcon />
           </MenuTrigger>
           <MenuPopup side="bottom" align="end">
-            <MenuPrimitive.Item
-              onClick={onNewBot}
-              className="flex h-8 items-center rounded-md px-2 outline-none data-highlighted:bg-muted"
-            >
-              {t("roster.newBot")}
-            </MenuPrimitive.Item>
-            <MenuPrimitive.Item
-              onClick={onNewRoom}
-              className="flex h-8 items-center rounded-md px-2 outline-none data-highlighted:bg-muted"
-            >
-              {t("roster.newRoom")}
-            </MenuPrimitive.Item>
+            <MenuItem onClick={onNewBot}>{t("roster.newBot")}</MenuItem>
+            <MenuItem onClick={onNewRoom}>{t("roster.newRoom")}</MenuItem>
           </MenuPopup>
         </Menu>
       </div>

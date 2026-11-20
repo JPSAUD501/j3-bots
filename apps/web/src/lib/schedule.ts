@@ -2,7 +2,7 @@
 import type { RoutineTrigger } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import type { I18n } from "../i18n/i18n";
-import { fullTime, type TimeContext } from "./time";
+import { formatMoment, fullTime, type TimeContext } from "./time";
 
 /**
  * A routine's trigger written out, as the operator would say it: "Weekdays at
@@ -78,7 +78,8 @@ function cronInWords(cron: string, i18n: I18n, zone: string | null): string | nu
 
   const h = number(hour, 23);
   if (h === null) return null;
-  const time = new Intl.DateTimeFormat(i18n.locale, { timeStyle: "short", timeZone: "UTC" }).format(
+  const time = formatMoment(
+    new Intl.DateTimeFormat(i18n.locale, { timeStyle: "short", timeZone: "UTC" }),
     Date.UTC(2000, 0, 1, h, m),
   );
 

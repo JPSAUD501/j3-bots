@@ -27,8 +27,42 @@ function calendarDaysAgo(at: DateTime.Utc, { now, timeZone }: TimeContext): numb
   return dayNumber(now) - dayNumber(at);
 }
 
+/** The parts of a time of day: "8", ":", "47", " ", "AM". */
+const TIME_OF_DAY: ReadonlySet<Intl.DateTimeFormatPartTypes> = new Set([
+  "hour",
+  "minute",
+  "second",
+  "fractionalSecond",
+  "dayPeriod",
+]);
+
+/** A narrow no-break space, which Intl itself puts between "8:47" and "AM" in some runtimes. */
+const UNBREAKABLE = "\u202F";
+
+/**
+ * A moment as `formatter` writes it, with every time of day in one piece: the
+ * spaces inside "8:47 AM" or "8:47 p. m." never break, so a line never ends
+ * between the minutes and the period. Spaces around a date stay breakable.
+ * Runtimes differ on which space they put there, so this sets it rather than
+ * trusting it.
+ */
+export function formatMoment(formatter: Intl.DateTimeFormat, epochMillis: number): string {
+  const parts = formatter.formatToParts(epochMillis);
+  const timeOfDay = (part: Intl.DateTimeFormatPart | undefined) =>
+    part !== undefined && TIME_OF_DAY.has(part.type);
+  return parts
+    .map((part, index) =>
+      part.type === "dayPeriod" ||
+      (part.type === "literal" && timeOfDay(parts[index - 1]) && timeOfDay(parts[index + 1]))
+        ? part.value.replace(/\s/g, UNBREAKABLE)
+        : part.value,
+    )
+    .join("");
+}
+
 const format = (at: DateTime.Utc, ctx: TimeContext, options: Intl.DateTimeFormatOptions) =>
-  new Intl.DateTimeFormat(ctx.i18n.locale, { timeZone: ctx.timeZone, ...options }).format(
+  formatMoment(
+    new Intl.DateTimeFormat(ctx.i18n.locale, { timeZone: ctx.timeZone, ...options }),
     DateTime.toEpochMillis(at),
   );
 

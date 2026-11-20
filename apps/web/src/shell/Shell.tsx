@@ -91,17 +91,21 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
   const selectionKey = item === null ? null : draftKey(keyOf(item));
   // Moving to another conversation with a mouse or keyboard puts the cursor in its
   // composer; opening or closing the details beside the conversation moves focus
-  // with them, as the dialog does below `wide`. Neither happens on the first render,
-  // so loading a page never scrolls or steals focus.
+  // with them, as the dialog does below `wide`. When the details close because the
+  // conversation changed, the change wins: focus goes where any move would send it,
+  // and the title takes it only when the details close on the same conversation.
+  // None of this happens on the first render, so loading a page never scrolls or
+  // steals focus.
   const shown = useRef({ selectionKey, detailsOpen });
   useEffect(() => {
     const before = shown.current;
     shown.current = { selectionKey, detailsOpen };
-    if (before.detailsOpen !== detailsOpen) {
+    const moved = before.selectionKey !== selectionKey;
+    if (before.detailsOpen !== detailsOpen && (detailsOpen || !moved)) {
       if (detailsModal) return;
       if (detailsOpen) detailsHeadingRef.current?.focus();
       else titleRef.current?.focus();
-    } else if (before.selectionKey !== selectionKey && selectionKey !== null && !coarsePointer()) {
+    } else if (moved && selectionKey !== null && !coarsePointer()) {
       composerRef.current?.focus();
     }
   }, [selectionKey, detailsOpen, detailsModal]);
@@ -116,9 +120,16 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
     } else if (shortcuts.nextBot.matches(event) || shortcuts.previousBot.matches(event)) {
       const rows = orderRoster(filterRoster(data.roster, ""));
       if (rows.length === 0) return;
+      const forward = shortcuts.nextBot.matches(event);
       const index = item === null ? -1 : rows.indexOf(item);
-      const step = shortcuts.nextBot.matches(event) ? 1 : -1;
-      const next = rows[(index + step + rows.length) % rows.length];
+      // With nothing selected, down starts at the top and up at the bottom.
+      const nextIndex =
+        index === -1
+          ? forward
+            ? 0
+            : rows.length - 1
+          : (index + (forward ? 1 : -1) + rows.length) % rows.length;
+      const next = rows[nextIndex];
       if (next) {
         event.preventDefault();
         navigation.select(keyOf(next));
@@ -204,8 +215,10 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
         {entries.length === 0 && item._tag === "bot" ? (
           <QuietConversation bot={item.bot} />
         ) : (
-          // Reversed, so the view stays pinned to the newest entry as entries arrive.
+          // Reversed, so the view stays pinned to the newest entry as entries arrive. One per
+          // conversation, so each opens at its own end rather than where the last one was left.
           <div
+            key={`timeline:${draftKey(key)}`}
             ref={timelineRef}
             className="flex min-h-0 flex-1 flex-col-reverse overflow-y-auto [overflow-anchor:auto]"
           >
