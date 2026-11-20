@@ -15,6 +15,8 @@ J3 Bots has three clients: a web app, a desktop app and a mobile app. All three 
 
 **`packages/design-tokens`** holds colors, type sizes, spacing, radii and motion timings as data, so the web stylesheet and the mobile theme are generated from one source.
 
+`client-runtime` imports nothing from a platform. Each app provides it, as services: the server's origin; a credential store over the platform's secure storage (keychain or keystore on mobile, the OS vault on desktop); a source of network status; an HTTP client and a WebSocket constructor (`fetch` and the global `WebSocket` on all three); and a secure random source. The runtime exposes state as values a UI reads synchronously and watches with a listener, so any renderer can use it; React hooks over them live in `@j3-bots/client-runtime/react`.
+
 The rule from T3 Code that J3 Bots adopts as is: **the UI stays dumb.** A component receives state and emits intent. If two clients need the same decision, the decision lives in `client-runtime`.
 
 ## Web
@@ -69,9 +71,16 @@ A device token grants everything the operator can do in J3 Bots. There are no na
 
 ## Connecting
 
-Every connection is one device's. The client opens the socket at `/ws` with its token as an `Authorization: Bearer` header. A browser cannot set that header on a WebSocket, so the web client first trades the token for a single-use ticket at `POST /api/socket-ticket` and opens `/ws?ticket=…` within a minute. Either way the server checks the credential once, at the upgrade, and the socket is that device's until it closes.
+Every connection is one device's. The server accepts the device token as an `Authorization: Bearer` header on the upgrade, or a single-use ticket bought with it at `POST /api/socket-ticket` and passed as `/ws?ticket=…` within a minute. Either way the server checks the credential once, at the upgrade, and the socket is that device's until it closes.
 
-A 401 at the upgrade means the device is not paired or was revoked: a client that can read the status (desktop, mobile) stops reconnecting and asks to pair again. A browser cannot: a refused WebSocket upgrade reaches it as a plain connection failure, without the status. So when the web client's handshake fails, it asks `POST /api/socket-ticket` for a fresh ticket, since the old one may have been used or expired, and tries again with backoff. A 401 from the ticket route is the signal that the device is not paired or was revoked, and the web client then asks to pair again. A socket that closes after it opened means reconnect, the same way. Files go over HTTP with the same bearer: `POST /attachments` before sending a message that carries them, and `GET /attachments/:id` to open one.
+All three clients use the ticket. A browser cannot set a header on a WebSocket, and cannot read the status of a refused upgrade, which reaches it as a plain connection failure. The ticket route is plain HTTP, whose status every platform reads the same way, so one path serves all three:
+
+- Before its first ticket, the client checks `GET /api/server`. A server that speaks another protocol version is shown as incompatible and not retried until the operator asks.
+- Every socket is opened with a fresh ticket, since a ticket works once.
+- A 401 from the ticket route means the device is not paired or was revoked: the client forgets its credential, stops reconnecting and asks to pair again.
+- Anything else (no answer, a refused upgrade, a socket that closes after it opened) means try again, after a pause that doubles from half a second up to thirty seconds, jittered so clients do not return together. While the platform reports no network the client waits, and it tries at once when the network returns.
+
+A request in flight when its socket closes is sent again on the next socket. That is safe because every command carries its command id, and the rest are reads. Files go over HTTP with the same bearer: `POST /attachments` before sending a message that carries them, and `GET /attachments/:id` to open one.
 
 ## Behavior every client must get right
 
