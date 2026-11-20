@@ -35,6 +35,10 @@ Decisions marked **Proposed** are recommendations waiting for the project owner'
 
 - [Design language](design/design-language.md): principles, references, tokens and components.
 
+## Operations
+
+- [Running on a Raspberry Pi](operations/running-on-a-pi.md): install, pairing, updates, logs and backups for the server as a user service.
+
 ## Engineering
 
 - [Standards](engineering/standards.md): toolchain, code rules, testing policy, pull requests.

@@ -63,7 +63,7 @@ Plain HTTP is accepted only on loopback and private address ranges. Everything e
 
 A new client is paired with a one-time code.
 
-1. The operator runs `j3 pair` on the host, or opens Devices in an already paired client. Either shows a code and a QR code that expire in five minutes. The code is ten characters of Crockford base32 (no `I`, `L`, `O` or `U`); clients accept it in lower case and with spaces or dashes.
+1. The operator runs `j3-bots pair` on the host, or opens Devices in an already paired client. Either shows a code that expires in five minutes; `j3-bots pair` also prints the addresses the server listens on. A QR code that carries the address and the code is planned. The code is ten characters of Crockford base32 (no `I`, `L`, `O` or `U`); clients accept it in lower case and with spaces or dashes.
 2. The new client sends the code to `POST /api/pair` and receives a device token. The server stores only a hash. A code works once.
 3. Devices are listed in settings with their last activity, and can be revoked. Revoking closes that device's connections immediately.
 

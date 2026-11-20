@@ -63,7 +63,7 @@ Sending something to another person is not reversible. The base prompt holds bot
 
 The first deployment of J3 Bots is on a host that has SSH access to the rest of its owner's network. That is common for a home server and it changes the stakes: a misled bot on that host can reach every machine the host can.
 
-Recommended for any such host, and to be documented in the install guide:
+Recommended for any such host, and set out step by step in [Running on a Raspberry Pi](../operations/running-on-a-pi.md#choose-the-user-it-runs-as):
 
 - Run J3 Bots and its engine as a **dedicated system user** that has no SSH keys, no sudo, and no read access to the operator's home directory.
 - Give that user its own provider sign-ins.
@@ -81,7 +81,8 @@ This is a deployment recommendation, not something J3 Bots enforces. See [open q
 
 - **Client connections** require a device token. Tokens are stored hashed, listed, and revocable. The socket checks the token, or a single-use ticket bought with it, once at the upgrade; each socket belongs to one device, and revoking the device closes its sockets at once. File routes take the same bearer on every request.
 - **Pairing codes** carry 50 bits (ten Crockford base32 characters), expire after five minutes and work once. Failed attempts are limited across all sources: after five failures in fifteen minutes, pairing is locked for fifteen minutes and every attempt is answered with the time it opens again. A locked-out attacker gets a handful of guesses per quarter hour against a space of 2^50. Codes and failures are kept in memory, so a restart of the server forgets both.
-- **Plain HTTP** is refused at start on any address that is not loopback or private. A public address needs `J3_TLS_CERT` and `J3_TLS_KEY`.
+- **Plain HTTP** is refused at start on any address that is not loopback or private. The default, `lan`, listens on every IPv4 interface and is refused while any of the host's addresses is public. A public address needs a TLS certificate and key ([Server: configuration](server.md#configuration)). On a private network, plain HTTP still lets anyone on that network read a device token in transit. Serving HTTPS, for instance on a Tailscale name, closes that gap.
+- **The admin socket** gives commands on the host a pairing code and the server's status. It takes no token: it is a Unix socket inside the data directory, and only the operator's user can open it (the directory is mode 0700, the socket 0600). Anyone who can act as that user can already read the database.
 - **A failing request** fails alone, with a generic error; the cause stays in the server log, and the socket's other subscriptions carry on.
 - **Webhook endpoints** authenticate with a secret in the path, compared in constant time, and optionally an HMAC over the body. Bodies are size-limited and rate-limited per routine.
 - **The bot tool endpoint** listens on loopback and accepts calls only from sessions the server created. It identifies the bot from the session and pins each call to the turn it came from, never from an argument the model supplies ([Server: bot tools](server.md#bot-tools)).
