@@ -22,7 +22,7 @@ import {
   QuietConversation,
 } from "../components/EmptyStates";
 import { Roster } from "../components/Roster";
-import { SettingsButton } from "../components/SettingsDialog";
+import { SettingsButton, SignOutDevice } from "../components/SettingsDialog";
 import { Button } from "../components/ui/button";
 import { Timeline } from "../components/Timeline";
 import { filterRoster, orderRoster, rosterKeyOf, rosterKeyText } from "../presentation/roster";
@@ -193,6 +193,10 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
             }
           />
         )}
+        {/* Settings live in the roster's footer; before there is a roster, this is the way out. */}
+        <div className="flex shrink-0 justify-center px-4 pb-3">
+          <SignOutDevice onSignOut={intents.signOut} quiet />
+        </div>
       </div>
     );
   }
@@ -284,6 +288,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
             value={draft.text}
             onValueChange={(value) => intents.setDraftText(target, value)}
             files={draft.files}
+            sending={draft.sending}
             onAttachFiles={(files) => intents.attachFiles(target, files)}
             onDetachFile={(fileKey) => intents.detachFile(target, fileKey)}
             onSend={() => intents.sendDraft(target)}

@@ -22,6 +22,8 @@ interface ComposerProps {
   readonly onValueChange: (value: string) => void;
   /** The files in the draft, as they upload. */
   readonly files?: ReadonlyArray<DraftFile>;
+  /** The draft is on its way to the outbox, for a few milliseconds: it takes no change. */
+  readonly sending?: boolean;
   /** Files the operator picked, pasted or dropped. Without it, the composer takes no files. */
   readonly onAttachFiles?: (files: ReadonlyArray<File>) => void;
   readonly onDetachFile?: (key: string) => void;
@@ -61,14 +63,16 @@ const nameOf = (file: DraftFile) => (file._tag === "ready" ? file.attachment.nam
  * new line. Files picked, pasted or dropped upload at once and show above the
  * pill; the message goes once they all have. With nothing to send, the
  * trailing button dictates where dictation exists. A text longer than a
- * message can hold is kept, and says so instead of sending. The field draws
- * no ring of its own: the pill takes the focus outline.
+ * message can hold is kept, and says so instead of sending. While Send hands
+ * the draft over, the field stays focused but read-only, and files wait. The
+ * field draws no ring of its own: the pill takes the focus outline.
  */
 export function Composer({
   recipient,
   value,
   onValueChange,
   files = [],
+  sending = false,
   onAttachFiles,
   onDetachFile,
   onSend,
@@ -83,12 +87,15 @@ export function Composer({
   const uploading = files.some((file) => file._tag === "uploading");
   const blocked = files.some((file) => file._tag === "failed");
   const tooLong = value.trim().length > MAX_MESSAGE_LENGTH;
-  const ready = !empty && !uploading && !blocked && !tooLong;
+  const ready = !sending && !empty && !uploading && !blocked && !tooLong;
   const send = () => {
     if (ready) onSend();
   };
   const attach = (list: FileList | null) => {
-    if (onAttachFiles && list !== null && list.length > 0) onAttachFiles([...list]);
+    if (!sending && onAttachFiles && list !== null && list.length > 0) onAttachFiles([...list]);
+  };
+  const detach = (key: string) => {
+    if (!sending) onDetachFile?.(key);
   };
   const failures = files.flatMap((file) =>
     file._tag === "failed"
@@ -122,7 +129,7 @@ export function Composer({
             <DraftFileChip
               key={file.key}
               file={file}
-              onRemove={onDetachFile ? () => onDetachFile(file.key) : undefined}
+              onRemove={onDetachFile ? () => detach(file.key) : undefined}
             />
           ))}
         </ul>
@@ -159,6 +166,7 @@ export function Composer({
           ref={inputRef}
           rows={1}
           value={value}
+          readOnly={sending}
           onChange={(event) => onValueChange(event.currentTarget.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -191,7 +199,7 @@ export function Composer({
             variant="primary"
             size="icon-pill"
             aria-disabled={!ready}
-            aria-label={uploading ? t("composer.sendAfterUpload") : t("composer.send")}
+            aria-label={uploading ? t("composer.stillUploading") : t("composer.send")}
           >
             <ArrowUpIcon />
           </Button>

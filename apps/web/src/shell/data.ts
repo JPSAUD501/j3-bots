@@ -55,6 +55,8 @@ export interface ShellData {
   readonly settings: Settings | null;
   /** Every paired device; null until they load. */
   readonly devices: ReadonlyArray<Device> | null;
+  /** A connection to the server is open now. Pairing another device needs one. */
+  readonly connected: boolean;
 }
 
 /** A pairing code for another device, or why there is none. */
@@ -92,14 +94,17 @@ export interface ShellIntents extends TimelineIntents {
     changes: Partial<Pick<Settings, "operatorName" | "timeZone">>,
   ) => Promise<boolean>;
   readonly startPairing: () => Promise<PairingStart>;
-  /** Resolves `false` when the server refused it. */
+  /**
+   * Resolves `false` unless the server confirmed it within ten seconds; the
+   * list of devices is then read again, and shows whether it was revoked.
+   */
   readonly revokeDevice: (deviceId: DeviceId) => Promise<boolean>;
   /** Reads the list of devices again, as when Settings opens. */
   readonly refreshDevices: () => void;
   /**
    * Ends this device's access and deletes what it keeps here; the app then
-   * returns to pairing. Resolves `false` when that deletion failed and the
-   * device is still signed in.
+   * returns to pairing. Resolves `false` when the credential could not be
+   * deleted and the device is still signed in.
    */
   readonly signOut: () => Promise<boolean>;
 }

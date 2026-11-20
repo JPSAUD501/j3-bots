@@ -34,7 +34,7 @@ interface State extends Omit<SampleTeam, "bots" | "room" | "attachments"> {
   readonly drafts: Readonly<Record<string, Draft>>;
 }
 
-const blankDraft: Draft = { text: "", files: [] };
+const blankDraft: Draft = { text: "", files: [], sending: false };
 
 /** How long an answer to a card takes to arrive, so a second click has something to miss. */
 const ANSWER_DELAY = 500;
@@ -404,6 +404,7 @@ function toData(state: State): ShellData {
     memory: (botId) => state.memory[botId] ?? [],
     settings: state.settings,
     devices: state.devices,
+    connected: true,
   };
 }
 

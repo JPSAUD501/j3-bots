@@ -294,7 +294,7 @@ export const en = {
   "timeline.loadingOlder": "Loading earlier messages…",
 
   "composer.files": "Files to send",
-  "composer.sendAfterUpload": "Send once the files have uploaded",
+  "composer.stillUploading": "Files are still uploading",
   "composer.file.uploading": "Uploading, {percent}",
   "composer.file.remove": "Remove {name}",
   "composer.file.failed": "{name} can’t be sent: {reason}",
@@ -309,6 +309,8 @@ export const en = {
   "composer.tooLong": "Too long to send. A message can hold {count} characters at most.",
   "composer.notKept":
     "This device couldn’t keep the message, so it wasn’t sent. It’s still in the message box.",
+  "composer.changedElsewhere":
+    "This draft changed in another tab, so it wasn’t sent. Check it and send again.",
 
   "file.gone": "{name} is no longer on the server.",
   "file.unreachable": "{name} couldn’t be opened. Check the connection and try again.",
@@ -398,18 +400,19 @@ export const en = {
   "settings.device.revoke.body": "{name} loses access at once. Pairing it again takes a new code.",
   "settings.device.revoke.cancel": "Keep it",
   "settings.device.revoke.pending": "Signing out…",
-  "settings.device.revoke.failed": "{name} wasn’t signed out. Check the connection and try again.",
+  "settings.device.revoke.failed": "Couldn’t confirm {name} is signed out.",
+  "settings.device.revoke.retry": "Try again",
   "settings.pair": "Pair another device",
   "settings.pair.again": "Get a new code",
   "settings.pair.instructions": "Enter this code on the other device:",
   "settings.pair.expires": "Works once, until {time}",
   "settings.pair.failed": "No code was made. Try again.",
+  "settings.pair.offline": "Available once this device is connected to J3 Bots again.",
   "settings.browser": "This browser",
   "settings.signOut": "Sign out this device",
   "settings.signOut.hint": "Signing out ends this device’s access and deletes what it keeps here.",
   "settings.signOut.pending": "Signing out…",
-  "settings.signOut.failed":
-    "This device couldn’t delete what it keeps here, so it’s still signed in. Try again.",
+  "settings.signOut.failed": "Sign-out didn’t finish. Try again.",
   "settings.signOut.title": "Sign out this device?",
   "settings.signOut.body":
     "This browser loses access, and pairing it again takes a new code. Drafts and unsent messages are discarded. Your bots and conversations stay on the server.",

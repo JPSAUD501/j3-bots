@@ -125,7 +125,7 @@ const loadingView: ConversationView = {
   hasOlder: false,
   loadingOlder: false,
 };
-const blankDraft: Draft = { text: "", files: [] };
+const blankDraft: Draft = { text: "", files: [], sending: false };
 
 const submitting = (state: ActionState | undefined) => state?._tag === "submitting";
 
@@ -181,6 +181,7 @@ function LiveShell({ children }: { children: ReactNode }) {
   const target = targetOf(botId, roomId);
   const detailsBotId: BotId | null = search.details === true && params.botId ? params.botId : null;
 
+  const connection = useConnection();
   const roster = useRoster();
   const engine = useEngineStatus();
   const settings = useSettings();
@@ -232,6 +233,7 @@ function LiveShell({ children }: { children: ReactNode }) {
     memory: (botId) => (botId === detailsBotId ? loadedList(memory) : null),
     settings: settings._tag === "ready" ? settings.value : null,
     devices: devices._tag === "ready" ? devices.value : null,
+    connected: connection._tag === "connected",
   };
 
   const openMemoryFile = (botId: BotId, path: MemoryPath) => {
@@ -304,6 +306,7 @@ function LiveShell({ children }: { children: ReactNode }) {
     sendDraft: (asked) =>
       void j3.sendDraft(asked).then((result) => {
         if (result === "not-kept") say(t("composer.notKept"));
+        else if (result === "changed-elsewhere") say(t("composer.changedElsewhere"));
       }),
     loadOlder: (asked) => {
       if (viewKey !== null && targetKey(asked) === viewKey) conversation.loadOlder();

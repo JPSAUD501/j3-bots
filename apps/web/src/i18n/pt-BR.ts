@@ -295,7 +295,7 @@ export const ptBR: Catalog = {
   "timeline.loadingOlder": "Carregando mensagens anteriores…",
 
   "composer.files": "Arquivos para enviar",
-  "composer.sendAfterUpload": "Enviar quando os arquivos terminarem de subir",
+  "composer.stillUploading": "Os arquivos ainda estão subindo",
   "composer.file.uploading": "Enviando, {percent}",
   "composer.file.remove": "Remover {name}",
   "composer.file.failed": "{name} não pode ser enviado: {reason}",
@@ -311,6 +311,8 @@ export const ptBR: Catalog = {
     "Longa demais para enviar. Uma mensagem pode ter no máximo {count} caracteres.",
   "composer.notKept":
     "Este dispositivo não conseguiu guardar a mensagem, então ela não foi enviada. Ela continua na caixa de mensagem.",
+  "composer.changedElsewhere":
+    "Este rascunho mudou em outra aba, então não foi enviado. Confira e envie de novo.",
 
   "file.gone": "{name} não está mais no servidor.",
   "file.unreachable": "Não deu para abrir {name}. Verifique a conexão e tente de novo.",
@@ -402,19 +404,19 @@ export const ptBR: Catalog = {
     "{name} perde o acesso na hora. Para parear de novo, é preciso um código novo.",
   "settings.device.revoke.cancel": "Manter",
   "settings.device.revoke.pending": "Desconectando…",
-  "settings.device.revoke.failed":
-    "{name} não foi desconectado. Verifique a conexão e tente de novo.",
+  "settings.device.revoke.failed": "Não deu para confirmar que {name} foi desconectado.",
+  "settings.device.revoke.retry": "Tentar de novo",
   "settings.pair": "Parear outro dispositivo",
   "settings.pair.again": "Gerar outro código",
   "settings.pair.instructions": "Digite este código no outro dispositivo:",
   "settings.pair.expires": "Vale uma vez, até {time}",
   "settings.pair.failed": "Nenhum código foi gerado. Tente de novo.",
+  "settings.pair.offline": "Disponível quando este dispositivo voltar a se conectar ao J3 Bots.",
   "settings.browser": "Este navegador",
   "settings.signOut": "Sair neste dispositivo",
   "settings.signOut.hint": "Sair encerra o acesso deste dispositivo e apaga o que ele guarda aqui.",
   "settings.signOut.pending": "Saindo…",
-  "settings.signOut.failed":
-    "Este dispositivo não conseguiu apagar o que guarda aqui, então continua conectado. Tente de novo.",
+  "settings.signOut.failed": "A saída não terminou. Tente de novo.",
   "settings.signOut.title": "Sair neste dispositivo?",
   "settings.signOut.body":
     "Este navegador perde o acesso, e parear de novo exige um código novo. Rascunhos e mensagens não enviadas são descartados. Seus bots e conversas continuam no servidor.",
