@@ -95,7 +95,13 @@ it.layer(NodeServices.layer)("server configuration", (it) => {
       assert.strictEqual((yield* fs.stat(home)).mode & 0o777, 0o700);
 
       yield* writeConfigFile(home, JSON.stringify({ port: 4000 }));
-      yield* withEnvironment(initialize, env);
+      // A home nothing more can be written to, as on a full disk: a start that
+      // finds the file has nothing to write.
+      yield* fs.chmod(home, 0o500);
+      const full = yield* withEnvironment(initialize, env).pipe(
+        Effect.ensuring(fs.chmod(home, 0o700).pipe(Effect.ignore)),
+      );
+      assert.strictEqual(full.port, 4000);
       assert.strictEqual((yield* withEnvironment(load, env)).port, 4000);
     }).pipe(Effect.scoped),
   );

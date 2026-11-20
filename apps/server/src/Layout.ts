@@ -7,10 +7,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as Hex from "effect/encoding/Hex";
-import * as SecureRandom from "effect/crypto/SecureRandom";
 import type * as PlatformError from "effect/PlatformError";
 import { ServerConfig } from "./config.ts";
+import { replaceFile } from "./files.ts";
 import { homeLayout } from "./home/entries.ts";
 import { isWithin, realLocation } from "./paths.ts";
 
@@ -62,9 +61,6 @@ export class Layout extends Context.Service<
   }
 >()("@j3-bots/server/Layout") {}
 
-/** Random bytes in a temporary file's name: never guessed ahead of the write. */
-const TEMPORARY_NAME_BYTES = 12;
-
 export const layer = Layer.effect(
   Layout,
   Effect.gen(function* () {
@@ -77,7 +73,6 @@ export const layer = Layer.effect(
       path.resolve(webClient.directory),
     );
     const fs = yield* FileSystem.FileSystem;
-    const random = yield* SecureRandom.SecureRandom;
 
     const writable = Effect.fn("Layout.writable")(
       function* (location: string) {
@@ -96,20 +91,15 @@ export const layer = Layer.effect(
       Effect.provideService(Path.Path, path),
     );
 
-    const writeFile = Effect.fn("Layout.writeFile")(function* (
-      file: string,
-      data: string | Uint8Array,
-    ) {
-      const folder = yield* writable(path.dirname(file));
-      yield* fs.makeDirectory(folder, { recursive: true });
-      const suffix = Hex.encode(yield* random.randomBytes(TEMPORARY_NAME_BYTES));
-      const temporary = path.join(folder, `.${path.basename(file)}.${suffix}.j3-writing`);
-      const contents = typeof data === "string" ? new TextEncoder().encode(data) : data;
-      yield* fs.writeFile(temporary, contents, { flag: "wx", mode: 0o600 }).pipe(
-        Effect.andThen(fs.rename(temporary, file)),
-        Effect.onError(() => fs.remove(temporary, { force: true }).pipe(Effect.ignore)),
-      );
-    });
+    const writeFile = Effect.fn("Layout.writeFile")(
+      function* (file: string, data: string | Uint8Array) {
+        const folder = yield* writable(path.dirname(file));
+        yield* fs.makeDirectory(folder, { recursive: true });
+        yield* replaceFile(file, data, 0o600);
+      },
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+    );
 
     return Layout.of({
       workspace: layout.workspace,
@@ -121,4 +111,4 @@ export const layer = Layer.effect(
       writeFile,
     });
   }),
-).pipe(Layer.provide(SecureRandom.layerWebCrypto));
+);

@@ -8,10 +8,9 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
-import * as SecureRandom from "effect/crypto/SecureRandom";
-import * as Hex from "effect/encoding/Hex";
 import * as Socket from "../admin/socket.ts";
 import { DEFAULTS_TEXT, load, ServerConfig } from "../config.ts";
+import { publishFile } from "../files.ts";
 import { HOME_ENTRIES } from "./entries.ts";
 
 // The home holds the database, the bots' files, the engine's credential and
@@ -73,51 +72,24 @@ export const checkPrivate = Effect.fn("Home.checkPrivate")(function* (home: stri
   }
 });
 
-/** Random bytes in a temporary file's name: never guessed ahead of the write. */
-const TEMPORARY_NAME_BYTES = 12;
-
-/**
- * Publishes `text` at `file`, whole, unless something is already there: it is
- * written to a new file of a random name in the same folder first, which then
- * takes the name only if it is free. A full disk or a crash never leaves a
- * partial file at `file`, and an existing one is never replaced.
- */
-const publishNew = Effect.fn("Home.publishNew")(function* (file: string, text: string) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const random = yield* SecureRandom.SecureRandom;
-  const suffix = Hex.encode(yield* random.randomBytes(TEMPORARY_NAME_BYTES));
-  const temporary = path.join(path.dirname(file), `.${path.basename(file)}.${suffix}.j3-writing`);
-  yield* fs.writeFileString(temporary, text, { flag: "wx", mode: 0o600 }).pipe(
-    // A link, unlike a rename, fails rather than replace what is at `file`.
-    Effect.andThen(
-      fs.link(temporary, file).pipe(
-        Effect.catchIf(
-          (error) => error.reason._tag === "AlreadyExists",
-          () => Effect.void,
-        ),
-      ),
-    ),
-    Effect.ensuring(fs.remove(temporary, { force: true }).pipe(Effect.ignore)),
-  );
-});
-
 /**
  * The configuration for a server about to start, with its home ready. Nothing
  * is written until both pass their checks: the configuration, as `load`
  * checks it (where the home is included), and the home's privacy. Then the
- * home is created, readable by the operator only, and on first run
- * `config.json` is published with every setting at its default. An existing
- * file is never rewritten.
+ * home is created, readable by the operator only, and on first run, with no
+ * `config.json` yet, one is published whole with every setting at its
+ * default. An existing file is never rewritten, and a start that finds one
+ * writes nothing there.
  */
 export const initialize = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const config = yield* load;
   yield* checkPrivate(config.home);
   yield* fs.makeDirectory(config.home, { recursive: true, mode: 0o700 });
-  yield* publishNew(config.configFile, DEFAULTS_TEXT).pipe(
-    Effect.provide(SecureRandom.layerWebCrypto),
-  );
+  if (!(yield* fs.exists(config.configFile))) {
+    // Two first starts may both get here: the publication keeps the first file.
+    yield* publishFile(config.configFile, DEFAULTS_TEXT, 0o600);
+  }
   return config;
 });
 
