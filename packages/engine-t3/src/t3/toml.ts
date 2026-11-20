@@ -64,16 +64,39 @@ const keyText = (key: string) => (BARE_KEY.test(key) ? key : tomlString(key));
 const valueText = (value: TomlValue): string =>
   typeof value === "string" ? tomlString(value) : `[${value.map(tomlString).join(", ")}]`;
 
+const pathText = (path: ReadonlyArray<string>) => path.map(keyText).join(".");
+
 const render = (table: TomlTable) =>
   [
-    `[${table.path.map(keyText).join(".")}]`,
+    `[${pathText(table.path)}]`,
     ...table.values.map(([key, value]) => `${keyText(key)} = ${valueText(value)}`),
   ].join("\n");
+
+/** A table as a pair inside an inline table, its path relative to that table's. */
+const renderInline = (table: TomlTable, under: ReadonlyArray<string>) =>
+  `${pathText(table.path.slice(under.length))} = { ${table.values
+    .map(([key, value]) => `${keyText(key)} = ${valueText(value)}`)
+    .join(", ")} }`;
 
 // ---------------------------------------------------------------------------
 // Reading statements
 
-/** One statement, with its text up to its line break. */
+/** One pair of an inline table: its key, and its text from the key to the end of its value. */
+interface InlinePair {
+  readonly key: ReadonlyArray<string>;
+  readonly text: string;
+}
+
+/** A pair whose value is an inline table: the text around the braces, and its pairs. */
+interface InlineTable {
+  /** From the statement's start to the opening brace. */
+  readonly before: string;
+  readonly pairs: ReadonlyArray<InlinePair>;
+  /** From after the closing brace to the statement's end, a comment included. */
+  readonly after: string;
+}
+
+/** One statement, with its text up to its line break, and the line it starts on. */
 type Statement =
   /** A blank line, or one that holds only a comment. */
   | { readonly _tag: "trivia"; readonly text: string }
@@ -82,8 +105,15 @@ type Statement =
       readonly path: ReadonlyArray<string>;
       readonly arrayTable: boolean;
       readonly text: string;
+      readonly line: number;
     }
-  | { readonly _tag: "pair"; readonly key: ReadonlyArray<string>; readonly text: string };
+  | {
+      readonly _tag: "pair";
+      readonly key: ReadonlyArray<string>;
+      readonly text: string;
+      readonly line: number;
+      readonly inline: InlineTable | null;
+    };
 
 /** A place in the file this reading does not follow. */
 class Unfollowed {
@@ -128,9 +158,12 @@ class Reader {
     return this.text.startsWith(token, this.pos);
   }
 
+  private get line() {
+    return this.text.slice(0, this.pos).split("\n").length;
+  }
+
   private fail(what: string): never {
-    const line = this.text.slice(0, this.pos).split("\n").length;
-    throw new Unfollowed(`${what} on line ${line}`);
+    throw new Unfollowed(`${what} on line ${this.line}`);
   }
 
   private spaces() {
@@ -254,15 +287,7 @@ class Reader {
     if (this.peek() === '"') return void this.basicString();
     if (this.peek() === "'") return void this.literalString();
     if (this.peek() === "[") return this.sequence("]", () => this.value());
-    if (this.peek() === "{") {
-      return this.sequence("}", () => {
-        this.key();
-        if (this.peek() !== "=") this.fail("= was expected");
-        this.pos++;
-        this.spaces();
-        this.value();
-      });
-    }
+    if (this.peek() === "{") return void this.inlineTable();
     const start = this.pos;
     while (!this.done && !SCALAR_END.test(this.peek())) {
       this.pos++;
@@ -276,6 +301,21 @@ class Reader {
       }
     }
     if (this.pos === start) this.fail("A value was expected");
+  }
+
+  /** An inline table's pairs, each with its text. */
+  private inlineTable(): ReadonlyArray<InlinePair> {
+    const pairs: Array<InlinePair> = [];
+    this.sequence("}", () => {
+      const from = this.pos;
+      const key = this.key();
+      if (this.peek() !== "=") this.fail("= was expected");
+      this.pos++;
+      this.spaces();
+      this.value();
+      pairs.push({ key, text: this.text.slice(from, this.pos).trim() });
+    });
+    return pairs;
   }
 
   /** An array's values or an inline table's pairs, to `close`, line breaks and a last comma allowed. */
@@ -313,6 +353,7 @@ class Reader {
         statements.push({ _tag: "trivia", text: this.text.slice(start, end) });
         continue;
       }
+      const line = this.line;
       if (this.peek() === "[") {
         const arrayTable = this.at("[[");
         this.pos += arrayTable ? 2 : 1;
@@ -321,16 +362,38 @@ class Reader {
         if (!this.at(close)) this.fail("A table header that is not closed");
         this.pos += close.length;
         const end = this.restOfLine();
-        statements.push({ _tag: "header", path, arrayTable, text: this.text.slice(start, end) });
+        statements.push({
+          _tag: "header",
+          path,
+          arrayTable,
+          text: this.text.slice(start, end),
+          line,
+        });
         continue;
       }
       const key = this.key();
       if (this.peek() !== "=") this.fail("= was expected");
       this.pos++;
       this.spaces();
-      this.value();
+      const open = this.pos;
+      const pairs = this.peek() === "{" ? this.inlineTable() : null;
+      if (pairs === null) this.value();
+      const close = this.pos;
       const end = this.restOfLine();
-      statements.push({ _tag: "pair", key, text: this.text.slice(start, end) });
+      statements.push({
+        _tag: "pair",
+        key,
+        text: this.text.slice(start, end),
+        line,
+        inline:
+          pairs === null
+            ? null
+            : {
+                before: this.text.slice(start, open),
+                pairs,
+                after: this.text.slice(close, end),
+              },
+      });
     }
     return statements;
   }
@@ -382,34 +445,39 @@ const unowned = (
   return kept;
 };
 
-const sameValue = (a: TomlValueWithoutBigInt, b: TomlValueWithoutBigInt): boolean => {
+/**
+ * The first path at which `a` and `b` read differently, or null when they
+ * read the same. Only key names make up a path, never values.
+ */
+const difference = (
+  a: TomlValueWithoutBigInt,
+  b: TomlValueWithoutBigInt,
+  path: ReadonlyArray<string> = [],
+): ReadonlyArray<string> | null => {
   if (Array.isArray(a) || Array.isArray(b)) {
-    return (
-      Array.isArray(a) &&
-      Array.isArray(b) &&
-      a.length === b.length &&
-      a.every((item, index) => {
-        const other = b[index];
-        return other !== undefined && sameValue(item, other);
-      })
-    );
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return path;
+    for (const [index, item] of a.entries()) {
+      const other = b[index];
+      if (other === undefined) return path;
+      if (difference(item, other, path) !== null) return path;
+    }
+    return null;
   }
   if (isTable(a) || isTable(b)) {
-    if (!isTable(a) || !isTable(b)) return false;
-    const keys = Object.keys(a);
-    return (
-      keys.length === Object.keys(b).length &&
-      keys.every((key) => {
-        const left = a[key];
-        const right = b[key];
-        return left !== undefined && right !== undefined && sameValue(left, right);
-      })
-    );
+    if (!isTable(a) || !isTable(b)) return path;
+    for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
+      const left = a[key];
+      const right = b[key];
+      if (left === undefined || right === undefined) return [...path, key];
+      const found = difference(left, right, [...path, key]);
+      if (found !== null) return found;
+    }
+    return null;
   }
   if (typeof a === "object" || typeof b === "object") {
-    return typeof a === typeof b && String(a) === String(b);
+    return typeof a === typeof b && String(a) === String(b) ? null : path;
   }
-  return Object.is(a, b);
+  return Object.is(a, b) ? null : path;
 };
 
 /** Whether `path` starts with `prefix`. */
@@ -422,18 +490,20 @@ const sameStart = (prefix: ReadonlyArray<string>, path: ReadonlyArray<string>) =
 interface Chunk {
   /** Null for the statements before the first table. */
   readonly header: (Statement & { readonly _tag: "header" }) | null;
+  /** The comments and blank lines right above the header. */
+  readonly leading: ReadonlyArray<Statement>;
   readonly statements: Array<Statement>;
 }
 
 /**
  * The statements before the first table, and one chunk per table. A table
- * keeps the comments and blank lines right above its header, so replacing it
- * leaves none behind.
+ * keeps the comments and blank lines right above its header apart, so they
+ * stay where they are when the table is replaced.
  */
 const chunks = (statements: ReadonlyArray<Statement>) => {
-  const all: Array<Chunk> = [{ header: null, statements: [] }];
+  const all: Array<Chunk> = [{ header: null, leading: [], statements: [] }];
   for (const statement of statements) {
-    const current = all.at(-1) ?? { header: null, statements: [] };
+    const current = all.at(-1) ?? { header: null, leading: [], statements: [] };
     if (statement._tag !== "header") {
       current.statements.push(statement);
       continue;
@@ -443,7 +513,7 @@ const chunks = (statements: ReadonlyArray<Statement>) => {
       const last = current.statements.pop();
       if (last !== undefined) leading.unshift(last);
     }
-    all.push({ header: statement, statements: [...leading, statement] });
+    all.push({ header: statement, leading, statements: [statement] });
   }
   return all;
 };
@@ -468,6 +538,59 @@ export const editToml = (text: string, edit: TomlEdit): TomlEdited => {
   }
   const owned = (path: ReadonlyArray<string>) =>
     edit.owns.some((prefix) => sameStart(prefix, path));
+  /** The owned tables a pair at `path` holds part of: its path is a strict prefix of theirs. */
+  const ownedWithin = (path: ReadonlyArray<string>) =>
+    edit.owns.filter((prefix) => prefix.length > path.length && sameStart(path, prefix));
+
+  /** Tables written inside an inline table, rather than as tables of their own. */
+  const inlined = new Set<TomlTable>();
+  /**
+   * A pair at `path` whose value holds part of an owned table: its inline
+   * table with the owned pairs replaced by J3 Bots' tables, and every other
+   * pair as it was written. Anything else cannot take a table, and is refused
+   * with its line.
+   */
+  const editInline = (
+    statement: Statement & { readonly _tag: "pair" },
+    path: ReadonlyArray<string>,
+    within: ReadonlyArray<ReadonlyArray<string>>,
+  ): Statement | Unfollowed => {
+    const at = `${pathText(path)} on line ${statement.line}`;
+    if (statement.inline === null) {
+      return new Unfollowed(`${at} is not a table, and J3 Bots' tables go under it`);
+    }
+    const relative = within.map((prefix) => prefix.slice(path.length));
+    const kept: Array<string> = [];
+    for (const pair of statement.inline.pairs) {
+      if (relative.some((prefix) => sameStart(prefix, pair.key))) continue;
+      if (
+        relative.some((prefix) => prefix.length > pair.key.length && sameStart(pair.key, prefix))
+      ) {
+        return new Unfollowed(`${at} holds J3 Bots' tables deeper than it can edit`);
+      }
+      kept.push(pair.text);
+    }
+    const ours = edit.tables.filter((table) =>
+      within.some((prefix) => sameStart(prefix, table.path)),
+    );
+    for (const table of ours) inlined.add(table);
+    const pairs = [...kept, ...ours.map((table) => renderInline(table, path))];
+    const body = pairs.length === 0 ? "{}" : `{ ${pairs.join(", ")} }`;
+    return {
+      ...statement,
+      text: `${statement.inline.before}${body}${statement.inline.after}`,
+    };
+  };
+
+  /** A pair as it is written after the edit: kept, edited inside, or removed when owned. */
+  const pairAfter = (
+    statement: Statement & { readonly _tag: "pair" },
+    path: ReadonlyArray<string>,
+  ): Statement | Unfollowed | null => {
+    if (owned(path)) return null;
+    const within = ownedWithin(path);
+    return within.length === 0 ? statement : editInline(statement, path, within);
+  };
 
   const [preamble, ...tables] = chunks(statements);
   // Each owned top-level key set where it is, or after the others, or removed.
@@ -483,36 +606,73 @@ export const editToml = (text: string, edit: TomlEdit): TomlEdited => {
     if (ownedKey !== undefined) {
       const [key, value] = ownedKey;
       if (!placed.has(key) && value !== undefined) {
-        top.push({ _tag: "pair", key: [key], text: `${keyText(key)} = ${valueText(value)}` });
+        top.push({
+          _tag: "pair",
+          key: [key],
+          text: `${keyText(key)} = ${valueText(value)}`,
+          line: statement.line,
+          inline: null,
+        });
       }
       placed.add(key);
-    } else if (!owned(statement.key)) {
-      top.push(statement);
+      continue;
     }
+    const after = pairAfter(statement, statement.key);
+    if (after instanceof Unfollowed) return { _tag: "unreadable", reason: after.reason };
+    if (after !== null) top.push(after);
   }
   for (const [key, value] of edit.keys) {
     if (!placed.has(key) && value !== undefined) {
-      top.push({ _tag: "pair", key: [key], text: `${keyText(key)} = ${valueText(value)}` });
+      top.push({
+        _tag: "pair",
+        key: [key],
+        text: `${keyText(key)} = ${valueText(value)}`,
+        line: 0,
+        inline: null,
+      });
     }
   }
 
-  const ours = edit.tables.map(render);
-  const parts = [textOf(top)];
-  let oursPlaced = false;
+  const kept: Array<{ readonly owned: boolean; readonly leading: string; readonly text: string }> =
+    [];
   for (const table of tables) {
     const path = table.header?.path ?? [];
+    const leading = textOf(table.leading);
     if (owned(path)) {
-      if (!oursPlaced) parts.push(...ours);
-      oursPlaced = true;
+      kept.push({ owned: true, leading, text: "" });
       continue;
     }
-    parts.push(
-      textOf(
-        table.statements.filter(
-          (statement) => statement._tag !== "pair" || !owned([...path, ...statement.key]),
-        ),
-      ),
-    );
+    const body: Array<Statement> = [...table.leading];
+    for (const statement of table.statements) {
+      if (statement._tag !== "pair") {
+        body.push(statement);
+        continue;
+      }
+      const after = pairAfter(statement, [...path, ...statement.key]);
+      if (after instanceof Unfollowed) return { _tag: "unreadable", reason: after.reason };
+      if (after !== null) body.push(after);
+    }
+    kept.push({ owned: false, leading, text: textOf(body) });
+  }
+
+  // J3 Bots' tables go where its first table was, under the comments above
+  // it, or at the end. The comments above another table it owned stay where
+  // they were.
+  const ours = edit.tables.filter((table) => !inlined.has(table)).map(render);
+  const parts = [textOf(top)];
+  let oursPlaced = false;
+  for (const table of kept) {
+    if (!table.owned) {
+      parts.push(table.text);
+      continue;
+    }
+    if (oursPlaced) {
+      parts.push(table.leading);
+      continue;
+    }
+    const [first, ...rest] = ours;
+    parts.push([table.leading, first ?? ""].filter((part) => part !== "").join("\n"), ...rest);
+    oursPlaced = true;
   }
   if (!oursPlaced) parts.push(...ours);
   const body = parts.filter((part) => part !== "").join("\n\n");
@@ -520,11 +680,29 @@ export const editToml = (text: string, edit: TomlEdit): TomlEdited => {
 
   // What the writer does not own reads the same after the edit.
   const after = parsed(edited);
-  if (
-    after._tag === "error" ||
-    !sameValue(unowned(before.table, edit), unowned(after.table, edit))
-  ) {
-    return { _tag: "unreadable", reason: "an edit would change what J3 Bots does not own" };
+  if (after._tag === "error") {
+    const conflict = statements.find(
+      (statement): statement is Statement & { readonly _tag: "pair" | "header" } =>
+        statement._tag !== "trivia" &&
+        edit.owns.some(
+          (prefix) =>
+            prefix[0] === (statement._tag === "header" ? statement.path : statement.key)[0],
+        ),
+    );
+    return {
+      _tag: "unreadable",
+      reason:
+        conflict === undefined
+          ? "J3 Bots' tables cannot be added to it"
+          : `J3 Bots' tables cannot be added next to how line ${conflict.line} writes them`,
+    };
+  }
+  const changed = difference(unowned(before.table, edit), unowned(after.table, edit));
+  if (changed !== null) {
+    return {
+      _tag: "unreadable",
+      reason: `an edit would change ${changed.length === 0 ? "the file" : pathText(changed)}, which J3 Bots does not own`,
+    };
   }
   return { _tag: "edited", text: edited };
 };

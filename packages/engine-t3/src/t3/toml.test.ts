@@ -80,6 +80,55 @@ describe("editToml", () => {
     assert.include(result, 'command = "/usr/bin/node"');
   });
 
+  it("edits J3 Bots' table inside an inline table, keeping the other pairs as written", () => {
+    const text = [
+      'mcp_servers = { j3 = { command = "/old/node" }, other = { command = "other", args = ["a, b"] } } # tools',
+      "",
+      "[projects.x]",
+      'trust_level = "trusted"',
+      "",
+    ].join("\n");
+    const result = edited(text);
+    assert.strictEqual(
+      result.split("\n")[0],
+      'mcp_servers = { other = { command = "other", args = ["a, b"] }, j3 = { command = "/usr/bin/node" } } # tools',
+    );
+    assert.notInclude(result, "[mcp_servers.j3]");
+    // Provisioned again, it reads the same.
+    assert.strictEqual(edited(result), result);
+  });
+
+  it("refuses a value J3 Bots' table would go under, naming its line", () => {
+    const result = editToml('model = "gpt-6-luna"\nmcp_servers = "the-secret"\n', tools);
+    assert.strictEqual(result._tag, "unreadable");
+    if (result._tag === "unreadable") {
+      assert.include(result.reason, "mcp_servers on line 2");
+      assert.notInclude(result.reason, "the-secret");
+    }
+  });
+
+  it("keeps the operator's comments above a table it replaces", () => {
+    const text = [
+      'model = "gpt-6-luna"',
+      "",
+      "# The bot tools; J3 Bots rewrites this table.",
+      "[mcp_servers.j3]",
+      'command = "/old/node"',
+      "",
+    ].join("\n");
+    assert.strictEqual(
+      edited(text),
+      [
+        'model = "gpt-6-luna"',
+        "",
+        "# The bot tools; J3 Bots rewrites this table.",
+        "[mcp_servers.j3]",
+        'command = "/usr/bin/node"',
+        "",
+      ].join("\n"),
+    );
+  });
+
   it("leaves a file that is not TOML as it is, and says where without quoting it", () => {
     const result = editToml('key = "the-secret\n[mcp_servers.j3]\n', tools);
     assert.strictEqual(result._tag, "unreadable");
