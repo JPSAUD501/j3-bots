@@ -10,6 +10,7 @@ import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import * as Domain from "../domain.ts";
+import { Entries } from "../entries/Entries.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
@@ -35,6 +36,7 @@ import {
   until,
 } from "../testing/turns.ts";
 import { MAX_INDETERMINATE_ANSWERS, SYNC_DEADLINE } from "./model.ts";
+import { Pipeline } from "./Pipeline.ts";
 import { RETRY_TICK } from "./reconciler.ts";
 import { Stops } from "./Stops.ts";
 
@@ -309,7 +311,7 @@ it.effect("sends a Stop again after its call timed out, with nothing else to wak
 );
 
 it.effect(
-  "confirms a reopened Stop once the recovery settles a send of its session left undecided",
+  "confirms a reopened Stop once the recovery fails a later message's undecided send, which stays retryable",
   () =>
     Effect.gen(function* () {
       const control = yield* TestEngineControl;
@@ -331,17 +333,26 @@ it.effect(
       yield* flushed(bot.id);
 
       // The fenced key lands after all, which reopens the Stop. The Stop
-      // waits on the undecided send, which the recovery still settles: as
-      // stopped, since the reopened Stop ends whatever the session runs.
+      // waits on the undecided send, which the recovery still settles. The
+      // operator wrote that message after the Stop: it is new intent, so it
+      // fails as never known, for the operator to send again.
       yield* fenced.land;
       yield* recoverTimes(MAX_INDETERMINATE_ANSWERS - 1);
-      yield* deliveryIs(unfenced, "cancelled");
+      yield* deliveryIs(unfenced, "failed");
+      const found = Option.getOrThrow(yield* (yield* Entries).find(unfenced)).entry;
+      assert.deepStrictEqual(found._tag === "message" ? found.delivery : null, {
+        _tag: "failed",
+        reason: "unresolved",
+      });
       yield* turnEnded(bot.id);
+      yield* stopSettled;
       yield* deliveryIs(stopped, "cancelled");
+      // Its turn never ran, so no turn failed: the message shows the failure.
+      assert.notInclude(yield* noticesOf(bot.id), "turn-failed");
 
-      const after = yield* sendToBot(bot.id, "Then report what changed.");
+      yield* (yield* Pipeline).retryMessage({ commandId: command(), entryId: unfenced });
       yield* nextTurn(bot.id);
-      yield* deliveryIs(after, "delivered");
+      yield* deliveryIs(unfenced, "delivered");
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 

@@ -30,9 +30,10 @@ export const stopTargets = (sql: SqlClient.SqlClient) => {
 
   /**
    * Whether a Stop of the bot covers work for `audience` that began at
-   * `since`: a bot Stop, or a room Stop of that room, that is still
-   * unsettled, or was recorded at or after `since` and so ended that work
-   * after it began. Such work wakes nobody and needs no notice.
+   * `since`: a bot Stop, or a room Stop of that room, recorded at or after
+   * `since`, which so ended that work after it began. Such work wakes nobody
+   * and needs no notice. Work that began after a Stop is new intent, whatever
+   * became of that Stop's targets.
    */
   const covers = Effect.fn("stopTargets.covers")(function* (
     botId: BotId,
@@ -44,12 +45,7 @@ export const stopTargets = (sql: SqlClient.SqlClient) => {
       SELECT 1 AS n FROM stops s
       WHERE s.bot_id = ${botId}
         AND (s.scope = 'bot' OR (s.scope = 'room' AND s.room_id = ${roomId}))
-        AND (
-          s.created_at >= ${timeText(since)}
-          OR EXISTS (
-            SELECT 1 FROM stop_targets t WHERE t.stop_id = s.id AND t.stopped_at IS NULL
-          )
-        )
+        AND s.created_at >= ${timeText(since)}
       LIMIT 1
     `.pipe(Effect.orDie);
     return rows.length > 0;
