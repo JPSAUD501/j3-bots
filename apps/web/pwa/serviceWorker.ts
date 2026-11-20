@@ -7,7 +7,8 @@ import { HTTP_PATHS } from "@j3-bots/contracts";
  * styles, fonts and icons) and nothing else.
  *
  * - A page load goes to the network first, so a new build shows at once; only
- *   when the network fails does the kept page answer.
+ *   when the network fails, or the server answers with an error of its own
+ *   (a 5xx, as from a proxy whose server is down), does the kept page answer.
  * - A file of the shell is answered from the kept copy; its name carries its
  *   content's hash, so the copy is never stale.
  * - The API, the RPC socket and attachments are never answered or kept: they
@@ -58,9 +59,12 @@ self.addEventListener("fetch", (event) => {
   if (url.origin !== self.location.origin) return;
   if (CONFIG.neverCached.some((prefix) => url.pathname.startsWith(prefix))) return;
   if (request.mode === "navigate") {
+    const keptPage = (otherwise) =>
+      caches.match(CONFIG.page, { cacheName: CONFIG.cache }).then((page) => page ?? otherwise);
     event.respondWith(
-      fetch(request).catch(() =>
-        caches.match(CONFIG.page, { cacheName: CONFIG.cache }).then((page) => page ?? Response.error()),
+      fetch(request).then(
+        (response) => (response.status >= 500 ? keptPage(response) : response),
+        () => keptPage(Response.error()),
       ),
     );
     return;

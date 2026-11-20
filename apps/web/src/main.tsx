@@ -22,6 +22,10 @@ if (import.meta.env.PROD && "serviceWorker" in navigator) {
   });
 }
 
+// A build replaced while this page was open has deleted the scripts it would load
+// next; loading the page again picks up the new build.
+window.addEventListener("vite:preloadError", () => window.location.reload());
+
 createRoot(root).render(
   <StrictMode>
     <RouterProvider router={router} />
