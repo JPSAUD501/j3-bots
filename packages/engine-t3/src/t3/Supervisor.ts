@@ -18,7 +18,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import { boundedCommand } from "./Command.ts";
+import { boundedCommand, engineEnvironment } from "./Command.ts";
 import type { Access } from "./Credential.ts";
 import { ORCHESTRATION_PROTOCOL, pin } from "./Pin.ts";
 import { engineFolders, type PrivateFiles } from "./PrivateFiles.ts";
@@ -139,6 +139,7 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
   const { state } = input;
   const check = probe(input.port).pipe(Effect.provideService(HttpClient.HttpClient, http));
   const recordFile = path.join(engineFolders(path, input.home).j3, "engine-process.json");
+  const environment = engineEnvironment(yield* Effect.sync(() => process.env));
 
   const engine = boundedCommand(
     input.executable,
@@ -152,7 +153,7 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
       "127.0.0.1",
       "--no-browser",
     ],
-    { stdin: "ignore", stdout: "ignore", stderr: "ignore" },
+    { stdin: "ignore", stdout: "ignore", stderr: "ignore", env: environment, extendEnv: false },
     ENGINE_STOP,
   );
 

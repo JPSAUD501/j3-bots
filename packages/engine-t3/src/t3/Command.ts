@@ -22,3 +22,28 @@ export const boundedCommand = (
     killSignal: "SIGTERM",
     forceKillAfter: stopWithin,
   });
+
+/**
+ * Variables that configure T3 Code or a harness it runs: Claude Code's and
+ * Anthropic's (`CLAUDE_CONFIG_DIR`, `ANTHROPIC_AUTH_TOKEN`), Codex's and
+ * OpenAI's (`CODEX_HOME`, `OPENAI_API_KEY`), and T3 Code's own (`T3CODE_HOME`,
+ * `T3_BOOT_SERVICE_UNIT`).
+ */
+const HARNESS_CONFIGURATION = /^(ANTHROPIC_|CLAUDE|OPENAI_|CODEX_|T3CODE_|T3_)/;
+
+/**
+ * The environment the engine starts with: the server's, without what
+ * configures T3 Code or a harness. The engine passes its environment on to
+ * every harness it starts, so a server started from the operator's shell
+ * would otherwise give bots the operator's own provider credentials, config
+ * folders or T3 Code service. A bot's harness is configured only by what J3
+ * Bots provisions.
+ */
+export const engineEnvironment = (
+  parent: Readonly<Record<string, string | undefined>>,
+): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(parent).flatMap(([name, value]) =>
+      value === undefined || HARNESS_CONFIGURATION.test(name) ? [] : [[name, value]],
+    ),
+  );
