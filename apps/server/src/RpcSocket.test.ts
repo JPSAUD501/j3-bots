@@ -27,7 +27,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as DeviceAuth from "./auth/DeviceAuth.ts";
 import * as Http from "./http.ts";
 import * as RpcSocket from "./RpcSocket.ts";
-import * as TestDatabase from "./testing/database.ts";
+import * as TestDomain from "./testing/domain.ts";
 
 const SocketRpcs = RpcGroup.make(
   Rpc.make("whoami", { success: DeviceId }),
@@ -97,9 +97,8 @@ const server = Layer.unwrap(
     );
   }),
 ).pipe(
-  Layer.provideMerge(DeviceAuth.layer),
   Layer.provideMerge(NodeHttpServer.layerTest),
-  Layer.provideMerge(TestDatabase.layer),
+  Layer.provideMerge(TestDomain.layer),
 );
 
 it.layer(server, { excludeTestServices: true })("RPC socket", (it) => {

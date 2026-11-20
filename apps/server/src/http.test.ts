@@ -6,15 +6,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
-import * as DeviceAuth from "./auth/DeviceAuth.ts";
 import * as Http from "./http.ts";
-import * as TestDatabase from "./testing/database.ts";
+import * as TestDomain from "./testing/domain.ts";
 
 it.layer(
   Http.layer.pipe(
     Layer.provideMerge(NodeHttpServer.layerTest),
-    Layer.provide(DeviceAuth.layer),
-    Layer.provide(TestDatabase.layer),
+    Layer.provide(TestDomain.layer),
   ),
 )("http", (it) => {
   it.effect("tells a client which protocol it speaks before it pairs", () =>
