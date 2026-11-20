@@ -1,0 +1,77 @@
+# Clients
+
+Roster has three clients: a web app, a desktop app and a mobile app. All three show the same conversations and none of them runs a bot. A bot keeps working with every client closed.
+
+## What clients share
+
+**`packages/contracts`** defines every request, subscription, entity and error that crosses the wire. Clients and the server decode with the same schemas.
+
+**`packages/client-runtime`** holds everything a client does that is not drawing:
+
+- the connection: pairing, authentication, reconnect with backoff, resuming subscriptions by sequence;
+- state: the roster, the open conversation, pending cards, routines, engine status;
+- commands: sending a message, answering a card, stopping a bot, each with its own idempotency key and optimistic entry;
+- drafts and unsent messages.
+
+**`packages/design-tokens`** holds colors, type sizes, spacing, radii and motion timings as data, so the web stylesheet and the mobile theme are generated from one source.
+
+The rule from T3 Code that Roster adopts as is: **the UI stays dumb.** A component receives state and emits intent. If two clients need the same decision, the decision lives in `client-runtime`.
+
+## Web
+
+The reference client. It is served by the Roster server itself, so pointing a browser at the server is enough to use Roster.
+
+- React with the React Compiler, TanStack Router, Tailwind CSS v4 with tokens as CSS variables.
+- Component primitives on Base UI, in a local `components/ui` layer whose components own their look: callers pick a variant, they do not restyle.
+- A virtualized conversation list that keeps the scroll position stable while messages stream in.
+- Installable as a PWA, which gives phone users a working client before the native app exists.
+
+## Desktop
+
+An Electron shell around the web client.
+
+- Loads the built web client from a privileged custom scheme, not from a dev server or a `file://` path.
+- Adds what a browser tab cannot do: a global shortcut to open the composer, native notifications with actions, a menu-bar presence that shows which bots need the operator, deep links (`roster://bot/<id>`), auto-update.
+- Connects to a Roster server the operator points it at. Bundling a server and an engine inside the desktop app, for people who have no always-on machine, is a later step and not part of the first versions.
+
+## Mobile
+
+An Expo app for iOS and Android.
+
+- React Native with React Navigation's native stack. The three regions (roster, conversation, details) are a stack on phones and columns on tablets.
+- Uniwind for styling, fed by the same tokens as the web.
+- LegendList for the conversation, with keyboard-aware scrolling.
+- Push notifications, dictation in the composer, and the share sheet as a way to send something to a bot.
+
+Mobile uses its own components. Web and mobile share logic, tokens and vocabulary, not React components. See [decision 0007](../decisions/0007-client-and-server-stack.md) for why, and for the alternative of a single universal codebase.
+
+## Reaching the server
+
+The server listens on an address the operator chooses. Roster does not run a relay.
+
+| Where the client is | How it reaches the server |
+| --- | --- |
+| Same machine | Loopback |
+| Same network | The server's LAN address |
+| Anywhere else | The operator's own private network (Tailscale, WireGuard) or their own reverse proxy with TLS |
+
+Plain HTTP is accepted only on loopback and private address ranges. Everything else requires TLS.
+
+## Pairing
+
+A new client is paired with a one-time code.
+
+1. The operator runs `roster pair` on the host, or opens Devices in an already paired client. Either shows a short code and a QR code that expire in a few minutes.
+2. The new client sends the code and receives a device token. The server stores only a hash.
+3. Devices are listed in settings with their last activity, and can be revoked. Revoking closes that device's connection immediately.
+
+A device token grants everything the operator can do in Roster. There are no narrower roles in the first versions.
+
+## Behavior every client must get right
+
+- **Offline and reconnect.** A message typed while disconnected is kept and sent on reconnect, exactly once.
+- **One conversation everywhere.** An entry sent or answered on one device appears on the others without a reload.
+- **Cards resolve once.** Answering a question or an approval on any device resolves it on all.
+- **State is the server's.** A client never infers "the bot is working" from its own timers. It shows what the server reports and marks its view as stale when disconnected.
+- **Every action has a name.** A command's label, its shortcut hint, its menu entry and its accessible name describe the same action on the same object.
+- **Languages from the first screen.** Interface text goes through the translation layer from day one, as whole sentences. English is the source language.
