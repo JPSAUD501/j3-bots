@@ -74,7 +74,14 @@ export {
   type SecretAnswer,
   targetKey,
 } from "./stores/Conversations.ts";
-export { type BotDraft, freshStartAction } from "./stores/Details.ts";
+export {
+  type BotChanges,
+  type BotDraft,
+  freshStartAction,
+  type MemoryEdit,
+  memorySaveKey,
+  type Save,
+} from "./stores/Details.ts";
 export { Devices, type RevokeResult } from "./stores/Devices.ts";
 export {
   type Draft,

@@ -8,11 +8,16 @@ import {
   type EntryTarget,
   HTTP_PATHS,
   J3Rpcs,
+  MemoryPath,
+  ModelId,
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_INLINE_IMAGE_SIZE,
   MAX_INLINE_IMAGES_SIZE,
   MAX_MESSAGE_LENGTH,
+  Conflict,
+  Invalid,
   NotFound,
+  ProviderId,
 } from "@j3-bots/contracts";
 import * as Server from "@j3-bots/server/testing";
 import { assert, it } from "@effect/vitest";
@@ -45,7 +50,7 @@ import {
   messageStatus,
   targetKey,
 } from "../src/stores/Conversations.ts";
-import { Details } from "../src/stores/Details.ts";
+import { Details, memorySaveKey } from "../src/stores/Details.ts";
 import { Devices } from "../src/stores/Devices.ts";
 import { Drafts } from "../src/stores/Drafts.ts";
 import { Roster } from "../src/stores/Roster.ts";
@@ -3251,6 +3256,79 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       assert.deepStrictEqual(settings.save.get(), { _tag: "saved" });
       const shown = settings.state.get();
       assert.strictEqual(shown._tag === "ready" && shown.value.notifications.previews, before);
+    }).pipe(Effect.scoped, Effect.provide(client())),
+  );
+
+  it.effect("changes a bot, and keeps the changes of an update the server refused", () =>
+    Effect.gen(function* () {
+      yield* pairAndConnect;
+      const botId = yield* createBot("Scout");
+      const details = yield* Details;
+      const roster = yield* Roster;
+
+      const saved = yield* details.updateBot(botId, { profile: { title: "Research" } });
+      assert.strictEqual(saved._tag, "done");
+      assert.isFalse(details.botSaves.get().has(botId));
+      yield* waitFor(
+        roster.state,
+        (state) =>
+          state._tag === "ready" &&
+          state.value.some((item) => item._tag === "bot" && item.bot.profile.title === "Research"),
+      );
+
+      const changes = {
+        profile: { name: "Scout 2" },
+        model: { providerId: ProviderId.make("nowhere"), modelId: ModelId.make("none") },
+      };
+      const refused = yield* details.updateBot(botId, changes);
+      assert.deepStrictEqual(refused, {
+        _tag: "failed",
+        failure: { _tag: "refused", error: new Invalid({ reason: "model" }) },
+      });
+      assert.deepStrictEqual(details.botSaves.get().get(botId), {
+        _tag: "failed",
+        changes,
+        failure: { _tag: "refused", error: new Invalid({ reason: "model" }) },
+      });
+    }).pipe(Effect.provide(client())),
+  );
+
+  it.effect("refuses a memory write over a revision since replaced, and keeps its text", () =>
+    Effect.gen(function* () {
+      yield* pairAndConnect;
+      const botId = yield* createBot("Scout");
+      const details = yield* Details;
+      const scope = { _tag: "bot", botId } as const;
+      const path = MemoryPath.make("notes.md");
+      const list = yield* details.memory(scope);
+      yield* waitFor(list, (state) => state._tag === "ready");
+
+      const created = yield* details.writeMemory(scope, path, { text: "one", revision: null });
+      if (created._tag !== "done") return assert.fail("The file was not created");
+      // The list open beside it reads the new file.
+      yield* waitFor(
+        list,
+        (state) => state._tag === "ready" && state.value.some((file) => file.path === path),
+      );
+      const read = created.value.revision;
+      // Another device writes the file after this one read it.
+      const replaced = yield* details.writeMemory(scope, path, { text: "two", revision: read });
+      assert.strictEqual(replaced._tag, "done");
+
+      const edit = { text: "three", revision: read };
+      const stale = yield* details.writeMemory(scope, path, edit);
+      const conflict = {
+        _tag: "refused",
+        error: new Conflict({ reason: "stale-revision" }),
+      } as const;
+      assert.deepStrictEqual(stale, { _tag: "failed", failure: conflict });
+      assert.deepStrictEqual(details.memorySaves.get().get(memorySaveKey(scope, path)), {
+        _tag: "failed",
+        changes: edit,
+        failure: conflict,
+      });
+      const kept = yield* details.readMemory(scope, path);
+      assert.strictEqual(kept._tag === "done" && kept.value.text, "two");
     }).pipe(Effect.scoped, Effect.provide(client())),
   );
 });
