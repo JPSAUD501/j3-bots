@@ -10,10 +10,7 @@ import * as Http from "./http.ts";
 import * as TestDomain from "./testing/domain.ts";
 
 it.layer(
-  Http.layer.pipe(
-    Layer.provideMerge(NodeHttpServer.layerTest),
-    Layer.provide(TestDomain.layer),
-  ),
+  Http.layer.pipe(Layer.provideMerge(NodeHttpServer.layerTest), Layer.provide(TestDomain.layer)),
 )("http", (it) => {
   it.effect("tells a client which protocol it speaks before it pairs", () =>
     Effect.gen(function* () {

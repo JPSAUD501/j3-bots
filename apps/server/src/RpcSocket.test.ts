@@ -96,10 +96,7 @@ const server = Layer.unwrap(
       Layer.succeed(Ticks, queue),
     );
   }),
-).pipe(
-  Layer.provideMerge(NodeHttpServer.layerTest),
-  Layer.provideMerge(TestDomain.layer),
-);
+).pipe(Layer.provideMerge(NodeHttpServer.layerTest), Layer.provideMerge(TestDomain.layer));
 
 it.layer(server, { excludeTestServices: true })("RPC socket", (it) => {
   it.effect("refuses an upgrade without a valid credential", () =>

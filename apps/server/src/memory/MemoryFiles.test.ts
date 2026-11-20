@@ -1,0 +1,84 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import { assert, it } from "@effect/vitest";
+import { MemoryPath } from "@j3-bots/contracts";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Layout from "../Layout.ts";
+import * as TestDatabase from "../testing/database.ts";
+import * as MemoryFiles from "./MemoryFiles.ts";
+
+const files = MemoryFiles.layer.pipe(
+  Layer.provideMerge(Layout.layer),
+  Layer.provideMerge(TestDatabase.layer),
+);
+
+const shared = { _tag: "shared" } as const;
+
+/** A folder outside the memory, and a link inside the memory that points to it. */
+const linkOutside = (name: string, target: "folder" | "nowhere") =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const { sharedMemory } = yield* Layout.Layout;
+    const outside = yield* fs.makeTempDirectoryScoped();
+    yield* fs.makeDirectory(sharedMemory, { recursive: true });
+    const pointed = target === "folder" ? outside : path.join(outside, "missing");
+    yield* fs.symlink(pointed, path.join(sharedMemory, name));
+    return outside;
+  });
+
+it.effect("refuses to read or write through a link that leaves the memory folder", () =>
+  Effect.gen(function* () {
+    const memory = yield* MemoryFiles.MemoryFiles;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const outside = yield* linkOutside("escape", "folder");
+    yield* fs.writeFileString(path.join(outside, "secret.md"), "outside");
+
+    const read = yield* memory.read(shared, MemoryPath.make("escape/secret.md")).pipe(Effect.exit);
+    const write = yield* memory
+      .write({ scope: shared, path: MemoryPath.make("escape/new.md"), text: "x", revision: null })
+      .pipe(Effect.exit);
+
+    assert.isTrue(Exit.isFailure(read));
+    assert.isTrue(Exit.isFailure(write));
+    assert.isFalse(yield* fs.exists(path.join(outside, "new.md")));
+  }).pipe(Effect.scoped, Effect.provide(files)),
+);
+
+it.effect("refuses to write through a link to a place that does not exist yet", () =>
+  Effect.gen(function* () {
+    const memory = yield* MemoryFiles.MemoryFiles;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const outside = yield* linkOutside("dangling", "nowhere");
+
+    const write = yield* memory
+      .write({ scope: shared, path: MemoryPath.make("dangling/new.md"), text: "x", revision: null })
+      .pipe(Effect.exit);
+
+    assert.isTrue(Exit.isFailure(write));
+    assert.isFalse(yield* fs.exists(path.join(outside, "missing")));
+  }).pipe(Effect.scoped, Effect.provide(files)),
+);
+
+it.effect("writes only over the revision the writer read", () =>
+  Effect.gen(function* () {
+    const memory = yield* MemoryFiles.MemoryFiles;
+    const path = MemoryPath.make("notes/today.md");
+    const first = yield* memory.write({ scope: shared, path, text: "one", revision: null });
+    yield* memory.write({ scope: shared, path, text: "two", revision: first.revision });
+
+    const stale = yield* memory
+      .write({ scope: shared, path, text: "three", revision: first.revision })
+      .pipe(Effect.exit);
+
+    assert.isTrue(Exit.isFailure(stale));
+    const current = yield* memory.read(shared, path);
+    assert.strictEqual(Option.getOrThrow(current).text, "two");
+  }).pipe(Effect.provide(files)),
+);

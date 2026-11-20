@@ -9,8 +9,8 @@ import * as Stream from "effect/Stream";
 import * as Domain from "../domain.ts";
 import * as TestDatabase from "./database.ts";
 
-/** The model the test engine offers, and the one a bot gets by default. */
-export const MODEL = { providerId: ProviderId.make("claude"), modelId: ModelId.make("opus") };
+/** The one model the test engine offers. */
+const MODEL = { providerId: ProviderId.make("claude"), modelId: ModelId.make("opus") };
 
 const provider: EngineStatus["providers"][number] = {
   id: MODEL.providerId,
