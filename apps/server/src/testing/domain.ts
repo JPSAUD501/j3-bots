@@ -36,8 +36,11 @@ const engine = Layer.effect(
   }),
 ).pipe(Layer.provideMerge(TestEngine.layer));
 
+/**
+ * What outlives a server restart: the database, the home and the engine. A
+ * restart test builds this once and `Domain.layer` over it twice.
+ */
+export const machine = engine.pipe(Layer.provideMerge(TestDatabase.layer));
+
 /** The whole domain over a fresh database, a temporary home and the in-memory engine. */
-export const layer = Domain.layer.pipe(
-  Layer.provideMerge(engine),
-  Layer.provideMerge(TestDatabase.layer),
-);
+export const layer = Domain.layer.pipe(Layer.provideMerge(machine));
