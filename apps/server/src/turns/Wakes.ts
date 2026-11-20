@@ -8,7 +8,14 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import { Ids } from "../Ids.ts";
 import { json, timeText } from "../persistence/columns.ts";
-import { type Audience, audienceColumns, PRIORITY, type WakeKind, WakePayload } from "./model.ts";
+import {
+  type Audience,
+  audienceColumns,
+  type DispatchSeq,
+  PRIORITY,
+  type WakeKind,
+  WakePayload,
+} from "./model.ts";
 import { liveTarget } from "./liveTarget.ts";
 import { Signals } from "./Signals.ts";
 import { stopTargets } from "./stopTargets.ts";
@@ -26,13 +33,13 @@ export interface NewWake {
   readonly retryOf: string | null;
   /**
    * What led to it: the operator, whose word a Stop never cancels ahead of
-   * time, or the bot's own work that began at `since`, which a Stop covering
-   * it ended (`stopTargets.covers`) and an archived or deleted room left with
-   * nowhere to go.
+   * time, or the bot's own work that began with the dispatch written at
+   * `seq`, which a Stop covering it ended (`stopTargets.covers`) and an
+   * archived or deleted room left with nowhere to go.
    */
   readonly cause:
     | { readonly _tag: "operator" }
-    | { readonly _tag: "work"; readonly since: DateTime.Utc };
+    | { readonly _tag: "work"; readonly seq: DispatchSeq };
 }
 
 const encodePayload = Schema.encodeEffect(json(WakePayload));
@@ -65,7 +72,7 @@ export const layer = Layer.effect(
       for (const wake of wakes) {
         if (
           wake.cause._tag === "work" &&
-          ((yield* stops.covers(wake.botId, wake.audience, wake.cause.since)) ||
+          ((yield* stops.covers(wake.botId, wake.audience, wake.cause.seq)) ||
             (yield* live(wake.botId, wake.audience)) === null)
         ) {
           continue;

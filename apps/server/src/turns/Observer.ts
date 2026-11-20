@@ -496,7 +496,7 @@ export const layer = Layer.effect(
       const carried = yield* ledger.wakesOf(dispatch.id);
       // What the operator stopped needs no notice and no follow-up, also when
       // the turn ended on its own before the Stop's interrupt reached it.
-      if (yield* stops.covers(session.bot_id, audience, dispatch.created_at)) return;
+      if (yield* stops.covers(session.bot_id, audience, dispatch.seq)) return;
       if (outcome._tag === "failed" || outcome._tag === "interrupted") {
         const failure = outcome._tag === "failed" ? outcome.failure : "unknown";
         yield* notify(
@@ -518,7 +518,7 @@ export const layer = Layer.effect(
             sourceEntryId: null,
             hops: 0,
             retryOf: null,
-            cause: { _tag: "work", since: dispatch.created_at },
+            cause: { _tag: "work", seq: dispatch.seq },
           },
         ]);
         return;

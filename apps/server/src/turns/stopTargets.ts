@@ -6,7 +6,13 @@ import * as Effect from "effect/Effect";
 import type * as SqlClient from "effect/sql/SqlClient";
 import { timeText } from "../persistence/columns.ts";
 import type { WakesAfter } from "./Ledger.ts";
-import { type Audience, audienceOf, type SessionRowId, type WakeFailure } from "./model.ts";
+import {
+  type Audience,
+  audienceOf,
+  type DispatchSeq,
+  type SessionRowId,
+  type WakeFailure,
+} from "./model.ts";
 
 /** How a dispatch's work ended short of running to its end. */
 export type Ending =
@@ -29,23 +35,24 @@ export const stopTargets = (sql: SqlClient.SqlClient) => {
   const now = Effect.map(DateTime.now, timeText);
 
   /**
-   * Whether a Stop of the bot covers work for `audience` that began at
-   * `since`: a bot Stop, or a room Stop of that room, recorded at or after
-   * `since`, which so ended that work after it began. Such work wakes nobody
-   * and needs no notice. Work that began after a Stop is new intent, whatever
-   * became of that Stop's targets.
+   * Whether a Stop of the bot covers work for `audience` that began with the
+   * dispatch written at `seq`: a bot Stop, or a room Stop of that room,
+   * recorded once that dispatch was written (its mark is at or above `seq`),
+   * which so ended that work after it began. Such work wakes nobody and needs
+   * no notice. Work whose dispatch was written after a Stop is new intent,
+   * whatever became of that Stop's targets.
    */
   const covers = Effect.fn("stopTargets.covers")(function* (
     botId: BotId,
     audience: Audience,
-    since: DateTime.Utc,
+    seq: DispatchSeq,
   ) {
     const roomId = audience._tag === "room" ? audience.roomId : null;
     const rows = yield* sql<{ readonly n: number }>`
       SELECT 1 AS n FROM stops s
       WHERE s.bot_id = ${botId}
         AND (s.scope = 'bot' OR (s.scope = 'room' AND s.room_id = ${roomId}))
-        AND s.created_at >= ${timeText(since)}
+        AND s.dispatch_mark >= ${seq}
       LIMIT 1
     `.pipe(Effect.orDie);
     return rows.length > 0;
@@ -137,11 +144,11 @@ export const stopTargets = (sql: SqlClient.SqlClient) => {
         readonly bot_id: BotId;
         readonly audience: "conversation" | "room";
         readonly audience_room_id: RoomId | null;
-        readonly created_at: DateTime.Utc;
+        readonly seq: DispatchSeq;
       },
       ending: Ending,
     ) {
-      if (yield* covers(dispatch.bot_id, audienceOf(dispatch), dispatch.created_at)) {
+      if (yield* covers(dispatch.bot_id, audienceOf(dispatch), dispatch.seq)) {
         return { _tag: "cancelled" } satisfies WakesAfter as WakesAfter;
       }
       switch (ending._tag) {

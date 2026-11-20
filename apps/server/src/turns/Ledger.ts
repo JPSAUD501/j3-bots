@@ -16,6 +16,7 @@ import {
   AudienceColumn,
   audienceOf,
   DispatchRowId,
+  DispatchSeq,
   DispatchStatus,
   SessionRowId,
   WakeFailure,
@@ -25,6 +26,7 @@ import {
 } from "./model.ts";
 
 export const DispatchRow = Schema.Struct({
+  seq: DispatchSeq,
   id: DispatchRowId,
   bot_id: BotId,
   session_id: SessionRowId,
@@ -50,7 +52,7 @@ export const DispatchRow = Schema.Struct({
 export type DispatchRow = typeof DispatchRow.Type;
 
 export const DISPATCH_COLUMNS = `
-  id, bot_id, session_id, audience, audience_room_id, delivery, steer_turn_id, fresh_context,
+  seq, id, bot_id, session_id, audience, audience_room_id, delivery, steer_turn_id, fresh_context,
   envelope, status, disposition, engine_turn_id, continuation_resumes_at, fenced_by_stop_id,
   outcome_json, attempts, indeterminate_answers, staging_failures, next_attempt_at, closed_by,
   created_at

@@ -20,6 +20,13 @@ import * as Schema from "effect/Schema";
 export const DispatchRowId = Schema.String.pipe(Schema.brand("DispatchRowId"));
 export type DispatchRowId = typeof DispatchRowId.Type;
 
+/**
+ * The order a dispatch was written in: SQLite's serialized writes give every
+ * dispatch a higher one than any written before it, and none is reused.
+ */
+export const DispatchSeq = Schema.Int.pipe(Schema.brand("DispatchSeq"));
+export type DispatchSeq = typeof DispatchSeq.Type;
+
 /** J3 Bots' own id of a session row; the engine's id for it is a `SessionId`. */
 export const SessionRowId = Schema.String.pipe(Schema.brand("SessionRowId"));
 export type SessionRowId = typeof SessionRowId.Type;

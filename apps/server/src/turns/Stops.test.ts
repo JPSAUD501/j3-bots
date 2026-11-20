@@ -22,6 +22,7 @@ import {
   createBot,
   deliveryIs,
   engineSession,
+  eventually,
   flushed,
   gateSettled,
   nextTurn,
@@ -39,6 +40,50 @@ import { MAX_INDETERMINATE_ANSWERS, SYNC_DEADLINE } from "./model.ts";
 import { Pipeline } from "./Pipeline.ts";
 import { RETRY_TICK } from "./reconciler.ts";
 import { Stops } from "./Stops.ts";
+
+it.effect("keeps a message sent after a Stop retryable when both share a timestamp", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const sql = yield* SqlClient.SqlClient;
+    const entries = yield* Entries;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Rewrite the intro.");
+    yield* nextTurn(bot.id);
+    yield* (yield* Stops).stopBot({ commandId: command(), botId: bot.id });
+    yield* stopSettled;
+    yield* turnEnded(bot.id);
+
+    // In the same millisecond as the Stop, a new message is refused.
+    yield* control.rejectNextDispatch;
+    const message = yield* sendToBot(bot.id, "Now the outro.");
+    const delivery = yield* eventually(
+      entries
+        .find(message)
+        .pipe(
+          Effect.map((found) =>
+            Option.isSome(found) &&
+            found.value.entry._tag === "message" &&
+            found.value.entry.delivery._tag !== "pending"
+              ? Option.some(found.value.entry.delivery)
+              : Option.none(),
+          ),
+        ),
+    );
+    const [same] = yield* sql<{ readonly same: number }>`
+      SELECT s.created_at = d.created_at AS same FROM stops s, dispatches d
+      WHERE d.status = 'failed'
+    `.pipe(Effect.orDie);
+    assert.strictEqual(same?.same, 1);
+
+    // It came after the Stop: it failed, and the operator may send it again.
+    assert.strictEqual(delivery._tag, "failed");
+    yield* (yield* Pipeline).retryMessage({ commandId: command(), entryId: message });
+    yield* nextTurn(bot.id);
+    yield* deliveryIs(message, "delivered");
+    assert.strictEqual(yield* timesSent(session, "Now the outro."), 1);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
 
 it.effect("cancels a message whose send was lost behind a turn when Stop races it", () =>
   Effect.gen(function* () {

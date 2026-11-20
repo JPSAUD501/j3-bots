@@ -13,6 +13,14 @@ import * as SqlClient from "effect/sql/SqlClient";
 // in place: the table is rebuilt the documented way, which needs foreign keys
 // off outside the migration's transaction (`Sqlite.ts`).
 //
+// The rebuild also gives each dispatch `seq`, the order it was written in:
+// `AUTOINCREMENT`, so a number is never reused once its row is gone (deleting
+// a bot deletes its dispatches). `stops.dispatch_mark` is the highest `seq`
+// when a Stop was recorded, and a Stop covers the work of exactly the
+// dispatches at or below it (`stopTargets.covers`). SQLite serializes writes,
+// so this order is exact where two times in the same millisecond, or a clock
+// stepped back, are not. Stops already recorded get the mark their time gave.
+//
 // `stop_targets.retry_at` is when the Stop runner tries a session again after
 // its work there failed unexpectedly: a durable deadline like every other
 // worker's, not a retry on each pass.
@@ -22,7 +30,8 @@ export default Effect.gen(function* () {
 
   yield* sql`
     CREATE TABLE dispatches_rebuilt (
-      id TEXT PRIMARY KEY,
+      seq INTEGER PRIMARY KEY AUTOINCREMENT,
+      id TEXT NOT NULL UNIQUE,
       bot_id TEXT NOT NULL REFERENCES bots (id) ON DELETE CASCADE,
       session_id TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
       audience TEXT NOT NULL CHECK (audience IN ('conversation', 'room')),
@@ -75,7 +84,7 @@ export default Effect.gen(function* () {
   `;
   yield* sql`
     INSERT INTO dispatches_rebuilt (
-      rowid, id, bot_id, session_id, audience, audience_room_id, delivery, steer_turn_id,
+      seq, id, bot_id, session_id, audience, audience_room_id, delivery, steer_turn_id,
       fresh_context, envelope, status, failure_reason, disposition, disposition_turn_id,
       engine_turn_id, continuation_resumes_at, fenced_by_stop_id, outcome_json, attempts,
       created_at, updated_at, indeterminate_answers, next_attempt_at, staging_failures, closed_by
@@ -133,6 +142,13 @@ export default Effect.gen(function* () {
   if (dangling.length > 0) {
     return yield* Effect.die(new Error("Rebuilding dispatches left a foreign key unsatisfied"));
   }
+
+  yield* sql`ALTER TABLE stops ADD COLUMN dispatch_mark INTEGER NOT NULL DEFAULT 0`;
+  yield* sql`
+    UPDATE stops SET dispatch_mark = (
+      SELECT COALESCE(MAX(d.seq), 0) FROM dispatches d WHERE d.created_at <= stops.created_at
+    )
+  `;
 
   yield* sql`ALTER TABLE stop_targets ADD COLUMN retry_at TEXT`;
 });

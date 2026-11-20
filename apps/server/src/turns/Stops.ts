@@ -25,7 +25,7 @@ import { Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { RoomWork } from "../rooms/RoomWork.ts";
 import { Ledger } from "./Ledger.ts";
-import { AudienceColumn, DispatchRowId, SessionRowId } from "./model.ts";
+import { AudienceColumn, DispatchRowId, DispatchSeq, SessionRowId } from "./model.ts";
 import { Observer } from "./Observer.ts";
 import { Readiness } from "./Readiness.ts";
 import { DEFECT_RETRY, type Pass, onePassAtATime, passOutcome, reconcile } from "./reconciler.ts";
@@ -58,7 +58,7 @@ const Fenced = Schema.Struct({
   audience_room_id: Schema.NullOr(RoomId),
   status: Schema.Literals(["intended", "failed"]),
   attempts: Schema.Int,
-  created_at: Time,
+  seq: DispatchSeq,
 });
 
 /**
@@ -161,9 +161,13 @@ export const layer = Layer.effect(
       `;
       if (sessionIds.length > 0 || (anyFenceable?.n ?? 0) > 0) {
         const stopId = yield* ids.make("stop");
+        // It covers the work of every dispatch written before it, and of none after.
         yield* sql`
-          INSERT INTO stops (id, bot_id, scope, room_id, created_at)
-          VALUES (${stopId}, ${botId}, ${scope._tag}, ${scope._tag === "room" ? scope.roomId : null}, ${at})
+          INSERT INTO stops (id, bot_id, scope, room_id, created_at, dispatch_mark)
+          VALUES (
+            ${stopId}, ${botId}, ${scope._tag}, ${scope._tag === "room" ? scope.roomId : null}, ${at},
+            (SELECT COALESCE(MAX(seq), 0) FROM dispatches)
+          )
         `;
         for (const sessionId of sessionIds) {
           yield* sql`
@@ -180,7 +184,7 @@ export const layer = Layer.effect(
                 WHEN status = 'intended' AND attempts > 0 THEN NULL ELSE next_attempt_at
               END
             WHERE ${fenceable}
-            RETURNING id, bot_id, audience, audience_room_id, status, attempts, created_at
+            RETURNING id, bot_id, audience, audience_room_id, status, attempts, seq
           `,
         })(undefined);
         // An undecided one the engine may have is settled by the recovery,
