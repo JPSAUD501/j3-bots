@@ -180,7 +180,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
 
   if (data.roster === null || data.roster.length === 0) {
     return (
-      <div className="flex h-full flex-col pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]">
+      <div className="flex h-full flex-col pt-(--inset-top) pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]">
         {data.roster === null ? (
           <Connecting />
         ) : (

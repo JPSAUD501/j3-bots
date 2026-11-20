@@ -108,16 +108,13 @@ function Gate({ children }: { children: ReactNode }) {
     case "waiting":
     case "connected":
       return (
-        <div className="flex h-full flex-col">
-          <ConnectionBanner
-            state={connection}
-            everConnected={everConnected}
-            onRetryNow={j3.reconnectNow}
-          />
-          <div className="min-h-0 flex-1">
-            <LiveShell>{children}</LiveShell>
-          </div>
-        </div>
+        <ConnectionBanner
+          state={connection}
+          everConnected={everConnected}
+          onRetryNow={j3.reconnectNow}
+        >
+          <LiveShell>{children}</LiveShell>
+        </ConnectionBanner>
       );
   }
 }

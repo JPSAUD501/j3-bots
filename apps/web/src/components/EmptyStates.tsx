@@ -7,6 +7,7 @@ import type { I18n } from "../i18n/i18n";
 import { cn } from "../lib/cn";
 import { usageLimitText } from "../presentation/roster";
 import { BotAvatar } from "./BotAvatar";
+import { useConnectionLineShown } from "./ConnectionBanner";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 import { Kbd } from "./ui/kbd";
@@ -127,10 +128,14 @@ export function engineProblem(
 /** Before the first roster arrives: the server has not answered yet. */
 export function Connecting() {
   const { t } = useI18n();
+  // When the connection line says why the server is out of reach, saying it here again adds nothing.
+  const explained = useConnectionLineShown();
   return (
     <Centered>
       <Ensemble />
-      <Heading title={t("firstRun.connecting.title")} body={t("firstRun.connecting.body")} />
+      {!explained && (
+        <Heading title={t("firstRun.connecting.title")} body={t("firstRun.connecting.body")} />
+      )}
     </Centered>
   );
 }
