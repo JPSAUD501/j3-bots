@@ -45,12 +45,13 @@ Three regions, the same on every surface.
 | --- | --- | --- | --- |
 | Roster | Left column, 280 px | Left column, 280 px | First screen |
 | Conversation | Center, text column capped at 720 px | Center | Pushed screen |
-| Details | Right pane, 320 px, closed by default, beside the conversation | Modal pane over the conversation, with a scrim that closes it | Pushed screen |
+| Details | Right pane, 320 px, closed by default, beside the conversation | Modal dialog over the conversation, with a scrim that closes it | Modal dialog that covers the screen |
 
 - The layout follows the width of the interface's own container, not the window's, so the same component lays out correctly in a narrow frame on a wide screen.
 - The conversation text column has a maximum width; on a wide window the space goes to margins and the details pane, not to longer lines.
 - The details pane opens from the bot's name in the conversation header, or from the pane button beside it. On a phone the name carries a chevron, because there is no pane button.
-- Below the wide layout the details pane is modal: the roster and the conversation behind it are inert, focus stays inside it, and the conversation's shortcuts wait until it closes. At the wide layout it sits beside the conversation and nothing else is blocked.
+- Below the wide layout the details pane is a modal dialog: the roster and the conversation behind it are inert, focus is trapped inside it, the dialog handles `Escape`, and the conversation's shortcuts wait until it closes. At the wide layout it sits beside the conversation, nothing else is blocked, and `Escape` closes it from anywhere in the shell.
+- On phones every region keeps clear of the screen's safe areas (the notch, rounded corners and home indicator) on the edges it touches, in portrait and landscape.
 
 ### Keyboard and focus
 
@@ -62,8 +63,8 @@ Three regions, the same on every surface.
 | Close the details pane, before anything else | `Escape` |
 | Move through the roster | `↓` from the search field, then `↑`, `↓`, `Home`, `End` |
 
-- Shortcut hints are shown where the action is: on the Stop button, and on the empty screen for the next-bot shortcut.
-- Opening the details pane moves focus to its heading; closing it returns focus to the conversation title. Choosing another conversation with a mouse or keyboard puts the cursor in its composer; on touch screens it does not, so the keyboard does not cover the conversation. Loading a page moves focus nowhere.
+- Shortcut hints are shown where the action is: on the Stop button, and on the empty screen for the next-bot shortcut. Touch screens show neither.
+- Opening the details pane moves focus to its heading; closing it, by any route, returns focus to the conversation title. Choosing another conversation with a mouse or keyboard puts the cursor in its composer; on touch screens it does not, so the keyboard does not cover the conversation. Loading a page moves focus nowhere.
 - A command palette (`Cmd/Ctrl+K`) that reaches every action is planned and not built yet.
 
 ## Color
@@ -184,20 +185,20 @@ J3 Bots has **its own** avatar system. Existing products use friendly blob chara
 
 | Component | Notes |
 | --- | --- |
-| Roster row | Avatar, name, time, one status line; waiting and blocked lines are worded and colored. Unread shows once: as the avatar's done badge, or, for a row whose avatar shows another state, as a dot under the time; the time itself stays muted, and screen readers hear "Unread" either way. The line comes from the bot's state, else from the server's preview of the last entry: a card the bot still waits on reads in the present ("Asks: …"), an older one in the past ("Asked: …"). Order: pinned, then rows that need the operator, then most recent |
-| Bubble | Operator and bot variants; groups; link and code styling. In a room, a bot's group is labeled with its name beside a small drawing of its shape, which carries identity only, never state. Under each of the operator's messages the bot has not received yet, "Queued", or why it never will |
-| Composer | Pill, labeled "Message {name}", attachment and dictation; sends on Enter |
+| Roster row | Avatar, name, time, one status line; waiting and blocked lines are worded and colored. Unread shows once: as the avatar's done badge, or, for a row whose avatar shows another state, as a dot under the time; the time itself stays muted, and screen readers hear "Unread" either way. The line comes from the bot's state, else from the server's preview of the last entry: a card the bot still waits on reads in the present ("Asks: …"), an older one in the past ("Asked: …"). Only a stand-in for something absent, such as "No messages yet", is italic. Order: pinned, then rows that need the operator, then most recent |
+| Bubble | Operator and bot variants; groups; link and code styling. In a room, a bot's group is labeled with its name beside a 20 px drawing of its shape, which carries identity only, never state. Under each of the operator's messages the bot has not received yet, "Queued", or why it never will |
+| Composer | Pill, labeled "Message {name}", attachment and dictation; sends on Enter. While its field has keyboard focus, the whole pill carries the `accent` focus outline |
 | Work fold | "Worked for {duration}"; opens to steps: commands, edits, searches, delegated tasks. Long commands wrap; nothing is shown only in a hover title |
-| Question card | Prompt, up to six options, optional free text; resolved state. A single question with one choice and no typed answer is answered by tapping an option; anything else is a form of radios, checkboxes and text, sent with "Send answer". An option the bot recommends says "Recommended"; one that loses something is drawn in `blocked` and says "Loses something". Dismissing reads "Dismiss as a no", because that is what the bot receives |
-| Approval card | The exact action, Allow once (primary), Allow for session, Deny (outline, as neutral as Allow for session). While pending it shows everything the action will do in a bounded area that scrolls with the keyboard; once decided, that detail folds away |
+| Question card | Prompt, up to six options, optional free text; resolved state. Once an option is chosen, the text field reads "Add a note to your answer", because both are sent. A single question with one choice and no typed answer is answered by tapping an option; anything else is a form of radios, checkboxes and text, sent with "Send answer". An option the bot recommends says "Recommended"; one that loses something is drawn in `blocked` and says "Loses something". Dismissing reads "Dismiss as a no", because that is what the bot receives |
+| Approval card | Allow once (primary), Allow for session, Deny (outline, as neutral as Allow for session). While pending it shows one block: everything the action will do when the bot spelled it out, else the exact action, in a bounded area that scrolls with the keyboard. Once decided, it shows the exact action, and the rest folds away |
 | Credential card | What is asked for and why, a masked field, a link to get one when the bot gives a web address, Provide and Decline. Says the value is not kept; the typed value exists only while the card is pending, and once answered only what happened remains |
 | File card | Name, type, size; opens a preview |
 | Handoff card | "Asked Scout about …"; opens the exchange |
-| Routine row | Name, schedule in words, next run, last result with the run count in one sentence ("Last run reported back yesterday at 8:47 AM · 18 runs"), pause switch |
-| Presence line | One line under the bot's name in the conversation header: what it is doing now. "Waiting for you" is a button that moves to the card the bot waits on. Screen readers hear a change of state once, when it happens, not every time the line is read |
-| Delete confirmation | A dialog that names the bot, says its conversation, memory and routines are deleted for good and that files in its workspace are kept. "Keep {name}" has focus; the bot is deleted only after the destructive button is pressed |
-| First run | Lists each provider with an accurate state ("Ready", "Not signed in", "Usage limit reached, resets …", "Not available right now"). A provider that needs signing in shows the command to run on the host in a code line with a copy button. Creating the first bot opens its conversation |
-| Notice | One quiet line where something stopped: a failed turn (with Try again), a reply that did not arrive, a chain of bots that hit its budget, a bot waiting in its own conversation |
+| Routine row | Name, schedule in words, next run, last result with the run count in one sentence ("Last run reported back yesterday at 8:47 AM · 18 runs"), pause switch. A failed run draws only its failure in `blocked`; the run count stays muted |
+| Presence line | One line under the bot's name in the conversation header: what it is doing now. "Waiting for you" is a button that moves to the card the bot waits on: underlined in the line on pointer devices, and on touch screens a separate 44 px button with an arrow at the end of the header, apart from the name that opens the details. Screen readers hear a change of state once, when it happens, not every time the line is read |
+| Delete confirmation | Opened from the last section of the details, alone below a hairline, apart from "Start fresh". A dialog that names the bot, says its conversation, memory and routines are deleted for good and that files in its workspace are kept. "Keep {name}" has focus; the bot is deleted only after the destructive button is pressed |
+| First run | Lists each provider with an accurate state ("Ready", "Not signed in", "Usage limit reached, resets …", "Not available right now"). A limited provider uses the same sentence as a blocked bot, with the day when the reset is not today. A provider that needs signing in shows the command to run on the host, wrapped to read in full, with a copy button pinned to its corner; where the page has no clipboard, as over plain HTTP on the local network, the button selects the command instead. Creating the first bot opens its conversation |
+| Notice | One quiet line where something stopped: a failed turn (with Try again), a reply that did not arrive, a chain of bots that hit its budget (a pause mark), a bot waiting in its own conversation. Notices are not announced; the conversation header's live region is |
 | Routine change | A card in the timeline when a routine is created, changed, paused, resumed or deleted |
 
 Question, approval and credential cards take a submitting state: while the operator's answer is on its way, their controls are disabled, so a second press cannot send a second answer.
@@ -208,7 +209,7 @@ Interface text follows the same rules as bot messages: plain, short, literal.
 
 - Sentence case everywhere.
 - A button says what it does to what: "Pause routine", not "Pause".
-- Schedules are written out: "Weekdays at 8:47 AM", not a cron expression. A schedule with no plain sentence shows its expression. A schedule kept in another time zone names it: "Every Monday and Thursday at 9:00 AM (Western European Time)". A single run gives its full date and time in the operator's time zone, and "Next run" is always in the operator's time zone.
+- Schedules are written out: "Weekdays at 8:47 AM", not a cron expression. A schedule with no plain sentence shows its expression. A schedule kept in another time zone names it, hourly ones included: "Every Monday and Thursday at 9:00 AM (Western European Time)", "Every hour at minute 15 (India Standard Time)". A single run gives its full date and time in the operator's time zone, and "Next run" is always in the operator's time zone.
 - Times use the language's own short style ("8:47 AM" in English, "08:47" in Portuguese) and the operator's time zone. A time standing alone reads "Yesterday at 1:40 PM"; inside a sentence it has its own form ("yesterday at 1:40 PM", "at 8:47 AM", "on Nov 13, 2026, 4:30 PM"), so no capital lands mid-sentence.
 - Errors say what happened and what the operator can do.
 - No exclamation marks, no mascot voice.
@@ -222,7 +223,7 @@ Every interface sentence goes through the translation layer as a whole sentence 
 - Text contrast of at least 4.5:1, and 3:1 for large text and interface marks, in both themes.
 - State is never carried by color alone: the avatar's form or a mark changes too.
 - Every action is reachable by keyboard on desktop and by screen reader on every platform, with the same name it has on screen.
-- Touch targets are at least 44 pt; smaller controls extend their hit area on touch screens.
+- Touch targets are at least 44 px. On touch screens a compact control grows to a real 44 px box, so controls that sit side by side or wrap onto a second line never cover one another; pointer devices keep the compact size.
 - Light and dark follow the system unless the operator picks one in Settings. The choice is applied before the first paint.
 
 ## Next steps for design
