@@ -74,6 +74,20 @@ export function botPatch(bot: Bot, edits: BotEdits): BotPatch {
 }
 
 /**
+ * The edits once the operator types `value` into a profile field that showed
+ * `from` when they started editing it. Typing back exactly what it started
+ * from drops the edit, so the field follows the bot again and a save never
+ * sends a value another device changed meanwhile. Anything else stays as
+ * typed, spaces included.
+ */
+export const withProfileEdit = (
+  edits: BotEdits,
+  field: ProfileField,
+  value: string,
+  from: string,
+): BotEdits => ({ ...edits, [field]: value === from ? null : value });
+
+/**
  * The edits after a save of `changes` failed: a field the form holds no edit
  * for takes the value the save sent, so the operator's work is never lost,
  * even in a form opened after the save started.

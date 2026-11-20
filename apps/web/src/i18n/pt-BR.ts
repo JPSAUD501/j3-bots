@@ -443,7 +443,7 @@ export const ptBR: Catalog = {
   "memory.gone": "Este arquivo não existe mais, então sua edição não foi salva.",
   "memory.saveFailed": "Sua edição não foi salva. Tente de novo.",
   "memory.tooLong":
-    "Esta edição é longa demais para salvar: um arquivo de memória tem no máximo {max} caracteres. Encurte-a para salvar.",
+    "Esta edição é longa demais para salvar: um arquivo de memória tem no máximo {max} caracteres, e alguns caracteres, como emojis, contam como dois. Encurte-a para salvar.",
   "memory.failedClosed": "Sua edição em {file} não foi salva. Abra o arquivo para ver o motivo.",
 
   "settings.close": "Fechar configurações",

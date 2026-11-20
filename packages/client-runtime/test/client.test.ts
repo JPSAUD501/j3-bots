@@ -3352,8 +3352,6 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         .writeMemory(scope, path, { text: "never sent", revision: null })
         .pipe(Effect.forkChild({ startImmediately: true }));
       assert.strictEqual(details.memorySaves.get().get(memorySaveKey(scope, path))?._tag, "saving");
-      // Long enough for the client to settle into waiting for the network.
-      yield* Effect.sleep("50 millis");
       assert.deepStrictEqual(yield* (yield* SignOut).run, { _tag: "still-listed" });
 
       assert.deepStrictEqual(yield* Fiber.join(writing), { _tag: "pairing-changed" });

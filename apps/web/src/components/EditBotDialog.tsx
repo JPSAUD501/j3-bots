@@ -19,6 +19,7 @@ import {
   type ProfileField,
   sameModel,
   withChanges,
+  withProfileEdit,
 } from "../presentation/botEdit";
 import { shownSaveProblem } from "../presentation/saves";
 import { permissionText } from "./DetailsPanel";
@@ -96,6 +97,18 @@ export function EditBotForm({
     setEdits((current) => ({ ...current, ...change }));
     setFailureShown(false);
   };
+  // What each text field showed when its edit started: typing it back ends the edit.
+  const [startedFrom, setStartedFrom] = useState<Readonly<Record<ProfileField, string | null>>>({
+    name: null,
+    title: null,
+    job: null,
+  });
+  const editText = (field: ProfileField, value: string) => {
+    const from = startedFrom[field] ?? bot.profile[field];
+    setStartedFrom((current) => ({ ...current, [field]: value === from ? null : from }));
+    setEdits((current) => withProfileEdit(current, field, value, from));
+    setFailureShown(false);
+  };
 
   const saving = save?._tag === "saving";
   const shown = saving ? withChanges(bot, save.changes) : bot;
@@ -166,7 +179,7 @@ export function EditBotForm({
             maxLength={PROFILE_LIMITS.name}
             readOnly={saving}
             autoComplete="off"
-            onChange={(event) => edit({ name: event.currentTarget.value })}
+            onChange={(event) => editText("name", event.currentTarget.value)}
             className={cn(fieldClass, "h-9 pointer-coarse:h-11")}
             {...errorProps("name")}
           />
@@ -184,7 +197,7 @@ export function EditBotForm({
             readOnly={saving}
             autoComplete="off"
             placeholder={t("editBot.titleField.placeholder")}
-            onChange={(event) => edit({ title: event.currentTarget.value })}
+            onChange={(event) => editText("title", event.currentTarget.value)}
             className={cn(fieldClass, "h-9 pointer-coarse:h-11")}
             {...errorProps("title")}
           />
@@ -201,7 +214,7 @@ export function EditBotForm({
             maxLength={PROFILE_LIMITS.job}
             readOnly={saving}
             rows={4}
-            onChange={(event) => edit({ job: event.currentTarget.value })}
+            onChange={(event) => editText("job", event.currentTarget.value)}
             aria-describedby={invalid.has("job") ? `${ids.jobHint} ${errorIds.job}` : ids.jobHint}
             aria-invalid={invalid.has("job") || undefined}
             className={cn(fieldClass, "field-sizing-content min-h-24 resize-none py-2")}

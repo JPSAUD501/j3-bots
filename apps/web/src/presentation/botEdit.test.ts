@@ -2,7 +2,13 @@
 import { type EngineStatus, ModelId, ProviderId } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { bot } from "../test/fixtures";
-import { botPatch, editsAfterFailedBotSave, modelChoices, noBotEdits } from "./botEdit";
+import {
+  botPatch,
+  editsAfterFailedBotSave,
+  modelChoices,
+  noBotEdits,
+  withProfileEdit,
+} from "./botEdit";
 
 const claude = { providerId: ProviderId.make("claude"), modelId: ModelId.make("sonnet") };
 const codex = { providerId: ProviderId.make("codex"), modelId: ModelId.make("gpt") };
@@ -37,6 +43,22 @@ describe("botPatch", () => {
       _tag: "invalid",
       fields: new Set(["name"]),
     });
+  });
+});
+
+describe("withProfileEdit", () => {
+  it("drops a field typed back to where it started, so a later rename elsewhere stays", () => {
+    const renamed = withProfileEdit(noBotEdits, "name", "Scout II", "Scout");
+    const reverted = withProfileEdit(renamed, "name", "Scout", "Scout");
+    const titled = withProfileEdit(reverted, "title", "Research", "");
+    // Another device renames the bot before Save.
+    const elsewhere = { ...scout, profile: { ...scout.profile, name: "Scout III" } };
+    expect(botPatch(elsewhere, titled)).toEqual({
+      _tag: "changes",
+      changes: { profile: { title: "Research" } },
+    });
+    // Only an exact match ends the edit, so typing a space keeps it.
+    expect(withProfileEdit(reverted, "name", "Scout ", "Scout").name).toBe("Scout ");
   });
 });
 

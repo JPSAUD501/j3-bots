@@ -79,9 +79,14 @@ export function MemoryFile({
       setFailureShown(true);
     }
   }
+  // Loading the newer version takes one read at a time, and no edit meanwhile.
+  // A read that fails keeps the edit and offers to try again.
+  const [reloading, setReloading] = useState(false);
+  const [reloadFailed, setReloadFailed] = useState(false);
   const endEdit = () => {
     setEditing(null);
     setFailureShown(false);
+    setReloadFailed(false);
   };
   // A new version of the file, saved or read again, ends the edit. The first
   // read does not: an edit kept from a failed save waits for it. A read that
@@ -92,8 +97,6 @@ export function MemoryFile({
     if (lastRead !== null) endEdit();
   }
 
-  // Loading the newer version takes one read at a time, and no edit meanwhile.
-  const [reloading, setReloading] = useState(false);
   const loadNewer = () => {
     if (reloading || !connected) return;
     setReloading(true);
@@ -102,13 +105,13 @@ export function MemoryFile({
       // The operator asked for the newer version: it replaces the edit, even
       // when it is the first version this view could read.
       if (read) endEdit();
+      else setReloadFailed(true);
     });
   };
 
   const saving = save?._tag === "saving";
   const text = saving ? save.changes.text : editing?.text;
   const problem = shownSaveProblem(save, !failureShown);
-  const reloadFailed = problem === "stale" && reading._tag === "failed";
   const tooLong = editing !== null && !fits(editing.text);
   const canSave =
     editing !== null &&

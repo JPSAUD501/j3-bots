@@ -32,6 +32,7 @@ import {
 import type {
   Bot,
   BotId,
+  DeviceId,
   EntryId,
   EntryTarget,
   MemoryPath,
@@ -123,6 +124,7 @@ function Screen({ children }: { children: ReactNode }) {
 function Gate({ children }: { children: ReactNode }) {
   const j3 = useJ3Client();
   const connection = useConnection();
+  const pairing = useReadable(j3.pairing);
   const [everConnected, setEverConnected] = useState(false);
   if (connection._tag === "connected" && !everConnected) setEverConnected(true);
   switch (connection._tag) {
@@ -160,7 +162,10 @@ function Gate({ children }: { children: ReactNode }) {
           everConnected={everConnected}
           onRetryNow={j3.reconnectNow}
         >
-          <LiveShell>{children}</LiveShell>
+          {/* Mounted afresh for each pairing: nothing open or typed under one shows under the next. */}
+          <LiveShell key={pairing ?? "none"} pairing={pairing}>
+            {children}
+          </LiveShell>
         </ConnectionBanner>
       );
   }
@@ -219,8 +224,10 @@ interface MemoryView {
 
 const memoryScopeOf = (view: MemoryView): MemoryScope => ({ _tag: "bot", botId: view.botId });
 
-function LiveShell({ children }: { children: ReactNode }) {
+function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: ReactNode }) {
   const j3 = useJ3Client();
+  // An answer that arrives after the pairing changed belongs to the one that ended.
+  const stillPaired = () => j3.pairing.get() === pairing;
   const { t } = useI18n();
   const navigate = useNavigate();
   const params = useParams({ strict: false });
@@ -315,26 +322,34 @@ function LiveShell({ children }: { children: ReactNode }) {
     connected: connection._tag === "connected",
   };
 
+  // The latest memory read owns the viewer: each read, opening and closing
+  // moves this on, and an answer is applied only while its read still owns it.
+  const memoryRead = useRef(0);
+
   /**
-   * Reads a memory file into the viewer, unless the viewer has moved on to
-   * another one, and resolves with whether the read succeeded.
+   * Reads a memory file into the viewer, and resolves with whether this read
+   * put the file there. A read that fails after one succeeded keeps the
+   * version already read.
    */
-  const readMemoryFile = (botId: BotId, path: MemoryPath) =>
-    // Two files can share a title, and two bots a path: a late answer for another file is dropped.
-    j3.readMemory({ _tag: "bot", botId }, path).then((result) => {
-      setMemoryView((current) =>
-        current?.botId !== botId || current.path !== path
-          ? current
-          : {
-              ...current,
-              reading:
-                result._tag === "done"
-                  ? { _tag: "read", document: result.value }
+  const readMemoryFile = (botId: BotId, path: MemoryPath) => {
+    const read = ++memoryRead.current;
+    return j3.readMemory({ _tag: "bot", botId }, path).then((result) => {
+      if (memoryRead.current !== read || !stillPaired()) return false;
+      setMemoryView(
+        (current) =>
+          current && {
+            ...current,
+            reading:
+              result._tag === "done"
+                ? { _tag: "read", document: result.value }
+                : current.reading._tag === "read"
+                  ? current.reading
                   : { _tag: "failed" },
-            },
+          },
       );
       return result._tag === "done";
     });
+  };
 
   const openMemoryFile = (botId: BotId, path: MemoryPath) => {
     const title = memoryLabel(path, t);
@@ -343,6 +358,7 @@ function LiveShell({ children }: { children: ReactNode }) {
   };
 
   const closeMemoryFile = () => {
+    memoryRead.current++;
     if (memoryView !== null) j3.dismissMemorySave(memoryScopeOf(memoryView), memoryView.path);
     setMemoryView(null);
   };
@@ -351,6 +367,7 @@ function LiveShell({ children }: { children: ReactNode }) {
     const scope = memoryScopeOf(view);
     const key = memorySaveKey(scope, view.path);
     void j3.writeMemory(scope, view.path, edit).then((result) => {
+      if (!stillPaired()) return;
       if (result._tag === "done") {
         setMemoryView((current) =>
           current?.botId !== view.botId || current.path !== view.path
@@ -382,6 +399,7 @@ function LiveShell({ children }: { children: ReactNode }) {
 
   const updateBot = (bot: Bot, changes: BotChanges) =>
     void j3.updateBot(bot.id, changes).then((result) => {
+      if (!stillPaired()) return;
       if (open.current.bot !== bot.id) {
         if (result._tag === "failed") say(t("editBot.failedClosed", { name: bot.profile.name }));
       } else if (result._tag === "done") {
@@ -561,7 +579,8 @@ function LiveShell({ children }: { children: ReactNode }) {
         onLoadNewer={() => {
           if (memoryView === null) return Promise.resolve(false);
           const { botId, path } = memoryView;
-          // The conflict holds until the newer version is in hand.
+          // The conflict holds until the newer version is in hand. A read that
+          // lost the viewer, or its pairing, resolves false and dismisses nothing.
           return readMemoryFile(botId, path).then((read) => {
             if (read) j3.dismissMemorySave(memoryScopeOf(memoryView), path);
             return read;

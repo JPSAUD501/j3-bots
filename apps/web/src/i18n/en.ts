@@ -437,7 +437,7 @@ export const en = {
   "memory.gone": "This file no longer exists, so your edit wasn’t saved.",
   "memory.saveFailed": "Your edit wasn’t saved. Try again.",
   "memory.tooLong":
-    "This edit is too long to save: a memory file holds {max} characters at most. Shorten it to save.",
+    "This edit is too long to save: a memory file holds {max} characters at most, and some characters, like emoji, count as two. Shorten it to save.",
   "memory.failedClosed": "Your edit to {file} wasn’t saved. Open it to see why.",
 
   "settings.close": "Close settings",

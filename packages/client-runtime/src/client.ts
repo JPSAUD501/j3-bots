@@ -130,6 +130,11 @@ export type PairResult =
  */
 export interface J3Client {
   readonly connection: Readable<Connection.ConnectionState>;
+  /**
+   * The pairing this window follows: its device id, or null without one. A
+   * window shows, keeps and sends only the records of the pairing it follows.
+   */
+  readonly pairing: Readable<DeviceId | null>;
   readonly pair: (input: {
     readonly code: string;
     readonly deviceName: string;
@@ -345,6 +350,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
 
   return {
     connection: connection.state,
+    pairing: connection.pairing,
     pair: (input) =>
       run.promise(
         connection.pair(input).pipe(
