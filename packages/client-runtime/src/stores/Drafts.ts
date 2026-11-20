@@ -10,10 +10,12 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Base64Url from "effect/encoding/Base64Url";
 import { Connection } from "../connection/Connection.ts";
@@ -133,6 +135,17 @@ export class Drafts extends Context.Service<
      */
     readonly send: (target: EntryTarget, mentions?: Mentions) => Effect.Effect<DraftSendResult>;
     /**
+     * Each draft another window sent or changed while this one was changing
+     * or sending it. Nothing this window held was written: it now shows the
+     * draft as the device keeps it, and `restore` puts its text back.
+     */
+    readonly changedElsewhere: Stream.Stream<EntryTarget>;
+    /**
+     * Puts back the text this window held when another window changed the
+     * draft, as a new change to the draft as it is now.
+     */
+    readonly restore: (target: EntryTarget) => Effect.Effect<void>;
+    /**
      * Stops every upload and drops every draft, here and on the device. It
      * happens by itself whenever the device has no credential.
      */
@@ -163,38 +176,82 @@ export const layer = Layer.effect(
     // Each draft as the device keeps it, by key, as this window last read or wrote it.
     const known = new Map<string, string>();
     for (const [key, value] of stored) {
-      const draft = decodeStored(value);
-      if (Option.isNone(draft)) continue;
-      restored.set(key, shown(draft.value));
+      // Even a record this window cannot read is the one its next write claims.
       known.set(key, value);
+      const draft = decodeStored(value);
+      if (Option.isSome(draft)) restored.set(key, shown(draft.value));
     }
     const state = new Cell<ReadonlyMap<string, Draft>>(restored);
     const uploads = new Map<string, Fiber.Fiber<void>>();
+    // The text this window held when another window changed its draft, by key.
+    const displaced = new Map<string, string>();
+    const changes = yield* PubSub.unbounded<EntryTarget>();
     let nextKey = 0;
 
     // Writes go through one writer that always writes the latest draft of each
     // key, so a burst of keystrokes costs a few writes, never a queue of them.
-    // It and `send` take turns, so a draft is never written back once sent.
+    // Each write claims the draft as this window last read or wrote it, as
+    // `send` does, and the two take turns: a window never writes over what
+    // another window sent or changed.
     const turn = yield* Semaphore.make(1);
-    const unwritten = new Set<string>();
+    const unwritten = new Map<string, EntryTarget>();
     const wake = yield* Queue.sliding<void>(1);
     const persisted = (draft: Draft) => ({
       text: draft.text,
       files: draft.files.flatMap((file) => (file._tag === "ready" ? [file.attachment] : [])),
     });
     const revision = random.randomBytes(12).pipe(Effect.map(Base64Url.encode));
-    const writeOne = (key: string) => {
-      const draft = state.get().get(key) ?? empty;
-      const record = persisted(draft);
+
+    /** Shows `draft` as the draft of `key`. */
+    const show = (key: string, draft: Draft) => {
+      const next = new Map(state.get());
+      if (isEmpty(draft)) next.delete(key);
+      else next.set(key, draft);
+      state.set(next);
+    };
+
+    /**
+     * Shows the draft of `target` as the device keeps it, after another window
+     * sent or changed it, and keeps the text this window held for `restore`.
+     */
+    const reload = (target: EntryTarget) => {
+      const key = targetKey(target);
+      return storage.readAll("drafts").pipe(
+        Effect.flatMap((records) => {
+          const value = records.get(key);
+          displaced.set(key, (state.get().get(key) ?? empty).text);
+          unwritten.delete(key);
+          if (value === undefined) known.delete(key);
+          else known.set(key, value);
+          const draft = value === undefined ? Option.none() : decodeStored(value);
+          show(key, Option.isSome(draft) ? shown(draft.value) : empty);
+          return PubSub.publish(changes, target);
+        }),
+        Effect.catchTag("LocalStorageError", (error) =>
+          Effect.logWarning("A draft another window changed could not be read", error).pipe(
+            Effect.andThen(
+              Effect.sync(() => show(key, { ...(state.get().get(key) ?? empty), sending: false })),
+            ),
+          ),
+        ),
+      );
+    };
+
+    const writeOne = (target: EntryTarget) => {
+      const key = targetKey(target);
+      const record = persisted(state.get().get(key) ?? empty);
       const write = Effect.gen(function* () {
-        if (record.text === "" && record.files.length === 0) {
-          yield* storage.remove("drafts", key);
-          known.delete(key);
-          return;
-        }
-        const value = yield* encodeStored({ revision: yield* revision, ...record });
-        yield* storage.write("drafts", key, value);
-        known.set(key, value);
+        const value =
+          record.text === "" && record.files.length === 0
+            ? null
+            : yield* encodeStored({ revision: yield* revision, ...record });
+        const claimed = yield* storage.commit(
+          [{ table: "drafts", key, value }],
+          [{ table: "drafts", key, value: known.get(key) ?? null }],
+        );
+        if (!claimed) return yield* reload(target);
+        if (value === null) known.delete(key);
+        else known.set(key, value);
       });
       return write.pipe(
         Effect.catchTags({
@@ -206,35 +263,28 @@ export const layer = Layer.effect(
     yield* Effect.gen(function* () {
       while (true) {
         yield* Queue.take(wake);
-        const keys = [...unwritten];
+        const targets = [...unwritten.values()];
         unwritten.clear();
-        for (const key of keys) yield* turn.withPermits(1)(writeOne(key));
+        for (const target of targets) yield* turn.withPermits(1)(writeOne(target));
       }
     }).pipe(Effect.forkIn(scope));
 
-    /** Shows `draft` as the draft of `key`. */
-    const show = (key: string, draft: Draft) => {
-      const next = new Map(state.get());
-      if (isEmpty(draft)) next.delete(key);
-      else next.set(key, draft);
-      state.set(next);
-    };
-
     /** Changes one draft at once, unless it is `sending`, and has the writer keep it. */
-    const changeNow = (key: string, update: (draft: Draft) => Draft) => {
+    const changeNow = (target: EntryTarget, update: (draft: Draft) => Draft) => {
+      const key = targetKey(target);
       const before = state.get().get(key) ?? empty;
       if (before.sending) return;
       const after = update(before);
       if (after === before) return;
       show(key, after);
-      unwritten.add(key);
+      unwritten.set(key, target);
       Queue.offerUnsafe(wake, void 0);
     };
-    const change = (key: string, update: (draft: Draft) => Draft) =>
-      Effect.sync(() => changeNow(key, update));
+    const change = (target: EntryTarget, update: (draft: Draft) => Draft) =>
+      Effect.sync(() => changeNow(target, update));
 
-    const replaceFileNow = (key: string, fileKey: string, file: DraftFile) =>
-      changeNow(key, (draft) =>
+    const replaceFileNow = (target: EntryTarget, fileKey: string, file: DraftFile) =>
+      changeNow(target, (draft) =>
         draft.files.some((candidate) => candidate.key === fileKey)
           ? {
               ...draft,
@@ -242,11 +292,22 @@ export const layer = Layer.effect(
             }
           : draft,
       );
-    const replaceFile = (key: string, fileKey: string, file: DraftFile) =>
-      Effect.sync(() => replaceFileNow(key, fileKey, file));
+    const replaceFile = (target: EntryTarget, fileKey: string, file: DraftFile) =>
+      Effect.sync(() => replaceFileNow(target, fileKey, file));
 
-    const setText = (target: EntryTarget, text: string) =>
-      change(targetKey(target), (draft) => (draft.text === text ? draft : { ...draft, text }));
+    const withText = (text: string) => (draft: Draft) =>
+      draft.text === text ? draft : { ...draft, text };
+
+    const setText = (target: EntryTarget, text: string) => change(target, withText(text));
+
+    const restore = (target: EntryTarget) =>
+      Effect.sync(() => {
+        const key = targetKey(target);
+        const text = displaced.get(key);
+        if (text === undefined || state.get().get(key)?.sending === true) return;
+        displaced.delete(key);
+        changeNow(target, withText(text));
+      });
 
     const attach = Effect.fn("Drafts.attach")(function* (
       target: EntryTarget,
@@ -276,7 +337,7 @@ export const layer = Layer.effect(
           ? { _tag: "uploading", key: file.key, sent: 0, ...file.local }
           : { _tag: "failed", key: file.key, problem, ...file.local };
       });
-      yield* change(key, (draft) => ({ ...draft, files: [...draft.files, ...entries] }));
+      yield* change(target, (draft) => ({ ...draft, files: [...draft.files, ...entries] }));
 
       for (const [index, file] of picked.entries()) {
         if (problems[index] !== null) continue;
@@ -287,7 +348,7 @@ export const layer = Layer.effect(
             .get(key)
             ?.files.find((candidate) => candidate.key === fileKey);
           if (current?._tag !== "uploading" || current.sent === sent) return;
-          replaceFileNow(key, fileKey, { ...current, sent });
+          replaceFileNow(target, fileKey, { ...current, sent });
         };
         const fiber = yield* files
           .upload({
@@ -299,9 +360,9 @@ export const layer = Layer.effect(
           .pipe(
             Effect.matchEffect({
               onSuccess: (attachment) =>
-                replaceFile(key, fileKey, { _tag: "ready", key: fileKey, attachment }),
+                replaceFile(target, fileKey, { _tag: "ready", key: fileKey, attachment }),
               onFailure: (error) =>
-                replaceFile(key, fileKey, {
+                replaceFile(target, fileKey, {
                   _tag: "failed",
                   key: fileKey,
                   problem: uploadProblem(error),
@@ -319,30 +380,12 @@ export const layer = Layer.effect(
       Effect.suspend(() => {
         const upload = uploads.get(fileKey);
         uploads.delete(fileKey);
-        return change(targetKey(target), (draft) =>
+        return change(target, (draft) =>
           draft.files.some((file) => file.key === fileKey)
             ? { ...draft, files: draft.files.filter((file) => file.key !== fileKey) }
             : draft,
         ).pipe(Effect.andThen(upload === undefined ? Effect.void : Fiber.interrupt(upload)));
       });
-
-    /** Shows the draft of `key` as the device keeps it, after another window changed it. */
-    const reload = (key: string, held: Draft) =>
-      storage.readAll("drafts").pipe(
-        Effect.map((records) => {
-          const value = records.get(key);
-          const draft = value === undefined ? Option.none() : decodeStored(value);
-          unwritten.delete(key);
-          if (value === undefined || Option.isNone(draft)) known.delete(key);
-          else known.set(key, value);
-          show(key, Option.isSome(draft) ? shown(draft.value) : empty);
-        }),
-        Effect.catchTag("LocalStorageError", (error) =>
-          Effect.logWarning("A draft another window changed could not be read", error).pipe(
-            Effect.andThen(Effect.sync(() => show(key, held))),
-          ),
-        ),
-      );
 
     const send = Effect.fn("Drafts.send")(function* (target: EntryTarget, mentions?: Mentions) {
       const key = targetKey(target);
@@ -379,7 +422,7 @@ export const layer = Layer.effect(
               show(key, empty);
               break;
             case "changed-elsewhere":
-              yield* reload(key, draft);
+              yield* reload(target);
               break;
             case "not-kept":
               show(key, draft);
@@ -397,6 +440,7 @@ export const layer = Layer.effect(
         yield* Fiber.interruptAll(running);
         unwritten.clear();
         known.clear();
+        displaced.clear();
         state.set(new Map());
         yield* storage.clear("drafts");
       }),
@@ -414,6 +458,15 @@ export const layer = Layer.effect(
       }
     }).pipe(Effect.forkIn(scope));
 
-    return Drafts.of({ state, setText, attach, detach, send, discardAll });
+    return Drafts.of({
+      state,
+      setText,
+      attach,
+      detach,
+      send,
+      changedElsewhere: Stream.fromPubSub(changes),
+      restore,
+      discardAll,
+    });
   }),
 );

@@ -168,6 +168,13 @@ export interface J3Client {
   readonly detachFile: (target: EntryTarget, key: string) => void;
   /** Sends the draft once and clears it. */
   readonly sendDraft: (target: EntryTarget) => Promise<Drafts.DraftSendResult>;
+  /**
+   * Calls `listener` for each draft another window sent or changed under this
+   * one; see `Drafts.changedElsewhere`. Returns the function that stops it.
+   */
+  readonly onDraftChangedElsewhere: (listener: (target: EntryTarget) => void) => () => void;
+  /** Puts back the text this window held when another window changed the draft. */
+  readonly restoreDraft: (target: EntryTarget) => void;
   /** A file's bytes, with this device's credential. */
   readonly download: (id: AttachmentId) => Promise<DownloadResult>;
 
@@ -275,6 +282,14 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     return { value, release };
   };
 
+  /** Calls `listener` for each item of `stream` until the returned function is called. */
+  const listen = <A>(stream: Stream.Stream<A>, listener: (item: A) => void) => {
+    const fiber = run.fork(
+      stream.pipe(Stream.runForEach((item) => Effect.sync(() => listener(item)))),
+    );
+    return () => fire(Fiber.interrupt(fiber));
+  };
+
   return {
     connection: connection.state,
     pair: (input) =>
@@ -319,6 +334,8 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     attachFiles: (target, files) => fire(services.drafts.attach(target, files)),
     detachFile: (target, key) => fire(services.drafts.detach(target, key)),
     sendDraft: (target) => run.promise(services.drafts.send(target)),
+    onDraftChangedElsewhere: (listener) => listen(services.drafts.changedElsewhere, listener),
+    restoreDraft: (target) => run.sync(services.drafts.restore(target)),
     download: (id) =>
       run.promise(
         services.files.download(id).pipe(
@@ -365,14 +382,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
       ),
 
     setView: (target) => fire(services.presence.setView(target)),
-    onNotification: (listener) => {
-      const fiber = run.fork(
-        services.presence.notifications.pipe(
-          Stream.runForEach((notification) => Effect.sync(() => listener(notification))),
-        ),
-      );
-      return () => fire(Fiber.interrupt(fiber));
-    },
+    onNotification: (listener) => listen(services.presence.notifications, listener),
 
     call: <A, E>(use: (client: Connection.J3RpcClient) => Effect.Effect<A, E | RpcClientError>) =>
       run.promiseExit(connection.call<A, E>(use)),
