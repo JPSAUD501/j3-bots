@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import * as NetAddress from "effect/net/NetAddress";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import rootPackage from "../../../../package.json" with { type: "json" };
 import { AdminClient } from "../admin/AdminClient.ts";
 import { type AdminStatus, PAIRING_CAVEAT } from "../admin/protocol.ts";
@@ -84,7 +85,17 @@ const HOME_SUMMARIES: Record<Home.HomeNotPrivate["reason"], (home: string) => st
 
 const homeCheck = Effect.fn("doctor.home")(function* (home: string) {
   const fs = yield* FileSystem.FileSystem;
-  if (!(yield* fs.exists(home).pipe(Effect.orElseSucceed(() => false)))) {
+  const present = yield* fs.exists(home).pipe(Effect.result);
+  if (present._tag === "Failure") {
+    // Not a missing home: the server would fail on it too, as when a disk reports errors.
+    const { cause, message } = present.failure;
+    return check(
+      "Data directory",
+      "problem",
+      `The file system could not say whether ${home} exists: ${Predicate.isError(cause) ? cause.message : message} The server refuses to start until it can.`,
+    );
+  }
+  if (!present.success) {
     return check(
       "Data directory",
       "ok",

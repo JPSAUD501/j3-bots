@@ -7,6 +7,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import { AdminClient, AdminRequestFailed } from "../admin/AdminClient.ts";
 import { AdminStatus } from "../admin/protocol.ts";
@@ -78,6 +79,8 @@ interface World {
   readonly memoryDelegated: boolean;
   readonly configFile: Option.Option<string>;
   readonly homeMode: number;
+  /** The file system fails with EIO when asked about the home, as a failing SD card does. */
+  readonly homeUnreadable: boolean;
   /** A regular file where the admin socket goes. */
   readonly socketBlocked: boolean;
 }
@@ -101,6 +104,7 @@ const HEALTHY: World = {
   memoryDelegated: true,
   configFile: Option.none(),
   homeMode: 0o700,
+  homeUnreadable: false,
   socketBlocked: false,
 };
 
@@ -193,7 +197,27 @@ const diagnoseIn = (changes: Partial<World> = {}) =>
         }),
       ),
     );
-    const checks = yield* diagnose.pipe(Effect.provide(fakes));
+    const fileSystem = FileSystem.FileSystem.of({
+      ...fs,
+      exists: (target) =>
+        world.homeUnreadable && target === home
+          ? Effect.fail(
+              PlatformError.systemError({
+                _tag: "Unknown",
+                module: "FileSystem",
+                method: "access",
+                pathOrDescriptor: target,
+                cause: Object.assign(new Error(`EIO: i/o error, access '${target}'`), {
+                  code: "EIO",
+                }),
+              }),
+            )
+          : fs.exists(target),
+    });
+    const checks = yield* diagnose.pipe(
+      Effect.provide(fakes),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+    );
     return { checks, home, web };
   }).pipe(Effect.scoped);
 
@@ -266,6 +290,15 @@ it.layer(NodeServices.layer)("doctor", (it) => {
         Option.getOrElse(open.fix, () => ""),
         "chmod 700",
       );
+    }),
+  );
+
+  it.effect("finds a data directory the file system cannot read a problem, not a first run", () =>
+    Effect.gen(function* () {
+      const failing = named((yield* diagnoseIn({ homeUnreadable: true })).checks, "Data directory");
+      assert.strictEqual(failing.status, "problem");
+      assert.include(failing.summary, "EIO: i/o error");
+      assert.notInclude(failing.summary, "creates it");
     }),
   );
 
