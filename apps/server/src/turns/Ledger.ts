@@ -3,6 +3,7 @@ import {
   BotId,
   type Entry,
   EntryId,
+  type FailureClass,
   type MessageDelivery,
   type Notice,
   RoomId,
@@ -90,6 +91,16 @@ export type WakesAfter =
   | { readonly _tag: "pending" }
   | { readonly _tag: "cancelled" }
   | { readonly _tag: "failed"; readonly reason: WakeFailure };
+
+/**
+ * How an answer's notice names why it did not reach the bot: a key never
+ * resolved is the engine's to blame, and a room's Stop is the operator's.
+ */
+const answerFailure: Record<WakeFailure, FailureClass> = {
+  rejected: "unknown",
+  unresolved: "engine-unavailable",
+  stopped: "stopped",
+};
 
 const FailedWake = Schema.Struct({
   bot_id: BotId,
@@ -384,10 +395,7 @@ export const layer = Layer.effect(
           // before keeps the notice it has, which now shows this failure.
           const answer = failed.find((wake) => wake.payload_json._tag === "answer");
           if (answer !== undefined) {
-            const notice: Notice = {
-              _tag: "turn-failed",
-              failure: after.reason === "unresolved" ? "engine-unavailable" : "unknown",
-            };
+            const notice: Notice = { _tag: "turn-failed", failure: answerFailure[after.reason] };
             const shown = yield* undeliveredNotices(dispatchId);
             if (shown.length === 0) {
               yield* notify(answer.bot_id, audienceOf(answer), notice, {

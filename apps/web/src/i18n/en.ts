@@ -31,6 +31,7 @@ export const en = {
   "failure.permissionError": "Its provider needs signing in again",
   "failure.engineUnavailable": "Can’t reach the engine",
   "failure.sessionLost": "Lost its working context",
+  "failure.stopped": "Not delivered: you stopped the room",
   "failure.unknown": "Stopped by an unexpected error",
 
   "summary.fromYou": "You: {text}",

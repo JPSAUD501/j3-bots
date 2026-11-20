@@ -29,6 +29,7 @@ export const ptBR: Catalog = {
   "failure.permissionError": "O provedor precisa de um novo login",
   "failure.engineUnavailable": "Não foi possível alcançar o motor",
   "failure.sessionLost": "Perdeu o contexto de trabalho",
+  "failure.stopped": "Não entregue: você parou a sala",
   "failure.unknown": "Parou por um erro inesperado",
 
   "summary.fromYou": "Você: {text}",

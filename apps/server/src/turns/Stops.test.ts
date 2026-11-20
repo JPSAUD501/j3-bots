@@ -621,6 +621,48 @@ it.effect("cancels a private message a bot Stop dropped after the room's archiva
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("names a room's Stop on the retryable notice of an answer it dropped", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    const room = yield* roomOf(bot.id);
+    yield* sendToBot(bot.id, "Deploy it.");
+    const asking = yield* nextTurn(bot.id);
+    const card = yield* askRegion(bot.id, session, asking);
+    yield* control.finishTurn({
+      sessionId: session,
+      turnId: asking,
+      outcome: { _tag: "completed" },
+    });
+    yield* turnEnded(bot.id);
+
+    // A room message whose recovery gave up: its key may still land, so the
+    // room's archival stops the session too.
+    yield* control.deferNextDispatch;
+    const inRoom = yield* sendInRoom(bot.id, room.id, "Tag the release.");
+    yield* flushed(bot.id);
+    yield* recoverTimes(MAX_INDETERMINATE_ANSWERS - 1);
+    yield* deliveryIs(inRoom, "failed");
+
+    // The answer waits in the engine behind a turn of the engine's own, and
+    // the room's Stop drops it: no Stop of the bot's own work covers it.
+    yield* control.startEngineTurnDuringNextDispatch(session);
+    yield* answerFirstOption(card);
+    yield* nextTurn(bot.id, asking);
+    yield* gateSettled(bot.id);
+    yield* (yield* Rooms).update({
+      commandId: command(),
+      roomId: room.id,
+      changes: { archived: true },
+    });
+
+    const notice = yield* awaitEntry(bot.id, "notice");
+    assert.deepStrictEqual(notice.notice, { _tag: "turn-failed", failure: "stopped" });
+    assert.isTrue(notice.retryable);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("shows no retryable notice for an answer whose session is lost during a Stop", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;

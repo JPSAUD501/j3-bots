@@ -76,6 +76,8 @@ function failureText(
       return t("failure.engineUnavailable");
     case "session-lost":
       return t("failure.sessionLost");
+    case "stopped":
+      return t("failure.stopped");
     case "unknown":
       return t("failure.unknown");
   }
