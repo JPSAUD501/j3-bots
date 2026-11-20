@@ -75,6 +75,40 @@ const checksumFor = (sums: string, file: string): Option.Option<string> => {
 const INSTALLED_MARKER = ".installed";
 
 /**
+ * Whether the pinned engine is installed under `home`, without installing it
+ * or starting it: what `j3-bots doctor` reports.
+ */
+export type EngineInstall =
+  | { readonly _tag: "installed"; readonly version: string; readonly executable: string }
+  /** The server downloads it on its first start. */
+  | { readonly _tag: "missing"; readonly version: string }
+  /** No release of the pinned version runs on this platform. */
+  | { readonly _tag: "unsupported-platform"; readonly version: string };
+
+export const inspectInstall = Effect.fn("engine.inspectInstall")(function* (input: {
+  readonly home: string;
+  readonly platform: string;
+  readonly arch: string;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const target = runtimeDirectory(path, input.home);
+  const installed = yield* fs
+    .exists(path.join(target, INSTALLED_MARKER))
+    .pipe(Effect.orElseSucceed(() => false));
+  if (installed) {
+    return {
+      _tag: "installed",
+      version: pin.version,
+      executable: path.join(target, "t3"),
+    } satisfies EngineInstall;
+  }
+  return Option.isSome(releasePlatform(input.platform, input.arch))
+    ? ({ _tag: "missing", version: pin.version } satisfies EngineInstall)
+    : ({ _tag: "unsupported-platform", version: pin.version } satisfies EngineInstall);
+});
+
+/**
  * The pinned engine executable, installed if missing. Idempotent: a finished
  * install is detected by its marker and costs one `stat`. Resumable: an
  * interrupted download continues from where it stopped.
