@@ -606,7 +606,7 @@ const signInCommands: Record<string, string> = {
 
 const engines = {
   starting: null,
-  down: { ...team.engine, state: { _tag: "unavailable" } },
+  down: { ...team.engine, state: { _tag: "unavailable", reason: "down" } },
   incompatible: { ...team.engine, state: { _tag: "incompatible", runningVersion: "0.1.8" } },
   signIn: {
     ...team.engine,
