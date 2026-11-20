@@ -160,13 +160,20 @@ const killEngine = Effect.fnUntraced(function* (home: string) {
 const take = (queue: Queue.Dequeue<SessionEvent, Cause.Done>) =>
   Queue.take(queue).pipe(Effect.orDie);
 
-const until = Effect.fnUntraced(function* (
+const isTagged = <T extends SessionEvent["_tag"]>(
+  event: SessionEvent,
+  tag: T,
+): event is Extract<SessionEvent, { readonly _tag: T }> => event._tag === tag;
+
+/** Takes events until one is `tag` and matches, and returns it. */
+const until = Effect.fnUntraced(function* <T extends SessionEvent["_tag"]>(
   queue: Queue.Dequeue<SessionEvent, Cause.Done>,
-  match: (event: SessionEvent) => boolean,
+  tag: T,
+  match: (event: Extract<SessionEvent, { readonly _tag: T }>) => boolean = () => true,
 ) {
   while (true) {
     const event = yield* take(queue);
-    if (match(event)) return event;
+    if (isTagged(event, tag) && match(event)) return event;
   }
 });
 
@@ -187,13 +194,13 @@ const openWatched = Effect.fnUntraced(function* (name: string) {
   const queue = yield* engine
     .events({ sessionId, after: null })
     .pipe(Stream.orDie, Stream.toQueue({ capacity: "unbounded" }));
-  yield* until(queue, (event) => event._tag === "replaced");
+  yield* until(queue, "replaced");
   return { sessionId, queue };
 });
 
 describe("Engine conformance, real engine only", () => {
   it.live(
-    "survives an engine restart: the stream resumes and the cut turn stays interrupted",
+    "survives an engine restart: the cut turn stays interrupted, the held queue resumes once",
     () =>
       Effect.gen(function* () {
         const engine = yield* Engine;
@@ -207,14 +214,23 @@ describe("Engine conformance, real engine only", () => {
           attachments: [],
           delivery: { _tag: "start", freshContext: false },
         });
-        yield* until(queue, (event) => event._tag === "turn-started");
+        yield* until(queue, "turn-started");
+        // A turn waiting behind it, which the restart holds.
+        yield* bench.startForeignTurn(sessionId);
 
         yield* killEngine(home);
-        const end = yield* until(
-          queue,
-          (event) => event._tag === "turn-finished" && event.turnId === turnOf(running),
-        );
+        // The engine holds the queue as it recovers, before or after it ends the cut turn.
+        let end: Extract<SessionEvent, { readonly _tag: "turn-finished" }> | undefined;
+        let held: Extract<SessionEvent, { readonly _tag: "queue-held" }> | undefined;
+        while (end === undefined || held === undefined) {
+          const event = yield* take(queue);
+          if (isTagged(event, "turn-finished") && event.turnId === turnOf(running)) end = event;
+          if (isTagged(event, "queue-held")) held = event;
+        }
         yield* engineReady;
+        yield* engine.resumeQueue({ sessionId, hold: held.cursor });
+        const waiting = yield* until(queue, "turn-started");
+        yield* until(queue, "turn-finished", (event) => event.turnId === waiting.turnId);
         const after = yield* engine.dispatch({
           key: bench.key("restart-reply"),
           sessionId,
@@ -224,15 +240,19 @@ describe("Engine conformance, real engine only", () => {
         });
         const next = yield* until(
           queue,
-          (event) => event._tag === "turn-finished" && event.turnId === turnOf(after),
+          "turn-finished",
+          (event) => event.turnId === turnOf(after),
         );
 
         // Provisioned not to continue turns after its restart, the engine ends the cut turn.
-        assert.deepStrictEqual(end._tag === "turn-finished" && end.outcome, {
+        assert.deepStrictEqual(end.outcome, {
           _tag: "interrupted",
         });
-        assert.deepStrictEqual(next._tag === "turn-finished" && next.outcome, {
+        assert.deepStrictEqual(next.outcome, {
           _tag: "completed",
+        });
+        assert.deepStrictEqual(waiting.cause, {
+          _tag: "background",
         });
       }).pipe(
         Effect.provide(bench.pipe(Layer.provideMerge(realEngine), Layer.provideMerge(platform))),
@@ -258,11 +278,8 @@ describe("Engine conformance, real engine only", () => {
             delivery: { _tag: "start", freshContext: false },
           } as const;
           const disposition = yield* engine.dispatch(dispatch);
-          const started = yield* until(queue, (event) => event._tag === "turn-started");
-          yield* until(
-            queue,
-            (event) => event._tag === "turn-finished" && event.turnId === turnOf(disposition),
-          );
+          const started = yield* until(queue, "turn-started");
+          yield* until(queue, "turn-finished", (event) => event.turnId === turnOf(disposition));
           // The turn ends after this cursor, so a replacement must list it.
           return { dispatch, disposition, sessionId, cursor: started.cursor };
         }).pipe(Effect.scoped, Effect.provide(engines));
@@ -270,16 +287,15 @@ describe("Engine conformance, real engine only", () => {
         // A new server process knows nothing of the first one's streams.
         const second = yield* Effect.gen(function* () {
           const engine = yield* Engine;
-          const again = yield* engine.dispatch(first.dispatch);
+          yield* engine.redispatch(first.dispatch);
           const queue = yield* engine
             .events({ sessionId: first.sessionId, after: first.cursor })
             .pipe(Stream.orDie, Stream.toQueue({ capacity: "unbounded" }));
           const resumed = yield* take(queue);
-          return { again, resumed };
+          return { resumed };
         }).pipe(Effect.scoped, Effect.provide(engines));
 
         assert.strictEqual(first.disposition._tag, "started");
-        assert.deepStrictEqual(second.again, { _tag: "applied-earlier" });
         assert.strictEqual(second.resumed._tag, "replaced");
         if (second.resumed._tag !== "replaced") return;
         assert.deepStrictEqual(second.resumed.openTurns, []);

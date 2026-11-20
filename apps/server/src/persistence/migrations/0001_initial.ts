@@ -104,6 +104,12 @@ export default Effect.gen(function* () {
   // run routines. `admitted_turn_id` is the session's running turn once its
   // provider turn started, with the audience its speech goes to: a bot tool
   // call is matched to one of that turn's `j3` tool calls.
+  //
+  // `queue_held_cursor` is the cursor of the `queue-held` event that holds the
+  // session's engine queue now, cleared when the queue moves again;
+  // `queue_resumed_cursor` is the hold the server last asked the engine to
+  // resume. The server resumes a hold once: when the two differ and no Stop of
+  // the session is unsettled.
   yield* sql`
     CREATE TABLE sessions (
       id TEXT PRIMARY KEY,
@@ -116,6 +122,8 @@ export default Effect.gen(function* () {
       admitted_turn_id TEXT,
       admitted_audience TEXT CHECK (admitted_audience IN ('conversation', 'room')),
       admitted_room_id TEXT REFERENCES rooms (id) ON DELETE SET NULL,
+      queue_held_cursor TEXT,
+      queue_resumed_cursor TEXT,
       created_at TEXT NOT NULL,
       retired_at TEXT,
       CHECK (admitted_turn_id IS NULL OR engine_session_id IS NOT NULL),
@@ -145,31 +153,42 @@ export default Effect.gen(function* () {
   `;
   yield* sql`CREATE INDEX routines_due ON routines (next_run_at) WHERE enabled = 1`;
 
-  // The operator's Stop of one bot (or of a room's work, when the room is
-  // archived), written with its targets before the engine is called; its id is
-  // the command id. A target is every session with a turn, a waiting turn,
-  // background work, or a dispatch that may have been sent (`intended` with
-  // attempts, `accepted` or `delivered`) when the Stop was recorded. Its
-  // `engine_key` is derived from the Stop and the session, so a retried Stop
-  // sends the same command. While a target is not stopped, nothing is
-  // dispatched into its session and no held queue there is resumed; after a
-  // restart the server sends those Stops again before it opens the sessions'
-  // events. The Stop is finished when every target is stopped.
+  // A Stop, written with its targets before the engine is called; its id is
+  // the command id. `scope` is `bot` for the operator's Stop of one bot, which
+  // ends all of its work, or `room` for a room's archival, which ends only work
+  // whose audience is that room. A target is every session with a turn, a
+  // waiting turn, background work, or a dispatch that may have been sent
+  // (`intended` with attempts, `accepted` or `delivered`) in the Stop's scope
+  // when it was recorded.
+  //
+  // The engine answers a Stop before its effects land, so a target is stopped
+  // only when the session's events confirm it: no turn running or waiting and
+  // no continuation pending. A dispatch fenced by the Stop that the engine
+  // still applies afterwards is stopped on sight, in a new `round` of the same
+  // target. Each round's `engine_key` is derived from the Stop, the session and
+  // the round, so a retried round sends the same command. While a target is
+  // not stopped, nothing is dispatched into its session and no held queue
+  // there is resumed; after a restart the server sends those rounds again
+  // before it opens the sessions' events. A Stop is finished when every target
+  // is stopped.
   yield* sql`
     CREATE TABLE stops (
       id TEXT PRIMARY KEY,
       bot_id TEXT NOT NULL REFERENCES bots (id) ON DELETE CASCADE,
+      scope TEXT NOT NULL CHECK (scope IN ('bot', 'room')),
+      room_id TEXT REFERENCES rooms (id) ON DELETE SET NULL,
       created_at TEXT NOT NULL,
-      finished_at TEXT
+      CHECK (scope = 'room' OR room_id IS NULL)
     )
   `;
   yield* sql`
     CREATE TABLE stop_targets (
       stop_id TEXT NOT NULL REFERENCES stops (id) ON DELETE CASCADE,
       session_id TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+      round INTEGER NOT NULL CHECK (round >= 0),
       engine_key TEXT NOT NULL UNIQUE,
       stopped_at TEXT,
-      PRIMARY KEY (stop_id, session_id)
+      PRIMARY KEY (stop_id, session_id, round)
     )
   `;
   yield* sql`
@@ -183,30 +202,40 @@ export default Effect.gen(function* () {
   // place. `attempts` is raised, durably, before each send: 0 proves the engine
   // never saw the key.
   //
-  // `status`: `intended` until the engine's answer is known (a lost reply
-  // leaves it here, and the same key is sent again); `accepted` once the engine
-  // or the session's events show it applied; `delivered` when its turn started
-  // or its steer settled as taken; `finished` with the turn's outcome; `dropped`
-  // when a Stop ended it before delivery (a cancelled waiting turn, a dropped
-  // steer); `abandoned` when it will never be delivered, for `abandon_reason`:
-  // - `not-applied`: the engine applied nothing and the wakes may go again
-  //   (`SessionBusy`, `SessionNotFound`, or a dispatch a Stop fenced before it
-  //   was ever sent);
-  // - `rejected`: the engine refused the key; the wakes fail;
-  // - `unresolved`: no answer could be had before the session was retired or
-  //   removed, or within the key's retention; the wakes fail.
+  // `status`:
+  // - `intended` until the engine's answer is known. A lost reply leaves it
+  //   here, and the server recovers it: it sends the same key again with
+  //   `redispatch`, which skips every local check, with backoff and a bound.
+  // - `accepted` once the engine or the session's events show it applied. A
+  //   recovered dispatch is accepted with no disposition: the engine does not
+  //   say how a key it already had was applied.
+  // - `delivered` when its turn started; `finished` with the turn's outcome. A
+  //   steer that rode its target turn finishes with that turn once the engine
+  //   settles it as taken.
+  // - `dropped` when a Stop ended it before delivery: a cancelled waiting turn,
+  //   a dropped steer.
+  // - `released` when the engine certainly applied nothing and the wakes go
+  //   back to pending: the first send was refused locally (`SessionBusy`,
+  //   `SessionNotFound`), or a Stop fenced it before it was ever sent.
+  // - `failed` when it will not be delivered, for `failure_reason`:
+  //   `rejected` when the engine's reply names a rejection, `unresolved` when
+  //   no answer came within the recovery's bound, before the session was
+  //   retired or removed, or within a day. The wakes fail with it, visibly,
+  //   and are never sent again; the operator retries them as new wakes. A
+  //   failed dispatch the engine's events later show delivered moves on to
+  //   `delivered` or `finished`, and its wakes with it.
   // A dispatch that ends undelivered releases the catch-up notes and held
   // messages its envelope carried.
   //
   // `disposition` and `disposition_turn_id` are the engine's first answer and
-  // never change once recorded; they stay null when the first answer the server
-  // saw was `applied-earlier`. `engine_turn_id` is the turn that delivers it:
+  // never change once recorded. `engine_turn_id` is the turn that delivers it:
   // the disposition's turn, the follow-up turn of a requeued steer, or a turn
-  // learned from the events, and it moves along each continuation of that turn.
-  // While the engine holds a pending continuation of its turn,
+  // learned from the events. A dispatch that owns its turn moves along each
+  // continuation of it: while the engine holds a pending continuation,
   // `continuation_resumes_at` is set and the dispatch stays `delivered`, with
-  // the latest outcome in `outcome_json`. A dispatch fenced by a Stop is never
-  // sent again except to learn the answer for its key.
+  // the latest outcome in `outcome_json`. A steer riding another turn never
+  // follows a continuation. A dispatch fenced by a Stop is never sent again
+  // except to learn the answer for its key.
   yield* sql`
     CREATE TABLE dispatches (
       id TEXT PRIMARY KEY,
@@ -219,9 +248,11 @@ export default Effect.gen(function* () {
       fresh_context INTEGER NOT NULL DEFAULT 0 CHECK (fresh_context IN (0, 1)),
       envelope TEXT NOT NULL,
       status TEXT NOT NULL CHECK (
-        status IN ('intended', 'accepted', 'delivered', 'finished', 'dropped', 'abandoned')
+        status IN (
+          'intended', 'accepted', 'delivered', 'finished', 'dropped', 'released', 'failed'
+        )
       ),
-      abandon_reason TEXT CHECK (abandon_reason IN ('not-applied', 'rejected', 'unresolved')),
+      failure_reason TEXT CHECK (failure_reason IN ('rejected', 'unresolved')),
       disposition TEXT CHECK (disposition IN ('started', 'queued', 'steered', 'new-turn')),
       disposition_turn_id TEXT,
       engine_turn_id TEXT,
@@ -239,12 +270,16 @@ export default Effect.gen(function* () {
         OR (delivery = 'start' AND disposition IN ('started', 'queued'))
         OR (delivery = 'steer' AND disposition IN ('steered', 'new-turn'))
       ),
-      CHECK ((status = 'abandoned') = (abandon_reason IS NOT NULL)),
-      CHECK (disposition IS NULL OR status NOT IN ('intended', 'abandoned')),
+      CHECK ((status = 'failed') = (failure_reason IS NOT NULL)),
+      CHECK (disposition IS NULL OR status NOT IN ('intended', 'released', 'failed')),
       CHECK ((disposition IS NULL) = (disposition_turn_id IS NULL)),
-      CHECK (engine_turn_id IS NULL OR status NOT IN ('intended', 'abandoned')),
+      CHECK (engine_turn_id IS NULL OR status NOT IN ('intended', 'released', 'failed')),
       CHECK (status NOT IN ('delivered', 'finished', 'dropped') OR engine_turn_id IS NOT NULL),
-      CHECK (continuation_resumes_at IS NULL OR status = 'delivered')
+      CHECK (continuation_resumes_at IS NULL OR status = 'delivered'),
+      CHECK (
+        continuation_resumes_at IS NULL
+        OR NOT (delivery = 'steer' AND engine_turn_id = steer_turn_id)
+      )
     )
   `;
   // The audience's room is left out: deleting the room clears it.
@@ -270,6 +305,18 @@ export default Effect.gen(function* () {
     CREATE INDEX dispatches_open ON dispatches (session_id, status)
     WHERE status IN ('intended', 'accepted', 'delivered')
   `;
+  // A steer riding its target turn leaves it only for its own follow-up turn,
+  // while the engine has not yet settled it.
+  yield* sql`
+    CREATE TRIGGER dispatches_rider_keeps_turn
+    BEFORE UPDATE OF engine_turn_id ON dispatches
+    WHEN OLD.delivery = 'steer' AND OLD.engine_turn_id = OLD.steer_turn_id
+      AND OLD.status <> 'accepted'
+      AND NEW.engine_turn_id IS NOT OLD.engine_turn_id
+    BEGIN
+      SELECT RAISE(ABORT, 'a steer finishes with the turn it rode');
+    END
+  `;
   // A turn delivers at most one dispatch of its own; steers that ride on it are
   // not its own, whatever the engine first answered for them.
   yield* sql`
@@ -281,8 +328,10 @@ export default Effect.gen(function* () {
   // Everything a bot does starts as a wake, recorded with the entry that
   // caused it. J3 Bots holds pending wakes itself and coalesces a bot's
   // pending wakes of one kind and one audience into one dispatch, only when its
-  // session can take it. `failed` is a wake whose dispatch was abandoned as
-  // rejected or unresolved: the operator sees that it did not reach the bot.
+  // session can take it. `failed` is a wake that will not reach the bot, for
+  // `failure_reason`: its dispatch failed as `rejected` or `unresolved`, or a
+  // Stop dropped it (`stopped`). The operator sees it, and retrying it writes
+  // new wakes. A failed wake whose dispatch is delivered late moves on with it.
   yield* sql`
     CREATE TABLE wakes (
       id TEXT PRIMARY KEY,
@@ -296,9 +345,11 @@ export default Effect.gen(function* () {
       payload_json TEXT NOT NULL,
       status TEXT NOT NULL
         CHECK (status IN ('pending', 'dispatched', 'finished', 'cancelled', 'failed')),
+      failure_reason TEXT CHECK (failure_reason IN ('rejected', 'unresolved', 'stopped')),
       dispatch_id TEXT REFERENCES dispatches (id) ON DELETE SET NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
+      CHECK ((status = 'failed') = (failure_reason IS NOT NULL)),
       CHECK (status NOT IN ('dispatched', 'finished', 'failed') OR dispatch_id IS NOT NULL),
       CHECK (audience = 'room' OR audience_room_id IS NULL),
       CHECK (kind <> 'room' OR audience = 'room')
@@ -380,7 +431,7 @@ export default Effect.gen(function* () {
 
   // What a side session did, for the bot's next envelope in its main session.
   // `consumed_dispatch_id` is the dispatch whose envelope carries it. When that
-  // dispatch ends undelivered (dropped, or abandoned for any reason), the same
+  // dispatch ends undelivered (dropped, released or failed), the same
   // transaction clears it again, so the next envelope carries it instead. Held
   // messages work the same way.
   yield* sql`

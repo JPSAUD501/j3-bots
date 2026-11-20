@@ -19,14 +19,21 @@ export class EngineUnavailable extends Schema.TaggedError<EngineUnavailable>()(
 }
 
 /**
- * The command was sent, but its reply was lost: the connection dropped or the
- * engine restarted before it answered. It may or may not have been applied, and
+ * The command was sent, but no definite answer came back: the connection
+ * dropped, the engine restarted before it answered, or it answered with an
+ * error the adapter cannot identify. It may or may not have been applied, and
  * this error never means it was not.
  *
- * A keyed command is resolved by sending it again with the same key and the
- * same input: the engine applies a key once, and a definite answer to the
- * repeat is the answer to the first. A command without a key is idempotent by
- * nature, except `respondSecret`: see there.
+ * The engine's `/ws` reply to a failed command is one generic error whose cause
+ * keeps only the class name and message of what went wrong, and a refusal it
+ * records (a rejected receipt) answers its first submission with the same kind
+ * of error as a failure after the command was applied. So only a resend can
+ * tell them apart. A dispatch is resolved with `Engine.redispatch` under the
+ * same key. Every other keyed command is resolved by sending it again with the
+ * same key and input. A command without a key is idempotent by nature, except
+ * `respondSecret`: see there. **Read** at `db51b67`: `apps/server/src/ws.ts`
+ * (`OrchestrationV2DispatchCommandError`, `cause: Schema.Defect()`), Effect's
+ * `Schema.Defect` encoding `{name, message, cause?}`.
  */
 export class EngineIndeterminate extends Schema.TaggedError<EngineIndeterminate>()(
   "EngineIndeterminate",
@@ -56,8 +63,10 @@ export class ProjectNotFound extends Schema.TaggedError<ProjectNotFound>()("Proj
 }
 
 /**
- * The session does not exist, or it was retired. From `dispatch`, nothing was
- * applied; the key is spent all the same and is never sent again.
+ * The session does not exist, or it was retired. From `dispatch`, the adapter
+ * found this before sending anything: the key was never sent, and the caller
+ * may use the wakes again. `redispatch` never fails this way, since it skips
+ * every local check.
  */
 export class SessionNotFound extends Schema.TaggedError<SessionNotFound>()("SessionNotFound", {
   sessionId: SessionId,
@@ -68,10 +77,10 @@ export class SessionNotFound extends Schema.TaggedError<SessionNotFound>()("Sess
 }
 
 /**
- * A `start` was refused before it was sent, because the adapter saw a turn
- * running or waiting to start in the session: usually one the engine started
- * itself. Nothing was sent. The server dispatches again once the session is
- * idle.
+ * A first `start` was refused before it was sent, because the adapter saw a
+ * turn running or waiting to start in the session: usually one the engine
+ * started itself. Nothing was sent, so the caller may use the wakes again once
+ * the session is idle. `redispatch` never fails this way.
  *
  * Best effort only: a turn can begin between this check and the engine
  * applying the start, and then the dispatch is accepted as `queued` instead.
@@ -86,12 +95,33 @@ export class SessionBusy extends Schema.TaggedError<SessionBusy>()("SessionBusy"
 }
 
 /**
- * The engine refused a dispatch and applied nothing: the key is spent, and
- * sending it again fails the same way. Returned for the first refusal and for
- * every repeat of the key. The engine refuses, for instance, a steer into a
- * turn that Stop already reached, that waits behind another turn, or that ended
- * any way but completing (**Read** at `db51b67`, `dispatchSteerIntoRun`), or a
- * message over a limit of its managed policy.
+ * The engine refused a dispatch, and nothing of it was applied. The adapter
+ * reports it only on positive evidence it can read on `/ws`, by the class name
+ * the error's cause keeps:
+ * - `OrchestratorCommandPreviouslyRejectedError`: a resend found the key's
+ *   rejected receipt. The engine writes one for every refusal it makes while
+ *   planning a command, whatever the reason: a steer into a turn that Stop
+ *   already reached, that waits behind another turn or that ended any way
+ *   but completing (`dispatchSteerIntoRun`), a thread that is not active, a
+ *   provider that cannot take it.
+ * - `OrchestratorRuntimeModeAboveCeilingError`: the managed policy's
+ *   runtime-mode ceiling refused it. It is checked after the receipt lookup,
+ *   under the thread's lock, and leaves no receipt, so the key was not applied
+ *   before either.
+ *
+ * Every other error is `EngineIndeterminate`. Two refusals come before the
+ * receipt lookup and so say nothing about an earlier submission:
+ * `AttachmentClaimError` (a staged file the engine cannot claim), which is a
+ * defect of the caller, since a dispatch names only files staged and still
+ * usable; and `ThreadManagementProviderInstanceDisabledError`, which is
+ * indeterminate. `OrchestratorThreadAboveModeLimitError` (the dispatch mode
+ * limit) binds only agent and MCP callers, never `/ws`.
+ * **Read** at `db51b67`: `Orchestrator.ts` (`dispatchWithReceiptEffect`,
+ * `replayCommandReceipt`), `ThreadMessageIntake.ts` (`dispatchCommand`),
+ * `ThreadManagementService.ts` (`assertDispatchTargetEnabled`),
+ * `DispatchModeLimit.ts`.
+ *
+ * The caller never sends the key again.
  */
 export class DispatchRejected extends Schema.TaggedError<DispatchRejected>()("DispatchRejected", {
   key: IdempotencyKey,

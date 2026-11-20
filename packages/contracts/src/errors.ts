@@ -53,7 +53,7 @@ export class Conflict extends Schema.TaggedError<Conflict>()("Conflict", {
     "card-closed",
     /** The memory file changed after it was read. */
     "stale-revision",
-    /** The notice can no longer be retried. */
+    /** The notice or message can no longer be retried. */
     "not-retryable",
     /** The engine cannot take the command right now; retry once it is ready. */
     "engine-unavailable",

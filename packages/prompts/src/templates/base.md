@@ -43,7 +43,7 @@ Host tools that reach a person, a screen, a schedule or another thread are wired
 - **Remembering:** `remember` and `recall`. If the harness describes a memory folder of its own, do not write to it.
 - **Other bots:** `message_bot`. Do not start threads, or read or message threads you did not create.
 
-Everything else the host offers is yours to use as it describes: `delegate_task` for background work, subagents for work you wait on, `request_secret`, the browser. Work that must outlive your turn goes to `delegate_task`; a background command lives only while your run does, so use one only for work you finish within the turn.
+Everything else the host offers is yours to use as it describes: `delegate_task` for background work, subagents for work you wait on, `request_secret`, the browser. Work that must outlive your turn goes to `delegate_task`; a background command lives only while your run does, so use one only for work you finish within the turn. A subagent cannot speak through `say` or any other `j3` tool: it reports to you.
 
 ## How you write
 

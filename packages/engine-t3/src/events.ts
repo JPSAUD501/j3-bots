@@ -31,9 +31,10 @@ export const TurnCause = Schema.Union([
   /**
    * The engine resumed, on its own, the turn `turnId`, which ended with a
    * pending `continuation` (a usage limit that has now reset). `turnId` is the
-   * turn this one directly continues, which may itself be a continuation: the
-   * server follows the chain one link at a time, moving whatever `turnId`
-   * answered (its dispatch, its audience) to this turn.
+   * turn this one directly continues, which the engine names on the resuming
+   * message (`usageLimitContinuationOfRunId`), and which may itself be a
+   * continuation: the server follows the chain one link at a time, moving the
+   * dispatch that owned `turnId` and its audience to this turn.
    */
   Schema.TaggedStruct("continuation", { turnId: TurnId }),
   /**
@@ -121,8 +122,17 @@ export type ToolCall = typeof ToolCall.Type;
 
 /**
  * The engine will resume an ended turn on its own: it failed at a usage limit
- * and the engine arms a resume for the reset (**Read** at `db51b67`,
- * `UsageLimitRecoveryWorker.ts`). The resumed turn is a `continuation` of it.
+ * and the engine arms a resume for the reset. The resumed turn is a
+ * `continuation` of it.
+ *
+ * The engine arms the resume asynchronously, so the adapter predicts it when
+ * the turn ends, from the same conditions the engine's worker checks on the
+ * session (the turn is the latest and failed at the limit, the reset is known
+ * and less than a day past, the session is not archived and waits on no
+ * request), and then follows the engine's own record of it: the armed
+ * recovery and its `autoResume`. A snooze only delays a continuation; it never
+ * prevents one. **Read** at `db51b67`, `UsageLimitRecoveryWorker.ts`
+ * (`limitRecoveryCommand`, `MAX_OVERDUE_ARM_MS`).
  */
 export const PendingContinuation = Schema.Struct({ resumesAt: Schema.DateTimeUtc });
 export type PendingContinuation = typeof PendingContinuation.Type;
@@ -176,6 +186,7 @@ export type HostSpeech = typeof HostSpeech.Type;
  * How a `steered` dispatch's steer settled when the turn it steered ended.
  * `read`: as the `steered` event; `dropped`: as `steer-dropped`. A steer that
  * was requeued shows as its follow-up turn instead, with the dispatch as cause.
+ * Either is the engine's claim: see `steered`.
  */
 export const SteerSettlement = Schema.Struct({
   key: IdempotencyKey,
@@ -216,7 +227,10 @@ export const SessionEvent = Schema.Union([
    * - `steers` is how every steer settled on the ended turns listed, read or
    *   dropped. A steer of an open turn is not listed: it settles when that turn
    *   ends. One that was requeued shows as its follow-up turn, with the
-   *   dispatch as its cause.
+   *   dispatch as its cause;
+   * - `queueHeld` says the session's queue is held now. If it is, this event
+   *   stands for the hold, as a `queue-held` would, and its cursor is the
+   *   hold's.
    */
   Schema.TaggedStruct("replaced", {
     ...at,
@@ -228,6 +242,7 @@ export const SessionEvent = Schema.Union([
       Schema.Struct({ requestId: RequestId, turnId: TurnId, resolution: RequestResolution }),
     ),
     steers: Schema.Array(SteerSettlement),
+    queueHeld: Schema.Boolean,
   }),
   /**
    * A turn began. Until its first step, the bot is thinking. A turn caused by a
@@ -239,10 +254,24 @@ export const SessionEvent = Schema.Union([
    * How a `steered` dispatch settled is known only once the turn it steered has
    * ended, so each of these three follows that turn's `turn-finished`, one per
    * steer, and nothing about the steer comes before. Until then the dispatch
-   * is undecided.
+   * is undecided. The adapter reads the settlement from the engine's own
+   * record of the steer once the turn has settled: requeued, cancelled by
+   * Stop, or neither.
+   *
+   * A steer sent before the target's provider turn started waits in the
+   * engine as a run of its own that carries the message. When the target
+   * starts, the engine cancels that carrier and steers the message in; the
+   * adapter reports neither the carrier nor its cancellation. If the target
+   * ends first, the carrier is the follow-up of `steer-requeued`.
    *
    * `steered`: the steered turn took the message: the dispatch was delivered,
-   * and its outcome is that turn's.
+   * and it finishes with that turn. This is the engine's claim, and two
+   * provider paths make it without proof the model read the message: Codex
+   * acknowledges a steer when it is sent, never when it is consumed, and
+   * Claude Code marks a steer taken when offering it to the running turn
+   * fails. **Read** at `db51b67`: `Orchestrator.ts` (`requeueUnreadSteers`,
+   * `queued-message.promote-to-steer`), `CodexAdapterV2.ts` and
+   * `ClaudeAdapterV2.ts` (`steerTurn`).
    */
   Schema.TaggedStruct("steered", { ...at, key: IdempotencyKey, turnId: TurnId }),
   /**
@@ -316,10 +345,26 @@ export const SessionEvent = Schema.Union([
     continuation: Schema.NullOr(PendingContinuation),
   }),
   /**
-   * The pending continuation of the ended turn `turnId` will not run: the
-   * engine cleared it, or a newer message took its place.
+   * The pending continuation of the ended turn `turnId` will not run: `stop`
+   * disarmed it (the engine's armed recovery no longer resumes on its own), a
+   * newer turn started in the session, or the session stopped qualifying for
+   * it (archived, waiting on a request, or past the one-day limit). **Read**
+   * at `db51b67`: `Orchestrator.ts` (`holdStoppedThread`),
+   * `UsageLimitRecoveryWorker.ts`.
    */
   Schema.TaggedStruct("continuation-dropped", { ...at, turnId: TurnId }),
+  /**
+   * The engine held the session's queue of waiting turns: after an engine
+   * restart, a provider error, a model or provider change while the replaced
+   * provider session still runs background work, or a Stop. One per hold;
+   * the server answers it with `Engine.resumeQueue`, naming this cursor. A
+   * hold the engine puts back in answer to that resume, before any turn
+   * started, is not reported until its cause has passed: then it comes as a
+   * new `queue-held`. **Read** at `db51b67`: `Orchestrator.ts`
+   * (`startNextQueuedRun`, `queue.resume`); the hold is a field of each
+   * waiting run.
+   */
+  Schema.TaggedStruct("queue-held", { ...at }),
   /**
    * Answers `Engine.synchronize` with this token: every event the engine had
    * recorded for the session when it was called has been delivered on this

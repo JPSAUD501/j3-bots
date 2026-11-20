@@ -200,12 +200,11 @@ export const EntryRpcs = RpcGroup.make(
    * Answers a secret request. The value goes straight to the engine and is not
    * stored, logged or kept in a receipt.
    *
-   * Answers how the card resolved. `confirmed` is true only when this call's
-   * own answer is the one the engine took. Otherwise the card was already
-   * closed, or the engine's reply was lost and a retry found it closed: the
-   * resolution is what the card shows, which may be this answer, another
-   * device's, or `expired`. Only a confirmed `provided` or `declined` means
-   * this call did it; `expired` means no answer was taken.
+   * Success means this call's answer is the one the engine took. When the
+   * card had closed another way, or the engine's reply was lost and a retry
+   * found the card closed, it fails with `Conflict("card-closed")`: the card
+   * shows how it resolved, which may be this answer, another device's, or
+   * `expired`.
    */
   Rpc.make("secret.provide", {
     payload: {
@@ -219,14 +218,19 @@ export const EntryRpcs = RpcGroup.make(
         Schema.TaggedStruct("decline", {}),
       ]),
     },
-    success: Schema.Struct({
-      resolution: Schema.Literals(["provided", "declined", "expired"]),
-      confirmed: Schema.Boolean,
-    }),
     error: CommandError,
   }),
   /** Runs again what a retryable notice says failed. */
   Rpc.make("notice.retry", {
+    payload: { ...command, entryId: EntryId },
+    error: CommandError,
+  }),
+  /**
+   * Sends again a message whose delivery `failed`, to the recipients it
+   * failed for, as new deliveries; the message is `pending` again. Fails with
+   * `Conflict("not-retryable")` when its delivery is not `failed`.
+   */
+  Rpc.make("message.retry", {
     payload: { ...command, entryId: EntryId },
     error: CommandError,
   }),

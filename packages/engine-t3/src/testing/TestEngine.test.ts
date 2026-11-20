@@ -60,28 +60,24 @@ const steer = (value: string, turnId: TurnId) =>
 
 const tags = (events: Iterable<SessionEvent>) => [...events].map((event) => event._tag);
 
-/** The turn a first submission's disposition names. */
-const turnOf = (disposition: DispatchDisposition): TurnId => {
-  if (disposition._tag === "applied-earlier") return assert.fail("no turn on a repeat");
-  return disposition.turnId;
-};
+/** The turn a disposition names. */
+const turnOf = (disposition: DispatchDisposition): TurnId => disposition.turnId;
 
 describe("TestEngine", () => {
-  it.effect("applies a dispatch key once, and cannot say how a repeat was accepted", () =>
+  it.effect("applies a dispatch key once: a resend applies nothing and says only accepted", () =>
     Effect.gen(function* () {
       const engine = yield* Engine;
       const control = yield* TestEngine.TestEngineControl;
       const sessionId = yield* openSession;
 
       yield* engine.dispatch({ ...start("dispatch-1"), sessionId });
-      const again = yield* engine.dispatch({ ...start("dispatch-1"), sessionId });
+      yield* engine.redispatch({ ...start("dispatch-1"), sessionId });
 
-      assert.deepStrictEqual(again, { _tag: "applied-earlier" });
       assert.lengthOf(yield* control.dispatches(sessionId), 1);
     }).pipe(Effect.provide(TestEngine.layer)),
   );
 
-  it.effect("resolves a dispatch whose reply was lost by sending it again", () =>
+  it.effect("resolves a lost reply with a resend that the dispatch's own turn does not block", () =>
     Effect.gen(function* () {
       const engine = yield* Engine;
       const control = yield* TestEngine.TestEngineControl;
@@ -90,19 +86,22 @@ describe("TestEngine", () => {
       yield* control.loseNextReply;
 
       const lost = yield* engine.dispatch({ ...start("dispatch-1"), sessionId }).pipe(Effect.flip);
-      const repeat = yield* engine.dispatch({ ...start("dispatch-1"), sessionId });
+      // The lost dispatch started a turn, so the session is busy now.
+      yield* engine.redispatch({ ...start("dispatch-1"), sessionId });
 
       assert.strictEqual(lost._tag, "EngineIndeterminate");
-      assert.deepStrictEqual(repeat, { _tag: "applied-earlier" });
-      const [delivered] = yield* take(sessionId, cursorOf(first), 1);
-      assert.deepStrictEqual(delivered?._tag === "turn-started" && delivered.cause, {
-        _tag: "dispatch",
-        key: key("dispatch-1"),
-      });
+      assert.lengthOf(yield* control.dispatches(sessionId), 1);
+      const events = [...(yield* take(sessionId, cursorOf(first), 1))];
+      assert.deepStrictEqual(
+        events.map((event) => event._tag === "turn-started" && event.cause),
+        [{ _tag: "dispatch", key: key("dispatch-1") }],
+      );
+      const [replaced] = yield* take(sessionId, null, 1);
+      assert.lengthOf(replaced?._tag === "replaced" ? replaced.openTurns : [], 1);
     }).pipe(Effect.provide(TestEngine.layer)),
   );
 
-  it.effect("refuses a rejected dispatch key on every repeat, applying nothing", () =>
+  it.effect("refuses a rejected key on resend too, after a lost reply, applying nothing", () =>
     Effect.gen(function* () {
       const engine = yield* Engine;
       const control = yield* TestEngine.TestEngineControl;
@@ -111,12 +110,12 @@ describe("TestEngine", () => {
       yield* control.loseNextReply;
 
       const lost = yield* engine.dispatch({ ...start("dispatch-1"), sessionId }).pipe(Effect.flip);
-      const repeat = yield* engine
-        .dispatch({ ...start("dispatch-1"), sessionId })
+      const resend = yield* engine
+        .redispatch({ ...start("dispatch-1"), sessionId })
         .pipe(Effect.flip);
 
       assert.strictEqual(lost._tag, "EngineIndeterminate");
-      assert.strictEqual(repeat._tag, "DispatchRejected");
+      assert.strictEqual(resend._tag, "DispatchRejected");
       assert.deepStrictEqual(yield* control.dispatches(sessionId), []);
       const [replaced] = yield* take(sessionId, null, 1);
       assert.deepStrictEqual(replaced?._tag === "replaced" && replaced.openTurns, []);
@@ -209,11 +208,7 @@ describe("TestEngine", () => {
       const turnId = turnOf(yield* engine.dispatch({ ...start("dispatch-1"), sessionId }));
       yield* engine.dispatch({ ...steer("dispatch-2", turnId), sessionId });
 
-      yield* control.finishTurn({
-        sessionId,
-        turnId,
-        outcome: { _tag: "failed", failure: "provider-error", retryAt: null },
-      });
+      yield* control.finishTurn({ sessionId, turnId, outcome: { _tag: "interrupted" } });
 
       const events = [...(yield* take(sessionId, cursorOf(first), 4))];
       assert.deepStrictEqual(tags(events), [
@@ -259,68 +254,63 @@ describe("TestEngine", () => {
     }).pipe(Effect.provide(TestEngine.layer)),
   );
 
-  it.effect(
-    "stops a session: drops untaken steers after the turn ends, then cancels the queue",
-    () =>
-      Effect.gen(function* () {
-        const engine = yield* Engine;
-        const control = yield* TestEngine.TestEngineControl;
-        const sessionId = yield* openSession;
-        const [first] = yield* take(sessionId, null, 1);
-        const turnId = turnOf(yield* engine.dispatch({ ...start("dispatch-1"), sessionId }));
-        yield* engine.dispatch({ ...steer("dispatch-2", turnId), sessionId });
-        const waiting = yield* control.startEngineTurn(sessionId);
-
-        yield* engine.stop({ key: key("stop-1"), sessionId });
-
-        const events = [...(yield* take(sessionId, cursorOf(first), 4))];
-        assert.deepStrictEqual(
-          events.map((event) =>
-            event._tag === "turn-finished"
-              ? [event.turnId, event.outcome._tag]
-              : event._tag === "steer-dropped"
-                ? [event.turnId, event.key]
-                : event._tag,
-          ),
-          [
-            "turn-started",
-            [turnId, "interrupted"],
-            [turnId, key("dispatch-2")],
-            [waiting, "cancelled"],
-          ],
-        );
-        // Applied once: the same key answers even after the session has gone.
-        yield* engine.retireSession(sessionId);
-        yield* engine.stop({ key: key("stop-1"), sessionId });
-      }).pipe(Effect.provide(TestEngine.layer)),
-  );
-
-  it.effect("lets a message that reaches the engine mid-Stop restart a turn the Stop misses", () =>
+  it.effect("stops a session after answering: cancels the queue, ends the turn, drops steers", () =>
     Effect.gen(function* () {
       const engine = yield* Engine;
       const control = yield* TestEngine.TestEngineControl;
       const sessionId = yield* openSession;
-      const running = yield* control.startEngineTurn(sessionId);
-      const held = yield* control.startEngineTurn(sessionId);
-      yield* control.dispatchDuringNextStop({ sessionId, key: key("dispatch-1"), text: "Hi" });
+      const [first] = yield* take(sessionId, null, 1);
+      const turnId = turnOf(yield* engine.dispatch({ ...start("dispatch-1"), sessionId }));
+      yield* engine.dispatch({ ...steer("dispatch-2", turnId), sessionId });
+      const waiting = yield* control.startEngineTurn(sessionId);
 
       yield* engine.stop({ key: key("stop-1"), sessionId });
 
-      // The Stop's cancels miss the held turn the message released.
-      const [snapshot] = yield* take(sessionId, null, 1);
+      const events = [...(yield* take(sessionId, cursorOf(first), 5))];
       assert.deepStrictEqual(
-        snapshot?._tag === "replaced" &&
-          snapshot.openTurns.map((turn) => [turn.turnId, turn.startedAt !== null]),
-        [[held, true]],
+        events.map((event) =>
+          event._tag === "turn-finished"
+            ? [event.turnId, event.outcome._tag]
+            : event._tag === "steer-dropped"
+              ? [event.turnId, event.key]
+              : event._tag,
+        ),
+        [
+          "turn-started",
+          "queue-held",
+          [waiting, "cancelled"],
+          [turnId, "interrupted"],
+          [turnId, key("dispatch-2")],
+        ],
       );
-      const [slipped] = yield* control.dispatches(sessionId);
-      assert.strictEqual(slipped?.disposition._tag, "queued");
-      assert.isTrue(
-        snapshot?._tag === "replaced" &&
-          !snapshot.openTurns.some((turn) => turn.turnId === running),
-      );
+      // Applied once: the same key answers even after the session has gone.
+      yield* engine.retireSession(sessionId);
+      yield* engine.stop({ key: key("stop-1"), sessionId });
     }).pipe(Effect.provide(TestEngine.layer)),
   );
+
+  it.effect("disarms a pending usage-limit continuation on Stop", () =>
+    Effect.gen(function* () {
+      const engine = yield* Engine;
+      const control = yield* TestEngine.TestEngineControl;
+      const sessionId = yield* openSession;
+      const resumesAt = DateTime.add(yield* DateTime.now, { hours: 1 });
+      const limited = turnOf(yield* engine.dispatch({ ...start("dispatch-1"), sessionId }));
+      yield* control.finishTurn({
+        sessionId,
+        turnId: limited,
+        outcome: { _tag: "failed", failure: "usage-limit", retryAt: resumesAt },
+        continuation: { resumesAt },
+      });
+      const [before] = yield* take(sessionId, null, 1);
+
+      yield* engine.stop({ key: key("stop-1"), sessionId });
+
+      const [dropped] = yield* take(sessionId, cursorOf(before), 1);
+      assert.deepStrictEqual(dropped?._tag === "continuation-dropped" && dropped.turnId, limited);
+    }).pipe(Effect.provide(TestEngine.layer)),
+  );
+
   it.effect("resumes by replaying the events after the cursor, and nothing else", () =>
     Effect.gen(function* () {
       const engine = yield* Engine;
@@ -455,6 +445,7 @@ describe("TestEngine", () => {
       const engine = yield* Engine;
       const control = yield* TestEngine.TestEngineControl;
       const sessionId = yield* openSession;
+      const [first] = yield* take(sessionId, null, 1);
       const turnId = turnOf(yield* engine.dispatch({ ...start("dispatch-1"), sessionId }));
       const requestId = yield* control.openRequest({
         sessionId,
@@ -469,6 +460,7 @@ describe("TestEngine", () => {
       });
 
       yield* engine.stop({ key: key("stop-1"), sessionId });
+      const ended = yield* take(sessionId, cursorOf(first), 4);
       const refused = yield* engine
         .respond({
           key: key("respond-1"),
@@ -479,6 +471,12 @@ describe("TestEngine", () => {
         .pipe(Effect.flip);
 
       assert.strictEqual(refused._tag, "RequestClosed");
+      assert.deepStrictEqual(tags(ended), [
+        "turn-started",
+        "request-opened",
+        "request-closed",
+        "turn-finished",
+      ]);
       const [replaced] = yield* take(sessionId, null, 1);
       assert.deepStrictEqual(
         replaced?._tag === "replaced" && [replaced.openTurns, replaced.openRequests],
@@ -525,24 +523,27 @@ describe("TestEngine", () => {
     }).pipe(Effect.provide(TestEngine.layer)),
   );
 
-  it.effect("resumes a held queue once, and leaves it held when the engine holds it again", () =>
+  it.effect("reports a hold once, and one put back on resume only when its cause has passed", () =>
     Effect.gen(function* () {
+      const engine = yield* Engine;
       const control = yield* TestEngine.TestEngineControl;
       const sessionId = yield* openSession;
       const running = yield* control.startEngineTurn(sessionId);
       const waiting = yield* control.startEngineTurn(sessionId);
+      const [first] = yield* take(sessionId, null, 1);
 
       yield* control.holdQueue({ sessionId, heldAgainOnResume: true });
       yield* control.finishTurn({ sessionId, turnId: running, outcome: { _tag: "completed" } });
-      const [held] = yield* take(sessionId, null, 1);
-      yield* control.holdQueue({ sessionId, heldAgainOnResume: false });
-      const [resumed] = yield* take(sessionId, null, 1);
+      const [held] = yield* take(sessionId, cursorOf(first), 1);
+      yield* engine.resumeQueue({ sessionId, hold: cursorOf(held) });
+      yield* control.endReplacedSessionWork(sessionId);
+      const events = [...(yield* take(sessionId, cursorOf(first), 3))];
+      const [, , heldAgain] = events;
+      yield* engine.resumeQueue({ sessionId, hold: cursorOf(heldAgain) });
+      const [started] = yield* take(sessionId, cursorOf(heldAgain), 1);
 
-      const startedOf = (event: SessionEvent | undefined) =>
-        event?._tag === "replaced" &&
-        event.openTurns.map((turn) => [turn.turnId, turn.startedAt !== null]);
-      assert.deepStrictEqual(startedOf(held), [[waiting, false]]);
-      assert.deepStrictEqual(startedOf(resumed), [[waiting, true]]);
+      assert.deepStrictEqual(tags(events), ["queue-held", "turn-finished", "queue-held"]);
+      assert.deepStrictEqual(started?._tag === "turn-started" && started.turnId, waiting);
     }).pipe(Effect.provide(TestEngine.layer)),
   );
 

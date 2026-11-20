@@ -10,6 +10,8 @@ const MAX_ATTACHMENTS = 100;
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
 const MAX_INLINE_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_INLINE_IMAGE_BYTES_TOTAL = 80 * 1024 * 1024;
+// J3 Bots' own limit on names is lower (`MAX_ATTACHMENT_NAME_LENGTH` in the
+// contracts, 200), and the server checks it first; this is the engine's.
 const MAX_NAME_LENGTH = 255;
 const MAX_MEDIA_TYPE_LENGTH = 100;
 const MEDIA_TYPE = /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/;

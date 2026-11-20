@@ -34,10 +34,10 @@ export const HTTP_PATHS = {
    * in the `name` query parameter, with the device token as a bearer. Answers the
    * new `Attachment`, whose name is trimmed and whose media type is lowercased
    * without parameters; 413 above `MAX_ATTACHMENT_SIZE`, 400 with
-   * `Invalid("attachment")` for an empty body, a name that is blank or over 200
-   * characters, or a media type that is not `type/subtype` within 100
-   * characters. Uploading the same bytes again
-   * gives a new attachment with its own name; the bytes are stored once.
+   * `Invalid("attachment")` for an empty body, a name that is blank or over
+   * `MAX_ATTACHMENT_NAME_LENGTH` characters, or a media type that is not
+   * `type/subtype` within 100 characters. Uploading the same bytes again gives
+   * a new attachment with its own name; the bytes are stored once.
    * `GET <path>/<id>` answers the bytes, with the same credential.
    */
   attachments: "/attachments",
