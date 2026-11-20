@@ -53,8 +53,6 @@ export interface ProvisionInput {
   };
   /** Relative to each workspace folder, as Claude Code resolves it. */
   readonly systemPromptFile: string;
-  /** The base prompt, which Codex reads from `developer_instructions`. */
-  readonly codexDeveloperInstructions: string;
 }
 
 /** The engine's name for a J3 Bots provider id: a stable slug the engine accepts. */
@@ -169,8 +167,6 @@ const tomlString = (value: string) => JSON.stringify(value);
 export const codexConfig = (input: ProvisionInput) =>
   [
     "# Written by J3 Bots. Changes here are overwritten.",
-    `developer_instructions = ${tomlString(input.codexDeveloperInstructions)}`,
-    "",
     `[mcp_servers.${TOOL_SERVER}]`,
     `command = ${tomlString(input.toolBridge.command)}`,
     `args = [${input.toolBridge.args.map(tomlString).join(", ")}]`,

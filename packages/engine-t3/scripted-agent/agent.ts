@@ -38,8 +38,15 @@ const HttpMcpServer = Schema.Struct({
   headers: Schema.Array(McpHeader),
 });
 type HttpMcpServer = typeof HttpMcpServer.Type;
+const StdioMcpServer = Schema.Struct({
+  name: Schema.String,
+  command: Schema.String,
+  args: Schema.Array(Schema.String),
+  env: Schema.Array(McpHeader),
+});
 const decodeServers = Schema.decodeUnknownOption(Schema.Array(Schema.Unknown));
 const decodeHttpServer = Schema.decodeUnknownOption(HttpMcpServer);
+const decodeStdioServer = Schema.decodeUnknownOption(StdioMcpServer);
 
 const SessionParams = Schema.Struct({
   sessionId: Schema.optional(Schema.String),
@@ -233,13 +240,16 @@ const callHostTool = async (turn: Turn, tool: string, input: Record<string, unkn
  *
  * - `plain`: a short reply, and usage.
  * - `slow`: streams a word every `every` ms (default 200) until cancelled or
- *   `for` ms pass (default 60000). For interrupts, stops and steers.
+ *   `for` ms pass (default 60000). For stops and steers.
  * - `approval`: asks permission for a write, then says whether it was granted.
  * - `question`: asks one multiple-choice question and repeats the answer.
  * - `speak`: sends `text` to the user through the engine's `send_to_user` tool.
  * - `secret`: asks for a secret through the engine's `request_secret` tool.
- * - `background`: ends the turn at once, then talks again `after` ms later
- *   (default 1000), outside any prompt: work nobody dispatched.
+ *
+ * No script starts work on its own after its turn: the engine offers a
+ * continuation only to agents it recognizes by name (**Read**, `db51b67`,
+ * `provider-acp-registry/src/server/adapter.ts`), and this agent claims no
+ * other agent's name.
  */
 const SCRIPTS: Record<string, (turn: Turn) => Promise<StopReason>> = {
   plain: async (turn) => {
@@ -346,19 +356,6 @@ const SCRIPTS: Record<string, (turn: Turn) => Promise<StopReason>> = {
     reportUsage(turn);
     return "end_turn";
   },
-  background: async (turn) => {
-    const after = Number(turn.args.get("after") ?? "1000");
-    const sessionId = turn.sessionId;
-    await say(turn, "Starting background work.");
-    reportUsage(turn);
-    setTimeout(() => {
-      update(sessionId, {
-        sessionUpdate: "agent_message_chunk",
-        content: { type: "text", text: "Background work finished." },
-      });
-    }, after);
-    return "end_turn";
-  },
 };
 
 const DIRECTIVE = /\[\[script:([a-z-]+)((?:\s+[a-z]+=[^\s\]]+)*)\s*\]\]/;
@@ -373,10 +370,32 @@ const parseDirective = (text: string) => {
   return { name: match?.[1] ?? "plain", args };
 };
 
-const hostToolsFrom = (servers: unknown) =>
-  Option.flatMap(decodeServers(servers), (list) =>
-    Option.firstSomeOf(list.map((server) => decodeHttpServer(server))),
+/**
+ * The engine's own MCP server for this session. The engine offers it over HTTP
+ * to agents that take HTTP servers it trusts, and to the rest as a stdio bridge
+ * (its own binary) whose environment names the same HTTP endpoint. The bridge
+ * only relays to that endpoint, so this agent calls the endpoint directly
+ * instead of starting a second engine binary.
+ */
+const hostServerOf = (server: unknown): Option.Option<HttpMcpServer> =>
+  Option.orElse(decodeHttpServer(server), () =>
+    Option.flatMap(decodeStdioServer(server), (stdio) => {
+      const env = new Map(stdio.env.map((entry) => [entry.name, entry.value]));
+      const url = env.get("T3_ACP_MCP_ENDPOINT");
+      const authorization = env.get("T3_ACP_MCP_AUTHORIZATION");
+      return url === undefined || authorization === undefined
+        ? Option.none()
+        : Option.some({
+            type: "http" as const,
+            name: stdio.name,
+            url,
+            headers: [{ name: "Authorization", value: authorization }],
+          });
+    }),
   );
+
+const hostToolsFrom = (servers: unknown) =>
+  Option.flatMap(decodeServers(servers), (list) => Option.firstSomeOf(list.map(hostServerOf)));
 
 const handleRequest = async (method: string, params: Record<string, unknown>): Promise<unknown> => {
   switch (method) {
