@@ -168,7 +168,9 @@ export const applyEvent = (mirror: Mirror, event: OrchestrationV2DomainEvent): b
       dropUnheld(mirror);
       return true;
     case "provider-thread.updated":
-      // No session event is made of it.
+      // No session event is made of it. A provider-thread task ending changes
+      // only `backgroundWorkPending`, which the Stop runner reads afresh on
+      // its periodic synchronize while a Stop waits on that work.
       mirror.providerThreads.set(event.payload.id, event.payload);
       return false;
     default:

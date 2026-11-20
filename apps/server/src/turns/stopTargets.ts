@@ -31,6 +31,13 @@ export const stopKey = (stopId: string, sessionId: string, round: number): Idemp
 /**
  * The bookkeeping of Stop targets the observer and the Stop runner share
  * (`docs/architecture/server.md`, Stop). It runs in the caller's transaction.
+ *
+ * The rule it keeps: a target settles only when the engine's own state shows
+ * nothing the Stop targeted can still run, no turn running or starting and no
+ * background work pending; and while a target is unsettled, something keeps
+ * acting on it. Either a send of its latest round is still being resolved, or
+ * a fresh round goes out: when a turn the round missed starts (`openRound`),
+ * and when the engine refused the round (`rejectRound`), after a backoff.
  */
 export const stopTargets = (sql: SqlClient.SqlClient) => {
   const now = Effect.map(DateTime.now, timeText);

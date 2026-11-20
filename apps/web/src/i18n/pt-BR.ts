@@ -29,7 +29,7 @@ export const ptBR: Catalog = {
   "failure.permissionError": "O provedor precisa de um novo login",
   "failure.engineUnavailable": "Não foi possível alcançar o motor",
   "failure.sessionLost": "Perdeu o contexto de trabalho",
-  "failure.stopped": "Não entregue: você parou a sala",
+  "failure.stopped": "Não entregue: a sala foi encerrada",
   "failure.unknown": "Parou por um erro inesperado",
 
   "summary.fromYou": "Você: {text}",
@@ -66,7 +66,7 @@ export const ptBR: Catalog = {
   "message.cancelled": "Não enviada: você parou o bot antes",
   "message.failed.rejected": "Não entregue: o motor recusou",
   "message.failed.unresolved": "Pode ter sido entregue. Enviar de novo pode repetir o trabalho.",
-  "message.failed.stopped": "Não entregue: você parou a sala",
+  "message.failed.stopped": "Não entregue: a sala foi encerrada",
   "message.retry": "Enviar de novo",
 
   "file.open": "Abrir {name}",

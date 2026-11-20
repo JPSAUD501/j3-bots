@@ -31,7 +31,7 @@ export const en = {
   "failure.permissionError": "Its provider needs signing in again",
   "failure.engineUnavailable": "Can’t reach the engine",
   "failure.sessionLost": "Lost its working context",
-  "failure.stopped": "Not delivered: you stopped the room",
+  "failure.stopped": "Not delivered: the room was closed",
   "failure.unknown": "Stopped by an unexpected error",
 
   "summary.fromYou": "You: {text}",
@@ -68,7 +68,7 @@ export const en = {
   "message.cancelled": "Not sent: you stopped the bot first",
   "message.failed.rejected": "Not delivered: the engine refused it",
   "message.failed.unresolved": "May have been delivered. Sending again may repeat the work.",
-  "message.failed.stopped": "Not delivered: you stopped the room",
+  "message.failed.stopped": "Not delivered: the room was closed",
   "message.retry": "Send again",
 
   "file.open": "Open {name}",
