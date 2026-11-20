@@ -293,6 +293,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
             sending={draft.sending}
             loading={data.draftsLoading}
             {...(data.draftsFailed ? { unread: { onRetry: intents.retryDrafts } } : {})}
+            notSaved={data.draftNotSaved(target)}
             onAttachFiles={(files) => intents.attachFiles(target, files)}
             onDetachFile={(fileKey) => intents.detachFile(target, fileKey)}
             onSend={() => intents.sendDraft(target)}
@@ -329,7 +330,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
               setRoutineEnabled: intents.setRoutineEnabled,
               openAttachment: intents.openAttachment,
               openMemoryFile: (path) => intents.openMemoryFile(bot.id, path),
-              freshStart: () => intents.freshStart(bot.id),
+              freshStart: () => intents.freshStart(bot.id, bot.profile.name),
               deleteBot: () => intents.deleteBot(bot.id),
               ...(editProfile ? { editProfile: () => editProfile(bot.id) } : {}),
             }}

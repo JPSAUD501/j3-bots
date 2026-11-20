@@ -56,6 +56,11 @@ export interface ShellData {
   readonly draftsLoading: boolean;
   /** The drafts could not be read: no draft takes a change until `retryDrafts` reads them. */
   readonly draftsFailed: boolean;
+  /**
+   * The device could not keep the draft of `target` as it shows: it is held
+   * in memory only, and saved again until it is.
+   */
+  readonly draftNotSaved: (target: EntryTarget) => boolean;
   /** Whether the operator's answer to a card is still on its way to the server. */
   readonly submitting: (entryId: EntryId) => boolean;
   /** A work fold's steps, or null while they load. */
@@ -93,8 +98,8 @@ export interface ShellIntents extends TimelineIntents {
   readonly restoreDraft: (target: EntryTarget) => void;
   /** Lets go of the text another tab replaced. */
   readonly dismissDraftOffer: (target: EntryTarget) => void;
-  /** Reads the drafts again after they could not be read. */
-  readonly retryDrafts: () => void;
+  /** Reads the drafts again after they could not be read: resolves with whether they are read now. */
+  readonly retryDrafts: () => Promise<boolean>;
   readonly loadOlder: (target: EntryTarget) => void;
   /** The operator has seen the conversation through this entry. */
   readonly markRead: (target: EntryTarget, through: EntryOrder) => void;
@@ -109,7 +114,8 @@ export interface ShellIntents extends TimelineIntents {
   /** Absent until profiles can be edited. */
   readonly editProfile?: (botId: BotId) => void;
   readonly openMemoryFile: (botId: BotId, path: MemoryPath) => void;
-  readonly freshStart: (botId: BotId) => void;
+  /** `name` is the bot's as the operator asked, for what the shell says once it is done. */
+  readonly freshStart: (botId: BotId, name: string) => void;
   readonly deleteBot: (botId: BotId) => void;
 
   /** Saves the change; `settingsSave` follows it. */

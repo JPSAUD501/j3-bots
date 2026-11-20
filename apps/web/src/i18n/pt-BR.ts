@@ -215,7 +215,7 @@ export const ptBR: Catalog = {
   "details.freshStartHint":
     "Recomeçar limpa o que {name} tem em mente. A conversa, a memória, as rotinas e os arquivos continuam.",
   "details.freshStart": "Recomeçar",
-  "details.freshStart.done": "Recomeçou do zero.",
+  "details.freshStart.done": "{name} recomeçou do zero.",
   "details.freshStart.failed": "Não foi possível recomeçar. Tente de novo.",
   "details.delete": "Excluir {name}",
   "details.delete.title": "Excluir {name}?",
@@ -293,6 +293,7 @@ export const ptBR: Catalog = {
   "message.notSent.unexpected": "Não enviada: algo deu errado no servidor",
   "message.unrecorded": "Este dispositivo ainda não conseguiu guardar a resposta do servidor.",
   "message.discard": "Apagar",
+  "message.changeNotKept": "Este dispositivo não conseguiu guardar essa alteração. Tente de novo.",
 
   "timeline.loadOlder": "Mostrar mensagens anteriores",
   "timeline.loadingOlder": "Carregando mensagens anteriores…",
@@ -328,6 +329,7 @@ export const ptBR: Catalog = {
   "composer.dismiss": "Dispensar",
   "composer.unread": "Não foi possível carregar seu rascunho.",
   "composer.unread.retry": "Tentar de novo",
+  "composer.notSaved": "Ainda não salvo",
   "composer.waitToAttach": "Espere um instante e adicione os arquivos de novo.",
 
   "file.gone": "{name} não está mais no servidor.",
@@ -346,7 +348,7 @@ export const ptBR: Catalog = {
     "Na máquina que roda o J3 Bots, execute {command}, ou abra Configurações num dispositivo já pareado, e digite o código que aparecer.",
   "pairing.signedOut": "Este dispositivo saiu da conta. Pareie de novo para continuar.",
   "pairing.stillListed":
-    "Este dispositivo saiu da conta, mas o J3 Bots não respondeu, então ele continua na lista até você desconectá-lo nas Configurações de outro dispositivo.",
+    "Este dispositivo saiu da conta, mas o J3 Bots não confirmou, então ele pode continuar na lista até você desconectá-lo nas Configurações de outro dispositivo.",
   "pairing.code": "Código de pareamento",
   "pairing.deviceName": "Nome deste dispositivo",
   "pairing.submit": "Parear",

@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { Attachment, HTTP_PATHS, NotAuthenticated } from "@j3-bots/contracts";
+import {
+  Attachment,
+  type DeviceId,
+  type DeviceToken,
+  HTTP_PATHS,
+  NotAuthenticated,
+} from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -12,6 +18,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { backoffDelay, Connection, NotPaired, ReconnectPolicy } from "../connection/Connection.ts";
 import { transferDeadline, within } from "../connection/http.ts";
 import { FileTransfer, ServerAddress } from "../ports.ts";
+import { waitFor } from "../Store.ts";
 import type { FileProblem } from "./limits.ts";
 
 /** The server refused the file, for good: sending it again would be refused again. */
@@ -51,11 +58,13 @@ const isNotAuthenticated = (body: string) =>
   Option.isSome(Schema.decodeOption(Schema.fromJsonString(NotAuthenticated))(body));
 
 /**
- * File bytes over HTTP, with the device token as a bearer. An upload waits
- * for the server and tries again after a network failure, or after it took
- * longer than its size allows, so a file the operator attached while offline
- * goes as soon as the server answers. A download gets the same time for its
- * size, and then counts as unreachable.
+ * File bytes over HTTP, with the device token as a bearer. A transfer belongs
+ * to the pairing it started under: it carries that pairing's token, read
+ * once, and ends with `NotPaired` as soon as this window follows another
+ * pairing or none. An upload waits for the server and tries again after a
+ * network failure, or after it took longer than its size allows, so a file
+ * the operator attached while offline goes as soon as the server answers. A
+ * download gets the same time for its size, and then counts as unreachable.
  *
  * As for the socket ticket, only the server's own answer counts: a 401
  * means the device is not paired only when its body is the server's
@@ -67,10 +76,11 @@ export class Files extends Context.Service<
   Files,
   {
     /**
-     * Uploads `body` as a file named `name`, reporting the bytes sent so far.
-     * `mediaType` must be normalized (see `normalizeMediaType`).
+     * Uploads `body` as a file named `name` for `pairing`, reporting the
+     * bytes sent so far. `mediaType` must be normalized (see `normalizeMediaType`).
      */
     readonly upload: (input: {
+      readonly pairing: DeviceId;
       readonly name: string;
       readonly mediaType: string;
       readonly body: Blob;
@@ -96,21 +106,27 @@ export const layer = Layer.effect(
       return answered.origin === origin.origin && answered.pathname === path;
     };
 
+    /** Fails with `NotPaired` once this window follows another pairing than `pairing`, or none. */
+    const ended = (pairing: DeviceId) =>
+      waitFor(connection.pairing, (current) => current !== pairing).pipe(
+        Effect.andThen(Effect.fail(new NotPaired())),
+      );
+
     const uploadOnce = Effect.fnUntraced(function* (input: {
+      readonly token: Redacted.Redacted<DeviceToken>;
       readonly name: string;
       readonly mediaType: string;
       readonly body: Blob;
       readonly onProgress: (sent: number) => void;
     }) {
       yield* connection.awaitConnected;
-      const token = yield* connection.bearer;
       const url = new URL(HTTP_PATHS.attachments, origin);
       url.searchParams.set("name", input.name);
       const response = yield* transfer
         .upload({
           url: url.toString(),
           headers: {
-            authorization: `Bearer ${Redacted.value(token)}`,
+            authorization: `Bearer ${Redacted.value(input.token)}`,
             "content-type": input.mediaType,
           },
           body: input.body,
@@ -143,27 +159,33 @@ export const layer = Layer.effect(
     });
 
     const upload = Effect.fn("Files.upload")(function* (input: {
+      readonly pairing: DeviceId;
       readonly name: string;
       readonly mediaType: string;
       readonly body: Blob;
       readonly onProgress: (sent: number) => void;
     }) {
       const name = input.name.trim() === "" ? "file" : input.name.trim();
-      let failures = 0;
-      while (true) {
-        const result = yield* uploadOnce({ ...input, name }).pipe(
-          Effect.map((attachment) => ({ _tag: "done", attachment }) as const),
-          Effect.catchTag("Transient", () => Effect.succeed({ _tag: "again" } as const)),
-        );
-        if (result._tag === "done") return result.attachment;
-        failures += 1;
-        input.onProgress(0);
-        yield* Effect.sleep(backoffDelay(failures, policy, yield* Random.next));
-      }
+      const token = yield* connection.bearer(input.pairing);
+      return yield* Effect.gen(function* () {
+        let failures = 0;
+        while (true) {
+          const result = yield* uploadOnce({ ...input, token, name }).pipe(
+            Effect.map((attachment) => ({ _tag: "done", attachment }) as const),
+            Effect.catchTag("Transient", () => Effect.succeed({ _tag: "again" } as const)),
+          );
+          if (result._tag === "done") return result.attachment;
+          failures += 1;
+          input.onProgress(0);
+          yield* Effect.sleep(backoffDelay(failures, policy, yield* Random.next));
+        }
+      }).pipe(Effect.raceFirst(ended(input.pairing)));
     });
 
     const download = Effect.fn("Files.download")(function* (attachment: Attachment) {
-      const token = yield* connection.bearer;
+      const pairing = connection.pairing.get();
+      if (pairing === null) return yield* new NotPaired();
+      const token = yield* connection.bearer(pairing);
       const unreachable = new AttachmentUnavailable({ reason: "unreachable" });
       const url = new URL(`${HTTP_PATHS.attachments}/${encodeURIComponent(attachment.id)}`, origin);
       // The deadline runs until the last byte is read, not only to the headers.
@@ -188,6 +210,7 @@ export const layer = Layer.effect(
       }).pipe(
         Effect.catchTag("HttpClientError", () => Effect.fail(unreachable)),
         within(transferDeadline(attachment.size, policy.requestTimeout), () => unreachable),
+        Effect.raceFirst(ended(pairing)),
       );
     });
 

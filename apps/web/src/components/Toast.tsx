@@ -19,8 +19,12 @@ export interface Notice {
  */
 export function Toast({ notice, onDone }: { notice: Notice | null; onDone: () => void }) {
   return (
+    // `aria-live` keeps the region heard while a modal hides the rest of the
+    // page from assistive tech: Base UI leaves out every `[aria-live]` element.
     <div
       role="status"
+      aria-live="polite"
+      aria-atomic="true"
       className="pointer-events-none fixed inset-x-4 bottom-[calc(env(safe-area-inset-bottom)+--spacing(20))] z-50 flex justify-center"
     >
       {notice && <Shown key={notice.id} notice={notice} onDone={onDone} />}

@@ -7,13 +7,14 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Base64Url from "effect/encoding/Base64Url";
-import { Connection } from "../connection/Connection.ts";
+import { backoffDelay, Connection, NotPaired, ReconnectPolicy } from "../connection/Connection.ts";
 import { Files, uploadProblem } from "../files/Files.ts";
 import {
   admitFiles,
@@ -150,7 +151,15 @@ const shown = (kept: Kept): Draft => ({
 /**
  * Every conversation's draft, kept on the device so a reload loses nothing:
  * its text, and the files already uploaded for it. Files upload as soon as
- * they are attached; the draft can be sent once they all have.
+ * they are attached, each for the pairing that took it and with its
+ * credential, and stop when that pairing ends; the draft can be sent once
+ * they all have.
+ *
+ * A draft the device could not keep, or that another window changed and the
+ * device could not be read for, is `notSaved`: this window holds it in memory
+ * only, as it is, and tries again, after a pause that grows with each
+ * failure, under the same checks as every write, until the device keeps it or
+ * shows what another window kept instead.
  *
  * One rule keeps a draft whole when several windows hold it. Every operation
  * on a draft (autosave, deletion, Send, Restore) runs under this window's
@@ -241,8 +250,13 @@ export class Drafts extends Context.Service<
      * draft that takes text would hide one the device keeps.
      */
     readonly readFailed: Readable<boolean>;
-    /** Reads the drafts again after `readFailed`. */
-    readonly retryRead: Effect.Effect<void>;
+    /** Reads the drafts again after `readFailed`: succeeds with whether they are read now. */
+    readonly retryRead: Effect.Effect<boolean>;
+    /**
+     * The drafts, by `targetKey`, the device could not keep as they show
+     * here: they are in memory only until a later attempt keeps them.
+     */
+    readonly notSaved: Readable<ReadonlySet<string>>;
     /**
      * Puts back the text this window held when another window changed the
      * draft, as a new change to the draft as it is now.
@@ -267,6 +281,7 @@ export const layer = Layer.effect(
     const files = yield* Files;
     const conversations = yield* Conversations;
     const random = yield* SecureRandom.SecureRandom;
+    const policy = yield* ReconnectPolicy;
     const scope = yield* Scope.Scope;
 
     // Each draft's stored record, by key, as this window last read or wrote it.
@@ -342,6 +357,7 @@ export const layer = Layer.effect(
     });
     const noDrafts: ReadonlyMap<string, Draft> = new Map();
     const noOffers: ReadonlyMap<string, number> = new Map();
+    const noKeys: ReadonlySet<string> = new Set();
 
     /**
      * Shows the drafts of `pairing` the device keeps. Runs under the lock, or
@@ -413,6 +429,18 @@ export const layer = Layer.effect(
     // `send` does: a window never writes over what another window sent or changed.
     const unwritten = new Map<string, EntryTarget>();
     const wake = yield* Queue.sliding<void>(1);
+    // The drafts the device could not keep as they show here.
+    const unsaved = new Cell<ReadonlySet<string>>(new Set());
+    const markSaved = (key: string, saved: boolean) => {
+      if (unsaved.get().has(key) !== saved) return;
+      const next = new Set(unsaved.get());
+      if (saved) next.delete(key);
+      else next.add(key);
+      unsaved.set(next);
+    };
+    // The drafts another window changed whose stored record could not be
+    // read: the writer reads it again before it writes anything of them.
+    const stale = new Set<string>();
     const revision = random.randomBytes(12).pipe(Effect.map(Base64Url.encode));
 
     /** Shows `draft` as the draft of `key`. */
@@ -431,7 +459,9 @@ export const layer = Layer.effect(
      * refused, and says why. Has the writer keep the files it adds. Keeps the
      * text this window held for `restore` when the device never kept it. Only
      * a record of `pairing`, the pairing this window follows, is shown or
-     * offered. Runs under the lock.
+     * offered. Succeeds with whether it could read the draft: when it could
+     * not, the draft stays as this window holds it, not saved, and the writer
+     * reads it again. Runs under the lock.
      */
     const reload = (target: EntryTarget, pairing: DeviceId) => {
       const key = targetKey(target);
@@ -472,8 +502,11 @@ export const layer = Layer.effect(
         };
         // What is left to write is settled before the draft shows: whoever sees
         // it may change it at once.
-        if (sameKept(keptOf(draft), keptOf(stored))) unwritten.delete(key);
-        else unwritten.set(key, target);
+        stale.delete(key);
+        if (sameKept(keptOf(draft), keptOf(stored))) {
+          unwritten.delete(key);
+          markSaved(key, true);
+        } else unwritten.set(key, target);
         show(key, draft);
         if (unwritten.has(key)) Queue.offerUnsafe(wake, void 0);
         const stopped = [...refused.keys()].flatMap((fileKey) => {
@@ -483,11 +516,19 @@ export const layer = Layer.effect(
         });
         yield* Fiber.interruptAll(stopped);
         yield* PubSub.publish(changes, { target, whileSending: held.sending, displaced: offered });
+        return true;
       }).pipe(
         Effect.catchTag("LocalStorageError", (error) =>
           Effect.logWarning("A draft another window changed could not be read", error).pipe(
             Effect.andThen(
-              Effect.sync(() => show(key, { ...(state.get().get(key) ?? empty), sending: false })),
+              Effect.sync(() => {
+                show(key, { ...(state.get().get(key) ?? empty), sending: false });
+                stale.add(key);
+                unwritten.set(key, target);
+                markSaved(key, false);
+                Queue.offerUnsafe(wake, void 0);
+                return false;
+              }),
             ),
           ),
         ),
@@ -497,15 +538,18 @@ export const layer = Layer.effect(
     /**
      * Writes the draft of `target` as it is now, as `pairing`'s, unless the
      * device keeps it so already, and only while the device's credential is
-     * `pairing`'s. Runs under the lock.
+     * `pairing`'s; reads it first when another window changed it and it could
+     * not be read. Succeeds with whether the device keeps what this window
+     * shows, or shows what another window kept instead. Runs under the lock.
      */
     const writeOne = Effect.fn("Drafts.write")(
       function* (target: EntryTarget, pairing: DeviceId) {
         const key = targetKey(target);
+        if (stale.has(key)) return yield* reload(target, pairing);
         const record = keptOf(state.get().get(key) ?? empty);
         const expected = known.get(key);
         const stored = keptIn(expected, pairing);
-        if (stored !== undefined && sameKept(record, stored)) return;
+        if (stored !== undefined && sameKept(record, stored)) return true;
         const value = yield* encodeStored({ revision: yield* revision, pairing, ...record });
         const claimed = yield* storage.commit(
           [{ table: "drafts", key, value }],
@@ -514,34 +558,58 @@ export const layer = Layer.effect(
         );
         if (claimed) {
           known.set(key, value);
-          return;
+          return true;
         }
         // The pairing ended: the drafts are dropped as this window follows the next.
         // Credential storage that cannot be read counts as ended too: nothing
-        // is reloaded, the draft stays as it is here, and its next write
-        // claims the record as this window last read it, again.
-        if (yield* connection.stillPaired(pairing)) yield* reload(target, pairing);
+        // is reloaded, the draft stays as it is here, not saved, and its next
+        // attempt claims the record as this window last read it, again.
+        return (yield* connection.stillPaired(pairing)) ? yield* reload(target, pairing) : false;
       },
       Effect.catchTags({
-        LocalStorageError: (error) => Effect.logWarning("A draft is kept in memory only", error),
-        SchemaError: (error) => Effect.logError("A draft could not be encoded", error),
+        LocalStorageError: (error) =>
+          Effect.logWarning("A draft is kept in memory only, until it can be saved", error).pipe(
+            Effect.as(false),
+          ),
+        SchemaError: (error) =>
+          Effect.logError("A draft could not be encoded", error).pipe(Effect.as(false)),
       }),
     );
     yield* Effect.gen(function* () {
+      // Attempts in a row that left a draft not saved.
+      let failures = 0;
       while (true) {
         yield* Queue.take(wake);
         const targets = [...unwritten.values()];
         unwritten.clear();
+        let failed = false;
         for (const target of targets) {
           yield* locked(
-            Effect.suspend(() => {
+            Effect.gen(function* () {
               // Without a pairing, nothing is kept: no window could send it.
               // A draft of a pairing this window no longer follows goes with it.
               const pairing = followed.get();
-              return pairing === null || closed() ? Effect.void : writeOne(target, pairing);
+              if (pairing === null || closed()) return;
+              const key = targetKey(target);
+              if (yield* writeOne(target, pairing)) {
+                markSaved(key, true);
+                return;
+              }
+              // It stays as this window holds it, and goes again: a change
+              // made meanwhile goes in its place.
+              failed = true;
+              markSaved(key, false);
+              if (!unwritten.has(key)) unwritten.set(key, target);
             }),
           );
         }
+        if (!failed) {
+          failures = 0;
+          continue;
+        }
+        failures += 1;
+        yield* Effect.sleep(backoffDelay(failures, policy, yield* Random.next));
+        Queue.offerUnsafe(wake, void 0);
       }
     }).pipe(Effect.forkIn(scope));
 
@@ -625,6 +693,8 @@ export const layer = Layer.effect(
       });
       yield* change(target, (draft) => ({ ...draft, files: [...draft.files, ...entries] }));
 
+      // Each file uploads for the pairing that took it, and stops when that pairing ends.
+      const pairing = followed.get();
       for (const [index, file] of picked.entries()) {
         if (problems[index] !== null) continue;
         const fileKey = file.key;
@@ -636,28 +706,31 @@ export const layer = Layer.effect(
           if (current?._tag !== "uploading" || current.sent === sent) return;
           replaceFileNow(target, fileKey, { ...current, sent });
         };
-        const fiber = yield* files
-          .upload({
-            name: file.local.name,
-            mediaType: file.local.mediaType,
-            body: file.body,
-            onProgress: progress,
-          })
-          .pipe(
-            Effect.matchEffect({
-              onSuccess: (attachment) =>
-                replaceFile(target, fileKey, { _tag: "ready", key: fileKey, attachment }),
-              onFailure: (error) =>
-                replaceFile(target, fileKey, {
-                  _tag: "failed",
-                  key: fileKey,
-                  problem: uploadProblem(error),
-                  ...file.local,
-                }),
-            }),
-            Effect.ensuring(Effect.sync(() => uploads.delete(fileKey))),
-            Effect.forkIn(scope),
-          );
+        const fiber = yield* (
+          pairing === null
+            ? Effect.fail(new NotPaired())
+            : files.upload({
+                pairing,
+                name: file.local.name,
+                mediaType: file.local.mediaType,
+                body: file.body,
+                onProgress: progress,
+              })
+        ).pipe(
+          Effect.matchEffect({
+            onSuccess: (attachment) =>
+              replaceFile(target, fileKey, { _tag: "ready", key: fileKey, attachment }),
+            onFailure: (error) =>
+              replaceFile(target, fileKey, {
+                _tag: "failed",
+                key: fileKey,
+                problem: uploadProblem(error),
+                ...file.local,
+              }),
+          }),
+          Effect.ensuring(Effect.sync(() => uploads.delete(fileKey))),
+          Effect.forkIn(scope),
+        );
         uploads.set(fileKey, fiber);
       }
     });
@@ -733,12 +806,15 @@ export const layer = Layer.effect(
           switch (kept) {
             case "sent":
               unwritten.delete(key);
+              stale.delete(key);
+              markSaved(key, true);
               offer(key, null);
               known.set(key, handedOver);
               show(key, empty);
               break;
             case "changed-elsewhere":
-              yield* reload(target, pairing);
+              // Unread, the draft stays as this window holds it, not saved, and nothing went.
+              if (!(yield* reload(target, pairing))) return "not-kept";
               break;
             default:
               // Not kept, or over a limit of a message: it stays as it was.
@@ -759,6 +835,8 @@ export const layer = Layer.effect(
       uploads.clear();
       yield* Fiber.interruptAll(running);
       unwritten.clear();
+      stale.clear();
+      unsaved.set(new Set());
       known.clear();
       displaced.clear();
       offers.set(new Map());
@@ -819,7 +897,7 @@ export const layer = Layer.effect(
         }
         return load(pairing);
       }),
-    );
+    ).pipe(Effect.map(() => !unread.get()));
 
     return Drafts.of({
       state: visible(state, noDrafts),
@@ -832,6 +910,7 @@ export const layer = Layer.effect(
       switching,
       readFailed: visible(unread, false),
       retryRead,
+      notSaved: visible(unsaved, noKeys),
       restore,
       dismiss,
       discardAll,

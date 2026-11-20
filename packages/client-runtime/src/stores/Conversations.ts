@@ -373,14 +373,18 @@ export class Conversations extends Context.Service<
     /**
      * Sends again, with its own command id, a message that was not sent. Does
      * nothing when the device no longer keeps it as not sent: another window
-     * sent it again or discarded it.
+     * sent it again or discarded it. Fails, changing nothing, when the device
+     * cannot keep the new attempt.
      */
-    readonly resend: (commandId: CommandId) => Effect.Effect<IntentResult<EntryId>>;
+    readonly resend: (
+      commandId: CommandId,
+    ) => Effect.Effect<IntentResult<EntryId>, LocalStorageError>;
     /**
      * Removes a message that was not sent from the conversation, unless the
-     * device no longer keeps it as not sent.
+     * device no longer keeps it as not sent. Fails, changing nothing, when the
+     * device cannot keep that it is discarded.
      */
-    readonly discard: (commandId: CommandId) => Effect.Effect<void>;
+    readonly discard: (commandId: CommandId) => Effect.Effect<void, LocalStorageError>;
     readonly retryMessage: (entryId: EntryId) => Effect.Effect<IntentResult>;
     readonly retryNotice: (entryId: EntryId) => Effect.Effect<IntentResult>;
     readonly answerCard: (entryId: EntryId, answer: CardAnswer) => Effect.Effect<IntentResult>;
@@ -1402,8 +1406,8 @@ export const layer = Layer.effect(
             record.pairing,
           )
           .pipe(
-            Effect.catchTag("LocalStorageError", (error) =>
-              Effect.logWarning("A message could not be sent again", error).pipe(Effect.as(false)),
+            Effect.tapError((error) =>
+              Effect.logWarning("A message could not be sent again", error),
             ),
           );
         if (!claimed) {
@@ -1439,9 +1443,7 @@ export const layer = Layer.effect(
           record.pairing,
         )
         .pipe(
-          Effect.catchTag("LocalStorageError", (error) =>
-            Effect.logWarning("A message could not be discarded", error),
-          ),
+          Effect.tapError((error) => Effect.logWarning("A message could not be discarded", error)),
         );
       yield* refresh;
     });

@@ -216,7 +216,7 @@ export const en = {
   "details.freshStartHint":
     "A fresh start clears what {name} is holding in mind. Its conversation, memory, routines and files stay.",
   "details.freshStart": "Start fresh",
-  "details.freshStart.done": "Started fresh.",
+  "details.freshStart.done": "{name} started fresh.",
   "details.freshStart.failed": "The fresh start didn’t happen. Try again.",
   "details.delete": "Delete {name}",
   "details.delete.title": "Delete {name}?",
@@ -292,6 +292,7 @@ export const en = {
   "message.notSent.unexpected": "Not sent: something went wrong on the server",
   "message.unrecorded": "This device couldn’t save the server’s answer yet.",
   "message.discard": "Delete",
+  "message.changeNotKept": "This device couldn’t save that change. Try again.",
 
   "timeline.loadOlder": "Show earlier messages",
   "timeline.loadingOlder": "Loading earlier messages…",
@@ -325,6 +326,7 @@ export const en = {
   "composer.dismiss": "Dismiss",
   "composer.unread": "Couldn’t load your draft.",
   "composer.unread.retry": "Try again",
+  "composer.notSaved": "Not saved yet",
   "composer.waitToAttach": "Wait a moment, then add the files again.",
 
   "file.gone": "{name} is no longer on the server.",
@@ -343,7 +345,7 @@ export const en = {
     "On the machine that runs J3 Bots, run {command}, or open Settings on a device that’s already paired, and enter the code it shows.",
   "pairing.signedOut": "This device was signed out. Pair it again to carry on.",
   "pairing.stillListed":
-    "This device is signed out, but J3 Bots couldn’t be reached, so it stays listed until you sign it out in Settings on another device.",
+    "This device is signed out, but J3 Bots didn’t confirm it, so it may stay listed until you sign it out in Settings on another device.",
   "pairing.code": "Pairing code",
   "pairing.deviceName": "Name for this device",
   "pairing.submit": "Pair",

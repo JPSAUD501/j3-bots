@@ -225,6 +225,7 @@ function LiveShell({ children }: { children: ReactNode }) {
   const draftOffers = useReadable(j3.draftOffers);
   const draftsLoading = useReadable(j3.draftsSwitching);
   const draftsFailed = useReadable(j3.draftsReadFailed);
+  const draftsNotSaved = useReadable(j3.draftsNotSaved);
   const conversation = useConversation(target);
   const files = useBotFiles(detailsBotId);
   const memory = useMemory(detailsBotId === null ? null : { _tag: "bot", botId: detailsBotId });
@@ -275,6 +276,7 @@ function LiveShell({ children }: { children: ReactNode }) {
     offer: (asked) => draftOffers.get(targetKey(asked)) ?? null,
     draftsLoading,
     draftsFailed,
+    draftNotSaved: (asked) => draftsNotSaved.has(targetKey(asked)),
     submitting: (entryId) =>
       submitting(actions.get(cardAction(entryId))) || submitting(actions.get(retryAction(entryId))),
     workSteps: (entryId) => steps.get(entryId) ?? null,
@@ -318,8 +320,14 @@ function LiveShell({ children }: { children: ReactNode }) {
     declineSecret: (entryId) => void j3.provideSecret(entryId, { _tag: "decline" }),
     retryNotice: (entryId) => void j3.retryNotice(entryId),
     retryMessage: (entryId) => void j3.retryMessage(entryId),
-    resendMessage: (commandId) => void j3.resend(commandId),
-    discardMessage: j3.discard,
+    resendMessage: (commandId) =>
+      void j3.resend(commandId).then((result) => {
+        if (result._tag === "not-kept") say(t("message.changeNotKept"));
+      }),
+    discardMessage: (commandId) =>
+      void j3.discard(commandId).then((discarded) => {
+        if (!discarded) say(t("message.changeNotKept"));
+      }),
     openWorkFold: (entryId) => setOpenFolds((open) => new Set(open).add(entryId)),
     closeWorkFold: (entryId) =>
       setOpenFolds((open) => new Set([...open].filter((id) => id !== entryId))),
@@ -375,11 +383,15 @@ function LiveShell({ children }: { children: ReactNode }) {
       }),
     newBot: () => setNewBot(true),
     openMemoryFile,
-    freshStart: (botId) =>
+    freshStart: (botId, name) =>
       void j3
         .freshStart(botId)
         .then((result) =>
-          say(t(result._tag === "done" ? "details.freshStart.done" : "details.freshStart.failed")),
+          say(
+            result._tag === "done"
+              ? t("details.freshStart.done", { name })
+              : t("details.freshStart.failed"),
+          ),
         ),
     deleteBot: (botId) =>
       void j3.deleteBot(botId, false).then((result) => {

@@ -226,7 +226,7 @@ function sampleIntents({ get, update }: Store): ShellIntents {
         files: draft.files.filter((file) => file.key !== key),
       })),
     restoreDraft: nothing,
-    retryDrafts: nothing,
+    retryDrafts: () => Promise.resolve(true),
     dismissDraftOffer: nothing,
     sendDraft: (target) => {
       const key = keyOf(target);
@@ -408,6 +408,7 @@ function toData(state: State): ShellData {
     offer: () => null,
     draftsLoading: false,
     draftsFailed: false,
+    draftNotSaved: () => false,
     submitting: (entryId) => state.inFlight.has(entryId),
     workSteps: (entryId) => state.workSteps[entryId] ?? null,
     routines: (botId) => state.routines[botId] ?? [],

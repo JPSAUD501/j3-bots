@@ -559,12 +559,15 @@ function ComposerDemo({
   recipient,
   files: initialFiles = [],
   sending = false,
+  notSaved = false,
   replaced: initialReplaced = null,
 }: {
   initial: string;
   recipient: string;
   files?: ReadonlyArray<DraftFile>;
   sending?: boolean;
+  /** The device could not keep the draft yet. */
+  notSaved?: boolean;
   /** Text another tab replaced, on offer. */
   replaced?: string | null;
 }) {
@@ -580,6 +583,7 @@ function ComposerDemo({
       onValueChange={setValue}
       files={files}
       sending={sending}
+      notSaved={notSaved}
       onAttachFiles={nothing}
       onDetachFile={(key) => setFiles((current) => current.filter((file) => file.key !== key))}
       onSend={() => setValue("")}
@@ -628,7 +632,7 @@ function ComposerSection() {
           ))}
         </div>
       </Labeled>
-      <Labeled label="Composer: empty, with a draft, with files uploading, ready and refused, handing a draft over, which takes no files dropped on it, and offering back text another tab replaced">
+      <Labeled label="Composer: empty, with a draft, with files uploading, ready and refused, handing a draft over, which takes no files dropped on it, not saved on the device yet, and offering back text another tab replaced">
         <div className="flex max-w-(--layout-text-column) flex-col gap-3">
           <ComposerDemo initial="" recipient={team.bots.scout.profile.name} />
           <ComposerDemo
@@ -646,6 +650,11 @@ function ComposerSection() {
             initial="On its way to the outbox."
             recipient={team.bots.scout.profile.name}
             sending
+          />
+          <ComposerDemo
+            initial="Held here until the device can keep it."
+            recipient={team.bots.ledger.profile.name}
+            notSaved
           />
           <ComposerDemo
             initial="Book the venue for the 14th."

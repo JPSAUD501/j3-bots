@@ -8,6 +8,7 @@ import {
   PROTOCOL_VERSION,
   type PairRequest,
 } from "@j3-bots/contracts";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -71,8 +72,8 @@ export type ConnectionState =
 /**
  * Why the client has no credential. `new`: it never had one. `signed-out`: the
  * server ended this device's access, or it was signed out here or in another
- * window. `still-listed`: it signed out here without reaching the server,
- * which lists it until another device revokes it.
+ * window. `still-listed`: it signed out here without the server confirming
+ * it, which may list it until another device revokes it.
  */
 export type UnpairedReason = "new" | "signed-out" | "still-listed";
 
@@ -242,10 +243,19 @@ export class Connection extends Context.Service<
     /** Skips the wait before the next attempt, and leaves `incompatible` and `storage-failed`. */
     readonly reconnectNow: Effect.Effect<void>;
     /**
+     * Whether the server itself refused `pairing`'s credential to this window:
+     * its own word that the pairing ended. A credential another window
+     * deleted, or one this window let go of, says nothing of the server.
+     */
+    readonly refusedByServer: (pairing: DeviceId) => boolean;
+    /**
      * Runs `use` on the open socket, waiting for one if there is none. If the
      * socket drops before `use` finishes, runs it again on the next socket, so
      * `use` must be safe to repeat: a command with a fixed command id, or a read.
-     * Fails with `NotPaired` once the device has no credential.
+     * It belongs to the pairing it started under, or, started while the
+     * credential is read, to that of the first socket: it fails with
+     * `NotPaired` once the device has no credential, or a socket of another
+     * pairing opens.
      */
     readonly call: <A, E>(
       use: (client: J3RpcClient) => Effect.Effect<A, E | RpcClientError>,
@@ -260,10 +270,13 @@ export class Connection extends Context.Service<
       use: (client: J3RpcClient, pairing: DeviceId) => Effect.Effect<void, E | RpcClientError>,
     ) => Effect.Effect<never, Exclude<E, RpcClientError>>;
     /**
-     * The device token, for the HTTP routes that take it as a bearer: files.
-     * Waits while the credential is read; fails with `NotPaired` without one.
+     * The device token of `pairing`, for the HTTP routes that take it as a
+     * bearer: files. Waits while the credential is read; fails with
+     * `NotPaired` unless this window holds `pairing`'s credential.
      */
-    readonly bearer: Effect.Effect<Redacted.Redacted<DeviceToken>, NotPaired>;
+    readonly bearer: (
+      pairing: DeviceId,
+    ) => Effect.Effect<Redacted.Redacted<DeviceToken>, NotPaired>;
     /** This device's id, as the server knows it. Fails with `NotPaired` without a credential. */
     readonly deviceId: Effect.Effect<DeviceId, NotPaired>;
     /**
@@ -304,6 +317,8 @@ export const layer = Layer.effect(
     // Asks the supervisor to try now. One pending wake is enough.
     const wakes = yield* Queue.sliding<void>(1);
     let generation = 0;
+    // The pairings whose credential the server refused to this window.
+    const refused = new Set<DeviceId>();
 
     yield* network.changes.pipe(
       Stream.runForEach((status) =>
@@ -493,6 +508,7 @@ export const layer = Layer.effect(
           case "revoked":
             // The server refused this credential. The refusal may come late,
             // after another window paired anew: that pairing stays.
+            refused.add(current.credential.deviceId);
             yield* end(current.credential, "signed-out").pipe(
               Effect.catchTag("CredentialStorageError", (error) =>
                 Effect.logWarning("The revoked credential stays in storage", error).pipe(
@@ -608,12 +624,19 @@ export const layer = Layer.effect(
     const call = <A, E>(
       use: (client: J3RpcClient) => Effect.Effect<A, E | RpcClientError>,
     ): Effect.Effect<A, Exclude<E, RpcClientError> | NotPaired> => {
-      const run = (after: number): Effect.Effect<A, Exclude<E, RpcClientError> | NotPaired> =>
+      const run = (
+        after: number,
+        bound: DeviceId | null,
+      ): Effect.Effect<A, Exclude<E, RpcClientError> | NotPaired> =>
         awaitSession(after).pipe(
-          Effect.flatMap((session) =>
-            use(session.client).pipe(
+          Effect.flatMap((session) => {
+            if (bound !== null && session.pairing !== bound) return Effect.fail(new NotPaired());
+            return use(session.client).pipe(
               Effect.asSome,
               Effect.catchIf(isRpcClientError, () => Effect.succeed(Option.none<A>())),
+              // Closing the socket here, offline or for another credential,
+              // interrupts what is in flight: that is no answer either.
+              Effect.catchCauseIf(Cause.hasInterruptsOnly, () => Effect.succeed(Option.none<A>())),
               // A request in flight when its socket closes may never be
               // answered: the socket's end decides, not the request's.
               Effect.raceFirst(Deferred.await(session.closed).pipe(Effect.as(Option.none<A>()))),
@@ -621,12 +644,12 @@ export const layer = Layer.effect(
                 (answered): Effect.Effect<A, Exclude<E, RpcClientError> | NotPaired> =>
                   Option.isSome(answered)
                     ? Effect.succeed(answered.value)
-                    : run(session.generation),
+                    : run(session.generation, session.pairing),
               ),
-            ),
-          ),
+            );
+          }),
         );
-      return Effect.suspend(() => run(0));
+      return Effect.suspend(() => run(0, pairing.get()));
     };
 
     const eachSession = <E>(
@@ -684,10 +707,15 @@ export const layer = Layer.effect(
           ),
         ),
       ),
+      refusedByServer: (held) => refused.has(held),
       reconnectNow: Queue.offer(wakes, void 0).pipe(Effect.asVoid),
       call,
       eachSession,
-      bearer: Effect.map(paired, (current) => current.token),
+      bearer: Effect.fn("Connection.bearer")(function* (held: DeviceId) {
+        const current = yield* paired;
+        if (current.deviceId !== held) return yield* new NotPaired();
+        return current.token;
+      }),
       deviceId: Effect.map(paired, (current) => current.deviceId),
       awaitConnected: awaitSession(0).pipe(Effect.asVoid),
     });

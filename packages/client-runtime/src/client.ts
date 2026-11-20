@@ -159,8 +159,12 @@ export interface J3Client {
   }) => Promise<
     Actions.IntentResult<EntryId> | { readonly _tag: "invalid"; readonly problem: MessageProblem }
   >;
-  readonly resend: (commandId: CommandId) => Promise<Actions.IntentResult<EntryId>>;
-  readonly discard: (commandId: CommandId) => void;
+  /** `not-kept` when the device could not keep the new attempt: nothing was sent. */
+  readonly resend: (
+    commandId: CommandId,
+  ) => Promise<Actions.IntentResult<EntryId> | { readonly _tag: "not-kept" }>;
+  /** Resolves `false` when the device could not keep the change: the message stays as it was. */
+  readonly discard: (commandId: CommandId) => Promise<boolean>;
 
   /** Every conversation's draft, by `targetKey`. Kept on the device. */
   readonly drafts: Readable<ReadonlyMap<string, Drafts.Draft>>;
@@ -196,7 +200,13 @@ export interface J3Client {
    * take no change until `retryDrafts` reads them.
    */
   readonly draftsReadFailed: Readable<boolean>;
-  readonly retryDrafts: () => void;
+  /** Resolves with whether the drafts are read now. */
+  readonly retryDrafts: () => Promise<boolean>;
+  /**
+   * The drafts, by `targetKey`, the device could not keep as they show: held
+   * in memory only, and saved again until they are.
+   */
+  readonly draftsNotSaved: Readable<ReadonlySet<string>>;
   /** Puts back the text this window held, never kept, when another window changed the draft. */
   readonly restoreDraft: (target: EntryTarget) => void;
   /** Lets go of the text on offer for `restoreDraft`. */
@@ -362,8 +372,23 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
             ),
           ),
       ),
-    resend: (commandId) => run.promise(conversations.resend(commandId)),
-    discard: (commandId) => fire(conversations.discard(commandId)),
+    resend: (commandId) =>
+      run.promise(
+        conversations
+          .resend(commandId)
+          .pipe(
+            Effect.catchTag("LocalStorageError", () =>
+              Effect.succeed({ _tag: "not-kept" } as const),
+            ),
+          ),
+      ),
+    discard: (commandId) =>
+      run.promise(
+        conversations.discard(commandId).pipe(
+          Effect.as(true),
+          Effect.catchTag("LocalStorageError", () => Effect.succeed(false)),
+        ),
+      ),
 
     drafts: services.drafts.state,
     setDraftText: (target, text) => run.sync(services.drafts.setText(target, text)),
@@ -374,7 +399,8 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     draftOffers: services.drafts.offers,
     draftsSwitching: services.drafts.switching,
     draftsReadFailed: services.drafts.readFailed,
-    retryDrafts: () => fire(services.drafts.retryRead),
+    retryDrafts: () => run.promise(services.drafts.retryRead),
+    draftsNotSaved: services.drafts.notSaved,
     restoreDraft: (target) => fire(services.drafts.restore(target)),
     dismissDraftOffer: (target) => fire(services.drafts.dismiss(target)),
     download: (attachment) =>

@@ -14,9 +14,13 @@ import { Drafts } from "../stores/Drafts.ts";
  * each failure is logged on its own.
  */
 export type SignOutResult =
-  /** The server revoked this device, and its credential is deleted here. */
+  /** The server confirmed this device's access ended, and its credential is deleted here. */
   | { readonly _tag: "signed-out" }
-  /** Its credential is deleted here, but the server was out of reach and still lists it. */
+  /**
+   * Its credential is deleted here, but the server never confirmed its access
+   * ended: it was out of reach, or another window deleted the credential
+   * first. The server may still list it.
+   */
   | { readonly _tag: "still-listed" }
   /**
    * A pairing made while it signed out, here or in another window, stays, and
@@ -52,20 +56,21 @@ export const layer = Layer.effect(
     const drafts = yield* Drafts;
     const conversations = yield* Conversations;
 
-    /** Whether the server revoked `pairing`. Revoking it closes its socket, so the answer is often `not-paired`. */
+    /** Whether the server said that `pairing` ended. */
     const revoke = Effect.fn("SignOut.revoke")(function* (pairing: DeviceId) {
       if (connection.state.get()._tag !== "connected") return false;
       const result = yield* devices.revoke(pairing);
-      switch (result._tag) {
-        case "done":
-          return true;
-        case "unanswered":
+      if (result._tag !== "failed") return result._tag === "done";
+      switch (result.failure._tag) {
+        case "refused":
+          return result.failure.error._tag === "NotFound";
+        // Revoking closes this device's socket before the answer can arrive,
+        // and the server refuses its credential on the next: that is its word.
+        // A credential another window deleted first is not.
+        case "not-paired":
+          return connection.refusedByServer(pairing);
+        case "unexpected":
           return false;
-        case "failed":
-          return (
-            result.failure._tag === "not-paired" ||
-            (result.failure._tag === "refused" && result.failure.error._tag === "NotFound")
-          );
       }
     });
 

@@ -44,6 +44,13 @@ export class TestNetwork extends Context.Service<
      * the client, as on a link that fails one way: requests still arrive.
      */
     readonly loseReplies: (lose: boolean) => Effect.Effect<void>;
+    /**
+     * While `true`, what the client sends on the open sockets never reaches
+     * the server, as on a link that fails the other way.
+     */
+    readonly loseRequests: (lose: boolean) => Effect.Effect<void>;
+    /** Waits until the client sent something the network lost. */
+    readonly requestLost: Effect.Effect<void>;
   }
 >()("@j3-bots/client-runtime/test/platform/TestNetwork") {}
 
@@ -53,7 +60,9 @@ const network = Layer.effectContext(
     const sockets = new Set<Socket.WebSocketLike>();
     const global = yield* Socket.WebSocketConstructor;
     let losing = false;
-    /** `socket`, whose messages reach the client unless replies are lost. */
+    let losingRequests = false;
+    const lost = yield* Queue.unbounded<void>();
+    /** `socket`, whose messages reach the client unless replies are lost, and the server unless requests are. */
     const lossy = (socket: Socket.WebSocketLike): Socket.WebSocketLike => {
       const wrapped = new Map<
         (event: Socket.WebSocketEvent) => void,
@@ -74,7 +83,10 @@ const network = Layer.effectContext(
         removeEventListener: (type, listener) =>
           socket.removeEventListener(type, wrapped.get(listener) ?? listener),
         close: (code, reason) => socket.close(code, reason),
-        send: (data) => socket.send(data),
+        send: (data) => {
+          if (losingRequests) Queue.offerUnsafe(lost, undefined);
+          else socket.send(data);
+        },
       };
     };
     return Context.make(
@@ -101,6 +113,11 @@ const network = Layer.effectContext(
             Effect.sync(() => {
               losing = lose;
             }),
+          loseRequests: (lose) =>
+            Effect.sync(() => {
+              losingRequests = lose;
+            }),
+          requestLost: Queue.take(lost),
         }),
       ),
     );
@@ -174,8 +191,8 @@ interface StorageOptions {
   readonly refuseCommits?: () => boolean;
   /** Fails every attempt to empty a table. */
   readonly refuseClears?: boolean;
-  /** Fails a read when it says so, as a disk that fails now and then would. */
-  readonly refuseReads?: () => boolean;
+  /** Fails a read of `table` when it says so, as a disk that fails now and then would. */
+  readonly refuseReads?: (table: LocalTable) => boolean;
   /** Holds every transaction until the latch opens, before it can fail. */
   readonly commitGate?: Latch.Latch;
   /** Receives one item as each transaction starts, before the gate. */
@@ -217,7 +234,7 @@ const makeStorage = (options: StorageOptions, pairing: () => DeviceId | null) =>
     return ClientStorage.of({
       readAll: (name) =>
         Effect.suspend(() =>
-          options.refuseReads?.() === true
+          options.refuseReads?.(name) === true
             ? Effect.fail(new LocalStorageError({ operation: "read" }))
             : Effect.sync(
                 () =>

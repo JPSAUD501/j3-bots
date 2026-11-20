@@ -38,9 +38,11 @@ interface ComposerProps {
   readonly loading?: boolean;
   /**
    * The drafts could not be read: the draft takes no change, and says so,
-   * until `onRetry` reads them.
+   * until `onRetry` reads them. It resolves with whether it did.
    */
-  readonly unread?: { readonly onRetry: () => void };
+  readonly unread?: { readonly onRetry: () => Promise<boolean> };
+  /** The device could not keep the draft as it shows: it is in memory only, and is saved again. */
+  readonly notSaved?: boolean;
   /** Files the operator picked, pasted or dropped. Without it, the composer takes no files. */
   readonly onAttachFiles?: (files: ReadonlyArray<File>) => void;
   readonly onDetachFile?: (key: string) => void;
@@ -115,10 +117,12 @@ const nameOf = (file: DraftFile) => (file._tag === "ready" ? file.attachment.nam
  * unavailable; files dropped or pasted meanwhile are not taken, and the
  * composer asks for them again. Many files scroll within their own list, so
  * the pill and what sits above it stay in view. A draft that could not be
- * read says so above the pill, with a way to read it again. Text replaced in
- * another tab is offered back above the pill until the operator restores or
- * dismisses it; either way the focus returns to the field. The field draws
- * no ring of its own: the pill takes the focus outline.
+ * read says so above the pill, with a way to read it again: once read, the
+ * focus returns to the field; read in vain, it says so again. A draft the
+ * device could not keep says so quietly below the pill until it is kept. Text
+ * replaced in another tab is offered back above the pill until the operator
+ * restores or dismisses it; either way the focus returns to the field. The
+ * field draws no ring of its own: the pill takes the focus outline.
  */
 export function Composer({
   draftKey,
@@ -129,6 +133,7 @@ export function Composer({
   sending = false,
   loading = false,
   unread,
+  notSaved = false,
   onAttachFiles,
   onDetachFile,
   onSend,
@@ -172,11 +177,19 @@ export function Composer({
   const detach = (key: string) => {
     if (!frozen) onDetachFile?.(key);
   };
+  const focusField = () => fieldRef.current?.focus();
   // The notice leaves with the button that was pressed: the focus goes back to the text.
   const answerReplaced = (answer: () => void) => {
     answer();
-    fieldRef.current?.focus();
+    focusField();
   };
+  // Each read in vain is a new alert, so it is announced again though the words are the same.
+  const [failedReads, setFailedReads] = useState(0);
+  const retryRead = (onRetry: () => Promise<boolean>) =>
+    void onRetry().then((read) => {
+      if (read) focusField();
+      else setFailedReads((count) => count + 1);
+    });
   const failures = files.flatMap((file) =>
     file._tag === "failed"
       ? [
@@ -221,10 +234,10 @@ export function Composer({
       {/* Drafts that load say nothing: it takes a moment. Drafts that could not be read say so until read. */}
       {unread && !loading && (
         <div className="flex flex-wrap items-center justify-end gap-x-2 ps-3 pe-1 text-xs text-muted-foreground">
-          <p role="alert" className="me-auto py-1">
+          <p key={failedReads} role="alert" className="me-auto py-1">
             {t("composer.unread")}
           </p>
-          <Button variant="ghost" size="sm" onClick={unread.onRetry}>
+          <Button variant="ghost" size="sm" onClick={() => retryRead(unread.onRetry)}>
             {t("composer.unread.retry")}
           </Button>
         </div>
@@ -338,6 +351,12 @@ export function Composer({
       <span id={waitingId} hidden>
         {t("composer.stillUploading")}
       </span>
+      {/* Quiet: it clears by itself once the device keeps the draft. */}
+      {notSaved && (
+        <p role="status" className="px-3 text-xs text-muted-foreground">
+          {t("composer.notSaved")}
+        </p>
+      )}
       <p role="alert" className="px-3 text-xs text-blocked empty:hidden">
         {/* Files just dropped and not taken come first: the operator is waiting on them now. */}
         {notTaken
