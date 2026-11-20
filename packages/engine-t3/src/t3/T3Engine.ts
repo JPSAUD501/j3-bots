@@ -113,8 +113,11 @@ import {
   queuedRuns,
   replacement,
   startingTurns,
+  toolPersistenceOf,
+  toolsToResolve,
   type EventBody,
   type Mirror,
+  type ToolPersistence,
   type View,
 } from "./Translate.ts";
 
@@ -204,6 +207,12 @@ type LoopInput =
   | { readonly _tag: "item"; readonly item: OrchestrationV2ThreadStreamItem }
   /** A file change an open approval holds, fetched whole. */
   | { readonly _tag: "fetched"; readonly item: FileChangeItem }
+  /** The persistence of a dynamic tool whose input the stream summarized, from its item fetched whole. */
+  | {
+      readonly _tag: "tool";
+      readonly itemId: string;
+      readonly persistence: ToolPersistence;
+    }
   /** The stream ended or a read failed: it is opened again once the engine is ready. */
   | { readonly _tag: "lost" }
   /** The engine has no record of the session's thread. */
@@ -430,6 +439,36 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
         ),
       ),
       Effect.map((projection) => mirrorOf(projection)),
+    );
+
+  /**
+   * The persistence of a dynamic tool whose input the stream summarized, from
+   * the item fetched whole: `unknown` when that fails or takes longer than
+   * `FETCH_TIMEOUT`, and when the engine cut the input short there too. See
+   * `isPersistentTool` in `Translate.ts` for what an unknown one counts as.
+   */
+  const toolPersistence = (sessionId: SessionId, itemId: string) =>
+    rpc["orchestration.getTurnItem"]({
+      threadId: ThreadId.make(sessionId),
+      itemId: TurnItemId.make(itemId),
+    }).pipe(
+      Effect.timeoutOption(FETCH_TIMEOUT),
+      Effect.map((fetched): ToolPersistence => {
+        const item = Option.getOrUndefined(fetched)?.item;
+        return item?.type === "dynamic_tool" ? toolPersistenceOf(item.input) : "unknown";
+      }),
+      Effect.orElseSucceed((): ToolPersistence => "unknown"),
+    );
+
+  /** Settles in `mirror` the persistence of each tool whose input the stream summarized. */
+  const resolveTools = (sessionId: SessionId, mirror: Mirror) =>
+    Effect.forEach(
+      toolsToResolve(mirror),
+      (itemId) =>
+        Effect.map(toolPersistence(sessionId, itemId), (persistence) => {
+          mirror.toolPersistence.set(itemId, persistence);
+        }),
+      { discard: true },
     );
 
   /** The state of a session that is still in use: a retired one is `SessionNotFound`. */
@@ -670,6 +709,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   ) {
     if ((yield* sendByReceipt(input)) === "applied") return;
     const mirror = yield* afterSending(projection(round.sessionId));
+    yield* resolveTools(round.sessionId, mirror);
     if (!isMoot(mirror, yield* DateTime.now)) return yield* new StopRejected({ key: round.key });
   });
 
@@ -1118,7 +1158,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
           switch (item.kind) {
             case "snapshot": {
               if (item.snapshotSequence <= sequence && view !== undefined) return;
-              mirror = mirrorOf(item.projection, mirror.fetched);
+              mirror = mirrorOf(item.projection, mirror);
               sequence = item.snapshotSequence;
               yield* digestToolCalls(mirror);
               yield* replace(view !== undefined || input.after !== null);
@@ -1145,8 +1185,21 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
          * without its diff, once per version of the item. Only a fetched item
          * comes back to the loop: a fetch that fails or takes longer than
          * `FETCH_TIMEOUT` leaves the card a summary, and is not tried again.
+         * Each live dynamic tool whose input the stream summarized is fetched
+         * once too, for its persistence, which comes back either way.
          */
         const fetchChanges = Effect.fnUntraced(function* () {
+          for (const itemId of toolsToResolve(mirror)) {
+            const key = `tool:${itemId}`;
+            if (asked.has(key)) continue;
+            asked.add(key);
+            yield* toolPersistence(input.sessionId, itemId).pipe(
+              Effect.flatMap((persistence) =>
+                Queue.offer(inputs, { _tag: "tool", itemId, persistence }),
+              ),
+              Effect.forkScoped,
+            );
+          }
           for (const change of changesToFetch(mirror)) {
             const key = `${change.id}@${DateTime.toEpochMillis(change.updatedAt)}`;
             if (asked.has(key)) continue;
@@ -1268,6 +1321,10 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
             case "item":
               yield* handle(next.item);
               yield* fetchChanges();
+              break;
+            case "tool":
+              // No session event is made of it: only `backgroundWorkPending` reads it.
+              mirror.toolPersistence.set(next.itemId, next.persistence);
               break;
             case "fetched":
               // The approval may have closed, or its item moved on, since it was asked for: the

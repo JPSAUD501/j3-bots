@@ -21,6 +21,8 @@ import {
   nothingToStop,
   replacement,
   startingTurns,
+  toolPersistenceOf,
+  toolsToResolve,
 } from "./Translate.ts";
 
 const answers = Schema.decodeUnknownSync(QuestionAnswers);
@@ -287,6 +289,43 @@ describe("backgroundWorkPending", () => {
       }),
     );
     assert.isTrue(backgroundWorkPending(mirror));
+  });
+
+  // The stream sends a dynamic tool input above 16 KiB as `{summary, truncated}`
+  // (**Read** at `db51b67`, `WireProjection.ts`, `summarizeDynamicValue`).
+  it("asks the item fetched whole whether a tool the stream summarized is persistent", () => {
+    const mirror = emptyMirror();
+    applyEvent(mirror, run("completed", 1));
+    applyEvent(
+      mirror,
+      item({
+        id: "item-tool",
+        type: "dynamic_tool",
+        toolName: "dev_server",
+        input: { summary: '{"persistent":true,"script":"…', truncated: true },
+        status: "running",
+      }),
+    );
+    // Pending until the fetch tells: the Stop waits that long.
+    assert.deepStrictEqual(toolsToResolve(mirror), ["item-tool"]);
+    assert.isTrue(backgroundWorkPending(mirror));
+
+    mirror.toolPersistence.set(
+      "item-tool",
+      toolPersistenceOf({ persistent: true, script: "x".repeat(20_000) }),
+    );
+    assert.deepStrictEqual(toolsToResolve(mirror), []);
+    assert.isFalse(backgroundWorkPending(mirror));
+
+    mirror.toolPersistence.set("item-tool", toolPersistenceOf({ script: "x".repeat(20_000) }));
+    assert.isTrue(backgroundWorkPending(mirror));
+
+    // The engine's read cut it short too: unknown, which never holds a Stop.
+    mirror.toolPersistence.set(
+      "item-tool",
+      toolPersistenceOf('{"script":"xxxx\n… output truncated for transport'),
+    );
+    assert.isFalse(backgroundWorkPending(mirror));
   });
 });
 

@@ -86,7 +86,22 @@ export interface Mirror {
    * can show it. See `approvalDetail.ts`.
    */
   readonly fetched: Map<string, FileChangeItem>;
+  /**
+   * Whether each live dynamic tool whose input the stream summarized runs on
+   * purpose, as read from the item fetched whole, by item id. See
+   * `isPersistentTool`.
+   */
+  readonly toolPersistence: Map<string, ToolPersistence>;
 }
+
+/**
+ * What a dynamic tool's input says of its persistence: `unknown` when the
+ * engine's read of the item cut the input short too. **Read** at `db51b67`,
+ * `WireProjection.ts`: `getTurnItem` bounds a dynamic tool's input at 256 KiB
+ * (`projectTurnItemForDetail`, `boundDynamicValue`, L212-224, L255-266), by
+ * cutting its JSON text and ending it with `TRUNCATION_MARKER` (L31).
+ */
+export type ToolPersistence = "persistent" | "transient" | "unknown";
 
 export const emptyMirror = (): Mirror => ({
   thread: undefined,
@@ -96,6 +111,7 @@ export const emptyMirror = (): Mirror => ({
   providerThreads: new Map(),
   toolDigests: new Map(),
   fetched: new Map(),
+  toolPersistence: new Map(),
 });
 
 /** A copy of the mirror as it stands, for resuming from it later. Entities are never mutated, only replaced. */
@@ -107,24 +123,28 @@ export const copyMirror = (mirror: Mirror): Mirror => ({
   providerThreads: new Map(mirror.providerThreads),
   toolDigests: new Map(mirror.toolDigests),
   fetched: new Map(mirror.fetched),
+  toolPersistence: new Map(mirror.toolPersistence),
 });
 
 /**
  * The mirror of a snapshot. File changes fetched before it still count for
- * the open approvals the snapshot has holding them at the same version.
+ * the open approvals the snapshot has holding them at the same version, and
+ * a tool's persistence for as long as the snapshot has its item.
  */
 export const mirrorOf = (
   projection: OrchestrationV2ThreadProjection,
-  fetched: ReadonlyMap<string, FileChangeItem> = new Map(),
+  before: Pick<Mirror, "fetched" | "toolPersistence"> = emptyMirror(),
 ): Mirror => {
+  const items: Map<string, Item> = new Map(projection.turnItems.map((item) => [item.id, item]));
   const mirror: Mirror = {
     thread: projection.thread,
     runs: new Map(projection.runs.map((run) => [run.id, run])),
-    items: new Map(projection.turnItems.map((item) => [item.id, item])),
+    items,
     requests: new Map(projection.runtimeRequests.map((request) => [request.id, request])),
     providerThreads: new Map(projection.providerThreads.map((thread) => [thread.id, thread])),
     toolDigests: new Map(),
-    fetched: new Map(fetched),
+    fetched: new Map(before.fetched),
+    toolPersistence: new Map([...before.toolPersistence].filter(([id]) => items.has(id))),
   };
   dropUnheld(mirror);
   return mirror;
@@ -360,11 +380,60 @@ const BACKGROUND_ITEM: ReadonlySet<Item["type"]> = new Set([
   "subagent",
 ]);
 
-/** A dynamic tool the agent keeps running on purpose, which the engine never counts as pending. */
-const isPersistentTool = (item: Item) =>
-  item.type === "dynamic_tool" &&
-  Predicate.hasProperty(item.input, "persistent") &&
-  item.input.persistent === true;
+/** The engine's test of a dynamic tool's input (**Read**, `isPersistentDynamicToolInput`). */
+const hasPersistentFlag = (input: unknown) =>
+  Predicate.hasProperty(input, "persistent") && input.persistent === true;
+
+/**
+ * The stream's stand-in for a dynamic tool input above 16 KiB, which drops
+ * the input's `persistent` flag. **Read** at `db51b67`, `WireProjection.ts`,
+ * `summarizeDynamicValue` (L29, L69-107) as `projectTurnItemForWire` applies
+ * it to a dynamic tool (L190-197).
+ */
+const isSummarizedInput = (input: unknown) =>
+  Predicate.hasProperty(input, "summary") &&
+  Predicate.hasProperty(input, "truncated") &&
+  input.truncated === true;
+
+/** What `getTurnItem` ends a dynamic tool input with when it cut it short. **Read**, L31. */
+const TRUNCATION_MARKER = "\n… output truncated for transport";
+
+/** The persistence a dynamic tool's input read whole by `getTurnItem` says. */
+export const toolPersistenceOf = (input: unknown): ToolPersistence =>
+  typeof input === "string" && input.endsWith(TRUNCATION_MARKER)
+    ? "unknown"
+    : hasPersistentFlag(input)
+      ? "persistent"
+      : "transient";
+
+/**
+ * A dynamic tool the agent keeps running on purpose, which the engine never
+ * counts as pending (**Read** at `db51b67`,
+ * `orchestrationV2PendingBackgroundWork.ts`, L250-254). For an input the
+ * stream summarized, the item fetched whole tells; until it is fetched the
+ * tool counts as pending, and a Stop waits that long. When the fetch failed
+ * or cut the input short as well, the persistence is unknown and the tool
+ * counts as persistent: a Stop could otherwise wait forever on a tool the
+ * engine's own stop leaves running, where the other mistake only lets it
+ * settle while the engine is still interrupting a tool its stop did target.
+ */
+const isPersistentTool = (mirror: Mirror, item: Item) => {
+  if (item.type !== "dynamic_tool") return false;
+  if (!isSummarizedInput(item.input)) return hasPersistentFlag(item.input);
+  const known = mirror.toolPersistence.get(item.id);
+  return known === "persistent" || known === "unknown";
+};
+
+/** Live dynamic tools whose input the stream summarized and whose persistence is not known yet. */
+export const toolsToResolve = (mirror: Mirror): ReadonlyArray<string> =>
+  [...mirror.items.values()].flatMap((item) =>
+    item.type === "dynamic_tool" &&
+    isOrchestrationV2WorkActive(item.status) &&
+    isSummarizedInput(item.input) &&
+    !mirror.toolPersistence.has(item.id)
+      ? [item.id]
+      : [],
+  );
 
 /**
  * Whether the session has background work the engine counts as pending: what
@@ -398,7 +467,7 @@ export const backgroundWorkPending = (mirror: Mirror): boolean => {
       (item) =>
         BACKGROUND_ITEM.has(item.type) &&
         isOrchestrationV2WorkActive(item.status) &&
-        !isPersistentTool(item) &&
+        !isPersistentTool(mirror, item) &&
         (item.runId === null || !rolledBack.has(item.runId)),
     )
   );
