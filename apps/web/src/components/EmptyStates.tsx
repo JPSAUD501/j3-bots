@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Bot, EngineStatus, ProviderStatus } from "@j3-bots/contracts";
 import { CheckIcon, CopyIcon } from "lucide-react";
-import { useId, useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { useI18n, usePresentation } from "../app/context";
 import type { I18n } from "../i18n/i18n";
 import { cn } from "../lib/cn";
 import { usageLimitText } from "../presentation/roster";
 import { BotAvatar } from "./BotAvatar";
 import { useConnectionLineShown } from "./ConnectionBanner";
+import { NewBotForm } from "./NewBotForm";
 import { Button } from "./ui/button";
-import { Checkbox } from "./ui/checkbox";
 import { Kbd } from "./ui/kbd";
 
 const idle = { _tag: "idle" } as const;
@@ -238,53 +238,11 @@ function CommandLine({ command, copyLabel }: { command: string; copyLabel: strin
 
 function CreateFirstBot({ onCreateBot }: Pick<FirstRunProps, "onCreateBot">) {
   const { t } = useI18n();
-  const [name, setName] = useState("");
-  const [primary, setPrimary] = useState(true);
-  const [state, setState] = useState<"editing" | "creating" | "failed">("editing");
-  const inputId = useId();
-  const trimmed = name.trim();
   return (
     <Centered>
       <Ensemble />
       <Heading title={t("firstRun.create.title")} body={t("firstRun.create.body")} />
-      <form
-        className="flex w-full max-w-xs flex-col gap-3 text-start"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (trimmed === "" || state === "creating") return;
-          setState("creating");
-          onCreateBot(trimmed, primary).then(
-            () => setState("editing"),
-            () => setState("failed"),
-          );
-        }}
-      >
-        <label htmlFor={inputId} className="sr-only">
-          {t("firstRun.create.name")}
-        </label>
-        <input
-          id={inputId}
-          value={name}
-          maxLength={40}
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder={t("firstRun.create.placeholder")}
-          className="h-9 rounded-md border border-input bg-surface px-3 text-sm placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:h-11"
-        />
-        <label className="flex items-start gap-2 text-xs text-muted-foreground">
-          <span className="mt-px">
-            <Checkbox checked={primary} onCheckedChange={setPrimary} />
-          </span>
-          <span>{t("firstRun.create.primary")}</span>
-        </label>
-        <Button type="submit" variant="primary" disabled={trimmed === "" || state === "creating"}>
-          {t("firstRun.create.submit")}
-        </Button>
-        {state === "failed" && (
-          <p role="alert" className="text-xs text-blocked">
-            {t("firstRun.create.failed")}
-          </p>
-        )}
-      </form>
+      <NewBotForm primaryAtFirst onCreate={onCreateBot} className="w-full max-w-xs text-start" />
     </Centered>
   );
 }

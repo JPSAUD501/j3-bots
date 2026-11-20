@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Dialog } from "@base-ui/react/dialog";
-import { useId, useState } from "react";
+import { useId } from "react";
 import { useI18n } from "../app/context";
-import { Button } from "./ui/button";
-import { Checkbox } from "./ui/checkbox";
+import { NewBotForm } from "./NewBotForm";
 
 interface NewBotDialogProps {
   readonly open: boolean;
@@ -31,66 +30,13 @@ export function NewBotDialog({ open, onOpenChange, onCreate }: NewBotDialogProps
             {t("newBot.body")}
           </Dialog.Description>
           {/* Mounted with the popup, so each opening starts empty. */}
-          <NewBotForm onCreate={onCreate} onCancel={() => onOpenChange(false)} />
+          <NewBotForm
+            primaryAtFirst={false}
+            onCreate={onCreate}
+            onCancel={() => onOpenChange(false)}
+          />
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>
-  );
-}
-
-function NewBotForm({
-  onCreate,
-  onCancel,
-}: {
-  onCreate: NewBotDialogProps["onCreate"];
-  onCancel: () => void;
-}) {
-  const { t } = useI18n();
-  const nameId = useId();
-  const [name, setName] = useState("");
-  const [primary, setPrimary] = useState(false);
-  const [state, setState] = useState<"editing" | "creating" | "failed">("editing");
-  const trimmed = name.trim();
-  const ready = trimmed !== "" && state !== "creating";
-  return (
-    <form
-      className="flex flex-col gap-3"
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (!ready) return;
-        setState("creating");
-        onCreate(trimmed, primary).then(
-          () => setState("editing"),
-          () => setState("failed"),
-        );
-      }}
-    >
-      <label htmlFor={nameId} className="sr-only">
-        {t("firstRun.create.name")}
-      </label>
-      <input
-        id={nameId}
-        value={name}
-        maxLength={40}
-        onChange={(event) => setName(event.currentTarget.value)}
-        placeholder={t("firstRun.create.placeholder")}
-        className="h-9 rounded-md border border-input bg-surface px-3 text-sm placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:h-11"
-      />
-      <label className="flex items-start gap-2 text-xs text-muted-foreground">
-        <span className="mt-px">
-          <Checkbox checked={primary} onCheckedChange={setPrimary} />
-        </span>
-        <span>{t("firstRun.create.primary")}</span>
-      </label>
-      <p role="alert" className="text-xs text-blocked empty:hidden">
-        {state === "failed" ? t("firstRun.create.failed") : null}
-      </p>
-      <div className="flex flex-wrap justify-end gap-2">
-        <Button onClick={onCancel}>{t("newBot.cancel")}</Button>
-        <Button type="submit" variant="primary" aria-disabled={!ready}>
-          {t("firstRun.create.submit")}
-        </Button>
-      </div>
-    </form>
   );
 }
