@@ -82,8 +82,9 @@ import { toolInputDigest } from "../toolCaller.ts";
 // refused while its work can still run, a turn whose provider is slow to
 // start it, and a dispatch that waits in the startup queue and lands late;
 // synchronization markers; and resume by cursor with replay or a replacement
-// that repeats turns already seen end, as the real engine may. The adapter's conformance suite runs the same scenarios against
-// the real engine, which keeps this double honest.
+// that repeats turns already seen end, as the real engine may. The adapter's
+// conformance suite runs the same scenarios against the real engine, which
+// keeps this double honest.
 
 /** The engine methods a test can hold in flight with `holdNext`. */
 export type HeldMethod =
