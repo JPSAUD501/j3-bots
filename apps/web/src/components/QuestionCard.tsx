@@ -24,7 +24,10 @@ interface QuestionCardProps {
 /**
  * A bot asking the operator to choose. A single question with single choice
  * and no typed answer is answered by tapping an option; anything else is a
- * form of radio buttons, checkboxes and text, sent with "Send answer".
+ * form of radio buttons, checkboxes and text, sent with "Send answer". An
+ * `ask` question takes a note beside a choice; the harness's own question
+ * takes one or the other, so typing clears the choice and choosing clears the
+ * text.
  * Dismissing reads as "no", and its button says so. An option the bot
  * recommends says so in words; one that loses something says that too, and
  * is drawn in the blocked color.
@@ -103,6 +106,7 @@ export function QuestionCard({
         <QuestionForm
           key={entry.id}
           questions={entry.questions}
+          textReplacesChoice={entry.origin === "engine"}
           onAnswer={answer}
           onDismiss={dismiss}
           submitting={submitting}
@@ -118,12 +122,14 @@ const optionRow =
 
 function QuestionForm({
   questions,
+  textReplacesChoice,
   onAnswer,
   onDismiss,
   submitting,
   focusWatch,
 }: {
   questions: ReadonlyArray<Question>;
+  textReplacesChoice: boolean;
   onAnswer: (answers: QuestionAnswers) => void;
   onDismiss: () => void;
   submitting: boolean;
@@ -152,6 +158,7 @@ function QuestionForm({
           key={q.id}
           question={q}
           draft={drafts.get(q.id) ?? null}
+          textReplacesChoice={textReplacesChoice}
           readOnly={submitting}
           onChange={(change) => update(q.id, change)}
         />
@@ -165,24 +172,29 @@ function QuestionForm({
 function QuestionFields({
   question,
   draft,
+  textReplacesChoice,
   readOnly,
   onChange,
 }: {
   question: Question;
   draft: QuestionDraft | null;
+  /** A typed answer goes instead of a choice, never beside it. */
+  textReplacesChoice: boolean;
   readOnly: boolean;
   onChange: (change: Partial<QuestionDraft>) => void;
 }) {
   const { t } = useI18n();
   const promptId = useId();
   const picked = draft?.optionIds ?? [];
-  // Typed text goes with a chosen option, not instead of it, and the field says so.
+  // Where typed text goes with a chosen option, the field says so.
   const textLabel =
     question.options.length === 0
       ? t("question.typeAnswer")
-      : picked.length > 0
+      : picked.length > 0 && !textReplacesChoice
         ? t("question.addNote")
         : t("question.typeInstead");
+  const choose = (optionIds: ReadonlyArray<string>) =>
+    onChange(textReplacesChoice ? { optionIds, text: "" } : { optionIds });
   const optionClass = cn(
     optionRow,
     "group/option hover:bg-muted data-checked:border-foreground/60 data-checked:bg-muted data-readonly:hover:bg-transparent",
@@ -197,7 +209,7 @@ function QuestionFields({
           <CheckboxGroup
             aria-labelledby={promptId}
             value={[...picked]}
-            onValueChange={(optionIds) => onChange({ optionIds })}
+            onValueChange={(optionIds) => choose(optionIds)}
             className="flex flex-col gap-1.5"
           >
             {question.options.map((option) => (
@@ -222,7 +234,7 @@ function QuestionFields({
             value={picked[0] ?? null}
             onValueChange={(value: unknown) => {
               const option = question.options.find((o) => o.id === value);
-              if (option) onChange({ optionIds: [option.id] });
+              if (option) choose([option.id]);
             }}
             readOnly={readOnly}
             className="flex flex-col gap-1.5"
@@ -243,7 +255,10 @@ function QuestionFields({
           value={draft?.text ?? ""}
           readOnly={readOnly}
           aria-disabled={readOnly}
-          onChange={(event) => onChange({ text: event.currentTarget.value })}
+          onChange={(event) => {
+            const text = event.currentTarget.value;
+            onChange(textReplacesChoice && text.trim() !== "" ? { text, optionIds: [] } : { text });
+          }}
           placeholder={textLabel}
           aria-label={question.options.length > 0 ? textLabel : question.prompt}
           className="field-sizing-content min-h-9 resize-none rounded-md border border-input bg-surface px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:min-h-11"

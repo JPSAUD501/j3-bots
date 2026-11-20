@@ -91,8 +91,18 @@ const encodeResponse = Schema.encodeEffect(json(StoredResponse));
 /** The engine key of the answer to a card: one card takes one answer. */
 const answerKey = (entryId: EntryId) => IdempotencyKey.make(`answer:${entryId}`);
 
-/** Whether answers fit the card's questions: known options, one unless several are allowed, text only where accepted. */
-const fits = (questions: ReadonlyArray<Question>, answers: QuestionAnswers): boolean => {
+/**
+ * Whether answers fit the card's questions: known options, one unless several
+ * are allowed, text only where accepted. An engine question takes a choice or
+ * a typed answer, never both: the engine receives a typed answer alone
+ * (`engineAnswersOf`), so a choice beside it would show on the card without
+ * reaching the turn. An `ask` question takes both.
+ */
+const fits = (
+  questions: ReadonlyArray<Question>,
+  answers: QuestionAnswers,
+  origin: QuestionEntry["origin"],
+): boolean => {
   const byId = new Map(questions.map((question) => [question.id, question]));
   if (Object.keys(answers).some((id) => !byId.has(id))) return false;
   return questions.every((question) => {
@@ -105,6 +115,7 @@ const fits = (questions: ReadonlyArray<Question>, answers: QuestionAnswers): boo
       new Set(answer.optionIds).size === answer.optionIds.length &&
       (question.multiple || answer.optionIds.length <= 1) &&
       (question.acceptsText || answer.text === null) &&
+      (origin === "ask" || answer.optionIds.length === 0 || answer.text === null) &&
       (answer.optionIds.length > 0 || text.length > 0)
     );
   });
@@ -121,7 +132,7 @@ const responseFor = (card: Entry, answer: CardAnswer): StoredResponse | "invalid
     case "question":
       if (card.status._tag !== "pending") return "closed";
       if (answer._tag === "dismiss") return { _tag: "dismiss" };
-      return answer._tag === "question" && fits(card.questions, answer.answers)
+      return answer._tag === "question" && fits(card.questions, answer.answers, card.origin)
         ? { _tag: "question", answers: answer.answers }
         : "invalid";
     case "secret-request":
@@ -209,7 +220,7 @@ export const layer = Layer.effect(
         return yield* new Conflict({ reason: "card-closed" });
       }
       if (answer._tag === "approval") return yield* new Invalid({ reason: "answer" });
-      if (answer._tag === "question" && !fits(card.questions, answer.answers)) {
+      if (answer._tag === "question" && !fits(card.questions, answer.answers, card.origin)) {
         return yield* new Invalid({ reason: "answer" });
       }
       yield* entries.update({

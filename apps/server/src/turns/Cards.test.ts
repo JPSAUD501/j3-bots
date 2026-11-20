@@ -196,6 +196,53 @@ it.effect("sends an answer when the answer before it hits a defect", () =>
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("takes a choice or a typed answer to an engine question, never both", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const cards = yield* Cards;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Deploy it.");
+    const turnId = yield* nextTurn(bot.id);
+    const requestId = yield* control.openRequest({
+      sessionId: session,
+      turnId,
+      request: {
+        _tag: "question",
+        questions: [
+          {
+            id: "region",
+            prompt: "Which region?",
+            options: [{ id: "eu", label: "Europe", description: null, style: "default" }],
+            acceptsText: true,
+            multiple: false,
+          },
+        ],
+      },
+    });
+    const card = yield* awaitEntry(bot.id, "question");
+    const answerWith = (optionIds: ReadonlyArray<string>, text: string | null) =>
+      cards.answer({
+        commandId: command(),
+        entryId: card.id,
+        answer: { _tag: "question", answers: { region: { optionIds, text } } },
+      });
+
+    // The engine would get the note alone, so the choice beside it is refused.
+    const both = yield* Effect.flip(answerWith(["eu"], "Frankfurt, if you can."));
+    assert.strictEqual(both._tag, "Invalid");
+
+    yield* answerWith([], "Frankfurt");
+    yield* cards.respondPending;
+    assert.deepStrictEqual(yield* control.responses(session), [
+      {
+        requestId,
+        response: { _tag: "question", answers: { region: { optionIds: [], text: "Frankfurt" } } },
+      },
+    ]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 /** The bot's two approval cards, oldest first, once both are shown. */
 const eventuallyTwoCards = (botId: BotId) =>
   until(
