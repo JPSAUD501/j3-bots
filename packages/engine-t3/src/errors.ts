@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { ModelId, ProviderId } from "@j3-bots/contracts";
 import * as Schema from "effect/Schema";
-import { EngineProjectId, RequestId, SessionId, TurnId } from "./ids.ts";
+import { EngineProjectId, IdempotencyKey, RequestId, SessionId, TurnId } from "./ids.ts";
 
 /**
  * The engine cannot take commands right now: it is starting, restarting, or its
@@ -23,12 +23,10 @@ export class EngineUnavailable extends Schema.TaggedError<EngineUnavailable>()(
  * engine restarted before it answered. It may or may not have been applied, and
  * this error never means it was not.
  *
- * A keyed command is safe to send again with the same key: the engine applies a
- * key once. A dispatch is reconciled with `Engine.lookupDispatch` before
- * anything else is decided, because only the engine's own record can prove
- * `not-applied`. A command without a key is idempotent by nature, except
- * `respondSecret`, whose retry is told apart by its `request-closed`
- * resolution.
+ * A keyed command is resolved by sending it again with the same key and the
+ * same input: the engine applies a key once, and a definite answer to the
+ * repeat is the answer to the first. A command without a key is idempotent by
+ * nature, except `respondSecret`: see there.
  */
 export class EngineIndeterminate extends Schema.TaggedError<EngineIndeterminate>()(
   "EngineIndeterminate",
@@ -57,7 +55,10 @@ export class ProjectNotFound extends Schema.TaggedError<ProjectNotFound>()("Proj
   }
 }
 
-/** The session does not exist, or it was retired. */
+/**
+ * The session does not exist, or it was retired. From `dispatch`, nothing was
+ * applied; the key is spent all the same and is never sent again.
+ */
 export class SessionNotFound extends Schema.TaggedError<SessionNotFound>()("SessionNotFound", {
   sessionId: SessionId,
 }) {
@@ -81,6 +82,21 @@ export class SessionBusy extends Schema.TaggedError<SessionBusy>()("SessionBusy"
 }) {
   override get message(): string {
     return `The session ${this.sessionId} is busy with turn ${this.turnId}.`;
+  }
+}
+
+/**
+ * The engine refused a dispatch and applied nothing: the key is spent, and
+ * sending it again fails the same way. Returned for the first refusal and for
+ * every repeat of the key. The engine refuses, for instance, a steer into a
+ * turn that Stop already reached (**Read** at `db51b67`,
+ * `dispatchSteerIntoRun`), or a message over a limit of its managed policy.
+ */
+export class DispatchRejected extends Schema.TaggedError<DispatchRejected>()("DispatchRejected", {
+  key: IdempotencyKey,
+}) {
+  override get message(): string {
+    return `The engine refused the dispatch ${this.key}; nothing was applied.`;
   }
 }
 

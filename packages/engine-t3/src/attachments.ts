@@ -1,13 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// The engine's limits on the files one message carries. **Read** at `db51b67`:
-// `packages/contracts/src/chatAttachment.ts` (`PROVIDER_SEND_TURN_*`,
-// `getProviderAttachmentLimitError`) and `packages/contracts/src/assets.ts`
-// (`AttachmentCreateUploadUrlInput`, which refuses an empty upload).
+// The engine's limits on the files one message carries and on each upload.
+// **Read** at `db51b67`: `packages/contracts/src/chatAttachment.ts`
+// (`PROVIDER_SEND_TURN_*`, `getProviderAttachmentLimitError`) and
+// `packages/contracts/src/assets.ts` (`AttachmentCreateUploadUrlInput`: a
+// trimmed name of 1 to 255 characters, a trimmed media type of 1 to 100, one of
+// the four image types for an image, and no empty upload).
 const MAX_ATTACHMENTS = 100;
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
 const MAX_INLINE_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_INLINE_IMAGE_BYTES_TOTAL = 80 * 1024 * 1024;
+const MAX_NAME_LENGTH = 255;
+const MAX_MEDIA_TYPE_LENGTH = 100;
+const MEDIA_TYPE = /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/;
 const INLINE_IMAGE_MEDIA_TYPES: ReadonlySet<string> = new Set([
   "image/gif",
   "image/jpeg",
@@ -63,5 +68,32 @@ export const attachmentLimitViolation = (
   }
   return imageBytes > MAX_INLINE_IMAGE_BYTES_TOTAL
     ? { _tag: "images-too-large", limit: MAX_INLINE_IMAGE_BYTES_TOTAL }
+    : undefined;
+};
+
+/** A file's name and media type in the form the engine stages them. */
+export interface AttachmentMetadata {
+  readonly name: string;
+  readonly mediaType: string;
+}
+
+/**
+ * A file's name and media type made acceptable to the engine's upload, or
+ * `undefined` when they cannot be: the name trimmed, the media type without
+ * parameters, trimmed and lowercased. The server applies it when a file is
+ * uploaded, refusing the upload on `undefined`, and stores the result, so the
+ * engine is never handed metadata it would refuse.
+ */
+export const normalizeAttachmentMetadata = (input: {
+  readonly name: string;
+  readonly mediaType: string;
+}): AttachmentMetadata | undefined => {
+  const name = input.name.trim();
+  const mediaType = (input.mediaType.split(";")[0] ?? "").trim().toLowerCase();
+  return name.length >= 1 &&
+    name.length <= MAX_NAME_LENGTH &&
+    mediaType.length <= MAX_MEDIA_TYPE_LENGTH &&
+    MEDIA_TYPE.test(mediaType)
+    ? { name, mediaType }
     : undefined;
 };

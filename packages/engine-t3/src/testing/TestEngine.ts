@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type {
   EngineStatus,
+  FailureClass,
   ModelChoice,
   PermissionMode,
   WorkStep,
@@ -25,6 +26,7 @@ import {
   type SecretAnswer,
 } from "../Engine.ts";
 import {
+  DispatchRejected,
   EngineIndeterminate,
   EngineUnavailable,
   ProjectNotFound,
@@ -38,9 +40,11 @@ import type {
   HostSpeech,
   OpenRequest,
   OpenTurn,
+  PendingContinuation,
   RequestResolution,
   SessionEvent,
   SteerSettlement,
+  ToolCall,
   TurnCause,
   TurnOutcome,
 } from "../events.ts";
@@ -52,27 +56,35 @@ import {
   type IdempotencyKey,
   RequestId,
   SessionId,
+  ToolCallId,
   TurnId,
 } from "../ids.ts";
+import { toolInputDigest } from "../toolCaller.ts";
 
 // An in-memory engine that keeps the `Engine` contract, for testing the server
 // without an engine process. It models what the server has to get right: keys
-// applied once; dispositions that record acceptance, with delivery reported by
-// events; a start the engine queues behind a turn it began itself; a steer that
-// is read, dropped by Stop, or started as a follow-up turn when its turn ends
-// unread; Stop cancelling waiting turns; requests that expire with their turn;
-// host speech; replies lost after a command was applied; synchronization
-// markers; and resume by cursor with replay or a replacement that repeats
-// turns already seen end, as the real engine may. The adapter's conformance
-// suite runs the same scenarios against the real engine, which keeps this
-// double honest.
+// applied once, a refused key refused again, and a repeat that cannot say how
+// the first was accepted; dispositions that record acceptance, with delivery
+// reported by events; a start the engine queues behind a turn it began itself;
+// a steer that settles only when its turn ends (read, dropped by Stop, or
+// requeued as a follow-up turn), including one sent to a turn that has not
+// started; Stop as the engine's own stop followed by a cancel per waiting turn,
+// with a message able to slip in between; queues the engine holds and the
+// adapter resumes once; turns that fail before they start; `j3` tool calls the
+// engine records after the bridge sees them; usage-limit continuations;
+// requests that expire with their turn; host speech; replies lost after a
+// command was applied; synchronization markers; and resume by cursor with
+// replay or a replacement that repeats turns already seen end, as the real
+// engine may. The adapter's conformance suite runs the same scenarios against
+// the real engine, which keeps this double honest.
 
-/** A dispatch the engine received, as the test inspects it. */
+/** A dispatch the engine applied, as the test inspects it. */
 export interface ReceivedDispatch {
   readonly key: IdempotencyKey;
   readonly text: string;
   readonly attachments: ReadonlyArray<DispatchAttachment>;
   readonly delivery: Delivery;
+  /** As the first submission was answered. */
   readonly disposition: DispatchDisposition;
 }
 
@@ -88,13 +100,45 @@ export class TestEngineControl extends Context.Service<
      */
     readonly loseNextReply: Effect.Effect<void>;
     /**
-     * The engine or the harness starts a turn of its own in the session while
-     * the next `start` dispatch is on its way: the adapter's busy check passes,
-     * and the engine then queues the start behind that turn.
+     * The engine refuses the next dispatch it receives, applying nothing and
+     * spending its key: it fails with `DispatchRejected`, as does every repeat.
      */
-    readonly startEngineTurnDuringNextDispatch: (input: {
+    readonly rejectNextDispatch: Effect.Effect<void>;
+    /**
+     * Background work wakes the session while the next `start` dispatch is on
+     * its way: the adapter's busy check passes, and the engine then queues the
+     * start behind that turn.
+     */
+    readonly startEngineTurnDuringNextDispatch: (sessionId: SessionId) => Effect.Effect<void>;
+    /**
+     * A `start` that passed the adapter's busy check reaches the engine in the
+     * middle of the session's next `stop`: after the engine's own stop, before
+     * the cancels. As a user's message, it releases the hold that stop put on
+     * the queue.
+     */
+    readonly dispatchDuringNextStop: (input: {
       readonly sessionId: SessionId;
-      readonly cause: Exclude<TurnCause, { readonly _tag: "dispatch" }>;
+      readonly key: IdempotencyKey;
+      readonly text: string;
+    }) => Effect.Effect<void>;
+    /**
+     * The engine holds the session's queue, as after a model change while the
+     * replaced provider session still runs background work. The adapter
+     * resumes it once; with `heldAgainOnResume` the engine holds it again in
+     * answer, and it stays held until the next call. A hold a Stop made is
+     * never resumed.
+     */
+    readonly holdQueue: (input: {
+      readonly sessionId: SessionId;
+      readonly heldAgainOnResume: boolean;
+    }) => Effect.Effect<void>;
+    /**
+     * The next turn the session starts fails before its provider turn starts:
+     * it ends `failed` with no `turn-started`.
+     */
+    readonly failNextStart: (input: {
+      readonly sessionId: SessionId;
+      readonly failure: FailureClass;
     }) => Effect.Effect<void>;
     /** Adds or replaces (by id) a step of a running turn. */
     readonly step: (input: {
@@ -102,10 +146,31 @@ export class TestEngineControl extends Context.Service<
       readonly turnId: TurnId;
       readonly step: WorkStep;
     }) => Effect.Effect<void>;
-    /** The agent reads every steer of the running turn it has not read yet. */
+    /**
+     * The agent takes every steer of the running turn. Each settles as
+     * `steered` when the turn ends.
+     */
     readonly readSteers: (input: {
       readonly sessionId: SessionId;
       readonly turnId: TurnId;
+    }) => Effect.Effect<void>;
+    /**
+     * The bot calls a `j3` tool in the running turn. With `recorded:
+     * "after-next-synchronize"` the engine records the call late: the next
+     * `synchronize` is answered before its `tool-call` event.
+     */
+    readonly toolCall: (input: {
+      readonly sessionId: SessionId;
+      readonly turnId: TurnId;
+      readonly tool: string;
+      readonly input: unknown;
+      readonly recorded: "now" | "after-next-synchronize";
+    }) => Effect.Effect<ToolCallId>;
+    /** A `j3` tool call returns. */
+    readonly closeToolCall: (input: {
+      readonly sessionId: SessionId;
+      readonly turnId: TurnId;
+      readonly callId: ToolCallId;
     }) => Effect.Effect<void>;
     /** The turn holds on the operator. */
     readonly openRequest: (input: {
@@ -126,21 +191,30 @@ export class TestEngineControl extends Context.Service<
     }) => Effect.Effect<void>;
     /**
      * Ends a running turn the way the provider would. Its open requests expire,
-     * and each steer it had not read becomes a follow-up turn that runs next.
+     * and each steer it had not taken is requeued as a follow-up turn.
+     * `continuation`, for a `failed` turn only, arms a usage-limit resume.
      */
     readonly finishTurn: (input: {
       readonly sessionId: SessionId;
       readonly turnId: TurnId;
       readonly outcome: TurnOutcome;
+      readonly continuation?: PendingContinuation;
+    }) => Effect.Effect<void>;
+    /** The engine runs a turn's pending continuation, as a turn of its own. */
+    readonly resumeContinuation: (input: {
+      readonly sessionId: SessionId;
+      readonly turnId: TurnId;
+    }) => Effect.Effect<TurnId>;
+    /** The engine clears a turn's pending continuation. */
+    readonly dropContinuation: (input: {
+      readonly sessionId: SessionId;
+      readonly turnId: TurnId;
     }) => Effect.Effect<void>;
     /**
-     * The engine or the harness wakes the session itself, as when background
-     * work finishes. The turn starts at once, or after the running one.
+     * Background work the bot started wakes the session. The turn starts at
+     * once, or after the running one.
      */
-    readonly startEngineTurn: (input: {
-      readonly sessionId: SessionId;
-      readonly cause: Exclude<TurnCause, { readonly _tag: "dispatch" }>;
-    }) => Effect.Effect<TurnId>;
+    readonly startEngineTurn: (sessionId: SessionId) => Effect.Effect<TurnId>;
     /** Forgets the session's event history, so a resume from any cursor gets a `replaced`. */
     readonly pruneHistory: (sessionId: SessionId) => Effect.Effect<void>;
     readonly dispatches: (sessionId: SessionId) => Effect.Effect<ReadonlyArray<ReceivedDispatch>>;
@@ -161,7 +235,12 @@ interface SteerRecord {
   readonly key: IdempotencyKey;
   /** Turns waiting when the steer was sent: a follow-up turn runs after these. */
   readonly queuedAhead: ReadonlyArray<TurnId>;
-  state: "unread" | "read" | "dropped" | "followed-up";
+  state: "unread" | "read" | "dropped" | "requeued";
+}
+
+interface ToolCallRecord {
+  readonly call: ToolCall;
+  state: "unrecorded" | "open" | "closed";
 }
 
 interface TurnRecord {
@@ -170,6 +249,7 @@ interface TurnRecord {
   startedAt: DateTime.Utc | null;
   readonly steps: Map<WorkStepId, WorkStep>;
   readonly steers: Array<SteerRecord>;
+  readonly toolCalls: Map<ToolCallId, ToolCallRecord>;
   readonly hostSpeech: Array<HostSpeech>;
   readonly closedRequests: Array<{
     readonly requestId: RequestId;
@@ -177,7 +257,11 @@ interface TurnRecord {
     readonly resolution: RequestResolution;
   }>;
   backgroundWork: boolean;
-  ended: { readonly outcome: TurnOutcome } | null;
+  ended: {
+    readonly outcome: TurnOutcome;
+    readonly at: DateTime.Utc;
+    continuation: PendingContinuation | null;
+  } | null;
 }
 
 type Subscriber = Queue.Enqueue<SessionEvent, SessionNotFound | Cause.Done>;
@@ -194,6 +278,8 @@ interface SessionRecord {
   readonly turns: Map<TurnId, TurnRecord>;
   running: TurnId | null;
   readonly waiting: Array<TurnId>;
+  /** Whether the queue is held, and by what. */
+  hold: "none" | "stop" | "engine";
   readonly requests: Map<RequestId, OpenRequest>;
   readonly dispatches: Map<IdempotencyKey, ReceivedDispatch>;
   readonly responses: Array<{ readonly requestId: RequestId; readonly response: RequestResponse }>;
@@ -201,12 +287,20 @@ interface SessionRecord {
   /** Each open stream, with the cursor of the last event it was given. */
   readonly subscribers: Map<Subscriber, { lastCursor: EventCursor }>;
   /** Set by `startEngineTurnDuringNextDispatch`. */
-  raceNextStart: Exclude<TurnCause, { readonly _tag: "dispatch" }> | null;
+  raceNextStart: boolean;
+  /** Set by `dispatchDuringNextStop`. */
+  dispatchDuringStop: { readonly key: IdempotencyKey; readonly text: string } | null;
+  /** Set by `failNextStart`. */
+  failNextStart: FailureClass | null;
 }
 
 type AppliedKey =
   | { readonly command: "openSession"; readonly sessionId: SessionId }
-  | { readonly command: "dispatch"; readonly sessionId: SessionId }
+  | {
+      readonly command: "dispatch";
+      readonly sessionId: SessionId;
+      readonly outcome: "applied" | "rejected";
+    }
   | { readonly command: "stop" | "respond" };
 
 const initialStatus: EngineStatus = {
@@ -222,6 +316,7 @@ const make = Effect.gen(function* () {
   const status = yield* SubscriptionRef.make(initialStatus);
   let reachable = true;
   let loseReply = false;
+  let rejectDispatch = false;
   // One counter for every session, as the real engine numbers its events.
   let sequence = 0;
   let nextId = 0;
@@ -245,7 +340,7 @@ const make = Effect.gen(function* () {
       if (!reachable) return Effect.fail(new EngineUnavailable());
       if (!loseReply) return effect;
       loseReply = false;
-      return effect.pipe(Effect.andThen(Effect.fail(new EngineIndeterminate())));
+      return effect.pipe(Effect.ignore, Effect.andThen(Effect.fail(new EngineIndeterminate())));
     });
 
   /** Fails the test: the caller broke the contract, which no engine would tolerate. */
@@ -292,17 +387,6 @@ const make = Effect.gen(function* () {
     deliver(session, event);
   };
 
-  const startTurn = (session: SessionRecord, turn: TurnRecord, at: DateTime.Utc) => {
-    turn.startedAt = at;
-    session.running = turn.turnId;
-    emit(session, at, (stamp) => ({
-      _tag: "turn-started",
-      ...stamp,
-      turnId: turn.turnId,
-      cause: turn.cause,
-    }));
-  };
-
   const newTurn = (session: SessionRecord, cause: TurnCause): TurnRecord => {
     const turn: TurnRecord = {
       turnId: TurnId.make(newId("turn")),
@@ -310,20 +394,13 @@ const make = Effect.gen(function* () {
       startedAt: null,
       steps: new Map(),
       steers: [],
+      toolCalls: new Map(),
       hostSpeech: [],
       closedRequests: [],
       backgroundWork: false,
       ended: null,
     };
     session.turns.set(turn.turnId, turn);
-    return turn;
-  };
-
-  /** A new turn that starts at once, or waits at the end of the queue. */
-  const addTurn = (session: SessionRecord, cause: TurnCause, at: DateTime.Utc) => {
-    const turn = newTurn(session, cause);
-    if (session.running === null) startTurn(session, turn, at);
-    else session.waiting.push(turn.turnId);
     return turn;
   };
 
@@ -346,10 +423,42 @@ const make = Effect.gen(function* () {
     }));
   };
 
+  const dropContinuation = (session: SessionRecord, turn: TurnRecord, at: DateTime.Utc) => {
+    if (turn.ended === null || turn.ended.continuation === null) return;
+    turn.ended.continuation = null;
+    emit(session, at, (stamp) => ({
+      _tag: "continuation-dropped",
+      ...stamp,
+      turnId: turn.turnId,
+    }));
+  };
+
+  /** Starts the next waiting turn, unless one runs or the queue is held. */
+  const startNext = (session: SessionRecord, at: DateTime.Utc) => {
+    if (session.running !== null || session.hold !== "none") return;
+    const nextId = session.waiting.shift();
+    const next = nextId === undefined ? undefined : session.turns.get(nextId);
+    if (next !== undefined) startTurn(session, next, at);
+  };
+
   /**
-   * Ends a turn. Its open requests expire. A steer it had not read is dropped
-   * when Stop ended it, and otherwise becomes a follow-up turn, placed after
-   * the turns that were already waiting when the steer was sent.
+   * A new turn, at the end of the queue; it starts at once if nothing runs and
+   * the queue is not held. The newer turn takes the place of any pending
+   * continuation, which no longer resumes the session's latest turn.
+   */
+  const addTurn = (session: SessionRecord, cause: TurnCause, at: DateTime.Utc) => {
+    for (const turn of session.turns.values()) dropContinuation(session, turn, at);
+    const turn = newTurn(session, cause);
+    session.waiting.push(turn.turnId);
+    startNext(session, at);
+    return turn;
+  };
+
+  /**
+   * Ends a turn. Its open requests expire and its tool calls close. Each steer
+   * settles after its `turn-finished`: taken (`steered`), dropped when Stop
+   * ended the turn, or otherwise requeued as a follow-up turn placed after the
+   * turns that were already waiting when the steer was sent.
    */
   const endTurn = (
     session: SessionRecord,
@@ -357,22 +466,39 @@ const make = Effect.gen(function* () {
     outcome: TurnOutcome,
     at: DateTime.Utc,
     endedBy: "stop" | "other",
+    continuation: PendingContinuation | null = null,
   ) => {
     for (const open of session.requests.values()) {
       if (open.turnId === turn.turnId) closeRequest(session, open, "expired", at);
     }
+    for (const [callId, record] of turn.toolCalls) {
+      if (record.state === "unrecorded") turn.toolCalls.delete(callId);
+      else record.state = "closed";
+    }
+    const waitingIndex = session.waiting.indexOf(turn.turnId);
+    if (waitingIndex >= 0) session.waiting.splice(waitingIndex, 1);
+    const settlements: Array<(stamp: { cursor: EventCursor; at: DateTime.Utc }) => SessionEvent> =
+      [];
     for (const steer of turn.steers) {
-      if (steer.state !== "unread") continue;
-      if (endedBy === "stop") {
+      if (steer.state === "read") {
+        settlements.push((stamp) => ({
+          _tag: "steered",
+          ...stamp,
+          key: steer.key,
+          turnId: turn.turnId,
+        }));
+      } else if (steer.state !== "unread") {
+        continue;
+      } else if (endedBy === "stop") {
         steer.state = "dropped";
-        emit(session, at, (stamp) => ({
+        settlements.push((stamp) => ({
           _tag: "steer-dropped",
           ...stamp,
           key: steer.key,
           turnId: turn.turnId,
         }));
       } else {
-        steer.state = "followed-up";
+        steer.state = "requeued";
         const followUp = newTurn(session, { _tag: "dispatch", key: steer.key });
         const place = session.waiting.filter((waiting) => steer.queuedAhead.includes(waiting));
         const last = place.at(-1);
@@ -381,26 +507,48 @@ const make = Effect.gen(function* () {
           0,
           followUp.turnId,
         );
+        settlements.push((stamp) => ({
+          _tag: "steer-requeued",
+          ...stamp,
+          key: steer.key,
+          turnId: turn.turnId,
+          followUpTurnId: followUp.turnId,
+        }));
       }
     }
-    const waitingIndex = session.waiting.indexOf(turn.turnId);
-    if (waitingIndex >= 0) session.waiting.splice(waitingIndex, 1);
-    turn.ended = { outcome };
+    turn.ended = { outcome, at, continuation };
     emit(session, at, (stamp) => ({
       _tag: "turn-finished",
       ...stamp,
       turnId: turn.turnId,
       outcome,
       backgroundWork: turn.backgroundWork,
+      continuation,
     }));
+    for (const settlement of settlements) emit(session, at, settlement);
     if (session.running === turn.turnId) {
       session.running = null;
-      // The adapter resumes a queue the engine held after a provider error,
-      // so a waiting turn always follows here.
-      const nextId = session.waiting.shift();
-      const next = nextId === undefined ? undefined : session.turns.get(nextId);
-      if (next !== undefined) startTurn(session, next, at);
+      // The engine holds its queue after a provider error and the adapter
+      // resumes it, so a waiting turn follows here unless a Stop holds it.
+      startNext(session, at);
     }
+  };
+
+  const startTurn = (session: SessionRecord, turn: TurnRecord, at: DateTime.Utc): void => {
+    session.running = turn.turnId;
+    if (session.failNextStart !== null) {
+      const failure = session.failNextStart;
+      session.failNextStart = null;
+      endTurn(session, turn, { _tag: "failed", failure, retryAt: null }, at, "other");
+      return;
+    }
+    turn.startedAt = at;
+    emit(session, at, (stamp) => ({
+      _tag: "turn-started",
+      ...stamp,
+      turnId: turn.turnId,
+      cause: turn.cause,
+    }));
   };
 
   const runningTurn = (session: SessionRecord, turnId: TurnId) => {
@@ -411,20 +559,62 @@ const make = Effect.gen(function* () {
   };
 
   /**
-   * Stops everything in the session: waiting turns are cancelled, the running
-   * turn's unread steers are dropped, and it ends with its background work.
+   * A `start` the engine applies. A user's message releases a held queue
+   * (**Read** at `db51b67`), so it is `queued` behind every turn left waiting.
    */
-  const stopAll = (session: SessionRecord, at: DateTime.Utc) => {
-    // Emptied first, so the running turn's end below starts none of them.
-    for (const turnId of session.waiting.splice(0)) {
-      const turn = session.turns.get(turnId);
-      if (turn !== undefined) endTurn(session, turn, { _tag: "cancelled" }, at, "stop");
+  const applyStart = (
+    session: SessionRecord,
+    key: IdempotencyKey,
+    at: DateTime.Utc,
+  ): DispatchDisposition => {
+    if (session.raceNextStart) {
+      session.raceNextStart = false;
+      addTurn(session, { _tag: "background" }, at);
     }
+    session.hold = "none";
+    const turn = addTurn(session, { _tag: "dispatch", key }, at);
+    return session.waiting.includes(turn.turnId)
+      ? { _tag: "queued", turnId: turn.turnId }
+      : { _tag: "started", turnId: turn.turnId };
+  };
+
+  /**
+   * Stop as the adapter runs it: the engine's own stop ends the running turn
+   * with its background work and holds the queue; then each turn still waiting
+   * is cancelled. A dispatch armed by `dispatchDuringNextStop` lands between
+   * the two.
+   */
+  const stopSession = (session: SessionRecord, at: DateTime.Utc) => {
+    session.hold = "stop";
     const running = session.running === null ? undefined : session.turns.get(session.running);
     if (running !== undefined) {
       running.backgroundWork = false;
       endTurn(session, running, { _tag: "interrupted" }, at, "stop");
     }
+    const slipped = session.dispatchDuringStop;
+    if (slipped !== null) {
+      session.dispatchDuringStop = null;
+      const delivery: Delivery = { _tag: "start", freshContext: false };
+      keys.set(slipped.key, { command: "dispatch", sessionId: session.id, outcome: "applied" });
+      session.dispatches.set(slipped.key, {
+        key: slipped.key,
+        text: slipped.text,
+        attachments: [],
+        delivery,
+        disposition: applyStart(session, slipped.key, at),
+      });
+    }
+    // Taken off the queue first: cancelling one turn starts no other.
+    for (const turnId of session.waiting.splice(0)) {
+      const turn = session.turns.get(turnId);
+      if (turn !== undefined) endTurn(session, turn, { _tag: "cancelled" }, at, "stop");
+    }
+  };
+
+  const retire = (session: SessionRecord, at: DateTime.Utc) => {
+    stopSession(session, at);
+    for (const turn of session.turns.values()) dropContinuation(session, turn, at);
+    session.retired = true;
   };
 
   /**
@@ -448,25 +638,33 @@ const make = Effect.gen(function* () {
           cause: turn.cause,
           startedAt: turn.startedAt,
           steps,
+          toolCalls: [...turn.toolCalls.values()].flatMap((record) =>
+            record.state === "open" ? [record.call] : [],
+          ),
         });
         listed.push(turn);
       } else if (after !== null) {
         endedTurns.push({
           turnId: turn.turnId,
           cause: turn.cause,
+          startedAt: turn.startedAt,
+          finishedAt: turn.ended.at,
           outcome: turn.ended.outcome,
           backgroundWork: turn.backgroundWork,
+          continuation: turn.ended.continuation,
           steps,
         });
         listed.push(turn);
       }
     }
     const steers: Array<SteerSettlement> = listed.flatMap((turn) =>
-      turn.steers.flatMap((steer) =>
-        steer.state === "read" || steer.state === "dropped"
-          ? [{ key: steer.key, turnId: turn.turnId, settlement: steer.state }]
-          : [],
-      ),
+      turn.ended === null
+        ? []
+        : turn.steers.flatMap((steer) =>
+            steer.state === "read" || steer.state === "dropped"
+              ? [{ key: steer.key, turnId: turn.turnId, settlement: steer.state }]
+              : [],
+          ),
     );
     return {
       _tag: "replaced",
@@ -487,6 +685,11 @@ const make = Effect.gen(function* () {
     const value = Number(cursor);
     return Number.isSafeInteger(value) && value >= 0 ? value : null;
   };
+
+  const sameDelivery = (a: Delivery, b: Delivery) =>
+    a._tag === "start"
+      ? b._tag === "start" && a.freshContext === b.freshContext
+      : b._tag === "steer" && a.turnId === b.turnId;
 
   const engine = Engine.of({
     status: SubscriptionRef.changes(status),
@@ -510,9 +713,7 @@ const make = Effect.gen(function* () {
           const at = yield* DateTime.now;
           for (const [path, id] of projects) if (id === projectId) projects.delete(path);
           for (const session of sessions.values()) {
-            if (session.projectId !== projectId || session.retired) continue;
-            stopAll(session, at);
-            session.retired = true;
+            if (session.projectId === projectId && !session.retired) retire(session, at);
           }
         }),
       ),
@@ -538,12 +739,15 @@ const make = Effect.gen(function* () {
             turns: new Map(),
             running: null,
             waiting: [],
+            hold: "none",
             requests: new Map(),
             dispatches: new Map(),
             responses: [],
             secretAnswers: [],
             subscribers: new Map(),
-            raceNextStart: null,
+            raceNextStart: false,
+            dispatchDuringStop: null,
+            failNextStart: null,
           });
           return sessionId;
         }),
@@ -563,52 +767,61 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const session = sessions.get(sessionId);
           if (session === undefined || session.retired) return;
-          stopAll(session, yield* DateTime.now);
-          session.retired = true;
+          retire(session, yield* DateTime.now);
         }),
       ),
 
     dispatch: ({ key, sessionId, text, attachments, delivery }) =>
       command(
         Effect.gen(function* () {
-          const previous = yield* priorUse(key, "dispatch");
-          if (previous?.command === "dispatch") {
-            if (previous.sessionId !== sessionId) {
-              return yield* misuse(`dispatch key ${key} sent to a second session`);
-            }
-            const first = sessions.get(sessionId)?.dispatches.get(key);
-            if (first !== undefined) return first.disposition;
-          }
-          const session = yield* liveSession(sessionId);
           if (attachments.some((attachment) => !staged.has(attachment.stagedId))) {
             return yield* misuse("an attachment that was never staged");
           }
           if (attachmentLimitViolation(attachments) !== undefined) {
             return yield* misuse("attachments over the engine's limits");
           }
-          const at = yield* DateTime.now;
-          let disposition: DispatchDisposition;
+          // The engine answers a key it holds a receipt for before anything else.
+          const previous = yield* priorUse(key, "dispatch");
+          if (previous?.command === "dispatch") {
+            if (previous.sessionId !== sessionId) {
+              return yield* misuse(`dispatch key ${key} sent to a second session`);
+            }
+            if (previous.outcome === "rejected") return yield* new DispatchRejected({ key });
+            const first = sessions.get(sessionId)?.dispatches.get(key);
+            if (
+              first !== undefined &&
+              (first.text !== text || !sameDelivery(first.delivery, delivery))
+            ) {
+              return yield* misuse(`dispatch key ${key} repeated with another input`);
+            }
+            return { _tag: "applied-earlier" } as const;
+          }
+          const session = yield* liveSession(sessionId);
           if (delivery._tag === "start") {
+            // The adapter's check, before anything is sent.
             const busyWith = session.running ?? session.waiting[0];
             if (busyWith !== undefined) {
               return yield* new SessionBusy({ sessionId, turnId: busyWith });
             }
-            // The adapter's check passed; a turn may still begin before the
-            // engine applies the start.
-            if (session.raceNextStart !== null) {
-              addTurn(session, session.raceNextStart, at);
-              session.raceNextStart = null;
-            }
-            const turn = addTurn(session, { _tag: "dispatch", key }, at);
-            disposition =
-              turn.startedAt === null
-                ? { _tag: "queued", turnId: turn.turnId }
-                : { _tag: "started", turnId: turn.turnId };
+          }
+          if (rejectDispatch) {
+            rejectDispatch = false;
+            keys.set(key, { command: "dispatch", sessionId, outcome: "rejected" });
+            return yield* new DispatchRejected({ key });
+          }
+          const at = yield* DateTime.now;
+          let disposition: DispatchDisposition;
+          if (delivery._tag === "start") {
+            disposition = applyStart(session, key, at);
           } else {
-            const target =
-              session.running === delivery.turnId ? session.turns.get(delivery.turnId) : undefined;
-            if (target !== undefined) {
-              target.steers.push({ key, queuedAhead: [...session.waiting], state: "unread" });
+            const target = session.turns.get(delivery.turnId);
+            if (target !== undefined && target.ended === null) {
+              // A turn that has not started takes the steer once it does.
+              target.steers.push({
+                key,
+                queuedAhead: session.waiting.filter((waiting) => waiting !== target.turnId),
+                state: "unread",
+              });
               disposition = { _tag: "steered", turnId: delivery.turnId };
             } else {
               // The target turn already ended: the engine keeps the message as a turn of its own.
@@ -618,7 +831,7 @@ const make = Effect.gen(function* () {
               };
             }
           }
-          keys.set(key, { command: "dispatch", sessionId });
+          keys.set(key, { command: "dispatch", sessionId, outcome: "applied" });
           session.dispatches.set(key, { key, text, attachments, delivery, disposition });
           return disposition;
         }),
@@ -633,25 +846,13 @@ const make = Effect.gen(function* () {
         }),
       ),
 
-    lookupDispatch: ({ sessionId, key }) =>
-      command(
-        Effect.sync(() => {
-          const session = sessions.get(sessionId);
-          if (session === undefined) return { _tag: "unknown" } as const;
-          const received = session.dispatches.get(key);
-          return received === undefined
-            ? ({ _tag: "not-applied" } as const)
-            : ({ _tag: "applied", disposition: received.disposition } as const);
-        }),
-      ),
-
     stop: ({ key, sessionId }) =>
       command(
         Effect.gen(function* () {
           if ((yield* priorUse(key, "stop")) !== undefined) return;
           const session = yield* liveSession(sessionId);
           keys.set(key, { command: "stop" });
-          stopAll(session, yield* DateTime.now);
+          stopSession(session, yield* DateTime.now);
         }),
       ),
 
@@ -734,6 +935,20 @@ const make = Effect.gen(function* () {
               token,
             });
           }
+          // Tool calls the engine records late appear only after this marker.
+          const running = session.running === null ? undefined : session.turns.get(session.running);
+          if (running === undefined) return;
+          for (const record of running.toolCalls.values()) {
+            if (record.state !== "unrecorded") continue;
+            record.state = "open";
+            emit(session, at, (stamp) => ({
+              _tag: "tool-call",
+              ...stamp,
+              turnId: running.turnId,
+              call: record.call,
+              state: "open",
+            }));
+          }
         }),
       ),
   });
@@ -752,10 +967,35 @@ const make = Effect.gen(function* () {
       loseReply = true;
     }),
 
-    startEngineTurnDuringNextDispatch: ({ sessionId, cause }) =>
+    rejectNextDispatch: Effect.sync(() => {
+      rejectDispatch = true;
+    }),
+
+    startEngineTurnDuringNextDispatch: (sessionId) =>
       Effect.gen(function* () {
         const session = yield* existingSession(sessionId);
-        session.raceNextStart = cause;
+        session.raceNextStart = true;
+      }),
+
+    dispatchDuringNextStop: ({ sessionId, key, text }) =>
+      Effect.gen(function* () {
+        const session = yield* existingSession(sessionId);
+        session.dispatchDuringStop = { key, text };
+      }),
+
+    holdQueue: ({ sessionId, heldAgainOnResume }) =>
+      Effect.gen(function* () {
+        const session = yield* existingSession(sessionId);
+        if (session.hold === "stop") return;
+        // The adapter resumes the hold once; the engine may hold it again.
+        session.hold = heldAgainOnResume ? "engine" : "none";
+        startNext(session, yield* DateTime.now);
+      }),
+
+    failNextStart: ({ sessionId, failure }) =>
+      Effect.gen(function* () {
+        const session = yield* existingSession(sessionId);
+        session.failNextStart = failure;
       }),
 
     step: ({ sessionId, turnId, step }) =>
@@ -770,12 +1010,47 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const session = yield* existingSession(sessionId);
         const turn = yield* runningTurn(session, turnId);
-        const at = yield* DateTime.now;
-        for (const steer of turn.steers) {
-          if (steer.state !== "unread") continue;
-          steer.state = "read";
-          emit(session, at, (stamp) => ({ _tag: "steered", ...stamp, key: steer.key, turnId }));
+        for (const steer of turn.steers) if (steer.state === "unread") steer.state = "read";
+      }),
+
+    toolCall: ({ sessionId, turnId, tool, input, recorded }) =>
+      Effect.gen(function* () {
+        const session = yield* existingSession(sessionId);
+        const turn = yield* runningTurn(session, turnId);
+        const call: ToolCall = {
+          callId: ToolCallId.make(newId("call")),
+          tool,
+          inputDigest: yield* toolInputDigest(input),
+        };
+        if (recorded === "now") {
+          turn.toolCalls.set(call.callId, { call, state: "open" });
+          emit(session, yield* DateTime.now, (stamp) => ({
+            _tag: "tool-call",
+            ...stamp,
+            turnId,
+            call,
+            state: "open",
+          }));
+        } else {
+          turn.toolCalls.set(call.callId, { call, state: "unrecorded" });
         }
+        return call.callId;
+      }),
+
+    closeToolCall: ({ sessionId, turnId, callId }) =>
+      Effect.gen(function* () {
+        const session = yield* existingSession(sessionId);
+        const turn = yield* runningTurn(session, turnId);
+        const record = turn.toolCalls.get(callId);
+        if (record?.state !== "open") return yield* misuse(`tool call ${callId} is not open`);
+        record.state = "closed";
+        emit(session, yield* DateTime.now, (stamp) => ({
+          _tag: "tool-call",
+          ...stamp,
+          turnId,
+          call: record.call,
+          state: "closed",
+        }));
       }),
 
     openRequest: ({ sessionId, turnId, request }) =>
@@ -823,17 +1098,41 @@ const make = Effect.gen(function* () {
         turn.backgroundWork = true;
       }),
 
-    finishTurn: ({ sessionId, turnId, outcome }) =>
+    finishTurn: ({ sessionId, turnId, outcome, continuation }) =>
       Effect.gen(function* () {
         const session = yield* existingSession(sessionId);
         const turn = yield* runningTurn(session, turnId);
-        endTurn(session, turn, outcome, yield* DateTime.now, "other");
+        if (continuation !== undefined && outcome._tag !== "failed") {
+          return yield* misuse("a continuation for a turn that did not fail");
+        }
+        endTurn(session, turn, outcome, yield* DateTime.now, "other", continuation ?? null);
       }),
 
-    startEngineTurn: ({ sessionId, cause }) =>
+    resumeContinuation: ({ sessionId, turnId }) =>
       Effect.gen(function* () {
         const session = yield* existingSession(sessionId);
-        return addTurn(session, cause, yield* DateTime.now).turnId;
+        const turn = session.turns.get(turnId);
+        if (turn?.ended == null || turn.ended.continuation === null) {
+          return yield* misuse(`turn ${turnId} has no pending continuation`);
+        }
+        turn.ended.continuation = null;
+        return addTurn(session, { _tag: "continuation", turnId }, yield* DateTime.now).turnId;
+      }),
+
+    dropContinuation: ({ sessionId, turnId }) =>
+      Effect.gen(function* () {
+        const session = yield* existingSession(sessionId);
+        const turn = session.turns.get(turnId);
+        if (turn?.ended == null || turn.ended.continuation === null) {
+          return yield* misuse(`turn ${turnId} has no pending continuation`);
+        }
+        dropContinuation(session, turn, yield* DateTime.now);
+      }),
+
+    startEngineTurn: (sessionId) =>
+      Effect.gen(function* () {
+        const session = yield* existingSession(sessionId);
+        return addTurn(session, { _tag: "background" }, yield* DateTime.now).turnId;
       }),
 
     pruneHistory: (sessionId) =>

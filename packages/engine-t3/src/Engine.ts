@@ -14,6 +14,7 @@ import type * as Option from "effect/Option";
 import type * as Redacted from "effect/Redacted";
 import type * as Stream from "effect/Stream";
 import type {
+  DispatchRejected,
   EngineDown,
   EngineIncompatible,
   ModelUnavailable,
@@ -53,18 +54,16 @@ export type Delivery =
    */
   | { readonly _tag: "start"; readonly freshContext: boolean }
   /**
-   * Add the message to the running turn `turnId`, so it can change course. If
-   * that turn is ending or cannot take it, the engine makes the message a turn
-   * of its own instead: see `DispatchDisposition`.
+   * Add the message to the open turn `turnId`, so it can change course. If that
+   * turn is ending, or its provider can take no steer at all, the engine makes
+   * the message a turn of its own instead: see `DispatchDisposition`.
    */
   | { readonly _tag: "steer"; readonly turnId: TurnId };
 
 /**
  * How the engine accepted a dispatch. It records acceptance only: delivery is
  * the `turn-started` event whose cause is `dispatch` with the dispatch's key,
- * or, for `steered`, the `steered` event. The same key always returns the same
- * disposition, including from `lookupDispatch`, even after a steer became a
- * follow-up turn.
+ * or, for `steered`, the `steered` event.
  */
 export type DispatchDisposition =
   /** A `start` began turn `turnId`. */
@@ -76,33 +75,34 @@ export type DispatchDisposition =
    */
   | { readonly _tag: "queued"; readonly turnId: TurnId }
   /**
-   * A `steer` was added to turn `turnId`. The agent reads it (`steered`), or
-   * Stop drops it unread (`steer-dropped`), or the turn ends any other way with
-   * the steer unread and the engine starts it as a follow-up turn whose cause is
-   * this dispatch. **Read** at `db51b67`.
+   * A `steer` was taken for turn `turnId`. How it settles is decided when that
+   * turn ends, and reported then: `steered` (the turn took it), `steer-dropped`
+   * (Stop ended the turn first) or `steer-requeued` (the turn ended any other
+   * way without taking it, and the engine queued it as a follow-up turn).
+   * **Read** at `db51b67`, `requeueUnreadSteers`.
+   *
+   * The same holds when the engine cannot steer `turnId` at once: the turn has
+   * not started its provider turn yet (the engine keeps the message aside and
+   * steers it in when the turn starts, or runs it as the follow-up turn if the
+   * turn ends first), or its provider steers only by interrupting the turn and
+   * restarting it with the message, which keeps `turnId` (one turn, several
+   * attempts). **Read** at `db51b67`.
    */
   | { readonly _tag: "steered"; readonly turnId: TurnId }
   /**
    * A `steer` became turn `turnId` of its own: the target turn was already
-   * ending, or its provider cannot steer. It starts at once if the session is
-   * idle, or after the running turn otherwise. **Read** at `db51b67`.
+   * ending, or its provider can neither steer nor restart. It starts at once if
+   * the session is idle, or after the running turn otherwise. **Read** at
+   * `db51b67`.
    */
-  | { readonly _tag: "new-turn"; readonly turnId: TurnId };
-
-/** Whether the engine applied a dispatch key, for reconciling after a crash or a lost reply. */
-export type DispatchLookup =
-  | { readonly _tag: "applied"; readonly disposition: DispatchDisposition }
+  | { readonly _tag: "new-turn"; readonly turnId: TurnId }
   /**
-   * The engine has the session and positively has no record of the key: sending
-   * it again cannot apply it twice. Only this answer proves a dispatch was not
-   * applied; `EngineIndeterminate` never does.
+   * The key was applied by an earlier submission whose reply was lost, and the
+   * engine does not say how it was accepted. The events report delivery as for
+   * any disposition: a turn whose cause is the key, or a steer settlement for
+   * it.
    */
-  | { readonly _tag: "not-applied" }
-  /**
-   * The engine cannot tell: the session is gone. The dispatch must not be sent
-   * into another session on this answer alone.
-   */
-  | { readonly _tag: "unknown" };
+  | { readonly _tag: "applied-earlier" };
 
 /** A file the message carries, staged first with `Engine.stageAttachment`. */
 export interface DispatchAttachment {
@@ -209,16 +209,20 @@ export interface EngineOptions {
  *   and `EngineIncompatible` mean nothing was sent. `EngineIndeterminate` means
  *   the command was sent and its reply lost: it may have been applied, and
  *   never counts as "not applied".
- * - Methods that take a `key` apply it once. Calling again with the same key
- *   returns the first result, even across engine and server restarts.
+ * - Methods that take a `key` apply it once, even across engine and server
+ *   restarts: calling again with the same key and input applies nothing new.
+ *   After `EngineIndeterminate`, that is how the caller learns what happened.
  * - Methods without a key are idempotent by nature, except where noted.
  * - It never returns engine identifiers other than the opaque ids in `ids.ts`.
  *
- * The engine holds its queue of waiting turns after an engine restart, a
- * provider error or a Stop (and waits without holding while a provider is at
- * its usage limit, resuming at the reset). The adapter resumes a held queue
- * whenever it holds a turn caused by a J3 Bots dispatch, except after a Stop,
- * which cancels those turns instead. The server never resumes a queue itself.
+ * The engine holds a session's queue of waiting turns after an engine restart,
+ * a provider error, a model or provider change while the replaced provider
+ * session still runs background work, and a Stop.
+ * The adapter resumes every held queue of a session it streams events for,
+ * once for each time the engine holds it: if the engine holds it again in
+ * answer to the resume, it stays held until the engine's next change of hold.
+ * It never resumes a hold a Stop made, nor any hold of a session while one of
+ * its `stop` calls has not returned. The server never resumes a queue itself.
  *
  * `@j3-bots/engine-t3/testing` has an in-memory implementation that keeps this
  * contract, for testing the server without an engine.
@@ -274,8 +278,8 @@ export class Engine extends Context.Service<
 
     /**
      * Takes a replaced session out of use, as a rotation does: stops what runs
-     * in it as `stop` does and archives it. Its history stays in the engine, so `lookupDispatch` still answers for
-     * it. Succeeds if it is already retired.
+     * in it as `stop` does and archives it. Its history stays in the engine.
+     * Succeeds if it is already retired.
      */
     readonly retireSession: (sessionId: SessionId) => Effect.Effect<void, EngineDown>;
 
@@ -284,8 +288,20 @@ export class Engine extends Context.Service<
      * receives, as if the user typed it: the wake envelope is the caller's, and
      * the caller stores it before this call so a retry sends the same text.
      *
-     * The result is acceptance only (see `DispatchDisposition`). After
-     * `EngineIndeterminate`, ask `lookupDispatch` before anything else.
+     * The result is acceptance only (see `DispatchDisposition`).
+     *
+     * After `EngineIndeterminate`, call again with the same key and the same
+     * input: the answer to the repeat is the answer for the key. The engine
+     * applies a key once and does not compare the input, so a different input
+     * is never applied. Name staged files that are still usable: the engine
+     * claims them before it checks the key, so stage them again once
+     * `usableUntil` has passed (a copy it claims for a repeat stays unused).
+     * **Read** at `db51b67`, `ThreadMessageIntake.dispatchCommand`.
+     *
+     * - `DispatchRejected`: the engine refused it; nothing was applied, and the
+     *   key is spent.
+     * - `SessionNotFound`: nothing was applied; the key is spent.
+     * - `SessionBusy`: nothing was sent.
      */
     readonly dispatch: (input: {
       readonly key: IdempotencyKey;
@@ -294,7 +310,10 @@ export class Engine extends Context.Service<
       /** Checked first with `attachmentLimitViolation`. */
       readonly attachments: ReadonlyArray<DispatchAttachment>;
       readonly delivery: Delivery;
-    }) => Effect.Effect<DispatchDisposition, EngineDown | SessionNotFound | SessionBusy>;
+    }) => Effect.Effect<
+      DispatchDisposition,
+      EngineDown | SessionNotFound | SessionBusy | DispatchRejected
+    >;
 
     /**
      * Uploads a file for a later dispatch. The engine mints the id; the caller
@@ -311,18 +330,20 @@ export class Engine extends Context.Service<
       readonly path: string;
     }) => Effect.Effect<StagedAttachment, EngineDown>;
 
-    /** Whether the engine applied a dispatch key to the session. */
-    readonly lookupDispatch: (input: {
-      readonly sessionId: SessionId;
-      readonly key: IdempotencyKey;
-    }) => Effect.Effect<DispatchLookup, EngineDown>;
-
     /**
      * The operator's Stop, for one session. Ends the running turn and the
      * background work the engine can reach (delegated tasks), cancels every turn
      * waiting in the engine's queue (they end `cancelled`; the engine's own stop
      * only holds them), and drops every steer the agent had not read
      * (`steer-dropped`). Open requests expire. Does nothing to an idle session.
+     *
+     * It takes several engine commands: the engine's own stop, which ends the
+     * running turn and holds the queue, then a cancel for each waiting turn. A
+     * message that reaches the session in between can release the hold and
+     * start a waiting turn the Stop then misses (**Read** at `db51b67`: a
+     * user's message releases held turns), so send the session no dispatch
+     * until `stop` has returned success. A command the engine refuses as moot
+     * (the turn already ended) counts as done.
      *
      * `key` is derived from the Stop command and the session, and stored with
      * the Stop's targets before this call. Wakes J3 Bots holds for the bot are
@@ -333,7 +354,11 @@ export class Engine extends Context.Service<
       readonly sessionId: SessionId;
     }) => Effect.Effect<void, EngineDown | SessionNotFound>;
 
-    /** Answers an approval or a question, which lets its turn continue. */
+    /**
+     * Answers an approval or a question, which lets its turn continue. Fails
+     * with `RequestClosed` when the request is no longer open, including when
+     * the engine refuses the answer for that reason.
+     */
     readonly respond: (input: {
       readonly key: IdempotencyKey;
       readonly sessionId: SessionId;
@@ -344,10 +369,13 @@ export class Engine extends Context.Service<
     /**
      * Answers a secret request. The value goes to the engine's secret store and
      * reaches the command that asked, never the model. Applied once by nature:
-     * the request closes, and answering again fails with `RequestClosed`. After
-     * `EngineIndeterminate`, a retry that fails with `RequestClosed` took effect
-     * if the request's `request-closed` resolution is the one this answer asked
-     * for (`provided` or `declined`); `expired` means it did not.
+     * the request closes, and answering again fails with `RequestClosed`.
+     *
+     * Success is the only proof that this call's answer was the one applied.
+     * After `EngineIndeterminate`, a retry that fails with `RequestClosed` says
+     * only that the request is closed: its resolution (from `request-closed`,
+     * after `synchronize`) is how it closed, which may be another submission's
+     * answer, a decline from elsewhere, or `expired`.
      */
     readonly respondSecret: (input: {
       readonly sessionId: SessionId;
@@ -378,8 +406,8 @@ export class Engine extends Context.Service<
      * stream of the session, after every event the engine had recorded for the
      * session when this was called. Once the server has applied that event, it
      * knows the session's state as of this call: the bot tool bridge uses it to
-     * find the turn a tool call came from. Choose the token, and start waiting
-     * for it, before calling.
+     * find the `tool-call` a tool request came from. Choose the token, and start
+     * waiting for it, before calling.
      */
     readonly synchronize: (input: {
       readonly sessionId: SessionId;
