@@ -507,7 +507,7 @@ export const layer = Layer.effect(
 
     /** A send that could only postpone its dispatch: its owner looks again at the new deadline. */
     const postponed = (dispatchId: DispatchRowId) =>
-      Effect.as(postpone(dispatchId), "scheduled" satisfies SendResult as SendResult);
+      postpone(dispatchId).pipe(Effect.as<SendResult>("scheduled"));
 
     /**
      * A defect is logged, and the dispatch goes through `then`, which counts
@@ -691,7 +691,7 @@ export const layer = Layer.effect(
     const sendOnce = (dispatchId: DispatchRowId, owner: SendOwner) =>
       Effect.gen(function* () {
         const found = yield* sessionOf(dispatchId).pipe(Effect.orDie);
-        if (Option.isNone(found)) return "none" satisfies SendResult as SendResult;
+        if (Option.isNone(found)) return "none";
         return yield* gate.run(found.value.session_id)(sendInGate(dispatchId, owner));
       }).pipe(
         Effect.catchCauseIf(

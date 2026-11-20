@@ -299,10 +299,10 @@ export const layer = Layer.effect(
     /** What an engine call's failure means for one session's Stop work. */
     const downProgress = {
       // Nothing was sent: the engine cannot take commands, and the pass ends.
-      EngineUnavailable: () => Effect.succeed("unavailable" satisfies Progress as Progress),
-      EngineIncompatible: () => Effect.succeed("unavailable" satisfies Progress as Progress),
+      EngineUnavailable: () => Effect.succeed<Progress>("unavailable"),
+      EngineIncompatible: () => Effect.succeed<Progress>("unavailable"),
       // No answer: this session is tried again on a later pass.
-      EngineIndeterminate: () => Effect.succeed("deferred" satisfies Progress as Progress),
+      EngineIndeterminate: () => Effect.succeed<Progress>("deferred"),
     };
 
     /**
@@ -318,19 +318,15 @@ export const layer = Layer.effect(
           Effect.andThen(engine.stop({ key: round.engine_key, sessionId: engineSessionId })),
           // Acknowledged, or found moot: either way it gets its grace.
           Effect.andThen(transaction(targets.acknowledge(round)).pipe(Effect.orDie)),
-          Effect.as("done" satisfies Progress as Progress),
+          Effect.as<Progress>("done"),
           Effect.catchTags({
             // The engine has no such session: nothing runs there.
             SessionNotFound: () =>
-              transaction(sessionLost(round.session_id)).pipe(
-                Effect.as("done" satisfies Progress as Progress),
-              ),
+              transaction(sessionLost(round.session_id)).pipe(Effect.as<Progress>("done")),
             // Refused while its work can still run, which spends the key: a
             // fresh round goes out once its backoff passes.
             StopRejected: () =>
-              transaction(targets.rejectRound(round)).pipe(
-                Effect.as("deferred" satisfies Progress as Progress),
-              ),
+              transaction(targets.rejectRound(round)).pipe(Effect.as<Progress>("deferred")),
             ...downProgress,
           }),
         ),
@@ -517,9 +513,9 @@ export const layer = Layer.effect(
           (cause) =>
             Effect.logError("A Stop round failed; it is tried again later", cause).pipe(
               Effect.andThen(retryLater(sessionId)),
-              Effect.map((at) => {
+              Effect.map((at): Progress => {
                 outcome.until(at);
-                return "done" satisfies Progress as Progress;
+                return "done";
               }),
             ),
         ),

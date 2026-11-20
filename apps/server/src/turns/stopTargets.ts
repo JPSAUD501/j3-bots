@@ -317,17 +317,17 @@ export const stopTargets = (sql: SqlClient.SqlClient) => {
         readonly seq: DispatchSeq;
       },
       ending: Ending,
-    ) {
+    ): Effect.fn.Return<WakesAfter> {
       if (yield* covers(dispatch.bot_id, audienceOf(dispatch), dispatch.seq)) {
-        return { _tag: "cancelled" } satisfies WakesAfter as WakesAfter;
+        return { _tag: "cancelled" };
       }
       switch (ending._tag) {
         case "unsent":
-          return { _tag: "pending" } satisfies WakesAfter as WakesAfter;
+          return { _tag: "pending" };
         case "dropped":
-          return { _tag: "failed", reason: "stopped" } satisfies WakesAfter as WakesAfter;
+          return { _tag: "failed", reason: "stopped" };
         case "failed":
-          return { _tag: "failed", reason: ending.reason } satisfies WakesAfter as WakesAfter;
+          return { _tag: "failed", reason: ending.reason };
       }
     }),
   };

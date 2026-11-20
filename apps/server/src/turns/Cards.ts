@@ -307,26 +307,26 @@ export const layer = Layer.effect(
     type Sent = "done" | "unavailable";
 
     /** The engine took the answer, or the request is closed: nothing more to send. */
-    const taken = Effect.fn("Cards.taken")(function* (entryId: EntryId) {
+    const taken = Effect.fn("Cards.taken")(function* (entryId: EntryId): Effect.fn.Return<Sent> {
       yield* sql`
         UPDATE engine_requests SET response_sent_at = ${timeText(yield* DateTime.now)},
           response_retry_at = NULL
         WHERE entry_id = ${entryId}
       `.pipe(Effect.orDie);
-      return "done" satisfies Sent as Sent;
+      return "done";
     });
 
     /** The answer waits until `next` before it is sent again. */
     const later = Effect.fn("Cards.later")(function* (
       pending: typeof PendingResponse.Type,
       next: DateTime.Utc,
-    ) {
+    ): Effect.fn.Return<Sent> {
       yield* sql`
         UPDATE engine_requests SET response_failures = ${pending.response_failures + 1},
           response_retry_at = ${timeText(next)}
         WHERE entry_id = ${pending.entry_id}
       `.pipe(Effect.orDie);
-      return "done" satisfies Sent as Sent;
+      return "done";
     });
 
     /**
@@ -356,12 +356,10 @@ export const layer = Layer.effect(
           Effect.catchTags({
             RequestClosed: () => taken(pending.entry_id),
             SessionNotFound: () =>
-              transaction(sessionLost(pending.session_id)).pipe(
-                Effect.as("done" satisfies Sent as Sent),
-              ),
+              transaction(sessionLost(pending.session_id)).pipe(Effect.as<Sent>("done")),
             EngineIndeterminate: () => unanswered(pending),
-            EngineUnavailable: () => Effect.succeed("unavailable" satisfies Sent as Sent),
-            EngineIncompatible: () => Effect.succeed("unavailable" satisfies Sent as Sent),
+            EngineUnavailable: () => Effect.succeed<Sent>("unavailable"),
+            EngineIncompatible: () => Effect.succeed<Sent>("unavailable"),
           }),
         );
 

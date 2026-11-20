@@ -107,20 +107,23 @@ export const layer = Layer.effect(
     });
 
     const lost = (sessionId: SessionRowId) =>
-      transaction(sessionLost(sessionId)).pipe(Effect.as("done" satisfies Resume as Resume));
+      transaction(sessionLost(sessionId)).pipe(Effect.as<Resume>("done"));
 
     /**
      * The hold waits until `next` before its resume is sent again: its reply
      * was lost, or the resume failed unexpectedly. Recorded only while it is
      * still the session's current hold.
      */
-    const later = Effect.fn("HeldQueues.later")(function* (hold: Due, next: DateTime.Utc) {
+    const later = Effect.fn("HeldQueues.later")(function* (
+      hold: Due,
+      next: DateTime.Utc,
+    ): Effect.fn.Return<Resume> {
       yield* sql`
         UPDATE sessions SET queue_resume_failures = ${hold.queue_resume_failures + 1},
           queue_resume_at = ${timeText(next)}
         WHERE id = ${hold.id} AND queue_held_cursor = ${hold.queue_held_cursor}
       `.pipe(Effect.orDie);
-      return "done" satisfies Resume as Resume;
+      return "done";
     });
 
     /** The reply was lost: the same hold is resumed again with backoff, which the engine applies once. */
@@ -152,12 +155,12 @@ export const layer = Layer.effect(
               WHERE id = ${sessionId} AND queue_held_cursor = ${hold.queue_held_cursor}
             `.pipe(Effect.orDie),
           ),
-          Effect.as("done" satisfies Resume as Resume),
+          Effect.as<Resume>("done"),
           Effect.catchTags({
             SessionNotFound: () => lost(sessionId),
             EngineIndeterminate: () => unanswered(hold),
-            EngineUnavailable: () => Effect.succeed("unavailable" satisfies Resume as Resume),
-            EngineIncompatible: () => Effect.succeed("unavailable" satisfies Resume as Resume),
+            EngineUnavailable: () => Effect.succeed<Resume>("unavailable"),
+            EngineIncompatible: () => Effect.succeed<Resume>("unavailable"),
           }),
         );
     });
@@ -166,9 +169,11 @@ export const layer = Layer.effect(
     type Step = "done" | "deferred" | "unavailable";
 
     /** Caught up, then resumed in the gate. */
-    const resumeOne = Effect.fn("HeldQueues.resumeOne")(function* (hold: Due) {
+    const resumeOne = Effect.fn("HeldQueues.resumeOne")(function* (
+      hold: Due,
+    ): Effect.fn.Return<Step> {
       yield* observer.watch(hold.id);
-      if (!(yield* observer.ready(hold.id))) return "deferred" satisfies Step as Step;
+      if (!(yield* observer.ready(hold.id))) return "deferred";
       // Caught up first: a replacement or a replayed hold is applied before
       // the hold is read in the gate. A catch-up that could not reach the
       // engine is this session's alone: the pass goes on with the others.
@@ -183,7 +188,7 @@ export const layer = Layer.effect(
         }),
       );
       if (caughtUp === "unavailable" || caughtUp === "deferred") return caughtUp;
-      if (caughtUp === "lost") return "done" satisfies Step as Step;
+      if (caughtUp === "lost") return "done";
       return yield* gate.run(hold.id)(resumeInGate(hold.id));
     });
 
