@@ -28,6 +28,28 @@ export const RequestId = opaque.pipe(Schema.brand("RequestId"));
 export type RequestId = typeof RequestId.Type;
 
 /**
+ * A file staged in the engine for a dispatch, as `Engine.stageAttachment`
+ * returned it. The engine mints this id itself; store it with the dispatch so a
+ * retry sends the same file without uploading it again.
+ */
+export const EngineAttachmentId = opaque.pipe(Schema.brand("EngineAttachmentId"));
+export type EngineAttachmentId = typeof EngineAttachmentId.Type;
+
+/**
+ * One use of the host's own speech tool in a turn. Stable: a `replaced` may list
+ * speech the server already applied, and this is how it tells.
+ */
+export const HostSpeechId = opaque.pipe(Schema.brand("HostSpeechId"));
+export type HostSpeechId = typeof HostSpeechId.Type;
+
+/**
+ * The caller's name for one `Engine.synchronize` call, echoed by the
+ * `synchronized` event it produces.
+ */
+export const SyncToken = opaque.pipe(Schema.brand("SyncToken"));
+export type SyncToken = typeof SyncToken.Type;
+
+/**
  * A position in one session's event stream. Store the cursor of the last event
  * applied, and pass it back to resume after a restart.
  */
@@ -38,7 +60,8 @@ export type EventCursor = typeof EventCursor.Type;
  * Makes an engine command safe to repeat. The engine applies a key once; sending
  * it again returns the first outcome. Use a durable id the server already owns
  * for the intent, written before the command is sent: the session's own id for
- * `openSession`, the dispatch id for `dispatch`. Every engine identifier the
+ * `openSession`, the dispatch id for `dispatch`, a key derived from the Stop
+ * command and the session for `stop`. Every engine identifier the
  * adapter sends for the command (the command id, the message id, the thread id
  * of a new session) is derived from the key, so a retry after a crash sends the
  * same command. Keys are global: never reuse one for another command.

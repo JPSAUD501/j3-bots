@@ -23,12 +23,18 @@ export const HTTP_PATHS = {
    * while pairing is locked out.
    */
   pair: "/api/pair",
-  /** `POST` with the device token as `Authorization: Bearer`. Answers `SocketTicketGrant`. */
+  /**
+   * `POST` with the device token as `Authorization: Bearer`. Answers
+   * `SocketTicketGrant`; 401 with `NotAuthenticated` when the device is not
+   * paired or was revoked, which means pair again.
+   */
   socketTicket: "/api/socket-ticket",
   /**
    * `POST` the raw bytes with the file's media type as `Content-Type` and its name
    * in the `name` query parameter, with the device token as a bearer. Answers the
-   * new `Attachment`; 413 above `MAX_ATTACHMENT_SIZE`.
+   * new `Attachment`; 413 above `MAX_ATTACHMENT_SIZE`, 400 with
+   * `Invalid("attachment")` for an empty body. Uploading the same bytes again
+   * gives a new attachment with its own name; the bytes are stored once.
    * `GET <path>/<id>` answers the bytes, with the same credential.
    */
   attachments: "/attachments",

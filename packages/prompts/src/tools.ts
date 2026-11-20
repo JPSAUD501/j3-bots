@@ -53,7 +53,7 @@ const SayInput = Schema.Struct({
   done: Schema.optionalKey(
     described(
       Schema.Boolean,
-      "True when this message delivers the result. Your run ends once it returns.",
+      "True when this message delivers the result. It closes the delivery; end your turn once it returns.",
     ),
   ),
 });

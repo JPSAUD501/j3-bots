@@ -7,6 +7,11 @@ import * as SqlClient from "effect/sql/SqlClient";
 // (`engine_*` columns and event cursors) are opaque values from
 // @j3-bots/engine-t3, stored and never parsed. Secret values have no column
 // anywhere: they pass from the client to the engine without being stored.
+//
+// An audience is where a bot's speech goes: `conversation` (the bot's own
+// conversation with the operator) or `room` with its room. A room audience
+// whose room was deleted keeps `room` with a null room id: nothing is delivered
+// to it.
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -61,13 +66,16 @@ export default Effect.gen(function* () {
     )
   `;
 
-  // A room keeps a host while it is in use. Deleting the host's bot fails until
-  // the server has handed the room to another member or archived it, which it
-  // does in the same transaction (see server.md, Rooms).
+  // An active room keeps a host and two to six members (the member count is
+  // the server's to keep). Deleting the host's bot fails until the server has
+  // handed the room to another member or archived it, which it does in the same
+  // transaction (see server.md, Rooms). An archived room may have fewer members
+  // and no host.
   yield* sql`
     CREATE TABLE rooms (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
       host_bot_id TEXT REFERENCES bots (id) ON DELETE SET NULL,
       hop_limit INTEGER NOT NULL CHECK (hop_limit >= 1),
       pinned INTEGER NOT NULL DEFAULT 0 CHECK (pinned IN (0, 1)),
@@ -75,7 +83,8 @@ export default Effect.gen(function* () {
       archived_at TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
-      CHECK (archived_at IS NOT NULL OR host_bot_id IS NOT NULL)
+      CHECK ((status = 'archived') = (archived_at IS NOT NULL)),
+      CHECK (status = 'archived' OR host_bot_id IS NOT NULL)
     )
   `;
 
@@ -92,7 +101,8 @@ export default Effect.gen(function* () {
   // Engine threads that give a bot working context. The id is J3 Bots' own and
   // is the key the engine session is opened with; the engine's id arrives once
   // it has been opened. At most one live main session per bot; side sessions
-  // run routines. `admitted_turn_id` is the turn bot tool calls bind to.
+  // run routines. `admitted_turn_id` is the turn bot tool calls bind to, with
+  // the audience its speech goes to.
   yield* sql`
     CREATE TABLE sessions (
       id TEXT PRIMARY KEY,
@@ -103,9 +113,13 @@ export default Effect.gen(function* () {
       run_count INTEGER NOT NULL DEFAULT 0,
       events_cursor TEXT,
       admitted_turn_id TEXT,
+      admitted_audience TEXT CHECK (admitted_audience IN ('conversation', 'room')),
+      admitted_room_id TEXT REFERENCES rooms (id) ON DELETE SET NULL,
       created_at TEXT NOT NULL,
       retired_at TEXT,
-      CHECK (admitted_turn_id IS NULL OR engine_session_id IS NOT NULL)
+      CHECK (admitted_turn_id IS NULL OR engine_session_id IS NOT NULL),
+      CHECK ((admitted_turn_id IS NULL) = (admitted_audience IS NULL)),
+      CHECK (admitted_audience = 'room' OR admitted_room_id IS NULL)
     )
   `;
   yield* sql`
@@ -130,59 +144,121 @@ export default Effect.gen(function* () {
   `;
   yield* sql`CREATE INDEX routines_due ON routines (next_run_at) WHERE enabled = 1`;
 
+  // The operator's Stop of one bot, written with its targets before the engine
+  // is called; its id is the command id. A target is every session of the bot
+  // with a turn, waiting turns or background work when the Stop was recorded.
+  // Its `engine_key` is derived from the Stop and the session, so a retried Stop
+  // sends the same command. The Stop is finished when every target is stopped.
+  yield* sql`
+    CREATE TABLE stops (
+      id TEXT PRIMARY KEY,
+      bot_id TEXT NOT NULL REFERENCES bots (id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL,
+      finished_at TEXT
+    )
+  `;
+  yield* sql`
+    CREATE TABLE stop_targets (
+      stop_id TEXT NOT NULL REFERENCES stops (id) ON DELETE CASCADE,
+      session_id TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+      engine_key TEXT NOT NULL UNIQUE,
+      stopped_at TEXT,
+      PRIMARY KEY (stop_id, session_id)
+    )
+  `;
+
   // One message sent into one session: the durable intent behind an engine
   // dispatch, written before the engine is called. Its id is the dispatch's
-  // idempotency key. The session and the envelope never change once written,
-  // so every retry sends the same text to the same place.
+  // idempotency key. The session, the audience and the envelope never change
+  // once written, so every retry sends the same text to the same place.
+  //
+  // `status`: `intended` until the engine's answer is known (a lost reply
+  // leaves it here, to be reconciled with a lookup); `accepted` once the
+  // disposition is recorded; `delivered` when its turn started or its steer was
+  // read; `finished` with the turn's outcome; `dropped` when a Stop ended it
+  // before delivery (a cancelled waiting turn, an unread steer); `abandoned`
+  // when the engine proved it was not applied. `disposition` and
+  // `disposition_turn_id` are the engine's first answer and never change;
+  // `engine_turn_id` is the turn that delivers it, which differs only for a
+  // steer the agent never read, moved to its follow-up turn. A dispatch fenced
+  // by a Stop is never sent again.
   yield* sql`
     CREATE TABLE dispatches (
       id TEXT PRIMARY KEY,
       bot_id TEXT NOT NULL REFERENCES bots (id) ON DELETE CASCADE,
       session_id TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+      audience TEXT NOT NULL CHECK (audience IN ('conversation', 'room')),
+      audience_room_id TEXT REFERENCES rooms (id) ON DELETE SET NULL,
       delivery TEXT NOT NULL CHECK (delivery IN ('start', 'steer')),
       steer_turn_id TEXT,
       fresh_context INTEGER NOT NULL DEFAULT 0 CHECK (fresh_context IN (0, 1)),
       envelope TEXT NOT NULL,
-      status TEXT NOT NULL
-        CHECK (status IN ('intended', 'applied', 'finished', 'abandoned')),
-      disposition TEXT CHECK (disposition IN ('started', 'steered', 'new-turn')),
+      status TEXT NOT NULL CHECK (
+        status IN ('intended', 'accepted', 'delivered', 'finished', 'dropped', 'abandoned')
+      ),
+      disposition TEXT CHECK (disposition IN ('started', 'queued', 'steered', 'new-turn')),
+      disposition_turn_id TEXT,
       engine_turn_id TEXT,
+      fenced_by_stop_id TEXT REFERENCES stops (id) ON DELETE SET NULL,
       outcome_json TEXT,
       attempts INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
+      CHECK (audience = 'room' OR audience_room_id IS NULL),
       CHECK ((delivery = 'steer') = (steer_turn_id IS NOT NULL)),
       CHECK (delivery = 'start' OR fresh_context = 0),
+      CHECK (
+        disposition IS NULL
+        OR (delivery = 'start' AND disposition IN ('started', 'queued'))
+        OR (delivery = 'steer' AND disposition IN ('steered', 'new-turn'))
+      ),
       CHECK ((disposition IS NULL) = (status IN ('intended', 'abandoned'))),
+      CHECK ((disposition IS NULL) = (disposition_turn_id IS NULL)),
       CHECK ((disposition IS NULL) = (engine_turn_id IS NULL))
     )
   `;
+  // The audience's room is left out: deleting the room clears it.
   yield* sql`
     CREATE TRIGGER dispatches_immutable_intent
-    BEFORE UPDATE OF session_id, delivery, steer_turn_id, fresh_context, envelope ON dispatches
+    BEFORE UPDATE OF session_id, audience, delivery, steer_turn_id, fresh_context, envelope
+    ON dispatches
     BEGIN
-      SELECT RAISE(ABORT, 'a dispatch keeps the session and envelope it was written with');
+      SELECT RAISE(ABORT, 'a dispatch keeps the session, audience and envelope it was written with');
+    END
+  `;
+  yield* sql`
+    CREATE TRIGGER dispatches_first_disposition
+    BEFORE UPDATE OF disposition, disposition_turn_id ON dispatches
+    WHEN OLD.disposition IS NOT NULL
+      AND (NEW.disposition IS NOT OLD.disposition
+        OR NEW.disposition_turn_id IS NOT OLD.disposition_turn_id)
+    BEGIN
+      SELECT RAISE(ABORT, 'a dispatch keeps the engine''s first answer');
     END
   `;
   yield* sql`
     CREATE INDEX dispatches_open ON dispatches (session_id, status)
-    WHERE status IN ('intended', 'applied')
+    WHERE status IN ('intended', 'accepted', 'delivered')
   `;
+  // A turn delivers at most one dispatch of its own; steers that ride on it are not its own.
   yield* sql`
     CREATE UNIQUE INDEX dispatches_turn ON dispatches (session_id, engine_turn_id)
-    WHERE disposition IN ('started', 'new-turn')
+    WHERE engine_turn_id IS NOT NULL
+      AND NOT (disposition = 'steered' AND engine_turn_id = disposition_turn_id)
   `;
 
   // Everything a bot does starts as a wake, recorded with the entry that
-  // caused it. J3 Bots holds pending wakes itself and dispatches one bot's next
-  // wakes, coalesced into one dispatch, only when its session is idle.
+  // caused it. J3 Bots holds pending wakes itself and coalesces a bot's
+  // pending wakes of one kind and one audience into one dispatch, only when its
+  // session can take it.
   yield* sql`
     CREATE TABLE wakes (
       id TEXT PRIMARY KEY,
       bot_id TEXT NOT NULL REFERENCES bots (id) ON DELETE CASCADE,
       kind TEXT NOT NULL CHECK (kind IN ('user', 'room', 'bot', 'routine', 'system')),
       priority INTEGER NOT NULL,
-      room_id TEXT REFERENCES rooms (id) ON DELETE SET NULL,
+      audience TEXT NOT NULL CHECK (audience IN ('conversation', 'room')),
+      audience_room_id TEXT REFERENCES rooms (id) ON DELETE SET NULL,
       routine_id TEXT REFERENCES routines (id) ON DELETE SET NULL,
       hops INTEGER NOT NULL DEFAULT 0,
       payload_json TEXT NOT NULL,
@@ -190,7 +266,9 @@ export default Effect.gen(function* () {
       dispatch_id TEXT REFERENCES dispatches (id) ON DELETE SET NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
-      CHECK (status NOT IN ('dispatched', 'finished') OR dispatch_id IS NOT NULL)
+      CHECK (status NOT IN ('dispatched', 'finished') OR dispatch_id IS NOT NULL),
+      CHECK (audience = 'room' OR audience_room_id IS NULL),
+      CHECK (kind <> 'room' OR audience = 'room')
     )
   `;
   yield* sql`
@@ -241,14 +319,17 @@ export default Effect.gen(function* () {
     END
   `;
 
-  // An `ask` card: the wake that asked, where the follow-up goes, and the wake
-  // the answer created, set in the same transaction as the answer.
+  // An `ask` card: the wake that asked, the audience of the turn that asked
+  // (where the answer's turn delivers), and the wake the answer created, set in
+  // the same transaction as the answer.
   yield* sql`
     CREATE TABLE ask_cards (
       entry_id TEXT PRIMARY KEY REFERENCES entries (id) ON DELETE CASCADE,
       origin_wake_id TEXT REFERENCES wakes (id) ON DELETE SET NULL,
-      continuation_json TEXT NOT NULL,
-      follow_up_wake_id TEXT UNIQUE REFERENCES wakes (id) ON DELETE SET NULL
+      audience TEXT NOT NULL CHECK (audience IN ('conversation', 'room')),
+      audience_room_id TEXT REFERENCES rooms (id) ON DELETE SET NULL,
+      follow_up_wake_id TEXT UNIQUE REFERENCES wakes (id) ON DELETE SET NULL,
+      CHECK (audience = 'room' OR audience_room_id IS NULL)
     )
   `;
 
@@ -265,18 +346,21 @@ export default Effect.gen(function* () {
   `;
 
   // What a side session did, for the bot's next envelope in its main session.
+  // `consumed_dispatch_id` is the dispatch whose envelope carries it. Abandoning
+  // or dropping that dispatch clears it again, in the same transaction, so the
+  // next envelope carries it instead. Held messages work the same way.
   yield* sql`
     CREATE TABLE catch_up_notes (
       id TEXT PRIMARY KEY,
       bot_id TEXT NOT NULL REFERENCES bots (id) ON DELETE CASCADE,
       text TEXT NOT NULL,
       created_at TEXT NOT NULL,
-      delivered_dispatch_id TEXT REFERENCES dispatches (id) ON DELETE SET NULL
+      consumed_dispatch_id TEXT REFERENCES dispatches (id) ON DELETE SET NULL
     )
   `;
   yield* sql`
     CREATE INDEX catch_up_notes_pending ON catch_up_notes (bot_id, created_at)
-    WHERE delivered_dispatch_id IS NULL
+    WHERE consumed_dispatch_id IS NULL
   `;
 
   // A non-urgent teammate message, held for the top of the recipient's next
@@ -290,25 +374,35 @@ export default Effect.gen(function* () {
       text TEXT NOT NULL,
       hops INTEGER NOT NULL,
       created_at TEXT NOT NULL,
-      delivered_dispatch_id TEXT REFERENCES dispatches (id) ON DELETE SET NULL
+      consumed_dispatch_id TEXT REFERENCES dispatches (id) ON DELETE SET NULL
     )
   `;
   yield* sql`
     CREATE INDEX held_messages_pending ON held_messages (recipient_bot_id, created_at)
-    WHERE delivered_dispatch_id IS NULL
+    WHERE consumed_dispatch_id IS NULL
   `;
 
-  // Files the operator sent and files bots delivered. Bytes live under
-  // `<J3_HOME>/attachments/`, at `storage_path` relative to it. A deleted
-  // bot's files stay with the room messages that carry them.
+  // File bytes, stored once per digest under `<J3_HOME>/attachments/`, at
+  // `storage_path` relative to it. Never empty.
+  yield* sql`
+    CREATE TABLE blobs (
+      sha256 TEXT PRIMARY KEY,
+      size INTEGER NOT NULL CHECK (size >= 1),
+      storage_path TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL
+    )
+  `;
+
+  // Files the operator sent and files bots delivered: a name and a media type
+  // over a blob, so the same bytes can be sent twice under different names and
+  // referenced from different entries. A deleted bot's files stay with the room
+  // messages that carry them.
   yield* sql`
     CREATE TABLE attachments (
       id TEXT PRIMARY KEY,
+      sha256 TEXT NOT NULL REFERENCES blobs (sha256),
       name TEXT NOT NULL,
       media_type TEXT NOT NULL,
-      size INTEGER NOT NULL CHECK (size >= 0),
-      sha256 TEXT NOT NULL,
-      storage_path TEXT NOT NULL UNIQUE,
       source TEXT NOT NULL CHECK (source IN ('operator', 'bot')),
       bot_id TEXT REFERENCES bots (id) ON DELETE SET NULL,
       entry_id TEXT REFERENCES entries (id) ON DELETE SET NULL,
@@ -316,8 +410,42 @@ export default Effect.gen(function* () {
       CHECK (source = 'bot' OR bot_id IS NULL)
     )
   `;
+  yield* sql`CREATE INDEX attachments_blob ON attachments (sha256)`;
   yield* sql`CREATE INDEX attachments_bot ON attachments (bot_id, created_at) WHERE bot_id IS NOT NULL`;
   yield* sql`CREATE INDEX attachments_entry ON attachments (entry_id) WHERE entry_id IS NOT NULL`;
+
+  // The files a dispatch carries, in order, fixed with the dispatch. A file is
+  // staged in the engine before the first send; the engine's id for it is kept,
+  // so a retry names the same staged file, until `usable_until` passes while
+  // the dispatch is still unsent and it is staged again.
+  yield* sql`
+    CREATE TABLE dispatch_attachments (
+      dispatch_id TEXT NOT NULL REFERENCES dispatches (id) ON DELETE CASCADE,
+      position INTEGER NOT NULL CHECK (position >= 0),
+      attachment_id TEXT NOT NULL REFERENCES attachments (id),
+      engine_attachment_id TEXT,
+      usable_until TEXT,
+      PRIMARY KEY (dispatch_id, position),
+      CHECK ((engine_attachment_id IS NULL) = (usable_until IS NULL))
+    )
+  `;
+
+  // A bot tool call, pinned to the turn it came from. The id is the bridge's id
+  // for the call, which it reuses on every retry of the forward, so a retry acts
+  // for the same turn and audience and returns the stored result.
+  yield* sql`
+    CREATE TABLE tool_calls (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+      engine_turn_id TEXT NOT NULL,
+      audience TEXT NOT NULL CHECK (audience IN ('conversation', 'room')),
+      audience_room_id TEXT REFERENCES rooms (id) ON DELETE SET NULL,
+      tool TEXT NOT NULL,
+      result_json TEXT,
+      created_at TEXT NOT NULL,
+      CHECK (audience = 'room' OR audience_room_id IS NULL)
+    )
+  `;
 
   yield* sql`
     CREATE TABLE routine_runs (

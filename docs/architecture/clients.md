@@ -71,7 +71,7 @@ A device token grants everything the operator can do in J3 Bots. There are no na
 
 Every connection is one device's. The client opens the socket at `/ws` with its token as an `Authorization: Bearer` header. A browser cannot set that header on a WebSocket, so the web client first trades the token for a single-use ticket at `POST /api/socket-ticket` and opens `/ws?ticket=…` within a minute. Either way the server checks the credential once, at the upgrade, and the socket is that device's until it closes.
 
-A 401 at the upgrade means the device is not paired or was revoked: the client stops reconnecting and asks to pair again. A closed socket otherwise means reconnect. Files go over HTTP with the same bearer: `POST /attachments` before sending a message that carries them, and `GET /attachments/:id` to open one.
+A 401 at the upgrade means the device is not paired or was revoked: a client that can read the status (desktop, mobile) stops reconnecting and asks to pair again. A browser cannot: a refused WebSocket upgrade reaches it as a plain connection failure, without the status. So when the web client's handshake fails, it asks `POST /api/socket-ticket` for a fresh ticket, since the old one may have been used or expired, and tries again with backoff. A 401 from the ticket route is the signal that the device is not paired or was revoked, and the web client then asks to pair again. A socket that closes after it opened means reconnect, the same way. Files go over HTTP with the same bearer: `POST /attachments` before sending a message that carries them, and `GET /attachments/:id` to open one.
 
 ## Behavior every client must get right
 

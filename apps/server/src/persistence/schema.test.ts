@@ -45,10 +45,16 @@ it.layer(TestDatabase.layer)("database", (it) => {
         SELECT author_bot_id AS author FROM entries WHERE id = 'entry-1'
       `;
       assert.deepStrictEqual(authors, [{ author: "scout" }]);
+
+      // Archived, the room no longer needs a host.
+      yield* sql`
+        UPDATE rooms SET status = 'archived', archived_at = ${now} WHERE id = 'launch'
+      `;
+      yield* sql`DELETE FROM bots WHERE id = 'quill'`;
     }),
   );
 
-  it.effect("never rewrites what a dispatch sends or where", () =>
+  it.effect("never rewrites what a dispatch sends, where, or the engine's first answer", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* insertBot("echo");
@@ -58,20 +64,36 @@ it.layer(TestDatabase.layer)("database", (it) => {
       `;
       yield* sql`
         INSERT INTO dispatches (
-          id, bot_id, session_id, delivery, envelope, status, created_at, updated_at
-        ) VALUES ('dispatch-1', 'echo', 'session-1', 'start', '<j3-wake/>', 'intended', ${now}, ${now})
+          id, bot_id, session_id, audience, delivery, steer_turn_id, envelope, status, created_at,
+          updated_at
+        ) VALUES (
+          'dispatch-1', 'echo', 'session-1', 'conversation', 'steer', 'turn-1', '<j3-wake/>',
+          'intended', ${now}, ${now}
+        )
       `;
 
       const rewritten = yield* sql`
         UPDATE dispatches SET envelope = '<j3-wake>other</j3-wake>' WHERE id = 'dispatch-1'
       `.pipe(Effect.flip);
-      assert.include(String(rewritten.reason.cause), "keeps the session and envelope");
+      assert.include(String(rewritten.reason.cause), "keeps the session, audience and envelope");
 
       yield* sql`
         UPDATE dispatches
-        SET status = 'applied', disposition = 'started', engine_turn_id = 'turn-1'
+        SET status = 'accepted', disposition = 'steered', disposition_turn_id = 'turn-1',
+          engine_turn_id = 'turn-1'
         WHERE id = 'dispatch-1'
       `;
+      // The steer went unread: the dispatch moves to the engine's follow-up turn,
+      // and keeps the answer the engine gave first.
+      yield* sql`
+        UPDATE dispatches SET status = 'delivered', engine_turn_id = 'turn-2'
+        WHERE id = 'dispatch-1'
+      `;
+      const reanswered = yield* sql`
+        UPDATE dispatches SET disposition = 'new-turn', disposition_turn_id = 'turn-2'
+        WHERE id = 'dispatch-1'
+      `.pipe(Effect.flip);
+      assert.include(String(reanswered.reason.cause), "first answer");
     }),
   );
 });
