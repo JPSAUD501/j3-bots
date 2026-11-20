@@ -139,6 +139,12 @@ export class Ledger extends Context.Service<
       resumesAt: DateTime.Utc,
     ) => Effect.Effect<void>;
     /**
+     * The engine resumed the pending continuation of its turn as `turnId`:
+     * the dispatch's work goes on in that turn, also one that ends before it
+     * starts.
+     */
+    readonly followContinuation: (dispatchId: DispatchRowId, turnId: TurnId) => Effect.Effect<void>;
+    /**
      * A Stop ended it in the engine before delivery: a cancelled waiting turn
      * (`turnId`), a dropped steer (the turn it was to ride). The bot never
      * read its envelope, so its catch-up notes and held messages go to the
@@ -475,6 +481,17 @@ export const layer = Layer.effect(
       `;
     }, Effect.orDie);
 
+    const followContinuation = Effect.fn("Ledger.followContinuation")(function* (
+      dispatchId: DispatchRowId,
+      turnId: TurnId,
+    ) {
+      yield* sql`
+        UPDATE dispatches SET engine_turn_id = ${turnId}, continuation_resumes_at = NULL,
+          updated_at = ${yield* now}
+        WHERE id = ${dispatchId} AND status = 'delivered' AND continuation_resumes_at IS NOT NULL
+      `;
+    }, Effect.orDie);
+
     const drop = Effect.fn("Ledger.drop")(function* (
       dispatchId: DispatchRowId,
       turnId: TurnId,
@@ -560,6 +577,7 @@ export const layer = Layer.effect(
       finish,
       closeDelivery,
       awaitContinuation,
+      followContinuation,
       drop,
       release,
       fail,

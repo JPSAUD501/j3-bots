@@ -325,6 +325,31 @@ export const layer = Layer.effect(
       `,
     });
 
+    /** The dispatch waiting for the pending continuation of a turn. */
+    const awaitingOn = SqlSchema.findOneOption({
+      Request: TurnKey,
+      Result: DispatchRow,
+      execute: ({ sessionId, turnId }) => sql`
+        SELECT ${sql.literal(DISPATCH_COLUMNS)} FROM dispatches
+        WHERE session_id = ${sessionId} AND engine_turn_id = ${turnId} AND status = 'delivered'
+          AND continuation_resumes_at IS NOT NULL
+      `,
+    });
+
+    /**
+     * One link of a continuation chain: the dispatch that waited on the turn
+     * `turnId` continues moves to `turnId`. Followed when that turn starts, or
+     * ends before it started, whichever is applied first.
+     */
+    const followLink = Effect.fn("Observer.followLink")(function* (
+      sessionId: SessionRowId,
+      turnId: TurnId,
+      continued: TurnId,
+    ) {
+      const waiting = yield* awaitingOn({ sessionId, turnId: continued }).pipe(Effect.orDie);
+      if (Option.isSome(waiting)) yield* ledger.followContinuation(waiting.value.id, turnId);
+    });
+
     const awaitingRows = SqlSchema.findAll({
       Request: SessionRowId,
       Result: DispatchRow,
@@ -454,12 +479,7 @@ export const layer = Layer.effect(
         // One link of the chain: the dispatch and its audience move to this turn.
         const previous = yield* turnOf(session.id, cause.turnId);
         if (Option.isSome(previous)) audience = audienceOf(previous.value);
-        yield* sql`
-          UPDATE dispatches SET engine_turn_id = ${turnId}, continuation_resumes_at = NULL,
-            updated_at = ${timeText(at)}
-          WHERE session_id = ${session.id} AND engine_turn_id = ${cause.turnId}
-            AND status = 'delivered' AND continuation_resumes_at IS NOT NULL
-        `;
+        yield* followLink(session.id, turnId, cause.turnId);
       }
       const columns = audienceColumns(audience);
       yield* sql`
@@ -497,7 +517,9 @@ export const layer = Layer.effect(
       // What the operator stopped needs no notice and no follow-up, also when
       // the turn ended on its own before the Stop's interrupt reached it.
       if (yield* stops.covers(session.bot_id, audience, dispatch.seq)) return;
-      if (outcome._tag === "failed" || outcome._tag === "interrupted") {
+      // Interrupted, or a continuation cancelled before it started: the work
+      // did not get to its end.
+      if (outcome._tag !== "completed") {
         const failure = outcome._tag === "failed" ? outcome.failure : "unknown";
         yield* notify(
           session.bot_id,
@@ -556,6 +578,10 @@ export const layer = Layer.effect(
       for (const request of open)
         yield* closeRequest(session, request.engine_request_id, "expired");
 
+      // A continuation that ended before it started still ends its chain's work.
+      if (end.cause?._tag === "continuation") {
+        yield* followLink(session.id, end.turnId, end.cause.turnId);
+      }
       const owner = yield* ownerOf(session.id, end.turnId, end.cause);
       if (Option.isNone(owner)) return;
       const dispatch = owner.value;

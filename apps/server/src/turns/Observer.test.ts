@@ -354,6 +354,58 @@ it.effect("settles a turn whose continuation the engine dropped, with a retryabl
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("ends a continuation's work when its turn fails before it starts", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const states = yield* BotStates;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Translate the docs.");
+    const first = yield* nextTurn(bot.id);
+    yield* control.finishTurn({
+      sessionId: session,
+      turnId: first,
+      ...usageLimit(yield* DateTime.now),
+    });
+    yield* until(states.of(bot.id).pipe(Effect.map((state) => state._tag === "blocked")));
+
+    yield* control.failNextStart({ sessionId: session, failure: "provider-error" });
+    yield* control.resumeContinuation({ sessionId: session, turnId: first });
+    const notice = yield* awaitEntry(bot.id, "notice");
+    assert.deepStrictEqual(notice.notice, { _tag: "turn-failed", failure: "provider-error" });
+    yield* until(states.of(bot.id).pipe(Effect.map((state) => state._tag === "idle")));
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "ends a continuation's work that failed before it started while the server was away",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const firstRun = Effect.gen(function* () {
+        const bot = yield* createBot("Ana");
+        const session = yield* engineSession(bot.id);
+        yield* sendToBot(bot.id, "Translate the docs.");
+        const turnId = yield* nextTurn(bot.id);
+        return { bot, session, turnId };
+      });
+      const { bot, session, turnId } = yield* firstRun.pipe(Effect.provide(Domain.layer));
+
+      yield* control.finishTurn({ sessionId: session, turnId, ...usageLimit(yield* DateTime.now) });
+      yield* control.failNextStart({ sessionId: session, failure: "provider-error" });
+      yield* control.resumeContinuation({ sessionId: session, turnId });
+      yield* control.pruneHistory(session);
+
+      yield* Effect.gen(function* () {
+        const notice = yield* awaitEntry(bot.id, "notice");
+        assert.deepStrictEqual(notice.notice, { _tag: "turn-failed", failure: "provider-error" });
+        yield* until(
+          (yield* BotStates).of(bot.id).pipe(Effect.map((state) => state._tag === "idle")),
+        );
+      }).pipe(Effect.provide(Domain.layer));
+    }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
+);
+
 it.effect("sends the operator's message while a continuation is pending", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;
