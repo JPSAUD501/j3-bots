@@ -18,6 +18,7 @@ import {
   type SecretAnswer,
   SessionId,
 } from "@j3-bots/engine-t3";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -36,7 +37,6 @@ import { Ledger } from "./Ledger.ts";
 import {
   AudienceColumn,
   audienceOf,
-  MAX_RESPONSE_TRIES,
   recoveryBackoff,
   SessionRowId,
   StoredResponse,
@@ -44,7 +44,7 @@ import {
 } from "./model.ts";
 import { Observer } from "./Observer.ts";
 import { Readiness } from "./Readiness.ts";
-import { type Pass, onePassAtATime, passOutcome, reconcile } from "./reconciler.ts";
+import { DEFECT_RETRY, type Pass, onePassAtATime, passOutcome, reconcile } from "./reconciler.ts";
 import { sessionLoss } from "./sessionRecords.ts";
 import { Signals } from "./Signals.ts";
 import { Wakes } from "./Wakes.ts";
@@ -154,8 +154,6 @@ export class Cards extends Context.Service<
     }) => Effect.Effect<void, NotFound | Conflict | Invalid>;
     /** Sends every recorded answer the engine has not taken, whose request is still open. */
     readonly respondPending: Effect.Effect<void>;
-    /** At a ready edge: every answer whose sends went unanswered is tried afresh. */
-    readonly retryExhausted: Effect.Effect<void>;
     /** Learns, for each submission marker a crash or a lost reply left, whether its card closed. */
     readonly checkSubmissions: Effect.Effect<void>;
     /** The responder, for as long as the scope lives. */
@@ -233,6 +231,7 @@ export const layer = Layer.effect(
           sourceEntryId: card.id,
           hops: 0,
           retryOf: null,
+          cause: { _tag: "operator" },
         },
       ]);
       yield* sql`
@@ -299,7 +298,6 @@ export const layer = Layer.effect(
           r.response_json, r.response_failures, r.response_retry_at
         FROM engine_requests r JOIN sessions s ON s.id = r.session_id
         WHERE r.closed_at IS NULL AND r.response_json IS NOT NULL AND r.response_sent_at IS NULL
-          AND r.response_failures < ${MAX_RESPONSE_TRIES}
           AND s.engine_session_id IS NOT NULL AND s.lost_at IS NULL
         ORDER BY r.rowid
       `,
@@ -318,21 +316,70 @@ export const layer = Layer.effect(
       return "done" satisfies Sent as Sent;
     });
 
-    /** The reply was lost: sent again with backoff, and after the bound at the next ready edge. */
-    const unanswered = Effect.fn("Cards.unanswered")(function* (
+    /** The answer waits until `next` before it is sent again. */
+    const later = Effect.fn("Cards.later")(function* (
       pending: typeof PendingResponse.Type,
+      next: DateTime.Utc,
     ) {
-      const failures = pending.response_failures + 1;
-      const next =
-        failures >= MAX_RESPONSE_TRIES
-          ? null
-          : timeText(DateTime.addDuration(yield* DateTime.now, recoveryBackoff(failures)));
       yield* sql`
-        UPDATE engine_requests SET response_failures = ${failures}, response_retry_at = ${next}
+        UPDATE engine_requests SET response_failures = ${pending.response_failures + 1},
+          response_retry_at = ${timeText(next)}
         WHERE entry_id = ${pending.entry_id}
       `.pipe(Effect.orDie);
       return "done" satisfies Sent as Sent;
     });
+
+    /**
+     * The reply was lost: the answer is sent again with backoff for as long
+     * as its request is open. Its key makes every send of it one answer.
+     */
+    const unanswered = Effect.fn("Cards.unanswered")(function* (
+      pending: typeof PendingResponse.Type,
+    ) {
+      const now = yield* DateTime.now;
+      return yield* later(
+        pending,
+        DateTime.addDuration(now, recoveryBackoff(pending.response_failures + 1)),
+      );
+    });
+
+    const respondOne = (pending: typeof PendingResponse.Type) =>
+      engine
+        .respond({
+          key: answerKey(pending.entry_id),
+          sessionId: pending.engine_session_id,
+          requestId: pending.engine_request_id,
+          response: pending.response_json,
+        })
+        .pipe(
+          Effect.andThen(taken(pending.entry_id)),
+          Effect.catchTags({
+            RequestClosed: () => taken(pending.entry_id),
+            SessionNotFound: () =>
+              transaction(sessionLost(pending.session_id)).pipe(
+                Effect.as("done" satisfies Sent as Sent),
+              ),
+            EngineIndeterminate: () => unanswered(pending),
+            EngineUnavailable: () => Effect.succeed("unavailable" satisfies Sent as Sent),
+            EngineIncompatible: () => Effect.succeed("unavailable" satisfies Sent as Sent),
+          }),
+        );
+
+    /**
+     * One answer at a time: a defect is logged and that answer is sent again
+     * after a later deadline, while the pass goes on with the others.
+     */
+    const supervised = (pending: typeof PendingResponse.Type) =>
+      respondOne(pending).pipe(
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.logError("An answer could not be sent; it is tried again later", cause).pipe(
+              Effect.andThen(DateTime.now),
+              Effect.flatMap((now) => later(pending, DateTime.addDuration(now, DEFECT_RETRY))),
+            ),
+        ),
+      );
 
     /**
      * The responder's pass: a reconciler over the answers the engine has not
@@ -347,26 +394,7 @@ export const layer = Layer.effect(
           if (pending.response_retry_at !== null) {
             if (DateTime.isGreaterThan(pending.response_retry_at, now)) continue;
           }
-          const sent = yield* engine
-            .respond({
-              key: answerKey(pending.entry_id),
-              sessionId: pending.engine_session_id,
-              requestId: pending.engine_request_id,
-              response: pending.response_json,
-            })
-            .pipe(
-              Effect.andThen(taken(pending.entry_id)),
-              Effect.catchTags({
-                RequestClosed: () => taken(pending.entry_id),
-                SessionNotFound: () =>
-                  transaction(sessionLost(pending.session_id)).pipe(
-                    Effect.as("done" satisfies Sent as Sent),
-                  ),
-                EngineIndeterminate: () => unanswered(pending),
-                EngineUnavailable: () => Effect.succeed("unavailable" satisfies Sent as Sent),
-                EngineIncompatible: () => Effect.succeed("unavailable" satisfies Sent as Sent),
-              }),
-            );
+          const sent = yield* supervised(pending);
           if (sent === "unavailable") return { _tag: "unavailable" } as const;
         }
         for (const pending of yield* pendingResponses) outcome.until(pending.response_retry_at);
@@ -375,11 +403,6 @@ export const layer = Layer.effect(
     );
 
     const respondPending = Effect.asVoid(respondPass);
-
-    const retryExhausted = sql`
-      UPDATE engine_requests SET response_failures = 0, response_retry_at = NULL
-      WHERE response_failures > 0 OR response_retry_at IS NOT NULL
-    `.pipe(Effect.orDie, Effect.asVoid);
 
     // ---- secret.provide -----------------------------------------------------------
 
@@ -501,7 +524,6 @@ export const layer = Layer.effect(
       answer,
       provideSecret,
       respondPending,
-      retryExhausted,
       checkSubmissions,
       run,
     });

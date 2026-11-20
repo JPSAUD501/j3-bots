@@ -10,6 +10,7 @@ import { Ids } from "../Ids.ts";
 import { json, timeText } from "../persistence/columns.ts";
 import { type Audience, audienceColumns, PRIORITY, type WakeKind, WakePayload } from "./model.ts";
 import { Signals } from "./Signals.ts";
+import { stopTargets } from "./stopTargets.ts";
 
 /** A wake about to be written. */
 export interface NewWake {
@@ -22,14 +23,24 @@ export interface NewWake {
   readonly hops: number;
   /** The failed wake an operator's retry sends again. */
   readonly retryOf: string | null;
+  /**
+   * What led to it: the operator, whose word a Stop never cancels ahead of
+   * time, or the bot's own work that began at `since`, which a Stop covering
+   * it ended (`stopTargets.covers`).
+   */
+  readonly cause:
+    | { readonly _tag: "operator" }
+    | { readonly _tag: "work"; readonly since: DateTime.Utc };
 }
 
 const encodePayload = Schema.encodeEffect(json(WakePayload));
 
 /**
- * Writes wakes (`docs/architecture/server.md`, 1. Something wakes the bot):
- * in the caller's transaction, the one that writes their cause, so a wake
- * exists exactly when its cause does. The dispatcher looks once it commits.
+ * Writes wakes (`docs/architecture/server.md`, 1. A wake is recorded before
+ * anything happens): in the caller's transaction, the one that writes their
+ * cause, so a wake exists exactly when its cause does. A wake that follows
+ * from work a Stop covers is not written: the operator stopped what it would
+ * continue. The dispatcher looks once it commits.
  */
 export class Wakes extends Context.Service<
   Wakes,
@@ -42,11 +53,18 @@ export const layer = Layer.effect(
     const sql = yield* SqlClient.SqlClient;
     const ids = yield* Ids;
     const signals = yield* Signals;
+    const stops = stopTargets(sql);
 
     const record = Effect.fn("Wakes.record")(function* (wakes: ReadonlyArray<NewWake>) {
       const at = timeText(yield* DateTime.now);
       const written: Array<string> = [];
       for (const wake of wakes) {
+        if (
+          wake.cause._tag === "work" &&
+          (yield* stops.covers(wake.botId, wake.audience, wake.cause.since))
+        ) {
+          continue;
+        }
         const id = yield* ids.make("wake");
         const { audience, roomId } = audienceColumns(wake.audience);
         yield* sql`

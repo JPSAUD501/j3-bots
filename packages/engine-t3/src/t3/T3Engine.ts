@@ -205,6 +205,12 @@ type LoopInput =
       readonly token: SyncToken;
       /** Settled once the marker went out, or the catch-up failed. */
       readonly done: Deferred.Deferred<void, EngineUnavailable | SessionNotFound>;
+      /**
+       * Completed when the caller gave up on it: a catch-up still queued is
+       * skipped, and one running is cancelled, so abandoned ones never pile
+       * up in the session's loop.
+       */
+      readonly abandoned: Deferred.Deferred<void>;
     };
 
 /** One open `events` stream, as `synchronize` reaches it. */
@@ -1196,7 +1202,9 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
                 ? Effect.sync(() => {
                     marked = true;
                   })
-                : handle(item),
+                : // Whole or not at all: a cancelled catch-up never leaves
+                  // the mirror ahead of what this stream emitted.
+                  Effect.uninterruptible(handle(item)),
             ),
             Effect.timeoutOption(SYNC_TIMEOUT),
             Effect.map((caught) => (Option.isSome(caught) && marked ? "marked" : "late")),
@@ -1250,11 +1258,13 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
               }
               break;
             case "sync":
+              if (yield* Deferred.isDone(next.abandoned)) break;
               yield* catchUp(next.token).pipe(
                 Effect.matchEffect({
                   onFailure: (error) => Deferred.fail(next.done, error),
                   onSuccess: () => Deferred.succeed(next.done, undefined),
                 }),
+                Effect.raceFirst(Deferred.await(next.abandoned)),
               );
               yield* fetchChanges();
               break;
@@ -1273,9 +1283,13 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       (target) =>
         Effect.gen(function* () {
           const done = yield* Deferred.make<void, EngineUnavailable | SessionNotFound>();
-          yield* Queue.offer(target.inputs, { _tag: "sync", token: input.token, done });
+          const abandoned = yield* Deferred.make<void>();
+          yield* Queue.offer(target.inputs, { _tag: "sync", token: input.token, done, abandoned });
           // A stream that closes owes no marker any more.
-          yield* Effect.raceFirst(Deferred.await(done), Deferred.await(target.closed));
+          yield* Effect.raceFirst(Deferred.await(done), Deferred.await(target.closed)).pipe(
+            // Given up on, by the caller or the timeout: the loop drops it.
+            Effect.onInterrupt(() => Deferred.succeed(abandoned, undefined)),
+          );
         }),
       { concurrency: "unbounded", discard: true },
     ).pipe(

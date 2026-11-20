@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import type { BotId, EntryTarget } from "@j3-bots/contracts";
+import { type BotId, type EntryTarget, PositiveInt } from "@j3-bots/contracts";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -9,6 +10,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Domain from "../domain.ts";
 import { Entries } from "../entries/Entries.ts";
 import { Rooms } from "../rooms/Rooms.ts";
+import { SettingsStore } from "../settings/SettingsStore.ts";
 import { BotTools } from "../tools/BotTools.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
@@ -19,6 +21,7 @@ import {
   engineSession,
   flushed,
   gateSettled,
+  holdGate,
   nextTurn,
   sendToBot,
   timesSent,
@@ -26,7 +29,7 @@ import {
   until,
 } from "../testing/turns.ts";
 import { Cards } from "./Cards.ts";
-import { DispatchRowId, recoveryBackoff } from "./model.ts";
+import { busyBackoff, DispatchRowId, recoveryBackoff } from "./model.ts";
 import { Pipeline } from "./Pipeline.ts";
 import { Wakes } from "./Wakes.ts";
 
@@ -117,6 +120,7 @@ it.effect("coalesces waiting wakes only with wakes of the same kind and audience
       sourceEntryId: null,
       hops: 0,
       retryOf: null,
+      cause: { _tag: "operator" } as const,
       payload,
     });
     yield* sql.withTransaction(
@@ -340,4 +344,123 @@ it.effect("sends an engine card's answer again after a restart, once", () =>
       assert.strictEqual((yield* control.responses(session)).length, 1);
     }).pipe(Effect.provide(Domain.layer));
   }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
+);
+
+it.effect("starts a bot refused busy once the deadline passes, after the turn's last event", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+
+    // The engine starts a turn of its own while the start is at its door, and
+    // the refusal reaches the server only after that turn's last event.
+    const sending = yield* control.holdNext("dispatch");
+    const message = yield* sendToBot(bot.id, "Draft the summary.");
+    yield* sending.entered;
+    const background = yield* control.startEngineTurn(session);
+    const answer = yield* control.holdNextAnswer("dispatch");
+    yield* sending.release;
+    yield* answer.entered;
+    yield* nextTurn(bot.id);
+    yield* control.finishTurn({
+      sessionId: session,
+      turnId: background,
+      outcome: { _tag: "completed" },
+    });
+    yield* turnEnded(bot.id);
+    yield* answer.release;
+    yield* gateSettled(bot.id);
+
+    // The session is left alone until its deadline, and taken after it.
+    yield* flushed(bot.id);
+    assert.strictEqual(yield* timesSent(session, "Draft the summary."), 0);
+    yield* TestClock.adjust(busyBackoff(1));
+    yield* flushed(bot.id);
+    yield* nextTurn(bot.id, background);
+    yield* deliveryIs(message, "delivered");
+    assert.strictEqual(yield* timesSent(session, "Draft the summary."), 1);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("starts a ready bot with the last slot while another bot's session catches up", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const store = yield* SettingsStore;
+    const settings = yield* store.get;
+    yield* store.save(
+      { ...settings, budgets: { ...settings.budgets, concurrentTurns: PositiveInt.make(1) } },
+      yield* DateTime.now,
+    );
+    const ana = yield* createBot("Ana");
+    const anaSession = yield* engineSession(ana.id);
+    const bia = yield* createBot("Bia");
+    const biaSession = yield* engineSession(bia.id);
+
+    // Ana's session never answers with its first snapshot.
+    const stalled = yield* control.withholdEvents(anaSession);
+    const waiting = yield* sendToBot(ana.id, "Plan the sprint.");
+    const message = yield* sendToBot(bia.id, "Review the budget.");
+    yield* flushed(bia.id);
+    const biaTurn = yield* nextTurn(bia.id);
+    yield* deliveryIs(message, "delivered");
+
+    // Once caught up, Ana takes the slot Bia gives back.
+    yield* stalled.release;
+    yield* flushed(ana.id);
+    assert.strictEqual(yield* timesSent(anaSession, "Plan the sprint."), 0);
+    yield* control.finishTurn({
+      sessionId: biaSession,
+      turnId: biaTurn,
+      outcome: { _tag: "completed" },
+    });
+    yield* nextTurn(ana.id);
+    yield* deliveryIs(waiting, "delivered");
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+/**
+ * Waits until a steer is written. Writing a dispatch changes nothing a client
+ * sees, so this reads the table again each time other fibers have run.
+ */
+const steerWritten = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  while (true) {
+    const [row] = yield* sql<{ readonly n: number }>`
+      SELECT COUNT(*) AS n FROM dispatches WHERE delivery = 'steer'
+    `.pipe(Effect.orDie);
+    if ((row?.n ?? 0) > 0) return;
+    yield* Effect.yieldNow;
+  }
+});
+
+it.effect("starts a turn with a steer whose turn ended while it waited for the gate", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Collect the metrics.");
+    const running = yield* nextTurn(bot.id);
+
+    // The message is planned into the running turn, and its send waits.
+    const gate = yield* holdGate(bot.id);
+    const message = yield* sendToBot(bot.id, "Include last week too.");
+    yield* steerWritten;
+    yield* control.finishTurn({
+      sessionId: session,
+      turnId: running,
+      outcome: { _tag: "completed" },
+    });
+    yield* turnEnded(bot.id);
+    yield* gate.release;
+
+    yield* nextTurn(bot.id, running);
+    yield* deliveryIs(message, "delivered");
+    const received = yield* control.dispatches(session);
+    assert.deepStrictEqual(
+      received
+        .filter((dispatch) => dispatch.text.includes("Include last week too."))
+        .map((dispatch) => dispatch.delivery._tag),
+      ["start"],
+    );
+  }).pipe(Effect.provide(TestDomain.layer)),
 );

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import { type BotId, WorkStepId } from "@j3-bots/contracts";
+import { type BotId, PositiveInt, WorkStepId } from "@j3-bots/contracts";
 import { Engine, EventCursor, IdempotencyKey } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as DateTime from "effect/DateTime";
@@ -14,6 +14,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as Domain from "../domain.ts";
+import { SettingsStore } from "../settings/SettingsStore.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
   awaitEntry,
@@ -617,5 +618,73 @@ it.effect("shows an event that cannot be applied once, and applies it when it ca
       (yield* BotStates).of(bot.id).pipe(Effect.map((state) => state._tag === "working")),
     );
     assert.deepStrictEqual(yield* noticesOf(bot.id), ["observation-failed"]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("resumes a held queue when the resume before it hits a defect", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const sql = yield* SqlClient.SqlClient;
+    const ana = yield* createBot("Ana");
+    yield* engineSession(ana.id);
+    yield* flushed(ana.id);
+    // A hold the engine never showed: resuming it is a bug the resumer must contain.
+    yield* sql`UPDATE sessions SET queue_held_cursor = events_cursor WHERE bot_id = ${ana.id}`;
+
+    const bia = yield* createBot("Bia");
+    const session = yield* engineSession(bia.id);
+    yield* sendToBot(bia.id, "Build it.");
+    yield* nextTurn(bia.id);
+    yield* control.startEngineTurn(session);
+    yield* control.holdQueue({ sessionId: session, heldAgainOnResume: false });
+    const resumed = sql<{ readonly n: number }>`
+      SELECT COUNT(*) AS n FROM sessions
+      WHERE bot_id = ${bia.id} AND queue_held_cursor IS NOT NULL
+        AND queue_resumed_cursor = queue_held_cursor
+    `.pipe(Effect.map(([row]) => (row?.n ?? 0) > 0));
+    yield* until(
+      sql<{ readonly n: number }>`
+        SELECT COUNT(*) AS n FROM sessions
+        WHERE bot_id = ${bia.id} AND queue_held_cursor IS NOT NULL
+      `.pipe(Effect.map(([row]) => (row?.n ?? 0) > 0)),
+    );
+
+    yield* (yield* HeldQueues).resumePending;
+    assert.isTrue(yield* resumed);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("plans nothing into a session whose events could not be applied, and holds no slot", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const sql = yield* SqlClient.SqlClient;
+    const store = yield* SettingsStore;
+    const settings = yield* store.get;
+    yield* store.save(
+      { ...settings, budgets: { ...settings.budgets, concurrentTurns: PositiveInt.make(1) } },
+      yield* DateTime.now,
+    );
+    const ana = yield* createBot("Ana");
+    const anaSession = yield* engineSession(ana.id);
+    yield* flushed(ana.id);
+    const bia = yield* createBot("Bia");
+    yield* engineSession(bia.id);
+
+    // A turn of Ana's own cannot be applied: what the server knows of her session is behind.
+    // A trigger takes no bound values; the id is one the server generated.
+    yield* sql.unsafe(`
+      CREATE TRIGGER poison BEFORE INSERT ON turns
+      WHEN NEW.session_id = (SELECT id FROM sessions WHERE bot_id = '${ana.id}')
+      BEGIN SELECT RAISE(ABORT, 'poison'); END
+    `);
+    yield* control.startEngineTurn(anaSession);
+    const notice = yield* awaitEntry(ana.id, "notice");
+    assert.deepStrictEqual(notice.notice, { _tag: "observation-failed" });
+
+    yield* sendToBot(ana.id, "Plan the sprint.");
+    const message = yield* sendToBot(bia.id, "Review the budget.");
+    yield* nextTurn(bia.id);
+    yield* deliveryIs(message, "delivered");
+    assert.strictEqual(yield* timesSent(anaSession, "Plan the sprint."), 0);
   }).pipe(Effect.provide(TestDomain.layer)),
 );

@@ -56,8 +56,9 @@ import {
   SessionRowId,
   TurnsInvariant,
 } from "./model.ts";
-import { inboxPath, Sender } from "./Sender.ts";
+import { inboxPath, Sender, type SendResult } from "./Sender.ts";
 import { isIdle, sessionWork } from "./sessionWork.ts";
+import { Observer } from "./Observer.ts";
 import { Readiness } from "./Readiness.ts";
 import { type Pass, onePassAtATime, passOutcome, reconcile } from "./reconciler.ts";
 import { Signals } from "./Signals.ts";
@@ -151,6 +152,7 @@ export const layer = Layer.effect(
     const engineState = yield* EngineState;
     const workOf = sessionWork(sql);
     const readiness = yield* Readiness;
+    const observer = yield* Observer;
     const random = yield* SecureRandom.SecureRandom;
 
     // ---- Operator commands ------------------------------------------------
@@ -265,6 +267,7 @@ export const layer = Layer.effect(
                 sourceEntryId: entry.id,
                 hops: 0,
                 retryOf: null,
+                cause: { _tag: "operator" },
               },
             ]);
           } else if (room !== undefined) {
@@ -315,6 +318,7 @@ export const layer = Layer.effect(
               sourceEntryId: wake.source_entry_id,
               hops: wake.hops,
               retryOf: wake.id,
+              cause: { _tag: "operator" },
             })),
           );
           yield* ledger.refreshMessages([input.entryId]);
@@ -339,13 +343,24 @@ export const layer = Layer.effect(
           const notice = found.value.entry;
           const [link] = yield* SqlSchema.findAll({
             Request: EntryId,
-            Result: Schema.Struct({ dispatch_id: DispatchRowId }),
+            Result: Schema.Struct({
+              dispatch_id: DispatchRowId,
+              reason: Schema.Literals(["undelivered", "turn"]),
+            }),
             execute: (entryId) => sql`
-              SELECT dispatch_id FROM notice_retries WHERE entry_id = ${entryId}
+              SELECT dispatch_id, reason FROM notice_retries WHERE entry_id = ${entryId}
             `,
           })(notice.id).pipe(Effect.orDie);
           if (!notice.retryable || link === undefined) {
             return yield* new Conflict({ reason: "not-retryable" });
+          }
+          // A delivery that failed counts only while the dispatch still has
+          // failed: one the engine applied after all must not go twice.
+          if (link.reason === "undelivered") {
+            const dispatch = yield* ledger.find(link.dispatch_id);
+            if (Option.isNone(dispatch) || dispatch.value.status !== "failed") {
+              return yield* new Conflict({ reason: "not-retryable" });
+            }
           }
           const sent = yield* ledger.wakesOf(link.dispatch_id);
           const retried = new Set<string>();
@@ -372,6 +387,7 @@ export const layer = Layer.effect(
                 sourceEntryId: wake.source_entry_id,
                 hops: wake.hops,
                 retryOf: wake.status === "failed" ? wake.id : null,
+                cause: { _tag: "operator" },
               })),
           );
           yield* ledger.refreshMessages(
@@ -386,16 +402,27 @@ export const layer = Layer.effect(
 
     /**
      * The bot's main session, if it can be planned into: live, opened in the
-     * engine, and not refused as busy since its last applied event.
+     * engine, and past the deadline of a busy refusal, which its next applied
+     * event ends sooner.
      */
     const mainSession = SqlSchema.findOneOption({
-      Request: Schema.String,
+      Request: Schema.Struct({ botId: Schema.String, now: Schema.String }),
       Result: MainSession,
-      execute: (botId) => sql`
+      execute: ({ botId, now }) => sql`
         SELECT id, bot_id FROM sessions
         WHERE bot_id = ${botId} AND purpose = 'main' AND retired_at IS NULL
           AND lost_at IS NULL AND engine_session_id IS NOT NULL
-          AND refused_busy = 0
+          AND (busy_until IS NULL OR busy_until <= ${now})
+      `,
+    });
+
+    /** The busy deadlines still ahead: the dispatcher looks again at the earliest. */
+    const busyDeadlines = SqlSchema.findAll({
+      Request: Schema.String,
+      Result: Schema.Struct({ busy_until: Time }),
+      execute: (now) => sql`
+        SELECT busy_until FROM sessions
+        WHERE busy_until > ${now} AND retired_at IS NULL AND lost_at IS NULL
       `,
     });
 
@@ -421,7 +448,11 @@ export const layer = Layer.effect(
       `,
     })(undefined).pipe(Effect.orDie);
 
-    /** Sessions with work across every bot: what the concurrency budget counts. */
+    /**
+     * Sessions with work the engine may have, across every bot: what the
+     * concurrency budget counts. A dispatch never sent holds no slot; it takes
+     * one when it is sent.
+     */
     const busySessions = sql<{ readonly n: number }>`
       SELECT COUNT(*) AS n FROM sessions s
       WHERE s.retired_at IS NULL AND s.lost_at IS NULL AND (
@@ -429,7 +460,7 @@ export const layer = Layer.effect(
         OR EXISTS (SELECT 1 FROM turns t WHERE t.session_id = s.id AND t.finished_at IS NULL)
         OR EXISTS (
           SELECT 1 FROM dispatches d WHERE d.session_id = s.id
-            AND d.status IN ('intended', 'accepted', 'delivered')
+            AND (d.status IN ('accepted', 'delivered') OR (d.status = 'intended' AND d.attempts > 0))
         )
       )
     `.pipe(
@@ -445,9 +476,9 @@ export const layer = Layer.effect(
      */
     const unsent = SqlSchema.findAll({
       Request: Schema.Void,
-      Result: Schema.Struct({ id: DispatchRowId }),
+      Result: Schema.Struct({ id: DispatchRowId, delivery: Schema.Literals(["start", "steer"]) }),
       execute: () => sql`
-        SELECT id FROM dispatches d
+        SELECT id, delivery FROM dispatches d
         WHERE status = 'intended' AND attempts = 0 AND fenced_by_stop_id IS NULL
           AND next_attempt_at IS NULL
           AND NOT EXISTS (
@@ -505,13 +536,25 @@ export const layer = Layer.effect(
       return group;
     });
 
-    /** How the bot's main session can take its head wake now, if it can. */
-    const planFor = Effect.fn("Pipeline.planFor")(function* (botId: BotId, slots: number) {
-      const session = yield* mainSession(botId).pipe(Effect.orDie);
+    /**
+     * How the bot's main session can take its head wake now: a plan, nothing
+     * for now, or a session whose events are not known yet, which is looked
+     * at again on a later pass.
+     */
+    const planFor = Effect.fn("Pipeline.planFor")(function* (
+      botId: BotId,
+      slots: number,
+      now: DateTime.Utc,
+    ) {
+      const session = yield* mainSession({ botId, now: timeText(now) }).pipe(Effect.orDie);
       if (Option.isNone(session)) return null;
       const pending = yield* pendingOf(botId).pipe(Effect.orDie);
       const head = pending[0];
       if (head === undefined) return null;
+      // Nothing is planned, and no slot taken, before the session's events
+      // are known: what they say decides how it can take the wake.
+      yield* observer.watch(session.value.id);
+      if (!(yield* observer.ready(session.value.id))) return "not-ready" as const;
       const work = yield* workOf(session.value.id);
       if (work.stopUnsettled) return null;
       if ((head.kind === "routine" || head.kind === "bot") && (yield* providerLimited(botId))) {
@@ -780,32 +823,44 @@ export const layer = Layer.effect(
      * A pass of the dispatcher. A session that is not ready only defers its
      * own dispatch; only the engine refusing a command ends the pass.
      */
+    /** Whether a send may have put a turn's worth of work in the engine: it holds a slot. */
+    const holdsSlot = (result: SendResult) => result !== "skipped" && result !== "none";
+
     const dispatchPass: Effect.Effect<Pass> = yield* onePassAtATime(
       Effect.gen(function* () {
         const outcome = passOutcome();
-        // A dispatch written before a crash, or while the engine was down, goes first.
-        for (const { id } of yield* unsent) {
+        const now = yield* DateTime.now;
+        const { budgets } = yield* settings.get;
+        let slots = budgets.concurrentTurns - (yield* busySessions);
+        // A dispatch written before a crash, or while the engine was down,
+        // goes first: a start takes a slot when it is sent, like a new one.
+        for (const { id, delivery } of yield* unsent) {
+          if (delivery === "start" && slots <= 0) continue;
           const result = yield* sender.send(id);
           if (result === "engine-unavailable") return { _tag: "unavailable" } as const;
           if (result === "skipped") outcome.defer();
+          if (delivery === "start" && holdsSlot(result)) slots--;
         }
-        const { budgets } = yield* settings.get;
-        let slots = budgets.concurrentTurns - (yield* busySessions);
         for (const { bot_id: botId } of yield* waitingBots) {
           const planned = yield* planOne(
             Effect.gen(function* () {
-              const plan = yield* planFor(botId, slots);
-              if (plan === null) return null;
+              const plan = yield* planFor(botId, slots, now);
+              if (plan === null || plan === "not-ready") return plan;
               const dispatchId = yield* writeDispatch(plan);
               return dispatchId === null ? null : { plan, dispatchId };
             }),
             null,
           );
-          if (planned === null) continue;
-          if (planned.plan.delivery._tag === "start") slots--;
+          if (planned === "not-ready") outcome.defer();
+          if (planned === null || planned === "not-ready") continue;
           const result = yield* sender.send(planned.dispatchId);
           if (result === "engine-unavailable") return { _tag: "unavailable" } as const;
           if (result === "skipped") outcome.defer();
+          if (planned.plan.delivery._tag === "start" && holdsSlot(result)) slots--;
+        }
+        // A session refused as busy is looked at again once its deadline passes.
+        for (const row of yield* busyDeadlines(timeText(now)).pipe(Effect.orDie)) {
+          outcome.until(row.busy_until);
         }
         return outcome.done();
       }).pipe(Effect.withSpan("Pipeline.dispatchPending")),

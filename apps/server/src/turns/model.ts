@@ -140,7 +140,11 @@ export const DispatchStatus = Schema.Literals([
 ]);
 export type DispatchStatus = typeof DispatchStatus.Type;
 
-/** How long a recovery waits after its `n`th undecided answer: doubling from 2 s to 10 min. */
+/**
+ * How long a recovery waits after its `n`th undecided answer, and an answer or
+ * a held queue's resume after its `n`th lost reply: doubling from 2 s to 10
+ * min.
+ */
 export const recoveryBackoff = (n: number): Duration.Duration =>
   Duration.min(Duration.seconds(2 * 2 ** Math.max(0, n - 1)), Duration.minutes(10));
 
@@ -166,11 +170,14 @@ export const UNAVAILABLE_RETRY = Duration.seconds(30);
  */
 export const SYNC_DEADLINE = Duration.seconds(10);
 
-/** A held queue whose resume got no answer is resumed again this many times, then at the next ready edge. */
-export const MAX_RESUME_TRIES = 5;
-
-/** An answer to an engine request whose reply was lost is sent again this many times, then at the next ready edge. */
-export const MAX_RESPONSE_TRIES = 5;
+/**
+ * How long nothing is planned into a session after its `n`th first send in a
+ * row was refused as busy, unless an event of it is applied first: doubling
+ * from 2 s to 30 s. The adapter saw a turn whose start the server has not
+ * applied yet, which is usually moments away.
+ */
+export const busyBackoff = (n: number): Duration.Duration =>
+  Duration.min(Duration.seconds(2 * 2 ** Math.max(0, n - 1)), Duration.seconds(30));
 
 /** The longest a bot tool request spends being matched to its call. */
 export const ADMISSION_DEADLINE = Duration.seconds(15);

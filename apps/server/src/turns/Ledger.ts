@@ -300,7 +300,7 @@ export const layer = Layer.effect(
                 _tag: "turn-failed",
                 failure: after.reason === "unresolved" ? "engine-unavailable" : "unknown",
               },
-              dispatchId,
+              { dispatchId, reason: "undelivered" },
             );
           }
           break;
@@ -317,6 +317,26 @@ export const layer = Layer.effect(
       yield* sql`UPDATE held_messages SET consumed_dispatch_id = NULL WHERE consumed_dispatch_id = ${dispatchId}`;
     }, Effect.orDie);
 
+    /**
+     * A notice that the dispatch was not delivered, which the engine turns out
+     * to have after all: it no longer offers a retry, which would deliver the
+     * same wakes twice.
+     */
+    const mootNotices = Effect.fn("Ledger.mootNotices")(function* (dispatchId: DispatchRowId) {
+      const rows = yield* sql<{ readonly entry_id: string }>`
+        SELECT entry_id FROM notice_retries
+        WHERE dispatch_id = ${dispatchId} AND reason = 'undelivered'
+      `;
+      for (const row of rows) {
+        const found = yield* entries.find(EntryId.make(row.entry_id));
+        if (Option.isSome(found) && found.value.entry._tag === "notice") {
+          if (found.value.entry.retryable) {
+            yield* entries.update({ ...found.value.entry, retryable: false });
+          }
+        }
+      }
+    }, Effect.orDie);
+
     const accept = Effect.fn("Ledger.accept")(function* (
       dispatchId: DispatchRowId,
       disposition: DispatchDisposition | null,
@@ -327,6 +347,7 @@ export const layer = Layer.effect(
           next_attempt_at = NULL, updated_at = ${at}
         WHERE id = ${dispatchId} AND status IN ('intended', 'failed')
       `;
+      yield* mootNotices(dispatchId);
       if (disposition !== null) {
         // The first answer only, and only on a dispatch the engine has: the
         // events may already have moved the turn on, or a Stop ended it.
@@ -355,6 +376,7 @@ export const layer = Layer.effect(
         UPDATE wakes SET status = 'dispatched', failure_reason = NULL, updated_at = ${at}
         WHERE dispatch_id = ${dispatchId} AND status = 'failed'
       `;
+      yield* mootNotices(dispatchId);
       yield* refreshMessages(yield* sourcesOf(dispatchId));
     }, Effect.orDie);
 

@@ -7,6 +7,7 @@ import {
   Engine,
   EngineAttachmentId,
   SessionId,
+  TurnId,
 } from "@j3-bots/engine-t3";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -26,6 +27,7 @@ import { Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { type DispatchRow, keyOf, Ledger, type WakesAfter } from "./Ledger.ts";
 import {
+  busyBackoff,
   type DispatchRowId,
   MAX_INDETERMINATE_ANSWERS,
   MAX_STAGING_FAILURES,
@@ -34,7 +36,6 @@ import {
   type WakeFailure,
 } from "./model.ts";
 import { Observer } from "./Observer.ts";
-import { DEFECT_RETRY } from "./reconciler.ts";
 import { SessionGate } from "./SessionGate.ts";
 import { sessionLoss } from "./sessionRecords.ts";
 import { Signals } from "./Signals.ts";
@@ -70,6 +71,7 @@ const FileRow = Schema.Struct({
 
 const SessionState = Schema.Struct({
   engine_session_id: Schema.NullOr(SessionId),
+  admitted_turn_id: Schema.NullOr(TurnId),
   lost: Schema.BooleanFromBit,
   gone: Schema.BooleanFromBit,
   stop_unsettled: Schema.BooleanFromBit,
@@ -100,9 +102,11 @@ type Staging =
  * as it stands then, so a fence that landed during the call decides where its
  * wakes go.
  *
- * A session that is gone is settled before anything waits on it, and one
- * whose events are not known yet is skipped: neither holds up another
- * session's sends.
+ * A dispatch whose session is gone, or whose recovery passed its bound, is
+ * settled before anything waits on the session's events; one whose session's
+ * events are not known yet is skipped. Neither holds up another session's
+ * sends. A defect counts against the dispatch's bounds like the failure it
+ * stands for, so a send that keeps failing ends visibly.
  */
 export class Sender extends Context.Service<
   Sender,
@@ -110,7 +114,7 @@ export class Sender extends Context.Service<
     /**
      * Sends a dispatch if it is due: a first send unless a Stop fenced it or
      * a Stop of its session is unsettled, a recovery of a key already sent in
-     * any case. A defect gives the dispatch a later deadline.
+     * any case.
      */
     readonly send: (dispatchId: DispatchRowId) => Effect.Effect<SendResult>;
   }
@@ -146,7 +150,7 @@ export const layer = Layer.effect(
       Request: Schema.String,
       Result: SessionState,
       execute: (sessionId) => sql`
-        SELECT s.engine_session_id, s.lost_at IS NOT NULL AS lost,
+        SELECT s.engine_session_id, s.admitted_turn_id, s.lost_at IS NOT NULL AS lost,
           (s.retired_at IS NOT NULL OR s.lost_at IS NOT NULL) AS gone,
           EXISTS (
             SELECT 1 FROM stop_targets t WHERE t.session_id = s.id AND t.stopped_at IS NULL
@@ -187,13 +191,22 @@ export const layer = Layer.effect(
 
     /**
      * The adapter saw a turn the server has not applied yet: nothing is
-     * planned into the session until its next event is.
+     * planned into the session before a short deadline, which its next
+     * applied event clears. A deadline rather than a mark, so a turn whose
+     * last event committed before this never strands the session.
      */
     const refusedBusy = (dispatchId: DispatchRowId, sessionId: string) =>
       transaction(
         Effect.gen(function* () {
+          const now = yield* DateTime.now;
+          const [row] = yield* sql<{ readonly busy_refusals: number }>`
+            SELECT busy_refusals FROM sessions WHERE id = ${sessionId}
+          `.pipe(Effect.orDie);
+          const refusals = (row?.busy_refusals ?? 0) + 1;
+          const until = DateTime.addDuration(now, busyBackoff(refusals));
           yield* sql`
-            UPDATE sessions SET refused_busy = 1 WHERE id = ${sessionId}
+            UPDATE sessions SET busy_refusals = ${refusals}, busy_until = ${timeText(until)}
+            WHERE id = ${sessionId}
           `.pipe(Effect.orDie);
           yield* releaseUnsent(dispatchId);
         }),
@@ -244,14 +257,19 @@ export const layer = Layer.effect(
         }),
       );
 
-    /** The answer was lost: counted, and the dispatch fails once the bound is reached. */
+    /**
+     * The answer was lost, or the send failed unexpectedly once the attempt
+     * was claimed: counted, and the dispatch fails once the bound is reached,
+     * or at once when its session is gone, since no answer can come.
+     */
     const undecided = (dispatchId: DispatchRowId) =>
       transaction(
         Effect.gen(function* () {
           const row = yield* current(dispatchId);
           if (Option.isNone(row) || row.value.status !== "intended") return "settled" as const;
+          const session = yield* sessionState(row.value.session_id).pipe(Effect.orDie);
           const answers = row.value.indeterminate_answers + 1;
-          if (answers >= MAX_INDETERMINATE_ANSWERS) {
+          if (session.gone || answers >= MAX_INDETERMINATE_ANSWERS) {
             yield* ledger.fail(dispatchId, "unresolved", yield* sentWakes(row.value, "unresolved"));
             return "settled" as const;
           }
@@ -266,15 +284,30 @@ export const layer = Layer.effect(
       );
 
     /**
-     * Staging failed: tried again with backoff, and after the bound the
-     * dispatch fails. Nothing was sent by this send, so a first send fails as
+     * Staging failed, or the send failed unexpectedly before its attempt was
+     * claimed: tried again with backoff, and after the bound the dispatch
+     * fails. Nothing was sent by this send, so a first send fails as
      * `rejected`; a recovery, whose key went out before, as `unresolved`.
+     * A session that is gone settles it at once.
      */
     const stagingFailed = (dispatchId: DispatchRowId) =>
       transaction(
         Effect.gen(function* () {
           const row = yield* current(dispatchId);
           if (Option.isNone(row) || row.value.status !== "intended") return "settled" as const;
+          const session = yield* sessionState(row.value.session_id).pipe(Effect.orDie);
+          if (session.gone) {
+            if (row.value.attempts === 0) {
+              yield* ledger.release(dispatchId, yield* unsentWakes(row.value));
+            } else {
+              yield* ledger.fail(
+                dispatchId,
+                "unresolved",
+                yield* sentWakes(row.value, "unresolved"),
+              );
+            }
+            return "settled" as const;
+          }
           const failures = row.value.staging_failures + 1;
           if (failures >= MAX_STAGING_FAILURES) {
             if (row.value.attempts === 0) {
@@ -415,7 +448,24 @@ export const layer = Layer.effect(
       return claimed.length > 0;
     });
 
-    const sendInGate = Effect.fn("Sender.sendInGate")(function* (dispatchId: DispatchRowId) {
+    /** A defect is logged, and the dispatch goes through `then`, which counts it. */
+    const countDefect =
+      (what: string, then: Effect.Effect<SendResult>) =>
+      <A>(effect: Effect.Effect<A>): Effect.Effect<A | SendResult> =>
+        effect.pipe(
+          Effect.catchCauseIf(
+            (cause) => !Cause.hasInterruptsOnly(cause),
+            (cause) => Effect.andThen(Effect.logError(what, cause), then),
+          ),
+        );
+
+    /**
+     * Everything before the call, read inside the gate: whether the dispatch
+     * is still due, the settling of one whose session is gone or whose bound
+     * passed, the session's readiness, the staging and the claim. What to call
+     * the engine with once the attempt is claimed, or what the send did.
+     */
+    const prepare = Effect.fn("Sender.prepare")(function* (dispatchId: DispatchRowId) {
       const found = yield* ledger.find(dispatchId);
       if (Option.isNone(found) || found.value.status !== "intended") return "none" as const;
       const row = found.value;
@@ -434,6 +484,7 @@ export const layer = Layer.effect(
       }
 
       // Ends with no answer: its session is gone, or the day's bound passed.
+      // Settled before anything waits on the session's events.
       const expired = DateTime.isLessThan(
         DateTime.addDuration(row.created_at, RECOVERY_WINDOW),
         now,
@@ -445,13 +496,34 @@ export const layer = Layer.effect(
       }
       const sessionId = session.engine_session_id;
 
+      // Nothing is sent into a session before its events are followed and
+      // known from a committed cursor or snapshot; the event that makes it
+      // ready nudges the workers.
+      yield* observer.watch(row.session_id);
+      if (!(yield* observer.ready(row.session_id))) return "skipped" as const;
+
+      // A steer goes only into the turn it was planned for: once that turn is
+      // no longer the admitted one, its wakes wait for the next dispatch.
+      if (firstSend && row.delivery === "steer" && session.admitted_turn_id !== row.steer_turn_id) {
+        yield* releaseUnsent(row.id);
+        return "settled" as const;
+      }
+
       const staging = yield* stage(row);
       if (staging._tag === "unavailable") return "engine-unavailable" as const;
       if (staging._tag === "failed") return yield* stagingFailed(row.id);
       const input = inputOf(row, sessionId, staging.files);
 
       if (!(yield* claim(row))) return "none" as const;
+      return { row, input, firstSend };
+    });
 
+    /** The call, once the attempt is claimed, and its answer recorded. */
+    const call = Effect.fn("Sender.call")(function* (
+      row: DispatchRow,
+      input: DispatchInput,
+      firstSend: boolean,
+    ) {
       if (firstSend) {
         return yield* engine.dispatch(input).pipe(
           Effect.flatMap((disposition) => accepted(row, disposition)),
@@ -484,43 +556,28 @@ export const layer = Layer.effect(
     });
 
     /**
-     * A defect in one send is logged, and the dispatch is given a deadline:
-     * the recovery tries it again then, never at once.
+     * One send, inside the gate. A defect counts against the dispatch's
+     * bounds, never retried at once: before the claim nothing was sent, so it
+     * counts as a staging failure; after it the key may be in the engine, so
+     * it counts as an undecided answer.
      */
-    const deferAfterDefect = Effect.fn("Sender.deferAfterDefect")(function* (
-      dispatchId: DispatchRowId,
-    ) {
-      const next = DateTime.addDuration(yield* DateTime.now, DEFECT_RETRY);
-      yield* sql`
-        UPDATE dispatches SET next_attempt_at = ${timeText(next)}
-        WHERE id = ${dispatchId} AND status = 'intended'
-      `.pipe(Effect.orDie);
-      return "scheduled" as const;
+    const sendInGate = Effect.fn("Sender.sendInGate")(function* (dispatchId: DispatchRowId) {
+      const prepared = yield* prepare(dispatchId).pipe(
+        countDefect(
+          "A dispatch could not be prepared; it is tried again later",
+          stagingFailed(dispatchId),
+        ),
+      );
+      if (typeof prepared === "string") return prepared;
+      return yield* call(prepared.row, prepared.input, prepared.firstSend).pipe(
+        countDefect("A dispatch's send failed; it is recovered later", undecided(dispatchId)),
+      );
     });
 
     const send = Effect.fn("Sender.send")(function* (dispatchId: DispatchRowId) {
       const found = yield* ledger.find(dispatchId);
       if (Option.isNone(found) || found.value.status !== "intended") return "none" as const;
-      const sessionId = found.value.session_id;
-      const session = yield* sessionState(sessionId).pipe(Effect.orDie);
-      // A session that is gone is settled in the gate without waiting on it.
-      // A live one takes nothing before its events are followed and known
-      // from a committed cursor or snapshot; until then it is skipped, and
-      // the event that makes it ready nudges the dispatcher.
-      if (!session.gone && session.engine_session_id !== null) {
-        if (!(yield* observer.ready(sessionId))) return "skipped" as const;
-      }
-      const result: SendResult = yield* gate
-        .run(sessionId)(sendInGate(dispatchId))
-        .pipe(
-          Effect.catchCauseIf(
-            (cause) => !Cause.hasInterruptsOnly(cause),
-            (cause) =>
-              Effect.logError("A dispatch could not be sent; it is tried again later", cause).pipe(
-                Effect.andThen(deferAfterDefect(dispatchId)),
-              ),
-          ),
-        );
+      const result = yield* gate.run(found.value.session_id)(sendInGate(dispatchId));
       // Only a change wakes anyone: the session may take its next wake, a
       // Stop may proceed, or the recovery has a new deadline.
       if (result === "settled") {

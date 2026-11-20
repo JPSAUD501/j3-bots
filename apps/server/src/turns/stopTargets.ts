@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { RoomId } from "@j3-bots/contracts";
+import { type BotId, RoomId } from "@j3-bots/contracts";
 import { IdempotencyKey } from "@j3-bots/engine-t3";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -101,7 +101,8 @@ export const stopTargets = (sql: SqlClient.SqlClient) => {
      * so each target still unsettled gets a new round, not yet issued. A turn
      * delivering a dispatch the Stop fenced reopens that Stop's target even
      * once confirmed: the engine applied the key after the Stop ended
-     * everything else. Whether one was opened.
+     * everything else, also a key whose recovery gave up (`unresolved`).
+     * Whether one was opened.
      */
     openRound: Effect.fn("stopTargets.openRound")(function* (
       sessionId: SessionRowId,
@@ -148,22 +149,31 @@ export const stopTargets = (sql: SqlClient.SqlClient) => {
         : ({ _tag: "failed", reason: "stopped" } satisfies WakesAfter);
     }),
 
-    /** Whether a Stop recorded since `since` reached the session in the dispatch's scope. */
-    stoppedSince: Effect.fn("stopTargets.stoppedSince")(function* (
-      sessionId: SessionRowId,
-      since: DateTime.Utc,
+    /**
+     * Whether a Stop of the bot covers work for `audience` that began at
+     * `since`: a bot Stop, or a room Stop of that room, that is still
+     * unsettled, or was recorded at or after `since` and so ended that work
+     * after it began. Such work wakes nobody and needs no notice.
+     */
+    covers: Effect.fn("stopTargets.covers")(function* (
+      botId: BotId,
       audience: Audience,
+      since: DateTime.Utc,
     ) {
-      const rows = yield* sql<{ readonly scope: string; readonly room_id: string | null }>`
-        SELECT DISTINCT s.scope, s.room_id FROM stops s
-        JOIN stop_targets t ON t.stop_id = s.id
-        WHERE t.session_id = ${sessionId} AND s.created_at >= ${timeText(since)}
+      const roomId = audience._tag === "room" ? audience.roomId : null;
+      const rows = yield* sql<{ readonly n: number }>`
+        SELECT 1 AS n FROM stops s
+        WHERE s.bot_id = ${botId}
+          AND (s.scope = 'bot' OR (s.scope = 'room' AND s.room_id = ${roomId}))
+          AND (
+            s.created_at >= ${timeText(since)}
+            OR EXISTS (
+              SELECT 1 FROM stop_targets t WHERE t.stop_id = s.id AND t.stopped_at IS NULL
+            )
+          )
+        LIMIT 1
       `.pipe(Effect.orDie);
-      return rows.some(
-        (row) =>
-          row.scope === "bot" ||
-          (audience._tag === "room" && audience.roomId !== null && audience.roomId === row.room_id),
-      );
+      return rows.length > 0;
     }),
   };
 };

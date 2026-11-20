@@ -127,6 +127,26 @@ export class TestEngineControl extends Context.Service<
      */
     readonly holdNext: (method: HeldMethod) => Effect.Effect<Held>;
     /**
+     * The next call of `method` is applied, or refused, as usual, and its
+     * answer waits until `release`. `entered` succeeds once it was decided,
+     * so a test can act between the engine's decision and the caller's
+     * hearing of it.
+     */
+    readonly holdNextAnswer: (method: HeldMethod) => Effect.Effect<Held>;
+    /**
+     * Every stream of the session opened from now on stalls before its first
+     * event, as when the engine is slow to answer a subscription, until
+     * `release`.
+     */
+    readonly withholdEvents: (
+      sessionId: SessionId,
+    ) => Effect.Effect<{ readonly release: Effect.Effect<void> }>;
+    /**
+     * While set, every `dispatch` and `redispatch` dies before anything of it
+     * is applied, as a bug in the adapter would.
+     */
+    readonly breakDispatches: (broken: boolean) => Effect.Effect<void>;
+    /**
      * The next `stop` is acknowledged at once, and its effects (the interrupt,
      * the cancels, the disarmed continuation) wait until `release`, as when
      * the provider's interrupt is slow.
@@ -403,6 +423,15 @@ const make = Effect.gen(function* () {
     readonly reply: Deferred.Deferred<void>;
   } | null = null;
   let deferNext: Deferred.Deferred<void> | null = null;
+  /** Answers held after their command was decided, by method. */
+  const answerHolds = new Map<
+    HeldMethod,
+    { readonly entered: Deferred.Deferred<void>; readonly release: Deferred.Deferred<void> }
+  >();
+  /** Sessions whose new streams stall until released. */
+  const withheld = new Map<SessionId, Deferred.Deferred<void>>();
+  /** While set, every dispatch and redispatch dies before it is applied. */
+  let brokenDispatches = false;
   /** Dispatches waiting in the startup queue, by key, until they land. */
   const deferred = new Map<IdempotencyKey, Deferred.Deferred<void>>();
   // One counter for every session, as the real engine numbers its events.
@@ -432,17 +461,35 @@ const make = Effect.gen(function* () {
       return effect.pipe(Effect.ignore, Effect.andThen(Effect.fail(new EngineIndeterminate())));
     });
 
-  /** Waits at the door when the test holds the next call of `method`. */
+  /**
+   * Waits at the door when the test holds the next call of `method`, and
+   * holds its answer once decided when the test holds that.
+   */
   const door = <A, E, R>(method: HeldMethod, effect: Effect.Effect<A, E, R>) =>
     Effect.suspend(() => {
+      const answered = Effect.suspend(() => {
+        const hold = answerHolds.get(method);
+        if (hold === undefined) return effect;
+        answerHolds.delete(method);
+        return Effect.exit(effect).pipe(
+          Effect.tap(() => Deferred.succeed(hold.entered, undefined)),
+          Effect.tap(() => Deferred.await(hold.release)),
+          Effect.flatten,
+        );
+      });
       const hold = holds.get(method);
-      if (hold === undefined) return effect;
+      if (hold === undefined) return answered;
       holds.delete(method);
       return Deferred.succeed(hold.entered, undefined).pipe(
         Effect.andThen(Deferred.await(hold.release)),
-        Effect.andThen(effect),
+        Effect.andThen(answered),
       );
     });
+
+  /** A bug in the adapter, while the test has dispatches broken. */
+  const unbroken = Effect.suspend(() =>
+    brokenDispatches ? Effect.die(new Error("A broken dispatch")) : Effect.void,
+  );
 
   /**
    * A dispatch the startup queue holds: the send waits there, so it answers
@@ -981,6 +1028,7 @@ const make = Effect.gen(function* () {
         "dispatch",
         command(
           Effect.gen(function* () {
+            yield* unbroken;
             const { key, sessionId, delivery } = input;
             yield* claimAttachments(input.attachments);
             if (keys.has(key)) {
@@ -1009,6 +1057,7 @@ const make = Effect.gen(function* () {
         "redispatch",
         command(
           Effect.gen(function* () {
+            yield* unbroken;
             const { key, sessionId, text, delivery } = input;
             // Staged ids may be fresh on a resend; the rest must match.
             yield* claimAttachments(input.attachments);
@@ -1157,22 +1206,28 @@ const make = Effect.gen(function* () {
           }
           // Read the history and join the live feed in one step, so no event
           // falls between them.
-          const at = yield* DateTime.now;
-          const from = after === null ? null : parseCursor(after);
-          let lastCursor = after ?? cursorOf(0);
-          if (from === null || from < session.replayableFrom) {
-            const replaced = replacement(session, from, at);
-            lastCursor = replaced.cursor;
-            Queue.offerUnsafe(queue, replaced);
-          } else {
-            for (const entry of session.log) {
-              if (entry.sequence <= from) continue;
-              lastCursor = entry.event.cursor;
-              Queue.offerUnsafe(queue, entry.event);
+          const join = Effect.gen(function* () {
+            const at = yield* DateTime.now;
+            const from = after === null ? null : parseCursor(after);
+            let lastCursor = after ?? cursorOf(0);
+            if (from === null || from < session.replayableFrom) {
+              const replaced = replacement(session, from, at);
+              lastCursor = replaced.cursor;
+              Queue.offerUnsafe(queue, replaced);
+            } else {
+              for (const entry of session.log) {
+                if (entry.sequence <= from) continue;
+                lastCursor = entry.event.cursor;
+                Queue.offerUnsafe(queue, entry.event);
+              }
             }
-          }
-          session.subscribers.set(queue, { lastCursor });
+            session.subscribers.set(queue, { lastCursor });
+          });
           yield* Effect.addFinalizer(() => Effect.sync(() => session.subscribers.delete(queue)));
+          const held = withheld.get(sessionId);
+          if (held === undefined) return yield* join;
+          // Stalled: it joins only once the test releases it.
+          yield* Effect.forkScoped(Deferred.await(held).pipe(Effect.andThen(join)));
         }),
       ),
 
@@ -1235,6 +1290,35 @@ const make = Effect.gen(function* () {
           entered: Deferred.await(entered),
           release: Deferred.succeed(release, undefined).pipe(Effect.asVoid),
         };
+      }),
+
+    holdNextAnswer: (method) =>
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        answerHolds.set(method, { entered, release });
+        return {
+          entered: Deferred.await(entered),
+          release: Deferred.succeed(release, undefined).pipe(Effect.asVoid),
+        };
+      }),
+
+    withholdEvents: (sessionId) =>
+      Effect.gen(function* () {
+        const release = yield* Deferred.make<void>();
+        withheld.set(sessionId, release);
+        return {
+          release: Effect.sync(() => withheld.delete(sessionId)).pipe(
+            Effect.andThen(Deferred.succeed(release, undefined)),
+            Effect.andThen(Effect.yieldNow),
+            Effect.asVoid,
+          ),
+        };
+      }),
+
+    breakDispatches: (broken) =>
+      Effect.sync(() => {
+        brokenDispatches = broken;
       }),
 
     delayNextStopEffects: Effect.gen(function* () {

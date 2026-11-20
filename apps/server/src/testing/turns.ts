@@ -10,6 +10,7 @@ import {
 } from "@j3-bots/contracts";
 import { SessionId, TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -97,6 +98,24 @@ export const gateSettled = (botId: BotId) =>
   });
 
 /**
+ * Holds the bot's session gate, as a long send or Stop round would, until
+ * `release`: whatever needs the gate waits behind it.
+ */
+export const holdGate = (botId: BotId) =>
+  Effect.gen(function* () {
+    const row = Option.getOrThrow(yield* sessionRow(botId));
+    const entered = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    yield* (yield* SessionGate)
+      .run(row.id)(
+        Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release))),
+      )
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.await(entered);
+    return { release: Deferred.succeed(release, undefined).pipe(Effect.asVoid) };
+  });
+
+/**
  * Waits until every wake the bot can take now has reached the engine: its
  * session's events are caught up (a session not caught up takes nothing),
  * then one pass of the dispatcher, then whatever send of the bot's still runs.
@@ -109,7 +128,8 @@ export const flushed = (botId: BotId) =>
         Effect.flatMap((row) =>
           Option.isNone(row) || row.value.lost_at !== null
             ? Effect.succeed(true)
-            : observer.ready(row.value.id),
+            : // Following a session is what lets it be ready.
+              observer.watch(row.value.id).pipe(Effect.andThen(observer.ready(row.value.id))),
         ),
       ),
     );
@@ -236,6 +256,7 @@ export const sendInRoom = (botId: BotId, roomId: RoomId, text: string) =>
           sourceEntryId: entry.id,
           hops: 0,
           retryOf: null,
+          cause: { _tag: "operator" },
         },
       ]),
     );

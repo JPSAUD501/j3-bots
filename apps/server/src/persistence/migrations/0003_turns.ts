@@ -5,8 +5,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 // What the turn machinery needs beyond the initial schema: the entry a wake
 // came from and the wake it retries, the recovery bound of a dispatch, its
 // staging retries and how its delivery closed, when a Stop round was issued,
-// acknowledged and observed, a session the engine no longer has or found
-// busy, a held queue's resume, the turns a session's events showed, their
+// acknowledged and observed, a session the engine no longer has or refused
+// as busy, a held queue's resume, the turns a session's events showed, their
 // work steps and `j3` tool calls, host speech already delivered, open cards,
 // an operator's answer still to reach the engine, and a submitted secret
 // whose answer was lost. See `docs/architecture/server.md`.
@@ -60,14 +60,16 @@ export default Effect.gen(function* () {
   // into it or watched there again; part 2b gives the bot a new one.
   yield* sql`ALTER TABLE sessions ADD COLUMN lost_at TEXT`;
   // A first send was refused as busy: the adapter saw a turn the server has
-  // not applied yet, so nothing is planned into the session until its next
-  // event is applied, which clears this.
+  // not applied yet. Nothing is planned into the session before `busy_until`,
+  // which the next applied event clears; `busy_refusals` counts the refusals
+  // in a row, for the deadline's backoff.
   yield* sql`
-    ALTER TABLE sessions ADD COLUMN refused_busy INTEGER NOT NULL DEFAULT 0
-      CHECK (refused_busy IN (0, 1))
+    ALTER TABLE sessions ADD COLUMN busy_refusals INTEGER NOT NULL DEFAULT 0
+      CHECK (busy_refusals >= 0)
   `;
-  // A held queue's resume whose reply was lost: how many times, and when it
-  // is tried next. Reset when a new hold is reported and at each ready edge.
+  yield* sql`ALTER TABLE sessions ADD COLUMN busy_until TEXT`;
+  // A held queue's resume whose reply was lost: how many times in a row, and
+  // when it is tried next. Reset when a new hold is reported.
   yield* sql`
     ALTER TABLE sessions ADD COLUMN queue_resume_failures INTEGER NOT NULL DEFAULT 0
       CHECK (queue_resume_failures >= 0)
@@ -142,8 +144,8 @@ export default Effect.gen(function* () {
   // sent under a key derived from the card, so one card takes one answer.
   yield* sql`ALTER TABLE engine_requests ADD COLUMN response_json TEXT`;
   // When the engine took that answer, and, while its replies are lost, how
-  // many times it was sent and when it is sent next. The request's events
-  // close the card.
+  // many times in a row it was sent and when it is sent next. The request's
+  // events close the card.
   yield* sql`
     ALTER TABLE engine_requests ADD COLUMN response_sent_at TEXT
       CHECK (response_sent_at IS NULL OR response_json IS NOT NULL)
@@ -172,10 +174,13 @@ export default Effect.gen(function* () {
   yield* sql`ALTER TABLE catch_up_notes ADD COLUMN note_json TEXT`;
 
   // A retryable notice and the dispatch whose wakes its retry sends again.
+  // `reason` says what failed: the dispatch's delivery (`undelivered`, which a
+  // late delivery makes moot) or the turn that ran (`turn`).
   yield* sql`
     CREATE TABLE notice_retries (
       entry_id TEXT PRIMARY KEY REFERENCES entries (id) ON DELETE CASCADE,
-      dispatch_id TEXT NOT NULL REFERENCES dispatches (id) ON DELETE CASCADE
+      dispatch_id TEXT NOT NULL REFERENCES dispatches (id) ON DELETE CASCADE,
+      reason TEXT NOT NULL CHECK (reason IN ('undelivered', 'turn'))
     )
   `;
 });

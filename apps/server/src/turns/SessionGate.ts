@@ -12,9 +12,8 @@ import { keyedLock } from "./keyedLock.ts";
  * and releases it; none holds it while it waits for events or backs off.
  *
  * The lock lives in the process. What makes the order hold across a restart is
- * that each step reads its state from the database inside the gate, and that
- * the server sends every unconfirmed Stop round before anything else
- * (`Turns.ts`).
+ * that each step reads its state from the database inside the gate: a first
+ * send finds an unsettled Stop of its session there, and is not made.
  */
 export class SessionGate extends Context.Service<
   SessionGate,

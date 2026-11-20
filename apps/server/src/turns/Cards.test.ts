@@ -16,6 +16,8 @@ import { timeText } from "../persistence/columns.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
   awaitEntry,
+  command,
+  conversation,
   createBot,
   engineSession,
   nextTurn,
@@ -142,3 +144,61 @@ it.effect("lets one submission at a time reach a card, when the first one's repl
     yield* until(secretStatus(bot.id).pipe(Effect.map((status) => status === "provided")));
   }).pipe(Effect.provide(TestDomain.layer)),
 );
+
+it.effect("sends an answer when the answer before it hits a defect", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const sql = yield* SqlClient.SqlClient;
+    const cards = yield* Cards;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Clean up.");
+    const turnId = yield* nextTurn(bot.id);
+    const approval = (action: string) =>
+      control.openRequest({
+        sessionId: session,
+        turnId,
+        request: { _tag: "approval", kind: "command", action, detail: null, allowsSession: false },
+      });
+    yield* approval("rm -rf build");
+    const second = yield* approval("rm -rf dist");
+    const [first, next] = yield* eventuallyTwoCards(bot.id);
+
+    // Both answers are recorded while the engine is away; the first is one
+    // its card cannot take, as a bug in the server would write.
+    yield* control.setReachable(false);
+    for (const card of [first, next]) {
+      yield* cards.answer({
+        commandId: command(),
+        entryId: card,
+        answer: { _tag: "approval", decision: "allow-once" },
+      });
+    }
+    yield* sql`
+      UPDATE engine_requests SET response_json = '{"_tag":"dismiss"}' WHERE entry_id = ${first}
+    `;
+    yield* control.setReachable(true);
+
+    yield* cards.respondPending;
+    const responses = yield* control.responses(session);
+    assert.deepStrictEqual(
+      responses.map((response) => response.requestId),
+      [second],
+    );
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+/** The bot's two approval cards, oldest first, once both are shown. */
+const eventuallyTwoCards = (botId: BotId) =>
+  until(
+    conversation(botId).pipe(
+      Effect.map((entries) => entries.filter((entry) => entry._tag === "approval").length === 2),
+    ),
+  ).pipe(
+    Effect.andThen(conversation(botId)),
+    Effect.map((entries) => {
+      const [first, next] = entries.filter((entry) => entry._tag === "approval");
+      if (first === undefined || next === undefined) throw new Error("two approval cards");
+      return [first.id, next.id] as const;
+    }),
+  );

@@ -52,16 +52,17 @@ type Round = typeof Round.Type;
 
 const Fenced = Schema.Struct({
   id: DispatchRowId,
+  status: Schema.Literals(["intended", "failed"]),
   attempts: Schema.Int,
   in_scope: Schema.BooleanFromBit,
 });
 
 /**
- * How one session's Stop work went in a pass of the runner: done for now,
- * waiting for the recovery (which nudges the runner), left for a later pass,
- * or refused by the engine, which ends the pass.
+ * How one session's Stop work went in a pass of the runner: done for now
+ * (also when it waits for the recovery, whose settling nudges the runner),
+ * left for a later pass, or refused by the engine, which ends the pass.
  */
-type Progress = "done" | "waiting" | "deferred" | "unavailable";
+type Progress = "done" | "deferred" | "unavailable";
 
 /**
  * The operator's Stop (`docs/architecture/server.md`, Stop): recorded in one
@@ -91,6 +92,13 @@ export class Stops extends Context.Service<
   }
 >()("@j3-bots/server/turns/Stops") {}
 
+/**
+ * A dispatch whose recovery gave up may still land: the engine keeps its key
+ * for good, so a Stop over its work fences it (`stopTargets.openRound`).
+ */
+const mayLand = (sql: SqlClient.SqlClient) =>
+  sql`(status = 'failed' AND failure_reason = 'unresolved')`;
+
 export const layer = Layer.effect(
   Stops,
   Effect.gen(function* () {
@@ -116,6 +124,7 @@ export const layer = Layer.effect(
 
     const record = Effect.fn("Stops.record")(function* (botId: BotId, scope: StopScope) {
       const at = timeText(yield* DateTime.now);
+      const landing = mayLand(sql);
       // Every session of the bot with work in scope that may be in the engine.
       // A bot Stop reaches every live session too, for background work the
       // server does not see.
@@ -128,6 +137,7 @@ export const layer = Layer.effect(
           OR EXISTS (
             SELECT 1 FROM dispatches WHERE session_id = s.id AND ${inScope(scope)} AND (
               (status = 'intended' AND attempts > 0) OR status IN ('accepted', 'delivered')
+              OR ${landing}
             )
           )
         )
@@ -136,8 +146,10 @@ export const layer = Layer.effect(
       // A dispatch in scope never sent is fenced even when no session needs
       // the engine's Stop, so it is never sent; in a target session, every
       // undecided dispatch is, since the engine's Stop ends the whole session.
+      // So is one that may still land, so that its landing reopens this Stop
+      // (`stopTargets.openRound`); it stays failed and the recovery's no more.
       const fenceable = sql`
-        bot_id = ${botId} AND status = 'intended' AND fenced_by_stop_id IS NULL
+        bot_id = ${botId} AND (status = 'intended' OR ${landing}) AND fenced_by_stop_id IS NULL
           AND (${inScope(scope)}${sessionIds.length > 0 ? sql` OR ${sql.in("session_id", sessionIds)}` : sql``})
       `;
       const [anyFenceable] = yield* sql<{ readonly n: number }>`
@@ -160,20 +172,23 @@ export const layer = Layer.effect(
           Result: Fenced,
           execute: () => sql`
             UPDATE dispatches SET fenced_by_stop_id = ${stopId}, updated_at = ${at},
-              next_attempt_at = CASE WHEN attempts > 0 THEN NULL ELSE next_attempt_at END
+              next_attempt_at = CASE
+                WHEN status = 'intended' AND attempts > 0 THEN NULL ELSE next_attempt_at
+              END
             WHERE ${fenceable}
-            RETURNING id, attempts, ${inScope(scope)} AS in_scope
+            RETURNING id, status, attempts, ${inScope(scope)} AS in_scope
           `,
         })(undefined);
-        // One the engine may have is settled by the recovery, which owns it from
-        // here: once now, since the Stop waits on it, then with its backoff.
-        if (fenced.some((dispatch) => dispatch.attempts > 0)) {
+        // An undecided one the engine may have is settled by the recovery,
+        // which owns it from here: once now, since the Stop waits on it, then
+        // with its backoff.
+        if (fenced.some((dispatch) => dispatch.status === "intended" && dispatch.attempts > 0)) {
           yield* sql.afterCommit(signals.recovery.fire);
         }
         for (const dispatch of fenced) {
           // Never sent: released. Its wakes are cancelled when the operator
           // stopped them, and wait again when they were private work.
-          if (dispatch.attempts === 0) {
+          if (dispatch.status === "intended" && dispatch.attempts === 0) {
             yield* ledger.release(
               dispatch.id,
               dispatch.in_scope ? { _tag: "cancelled" } : { _tag: "pending" },
@@ -360,7 +375,7 @@ export const layer = Layer.effect(
       // The recovery settles every dispatch whose answer was lost, on its
       // own backoff, so nothing the bot was sent lands behind the Stop; it
       // nudges the runner when it does.
-      if (yield* inFlight(first.session_id)) return "waiting" satisfies Progress;
+      if (yield* inFlight(first.session_id)) return "done" satisfies Progress;
       const engineSessionId = first.engine_session_id;
       if (engineSessionId === null) {
         for (const round of rounds) yield* markNothingToStop(round);
@@ -453,7 +468,7 @@ export const roomWorkLayer = Layer.effect(
           ) OR EXISTS (
             SELECT 1 FROM dispatches d WHERE d.session_id = s.id
               AND d.audience = 'room' AND d.audience_room_id = ${roomId}
-              AND d.status IN ('intended', 'accepted', 'delivered')
+              AND (d.status IN ('intended', 'accepted', 'delivered') OR ${mayLand(sql)})
           )
         `,
       })(undefined);

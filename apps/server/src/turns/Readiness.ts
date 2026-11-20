@@ -14,12 +14,11 @@ interface State {
 }
 
 /**
- * Whether the turn machinery may send the engine anything new
+ * Whether the turn machinery may send the engine anything
  * (`docs/architecture/server.md`, Failure handling). `Turns` closes it when
- * the engine stops being ready and releases it once it has sent the Stops,
- * caught up the events, recovered what was left undecided and resumed the
- * held queues, in that order. The dispatcher, the recovery and the Stop
- * runner wait on it, so none of them runs ahead of that order.
+ * the engine stops being ready and releases it once every session's events
+ * are followed again. Every worker waits on it; what each may then send into
+ * one session is that worker's own rule for the session.
  */
 export class Readiness extends Context.Service<
   Readiness,

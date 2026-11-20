@@ -9,6 +9,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import { Attachments } from "../attachments/Attachments.ts";
 import * as Domain from "../domain.ts";
+import { Rooms } from "../rooms/Rooms.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
   awaitEntry,
@@ -20,9 +21,12 @@ import {
   flushed,
   gateSettled,
   nextTurn,
+  roomOf,
+  sendInRoom,
   sendToBot,
   timesSent,
   turnEnded,
+  until,
 } from "../testing/turns.ts";
 import { BotStates } from "./BotStates.ts";
 import { MAX_INDETERMINATE_ANSWERS, recoveryBackoff } from "./model.ts";
@@ -54,6 +58,19 @@ const recoverTimes = (times: number) =>
       yield* pipeline.recoverDue;
     }
   });
+
+/** Waits until no Stop waits on the engine. */
+const stopSettled = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* until(
+    sql<{ readonly n: number }>`
+      SELECT COUNT(*) AS n FROM stop_targets WHERE stopped_at IS NULL
+    `.pipe(
+      Effect.orDie,
+      Effect.map(([row]) => (row?.n ?? 0) === 0),
+    ),
+  );
+});
 
 it.effect("never sends a message a Stop fenced while its send was staging in the gate", () =>
   Effect.gen(function* () {
@@ -167,6 +184,56 @@ it.effect(
       yield* deliveryIs(message, "delivered");
       assert.strictEqual(yield* timesSent(session, "Tag the release."), 1);
     }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("stops a room's message that lands after its recovery gave up and the room stopped", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    yield* engineSession(bot.id);
+    const room = yield* roomOf(bot.id);
+
+    const deferred = yield* control.deferNextDispatch;
+    const message = yield* sendInRoom(bot.id, room.id, "Tag the release.");
+    yield* flushed(bot.id);
+    yield* recoverTimes(MAX_INDETERMINATE_ANSWERS - 1);
+    yield* deliveryIs(message, "failed");
+
+    // Archiving the room stops its work. The key may still land, so the Stop
+    // covers it, also once settled.
+    yield* (yield* Rooms).update({
+      commandId: command(),
+      roomId: room.id,
+      changes: { archived: true },
+    });
+    yield* stopSettled;
+    yield* deferred.land;
+    yield* nextTurn(bot.id);
+    yield* turnEnded(bot.id);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("ends a send that keeps hitting an adapter defect, and lets a Stop settle", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+
+    yield* control.breakDispatches(true);
+    const message = yield* sendToBot(bot.id, "Rotate the keys.");
+    yield* flushed(bot.id);
+    yield* (yield* Stops).stopBot({ commandId: command(), botId: bot.id });
+
+    // Each defect is an undecided answer: the bound ends it, well inside a day.
+    yield* recoverTimes(MAX_INDETERMINATE_ANSWERS - 1);
+    yield* deliveryIs(message, "cancelled");
+
+    yield* control.breakDispatches(false);
+    const after = yield* sendToBot(bot.id, "Then rotate the certificates.");
+    yield* nextTurn(bot.id);
+    yield* deliveryIs(after, "delivered");
+    assert.strictEqual(yield* timesSent(session, "Rotate the keys."), 0);
+  }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect(

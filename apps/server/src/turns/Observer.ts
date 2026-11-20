@@ -53,7 +53,7 @@ import {
   StoredResponse,
   SYNC_DEADLINE,
 } from "./model.ts";
-import { notices } from "./notices.ts";
+import { type NoticeRetry, notices } from "./notices.ts";
 import { endingOf, sessionLoss, sessionRecords } from "./sessionRecords.ts";
 import { Signals } from "./Signals.ts";
 import { stopTargets } from "./stopTargets.ts";
@@ -104,10 +104,50 @@ const reopenAfter = (failures: number) =>
  * stream closes.
  */
 interface Following {
+  readonly _tag: "open";
   readonly opened: Deferred.Deferred<void>;
   readonly caughtUp: Deferred.Deferred<void, NotObserved>;
   readonly tokens: Map<SyncToken, Deferred.Deferred<void, NotObserved>>;
 }
+
+/**
+ * A session whose stream ended and waits out its backoff before it is opened
+ * again: nothing opens it sooner, and it is not ready meanwhile.
+ */
+interface Reopening {
+  readonly _tag: "reopening";
+}
+
+/**
+ * The events that can change whether a session is idle or a Stop of it is
+ * done: a turn's start or end, a dispatch settling, a replacement, a request
+ * opening or closing. Only these nudge the dispatcher and the Stop runner.
+ */
+const changesWork = (event: SessionEvent): boolean => {
+  switch (event._tag) {
+    case "replaced":
+    case "turn-started":
+    case "turn-finished":
+    case "steered":
+    case "steer-dropped":
+    case "steer-requeued":
+    case "continuation-dropped":
+    case "request-opened":
+    case "request-closed":
+      return true;
+    case "step":
+    case "host-speech":
+    case "tool-call":
+    case "queue-held":
+    case "synchronized":
+      return false;
+  }
+};
+
+const SessionNow = Schema.Struct({
+  lost: Schema.BooleanFromBit,
+  busy: Schema.BooleanFromBit,
+});
 
 /** A turn's end, as `turn-finished` and a replacement's ended turns tell it. */
 interface TurnEnd {
@@ -147,9 +187,9 @@ export class Observer extends Context.Service<
      */
     readonly watch: (sessionId: SessionRowId) => Effect.Effect<void>;
     /**
-     * Follows the session's events, and says whether they are known now from
-     * a committed snapshot or cursor and every event so far could be applied:
-     * nothing is sent into a session before. It never waits for that; the
+     * Whether the session's events are followed, known now from a committed
+     * snapshot or cursor, and every event so far could be applied: nothing is
+     * sent into a session before. It opens no stream and never waits; the
      * event that makes a session ready nudges the dispatcher.
      */
     readonly ready: (sessionId: SessionRowId) => Effect.Effect<boolean>;
@@ -190,7 +230,7 @@ export const layer = Layer.effect(
      * Each followed session. The engine sends a `synchronized` only on the
      * streams open when it is asked, so a waiter starts after `opened`.
      */
-    const following = new Map<SessionRowId, Following>();
+    const following = new Map<SessionRowId, Following | Reopening>();
     /** Consecutive times a session's stream ended in failure, for its reopening backoff. */
     const failures = new Map<SessionRowId, number>();
     /** Sessions whose failure already shows a notice, until an event applies again. */
@@ -239,6 +279,15 @@ export const layer = Layer.effect(
         SELECT engine_turn_id, audience, audience_room_id, finished_at, outcome_json,
           work_fold_entry_id
         FROM turns WHERE session_id = ${sessionId} AND finished_at IS NULL
+      `,
+    });
+
+    const sessionNow = SqlSchema.findOne({
+      Request: SessionRowId,
+      Result: SessionNow,
+      execute: (sessionId) => sql`
+        SELECT lost_at IS NOT NULL AS lost, busy_until IS NOT NULL AS busy
+        FROM sessions WHERE id = ${sessionId}
       `,
     });
 
@@ -309,14 +358,19 @@ export const layer = Layer.effect(
 
     // ---- Notices and work folds ---------------------------------------------------
 
-    /** The dispatch a retry of this one's failure sends again: the operator's own. */
+    /**
+     * What a retry of this turn's failure sends again: the operator's own
+     * dispatch, whose turn (or the turn that followed it up) ran.
+     */
     const retryOf = (
       dispatchId: DispatchRowId,
       carried: ReadonlyArray<WakeRow>,
-    ): DispatchRowId | null => {
-      if (carried.some((wake) => wake.kind === "user")) return dispatchId;
+    ): NoticeRetry | null => {
+      if (carried.some((wake) => wake.kind === "user")) return { dispatchId, reason: "turn" };
       for (const wake of carried) {
-        if (wake.payload_json._tag === "undelivered") return wake.payload_json.dispatchId;
+        if (wake.payload_json._tag === "undelivered") {
+          return { dispatchId: wake.payload_json.dispatchId, reason: "turn" };
+        }
       }
       return null;
     };
@@ -418,9 +472,10 @@ export const layer = Layer.effect(
       yield* ledger.finish(dispatch.id, outcome);
       const audience = audienceOf(dispatch);
       const carried = yield* ledger.wakesOf(dispatch.id);
+      // What the operator stopped needs no notice and no follow-up, also when
+      // the turn ended on its own before the Stop's interrupt reached it.
+      if (yield* stops.covers(session.bot_id, audience, dispatch.created_at)) return;
       if (outcome._tag === "failed" || outcome._tag === "interrupted") {
-        // What the operator stopped needs no notice.
-        if (yield* stops.stoppedSince(session.id, dispatch.created_at, audience)) return;
         const failure = outcome._tag === "failed" ? outcome.failure : "unknown";
         yield* notify(
           session.bot_id,
@@ -441,6 +496,7 @@ export const layer = Layer.effect(
             sourceEntryId: null,
             hops: 0,
             retryOf: null,
+            cause: { _tag: "work", since: dispatch.created_at },
           },
         ]);
         return;
@@ -935,20 +991,32 @@ export const layer = Layer.effect(
     });
 
     /**
-     * One event and its cursor, in one transaction. Once it commits the
-     * session's state is known from here: it is marked ready before the change
-     * is published, so whoever sees the change finds the session ready. Only
-     * then are the workers nudged, so a pass they run finds it ready too: the
-     * dispatcher (the session may take its next wake) and the Stop runner (a
-     * Stop may be confirmed). Not the runner for a marker, which its own
-     * observation asked for.
+     * One event and its cursor, in one transaction, unless the session was
+     * recorded lost meanwhile: then nothing more of its stream is applied, and
+     * this says to stop reading it. Once an event commits the session's state
+     * is known from here: it is marked ready before the change is published,
+     * so whoever sees the change finds the session ready. A busy refusal's
+     * deadline ends with it. Only then are the workers nudged, and only when
+     * something they wait on may have changed: the dispatcher when the event
+     * can change whether the session is idle, when it ended a busy deadline or
+     * made the session ready again, and the Stop runner when it can change
+     * whether a Stop is done.
      */
-    const apply = (session: Watched, follow: Following, event: SessionEvent) =>
-      transaction(
+    const apply = Effect.fn("Observer.apply")(function* (
+      session: Watched,
+      follow: Following,
+      event: SessionEvent,
+    ) {
+      const caughtUp = yield* Deferred.poll(follow.caughtUp);
+      const wasReady = Option.isSome(caughtUp) && !noticed.has(session.id);
+      const applied = yield* transaction(
         Effect.gen(function* () {
+          const now = yield* sessionNow(session.id);
+          if (now.lost) return null;
           yield* applyEvent(session, follow, event);
           yield* sql`
-            UPDATE sessions SET events_cursor = ${event.cursor}, refused_busy = 0
+            UPDATE sessions SET events_cursor = ${event.cursor}, busy_until = NULL,
+              busy_refusals = 0
             WHERE id = ${session.id}
           `;
           yield* sql.afterCommit(
@@ -958,25 +1026,49 @@ export const layer = Layer.effect(
             }).pipe(Effect.andThen(Deferred.succeed(follow.caughtUp, undefined))),
           );
           yield* changes.touch({ _tag: "bot", botId: session.bot_id });
+          return { busyEnded: now.busy };
         }),
-      ).pipe(
-        Effect.orDie,
-        Effect.andThen(signals.dispatch.fire),
-        Effect.andThen(event._tag === "synchronized" ? Effect.void : signals.stops.fire),
-      );
+      ).pipe(Effect.orDie);
+      if (applied === null) return false;
+      const work = changesWork(event);
+      if (work || applied.busyEnded || !wasReady) yield* signals.dispatch.fire;
+      if (work) yield* signals.stops.fire;
+      return true;
+    });
 
     // ---- Following sessions -----------------------------------------------------------
 
+    /**
+     * Opens the session's stream again once its backoff passes. Until then it
+     * stays `reopening`, so nothing opens it sooner and it is not ready.
+     */
     const reopen = Effect.fn("Observer.reopen")(
-      function* (sessionId: SessionRowId) {
+      function* (sessionId: SessionRowId, marker: Reopening) {
         const failed = (failures.get(sessionId) ?? 0) + 1;
         failures.set(sessionId, failed);
         yield* Effect.sleep(reopenAfter(failed));
+        if (following.get(sessionId) !== marker) return;
+        following.delete(sessionId);
         yield* watch(sessionId);
       },
       Effect.forkIn(scope),
       Effect.asVoid,
     );
+
+    /** The session's stream will be opened again: it is `reopening` from now. */
+    const willReopen = (sessionId: SessionRowId, follow: Following) =>
+      Effect.suspend(() => {
+        if (following.get(sessionId) !== follow) return Effect.void;
+        const marker: Reopening = { _tag: "reopening" };
+        following.set(sessionId, marker);
+        return reopen(sessionId, marker);
+      });
+
+    /** The session's stream will not be opened again: nothing follows it. */
+    const forget = (sessionId: SessionRowId, follow: Following) =>
+      Effect.sync(() => {
+        if (following.get(sessionId) === follow) following.delete(sessionId);
+      });
 
     /**
      * A session's stream ended. Every waiter on it fails, to be retried; the
@@ -989,17 +1081,21 @@ export const layer = Layer.effect(
       follow: Following,
       exit: Exit.Exit<void, SessionNotFound | EngineIncompatible>,
     ) {
-      if (following.get(session.id) === follow) following.delete(session.id);
       const closed = new NotObserved();
       yield* Deferred.fail(follow.caughtUp, closed);
       for (const waiting of follow.tokens.values()) yield* Deferred.fail(waiting, closed);
       if (Exit.isSuccess(exit)) {
+        // It stopped because the session was lost, or the engine ended it.
+        if (Option.isNone(yield* watchedRow(session.id).pipe(Effect.orDie))) {
+          return yield* forget(session.id, follow);
+        }
         yield* Effect.logWarning("A session's event stream ended; it is opened again");
-        return yield* reopen(session.id);
+        return yield* willReopen(session.id, follow);
       }
-      if (Cause.hasInterruptsOnly(exit.cause)) return;
+      if (Cause.hasInterruptsOnly(exit.cause)) return yield* forget(session.id, follow);
       const error = Cause.findErrorOption(exit.cause);
       if (Option.isSome(error) && error.value._tag === "SessionNotFound") {
+        yield* forget(session.id, follow);
         yield* Effect.logWarning("The engine no longer has a session", error.value);
         yield* transaction(
           Effect.gen(function* () {
@@ -1021,14 +1117,14 @@ export const layer = Layer.effect(
           ).pipe(Effect.orDie);
         }
       }
-      yield* reopen(session.id);
+      yield* willReopen(session.id, follow);
     });
 
     const open = Effect.fn("Observer.open")(function* (sessionId: SessionRowId, follow: Following) {
       const row = yield* watchedRow(sessionId).pipe(Effect.orDie);
       if (Option.isNone(row)) {
         // Nothing to follow: not opened yet, retired or lost.
-        if (following.get(sessionId) === follow) following.delete(sessionId);
+        yield* forget(sessionId, follow);
         yield* Deferred.fail(follow.caughtUp, new NotObserved());
         return;
       }
@@ -1044,7 +1140,9 @@ export const layer = Layer.effect(
       // one, the first `replaced` does once it is applied.
       if (session.events_cursor !== null) yield* Deferred.succeed(follow.caughtUp, undefined);
       yield* Stream.fromPull(Effect.succeed(pull)).pipe(
-        Stream.runForEach((event) => apply(session, follow, event)),
+        // Read until the session is recorded lost: what is buffered after
+        // that is never applied.
+        Stream.runForEachWhile((event) => apply(session, follow, event)),
         Effect.onExit((exit) =>
           Effect.andThen(Scope.close(streamScope, Exit.void), ended(session, follow, exit)),
         ),
@@ -1056,8 +1154,11 @@ export const layer = Layer.effect(
       Effect.suspend(() => {
         // Looked up and claimed in one step, so two callers never open two streams.
         const existing = following.get(sessionId);
-        if (existing !== undefined) return Deferred.await(existing.opened);
+        if (existing?._tag === "open") return Deferred.await(existing.opened);
+        // Its backoff opens it again.
+        if (existing?._tag === "reopening") return Effect.void;
         const follow: Following = {
+          _tag: "open",
           opened: Deferred.makeUnsafe<void>(),
           caughtUp: Deferred.makeUnsafe<void, NotObserved>(),
           tokens: new Map(),
@@ -1069,10 +1170,9 @@ export const layer = Layer.effect(
       }).pipe(Effect.withSpan("Observer.watch"));
 
     const ready = Effect.fn("Observer.ready")(function* (sessionId: SessionRowId) {
-      yield* watch(sessionId);
       const follow = following.get(sessionId);
       // An event that cannot be applied leaves what the server knows behind.
-      if (follow === undefined || noticed.has(sessionId)) return false;
+      if (follow?._tag !== "open" || noticed.has(sessionId)) return false;
       const caughtUp = yield* Deferred.poll(follow.caughtUp);
       if (Option.isNone(caughtUp)) return false;
       return Exit.isSuccess(yield* Effect.exit(caughtUp.value));
@@ -1091,10 +1191,13 @@ export const layer = Layer.effect(
         // its waiters already and would never fail this one.
         const follow = yield* Effect.sync(() => {
           const current = following.get(sessionId);
-          current?.tokens.set(token, applied);
+          if (current?._tag !== "open") return undefined;
+          current.tokens.set(token, applied);
           return current;
         });
         if (follow === undefined) return yield* new NotObserved();
+        // Abandoned at the deadline, the call is interrupted, which cancels
+        // the adapter's catch-up for it.
         yield* engine
           .synchronize({ sessionId: engineSessionId, token })
           .pipe(

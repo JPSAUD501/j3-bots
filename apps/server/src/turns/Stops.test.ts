@@ -5,6 +5,7 @@ import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import * as Domain from "../domain.ts";
 import { Rooms } from "../rooms/Rooms.ts";
@@ -370,4 +371,37 @@ it.effect(
       yield* deliveryIs(after, "delivered");
       assert.deepStrictEqual(yield* deliveriesOf(session, "Then export the audio."), ["start"]);
     }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("starts no turn of its own for work a Stop covered that ended before the interrupt", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const sql = yield* SqlClient.SqlClient;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Index the archive.");
+    const running = yield* nextTurn(bot.id);
+
+    // The turn completes without a reply before the Stop's interrupt lands.
+    const effects = yield* control.delayNextStopEffects;
+    yield* (yield* Stops).stopBot({ commandId: command(), botId: bot.id });
+    yield* control.finishTurn({
+      sessionId: session,
+      turnId: running,
+      outcome: { _tag: "completed" },
+    });
+    yield* turnEnded(bot.id);
+    yield* effects.release;
+    yield* until(
+      sql<{ readonly n: number }>`
+        SELECT COUNT(*) AS n FROM stop_targets WHERE stopped_at IS NULL
+      `.pipe(
+        Effect.orDie,
+        Effect.map(([row]) => (row?.n ?? 0) === 0),
+      ),
+    );
+    yield* flushed(bot.id);
+
+    assert.strictEqual((yield* control.dispatches(session)).length, 1);
+  }).pipe(Effect.provide(TestDomain.layer)),
 );
