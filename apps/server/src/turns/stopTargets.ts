@@ -3,8 +3,10 @@ import type { BotId, RoomId } from "@j3-bots/contracts";
 import { IdempotencyKey } from "@j3-bots/engine-t3";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
-import { timeText } from "../persistence/columns.ts";
+import * as SqlSchema from "effect/sql/SqlSchema";
+import { Time, timeText } from "../persistence/columns.ts";
 import type { WakesAfter } from "./Ledger.ts";
 import {
   type Audience,
@@ -12,6 +14,7 @@ import {
   type DispatchSeq,
   recoveryBackoff,
   type SessionRowId,
+  stopGrace,
   type WakeFailure,
 } from "./model.ts";
 
@@ -35,12 +38,75 @@ export const stopKey = (stopId: string, sessionId: string, round: number): Idemp
  * The rule it keeps: a target settles only when the engine's own state shows
  * nothing the Stop targeted can still run, no turn running or starting and no
  * background work pending; and while a target is unsettled, something keeps
- * acting on it. Either a send of its latest round is still being resolved, or
- * a fresh round goes out: when a turn the round missed starts (`openRound`),
- * and when the engine refused the round (`rejectRound`), after a backoff.
+ * acting on it. Its latest round is always in a state that a durable deadline
+ * or an event moves on, so nothing waits on its own:
+ *
+ * - not sent: the runner sends it once due (`due_at`), and resolves a send
+ *   whose answer was lost by the round's key;
+ * - refused: a fresh round follows, due after a backoff (`rejectRound`);
+ * - acknowledged, or found moot: the runner synchronizes the session until
+ *   the target settles, and once the round's grace passed (`recheck_at`)
+ *   with the engine still showing targeted work, a fresh round follows
+ *   (`recheck`);
+ * - missed: a turn that starts after the round was issued opens a fresh round
+ *   at once (`openRound`).
+ *
+ * A session the engine no longer has settles its targets, since nothing runs
+ * there.
  */
 export const stopTargets = (sql: SqlClient.SqlClient) => {
   const now = Effect.map(DateTime.now, timeText);
+
+  /**
+   * What the session's applied events show the Stop still has to end: a turn
+   * running, a dispatch the engine queued or may still be taking, a
+   * continuation it will start on its own.
+   */
+  const workShows = (sessionId: SessionRowId) => sql`(
+    EXISTS (SELECT 1 FROM turns t WHERE t.session_id = ${sessionId} AND t.finished_at IS NULL)
+    OR EXISTS (
+      SELECT 1 FROM dispatches d WHERE d.session_id = ${sessionId} AND (
+        d.status = 'accepted'
+        OR (d.status = 'intended' AND d.attempts > 0)
+        OR (d.status = 'delivered' AND d.continuation_resumes_at IS NOT NULL)
+      )
+    )
+  )`;
+
+  /** The earliest grace of a latest round still running in the session. */
+  const nextRecheck = SqlSchema.findAll({
+    Request: Schema.Struct({ sessionId: Schema.String, at: Schema.String }),
+    Result: Schema.Struct({ at: Schema.NullOr(Time) }),
+    execute: ({ sessionId, at }) => sql`
+      SELECT MIN(t.recheck_at) AS at FROM stop_targets t
+      WHERE t.session_id = ${sessionId} AND t.stopped_at IS NULL AND t.recheck_at > ${at}
+        AND NOT EXISTS (
+          SELECT 1 FROM stop_targets u
+          WHERE u.stop_id = t.stop_id AND u.session_id = t.session_id AND u.round > t.round
+        )
+    `,
+  });
+
+  /** A fresh round after `round`, unless one followed it already: at most one does. */
+  const followRound = Effect.fn("stopTargets.followRound")(function* (
+    round: { readonly stop_id: string; readonly session_id: SessionRowId; readonly round: number },
+    dueAt: DateTime.Utc | null,
+  ) {
+    const next = round.round + 1;
+    const opened = yield* sql<{ readonly n: number }>`
+      INSERT INTO stop_targets (stop_id, session_id, round, engine_key, due_at)
+      SELECT ${round.stop_id}, ${round.session_id}, ${next},
+        ${stopKey(round.stop_id, round.session_id, next)},
+        ${dueAt === null ? null : timeText(dueAt)}
+      WHERE NOT EXISTS (
+        SELECT 1 FROM stop_targets
+        WHERE stop_id = ${round.stop_id} AND session_id = ${round.session_id}
+          AND round > ${round.round}
+      )
+      RETURNING 1 AS n
+    `;
+    return opened.length > 0;
+  });
 
   /**
    * Whether a Stop of the bot covers work for `audience` that began with the
@@ -88,19 +154,69 @@ export const stopTargets = (sql: SqlClient.SqlClient) => {
                 WHERE v.stop_id = u.stop_id AND v.session_id = u.session_id
               )
           )
-          AND NOT EXISTS (
-            SELECT 1 FROM turns t WHERE t.session_id = ${sessionId} AND t.finished_at IS NULL
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM dispatches d WHERE d.session_id = ${sessionId} AND (
-              d.status = 'accepted'
-              OR (d.status = 'intended' AND d.attempts > 0)
-              OR (d.status = 'delivered' AND d.continuation_resumes_at IS NOT NULL)
-            )
-          )
+          AND NOT ${workShows(sessionId)}
         RETURNING 1 AS n
       `;
       return rows.length > 0;
+    }, Effect.orDie),
+
+    /**
+     * The engine acknowledged the round's commands, or found them moot. It
+     * gets a grace that grows with each round of the target it acknowledged
+     * (`stopGrace`), after which `recheck` follows it with a fresh round
+     * while the engine still shows work the Stop targets.
+     */
+    acknowledge: Effect.fn("stopTargets.acknowledge")(function* (round: {
+      readonly stop_id: string;
+      readonly session_id: SessionRowId;
+      readonly round: number;
+    }) {
+      const at = yield* DateTime.now;
+      const [acknowledged] = yield* sql<{ readonly n: number }>`
+        SELECT COUNT(*) AS n FROM stop_targets
+        WHERE stop_id = ${round.stop_id} AND session_id = ${round.session_id}
+          AND sent_at IS NOT NULL
+      `;
+      const recheckAt = DateTime.addDuration(at, stopGrace((acknowledged?.n ?? 0) + 1));
+      yield* sql`
+        UPDATE stop_targets SET sent_at = ${timeText(at)}, recheck_at = ${timeText(recheckAt)}
+        WHERE stop_id = ${round.stop_id} AND session_id = ${round.session_id}
+          AND round = ${round.round}
+      `;
+    }, Effect.orDie),
+
+    /**
+     * After the session's events were synchronized: each unsettled target
+     * whose latest round the engine acknowledged, and whose grace passed while
+     * the engine still shows work the Stop targets, gets a fresh round, due at
+     * once. `engineShows` is what the marker showed beyond the applied events:
+     * background work pending, or a run starting that no event told of. This
+     * covers what no event announces: an interrupt the engine could not carry
+     * out after it acknowledged the stop, a run whose provider never starts.
+     * Whether one was opened, and the earliest grace still running, for the
+     * runner to look again then.
+     */
+    recheck: Effect.fn("stopTargets.recheck")(function* (
+      sessionId: SessionRowId,
+      engineShows: boolean,
+    ) {
+      const at = yield* now;
+      const due = yield* sql<{ readonly stop_id: string; readonly round: number }>`
+        SELECT t.stop_id, t.round FROM stop_targets t
+        WHERE t.session_id = ${sessionId} AND t.stopped_at IS NULL
+          AND t.recheck_at <= ${at}
+          AND NOT EXISTS (
+            SELECT 1 FROM stop_targets u
+            WHERE u.stop_id = t.stop_id AND u.session_id = t.session_id AND u.round > t.round
+          )
+          AND (${engineShows ? sql`1` : sql`0`} OR ${workShows(sessionId)})
+      `;
+      let opened = false;
+      for (const round of due) {
+        if (yield* followRound({ ...round, session_id: sessionId }, null)) opened = true;
+      }
+      const [waiting] = yield* nextRecheck({ sessionId, at });
+      return { opened, next: waiting?.at ?? null };
     }, Effect.orDie),
 
     /**
@@ -142,9 +258,10 @@ export const stopTargets = (sql: SqlClient.SqlClient) => {
     /**
      * The engine refused a round while what the Stop targets can still run,
      * which spends the round's key (`StopRejected`): the round is marked
-     * refused, and the target gets a fresh round, sent once the backoff of
-     * its refused rounds passes. A newer round, opened meanwhile by a turn
-     * that started, goes out on its own instead.
+     * refused, and the target gets a fresh round, due once the backoff of the
+     * rounds refused since the engine last acknowledged one passes. A newer
+     * round, opened meanwhile by a turn that started, goes out on its own
+     * instead.
      */
     rejectRound: Effect.fn("stopTargets.rejectRound")(function* (round: {
       readonly stop_id: string;
@@ -158,22 +275,15 @@ export const stopTargets = (sql: SqlClient.SqlClient) => {
           AND round = ${round.round}
       `;
       const [refused] = yield* sql<{ readonly n: number }>`
-        SELECT COUNT(*) AS n FROM stop_targets
-        WHERE stop_id = ${round.stop_id} AND session_id = ${round.session_id}
-          AND rejected_at IS NOT NULL
+        SELECT COUNT(*) AS n FROM stop_targets t
+        WHERE t.stop_id = ${round.stop_id} AND t.session_id = ${round.session_id}
+          AND t.rejected_at IS NOT NULL
+          AND t.round > COALESCE((
+            SELECT MAX(u.round) FROM stop_targets u
+            WHERE u.stop_id = t.stop_id AND u.session_id = t.session_id AND u.sent_at IS NOT NULL
+          ), -1)
       `;
-      const retryAt = DateTime.addDuration(at, recoveryBackoff(refused?.n ?? 1));
-      const next = round.round + 1;
-      yield* sql`
-        INSERT INTO stop_targets (stop_id, session_id, round, engine_key, retry_at)
-        SELECT ${round.stop_id}, ${round.session_id}, ${next},
-          ${stopKey(round.stop_id, round.session_id, next)}, ${timeText(retryAt)}
-        WHERE NOT EXISTS (
-          SELECT 1 FROM stop_targets
-          WHERE stop_id = ${round.stop_id} AND session_id = ${round.session_id}
-            AND round > ${round.round}
-        )
-      `;
+      yield* followRound(round, DateTime.addDuration(at, recoveryBackoff(refused?.n ?? 1)));
     }, Effect.orDie),
 
     /**

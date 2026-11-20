@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import { WorkStepId } from "@j3-bots/contracts";
+import { type BotId, WorkStepId } from "@j3-bots/contracts";
 import type { SessionId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as DateTime from "effect/DateTime";
@@ -36,7 +36,7 @@ import {
   turnEnded,
   until,
 } from "../testing/turns.ts";
-import { MAX_INDETERMINATE_ANSWERS, SYNC_DEADLINE } from "./model.ts";
+import { MAX_INDETERMINATE_ANSWERS, recoveryBackoff, stopGrace, SYNC_DEADLINE } from "./model.ts";
 import { Pipeline } from "./Pipeline.ts";
 import { RETRY_TICK } from "./reconciler.ts";
 import { Stops } from "./Stops.ts";
@@ -794,4 +794,202 @@ it.effect(
       yield* round.entered;
       yield* round.release;
     }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+/** Rounds the engine acknowledged whose target has not settled. */
+const acknowledgedUnsettled = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const [row] = yield* sql<{ readonly n: number }>`
+    SELECT COUNT(*) AS n FROM stop_targets WHERE sent_at IS NOT NULL AND stopped_at IS NULL
+  `.pipe(Effect.orDie);
+  return row?.n ?? 0;
+});
+
+it.effect("sends a fresh round for a run whose provider never starts it", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const stops = yield* Stops;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Index the repository.");
+    yield* nextTurn(bot.id);
+
+    // Background work creates a run while the Stop's commands are on their
+    // way, and its provider never starts it: no event will tell of it.
+    yield* control.holdNextStartup(session);
+    const during = yield* control.startEngineTurnDuringNextStop(session);
+    yield* stops.stopBot({ commandId: command(), botId: bot.id });
+    yield* during.started;
+    yield* during.reply;
+    yield* stops.runPending;
+    assert.strictEqual(yield* acknowledgedUnsettled, 1);
+
+    // Past the round's grace the engine still lists the run as starting: a
+    // fresh round stops it, and what waited goes.
+    yield* TestClock.adjust(stopGrace(1));
+    yield* stopSettled;
+    const after = yield* sendToBot(bot.id, "Then summarize it.");
+    yield* nextTurn(bot.id);
+    yield* deliveryIs(after, "delivered");
+    assert.deepStrictEqual(yield* deliveriesOf(session, "Then summarize it."), ["start"]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("sends a fresh round when the engine acknowledged a Stop whose interrupt it lost", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const stops = yield* Stops;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Crawl the site.");
+    const running = yield* nextTurn(bot.id);
+
+    // The engine acknowledges the Stop and its interrupt never lands, as when
+    // planning it failed: the turn keeps running.
+    yield* control.delayNextStopEffects;
+    yield* stops.stopBot({ commandId: command(), botId: bot.id });
+    yield* stops.runPending;
+    assert.strictEqual(yield* acknowledgedUnsettled, 1);
+    assert.isTrue(Option.contains(yield* admittedTurn(bot.id), running));
+
+    // Past the round's grace the turn still runs: a fresh round ends it.
+    yield* TestClock.adjust(stopGrace(1));
+    yield* turnEnded(bot.id);
+    yield* stopSettled;
+    const after = yield* sendToBot(bot.id, "Then list the broken links.");
+    yield* nextTurn(bot.id);
+    yield* deliveryIs(after, "delivered");
+    assert.deepStrictEqual(yield* deliveriesOf(session, "Then list the broken links."), ["start"]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("sends a fresh round after a restart once an acknowledged round's grace passed", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const firstRun = Effect.gen(function* () {
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      yield* sendToBot(bot.id, "Render the video.");
+      yield* nextTurn(bot.id);
+
+      // The Stop is acknowledged, its interrupt is lost, and the server stops.
+      yield* control.delayNextStopEffects;
+      const stops = yield* Stops;
+      yield* stops.stopBot({ commandId: command(), botId: bot.id });
+      yield* stops.runPending;
+      assert.strictEqual(yield* acknowledgedUnsettled, 1);
+      return { bot, session };
+    });
+    const { bot, session } = yield* firstRun.pipe(Effect.provide(Domain.layer));
+
+    // The grace is the round's own: it passed while the server was down.
+    yield* TestClock.adjust(stopGrace(1));
+    yield* Effect.gen(function* () {
+      yield* turnEnded(bot.id);
+      yield* stopSettled;
+      const after = yield* sendToBot(bot.id, "Then export the audio.");
+      const started = yield* nextTurn(bot.id);
+      yield* deliveryIs(after, "delivered");
+      assert.deepStrictEqual(yield* deliveriesOf(session, "Then export the audio."), ["start"]);
+      yield* control.finishTurn({
+        sessionId: session,
+        turnId: started,
+        outcome: { _tag: "completed" },
+      });
+      yield* turnEnded(bot.id);
+    }).pipe(Effect.provide(Domain.layer));
+  }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
+);
+
+/** Starts a turn that leaves background work running, and ends it. */
+const leaveBackgroundWork = Effect.fn(function* (botId: BotId, session: SessionId) {
+  const control = yield* TestEngineControl;
+  const watching = yield* nextTurn(botId);
+  yield* control.startBackgroundWork({ sessionId: session, turnId: watching });
+  yield* control.finishTurn({
+    sessionId: session,
+    turnId: watching,
+    outcome: { _tag: "completed" },
+  });
+  yield* turnEnded(botId);
+  return watching;
+});
+
+it.effect("sends the operator's new Stop while an older round backs off", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const sql = yield* SqlClient.SqlClient;
+    const stops = yield* Stops;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Watch the build.");
+    const watching = yield* leaveBackgroundWork(bot.id, session);
+
+    // The engine refuses the first Stop: its next round waits out a backoff.
+    yield* control.rejectNextStop;
+    yield* stops.stopBot({ commandId: command(), botId: bot.id });
+    yield* stops.runPending;
+
+    // The operator stops the bot again: that round is due at once, and goes.
+    yield* stops.stopBot({ commandId: command(), botId: bot.id });
+    yield* stops.runPending;
+    const [newest] = yield* sql<{ readonly sent: number }>`
+      SELECT t.sent_at IS NOT NULL AS sent FROM stop_targets t
+      WHERE t.stop_id = (SELECT id FROM stops ORDER BY rowid DESC LIMIT 1)
+    `;
+    assert.deepStrictEqual(newest, { sent: 1 });
+
+    // The older round goes once its backoff passed, and the Stops settle.
+    const after = yield* sendToBot(bot.id, "Then tag the release.");
+    yield* TestClock.adjust(recoveryBackoff(1));
+    yield* stopSettled;
+    yield* nextTurn(bot.id, watching);
+    yield* deliveryIs(after, "delivered");
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("settles a Stop whose session is lost after the engine refused a round", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const sql = yield* SqlClient.SqlClient;
+    const stops = yield* Stops;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Watch the build.");
+    yield* leaveBackgroundWork(bot.id, session);
+
+    yield* control.rejectNextStop;
+    yield* stops.stopBot({ commandId: command(), botId: bot.id });
+    yield* stops.runPending;
+    yield* control.loseSession(session);
+
+    yield* stopSettled;
+    yield* until(noticesOf(bot.id).pipe(Effect.map((kinds) => kinds.includes("session-lost"))));
+    // The refused round keeps the engine's answer.
+    const [refused] = yield* sql<{ readonly refused: number; readonly sent: number }>`
+      SELECT rejected_at IS NOT NULL AS refused, sent_at IS NOT NULL AS sent
+      FROM stop_targets WHERE round = 0
+    `;
+    assert.deepStrictEqual(refused, { refused: 1, sent: 0 });
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("stops the background work a room's turn left running when the room is archived", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    const room = yield* roomOf(bot.id);
+    yield* sendInRoom(bot.id, room.id, "Watch the deploy.");
+    yield* leaveBackgroundWork(bot.id, session);
+
+    yield* (yield* Rooms).update({
+      commandId: command(),
+      roomId: room.id,
+      changes: { archived: true },
+    });
+
+    yield* stopSettled;
+    assert.isFalse(yield* control.backgroundWorkRunning(session));
+  }).pipe(Effect.provide(TestDomain.layer)),
 );

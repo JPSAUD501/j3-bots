@@ -150,10 +150,25 @@ export type DispatchStatus = typeof DispatchStatus.Type;
 /**
  * How long a recovery waits after its `n`th undecided answer, an answer or a
  * held queue's resume after its `n`th lost reply, and a Stop target's fresh
- * round after its `n`th refused one: doubling from 2 s to 10 min.
+ * round after its `n`th refused one since the engine last acknowledged one:
+ * doubling from 2 s to 10 min.
  */
 export const recoveryBackoff = (n: number): Duration.Duration =>
   Duration.min(Duration.seconds(2 * 2 ** Math.max(0, n - 1)), Duration.minutes(10));
+
+/**
+ * How long the engine has, after it acknowledged the `n`th round of a Stop
+ * target, to show that what the round targets ended before a fresh round
+ * follows: doubling from 30 s to 10 min. The engine's stop answers once it
+ * recorded the interrupt, which the provider then carries out, in seconds:
+ * 30 s leaves that a wide margin, and the runner confirms the Stop as soon as
+ * the events show it took. Past it, the round was lost on the engine's side
+ * (an interrupt it could not plan, a run whose provider never started), and
+ * the doubling keeps a target the engine can never end from costing more
+ * than a round every 10 min.
+ */
+export const stopGrace = (n: number): Duration.Duration =>
+  Duration.min(Duration.seconds(30 * 2 ** Math.max(0, n - 1)), Duration.minutes(10));
 
 /** A recovery that got this many undecided answers fails as `unresolved`. */
 export const MAX_INDETERMINATE_ANSWERS = 10;

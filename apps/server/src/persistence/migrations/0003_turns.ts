@@ -6,11 +6,12 @@ import * as SqlClient from "effect/sql/SqlClient";
 // came from and the wake it retries, the order dispatches were written in and
 // the dispatches a Stop covers, the recovery bound of a dispatch, its staging
 // retries and how its delivery closed, when a Stop round was issued,
-// acknowledged and observed, a session the engine no longer has or refused
-// as busy, a held queue's resume, the turns a session's events showed, their
-// work steps and `j3` tool calls, host speech already delivered, open cards,
-// an operator's answer still to reach the engine, and a submitted secret
-// whose answer was lost. See `docs/architecture/server.md`.
+// acknowledged, observed or refused and its deadlines, a session the engine
+// no longer has or refused as busy, a held queue's resume, the turns a
+// session's events showed and the background work they left, their work steps
+// and `j3` tool calls, host speech already delivered, open cards, an
+// operator's answer still to reach the engine, and a submitted secret whose
+// answer was lost. See `docs/architecture/server.md`.
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -169,6 +170,8 @@ export default Effect.gen(function* () {
   // when the session's events were caught up past that acknowledgment
   // (`observed_at`, from a `synchronized` marker requested after it). A target
   // is confirmed only from events applied once its latest round is observed.
+  // A target settles with `stopped_at` alone, so each round keeps what the
+  // engine answered for it.
   yield* sql`ALTER TABLE stop_targets ADD COLUMN issued_at TEXT`;
   yield* sql`
     ALTER TABLE stop_targets ADD COLUMN sent_at TEXT
@@ -178,16 +181,25 @@ export default Effect.gen(function* () {
     ALTER TABLE stop_targets ADD COLUMN observed_at TEXT
       CHECK (observed_at IS NULL OR sent_at IS NOT NULL)
   `;
-  // When the Stop runner tries a session again: after its work there failed
-  // unexpectedly, or, on a fresh round, after the engine refused the round
-  // before it. A durable deadline like every other worker's.
-  yield* sql`ALTER TABLE stop_targets ADD COLUMN retry_at TEXT`;
   // When the engine refused the round while its work could still run, which
   // spends the round's key: a fresh round follows, with backoff.
   yield* sql`
     ALTER TABLE stop_targets ADD COLUMN rejected_at TEXT
       CHECK (rejected_at IS NULL OR (issued_at IS NOT NULL AND sent_at IS NULL))
   `;
+  // The round's own backoff: it is not sent before `due_at`. Set on a fresh
+  // round that follows a refused one or one whose work kept running.
+  yield* sql`ALTER TABLE stop_targets ADD COLUMN due_at TEXT`;
+  // The grace an acknowledged round gives the engine: if its events still
+  // show work the Stop targets past `recheck_at`, a fresh round follows.
+  yield* sql`
+    ALTER TABLE stop_targets ADD COLUMN recheck_at TEXT
+      CHECK (recheck_at IS NULL OR sent_at IS NOT NULL)
+  `;
+  // When the Stop runner tries the session's Stop work again after it failed
+  // unexpectedly: a durable deadline like every other worker's, for the whole
+  // session.
+  yield* sql`ALTER TABLE stop_targets ADD COLUMN retry_at TEXT`;
 
   // When the engine answered that it has no such session. Nothing is planned
   // into it or watched there again; part 2b gives the bot a new one.
@@ -212,7 +224,10 @@ export default Effect.gen(function* () {
   // Every turn the session's events showed starting, with the audience it was
   // admitted with, applied once by its engine id: a replacement that repeats
   // a turn changes nothing. `work_fold_entry_id` is the fold in the bot's
-  // conversation, written with the turn's first step.
+  // conversation, written with the turn's first step. `background_work` says
+  // the turn ended leaving background work running, until the session's
+  // events show none pending: a Stop of its audience still has that work to
+  // end.
   yield* sql`
     CREATE TABLE turns (
       session_id TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
@@ -224,9 +239,11 @@ export default Effect.gen(function* () {
       finished_at TEXT,
       outcome_json TEXT,
       work_fold_entry_id TEXT REFERENCES entries (id) ON DELETE SET NULL,
+      background_work INTEGER NOT NULL DEFAULT 0 CHECK (background_work IN (0, 1)),
       PRIMARY KEY (session_id, engine_turn_id),
       CHECK (audience = 'room' OR audience_room_id IS NULL),
-      CHECK ((finished_at IS NULL) = (outcome_json IS NULL))
+      CHECK ((finished_at IS NULL) = (outcome_json IS NULL)),
+      CHECK (background_work = 0 OR finished_at IS NOT NULL)
     )
   `;
   yield* sql`CREATE INDEX turns_running ON turns (session_id) WHERE finished_at IS NULL`;

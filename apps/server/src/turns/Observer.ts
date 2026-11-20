@@ -605,9 +605,11 @@ export const layer = Layer.effect(
       const turn = yield* turnOf(session.id, end.turnId);
       if (Option.isSome(turn)) {
         if (turn.value.finished_at !== null) return;
+        // Background work it leaves running stays the work of its audience.
         yield* sql`
           UPDATE turns SET finished_at = ${timeText(end.at)},
-            outcome_json = ${yield* encodeOutcome(end.outcome)}
+            outcome_json = ${yield* encodeOutcome(end.outcome)},
+            background_work = ${end.backgroundWork ? 1 : 0}
           WHERE session_id = ${session.id} AND engine_turn_id = ${end.turnId}
         `;
         if (turn.value.work_fold_entry_id !== null) {
@@ -1104,6 +1106,17 @@ export const layer = Layer.effect(
         case "queue-held":
           return yield* queueHeld(session, event.cursor);
         case "synchronized": {
+          // Idle, with no background work pending: what earlier turns left
+          // running has ended.
+          if (!event.backgroundWork && event.startingTurns.length === 0) {
+            yield* sql`
+              UPDATE turns SET background_work = 0
+              WHERE session_id = ${session.id} AND background_work = 1
+                AND NOT EXISTS (
+                  SELECT 1 FROM turns t WHERE t.session_id = ${session.id} AND t.finished_at IS NULL
+                )
+            `;
+          }
           const waiting = follow.tokens.get(event.token);
           if (waiting !== undefined) {
             yield* sql.afterCommit(
