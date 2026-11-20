@@ -26,6 +26,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ClientRuntime from "../src/client.ts";
 import { Connection, type ConnectionState } from "../src/connection/Connection.ts";
@@ -213,6 +214,38 @@ const neverAnswers = (path: string, times = Number.POSITIVE_INFINITY) =>
       });
     }),
   ).pipe(Layer.provide(FetchHttpClient.layer));
+
+/**
+ * A reverse proxy in front of uploads whose own login has expired: it answers
+ * the first with its sign-in page, as a 401, sends the second to that page,
+ * which answers it from another address, and passes the rest on.
+ */
+const uploadsBehindProxyLogin = Layer.effect(
+  HttpClient.HttpClient,
+  Effect.gen(function* () {
+    const server = yield* HttpClient.HttpClient;
+    let seen = 0;
+    return HttpClient.make((request, url) => {
+      if (url.pathname !== HTTP_PATHS.attachments) return server.execute(request);
+      seen += 1;
+      if (seen === 1) {
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response("<html>Sign in to continue</html>", {
+              status: 401,
+              headers: { "content-type": "text/html" },
+            }),
+          ),
+        );
+      }
+      if (seen === 2) {
+        return server.execute(HttpClientRequest.get(new URL(HTTP_PATHS.server, url).toString()));
+      }
+      return server.execute(request);
+    });
+  }),
+).pipe(Layer.provide(FetchHttpClient.layer));
 
 /**
  * A server whose attachments folder was linked out of its private data: it
@@ -492,6 +525,29 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       Effect.provide(
         client(Option.none(), TestPlatform.makeDevice(), neverAnswers(HTTP_PATHS.attachments, 1)),
       ),
+    ),
+  );
+
+  it.effect("keeps uploading a file through a proxy's login page, and keeps the device", () =>
+    Effect.gen(function* () {
+      yield* pairAndConnect;
+      const drafts = yield* Drafts;
+      const target: EntryTarget = { _tag: "conversation", botId: yield* createBot("Proxied") };
+      yield* drafts.attach(target, [
+        { name: "notes.txt", body: new Blob(["notes"], { type: "text/plain" }) },
+      ]);
+
+      const settled = yield* waitFor(drafts.state, (state) =>
+        (state.get(targetKey(target))?.files ?? []).some((file) => file._tag !== "uploading"),
+      );
+      assert.deepStrictEqual(
+        settled.get(targetKey(target))?.files.map((file) => file._tag),
+        ["ready"],
+      );
+      assert.isTrue(Option.isSome(yield* (yield* CredentialStore).load));
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(client(Option.none(), TestPlatform.makeDevice(), uploadsBehindProxyLogin)),
     ),
   );
 
@@ -1166,7 +1222,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         settled
           .get(targetKey(target))
           ?.files.map((file) => [file._tag, file._tag === "failed" ? file.problem : null]),
-        [["failed", "refused"]],
+        [["failed", "server-setup"]],
       );
       assert.strictEqual(refused.count, 1);
     }).pipe(

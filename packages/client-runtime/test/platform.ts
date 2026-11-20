@@ -153,7 +153,7 @@ const transfer = Layer.effect(
           );
           const body = yield* response.text;
           request.onProgress(request.body.size);
-          return { status: response.status, body };
+          return { url: response.url, status: response.status, body };
         }).pipe(Effect.mapError(() => new TransferFailed())),
     });
   }),

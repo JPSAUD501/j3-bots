@@ -305,6 +305,8 @@ export const en = {
   "composer.file.tooMany": "A message can carry {count} files at most",
   "composer.file.nameTooLong": "The file name is too long",
   "composer.file.refused": "The server refused this file",
+  "composer.file.serverSetup":
+    "The server can’t store files until its setup is fixed; its log says how",
   "composer.file.notPaired": "This device is signed out",
   "composer.tooLong": "Too long to send. A message can hold {count} characters at most.",
   "composer.notKept":

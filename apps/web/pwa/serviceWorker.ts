@@ -7,8 +7,9 @@ import { HTTP_PATHS } from "@j3-bots/contracts";
  * styles, fonts and icons) and nothing else.
  *
  * - A page load goes to the network first, so a new build shows at once; only
- *   when the network fails, or the server answers with an error of its own
- *   (a 5xx, as from a proxy whose server is down), does the kept page answer.
+ *   when the network fails, the server answers with an error of its own (a
+ *   5xx, as from a proxy whose server is down), or no answer comes within
+ *   `NAVIGATION_WAIT_MS`, does the kept page answer.
  * - A file of the shell is answered from the kept copy; its name carries its
  *   content's hash, so the copy is never stale.
  * - The API, the RPC socket and attachments are never answered or kept: they
@@ -17,11 +18,19 @@ import { HTTP_PATHS } from "@j3-bots/contracts";
  * Each build keeps its shell under its own cache name, and a new worker
  * deletes the caches of older builds once it takes over.
  */
+/**
+ * How long a page load waits for the network before the kept page answers: a
+ * server or a proxy that takes the request and never answers would otherwise
+ * leave the installed app blank.
+ */
+const NAVIGATION_WAIT_MS = 4000;
+
 export function serviceWorkerSource(version: string, shell: ReadonlyArray<string>): string {
   const config = {
     cache: `j3-shell-${version}`,
     shell,
     page: "/index.html",
+    navigationWait: NAVIGATION_WAIT_MS,
     // Every API path sits under /api/, beside the socket and attachments.
     neverCached: ["/api/", HTTP_PATHS.rpc, HTTP_PATHS.attachments],
   };
@@ -61,8 +70,14 @@ self.addEventListener("fetch", (event) => {
   if (request.mode === "navigate") {
     const keptPage = (otherwise) =>
       caches.match(CONFIG.page, { cacheName: CONFIG.cache }).then((page) => page ?? otherwise);
+    const answered = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("No answer in time")), CONFIG.navigationWait);
+      fetch(request)
+        .then(resolve, reject)
+        .finally(() => clearTimeout(timer));
+    });
     event.respondWith(
-      fetch(request).then(
+      answered.then(
         (response) => (response.status >= 500 ? keptPage(response) : response),
         () => keptPage(Response.error()),
       ),

@@ -194,6 +194,8 @@ export interface UploadRequest {
 
 /** The server's answer to an upload, before the runtime reads it. */
 export interface UploadResponse {
+  /** The address that answered, after any redirect (`XMLHttpRequest.responseURL`). */
+  readonly url: string;
   readonly status: number;
   readonly body: string;
 }

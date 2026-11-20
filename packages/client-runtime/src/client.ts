@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type {
   Attachment,
-  AttachmentId,
   Bot,
   BotFile,
   BotId,
@@ -176,7 +175,7 @@ export interface J3Client {
   /** Puts back the text this window held when another window changed the draft. */
   readonly restoreDraft: (target: EntryTarget) => void;
   /** A file's bytes, with this device's credential. */
-  readonly download: (id: AttachmentId) => Promise<DownloadResult>;
+  readonly download: (attachment: Attachment) => Promise<DownloadResult>;
 
   readonly openBotFiles: (botId: BotId) => LoadedHandle<ReadonlyArray<BotFile>>;
   readonly openMemory: (scope: MemoryScope) => LoadedHandle<ReadonlyArray<MemoryFile>>;
@@ -336,9 +335,9 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     sendDraft: (target) => run.promise(services.drafts.send(target)),
     onDraftChangedElsewhere: (listener) => listen(services.drafts.changedElsewhere, listener),
     restoreDraft: (target) => run.sync(services.drafts.restore(target)),
-    download: (id) =>
+    download: (attachment) =>
       run.promise(
-        services.files.download(id).pipe(
+        services.files.download(attachment).pipe(
           Effect.map((value): DownloadResult => ({ _tag: "done", value })),
           Effect.catchTags({
             AttachmentUnavailable: (error) =>

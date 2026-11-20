@@ -287,7 +287,7 @@ function LiveShell({ children }: { children: ReactNode }) {
     openAttachment: (attachment) => {
       // Reserved now, while the click still lets the page open a window.
       const reserved = reserveWindow(attachment);
-      j3.download(attachment.id).then((result) => {
+      j3.download(attachment).then((result) => {
         if (result._tag === "done") {
           deliverFile(attachment, result.value.body, reserved);
           return;

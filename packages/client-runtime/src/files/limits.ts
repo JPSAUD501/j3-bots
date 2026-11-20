@@ -32,6 +32,12 @@ export type FileProblem =
   | "name-too-long"
   /** The server refused it for a reason the client could not foresee. */
   | "refused"
+  /**
+   * The server cannot store files privately until its operator fixes its
+   * setup: its attachments folder leads out of its data (409
+   * `Conflict("private-location")`).
+   */
+  | "server-setup"
   /** This device is no longer paired, so the file cannot be sent. */
   | "not-paired";
 

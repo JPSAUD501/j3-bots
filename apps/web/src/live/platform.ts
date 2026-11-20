@@ -197,7 +197,10 @@ const transfer = Layer.succeed(
           xhr.setRequestHeader(name, value);
         }
         xhr.upload.onprogress = (event) => request.onProgress(event.loaded);
-        xhr.onload = () => resume(Effect.succeed({ status: xhr.status, body: xhr.responseText }));
+        xhr.onload = () =>
+          resume(
+            Effect.succeed({ url: xhr.responseURL, status: xhr.status, body: xhr.responseText }),
+          );
         xhr.onerror = () => resume(Effect.fail(new TransferFailed()));
         xhr.send(request.body);
         return Effect.sync(() => xhr.abort());

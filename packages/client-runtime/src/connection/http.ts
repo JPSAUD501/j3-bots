@@ -38,15 +38,18 @@ export const within =
   <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | E2, R> =>
     effect.pipe(Effect.timeoutOrElse({ duration, orElse: () => Effect.fail(onTimeout()) }));
 
-/** The slowest link an upload is waited for: 32 KiB a second, a poor mobile uplink. */
+/** The slowest link a file transfer is waited for: 32 KiB a second, a poor mobile link. */
 const SLOW_LINK_BYTES_PER_SECOND = 32 * 1024;
-/** The longest any upload is waited for, however large. */
-const MAX_UPLOAD_WAIT = Duration.minutes(15);
+/** The longest any file transfer is waited for, however large. */
+const MAX_TRANSFER_WAIT = Duration.minutes(15);
 
-/** How long an upload of `size` bytes may take: a request's wait, plus its bytes over a slow link. */
-export const uploadDeadline = (size: number, requestTimeout: Duration.Duration) =>
+/**
+ * How long moving a file of `size` bytes, up or down, may take: a request's
+ * wait, plus its bytes over a slow link.
+ */
+export const transferDeadline = (size: number, requestTimeout: Duration.Duration) =>
   Duration.min(
-    MAX_UPLOAD_WAIT,
+    MAX_TRANSFER_WAIT,
     Duration.sum(requestTimeout, Duration.seconds(size / SLOW_LINK_BYTES_PER_SECOND)),
   );
 

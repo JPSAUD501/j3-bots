@@ -1,21 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { Attachment, type AttachmentId, HTTP_PATHS } from "@j3-bots/contracts";
+import { Attachment, HTTP_PATHS, NotAuthenticated } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Random from "effect/Random";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { backoffDelay, Connection, NotPaired, ReconnectPolicy } from "../connection/Connection.ts";
-import { uploadDeadline, within } from "../connection/http.ts";
+import { transferDeadline, within } from "../connection/http.ts";
 import { FileTransfer, ServerAddress } from "../ports.ts";
 import type { FileProblem } from "./limits.ts";
 
 /** The server refused the file, for good: sending it again would be refused again. */
 export class UploadRefused extends Schema.TaggedError<UploadRefused>()("UploadRefused", {
-  problem: Schema.Literals(["too-large", "refused"]),
+  problem: Schema.Literals(["too-large", "refused", "server-setup"]),
 }) {
   override get message(): string {
     return `The server refused the file: ${this.problem}.`;
@@ -46,12 +47,21 @@ export const uploadProblem = (error: UploadRefused | NotPaired): FileProblem =>
 class Transient extends Schema.TaggedError<Transient>()("Transient", {}) {}
 
 const decodeAttachment = Schema.decodeUnknownEffect(Schema.fromJsonString(Attachment));
+const isNotAuthenticated = (body: string) =>
+  Option.isSome(Schema.decodeOption(Schema.fromJsonString(NotAuthenticated))(body));
 
 /**
  * File bytes over HTTP, with the device token as a bearer. An upload waits
  * for the server and tries again after a network failure, or after it took
  * longer than its size allows, so a file the operator attached while offline
- * goes as soon as the server answers.
+ * goes as soon as the server answers. A download gets the same time for its
+ * size, and then counts as unreachable.
+ *
+ * As for the socket ticket, only the server's own answer counts: a 401
+ * means the device is not paired only when its body is the server's
+ * `NotAuthenticated`, and an answer from another address, as from a proxy
+ * that redirected the request to its own login page, did not come from the
+ * server. Either is a failure the next attempt may not meet.
  */
 export class Files extends Context.Service<
   Files,
@@ -67,7 +77,7 @@ export class Files extends Context.Service<
       readonly onProgress: (sent: number) => void;
     }) => Effect.Effect<Attachment, UploadRefused | NotPaired>;
     readonly download: (
-      id: AttachmentId,
+      attachment: Attachment,
     ) => Effect.Effect<Download, AttachmentUnavailable | NotPaired>;
   }
 >()("@j3-bots/client-runtime/files/Files") {}
@@ -80,6 +90,11 @@ export const layer = Layer.effect(
     const transfer = yield* FileTransfer;
     const http = yield* HttpClient.HttpClient;
     const policy = yield* ReconnectPolicy;
+    /** Whether `url`, where an answer came from, is `path` on the server. */
+    const fromServer = (url: string, path: string) => {
+      const answered = new URL(url, origin);
+      return answered.origin === origin.origin && answered.pathname === path;
+    };
 
     const uploadOnce = Effect.fnUntraced(function* (input: {
       readonly name: string;
@@ -103,21 +118,23 @@ export const layer = Layer.effect(
         })
         .pipe(
           Effect.mapError(() => new Transient()),
-          within(uploadDeadline(input.body.size, policy.requestTimeout), () => new Transient()),
+          within(transferDeadline(input.body.size, policy.requestTimeout), () => new Transient()),
         );
+      if (!fromServer(response.url, HTTP_PATHS.attachments)) return yield* new Transient();
       switch (response.status) {
         case 200:
           return yield* decodeAttachment(response.body).pipe(
             Effect.mapError(() => new UploadRefused({ problem: "refused" })),
           );
         case 400:
+          return yield* new UploadRefused({ problem: "refused" });
         // `Conflict("private-location")`: the server's attachments folder is
         // linked out of its private data, and stays refused until the
         // operator removes the link.
         case 409:
-          return yield* new UploadRefused({ problem: "refused" });
+          return yield* new UploadRefused({ problem: "server-setup" });
         case 401:
-          return yield* new NotPaired();
+          return yield* isNotAuthenticated(response.body) ? new NotPaired() : new Transient();
         case 413:
           return yield* new UploadRefused({ problem: "too-large" });
         default:
@@ -145,29 +162,33 @@ export const layer = Layer.effect(
       }
     });
 
-    const download = Effect.fn("Files.download")(function* (id: AttachmentId) {
+    const download = Effect.fn("Files.download")(function* (attachment: Attachment) {
       const token = yield* connection.bearer;
       const unreachable = new AttachmentUnavailable({ reason: "unreachable" });
-      const response = yield* http
-        .execute(
-          HttpClientRequest.get(
-            new URL(`${HTTP_PATHS.attachments}/${encodeURIComponent(id)}`, origin).toString(),
-          ).pipe(HttpClientRequest.bearerToken(token)),
-        )
-        .pipe(Effect.mapError(() => unreachable));
-      switch (response.status) {
-        case 200: {
-          const bytes = yield* response.arrayBuffer.pipe(Effect.mapError(() => unreachable));
-          const mediaType = response.headers["content-type"] ?? "application/octet-stream";
-          return { body: new Blob([bytes], { type: mediaType }), mediaType };
+      const url = new URL(`${HTTP_PATHS.attachments}/${encodeURIComponent(attachment.id)}`, origin);
+      // The deadline runs until the last byte is read, not only to the headers.
+      return yield* Effect.gen(function* () {
+        const response = yield* http.execute(
+          HttpClientRequest.get(url.toString()).pipe(HttpClientRequest.bearerToken(token)),
+        );
+        if (!fromServer(response.url, url.pathname)) return yield* unreachable;
+        switch (response.status) {
+          case 200: {
+            const bytes = yield* response.arrayBuffer;
+            const mediaType = response.headers["content-type"] ?? "application/octet-stream";
+            return { body: new Blob([bytes], { type: mediaType }), mediaType };
+          }
+          case 401:
+            return yield* isNotAuthenticated(yield* response.text) ? new NotPaired() : unreachable;
+          case 404:
+            return yield* new AttachmentUnavailable({ reason: "not-found" });
+          default:
+            return yield* unreachable;
         }
-        case 401:
-          return yield* new NotPaired();
-        case 404:
-          return yield* new AttachmentUnavailable({ reason: "not-found" });
-        default:
-          return yield* unreachable;
-      }
+      }).pipe(
+        Effect.catchTag("HttpClientError", () => Effect.fail(unreachable)),
+        within(transferDeadline(attachment.size, policy.requestTimeout), () => unreachable),
+      );
     });
 
     return Files.of({ upload, download });

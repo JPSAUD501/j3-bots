@@ -51,6 +51,8 @@ function fileProblemText(problem: FileProblem, i18n: I18n): string {
       return t("composer.file.nameTooLong");
     case "refused":
       return t("composer.file.refused");
+    case "server-setup":
+      return t("composer.file.serverSetup");
     case "not-paired":
       return t("composer.file.notPaired");
   }
