@@ -309,9 +309,12 @@ export const en = {
     "The server can’t store files until its setup is fixed; its log says how",
   "composer.file.notPaired": "This device is signed out",
   "composer.tooLong": "Too long to send. A message can hold {count} characters at most.",
+  "composer.tooManyFiles": "Too many files to send. A message can carry {count} files at most.",
   "composer.notKept":
     "This device couldn’t keep the message, so it wasn’t sent. It’s still in the message box.",
   "composer.changedElsewhere":
+    "This draft changed in another tab. This tab now shows it as it is there.",
+  "composer.changedElsewhereWhileSending":
     "This draft changed in another tab. This tab now shows it as it is there, and sent nothing.",
   "composer.restoreMine": "Restore my text",
 

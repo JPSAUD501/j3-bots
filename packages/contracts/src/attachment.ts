@@ -35,6 +35,11 @@ export type Attachment = typeof Attachment.Type;
 /** At most this many files in one message. */
 export const MAX_ATTACHMENTS_PER_MESSAGE = 10;
 
+/** The files of one message, by id: at most `MAX_ATTACHMENTS_PER_MESSAGE`. */
+export const MessageAttachments = Schema.Array(AttachmentId).check(
+  Schema.isMaxLength(MAX_ATTACHMENTS_PER_MESSAGE),
+);
+
 /**
  * The largest file `POST /attachments` accepts, in bytes. It refuses an empty
  * file. A message can carry less than this per file: see `message.send`.

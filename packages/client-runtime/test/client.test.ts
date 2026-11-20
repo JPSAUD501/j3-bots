@@ -8,6 +8,7 @@ import {
   type EntryTarget,
   HTTP_PATHS,
   J3Rpcs,
+  MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_MESSAGE_LENGTH,
   NotFound,
 } from "@j3-bots/contracts";
@@ -22,6 +23,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -293,6 +295,19 @@ const whenStored = (
 const present = (record: string | undefined) => record !== undefined;
 const absent = (record: string | undefined) => record === undefined;
 const holds = (text: string) => (record: string | undefined) => record?.includes(text) === true;
+
+const decodeDraftRecord = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({ text: Schema.String, files: Schema.Array(Schema.Unknown) }),
+  ),
+);
+/** Whether a draft record holds no draft: there is none, or it was emptied or sent. */
+const noDraft = (record: string | undefined) =>
+  record === undefined ||
+  Option.exists(
+    decodeDraftRecord(record),
+    (draft) => draft.text === "" && draft.files.length === 0,
+  );
 
 const isConnected = (state: ConnectionState) => state._tag === "connected";
 
@@ -926,10 +941,10 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
             assert.deepStrictEqual(
               yield* Fiber.join(noticed),
-              Option.some({ target: first.target, restorable: true }),
+              Option.some({ target: first.target, whileSending: false, restorable: true }),
             );
             assert.isUndefined(two.state.get().get(key));
-            yield* whenStored(device.storage, "drafts", key, absent);
+            yield* whenStored(device.storage, "drafts", key, noDraft);
             assert.strictEqual((yield* outbox).size, 1);
 
             yield* two.restore(first.target);
@@ -976,7 +991,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
           assert.deepStrictEqual(
             yield* Fiber.join(noticed),
-            Option.some({ target: first.target, restorable: true }),
+            Option.some({ target: first.target, whileSending: false, restorable: true }),
           );
           assert.strictEqual(two.state.get().get(key)?.text, "shared, from one");
           yield* whenStored(device.storage, "drafts", key, holds("from one"));
@@ -1024,7 +1039,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           assert.strictEqual(yield* Fiber.join(sending), "changed-elsewhere");
           assert.deepStrictEqual(
             yield* Fiber.join(noticed),
-            Option.some({ target: first.target, restorable: true }),
+            Option.some({ target: first.target, whileSending: true, restorable: true }),
           );
           assert.strictEqual(two.state.get().get(key)?.text, "shared, from one");
           assert.strictEqual((yield* device.storage.readAll("outbox").pipe(Effect.orDie)).size, 0);
@@ -1057,7 +1072,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         yield* drafts.setText(later, "afterwards");
         yield* whenStored(device.storage, "drafts", targetKey(later), present);
         const stored = yield* device.storage.readAll("drafts").pipe(Effect.orDie);
-        assert.isUndefined(stored.get(targetKey(target)));
+        assert.isTrue(noDraft(stored.get(targetKey(target))));
         assert.isUndefined(drafts.state.get().get(targetKey(target)));
       }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
     }),
@@ -1097,11 +1112,59 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
             shown?.files.map((file) => [file._tag, file._tag === "ready" ? null : file.name]),
             [["uploading", "slow.txt"]],
           );
-          assert.deepStrictEqual(notice, Option.some({ target: first.target, restorable: true }));
+          assert.deepStrictEqual(
+            notice,
+            Option.some({ target: first.target, whileSending: false, restorable: true }),
+          );
         }).pipe(
           Effect.scoped,
           Effect.provide(client(first.credential, device, neverAnswers(HTTP_PATHS.attachments))),
         );
+      }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+    }),
+  );
+
+  it.effect("keeps a file this tab uploaded when another tab changed the draft first", () =>
+    Effect.gen(function* () {
+      const device = TestPlatform.makeDevice();
+      const first = yield* Effect.gen(function* () {
+        yield* pairAndConnect;
+        const target: EntryTarget = { _tag: "conversation", botId: yield* createBot("Keeper") };
+        yield* (yield* Drafts).setText(target, "shared");
+        yield* whenStored(device.storage, "drafts", targetKey(target), present);
+        return { target, credential: yield* savedCredential };
+      }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
+      const key = targetKey(first.target);
+
+      yield* Effect.gen(function* () {
+        const one = yield* Drafts;
+        yield* Effect.gen(function* () {
+          const two = yield* Drafts;
+          yield* one.setText(first.target, "shared, from one");
+          yield* whenStored(device.storage, "drafts", key, holds("from one"));
+          const noticed = yield* Stream.runHead(two.changedElsewhere).pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+
+          // Its upload ends, and its write finds the draft changed.
+          yield* two.attach(first.target, [
+            { name: "notes.txt", body: new Blob(["notes"], { type: "text/plain" }) },
+          ]);
+          yield* Fiber.join(noticed);
+
+          const shown = two.state.get().get(key);
+          assert.strictEqual(shown?.text, "shared, from one");
+          assert.deepStrictEqual(
+            shown?.files.map((file) => (file._tag === "ready" ? file.attachment.name : file._tag)),
+            ["notes.txt"],
+          );
+          yield* whenStored(
+            device.storage,
+            "drafts",
+            key,
+            (record) => holds("from one")(record) && holds("notes.txt")(record),
+          );
+        }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
       }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
     }),
   );
@@ -1134,7 +1197,10 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           // Restoring would put back what the other tab replaced.
           yield* two.restore(first.target);
           assert.strictEqual(two.state.get().get(key)?.text, "shared, from one");
-          assert.deepStrictEqual(notice, Option.some({ target: first.target, restorable: false }));
+          assert.deepStrictEqual(
+            notice,
+            Option.some({ target: first.target, whileSending: true, restorable: false }),
+          );
           assert.strictEqual((yield* device.storage.readAll("outbox").pipe(Effect.orDie)).size, 0);
         }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
       }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
@@ -1241,6 +1307,138 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         yield* (yield* TestPlatform.TestNetwork).set("online");
         assert.strictEqual(yield* Queue.take(sends), commandId);
         yield* whenStored(device.storage, "outbox", commandId, absent);
+      }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+    }),
+  );
+
+  it.effect("refuses a file still uploading that no longer fits the draft another tab kept", () =>
+    Effect.gen(function* () {
+      const device = TestPlatform.makeDevice();
+      const first = yield* Effect.gen(function* () {
+        yield* pairAndConnect;
+        return { botId: yield* createBot("Crowded"), credential: yield* savedCredential };
+      }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
+      const target: EntryTarget = { _tag: "conversation", botId: first.botId };
+      const key = targetKey(target);
+
+      yield* Effect.gen(function* () {
+        const one = yield* Drafts;
+        yield* Effect.gen(function* () {
+          const two = yield* Drafts;
+          yield* two.attach(target, [
+            { name: "late.txt", body: new Blob(["late"], { type: "text/plain" }) },
+          ]);
+
+          // The first tab keeps a draft of as many files as a message can carry.
+          yield* one.attach(
+            target,
+            Array.from({ length: MAX_ATTACHMENTS_PER_MESSAGE }, (_, index) => ({
+              name: `file-${index}.txt`,
+              body: new Blob([`file ${index}`], { type: "text/plain" }),
+            })),
+          );
+          const uploaded = yield* waitFor(
+            one.state,
+            (state) =>
+              (state.get(key)?.files ?? []).filter((file) => file._tag === "ready").length ===
+              MAX_ATTACHMENTS_PER_MESSAGE,
+          );
+          const ids = (uploaded.get(key)?.files ?? []).flatMap((file) =>
+            file._tag === "ready" ? [file.attachment.id] : [],
+          );
+          yield* whenStored(device.storage, "drafts", key, (record) =>
+            ids.every((id) => record?.includes(id) === true),
+          );
+          const noticed = yield* Stream.runHead(two.changedElsewhere).pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+
+          yield* two.setText(target, "from two");
+          yield* Fiber.join(noticed);
+
+          assert.deepStrictEqual(
+            two.state
+              .get()
+              .get(key)
+              ?.files.map((file) => [file._tag, file._tag === "failed" ? file.problem : null]),
+            [...ids.map(() => ["ready", null]), ["failed", "too-many"]],
+          );
+          assert.strictEqual(yield* two.send(target), "not-ready");
+          assert.strictEqual((yield* device.storage.readAll("outbox").pipe(Effect.orDie)).size, 0);
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(client(first.credential, device, neverAnswers(HTTP_PATHS.attachments))),
+        );
+      }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+    }),
+  );
+
+  it.effect("keeps, and does not send, a draft with more files than a message can carry", () =>
+    Effect.gen(function* () {
+      const device = TestPlatform.makeDevice();
+      const first = yield* Effect.gen(function* () {
+        yield* pairAndConnect;
+        return { botId: yield* createBot("Overloaded"), credential: yield* savedCredential };
+      }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
+      const target: EntryTarget = { _tag: "conversation", botId: first.botId };
+      const key = targetKey(target);
+      // As an earlier version, which allowed more files, kept it.
+      const files = Array.from({ length: MAX_ATTACHMENTS_PER_MESSAGE + 1 }, (_, index) => ({
+        id: `kept-${index}`,
+        name: `file-${index}.txt`,
+        mediaType: "text/plain",
+        size: 1,
+      }));
+      yield* device.storage
+        .write("drafts", key, JSON.stringify({ revision: "earlier", text: "all of them", files }))
+        .pipe(Effect.orDie);
+
+      yield* Effect.gen(function* () {
+        const drafts = yield* Drafts;
+        const kept = drafts.state.get().get(key);
+        assert.strictEqual(kept?.files.length, MAX_ATTACHMENTS_PER_MESSAGE + 1);
+        assert.strictEqual(yield* drafts.send(target), "too-many-files");
+        assert.deepStrictEqual(drafts.state.get().get(key), kept);
+        assert.strictEqual((yield* device.storage.readAll("outbox").pipe(Effect.orDie)).size, 0);
+      }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+    }),
+  );
+
+  it.effect("finds the draft changed when another tab sent one this tab never saw", () =>
+    Effect.gen(function* () {
+      const { sends } = yield* Fakes;
+      const device = TestPlatform.makeDevice();
+      const first = yield* Effect.gen(function* () {
+        yield* pairAndConnect;
+        return { botId: yield* createBot("Blank"), credential: yield* savedCredential };
+      }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
+      const target: EntryTarget = { _tag: "conversation", botId: first.botId };
+      const key = targetKey(target);
+
+      yield* Effect.gen(function* () {
+        // This tab reads no draft.
+        const one = yield* Drafts;
+        yield* Effect.gen(function* () {
+          const two = yield* Drafts;
+          yield* two.setText(target, "from two");
+          yield* whenStored(device.storage, "drafts", key, holds("from two"));
+          assert.strictEqual(yield* two.send(target), "sent");
+          yield* whenStored(device.storage, "outbox", yield* Queue.take(sends), absent);
+        }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+        const noticed = yield* Stream.runHead(one.changedElsewhere).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+
+        yield* one.setText(target, "from one");
+
+        assert.deepStrictEqual(
+          yield* Fiber.join(noticed),
+          Option.some({ target, whileSending: false, restorable: true }),
+        );
+        assert.isUndefined(one.state.get().get(key));
+        assert.isTrue(
+          noDraft((yield* device.storage.readAll("drafts").pipe(Effect.orDie)).get(key)),
+        );
       }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
     }),
   );
@@ -1391,7 +1589,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           [first.attachmentId],
         );
         assert.strictEqual(yield* Queue.size(sends), 0);
-        yield* whenStored(device.storage, "drafts", targetKey(first.target), absent);
+        yield* whenStored(device.storage, "drafts", targetKey(first.target), noDraft);
       }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
     }),
   );

@@ -224,11 +224,12 @@ function LiveShell({ children }: { children: ReactNode }) {
   // Another tab sent or changed a draft under this one: this tab shows it as
   // stored, and when this tab held text the device never kept, the operator
   // decides whether it goes back in.
-  const changedElsewhere = useEffectEvent(({ target: asked, restorable }: DraftChangedElsewhere) =>
-    say(
-      t("composer.changedElsewhere"),
-      restorable ? { label: t("composer.restoreMine"), run: () => j3.restoreDraft(asked) } : null,
-    ),
+  const changedElsewhere = useEffectEvent(
+    ({ target: asked, whileSending, restorable }: DraftChangedElsewhere) =>
+      say(
+        t(whileSending ? "composer.changedElsewhereWhileSending" : "composer.changedElsewhere"),
+        restorable ? { label: t("composer.restoreMine"), run: () => j3.restoreDraft(asked) } : null,
+      ),
   );
   useEffect(() => j3.onDraftChangedElsewhere(changedElsewhere), [j3]);
 

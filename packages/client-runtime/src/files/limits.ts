@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
+  type Attachment,
   AttachmentMediaType,
   INLINE_IMAGE_MEDIA_TYPES,
   MAX_ATTACHMENT_NAME_LENGTH,
@@ -7,6 +8,8 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_INLINE_IMAGE_SIZE,
   MAX_INLINE_IMAGES_SIZE,
+  MessageAttachments,
+  MessageText,
 } from "@j3-bots/contracts";
 import * as Schema from "effect/Schema";
 
@@ -87,4 +90,29 @@ export const admitFiles = (
     count += 1;
     return null;
   });
+};
+
+/** Why a message cannot be sent as it is. */
+export type MessageProblem =
+  /** The text is longer than `MAX_MESSAGE_LENGTH`. */
+  | "too-long"
+  /** It carries more than `MAX_ATTACHMENTS_PER_MESSAGE` files. */
+  | "too-many-files";
+
+const isMessageText = Schema.is(MessageText);
+const isMessageAttachments = Schema.is(MessageAttachments);
+
+/**
+ * Whether a message of `text` and `attachments` can be sent, checked with the
+ * schemas `message.send` decodes it with: null when it can, why when it cannot.
+ */
+export const messageProblem = (
+  text: string,
+  attachments: ReadonlyArray<Attachment>,
+): MessageProblem | null => {
+  if (!isMessageText(text)) return "too-long";
+  if (!isMessageAttachments(attachments.map((attachment) => attachment.id))) {
+    return "too-many-files";
+  }
+  return null;
 };

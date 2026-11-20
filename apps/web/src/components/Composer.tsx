@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { DraftFile, FileProblem } from "@j3-bots/client-runtime";
+import { type DraftFile, type FileProblem, messageProblem } from "@j3-bots/client-runtime";
 import {
   MAX_ATTACHMENT_SIZE,
   MAX_ATTACHMENTS_PER_MESSAGE,
@@ -64,8 +64,8 @@ const nameOf = (file: DraftFile) => (file._tag === "ready" ? file.attachment.nam
  * The pill at the bottom of a conversation. Enter sends, Shift+Enter starts a
  * new line. Files picked, pasted or dropped upload at once and show above the
  * pill; the message goes once they all have. With nothing to send, the
- * trailing button dictates where dictation exists. A text longer than a
- * message can hold is kept, and says so instead of sending. While Send hands
+ * trailing button dictates where dictation exists. A message over a limit
+ * of `message.send` is kept, and says why instead of sending. While Send hands
  * the draft over, the field stays focused but read-only, and files wait. The
  * field draws no ring of its own: the pill takes the focus outline.
  */
@@ -89,8 +89,11 @@ export function Composer({
   const empty = value.trim() === "" && !files.some((file) => file._tag === "ready");
   const uploading = files.some((file) => file._tag === "uploading");
   const blocked = files.some((file) => file._tag === "failed");
-  const tooLong = value.trim().length > MAX_MESSAGE_LENGTH;
-  const ready = !sending && !empty && !uploading && !blocked && !tooLong;
+  const problem = messageProblem(
+    value.trim(),
+    files.flatMap((file) => (file._tag === "ready" ? [file.attachment] : [])),
+  );
+  const ready = !sending && !empty && !uploading && !blocked && problem === null;
   const send = () => {
     if (ready) onSend();
   };
@@ -213,11 +216,13 @@ export function Composer({
         {t("composer.stillUploading")}
       </span>
       <p role="alert" className="px-3 text-xs text-blocked empty:hidden">
-        {tooLong
+        {problem === "too-long"
           ? t("composer.tooLong", {
               count: new Intl.NumberFormat(locale).format(MAX_MESSAGE_LENGTH),
             })
-          : null}
+          : problem === "too-many-files"
+            ? t("composer.tooManyFiles", { count: String(MAX_ATTACHMENTS_PER_MESSAGE) })
+            : null}
       </p>
     </form>
   );

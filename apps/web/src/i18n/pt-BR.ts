@@ -311,9 +311,13 @@ export const ptBR: Catalog = {
   "composer.file.notPaired": "Este dispositivo saiu da conta",
   "composer.tooLong":
     "Longa demais para enviar. Uma mensagem pode ter no máximo {count} caracteres.",
+  "composer.tooManyFiles":
+    "Arquivos demais para enviar. Uma mensagem leva no máximo {count} arquivos.",
   "composer.notKept":
     "Este dispositivo não conseguiu guardar a mensagem, então ela não foi enviada. Ela continua na caixa de mensagem.",
   "composer.changedElsewhere":
+    "Este rascunho mudou em outra aba. Esta aba agora mostra o que está lá.",
+  "composer.changedElsewhereWhileSending":
     "Este rascunho mudou em outra aba. Esta aba agora mostra o que está lá e não enviou nada.",
   "composer.restoreMine": "Restaurar meu texto",
 

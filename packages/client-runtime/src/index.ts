@@ -28,6 +28,8 @@ export {
   admitFiles,
   type FileProblem,
   type LocalFile,
+  messageProblem,
+  type MessageProblem,
   normalizeMediaType,
 } from "./files/limits.ts";
 export {

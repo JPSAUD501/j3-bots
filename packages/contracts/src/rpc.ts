@@ -2,7 +2,7 @@
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
-import { BotFile, MAX_ATTACHMENTS_PER_MESSAGE } from "./attachment.ts";
+import { BotFile, MessageAttachments } from "./attachment.ts";
 import {
   AttachmentId,
   BotId,
@@ -174,9 +174,7 @@ export const EntryRpcs = RpcGroup.make(
       ...command,
       target: EntryTarget,
       text: MessageText,
-      attachments: Schema.Array(AttachmentId).check(
-        Schema.isMaxLength(MAX_ATTACHMENTS_PER_MESSAGE),
-      ),
+      attachments: MessageAttachments,
       mentions: Schema.optionalKey(Mentions),
     },
     success: EntryId,
