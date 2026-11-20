@@ -44,6 +44,8 @@ export const colors = {
   blocked: themed("oklch(0.53 0.2 27)", "oklch(0.71 0.17 25)"),
   "blocked-surface": themed("oklch(0.975 0.015 20)", "oklch(0.2 0.05 25)"),
   success: themed("oklch(0.52 0.12 160)", "oklch(0.78 0.14 160)"),
+  /** The track of a switch that is off: a boundary of 3:1 against every canvas. */
+  "control-off": themed("#82828a", "#6b6b73"),
   /** Marks drawn inside an avatar, over the bot's color. */
   "avatar-ink": themed("#ffffff", "#0b0b0c"),
   /** Behind sheets and dialogs. */
@@ -59,8 +61,8 @@ export type ColorRole = keyof typeof colors;
  */
 export const botPalette = {
   red: themed("oklch(0.441 0.179 29)", "oklch(0.555 0.193 33)"),
-  orange: themed("oklch(0.537 0.095 66)", "oklch(0.682 0.132 57)"),
-  yellow: themed("oklch(0.618 0.127 97)", "oklch(0.79 0.162 94)"),
+  orange: themed("oklch(0.535 0.11 72)", "oklch(0.682 0.132 57)"),
+  yellow: themed("oklch(0.621 0.125 86)", "oklch(0.79 0.162 94)"),
   green: themed("oklch(0.401 0.091 159)", "oklch(0.812 0.104 149)"),
   teal: themed("oklch(0.61 0.102 206)", "oklch(0.708 0.093 189)"),
   blue: themed("oklch(0.516 0.124 243)", "oklch(0.596 0.217 271)"),
@@ -137,6 +139,15 @@ export const layout = {
   rowHeight: { pointer: 52, touch: 64 },
   /** Minimum touch target. */
   touchTarget: 44,
+  /**
+   * Widest a bubble or a card in the timeline grows; on narrow columns they
+   * keep a share of it free, so the two sides of a conversation stay apart.
+   */
+  entryWidth: { max: 576, bubbleShare: 0.85, cardShare: 0.92 },
+  /** Compact cards in the timeline: a handoff, a routine change. */
+  compactCardWidth: 448,
+  /** The composer grows with its text up to this height, then scrolls. */
+  composerMaxHeight: 240,
   /** Below `tablet` one region shows at a time; from `wide` the details pane sits beside the conversation. */
   breakpoints: { tablet: 768, wide: 1200 },
 } as const;

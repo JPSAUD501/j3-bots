@@ -73,6 +73,19 @@ ${lines([
   ["layout-row-pointer", rem(layout.rowHeight.pointer)],
   ["layout-row-touch", rem(layout.rowHeight.touch)],
   ["layout-touch-target", rem(layout.touchTarget)],
+  [
+    "layout-bubble-width",
+    `min(${rem(layout.entryWidth.max)}, ${layout.entryWidth.bubbleShare * 100}%)`,
+  ],
+  [
+    "layout-card-width",
+    `min(${rem(layout.entryWidth.max)}, ${layout.entryWidth.cardShare * 100}%)`,
+  ],
+  [
+    "layout-compact-card-width",
+    `min(${rem(layout.compactCardWidth)}, ${layout.entryWidth.cardShare * 100}%)`,
+  ],
+  ["layout-composer-max-height", rem(layout.composerMaxHeight)],
 ])}
 }
 

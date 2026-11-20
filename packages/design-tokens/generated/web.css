@@ -23,11 +23,12 @@
   --blocked: oklch(0.53 0.2 27);
   --blocked-surface: oklch(0.975 0.015 20);
   --success: oklch(0.52 0.12 160);
+  --control-off: #82828a;
   --avatar-ink: #ffffff;
   --scrim: oklch(0 0 0 / 0.32);
   --bot-red: oklch(0.441 0.179 29);
-  --bot-orange: oklch(0.537 0.095 66);
-  --bot-yellow: oklch(0.618 0.127 97);
+  --bot-orange: oklch(0.535 0.11 72);
+  --bot-yellow: oklch(0.621 0.125 86);
   --bot-green: oklch(0.401 0.091 159);
   --bot-teal: oklch(0.61 0.102 206);
   --bot-blue: oklch(0.516 0.124 243);
@@ -59,6 +60,7 @@
   --blocked: oklch(0.71 0.17 25);
   --blocked-surface: oklch(0.2 0.05 25);
   --success: oklch(0.78 0.14 160);
+  --control-off: #6b6b73;
   --avatar-ink: #0b0b0c;
   --scrim: oklch(0 0 0 / 0.6);
   --bot-red: oklch(0.555 0.193 33);
@@ -87,6 +89,10 @@
   --layout-row-pointer: 3.25rem;
   --layout-row-touch: 4rem;
   --layout-touch-target: 2.75rem;
+  --layout-bubble-width: min(36rem, 85%);
+  --layout-card-width: min(36rem, 92%);
+  --layout-compact-card-width: min(28rem, 92%);
+  --layout-composer-max-height: 15rem;
 }
 
 @theme {
@@ -141,6 +147,7 @@
   --color-blocked: var(--blocked);
   --color-blocked-surface: var(--blocked-surface);
   --color-success: var(--success);
+  --color-control-off: var(--control-off);
   --color-avatar-ink: var(--avatar-ink);
   --color-scrim: var(--scrim);
   --color-bot-red: var(--bot-red);

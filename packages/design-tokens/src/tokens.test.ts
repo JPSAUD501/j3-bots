@@ -73,8 +73,8 @@ describe.each(modes)("%s theme contrast", (mode) => {
     }
   });
 
-  it("draws focus rings and state marks at 3:1 against every surface", () => {
-    for (const mark of ["accent", "waiting", "blocked", "success"] as const) {
+  it("draws focus rings, state marks and control boundaries at 3:1 against every surface", () => {
+    for (const mark of ["accent", "waiting", "blocked", "success", "control-off"] as const) {
       for (const bg of ["background", "surface", "sidebar", "muted"] as const) {
         expect(contrastRatio(color(mark), color(bg))).toBeGreaterThanOrEqual(3);
       }
