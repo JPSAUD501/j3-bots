@@ -11,10 +11,11 @@ export interface Notice {
 }
 
 /**
- * A short sentence about something that just went wrong out of view, such as
- * a file that could not be opened. It goes by itself, and asks nothing of the
- * operator: what they can act on stays where they act, until they do. The
- * region is always there, so each new notice is announced once.
+ * A short sentence about something that just happened out of view, such as
+ * a file that could not be opened or a fresh start done. It goes by itself,
+ * and asks nothing of the operator: what they can act on stays where they
+ * act, until they do. The region is always there, so each new notice is
+ * announced once.
  */
 export function Toast({ notice, onDone }: { notice: Notice | null; onDone: () => void }) {
   return (

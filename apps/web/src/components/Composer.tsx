@@ -36,6 +36,11 @@ interface ComposerProps {
    * another pairing ended: until they show, the draft takes no change.
    */
   readonly loading?: boolean;
+  /**
+   * The drafts could not be read: the draft takes no change, and says so,
+   * until `onRetry` reads them.
+   */
+  readonly unread?: { readonly onRetry: () => void };
   /** Files the operator picked, pasted or dropped. Without it, the composer takes no files. */
   readonly onAttachFiles?: (files: ReadonlyArray<File>) => void;
   readonly onDetachFile?: (key: string) => void;
@@ -105,13 +110,15 @@ const nameOf = (file: DraftFile) => (file._tag === "ready" ? file.attachment.nam
  * pill; the message goes once they all have. With nothing to send, the
  * trailing button dictates where dictation exists. A message over a limit
  * of `message.send` is kept, and says why instead of sending. While Send hands
- * the draft over, or the drafts load, the field stays focused but read-only,
- * and attaching and removing files show as unavailable; files dropped or
- * pasted meanwhile are not taken, and the composer asks for them again. Many
- * files scroll within their own list, so the pill and what sits above it stay
- * in view. Text replaced in another tab is offered back above the pill until
- * the operator restores or dismisses it; either way the focus returns to the
- * field. The field draws no ring of its own: the pill takes the focus outline.
+ * the draft over, or the drafts load or could not be read, the field stays
+ * focused but read-only, and attaching and removing files show as
+ * unavailable; files dropped or pasted meanwhile are not taken, and the
+ * composer asks for them again. Many files scroll within their own list, so
+ * the pill and what sits above it stay in view. A draft that could not be
+ * read says so above the pill, with a way to read it again. Text replaced in
+ * another tab is offered back above the pill until the operator restores or
+ * dismisses it; either way the focus returns to the field. The field draws
+ * no ring of its own: the pill takes the focus outline.
  */
 export function Composer({
   draftKey,
@@ -121,6 +128,7 @@ export function Composer({
   files = [],
   sending = false,
   loading = false,
+  unread,
   onAttachFiles,
   onDetachFile,
   onSend,
@@ -142,8 +150,8 @@ export function Composer({
     value.trim(),
     files.flatMap((file) => (file._tag === "ready" ? [file.attachment] : [])),
   );
-  // The draft takes no change while it is handed over or loads.
-  const frozen = sending || loading;
+  // The draft takes no change while it is handed over, loads, or could not be read.
+  const frozen = sending || loading || unread !== undefined;
   const ready = !frozen && !empty && !uploading && !blocked && problem === null;
   // Files dropped or pasted while the draft took no change, which it did not take.
   const [notTaken, setNotTaken] = useState(false);
@@ -209,6 +217,17 @@ export function Composer({
             />
           ))}
         </ul>
+      )}
+      {/* Drafts that load say nothing: it takes a moment. Drafts that could not be read say so until read. */}
+      {unread && !loading && (
+        <div className="flex flex-wrap items-center justify-end gap-x-2 ps-3 pe-1 text-xs text-muted-foreground">
+          <p role="alert" className="me-auto py-1">
+            {t("composer.unread")}
+          </p>
+          <Button variant="ghost" size="sm" onClick={unread.onRetry}>
+            {t("composer.unread.retry")}
+          </Button>
+        </div>
       )}
       {replaced && (
         <div className="flex flex-wrap items-center justify-end gap-x-2 ps-3 pe-1 text-xs text-muted-foreground">

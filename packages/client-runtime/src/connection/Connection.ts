@@ -219,8 +219,8 @@ export class Connection extends Context.Service<
      * Deletes the credential of `pairing` from storage, then lets go of it, so
      * a failure leaves the device as it was. It revokes nothing: `reason` says
      * whether the server still lists the device. A pairing made since, here
-     * or in another window, is left in storage, and this window follows it:
-     * the result says so.
+     * or in another window, is left in storage, and this window follows it,
+     * even when word of it has not reached this window yet: the result says so.
      */
     readonly forget: (
       reason: Exclude<UnpairedReason, "new">,
@@ -571,8 +571,19 @@ export const layer = Layer.effect(
     ) {
       const current = yield* SubscriptionRef.get(credential);
       if (current._tag !== "paired") {
-        yield* follow(() => ({ _tag: "none", reason }));
-        return "forgotten";
+        // This window let go of its credential already, but storage decides:
+        // another window's pairing may be there before word of it arrived
+        // here, or the credential that ended may still be there.
+        const stored = yield* store.load;
+        if (Option.isSome(stored) && stored.value.deviceId === pairing) {
+          return yield* end(stored.value, reason);
+        }
+        return yield* follow(() =>
+          Option.match(stored, {
+            onNone: (): Credential => ({ _tag: "none", reason }),
+            onSome: (found): Credential => ({ _tag: "paired", credential: found }),
+          }),
+        ).pipe(Effect.as<ForgetResult>(Option.isSome(stored) ? "paired-anew" : "forgotten"));
       }
       // This window already follows a pairing made since: it stays.
       if (current.credential.deviceId !== pairing) return "paired-anew";

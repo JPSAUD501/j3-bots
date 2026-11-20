@@ -29,7 +29,9 @@ import {
 import type { BotId, EntryId, EntryTarget, MemoryPath, RoomId, WorkStep } from "@j3-bots/contracts";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import {
+  createContext,
   use,
+  useCallback,
   useEffect,
   useEffectEvent,
   useState,
@@ -61,8 +63,38 @@ const client = () => (started ??= createJ3Client(platform));
 export function LiveSourceProvider({ children }: { children: ReactNode }) {
   return (
     <J3ClientProvider client={use(client())}>
-      <Gate>{children}</Gate>
+      <Notices>
+        <Gate>{children}</Gate>
+      </Notices>
     </J3ClientProvider>
+  );
+}
+
+const SayContext = createContext<((text: string) => void) | null>(null);
+
+/** Shows a short sentence in the page's one toast. */
+const useSay = () => {
+  const say = use(SayContext);
+  if (say === null) throw new Error("useSay needs Notices above it.");
+  return say;
+};
+
+/**
+ * The page's toast, above the gate: a notice outlives the screen that asked
+ * for it, as when signing out leaves the shell and another tab's pairing
+ * brings it back.
+ */
+function Notices({ children }: { children: ReactNode }) {
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const say = useCallback(
+    (text: string) => setNotice((previous) => ({ id: (previous?.id ?? 0) + 1, text })),
+    [],
+  );
+  return (
+    <SayContext value={say}>
+      {children}
+      <Toast notice={notice} onDone={() => setNotice(null)} />
+    </SayContext>
   );
 }
 
@@ -192,6 +224,7 @@ function LiveShell({ children }: { children: ReactNode }) {
   const drafts = useReadable(j3.drafts);
   const draftOffers = useReadable(j3.draftOffers);
   const draftsLoading = useReadable(j3.draftsSwitching);
+  const draftsFailed = useReadable(j3.draftsReadFailed);
   const conversation = useConversation(target);
   const files = useBotFiles(detailsBotId);
   const memory = useMemory(detailsBotId === null ? null : { _tag: "bot", botId: detailsBotId });
@@ -202,7 +235,7 @@ function LiveShell({ children }: { children: ReactNode }) {
   const [steps, setSteps] = useState<ReadonlyMap<EntryId, ReadonlyArray<WorkStep>>>(new Map());
   const [newBot, setNewBot] = useState(false);
   const [memoryView, setMemoryView] = useState<MemoryView | null>(null);
-  const [notice, setNotice] = useState<Notice | null>(null);
+  const say = useSay();
 
   const view: ConversationView =
     conversation.state === null
@@ -220,8 +253,6 @@ function LiveShell({ children }: { children: ReactNode }) {
   useEffect(() => {
     j3.setView(visible ? targetOf(botId, roomId) : null);
   }, [j3, botId, roomId, visible]);
-
-  const say = (text: string) => setNotice((previous) => ({ id: (previous?.id ?? 0) + 1, text }));
 
   // Another tab sent or changed a draft under this one, and this tab shows it
   // as stored. Text of this tab's that the device never kept is offered back
@@ -243,6 +274,7 @@ function LiveShell({ children }: { children: ReactNode }) {
     draft: (asked) => drafts.get(targetKey(asked)) ?? blankDraft,
     offer: (asked) => draftOffers.get(targetKey(asked)) ?? null,
     draftsLoading,
+    draftsFailed,
     submitting: (entryId) =>
       submitting(actions.get(cardAction(entryId))) || submitting(actions.get(retryAction(entryId))),
     workSteps: (entryId) => steps.get(entryId) ?? null,
@@ -323,6 +355,7 @@ function LiveShell({ children }: { children: ReactNode }) {
       ),
     detachFile: j3.detachFile,
     restoreDraft: j3.restoreDraft,
+    retryDrafts: j3.retryDrafts,
     dismissDraftOffer: j3.dismissDraftOffer,
     sendDraft: (asked) =>
       void j3.sendDraft(asked).then((result) => {
@@ -342,7 +375,12 @@ function LiveShell({ children }: { children: ReactNode }) {
       }),
     newBot: () => setNewBot(true),
     openMemoryFile,
-    freshStart: (botId) => void j3.freshStart(botId),
+    freshStart: (botId) =>
+      void j3
+        .freshStart(botId)
+        .then((result) =>
+          say(t(result._tag === "done" ? "details.freshStart.done" : "details.freshStart.failed")),
+        ),
     deleteBot: (botId) =>
       void j3.deleteBot(botId, false).then((result) => {
         if (result._tag === "done") void navigate({ to: "/" });
@@ -361,9 +399,18 @@ function LiveShell({ children }: { children: ReactNode }) {
     refreshDevices: j3.refreshDevices,
     signOut: () =>
       j3.signOut().then((result) => {
-        // Another tab paired this browser again meanwhile: it stays signed in under that pairing.
-        if (result === "paired-anew") say(t("settings.signOut.pairedAnew"));
-        return result !== "failed";
+        // Another tab paired this browser again meanwhile: it stays signed in
+        // under that pairing. The old one ended unless the server never said so.
+        if (result._tag === "paired-anew") {
+          say(
+            t(
+              result.revoked
+                ? "settings.signOut.pairedAnew"
+                : "settings.signOut.pairedAnewStillListed",
+            ),
+          );
+        }
+        return result._tag !== "failed";
       }),
   };
 
@@ -392,7 +439,6 @@ function LiveShell({ children }: { children: ReactNode }) {
         reading={memoryView?.reading ?? { _tag: "reading" }}
         onClose={() => setMemoryView(null)}
       />
-      <Toast notice={notice} onDone={() => setNotice(null)} />
     </ShellSourceContext>
   );
 }

@@ -191,6 +191,12 @@ export interface J3Client {
    * the pairing changed: the drafts take no change meanwhile.
    */
   readonly draftsSwitching: Readable<boolean>;
+  /**
+   * The drafts of the pairing this window follows could not be read: they
+   * take no change until `retryDrafts` reads them.
+   */
+  readonly draftsReadFailed: Readable<boolean>;
+  readonly retryDrafts: () => void;
   /** Puts back the text this window held, never kept, when another window changed the draft. */
   readonly restoreDraft: (target: EntryTarget) => void;
   /** Lets go of the text on offer for `restoreDraft`. */
@@ -367,6 +373,8 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     onDraftChangedElsewhere: (listener) => listen(services.drafts.changedElsewhere, listener),
     draftOffers: services.drafts.offers,
     draftsSwitching: services.drafts.switching,
+    draftsReadFailed: services.drafts.readFailed,
+    retryDrafts: () => fire(services.drafts.retryRead),
     restoreDraft: (target) => fire(services.drafts.restore(target)),
     dismissDraftOffer: (target) => fire(services.drafts.dismiss(target)),
     download: (attachment) =>

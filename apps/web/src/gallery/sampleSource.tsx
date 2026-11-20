@@ -226,6 +226,7 @@ function sampleIntents({ get, update }: Store): ShellIntents {
         files: draft.files.filter((file) => file.key !== key),
       })),
     restoreDraft: nothing,
+    retryDrafts: nothing,
     dismissDraftOffer: nothing,
     sendDraft: (target) => {
       const key = keyOf(target);
@@ -406,6 +407,7 @@ function toData(state: State): ShellData {
     // The sample is one tab: nothing else replaces its drafts, or pairs anew.
     offer: () => null,
     draftsLoading: false,
+    draftsFailed: false,
     submitting: (entryId) => state.inFlight.has(entryId),
     workSteps: (entryId) => state.workSteps[entryId] ?? null,
     routines: (botId) => state.routines[botId] ?? [],

@@ -45,6 +45,7 @@ import {
   messageStatus,
   targetKey,
 } from "../src/stores/Conversations.ts";
+import { Details } from "../src/stores/Details.ts";
 import { Devices } from "../src/stores/Devices.ts";
 import { Drafts } from "../src/stores/Drafts.ts";
 import { Roster } from "../src/stores/Roster.ts";
@@ -532,7 +533,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         yield* (yield* Conversations).enqueue({ target, text: "on its way" });
         yield* Queue.take(sends);
 
-        assert.strictEqual(yield* (yield* SignOut).run, "signed-out");
+        assert.deepStrictEqual(yield* (yield* SignOut).run, { _tag: "signed-out" });
 
         const unpaired = yield* waitFor(connection.state, (state) => state._tag === "unpaired");
         assert.deepStrictEqual(unpaired, { _tag: "unpaired", reason: "signed-out" });
@@ -555,7 +556,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         "stuck here",
       );
 
-      assert.strictEqual(yield* (yield* SignOut).run, "signed-out");
+      assert.deepStrictEqual(yield* (yield* SignOut).run, { _tag: "signed-out" });
 
       assert.isTrue(Option.isNone(yield* (yield* CredentialStore).load));
       const listed = yield* (yield* Server.Devices).list(deviceId);
@@ -574,7 +575,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       // Long enough for the client to settle into waiting for the network.
       yield* Effect.sleep("50 millis");
 
-      assert.strictEqual(yield* (yield* SignOut).run, "still-listed");
+      assert.deepStrictEqual(yield* (yield* SignOut).run, { _tag: "still-listed" });
 
       const unpaired = yield* waitFor(connection.state, (state) => state._tag === "unpaired");
       assert.deepStrictEqual(unpaired, { _tag: "unpaired", reason: "still-listed" });
@@ -2408,7 +2409,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           const connection = yield* Connection;
           yield* waitFor(connection.state, isConnected);
           // This tab signs out, which closes the slow tab's socket, pairs again, and writes.
-          assert.strictEqual(yield* (yield* SignOut).run, "signed-out");
+          assert.deepStrictEqual(yield* (yield* SignOut).run, { _tag: "signed-out" });
           yield* pairAndConnect;
           const paired = Option.map(yield* savedCredential, (stored) => stored.deviceId);
           yield* (yield* Drafts).setText(target, "written after pairing again");
@@ -2483,7 +2484,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           yield* network.loseReplies(false);
           yield* tickets.open;
 
-          assert.strictEqual(yield* Fiber.join(signingOut), "paired-anew");
+          assert.strictEqual((yield* Fiber.join(signingOut))._tag, "paired-anew");
           assert.deepStrictEqual(
             Option.map(yield* savedCredential, (stored) => stored.deviceId),
             Option.some(paired.value.deviceId),
@@ -2551,7 +2552,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         yield* Effect.gen(function* () {
           yield* waitFor((yield* Connection).state, isConnected);
           yield* tickets.close;
-          assert.strictEqual(yield* (yield* SignOut).run, "signed-out");
+          assert.deepStrictEqual(yield* (yield* SignOut).run, { _tag: "signed-out" });
           yield* pairAndConnect;
           yield* (yield* Drafts).setText(target, "the new pairing's");
           yield* whenStored(device.storage, "drafts", key, holds("the new pairing's"));
@@ -2614,7 +2615,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         yield* Effect.gen(function* () {
           const drafts = yield* Drafts;
           yield* waitFor((yield* Connection).state, isConnected);
-          assert.strictEqual(yield* (yield* SignOut).run, "signed-out");
+          assert.deepStrictEqual(yield* (yield* SignOut).run, { _tag: "signed-out" });
           yield* pairAndConnect;
           yield* drafts.setText(target, "the new pairing's");
           yield* whenStored(device.storage, "drafts", key, holds("the new pairing's"));
@@ -2669,7 +2670,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
       // The device refuses every write while this device signs out, so its text stays.
       full = true;
-      assert.strictEqual(yield* (yield* SignOut).run, "still-listed");
+      assert.deepStrictEqual(yield* (yield* SignOut).run, { _tag: "still-listed" });
       assert.strictEqual((yield* unsent(device.storage)).length, 1);
       full = false;
 
@@ -2737,7 +2738,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           yield* waitFor(leaving.pairing, (pairing) => pairing === paired.value.deviceId);
           yield* commitGate.open;
 
-          assert.strictEqual(yield* Fiber.join(signingOut), "paired-anew");
+          assert.strictEqual((yield* Fiber.join(signingOut))._tag, "paired-anew");
           assert.deepStrictEqual(
             Option.map(yield* savedCredential, (stored) => stored.deviceId),
             Option.some(paired.value.deviceId),
@@ -2759,6 +2760,151 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         Effect.provide(client(credential, device)),
       );
     }),
+  );
+
+  it.effect("shows nothing of the pairing it leaves while that pairing still saves", () =>
+    Effect.gen(function* () {
+      const { gate, sends } = yield* Fakes;
+      const commitGate = yield* Latch.make(true);
+      const committing = yield* Queue.unbounded<void>();
+      const { device, target, credential } = yield* pairedDevice("Left at once", {
+        commitGate,
+        committing,
+      });
+      const key = targetKey(target);
+
+      yield* Effect.gen(function* () {
+        const leaving = yield* Connection;
+        const conversations = yield* Conversations;
+        const drafts = yield* Drafts;
+        yield* waitFor(leaving.state, isConnected);
+        const conversation = yield* conversations.open(target);
+        yield* gate.close;
+        yield* conversations.enqueue({ target, text: "delivered under the old pairing" });
+        yield* Queue.take(sends);
+        yield* conversations.enqueue({ target, text: "waiting under the old pairing" });
+
+        // The device holds the transaction that records the first message's
+        // answer, then the one that saves the draft, which holds the drafts' lock.
+        yield* commitGate.close;
+        yield* Queue.clear(committing);
+        yield* gate.open;
+        yield* Queue.take(committing);
+        yield* drafts.setText(target, "written under the old pairing");
+        yield* Queue.take(committing);
+        assert.isTrue(
+          outgoingIn(conversation.state.get()).some(
+            (message) => message.text === "waiting under the old pairing",
+          ),
+        );
+
+        // Another tab pairs anew, and this one follows it.
+        yield* Effect.gen(function* () {
+          yield* waitFor((yield* Connection).state, isConnected);
+          yield* pairAndConnect;
+          const paired = yield* savedCredential;
+          if (Option.isNone(paired)) return assert.fail("The new pairing was not saved");
+          yield* waitFor(leaving.pairing, (pairing) => pairing === paired.value.deviceId);
+
+          // The old pairing's text is still being saved, and none of it shows.
+          assert.isTrue(drafts.switching.get());
+          assert.deepStrictEqual(outgoingIn(conversation.state.get()), []);
+          assert.strictEqual(drafts.state.get().get(key), undefined);
+          yield* commitGate.open;
+        }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+      }).pipe(
+        Effect.scoped,
+        Effect.ensuring(Effect.andThen(gate.open, commitGate.open)),
+        Effect.provide(client(credential, device)),
+      );
+    }),
+  );
+
+  it.effect("finds a pairing another tab made while this one signed out, before word of it", () =>
+    Effect.gen(function* () {
+      const commitGate = yield* Latch.make(true);
+      const { device, target, credential } = yield* pairedDevice("Paired before word", {
+        commitGate,
+      });
+      const heard = yield* Latch.make(false);
+
+      // The tab that signs out hears other tabs late.
+      yield* Effect.gen(function* () {
+        const leaving = yield* Connection;
+        const signOut = yield* SignOut;
+        yield* waitFor(leaving.state, isConnected);
+        // A draft of the pairing that ends: signing out waits while it is erased.
+        yield* (yield* Drafts).setText(target, "erased on sign-out");
+        yield* whenStored(device.storage, "drafts", targetKey(target), holds("erased on sign-out"));
+
+        yield* Effect.gen(function* () {
+          const other = yield* Connection;
+          yield* waitFor(other.state, isConnected);
+          yield* commitGate.close;
+          const signingOut = yield* signOut.run.pipe(Effect.forkChild({ startImmediately: true }));
+
+          // The server ends the pairing, and both tabs let go of it.
+          yield* waitFor(leaving.state, (state) => state._tag === "unpaired");
+          yield* waitFor(other.state, (state) => state._tag === "unpaired");
+          // The other tab pairs anew before the tab signing out hears of it.
+          yield* pairAndConnect;
+          const paired = yield* savedCredential;
+          if (Option.isNone(paired)) return assert.fail("The new pairing was not saved");
+          yield* commitGate.open;
+
+          assert.deepStrictEqual(yield* Fiber.join(signingOut), {
+            _tag: "paired-anew",
+            revoked: true,
+          });
+          assert.strictEqual(leaving.pairing.get(), paired.value.deviceId);
+        }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+      }).pipe(
+        Effect.scoped,
+        Effect.ensuring(Effect.andThen(commitGate.open, heard.open)),
+        Effect.provide(
+          client(credential, { ...device, credentials: () => device.credentials(heard) }),
+        ),
+      );
+    }),
+  );
+
+  it.effect("takes no change to drafts it could not read, and shows them once read again", () =>
+    Effect.gen(function* () {
+      let refusing = false;
+      const { device, target, credential } = yield* pairedDevice("Unread", {
+        refuseReads: () => refusing,
+      });
+      const key = targetKey(target);
+      yield* Effect.gen(function* () {
+        yield* (yield* Drafts).setText(target, "kept before the failure");
+        yield* whenStored(device.storage, "drafts", key, holds("kept before the failure"));
+      }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+
+      refusing = true;
+      yield* Effect.gen(function* () {
+        const drafts = yield* Drafts;
+        assert.isTrue(drafts.readFailed.get());
+        yield* drafts.setText(target, "typed over what could not be read");
+        assert.strictEqual(drafts.state.get().get(key), undefined);
+
+        refusing = false;
+        yield* drafts.retryRead;
+        assert.isFalse(drafts.readFailed.get());
+        assert.strictEqual(drafts.state.get().get(key)?.text, "kept before the failure");
+        yield* whenStored(device.storage, "drafts", key, holds("kept before the failure"));
+      }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+    }),
+  );
+
+  it.effect("tells what became of a fresh start the server fails", () =>
+    Effect.gen(function* () {
+      yield* pairAndConnect;
+      const botId = yield* createBot("Not fresh");
+      assert.deepStrictEqual(yield* (yield* Details).freshStart(botId), {
+        _tag: "failed",
+        failure: { _tag: "unexpected" },
+      });
+    }).pipe(Effect.provide(client())),
   );
 
   it.effect("shows the drafts already saved when a tab on the pairing screen is paired", () =>

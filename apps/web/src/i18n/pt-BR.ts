@@ -215,6 +215,8 @@ export const ptBR: Catalog = {
   "details.freshStartHint":
     "Recomeçar limpa o que {name} tem em mente. A conversa, a memória, as rotinas e os arquivos continuam.",
   "details.freshStart": "Recomeçar",
+  "details.freshStart.done": "Recomeçou do zero.",
+  "details.freshStart.failed": "Não foi possível recomeçar. Tente de novo.",
   "details.delete": "Excluir {name}",
   "details.delete.title": "Excluir {name}?",
   "details.delete.body":
@@ -324,6 +326,8 @@ export const ptBR: Catalog = {
   "composer.replaced": "Seu texto anterior foi substituído em outra aba.",
   "composer.restore": "Restaurar",
   "composer.dismiss": "Dispensar",
+  "composer.unread": "Não foi possível carregar seu rascunho.",
+  "composer.unread.retry": "Tentar de novo",
   "composer.waitToAttach": "Espere um instante e adicione os arquivos de novo.",
 
   "file.gone": "{name} não está mais no servidor.",
@@ -434,7 +438,9 @@ export const ptBR: Catalog = {
   "settings.signOut.pending": "Saindo…",
   "settings.signOut.failed": "A saída não terminou. Tente de novo.",
   "settings.signOut.pairedAnew":
-    "O acesso antigo deste dispositivo terminou, mas outra aba pareou este navegador de novo, então ele continua conectado.",
+    "Outra aba pareou este navegador de novo, então ele continua conectado. O acesso antigo terminou.",
+  "settings.signOut.pairedAnewStillListed":
+    "Outra aba pareou este navegador de novo, então ele continua conectado. O acesso antigo ainda pode aparecer em Dispositivos.",
   "settings.signOut.title": "Sair neste dispositivo?",
   "settings.signOut.body":
     "Este navegador perde o acesso, e parear de novo exige um código novo. Rascunhos e mensagens não enviadas são descartados. Seus bots e conversas continuam no servidor.",

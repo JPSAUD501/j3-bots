@@ -216,6 +216,8 @@ export const en = {
   "details.freshStartHint":
     "A fresh start clears what {name} is holding in mind. Its conversation, memory, routines and files stay.",
   "details.freshStart": "Start fresh",
+  "details.freshStart.done": "Started fresh.",
+  "details.freshStart.failed": "The fresh start didn’t happen. Try again.",
   "details.delete": "Delete {name}",
   "details.delete.title": "Delete {name}?",
   "details.delete.body":
@@ -321,6 +323,8 @@ export const en = {
   "composer.replaced": "Your earlier text was replaced in another tab.",
   "composer.restore": "Restore",
   "composer.dismiss": "Dismiss",
+  "composer.unread": "Couldn’t load your draft.",
+  "composer.unread.retry": "Try again",
   "composer.waitToAttach": "Wait a moment, then add the files again.",
 
   "file.gone": "{name} is no longer on the server.",
@@ -427,7 +431,9 @@ export const en = {
   "settings.signOut.pending": "Signing out…",
   "settings.signOut.failed": "Sign-out didn’t finish. Try again.",
   "settings.signOut.pairedAnew":
-    "This device’s old access ended, but another tab paired this browser again, so it stays signed in.",
+    "Another tab paired this browser again, so it stays signed in. Its old access ended.",
+  "settings.signOut.pairedAnewStillListed":
+    "Another tab paired this browser again, so it stays signed in. Its old access may still show under Devices.",
   "settings.signOut.title": "Sign out this device?",
   "settings.signOut.body":
     "This browser loses access, and pairing it again takes a new code. Drafts and unsent messages are discarded. Your bots and conversations stay on the server.",

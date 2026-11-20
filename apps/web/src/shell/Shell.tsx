@@ -292,6 +292,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
             files={draft.files}
             sending={draft.sending}
             loading={data.draftsLoading}
+            {...(data.draftsFailed ? { unread: { onRetry: intents.retryDrafts } } : {})}
             onAttachFiles={(files) => intents.attachFiles(target, files)}
             onDetachFile={(fileKey) => intents.detachFile(target, fileKey)}
             onSend={() => intents.sendDraft(target)}

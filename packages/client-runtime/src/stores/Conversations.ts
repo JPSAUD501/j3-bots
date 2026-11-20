@@ -317,8 +317,10 @@ export interface Conversation {
  *
  * When the pairing a window follows changes, the window drops its messages,
  * erases the device's records of the pairing that ended, and only those, and
- * reads those of the pairing it follows now. Erasing is cleanup: when it
- * fails, nothing of that pairing shows or goes anyway. At launch, the records
+ * reads those of the pairing it follows now. Nothing of the pairing that
+ * ended shows from the moment the pairing changes, though dropping its
+ * messages may wait for an answer being recorded under it. Erasing is
+ * cleanup: when it fails, nothing of that pairing shows or goes anyway. At launch, the records
  * of every pairing the device no longer holds go: a window can close before
  * it erased them.
  *
@@ -456,9 +458,12 @@ export const layer = Layer.effect(
 
         const project = (): ConversationState => {
           const sent = confirmed();
-          const outgoing = outbox
-            .get()
-            .map((held) => held.message)
+          // From the moment the pairing changes, nothing of the one that ended
+          // shows, though dropping its messages may wait for an answer being
+          // recorded under it.
+          const held = connection.pairing.get() === followed ? outbox.get() : [];
+          const outgoing = held
+            .map((item) => item.message)
             .filter((message) => targetKey(message.target) === key && !sent.has(message.commandId));
           return { phase, stale, items: [...sorted(), ...outgoing], hasOlder, loadingOlder };
         };
@@ -635,8 +640,10 @@ export const layer = Layer.effect(
           settle();
         };
         const unsubscribe = outbox.subscribe(onOutbox);
+        const unsubscribePairing = connection.pairing.subscribe(publish);
         const close = () => {
           unsubscribe();
+          unsubscribePairing();
           // The server has these; the next open reads them with the rest.
           removeOutgoing(
             new Set(
@@ -1351,6 +1358,8 @@ export const layer = Layer.effect(
       const kept = yield* withPairing(
         Effect.gen(function* () {
           const pairing = followed;
+          // A claim of another pairing comes from drafts this window is
+          // dropping as it follows the next pairing: they are no longer sent.
           if (pairing === null || (claim !== undefined && claim.pairing !== pairing)) {
             return yield* new NotPaired();
           }

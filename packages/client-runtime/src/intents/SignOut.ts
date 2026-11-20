@@ -15,16 +15,17 @@ import { Drafts } from "../stores/Drafts.ts";
  */
 export type SignOutResult =
   /** The server revoked this device, and its credential is deleted here. */
-  | "signed-out"
+  | { readonly _tag: "signed-out" }
   /** Its credential is deleted here, but the server was out of reach and still lists it. */
-  | "still-listed"
+  | { readonly _tag: "still-listed" }
   /**
    * A pairing made while it signed out, here or in another window, stays, and
    * this window follows it: the device is signed in under that pairing.
+   * `revoked`: the server confirmed the pairing that was signed out ended.
    */
-  | "paired-anew"
-  /** Its credential could not be deleted, so the device is still signed in here. */
-  | "failed";
+  | { readonly _tag: "paired-anew"; readonly revoked: boolean }
+  /** Its credential could not be deleted, so the device is still signed in. */
+  | { readonly _tag: "failed" };
 
 /** Ends this device's access: on the server when it can be reached, and here in any case. */
 export class SignOut extends Context.Service<
@@ -88,11 +89,11 @@ export const layer = Layer.effect(
           const reason = revoked ? "signed-out" : "still-listed";
           return yield* connection.forget(reason, pairing).pipe(
             Effect.map((forgotten): SignOutResult =>
-              forgotten === "paired-anew" ? "paired-anew" : reason,
+              forgotten === "paired-anew" ? { _tag: "paired-anew", revoked } : { _tag: reason },
             ),
             Effect.catchTag("CredentialStorageError", (error) =>
               Effect.logWarning("The credential could not be deleted", error).pipe(
-                Effect.as<SignOutResult>("failed"),
+                Effect.as<SignOutResult>({ _tag: "failed" }),
               ),
             ),
           );
