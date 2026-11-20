@@ -40,25 +40,25 @@ export class Listener extends Context.Service<Listener, ListenerStatus>()(
 ) {}
 
 /**
- * The HTTP server clients reach, and what it bound. Without TLS, every
- * connection is checked as it is accepted: one that reached an address that
- * is not loopback or private is closed unread. Start already refused such an
- * address; this keeps one that appears later (a new interface, a lease on a
+ * The HTTP server clients reach, and what it bound. When the configuration
+ * serves private addresses only (`privateOnly`), every connection is checked
+ * as it is accepted, over HTTP and HTTPS alike: one that reached an address
+ * that is not loopback or private is closed unread. Start already refused such
+ * an address; this keeps one that appears later (a new interface, a lease on a
  * modem's public network) from ever being served.
  */
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
-    const { host, port, tls, configFile } = yield* ServerConfig;
+    const { host, port, tls, privateOnly, configFile } = yield* ServerConfig;
     const credentials = Option.isSome(tls)
       ? Option.some(yield* Tls.load(tls.value))
       : Option.none();
     const createServer = () => {
-      if (Option.isSome(credentials)) {
-        const { cert, key } = credentials.value;
-        return NodeHttps.createServer({ cert, key });
-      }
-      const server = NodeHttp.createServer();
-      guardConnections(server, isPrivateAddress);
+      const server = Option.match(credentials, {
+        onNone: () => NodeHttp.createServer(),
+        onSome: ({ cert, key }) => NodeHttps.createServer({ cert, key }),
+      });
+      if (privateOnly) guardConnections(server, isPrivateAddress);
       return server;
     };
     const status = Layer.effect(

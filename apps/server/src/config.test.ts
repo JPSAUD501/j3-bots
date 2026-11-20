@@ -197,16 +197,31 @@ it.layer(NodeServices.layer)("server configuration", (it) => {
       const home = yield* freshHome;
       const lan = yield* withEnvironment(load, { J3_HOME: home });
       assert.strictEqual(lan.host, "0.0.0.0");
+      assert.isTrue(lan.privateOnly);
 
-      const exposed = yield* withEnvironment(load, { J3_HOME: home }, [
+      const exposedMachine = [
         ...LAN_ONLY,
         { interface: "eth0", address: "198.51.100.4", internal: false },
-      ]).pipe(Effect.exit);
-      assert.deepInclude(failure(exposed), {
-        setting: "host",
-        reason: "lan-has-public-address",
-        subject: "198.51.100.4",
-      });
+      ];
+      const tls = { J3_TLS_CERT: TEST_TLS.cert, J3_TLS_KEY: TEST_TLS.key };
+      // A certificate serves HTTPS, but `lan` still serves private addresses only.
+      for (const env of [{ J3_HOME: home }, { J3_HOME: home, ...tls }]) {
+        const exposed = yield* withEnvironment(load, env, exposedMachine).pipe(Effect.exit);
+        assert.deepInclude(failure(exposed), {
+          setting: "host",
+          reason: "lan-has-public-address",
+          subject: "198.51.100.4",
+        });
+      }
+      assert.isTrue((yield* withEnvironment(load, { J3_HOME: home, ...tls })).privateOnly);
+
+      // An address set explicitly with TLS is served whatever it is.
+      const everywhere = yield* withEnvironment(
+        load,
+        { J3_HOME: home, J3_HOST: "0.0.0.0", ...tls },
+        exposedMachine,
+      );
+      assert.isFalse(everywhere.privateOnly);
     }).pipe(Effect.scoped),
   );
 

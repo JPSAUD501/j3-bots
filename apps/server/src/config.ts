@@ -39,6 +39,12 @@ export interface ServerConfigShape {
    * every IPv4 interface, which start refuses unless all of them are private.
    */
   readonly host: string;
+  /**
+   * Whether every connection must reach a loopback or private address, or be
+   * closed unread: with `lan`, over HTTP and HTTPS alike, and on any address
+   * without TLS. Only an address set explicitly with TLS serves others.
+   */
+  readonly privateOnly: boolean;
   readonly port: number;
   /** A certificate and key to serve HTTPS with. Required on a public address. */
   readonly tls: Option.Option<{ readonly certPath: string; readonly keyPath: string }>;
@@ -94,7 +100,7 @@ class ConfigRefused extends Schema.TaggedError<ConfigRefused>()("ConfigRefused",
       case "public-address-without-tls":
         return `${this.setting} (${this.subject}) is not a loopback or private IP address. Use one of this machine's private addresses, written as an IP address, or set a TLS certificate and key to serve it over HTTPS.`;
       case "lan-has-public-address":
-        return `${this.setting} is "lan", but this machine has the public address ${this.subject}, which "lan" would also serve. Set it to one private address of this machine, or set a TLS certificate and key.`;
+        return `${this.setting} is "lan", which serves private addresses only, but this machine has the public address ${this.subject}, which "lan" would also listen on. Set it to one private address of this machine or, to serve the public address over HTTPS, to that address with a TLS certificate and key.`;
       case "tls-incomplete":
         return `${this.setting}: a TLS certificate and key must be set together.`;
       case "tls-unusable":
@@ -407,26 +413,25 @@ export const load = Effect.gen(function* () {
       ? fileSetting("host")
       : "host";
   const hostValue = Option.getOrElse(env.host, () => file.host ?? DEFAULTS.host);
-  if (Option.isNone(tls)) {
-    if (hostValue === LAN) {
-      const network = yield* Network;
-      const exposed = (yield* network.ipv4Addresses).find(
-        ({ address, internal }) => !internal && !isPrivateAddress(address),
-      );
-      if (exposed !== undefined) {
-        return yield* new ConfigRefused({
-          setting: hostSetting,
-          reason: "lan-has-public-address",
-          subject: exposed.address,
-        });
-      }
-    } else if (!isPrivateAddress(hostValue)) {
+  // `lan` means private addresses only, with or without TLS.
+  if (hostValue === LAN) {
+    const network = yield* Network;
+    const exposed = (yield* network.ipv4Addresses).find(
+      ({ address, internal }) => !internal && !isPrivateAddress(address),
+    );
+    if (exposed !== undefined) {
       return yield* new ConfigRefused({
         setting: hostSetting,
-        reason: "public-address-without-tls",
-        subject: hostValue,
+        reason: "lan-has-public-address",
+        subject: exposed.address,
       });
     }
+  } else if (Option.isNone(tls) && !isPrivateAddress(hostValue)) {
+    return yield* new ConfigRefused({
+      setting: hostSetting,
+      reason: "public-address-without-tls",
+      subject: hostValue,
+    });
   }
   const configuredWebClient = Option.orElse(env.webClient, () =>
     Option.fromNullishOr(file.webClient),
@@ -507,6 +512,7 @@ export const load = Effect.gen(function* () {
     databasePath: path.join(home, HOME_ENTRIES.database),
     engineHome: path.join(home, HOME_ENTRIES.engine),
     host: hostValue === LAN ? LAN_ADDRESS : hostValue,
+    privateOnly: hostValue === LAN || Option.isNone(tls),
     port: ports.port,
     tls,
     enginePort: ports.enginePort,

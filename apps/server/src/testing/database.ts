@@ -25,6 +25,7 @@ export const layer = Layer.unwrap(
           databasePath: path.join(home, "j3.sqlite"),
           engineHome: path.join(home, "engine"),
           host: "127.0.0.1",
+          privateOnly: true,
           port: 0,
           tls: Option.none(),
           enginePort: 0,
