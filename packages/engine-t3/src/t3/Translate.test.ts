@@ -321,12 +321,20 @@ describe("backgroundWorkPending", () => {
     mirror.toolPersistence.set("item-tool", toolPersistenceOf({ script: "x".repeat(20_000) }));
     assert.isTrue(backgroundWorkPending(mirror));
 
-    // The engine's read cut it short too: unknown, which never holds a Stop.
-    mirror.toolPersistence.set(
-      "item-tool",
-      toolPersistenceOf('{"script":"xxxx\n… output truncated for transport'),
+    // The engine's read cut an object short too: whether it was persistent is
+    // undecidable, and it counts as pending, which the Stop keeps acting on.
+    const cutObject = toolPersistenceOf('{"script":"xxxx\n… output truncated for transport');
+    assert.strictEqual(cutObject, "undecidable");
+    mirror.toolPersistence.set("item-tool", cutObject);
+    assert.isTrue(backgroundWorkPending(mirror));
+  });
+
+  it("reads a cut input that opens no object as transient", () => {
+    assert.strictEqual(
+      toolPersistenceOf("run the dev server …\n… output truncated for transport"),
+      "transient",
     );
-    assert.isFalse(backgroundWorkPending(mirror));
+    assert.strictEqual(toolPersistenceOf("[1,2,3\n… output truncated for transport"), "transient");
   });
 });
 

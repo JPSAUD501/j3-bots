@@ -95,13 +95,17 @@ export interface Mirror {
 }
 
 /**
- * What a dynamic tool's input says of its persistence: `unknown` when the
- * engine's read of the item cut the input short too. **Read** at `db51b67`,
- * `WireProjection.ts`: `getTurnItem` bounds a dynamic tool's input at 256 KiB
- * (`projectTurnItemForDetail`, `boundDynamicValue`, L212-224, L255-266), by
- * cutting its JSON text and ending it with `TRUNCATION_MARKER` (L31).
+ * What a dynamic tool's input says of its persistence, read whole by
+ * `getTurnItem`. **Read** at `db51b67`, `WireProjection.ts`: `getTurnItem`
+ * bounds a dynamic tool's input at 256 KiB (`projectTurnItemForDetail`,
+ * `boundDynamicValue`, L212-224, L255-266): it cuts a string input, or any
+ * other input's JSON text, and ends it with `TRUNCATION_MARKER` (L31, L44-51).
+ * A cut text that does not open with `{` was no object, so it carried no
+ * `persistent` flag: transient. One that does may have been an object with
+ * the flag past the cut: undecidable, and it counts as pending, as a
+ * transient one does (`isPersistentTool`).
  */
-export type ToolPersistence = "persistent" | "transient" | "unknown";
+export type ToolPersistence = "persistent" | "transient" | "undecidable";
 
 export const emptyMirror = (): Mirror => ({
   thread: undefined,
@@ -411,32 +415,34 @@ const isSummarizedInput = (input: unknown) =>
 const TRUNCATION_MARKER = "\n… output truncated for transport";
 
 /** The persistence a dynamic tool's input read whole by `getTurnItem` says. */
-export const toolPersistenceOf = (input: unknown): ToolPersistence =>
-  typeof input === "string" && input.endsWith(TRUNCATION_MARKER)
-    ? "unknown"
-    : hasPersistentFlag(input)
-      ? "persistent"
-      : "transient";
+export const toolPersistenceOf = (input: unknown): ToolPersistence => {
+  if (typeof input === "string" && input.endsWith(TRUNCATION_MARKER)) {
+    return input.startsWith("{") ? "undecidable" : "transient";
+  }
+  return hasPersistentFlag(input) ? "persistent" : "transient";
+};
 
 /**
  * A dynamic tool the agent keeps running on purpose, which the engine never
  * counts as pending (**Read** at `db51b67`,
- * `orchestrationV2PendingBackgroundWork.ts`, L250-254). For an input the
- * stream summarized, the item fetched whole tells; until it is fetched the
- * tool counts as pending, and a Stop waits that long. When the fetch failed
- * or cut the input short as well, the persistence is unknown and the tool
- * counts as persistent: a Stop could otherwise wait forever on a tool the
- * engine's own stop leaves running, where the other mistake only lets it
- * settle while the engine is still interrupting a tool its stop did target.
+ * `orchestrationV2PendingBackgroundWork.ts`, `pendingBackgroundTurnItems`,
+ * L242-258). For an input the stream summarized, the item read whole tells.
+ * Until that read succeeds, and when it cut an object short, the tool counts
+ * as pending: a Stop then waits on it, and keeps sending fresh rounds while
+ * it does, so a tool the engine's stop leaves running holds the Stop open
+ * rather than letting it settle while work it targets still runs.
  */
 const isPersistentTool = (mirror: Mirror, item: Item) => {
   if (item.type !== "dynamic_tool") return false;
   if (!isSummarizedInput(item.input)) return hasPersistentFlag(item.input);
-  const known = mirror.toolPersistence.get(item.id);
-  return known === "persistent" || known === "unknown";
+  return mirror.toolPersistence.get(item.id) === "persistent";
 };
 
-/** Live dynamic tools whose input the stream summarized and whose persistence is not known yet. */
+/**
+ * Live dynamic tools whose input the stream summarized and whose persistence
+ * no read of the item settled yet: a read that failed leaves one here, to be
+ * read again.
+ */
 export const toolsToResolve = (mirror: Mirror): ReadonlyArray<string> =>
   [...mirror.items.values()].flatMap((item) =>
     item.type === "dynamic_tool" &&

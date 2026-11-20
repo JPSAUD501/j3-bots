@@ -449,9 +449,8 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
 
   /**
    * The persistence of a dynamic tool whose input the stream summarized, from
-   * the item fetched whole: `unknown` when that fails or takes longer than
-   * `FETCH_TIMEOUT`, and when the engine cut the input short there too. See
-   * `isPersistentTool` in `Translate.ts` for what an unknown one counts as.
+   * the item read whole. None when the read failed or took longer than
+   * `FETCH_TIMEOUT`: nothing is known, and the item is read again later.
    */
   const toolPersistence = (sessionId: SessionId, itemId: string) =>
     rpc["orchestration.getTurnItem"]({
@@ -459,21 +458,29 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       itemId: TurnItemId.make(itemId),
     }).pipe(
       Effect.timeoutOption(FETCH_TIMEOUT),
-      Effect.map((fetched): ToolPersistence => {
+      Effect.map((fetched) => {
         const item = Option.getOrUndefined(fetched)?.item;
-        return item?.type === "dynamic_tool" ? toolPersistenceOf(item.input) : "unknown";
+        return item?.type === "dynamic_tool"
+          ? Option.some(toolPersistenceOf(item.input))
+          : Option.none<ToolPersistence>();
       }),
-      Effect.orElseSucceed((): ToolPersistence => "unknown"),
+      Effect.orElseSucceed(() => Option.none<ToolPersistence>()),
     );
 
-  /** Settles in `mirror` the persistence of each tool whose input the stream summarized. */
+  /**
+   * Settles in `mirror` the persistence of each tool whose input the stream
+   * summarized, as far as it can be read now.
+   */
   const resolveTools = (sessionId: SessionId, mirror: Mirror) =>
     Effect.forEach(
       toolsToResolve(mirror),
       (itemId) =>
-        Effect.map(toolPersistence(sessionId, itemId), (persistence) => {
-          mirror.toolPersistence.set(itemId, persistence);
-        }),
+        Effect.map(
+          toolPersistence(sessionId, itemId),
+          Option.map((persistence) => {
+            mirror.toolPersistence.set(itemId, persistence);
+          }),
+        ),
       { discard: true },
     );
 
@@ -1192,7 +1199,9 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
          * comes back to the loop: a fetch that fails or takes longer than
          * `FETCH_TIMEOUT` leaves the card a summary, and is not tried again.
          * Each live dynamic tool whose input the stream summarized is fetched
-         * once too, for its persistence, which comes back either way.
+         * too, for its persistence: a read that fails is asked for again on
+         * the next pass here, which every event and every catch-up runs, and
+         * until one succeeds the tool counts as pending.
          */
         const fetchChanges = Effect.fnUntraced(function* () {
           for (const itemId of toolsToResolve(mirror)) {
@@ -1200,8 +1209,12 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
             if (asked.has(key)) continue;
             asked.add(key);
             yield* toolPersistence(input.sessionId, itemId).pipe(
-              Effect.flatMap((persistence) =>
-                Queue.offer(inputs, { _tag: "tool", itemId, persistence }),
+              Effect.flatMap(
+                Option.match({
+                  onNone: () => Effect.sync(() => asked.delete(key)),
+                  onSome: (persistence) =>
+                    Queue.offer(inputs, { _tag: "tool", itemId, persistence }),
+                }),
               ),
               Effect.forkScoped,
             );
