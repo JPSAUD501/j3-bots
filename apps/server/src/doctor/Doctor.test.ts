@@ -32,7 +32,9 @@ const provider = (harness: "claude-code" | "codex", status: string) => ({
 });
 
 /** What the running server says of itself, decoded as the CLI decodes it. */
-const running = (overrides: { engine?: object; pairedDevices?: number } = {}) =>
+const running = (
+  overrides: { engine?: object; pairedDevices?: number; webClient?: AdminStatus["webClient"] } = {},
+) =>
   Schema.decodeUnknownSync(Schema.toCodecJson(AdminStatus))({
     version: "0.0.0",
     pid: 4242,
@@ -189,7 +191,7 @@ const diagnoseIn = (changes: Partial<World> = {}) =>
       ),
     );
     const checks = yield* diagnose.pipe(Effect.provide(fakes));
-    return { checks, home };
+    return { checks, home, web };
   }).pipe(Effect.scoped);
 
 const named = (checks: ReadonlyArray<Check>, name: string) => {
@@ -374,6 +376,29 @@ it.layer(NodeServices.layer)("doctor", (it) => {
       assertFlagged(named(stopped.checks, "Server"), "warning");
       const broken = yield* diagnoseIn({ server: "broken" });
       assertFlagged(named(broken.checks, "Server"), "problem");
+    }),
+  );
+
+  it.effect("says whether the web client is served as the running server reports it", () =>
+    Effect.gen(function* () {
+      const served = yield* diagnoseIn();
+      assert.strictEqual(
+        named(served.checks, "Web client").summary,
+        "The running server serves it.",
+      );
+
+      const stopped = yield* diagnoseIn({ server: Option.none() });
+      const built = named(stopped.checks, "Web client");
+      assert.strictEqual(built.status, "ok");
+      assert.strictEqual(
+        built.summary,
+        `Built in ${stopped.web}. The server is not running, so it does not serve it yet.`,
+      );
+
+      const late = yield* diagnoseIn({
+        server: Option.some(running({ webClient: "not-built" })),
+      });
+      assertFlagged(named(late.checks, "Web client"), "warning", "after the server started");
     }),
   );
 

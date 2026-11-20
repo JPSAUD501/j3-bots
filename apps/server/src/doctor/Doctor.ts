@@ -341,27 +341,51 @@ const providerCheck = Effect.fn("doctor.provider")(function* (
   return check(harness.name, "ok", `Found at ${found.value}; the engine reports it ready.`);
 });
 
+/** Whether the web client is served: as the server reports it while one runs, else as it is on disk. */
 const webClientCheck = Effect.fn("doctor.webClient")(function* (
   config: ServerConfig.ServerConfigShape,
-  status: Option.Option<AdminStatus>,
+  live: LiveServer,
 ) {
-  if (!(yield* isBuilt(config.webClient.directory))) {
+  const directory = config.webClient.directory;
+  if (live._tag === "described" && live.status.webClient === "served") {
+    return check("Web client", "ok", "The running server serves it.");
+  }
+  if (!(yield* isBuilt(directory))) {
     return check(
       "Web client",
       "warning",
-      `No web client is built in ${config.webClient.directory}, so the server serves only its API.`,
+      `No web client is built in ${directory}, so the server serves only its API.`,
       "Run `pnpm build` in this checkout, then restart the service: `systemctl --user restart j3-bots`.",
     );
   }
-  if (Option.isSome(status) && status.value.webClient === "not-built") {
-    return check(
-      "Web client",
-      "warning",
-      "The web client was built after the server started, so it is not served yet.",
-      "Restart the service: `systemctl --user restart j3-bots`.",
-    );
+  switch (live._tag) {
+    case "described":
+      return check(
+        "Web client",
+        "warning",
+        `It was built in ${directory} after the server started, so it is not served yet.`,
+        "Restart the service: `systemctl --user restart j3-bots`.",
+      );
+    case "garbled":
+      return check(
+        "Web client",
+        "ok",
+        `Built in ${directory}. The server on the admin socket does not say whether it serves it.`,
+      );
+    case "outside":
+      return check(
+        "Web client",
+        "ok",
+        `Built in ${directory}. The service is not running, so it does not serve it yet.`,
+      );
+    case "none":
+    case "blocked":
+      return check(
+        "Web client",
+        "ok",
+        `Built in ${directory}. The server is not running, so it does not serve it yet.`,
+      );
   }
-  return check("Web client", "ok", `Served from ${config.webClient.directory}.`);
 });
 
 const pairingCheck = (status: Option.Option<AdminStatus>, outside: boolean) => {
@@ -681,7 +705,7 @@ export const diagnose = Effect.gen(function* () {
     Unit.environmentOf(text).get("PATH"),
   );
   for (const harness of HARNESSES) checks.push(yield* providerCheck(harness, status, servicePath));
-  checks.push(yield* webClientCheck(config, status));
+  checks.push(yield* webClientCheck(config, live));
   checks.push(pairingCheck(status, live._tag === "outside"));
   checks.push(...(yield* serviceChecks(unitText)));
   if (Option.isSome(shellSettings)) checks.push(shellSettings.value);
