@@ -28,6 +28,11 @@ export type NotificationSettings = typeof NotificationSettings.Type;
 
 /** The operator's preferences. One per server; every field always has a value. */
 export const Settings = Schema.Struct({
+  /**
+   * What bots call the operator, in their instructions and their replies. Null
+   * until the operator gives one; bots then say "your user".
+   */
+  operatorName: Schema.NullOr(Label),
   /** Where routines' schedules are evaluated and what envelopes report times in. */
   timeZone: TimeZone,
   budgets: Budgets,

@@ -8,14 +8,17 @@ import * as Path from "effect/Path";
 import { ServerConfig } from "../config.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 
-/** The production database layer on a fresh file in a temporary home: foreign keys on, migrated. */
+/**
+ * The production database layer on a fresh file in a temporary home (foreign
+ * keys on, migrated), with the server configuration that points at that home.
+ */
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const home = yield* fs.makeTempDirectoryScoped();
     return Sqlite.layer.pipe(
-      Layer.provide(
+      Layer.provideMerge(
         Layer.succeed(ServerConfig, {
           home,
           databasePath: path.join(home, "j3.sqlite"),
@@ -24,6 +27,7 @@ export const layer = Layer.unwrap(
           tls: Option.none(),
           enginePort: 0,
           engineBinary: Option.none(),
+          toolPort: 0,
         }),
       ),
     );

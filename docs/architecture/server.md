@@ -10,7 +10,7 @@ J3 Bots keeps two kinds of state, in two places, for two different readers.
 
 | Entity | What it holds |
 | --- | --- |
-| Settings | One row: the operator's time zone, the budgets, notification preferences |
+| Settings | One row: the operator's name, their time zone, the budgets, notification preferences |
 | Bot | Profile, model, permission mode, workspace path, engine project id |
 | Conversation | One per bot. A sequence of entries, and how far the operator has read |
 | Room | Name, members, host, status (active or archived) and when it was archived. A sequence of entries |
@@ -44,7 +44,9 @@ bots/scout/
   skills/            procedures, one folder each
   files/             what the bot produces
 shared/
-  user.md            facts about the operator every bot can read
+  memory/
+    user.md          facts about the operator every bot can read
+    log/2026-11.md   shared dated history
   skills/            skills available to every bot
 ```
 
@@ -195,7 +197,7 @@ Because the main session does not see what a side session did, the server keeps 
 
 ## Bot tools
 
-Bots act on J3 Bots through a small MCP server named `j3`. The harness starts it as a local stdio process, one per loaded session; that process forwards each call to the J3 Bots server over loopback. It holds no state and does no work of its own, because a host with many recently active bots runs many of them (see [Engine](engine.md#footprint)).
+Bots act on J3 Bots through a small MCP server named `j3`. The harness starts it as a local stdio process, one per loaded session; that process forwards each call to the J3 Bots server's tool endpoint, an HTTP listener of its own on `127.0.0.1:J3_TOOL_PORT`, which stays on loopback whatever `J3_HOST` is. It holds no state and does no work of its own, because a host with many recently active bots runs many of them (see [Engine](engine.md#footprint)).
 
 The bridge identifies its caller from `T3CODE_THREAD_ID`, an environment variable the engine sets for each stdio MCP server the harness starts, with the session's thread id. The bridge reads it with `sessionOfToolCaller` from `packages/engine-t3` and never names the variable itself. The server maps that id to a session and a bot. A call from an unknown thread is refused. **Verified** on Claude Code on releases `4941` and `4969`, and on Codex from `4969`, the pinned release ([Engine](engine.md#version-pinning)).
 
@@ -258,7 +260,7 @@ Approvals and questions raised during a room turn appear in the bot's own conver
 
 ## Deleting a bot
 
-Deleting a bot removes its conversation, sessions, wakes, routines and memory, and retires its engine project. What it said elsewhere stays:
+Deleting a bot removes its engine project first, so nothing keeps running for a bot that no longer exists; while the engine cannot take that, the deletion fails with `Conflict("engine-unavailable")` and changes nothing. Then one transaction removes its conversation, sessions, wakes, routines and memory. What it said elsewhere stays:
 
 - Entries it wrote in rooms keep their author id. Nothing refers to the bot row, so the entries outlive it, and clients render the author as a deleted bot.
 - If it hosted a room, the room passes to the member who joined first among the rest, in the same transaction. The database refuses to leave an active room without a host.
@@ -342,6 +344,7 @@ The server reads its settings from the environment. A default applies only when 
 | `J3_TLS_CERT`, `J3_TLS_KEY` | none | Set together, they serve HTTPS on any address |
 | `J3_ENGINE_PORT` | `3738` | The engine's loopback port |
 | `J3_ENGINE_BINARY` | the pinned release | For testing an engine build |
+| `J3_TOOL_PORT` | `3739` | The bot tool endpoint's loopback port, which the `j3` bridges call |
 
 ## Failure handling
 
