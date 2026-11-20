@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { AttachmentId, Bot, MessageEntry } from "@j3-bots/contracts";
+import type { AttachmentId, Bot, MessageDelivery, MessageEntry } from "@j3-bots/contracts";
 import { usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
 import { clockTime } from "../lib/time";
@@ -7,6 +7,7 @@ import type { GroupPosition } from "../presentation/timeline";
 import { AvatarShape } from "./BotAvatar";
 import { FileCard } from "./FileCard";
 import { MessageText } from "./MessageText";
+import { Button } from "./ui/button";
 
 // Only the corners where bubbles of one group meet tighten, on the speaker's side.
 const operatorCorners: Record<GroupPosition, string> = {
@@ -22,6 +23,12 @@ const botCorners: Record<GroupPosition, string> = {
   last: "rounded-tl-sm",
 };
 
+const failedKeys = {
+  rejected: "message.failed.rejected",
+  unresolved: "message.failed.unresolved",
+  stopped: "message.failed.stopped",
+} as const satisfies Record<Extract<MessageDelivery, { _tag: "failed" }>["reason"], string>;
+
 interface MessageBubbleProps {
   readonly entry: MessageEntry;
   readonly position: GroupPosition;
@@ -33,6 +40,8 @@ interface MessageBubbleProps {
   /** Names that `@Name` may mention. */
   readonly mentionable?: ReadonlyArray<string>;
   readonly onOpenAttachment: (id: AttachmentId) => void;
+  /** Sends a message whose delivery failed again. */
+  readonly onRetry: () => void;
 }
 
 /** One message: the operator's on the right and dark, a bot's on the left and light. */
@@ -42,6 +51,7 @@ export function MessageBubble({
   speaker = null,
   mentionable,
   onOpenAttachment,
+  onRetry,
 }: MessageBubbleProps) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
@@ -87,6 +97,14 @@ export function MessageBubble({
       )}
       {entry.delivery._tag === "cancelled" && (
         <span className="pe-1 text-2xs text-muted-foreground">{t("message.cancelled")}</span>
+      )}
+      {fromOperator && entry.delivery._tag === "failed" && (
+        <div className="flex items-center gap-1 text-2xs text-blocked">
+          <span>{t(failedKeys[entry.delivery.reason])}</span>
+          <Button variant="ghost" size="sm" onClick={onRetry}>
+            {t("message.retry")}
+          </Button>
+        </div>
       )}
     </div>
   );

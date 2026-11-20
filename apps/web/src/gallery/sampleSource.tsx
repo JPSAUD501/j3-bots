@@ -238,6 +238,12 @@ function sampleIntents({ get, update }: Store): ShellIntents {
       update((s) =>
         updateEntry(s, entryId, (e) => (e._tag === "notice" ? { ...e, retryable: false } : e)),
       ),
+    retryMessage: (entryId) =>
+      update((s) =>
+        updateEntry(s, entryId, (e) =>
+          e._tag === "message" ? { ...e, delivery: { _tag: "pending" } } : e,
+        ),
+      ),
     stopBot: (botId) => update((s) => updateBot(s, botId, setState({ _tag: "idle" }))),
     setRoutineEnabled: (routineId, enabled) =>
       update((s) => ({

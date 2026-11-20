@@ -70,6 +70,7 @@ export const unconnected: { readonly data: ShellData; readonly intents: ShellInt
     provideSecret: nothing,
     declineSecret: nothing,
     retryNotice: nothing,
+    retryMessage: nothing,
     openWorkFold: nothing,
     openAttachment: nothing,
     openHandoff: nothing,

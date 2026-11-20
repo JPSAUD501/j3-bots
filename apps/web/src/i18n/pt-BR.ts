@@ -63,6 +63,10 @@ export const ptBR: Catalog = {
 
   "message.queued": "Na fila",
   "message.cancelled": "Não enviada: você parou o bot antes",
+  "message.failed.rejected": "Não entregue",
+  "message.failed.unresolved": "Pode não ter sido entregue",
+  "message.failed.stopped": "Não entregue: você parou a sala",
+  "message.retry": "Enviar de novo",
 
   "file.open": "Abrir {name}",
   "file.kindAndSize": "{kind} · {size}",

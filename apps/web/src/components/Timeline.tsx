@@ -30,6 +30,7 @@ export interface TimelineIntents {
   readonly provideSecret: (entryId: EntryId, value: Redacted.Redacted<string>) => void;
   readonly declineSecret: (entryId: EntryId) => void;
   readonly retryNotice: (entryId: EntryId) => void;
+  readonly retryMessage: (entryId: EntryId) => void;
   readonly openWorkFold: (entryId: EntryId) => void;
   readonly openAttachment: (attachmentId: AttachmentId) => void;
   readonly openHandoff: (entryId: EntryId) => void;
@@ -65,6 +66,7 @@ export function Timeline({ entries, inRoom, workSteps, submitting, intents }: Ti
               speaker={inRoom && author._tag === "bot" ? (bots.get(author.botId) ?? null) : null}
               mentionable={mentionable}
               onOpenAttachment={intents.openAttachment}
+              onRetry={() => intents.retryMessage(item.entry.id)}
             />
           );
         }

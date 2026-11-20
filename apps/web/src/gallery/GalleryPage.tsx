@@ -292,6 +292,7 @@ const timelineIntents: TimelineIntents = {
   provideSecret: nothing,
   declineSecret: nothing,
   retryNotice: nothing,
+  retryMessage: nothing,
   openWorkFold: nothing,
   openAttachment: nothing,
   openHandoff: nothing,
@@ -306,13 +307,44 @@ function BubblesSection() {
   const { bubbles } = variants;
   return (
     <Section title="Bubbles">
-      <Labeled label="Single bubbles, with no tightened corner: the operator, queued, cancelled, a bot with code, a bot with files">
+      <Labeled label="Single bubbles, with no tightened corner: the operator, queued, cancelled, not delivered, a bot with code, a bot with files">
         <div className="flex flex-col gap-2">
-          <MessageBubble entry={bubbles.operator} position="single" onOpenAttachment={nothing} />
-          <MessageBubble entry={bubbles.pending} position="single" onOpenAttachment={nothing} />
-          <MessageBubble entry={bubbles.cancelled} position="single" onOpenAttachment={nothing} />
-          <MessageBubble entry={bubbles.bot} position="single" onOpenAttachment={nothing} />
-          <MessageBubble entry={bubbles.withFiles} position="single" onOpenAttachment={nothing} />
+          <MessageBubble
+            entry={bubbles.operator}
+            position="single"
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+          />
+          <MessageBubble
+            entry={bubbles.pending}
+            position="single"
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+          />
+          <MessageBubble
+            entry={bubbles.cancelled}
+            position="single"
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+          />
+          <MessageBubble
+            entry={bubbles.failed}
+            position="single"
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+          />
+          <MessageBubble
+            entry={bubbles.bot}
+            position="single"
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+          />
+          <MessageBubble
+            entry={bubbles.withFiles}
+            position="single"
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+          />
         </div>
       </Labeled>
       <Labeled label="A conversation">

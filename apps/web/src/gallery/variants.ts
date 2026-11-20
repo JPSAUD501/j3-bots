@@ -76,6 +76,9 @@ export function galleryVariants(now: DateTime.Utc) {
     cancelled: message("cancelled", { _tag: "operator" }, "Skip May, it isn’t due yet", {
       delivery: { _tag: "cancelled" },
     }),
+    failed: message("failed", { _tag: "operator" }, "Also check June", {
+      delivery: { _tag: "failed", reason: "rejected" },
+    }),
     bot: message(
       "bot",
       scout,
