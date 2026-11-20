@@ -20,9 +20,21 @@ What is still shared with the machine:
 
 ## Version pinning
 
-J3 Bots names one exact T3 Code version. The engine binary is the standalone release archive for the platform, downloaded once, checked against the release's `SHA256SUMS`, and stored under `<J3_HOME>/engine/runtime/<version>/`.
+J3 Bots names one exact T3 Code version, in `engine.json` at the repository root: the release version and the commit its tag points at. The pin is `0.1.11-nightly.20261119.4941`, commit `ff9efe89`, the release both M0 probes ran against. **Verified**: the tag `v0.1.11-nightly.20261119.4941` points at that commit.
+
+The source claims labelled **Read** were made at commit `9bb92a4`, 155 commits after the pin. Each one still holds only until it is checked at the pin, by the adapter's code or its conformance suite.
+
+The engine binary is the standalone release archive for the platform, downloaded once, checked against the release's `SHA256SUMS`, and stored under `<J3_HOME>/engine/runtime/<version>/`.
 
 At startup the adapter reads the engine's public descriptor and refuses to continue if the server version or the orchestration protocol version is not the pinned one. **Verified**: `GET /.well-known/t3/environment` returns `serverVersion` and `orchestrationProtocolVersion` without authentication.
+
+### The engine's contracts
+
+The adapter decodes the protocol with T3 Code's own schemas ([decision 0007](../decisions/0007-client-and-server-stack.md)). Their package, `@t3tools/contracts`, is not published to a registry, so J3 Bots vendors it.
+
+- `packages/engine-t3/vendor/t3-contracts/` holds the package's source at the pinned commit, unmodified, with T3 Code's MIT license. It is a workspace package under its upstream name. Only `packages/engine-t3` may depend on it; the adapter will be its first user.
+- `pnpm vendor:t3-contracts` regenerates it from `engine.json`. The script refuses to run if the release tag no longer points at the pinned commit, and leaves out upstream's tests.
+- The package depends only on `effect`. J3 Bots' version catalog pins exactly the Effect version T3 Code pins at the commit (4.1.3), so the vendored schemas and J3 Bots' code share one copy of Effect. **Verified**: the vendored source typechecks in J3 Bots' build with T3 Code's compiler settings.
 
 ## Connecting
 
@@ -113,11 +125,11 @@ Each of these was found by reading the engine and would break a naive design.
 
 **Messages sent through `/mcp` get a note prepended** saying they did not come from the user. Messages sent through the client RPC do not. J3 Bots uses the client RPC and writes its own wake envelope.
 
-**The engine always adds its own instructions.** Whenever its MCP server is attached to a session, which is always, T3 Code appends its own text to the system prompt: 6,245 bytes for Claude Code and 7,639 for Codex at the pinned commit. It covers delegation and subagents, thread tools, secret requests, charts and the preview browser, pull request linking, and, for Claude, a tool for showing text mid-turn. There is no setting that removes it; only the device section can be turned off. J3 Bots' base prompt names the parts it replaces. See [Prompt architecture](../prompts/architecture.md#coexisting-with-the-host).
+**The engine always adds its own instructions.** Whenever its MCP server is attached to a session, which is always, T3 Code appends its own text to the system prompt: 6,245 bytes for Claude Code and 7,639 for Codex at commit `9bb92a4`. It covers delegation and subagents, thread tools, secret requests, charts and the preview browser, pull request linking, and, for Claude, a tool for showing text mid-turn. There is no setting that removes it; only the device section can be turned off. J3 Bots' base prompt names the parts it replaces. See [Prompt architecture](../prompts/architecture.md#coexisting-with-the-host).
 
 ## Upgrading the engine
 
-1. Change the pinned version in one place.
+1. Change the version and commit in `engine.json`, run `pnpm vendor:t3-contracts`, and move the catalog's Effect packages to the versions T3 Code pins at that commit. The protocol changes show up as type errors in `packages/engine-t3`.
 2. Run the adapter conformance suite against the new version: start an isolated engine, create a project and a thread, dispatch a message with a replay provider, receive the stream, answer an approval, interrupt a run, resume a subscription after a dropped socket.
 3. If it passes, release. On the operator's machine the upgrade stops the engine, copies its database files, starts the new version and checks the descriptor.
 4. If the new engine fails to start, restore the copied files and the previous binary.

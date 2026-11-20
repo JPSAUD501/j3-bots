@@ -177,7 +177,7 @@ When a limit stops something, the place where it stopped says so in one quiet li
 The server sends a notification when an entry is added to a conversation or room and no connected client currently has it in view, and when a bot starts waiting on the operator.
 
 - **Web and desktop**: over the open connection, shown by the client.
-- **Mobile**: a push through the platform's service. The payload carries the bot's name and, if the operator allows it, the first line of the message. See [open question 6](../open-questions.md).
+- **Mobile**: a push through the platform's service. The payload carries the bot's name and, if the operator allows it, the first line of the message. See [open question 5](../open-questions.md).
 
 Routines that end silently and non-urgent teammate messages never notify.
 

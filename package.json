@@ -1,0 +1,25 @@
+{
+  "name": "@j3-bots/monorepo",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "scripts": {
+    "typecheck": "vp run -r typecheck",
+    "lint": "vp lint --report-unused-disable-directives --deny-warnings",
+    "fmt": "vp fmt",
+    "fmt:check": "vp fmt --check",
+    "test": "vp run -r test",
+    "knip": "knip",
+    "vendor:t3-contracts": "scripts/vendor-t3-contracts.sh"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "catalog:",
+    "@types/node": "catalog:",
+    "knip": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "engines": {
+    "node": "26.13.1"
+  },
+  "packageManager": "pnpm@12.16.1"
+}

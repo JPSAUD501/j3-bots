@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      # Installs vp, the Node.js version in package.json `engines` and the pnpm
+      # version in `packageManager`, then the workspace. pnpm refuses to change
+      # the lockfile when CI is set.
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Typecheck
+        run: vp run typecheck
+
+      - name: Lint
+        run: vp run lint
+
+      - name: Format
+        run: vp run fmt:check
+
+      - name: Test
+        run: vp run test
+
+      - name: Unused code
+        run: vp run knip
