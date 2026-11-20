@@ -10,7 +10,8 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { AdminClient, AdminRequestFailed } from "../admin/AdminClient.ts";
 import { AdminStatus } from "../admin/protocol.ts";
-import { Host, type PortState } from "../system/Host.ts";
+import { Host } from "../system/Host.ts";
+import type { PortState } from "../system/Ports.ts";
 import { Network } from "../system/Network.ts";
 import { type Linger, Systemd, type UnitState } from "../system/Systemd.ts";
 import { type Check, type CheckStatus, diagnose } from "./Doctor.ts";
@@ -30,6 +31,7 @@ const provider = (harness: "claude-code" | "codex", status: string) => ({
 const running = (overrides: { engine?: object; pairedDevices?: number } = {}) =>
   Schema.decodeUnknownSync(Schema.toCodecJson(AdminStatus))({
     version: "0.0.0",
+    pid: 4242,
     startedAt: "2026-11-20T08:00:00.000Z",
     listener: { scheme: "http", address: "0.0.0.0", port: 3737, names: [] },
     toolPort: 3739,
@@ -80,7 +82,7 @@ const HEALTHY: World = {
   server: Option.some(running()),
   systemd: true,
   unitInstalled: true,
-  unit: { enabled: true, active: "active" },
+  unit: { enabled: true, active: "active", mainPid: Option.some(4242) },
   linger: "yes",
   memoryDelegated: true,
   configFile: Option.none(),
@@ -108,7 +110,7 @@ const diagnoseIn = (changes: Partial<World> = {}) =>
       yield* fs.makeDirectory(path.join(configHome, "systemd", "user"), { recursive: true });
       yield* fs.writeFileString(
         path.join(configHome, "systemd", "user", "j3-bots.service"),
-        `[Service]\nEnvironment="PATH=${world.unitPath}"\n`,
+        `[Service]\nEnvironment="J3_HOME=${home}"\nEnvironment="PATH=${world.unitPath}"\n`,
       );
     }
 
@@ -361,11 +363,17 @@ it.layer(NodeServices.layer)("doctor", (it) => {
     Effect.gen(function* () {
       const absent = yield* diagnoseIn({ unitInstalled: false });
       assertFlagged(named(absent.checks, "Service"), "warning");
-      const failed = yield* diagnoseIn({ unit: { enabled: true, active: "failed" } });
+      const failed = yield* diagnoseIn({
+        unit: { enabled: true, active: "failed", mainPid: Option.none() },
+      });
       assertFlagged(named(failed.checks, "Service"), "problem");
-      const disabled = yield* diagnoseIn({ unit: { enabled: false, active: "active" } });
+      const disabled = yield* diagnoseIn({
+        unit: { enabled: false, active: "active", mainPid: Option.some(4242) },
+      });
       assertFlagged(named(disabled.checks, "Service"), "warning");
-      const restarting = yield* diagnoseIn({ unit: { enabled: true, active: "activating" } });
+      const restarting = yield* diagnoseIn({
+        unit: { enabled: true, active: "activating", mainPid: Option.none() },
+      });
       assertFlagged(named(restarting.checks, "Service"), "warning", "restarting");
 
       const noLinger = yield* diagnoseIn({ linger: "no" });
@@ -387,6 +395,17 @@ it.layer(NodeServices.layer)("doctor", (it) => {
     Effect.gen(function* () {
       const overridden = yield* diagnoseIn({ environment: { J3_PORT: "4000" } });
       assertFlagged(named(overridden.checks, "Shell settings"), "warning", "J3_PORT");
+
+      // A typo in this shell is named on its own; the service is still described in full.
+      const typo = yield* diagnoseIn({ environment: { J3_PORT: "typo" } });
+      assertFlagged(named(typo.checks, "Shell settings"), "problem", "J3_PORT");
+      assert.strictEqual(named(typo.checks, "Configuration").status, "ok");
+      assert.strictEqual(named(typo.checks, "Server").status, "ok");
+
+      // The report is about the installed service's home, not this shell's.
+      const elsewhere = yield* diagnoseIn({ environment: { J3_HOME: "/nonexistent/j3" } });
+      assert.notInclude(named(elsewhere.checks, "Data directory").summary, "/nonexistent");
+      assert.strictEqual(named(elsewhere.checks, "Server").status, "ok");
       const notInstalled = yield* diagnoseIn({
         unitInstalled: false,
         environment: { J3_PORT: "4000" },

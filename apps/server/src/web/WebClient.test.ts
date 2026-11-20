@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// @effect-diagnostics nodeBuiltinImport:off -- Effect's client normalizes a request target; only node:http sends one as written.
+import * as NodeHttp from "node:http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -9,7 +11,9 @@ import * as Path from "effect/Path";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as NetAddress from "effect/net/NetAddress";
 import * as WebClient from "./WebClient.ts";
 
 const INDEX = "<!doctype html><title>J3 Bots</title>";
@@ -45,7 +49,7 @@ const fixture = Effect.fn("fixture")(function* (linkedIndex: boolean) {
 
 /** Runs `effect` against a server with the client's routes and one API route. */
 const serving = <A, E>(
-  effect: Effect.Effect<A, E, HttpClient.HttpClient>,
+  effect: Effect.Effect<A, E, HttpClient.HttpClient | HttpServer.HttpServer>,
   { linkedIndex = false } = {},
 ) =>
   Effect.gen(function* () {
@@ -63,6 +67,42 @@ const get = (url: string, accept = "*/*") =>
   HttpClient.execute(
     HttpClientRequest.get(url).pipe(HttpClientRequest.setHeader("accept", accept)),
   );
+
+/**
+ * `target` sent exactly as written, `#` and all, as a client other than a
+ * browser can: what the server answers, status and body.
+ */
+const raw = (target: string, accept = "text/html") =>
+  Effect.gen(function* () {
+    const { address } = yield* HttpServer.HttpServer;
+    if (!NetAddress.isInetAddress(address)) return yield* Effect.die("not an IP listener");
+    return yield* Effect.callback<{
+      readonly status: number;
+      readonly location: string | undefined;
+      readonly body: string;
+    }>((resume) => {
+      const request = NodeHttp.get(
+        { host: "127.0.0.1", port: address.port, path: target, headers: { accept } },
+        (response) => {
+          let body = "";
+          response.setEncoding("utf8");
+          response.on("data", (chunk: string) => {
+            body += chunk;
+          });
+          response.on("end", () =>
+            resume(
+              Effect.succeed({
+                status: response.statusCode ?? 0,
+                location: response.headers.location,
+                body,
+              }),
+            ),
+          );
+        },
+      );
+      request.on("error", (error) => resume(Effect.die(error)));
+    });
+  });
 
 it.layer(NodeServices.layer)("web client", (it) => {
   it.effect("serves the app at its root and at every path it routes itself", () =>
@@ -126,6 +166,53 @@ it.layer(NodeServices.layer)("web client", (it) => {
           assert.strictEqual(response.status, 404, url);
           assert.notInclude(yield* response.text, "private");
         }
+      }),
+    ),
+  );
+
+  it.effect("reads a raw request target once: a fragment or query never reaches the file", () =>
+    serving(
+      Effect.gen(function* () {
+        for (const target of [
+          "/x#/../leak.txt",
+          "/x?/../leak.txt",
+          "/x#/../linked/secret.txt",
+          "/assets#/../../secret.txt",
+          "/assets/..%2f..%2fsecret.txt",
+          "/..%5csecret.txt",
+          "/../secret.txt",
+          "/assets/../../secret.txt",
+          "/leak.txt#",
+          "/linked/secret.txt?x",
+        ]) {
+          const { status, body } = yield* raw(target);
+          assert.notInclude(body, "private", target);
+          assert.include([200, 301, 404], status, target);
+        }
+        // What the guard checked is what is served: the app, for a route.
+        assert.strictEqual((yield* raw("/x#/../leak.txt")).body, INDEX);
+        assert.strictEqual((yield* raw("/assets/index-B1x2y3z4.js#x", "*/*")).body, SCRIPT);
+      }),
+    ),
+  );
+
+  it.effect("sends a folder's index only behind its slash, and a 304 for a fresh copy", () =>
+    serving(
+      Effect.gen(function* () {
+        // However many slashes lead the path, the redirect stays on this server.
+        for (const target of ["/assets", "/.//assets"]) {
+          const folder = yield* raw(target);
+          assert.strictEqual(folder.status, 301, target);
+          assert.strictEqual(folder.location, "/assets/", target);
+        }
+        const page = yield* get("/");
+        const etag = page.headers["etag"] ?? "";
+        assert.notStrictEqual(etag, "");
+        const again = yield* HttpClient.execute(
+          HttpClientRequest.get("/").pipe(HttpClientRequest.setHeader("if-none-match", etag)),
+        );
+        assert.strictEqual(again.status, 304);
+        assert.strictEqual(again.headers["cache-control"], "no-cache");
       }),
     ),
   );

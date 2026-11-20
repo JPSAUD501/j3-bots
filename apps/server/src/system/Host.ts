@@ -11,19 +11,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-
-/**
- * Whether the server could listen on an address and port right now:
- * `in-use` by another program, `not-local` when the address is not one of
- * this machine's, `denied` when the user may not bind it, or another error,
- * by its code.
- */
-export type PortState =
-  | { readonly _tag: "free" }
-  | { readonly _tag: "in-use" }
-  | { readonly _tag: "not-local" }
-  | { readonly _tag: "denied" }
-  | { readonly _tag: "failed"; readonly code: string };
+import { type PortState, portStateOf } from "./Ports.ts";
 
 /** The facts about this machine that `j3-bots doctor` and `service` read. */
 export class Host extends Context.Service<
@@ -39,6 +27,7 @@ export class Host extends Context.Service<
     readonly searchPath: string;
     /** Bytes free to this user on the filesystem holding `path`, or its nearest existing parent. */
     readonly freeSpace: (path: string) => Effect.Effect<Option.Option<number>>;
+    /** Whether the server could listen on `host` and `port` right now. */
     readonly portState: (host: string, port: number) => Effect.Effect<PortState>;
     /** The first executable file named `name` in the folders of `searchPath`. */
     readonly findExecutable: (
@@ -51,18 +40,9 @@ export class Host extends Context.Service<
 const trialListen = (host: string, port: number) =>
   Effect.callback<PortState>((resume) => {
     const server = NodeNet.createServer();
-    server.once("error", (error: NodeJS.ErrnoException) => {
-      switch (error.code) {
-        case "EADDRINUSE":
-          return resume(Effect.succeed({ _tag: "in-use" }));
-        case "EADDRNOTAVAIL":
-          return resume(Effect.succeed({ _tag: "not-local" }));
-        case "EACCES":
-          return resume(Effect.succeed({ _tag: "denied" }));
-        default:
-          return resume(Effect.succeed({ _tag: "failed", code: error.code ?? error.message }));
-      }
-    });
+    server.once("error", (error: NodeJS.ErrnoException) =>
+      resume(Effect.succeed(portStateOf(error.code ?? error.message))),
+    );
     server.listen({ host, port, exclusive: true }, () => {
       server.close(() => resume(Effect.succeed({ _tag: "free" })));
     });

@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Config from "effect/Config";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import { SHELL_OVERRIDES } from "../config.ts";
 
 /** The systemd user unit J3 Bots installs: `~/.config/systemd/user/j3-bots.service`. */
 export const UNIT_NAME = "j3-bots.service";
@@ -86,6 +88,24 @@ const unquote = (value: string) => {
   return words.map((each) => each.replaceAll("%%", "%"));
 };
 
+/**
+ * The environment the service runs with, as a configuration source: the
+ * user's `HOME`, the unit's `J3_HOME` and `PATH`, and nothing else, so none of
+ * a shell's overrides.
+ */
+export const asTheService = (environment: {
+  readonly home: string;
+  readonly j3Home: string;
+  readonly searchPath: string;
+}) =>
+  ConfigProvider.layer(
+    ConfigProvider.fromEnvRecord({
+      HOME: environment.home,
+      J3_HOME: environment.j3Home,
+      PATH: environment.searchPath,
+    }),
+  );
+
 /** What the unit runs, and with what. */
 export interface UnitPlan {
   /** The Node executable, absolute: a unit has no shell to find it on `PATH`. */
@@ -164,11 +184,18 @@ export const render = Effect.fn("service.render")(function* (plan: UnitPlan) {
     `WorkingDirectory=${escapeSpecifiers(plan.home)}`,
     `Environment=${quote(`J3_HOME=${plan.home}`)}`,
     `Environment=${quote(`PATH=${plan.searchPath}`)}`,
+    // The user manager passes on its own environment (`systemctl --user
+    // set-environment`, a desktop session's import). An override there would
+    // replace the settings `service install` checked.
+    `UnsetEnvironment=${SHELL_OVERRIDES.join(" ")}`,
     `ExecStart=${[plan.node, plan.entryPoint, "serve"].map((word) => quote(escapeVariables(word))).join(" ")}`,
     // The server stops the engine and its harnesses itself; systemd ends what
-    // is left once the stop times out.
+    // is left once the stop times out. A stop takes at most the HTTP grace
+    // (5 s), the WebSocket close (2 s) and the engine's (10 s), well inside it.
     "KillMode=mixed",
     "TimeoutStopSec=30",
+    // SIGTERM interrupts the server, which then exits 130: that is a clean stop.
+    "SuccessExitStatus=130",
     "Restart=on-failure",
     "RestartSec=5",
     `MemoryHigh=${memoryHigh}M`,

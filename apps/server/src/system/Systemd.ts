@@ -32,6 +32,8 @@ export interface UnitState {
   readonly enabled: boolean;
   /** `active`, `inactive`, `failed`, `activating`, …, as systemd names it. */
   readonly active: string;
+  /** The process id of the unit's main process, while it has one. */
+  readonly mainPid: Option.Option<number>;
 }
 
 /** The user's systemd manager: no `sudo`, ever. */
@@ -118,6 +120,13 @@ export const layer = Layer.effect(
                 onSome: ({ output }) => output.trim() || "unknown",
               }),
             ),
+          ),
+          mainPid: systemctl(["show", "--property=MainPID", "--value", unit]).pipe(
+            Effect.map((result) => {
+              const pid = Option.isSome(result) ? Number(result.value.output.trim()) : 0;
+              // systemd says 0 when the unit has no main process.
+              return Number.isSafeInteger(pid) && pid > 0 ? Option.some(pid) : Option.none();
+            }),
           ),
         }),
       ),

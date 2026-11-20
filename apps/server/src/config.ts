@@ -73,6 +73,8 @@ class ConfigRefused extends Schema.TaggedError<ConfigRefused>()("ConfigRefused",
     "tls-unusable",
     "web-client-missing",
     "web-client-holds-state",
+    "web-client-in-home",
+    "web-client-in-state",
     "port-zero",
     "port-conflict",
   ]),
@@ -97,6 +99,10 @@ class ConfigRefused extends Schema.TaggedError<ConfigRefused>()("ConfigRefused",
         return `${this.setting} (${this.subject}) holds no built web client (no index.html). Build it, or remove the setting to use the one in this checkout.`;
       case "web-client-holds-state":
         return `${this.setting} is a folder that holds ${this.subject}, which the server would then publish. Point it at the built client's own folder.`;
+      case "web-client-in-home":
+        return `${this.setting} is inside the data directory ${this.subject}, which the server keeps private. Put the built client in ${this.subject}/web, or outside the data directory.`;
+      case "web-client-in-state":
+        return `${this.setting} is inside ${this.subject}, which the server keeps private. Point it at the built client's own folder.`;
       case "port-zero":
         return `${this.setting} is 0, but this port is dialed at the number set here. Choose a fixed free port.`;
       case "port-conflict":
@@ -115,8 +121,28 @@ class ConfigFileInvalid extends Schema.TaggedError<ConfigFileInvalid>()("ConfigF
   }
 }
 
-const CONFIG_FILE = "config.json";
-const ADMIN_SOCKET = "admin.sock";
+/**
+ * What the home holds, by name (see `docs/architecture/server.md#data`).
+ * Everything but `web` is private.
+ */
+export const HOME_ENTRIES = {
+  config: "config.json",
+  database: "j3.sqlite",
+  engine: "engine",
+  /** One workspace per bot, `bots/<bot>`. */
+  bots: "bots",
+  /** Memory and skills every bot reads. */
+  shared: "shared",
+  attachments: "attachments",
+  adminSocket: "admin.sock",
+  /** Held by the one server running for the home. */
+  lock: "server.lock",
+  /** The one place in the home a web client may be put: the server keeps nothing there. */
+  web: "web",
+} as const;
+
+const CONFIG_FILE = HOME_ENTRIES.config;
+const ADMIN_SOCKET = HOME_ENTRIES.adminSocket;
 /** The shortest `sun_path` among supported systems is 104 bytes, its terminator included. */
 const MAX_SOCKET_PATH_BYTES = 103;
 
@@ -176,6 +202,18 @@ export const overrideNote = (name: (typeof SHELL_OVERRIDES)[number], configFile:
     ? "J3_ENGINE_BINARY is set in this shell. It is for testing an engine build, and the service never uses it: it runs the pinned engine."
     : `${name} is set in this shell, but the service does not get it. Put the setting in ${configFile} instead.`;
 
+/** Each override, decoded as the server decodes it. */
+const OVERRIDES = {
+  J3_HOST: Config.NonEmptyString("J3_HOST"),
+  J3_PORT: Config.Port("J3_PORT"),
+  J3_TOOL_PORT: Config.Port("J3_TOOL_PORT"),
+  J3_ENGINE_PORT: Config.Port("J3_ENGINE_PORT"),
+  J3_WEB_CLIENT: Config.NonEmptyString("J3_WEB_CLIENT"),
+  J3_TLS_CERT: Config.NonEmptyString("J3_TLS_CERT"),
+  J3_TLS_KEY: Config.NonEmptyString("J3_TLS_KEY"),
+  J3_ENGINE_BINARY: Config.NonEmptyString("J3_ENGINE_BINARY"),
+} satisfies Record<(typeof SHELL_OVERRIDES)[number], Config.Config<string | number>>;
+
 /** The overrides set in this process's environment. */
 export const shellOverrides = Effect.gen(function* () {
   const set: Array<(typeof SHELL_OVERRIDES)[number]> = [];
@@ -185,18 +223,28 @@ export const shellOverrides = Effect.gen(function* () {
   return set;
 });
 
+/** The overrides set in this process's environment with a value the server refuses. */
+export const invalidShellOverrides = Effect.gen(function* () {
+  const invalid: Array<(typeof SHELL_OVERRIDES)[number]> = [];
+  for (const name of SHELL_OVERRIDES) {
+    const override: Config.Config<string | number> = OVERRIDES[name];
+    if ((yield* Effect.result(Config.option(override)))._tag === "Failure") invalid.push(name);
+  }
+  return invalid;
+});
+
 // A setting in the environment overrides the file. One that is present and
 // invalid fails, so a typo never silently becomes the default.
 const environment = Config.all({
   home: Config.option(Config.NonEmptyString("J3_HOME")),
-  host: Config.option(Config.NonEmptyString("J3_HOST")),
-  port: Config.option(Config.Port("J3_PORT")),
-  tlsCert: Config.option(Config.NonEmptyString("J3_TLS_CERT")),
-  tlsKey: Config.option(Config.NonEmptyString("J3_TLS_KEY")),
-  enginePort: Config.option(Config.Port("J3_ENGINE_PORT")),
-  engineBinary: Config.option(Config.NonEmptyString("J3_ENGINE_BINARY")),
-  toolPort: Config.option(Config.Port("J3_TOOL_PORT")),
-  webClient: Config.option(Config.NonEmptyString("J3_WEB_CLIENT")),
+  host: Config.option(OVERRIDES.J3_HOST),
+  port: Config.option(OVERRIDES.J3_PORT),
+  tlsCert: Config.option(OVERRIDES.J3_TLS_CERT),
+  tlsKey: Config.option(OVERRIDES.J3_TLS_KEY),
+  enginePort: Config.option(OVERRIDES.J3_ENGINE_PORT),
+  engineBinary: Config.option(OVERRIDES.J3_ENGINE_BINARY),
+  toolPort: Config.option(OVERRIDES.J3_TOOL_PORT),
+  webClient: Config.option(OVERRIDES.J3_WEB_CLIENT),
 });
 
 /** The nearest folder at or above `start` that holds a `.git` entry, if any. */
@@ -229,6 +277,39 @@ export const resolveHome = Effect.gen(function* () {
 export const resolveAdminSocket = Effect.gen(function* () {
   const path = yield* Path.Path;
   return path.join(yield* resolveHome, ADMIN_SOCKET);
+});
+
+/** The configuration file, `<home>/config.json`. */
+export const resolveConfigFile = Effect.gen(function* () {
+  const path = yield* Path.Path;
+  return path.join(yield* resolveHome, CONFIG_FILE);
+});
+
+/**
+ * Everything private the home holds, each bot's workspace on its own (one may
+ * be a link to another folder), and the TLS certificate and key.
+ */
+const privateLocations = Effect.fn("privateLocations")(function* (
+  home: string,
+  tls: Option.Option<{ readonly certPath: string; readonly keyPath: string }>,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const bots = path.join(home, HOME_ENTRIES.bots);
+  const workspaces = yield* fs.readDirectory(bots).pipe(Effect.orElseSucceed(() => []));
+  const { config, database, engine, shared, attachments, adminSocket, lock } = HOME_ENTRIES;
+  return [
+    ...[config, engine, HOME_ENTRIES.bots, shared, attachments, adminSocket, lock].map((entry) =>
+      path.join(home, entry),
+    ),
+    // SQLite keeps its journal beside the database.
+    ...["", "-wal", "-shm"].map((suffix) => path.join(home, `${database}${suffix}`)),
+    ...workspaces.map((workspace) => path.join(bots, workspace)),
+    ...Option.match(tls, {
+      onNone: () => [],
+      onSome: ({ certPath, keyPath }) => [certPath, keyPath],
+    }),
+  ];
 });
 
 /** The settings in `<home>/config.json`; none when the file does not exist. */
@@ -388,33 +469,34 @@ export const load = Effect.gen(function* () {
   } else {
     webClient = { _tag: "bundled", directory: yield* Installation.bundledWebClient };
   }
-  // Everything under the client's folder is public: it must hold no state.
+  // Everything under the client's folder is public, so it and the server's
+  // private state may not overlap, in either direction, links resolved.
+  const refuseWebClient = (reason: ConfigRefused["reason"], subject: string) =>
+    new ConfigRefused({
+      setting:
+        webClient._tag === "configured"
+          ? webClientSetting
+          : `The web client in this checkout (${webClient.directory})`,
+      reason,
+      subject,
+    });
   const webRoot = yield* realLocation(webClient.directory);
-  const state = [
-    home,
-    ...Option.match(tls, {
-      onNone: () => [],
-      onSome: ({ certPath, keyPath }) => [certPath, keyPath],
-    }),
-  ];
-  for (const held of state) {
-    if (isWithin(webRoot, yield* realLocation(held))) {
-      return yield* new ConfigRefused({
-        setting:
-          webClient._tag === "configured"
-            ? webClientSetting
-            : `The web client in this checkout (${webClient.directory})`,
-        reason: "web-client-holds-state",
-        subject: held,
-      });
-    }
+  const realHome = yield* realLocation(home);
+  if (isWithin(webRoot, realHome)) return yield* refuseWebClient("web-client-holds-state", home);
+  if (isWithin(realHome, webRoot) && !isWithin(path.join(realHome, HOME_ENTRIES.web), webRoot)) {
+    return yield* refuseWebClient("web-client-in-home", home);
+  }
+  for (const held of yield* privateLocations(home, tls)) {
+    const real = yield* realLocation(held);
+    if (isWithin(webRoot, real)) return yield* refuseWebClient("web-client-holds-state", held);
+    if (isWithin(real, webRoot)) return yield* refuseWebClient("web-client-in-state", held);
   }
 
   return {
     home,
     configFile,
-    databasePath: path.join(home, "j3.sqlite"),
-    engineHome: path.join(home, "engine"),
+    databasePath: path.join(home, HOME_ENTRIES.database),
+    engineHome: path.join(home, HOME_ENTRIES.engine),
     host: hostValue === LAN ? LAN_ADDRESS : hostValue,
     port: ports.port,
     tls,

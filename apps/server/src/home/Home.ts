@@ -9,7 +9,7 @@ import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Socket from "../admin/socket.ts";
-import { ServerConfig } from "../config.ts";
+import { HOME_ENTRIES, ServerConfig } from "../config.ts";
 
 // The home holds the database, the bots' files, the engine's credential and
 // the admin socket, which takes no token because only the operator's user can
@@ -17,7 +17,7 @@ import { ServerConfig } from "../config.ts";
 // time may use it.
 
 /** A path as one shell word. */
-const shellWord = (value: string) =>
+export const shellWord = (value: string) =>
   /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", `'"'"'`)}'`;
 
 /** The home is not a folder only this user can open. */
@@ -95,7 +95,7 @@ class HomeBlocked extends Schema.TaggedError<HomeBlocked>()("HomeBlocked", {
   }
 }
 
-const LOCK_FILE = "server.lock";
+const LOCK_FILE = HOME_ENTRIES.lock;
 const SQLITE_BUSY = 5;
 
 const isBusy = (error: unknown) =>

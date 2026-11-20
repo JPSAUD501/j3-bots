@@ -53,9 +53,10 @@ j3-bots service install
 - creates the data directory, `~/.j3-bots`, readable by this user only;
 - writes `~/.j3-bots/config.json` with the defaults;
 - checks the configuration as the service will run it, and stops there, leaving any installed unit as it was, if the server would refuse it;
+- stops there too if a server you started yourself, with `j3-bots serve`, is already running for the data directory;
 - writes the unit `~/.config/systemd/user/j3-bots.service`;
 - enables the unit and starts it;
-- waits up to a minute for the server to answer, and says whether it did and what state the engine is in.
+- waits up to a minute for the service's own server to answer (its process must be the unit's main process), and says whether it did and what state the engine is in.
 
 On its first start, the server downloads the engine it is pinned to into `~/.j3-bots/engine`, so the engine may still be starting when `service install` returns.
 
@@ -64,7 +65,7 @@ The unit records the real path of the Node that ran `service install`, this chec
 - after you install Node somewhere else;
 - after you install a harness in a folder that was not on that `PATH`.
 
-The service does not see `J3_*` variables from your shell: it runs with `config.json` alone. `service install` checks the configuration without them and names any it finds, and `doctor` warns about them while the service is installed. Put lasting settings in `config.json`. `J3_ENGINE_BINARY` is for testing an engine build by hand; it has no `config.json` key, and the service never uses it.
+The service does not see `J3_*` variables from your shell, nor from the user manager's environment (the unit unsets them): it runs with `config.json` alone. `service install` checks the configuration without them and names any it finds, and `doctor` warns about them while the service is installed. Put lasting settings in `config.json`. `J3_ENGINE_BINARY` is for testing an engine build by hand; it has no `config.json` key, and the service never uses it.
 
 If you did not create a dedicated user, turn lingering on for your own user so that the service survives a logout and starts at boot. `doctor` and `service install` both remind you:
 
@@ -76,7 +77,7 @@ sudo loginctl enable-linger "$(id -un)"
 
 - `Restart=on-failure` restarts the server five seconds after it fails. After five failures in five minutes, systemd stops trying, and `doctor` reports the service as failed.
 - `MemoryHigh` is 60% of the machine's memory: about 2.4 GB on a 4 GB Pi. Above it the kernel reclaims the service's memory first, which leaves room for the rest of the system. It needs the kernel's memory controller. Raspberry Pi OS kernels may disable it. `doctor` reports that case, and the fix is `cgroup_enable=memory` at the end of the single line in `/boot/firmware/cmdline.txt`, then a reboot.
-- On stop, systemd sends SIGTERM to the server alone (`KillMode=mixed`). The server stops the engine and its children itself, and after 30 seconds systemd kills whatever is left.
+- On stop, systemd sends SIGTERM to the server alone (`KillMode=mixed`). The server stops the engine and its children itself, and after 30 seconds systemd kills whatever is left. A stop takes at most about 17 seconds: 5 for open requests, 2 for each open WebSocket to close, and 10 for the engine. The server exits with status 130 when SIGTERM stops it, which the unit counts as success (`SuccessExitStatus=130`), so a stop or a restart never leaves the unit `failed`.
 
 ## Configuration
 
@@ -112,7 +113,7 @@ Open J3 Bots on the new device and enter it there:
 
 `pair` asks the running server for the code over its admin socket, `~/.j3-bots/admin.sock`. Only this user can connect to that socket, so the command works only on the Pi, as the user that runs the service. The addresses come from the server too: the port and scheme it listens on and, with `lan`, the Pi's private addresses, leaving out container and virtual-network interfaces such as `docker0`. Open one of them on the phone or computer you are pairing and enter the code.
 
-A browser treats a plain-HTTP address other than `localhost` as insecure, and on such an address it does not install J3 Bots as an app (a PWA). To install it on a phone, serve HTTPS: put a certificate and key in `tls` (paths relative to the data directory work). With Tailscale, `tailscale cert <machine>.<tailnet>.ts.net` issues one for the Pi's tailnet name. Over HTTPS, `pair` prints the names on the certificate, such as `https://<machine>.<tailnet>.ts.net:3737`, and no bare addresses, which the browser would not accept.
+A browser treats a plain-HTTP address other than `localhost` as insecure, and on such an address it does not install J3 Bots as an app (a PWA). To install it on a phone, serve HTTPS: put a certificate and key in `tls` (paths relative to the data directory work). With Tailscale, `tailscale cert <machine>.<tailnet>.ts.net` issues one for the Pi's tailnet name. Over HTTPS, `pair` prints the names on the certificate, such as `https://<machine>.<tailnet>.ts.net:3737`, and no bare addresses, which the browser would not accept. A wildcard name names no one host, so it is not printed; for a certificate with only wildcards, open a name it covers.
 
 ## Logs
 
@@ -173,8 +174,8 @@ Each line is ✓ (fine), `!` (a warning: the server runs, but something is missi
 | Check | What it looks at |
 | --- | --- |
 | Node | The Node running it has the major version J3 Bots is built on. |
-| Configuration | `config.json` and the `J3_*` variables decode and pass the checks the server makes at start. Some examples: a public address without TLS, two settings on one port, a TLS certificate and key that do not load as a pair, a web client folder that holds the data directory, and a data directory inside a Git checkout. |
-| Shell settings | With the service installed, a warning for each `J3_*` variable in your shell, which the service does not get. |
+| Configuration | `config.json` and, while the service is not installed, the `J3_*` variables decode and pass the checks the server makes at start. Some examples: a public address without TLS, two settings on one port, a TLS certificate and key that do not load as a pair, a web client folder that overlaps the data directory, and a data directory inside a Git checkout. With the service installed, every check describes the service: its data directory, its `config.json` and its `PATH`. |
+| Shell settings | With the service installed, a warning for each `J3_*` variable in your shell, which the service does not get, and a problem for one whose value the server would refuse. |
 | Data directory | It is a folder this user owns and can write to, and no group or other user can open it. Otherwise the server does not start, and `doctor` prints the `chmod` or `chown` command that fixes it. |
 | Disk space | Free space where the data directory is: less than 1 GB is a problem, less than 3 GB a warning. |
 | Server | Whether a server answers on the admin socket, its version and the address it listens on. |
@@ -194,3 +195,4 @@ Each line is ✓ (fine), `!` (a warning: the server runs, but something is missi
 - The server sets up no providers yet. `doctor` warns that no Claude Code or Codex provider is set up, and bots cannot run turns until a release that configures them.
 - The engine adapter does not yet read sign-in or usage state from the engine. For a configured provider it reports "ready", and `doctor` repeats what it reports (**Read** in `packages/engine-t3/src/t3/T3Engine.ts`).
 - `j3-bots pair` prints the code and the addresses but no QR code.
+- The repository has no web client yet, so the server serves only its API, and `doctor` warns about it.

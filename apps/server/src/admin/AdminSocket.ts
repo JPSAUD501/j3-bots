@@ -41,6 +41,7 @@ const routes = Layer.mergeAll(
           const devices = yield* Devices;
           const status: AdminStatus = {
             version: packageJson.version,
+            pid: process.pid,
             startedAt,
             listener,
             toolPort,

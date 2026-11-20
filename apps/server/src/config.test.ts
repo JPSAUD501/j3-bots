@@ -265,4 +265,100 @@ it.layer(NodeServices.layer)("server configuration", (it) => {
       assert.deepInclude(failure(exposedKey), { reason: "web-client-holds-state" });
     }).pipe(Effect.scoped),
   );
+
+  it.effect("refuses a web client inside the home anywhere but its web folder", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* freshHome;
+      const client = (folder: string) =>
+        Effect.gen(function* () {
+          yield* fs.makeDirectory(folder, { recursive: true });
+          yield* fs.writeFileString(path.join(folder, "index.html"), "<!doctype html>");
+          return folder;
+        });
+      const refusal = (webClient: string) =>
+        withEnvironment(load, { J3_HOME: home, J3_WEB_CLIENT: webClient }).pipe(
+          Effect.exit,
+          Effect.map(failure),
+        );
+
+      assert.deepInclude(yield* refusal(yield* client(home)), {
+        reason: "web-client-holds-state",
+        subject: home,
+      });
+      for (const inside of ["engine", "bots/b1", "attachments", "shared/skills", "elsewhere"]) {
+        assert.deepInclude(yield* refusal(yield* client(path.join(home, inside))), {
+          reason: "web-client-in-home",
+          subject: home,
+        });
+      }
+      // The web folder is the client's, unless it leads into private state.
+      const web = yield* client(path.join(home, "web", "dist"));
+      assert.deepInclude(
+        (yield* withEnvironment(load, { J3_HOME: home, J3_WEB_CLIENT: web })).webClient,
+        { directory: web },
+      );
+      yield* fs.remove(path.join(home, "web"), { recursive: true });
+      yield* fs.symlink(path.join(home, "engine"), path.join(home, "web"));
+      assert.deepInclude(yield* refusal(path.join(home, "web")), {
+        reason: "web-client-in-home",
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("refuses a web client that overlaps private state the home links elsewhere", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* freshHome;
+      const home = path.join(root, "home");
+      yield* fs.makeDirectory(path.join(home, "bots"), { recursive: true });
+      const html = (folder: string) =>
+        Effect.gen(function* () {
+          yield* fs.makeDirectory(folder, { recursive: true });
+          yield* fs.writeFileString(path.join(folder, "index.html"), "<!doctype html>");
+          return folder;
+        });
+      const refusal = (webClient: string) =>
+        withEnvironment(load, { J3_HOME: home, J3_WEB_CLIENT: webClient }).pipe(
+          Effect.exit,
+          Effect.map(failure),
+        );
+
+      const folders = ["engine", "bots/b1", "attachments", "shared"];
+      const files = ["j3.sqlite", "j3.sqlite-wal", "admin.sock", "server.lock", "config.json"];
+      for (const entry of [...folders, ...files]) {
+        // The entry lives in its own folder outside the home, linked from it.
+        const outside = path.join(root, "outside", entry.replaceAll("/", "-"));
+        const target = path.join(outside, "state");
+        if (folders.includes(entry)) yield* fs.makeDirectory(target, { recursive: true });
+        else yield* fs.makeDirectory(outside, { recursive: true });
+        if (!folders.includes(entry))
+          yield* fs.writeFileString(target, entry === "config.json" ? "{}" : "");
+        yield* fs.symlink(target, path.join(home, entry));
+
+        assert.deepInclude(
+          yield* refusal(yield* html(outside)),
+          {
+            reason: "web-client-holds-state",
+            subject: path.join(home, entry),
+          },
+          entry,
+        );
+        if (folders.includes(entry)) {
+          assert.deepInclude(
+            yield* refusal(yield* html(path.join(target, "client"))),
+            {
+              reason: "web-client-in-state",
+              subject: path.join(home, entry),
+            },
+            entry,
+          );
+        }
+        yield* fs.remove(path.join(home, entry));
+        yield* fs.remove(outside, { recursive: true });
+      }
+    }).pipe(Effect.scoped),
+  );
 });

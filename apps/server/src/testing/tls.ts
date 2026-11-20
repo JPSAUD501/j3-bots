@@ -3,7 +3,8 @@
 import * as NodeUrl from "node:url";
 
 /**
- * A self-signed certificate for `j3-bots.test` and its key, made for tests and
+ * A self-signed certificate for `j3-bots.test` (and `*.j3-bots.test`, a
+ * wildcard no client can open) and its key, made for tests and
  * trusted by nothing. They form a pair, as an HTTPS listener needs.
  */
 export const TEST_TLS = {

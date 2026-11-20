@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { EngineStatus, ProviderStatus } from "@j3-bots/contracts";
 import * as EngineLive from "@j3-bots/engine-t3/live";
+import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import * as NetAddress from "effect/net/NetAddress";
 import * as Option from "effect/Option";
@@ -13,6 +15,7 @@ import * as ServerConfig from "../config.ts";
 import * as Home from "../home/Home.ts";
 import * as Unit from "../service/unit.ts";
 import { Host } from "../system/Host.ts";
+import { type PortUse, portAdvice } from "../system/Ports.ts";
 import { Systemd } from "../system/Systemd.ts";
 
 // `j3-bots doctor`: everything the server needs from this machine, checked
@@ -95,7 +98,7 @@ const homeCheck = Effect.fn("doctor.home")(function* (home: string) {
       "Data directory",
       "problem",
       `${home} is not writable by this user.`,
-      `Run \`chmod 700 ${home}\`.`,
+      `Run \`chmod 700 ${Home.shellWord(home)}\`.`,
     );
   }
   return check("Data directory", "ok", `${home}, open to this user only.`);
@@ -158,46 +161,16 @@ const freePortsCheck = Effect.fn("doctor.ports")(function* (
   config: ServerConfig.ServerConfigShape,
 ) {
   const host = yield* Host;
-  const settingHint = `in ${config.configFile}`;
-  const wanted = [
+  const wanted: ReadonlyArray<PortUse> = [
     { label: "the server", host: config.host, port: config.port, setting: "port" },
     { label: "the bot tools", host: "127.0.0.1", port: config.toolPort, setting: "toolPort" },
     { label: "the engine", host: "127.0.0.1", port: config.enginePort, setting: "enginePort" },
   ];
-  for (const { label, host: address, port, setting } of wanted) {
-    const state = yield* host.portState(address, port);
-    switch (state._tag) {
-      case "free":
-        continue;
-      case "in-use":
-        return check(
-          "Ports",
-          "problem",
-          `Port ${port}, for ${label}, is in use by another program.`,
-          `Stop that program (\`ss -ltnp 'sport = :${port}'\` names it), or set "${setting}" ${settingHint} to a free port.`,
-        );
-      case "not-local":
-        return check(
-          "Ports",
-          "problem",
-          `${address} is not an address of this machine, so the server cannot listen on it.`,
-          `Set "host" ${settingHint} to "lan" or to one of this machine's addresses (\`ip -4 addr\`).`,
-        );
-      case "denied":
-        return check(
-          "Ports",
-          "problem",
-          `This user may not listen on ${address}:${port}.`,
-          `Set "${setting}" ${settingHint} to a port above 1023.`,
-        );
-      case "failed":
-        return check(
-          "Ports",
-          "problem",
-          `Listening on ${address}:${port}, for ${label}, failed with ${state.code}.`,
-          `Check "${setting}" and "host" ${settingHint}.`,
-        );
-    }
+  for (const use of wanted) {
+    const state = yield* host.portState(use.host, use.port);
+    if (state._tag === "free") continue;
+    const { summary, fix } = portAdvice(state, use, config.configFile);
+    return check("Ports", "problem", summary, fix);
   }
   return check(
     "Ports",
@@ -380,7 +353,7 @@ const webClientCheck = Effect.fn("doctor.webClient")(function* (
       "Web client",
       "warning",
       `No web client is built in ${config.webClient.directory}, so the server serves only its API.`,
-      "Build it with `pnpm --filter @j3-bots/web build`, then restart the service.",
+      "This release ships no web client yet. Once the repository has one, `pnpm build` builds it; then restart the service.",
     );
   }
   if (Option.isSome(status) && status.value.webClient === "not-built") {
@@ -503,18 +476,51 @@ const serviceChecks = Effect.fn("doctor.service")(function* (unitText: Option.Op
   return checks;
 });
 
-/** With the service installed, the overrides in this shell, which it does not get. */
+/**
+ * With the service installed, the overrides set in this shell: the service
+ * does not get them, and one the server would refuse is named on its own.
+ */
 const overridesCheck = Effect.fn("doctor.overrides")(function* (configFile: string) {
   const overrides = yield* ServerConfig.shellOverrides;
   if (overrides.length === 0) return Option.none<Check>();
+  const notes = overrides.map((name) => ServerConfig.overrideNote(name, configFile)).join(" ");
+  const invalid = yield* ServerConfig.invalidShellOverrides;
+  if (invalid.length > 0) {
+    return Option.some(
+      check(
+        "Shell settings",
+        "problem",
+        `${invalid.join(", ")} ${invalid.length === 1 ? "has a value" : "have values"} the server refuses, so \`j3-bots serve\` would not start in this shell. The service does not get ${invalid.length === 1 ? "it" : "them"}, so this report describes it as installed.`,
+        `Fix or unset ${invalid.join(" and ")} in this shell. ${notes}`,
+      ),
+    );
+  }
   return Option.some(
     check(
       "Shell settings",
       "warning",
-      `${overrides.join(", ")} ${overrides.length === 1 ? "is" : "are"} set in this shell, so this report may not describe the service, which runs with ${configFile}.`,
-      overrides.map((name) => ServerConfig.overrideNote(name, configFile)).join(" "),
+      `${overrides.join(", ")} ${overrides.length === 1 ? "is" : "are"} set in this shell, but the service does not get ${overrides.length === 1 ? "it" : "them"}. This report describes the service, which runs with ${configFile}.`,
+      notes,
     ),
   );
+});
+
+/**
+ * The configuration source the report describes: with the service installed,
+ * the service's own (its home and `PATH`, none of this shell's overrides);
+ * otherwise this shell's, which `j3-bots serve` would run with.
+ */
+const describedConfiguration = Effect.fn("doctor.describedConfiguration")(function* (
+  unitText: Option.Option<string>,
+) {
+  if (Option.isNone(unitText)) return Layer.empty;
+  const environment = Unit.environmentOf(unitText.value);
+  const home = yield* Config.NonEmptyString("HOME");
+  return Unit.asTheService({
+    home,
+    j3Home: environment.get("J3_HOME") ?? (yield* ServerConfig.resolveHome),
+    searchPath: environment.get("PATH") ?? "",
+  });
 });
 
 /** Every check, in the order the report shows them. */
@@ -524,7 +530,11 @@ export const diagnose = Effect.gen(function* () {
   const checks: Array<Check> = [nodeCheck(host.nodeVersion)];
 
   const unitText = yield* installedUnit;
-  const loaded = yield* ServerConfig.load.pipe(Effect.result);
+  const described = yield* describedConfiguration(unitText);
+  const shellSettings = Option.isSome(unitText)
+    ? yield* overridesCheck(yield* ServerConfig.resolveConfigFile.pipe(Effect.provide(described)))
+    : Option.none<Check>();
+  const loaded = yield* ServerConfig.load.pipe(Effect.provide(described), Effect.result);
   if (loaded._tag === "Failure") {
     checks.push(
       check(
@@ -534,8 +544,9 @@ export const diagnose = Effect.gen(function* () {
         "Fix the setting it names, then run this again.",
       ),
     );
-    checks.push(yield* homeCheck(yield* ServerConfig.resolveHome));
+    checks.push(yield* homeCheck(yield* ServerConfig.resolveHome.pipe(Effect.provide(described))));
     checks.push(...(yield* serviceChecks(unitText)));
+    if (Option.isSome(shellSettings)) checks.push(shellSettings.value);
     return checks;
   }
   const config = loaded.success;
@@ -594,9 +605,6 @@ export const diagnose = Effect.gen(function* () {
   checks.push(yield* webClientCheck(config, status));
   checks.push(pairingCheck(status));
   checks.push(...(yield* serviceChecks(unitText)));
-  if (Option.isSome(unitText)) {
-    const overrides = yield* overridesCheck(config.configFile);
-    if (Option.isSome(overrides)) checks.push(overrides.value);
-  }
+  if (Option.isSome(shellSettings)) checks.push(shellSettings.value);
   return checks;
 });

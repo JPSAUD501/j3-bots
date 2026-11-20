@@ -6,19 +6,21 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
-import * as HttpServerRespondable from "effect/http/HttpServerRespondable";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
-import * as HttpStaticServer from "effect/http/HttpStaticServer";
+import * as Mime from "effect/http/Mime";
 import { ServerConfig } from "../config.ts";
 import { isWithin } from "../paths.ts";
 
 // The built web client, served on the same origin as the API and the RPC
 // socket, so a browser needs no CORS. A path the client routes itself (no
-// file extension, asked for as HTML) gets `index.html`. Effect's static
-// server refuses paths that leave the folder, answers ranges and validators,
-// and names the media type by extension. It follows symbolic links, so the
-// file each request would get is checked first by where it really is: a link
-// inside the build never publishes a file outside it.
+// file extension, asked for as HTML) gets `index.html`.
+//
+// Each request is resolved once, here: the request target is parsed as a URL,
+// its path decoded and resolved inside the folder, links followed to where
+// the file really is, and that real path, checked to lie inside the folder,
+// is the file served. No second parser reads the target, so the file checked
+// is always the file sent, and a link inside the build never publishes a file
+// outside it.
 
 /** Vite names every file under `assets/` by its content hash, so it never changes. */
 const IMMUTABLE = "public, max-age=31536000, immutable";
@@ -33,80 +35,160 @@ const HTML_HEADERS = {
 
 /** API paths are never the client's, so an unknown one is a 404, not the app. */
 const API_PREFIX = "/api/";
-
-const pathname = (url: string) => new URL(url, "http://localhost").pathname;
+const ASSETS_PREFIX = "/assets/";
 
 const INDEX = "index.html";
 
-/**
- * Whether the file the static server would answer `url` with really lies
- * inside `realRoot`, links resolved. It mirrors the static server's choice:
- * the named file, a folder's `index.html`, or, for a path that names nothing,
- * the app's `index.html`. A path the static server refuses passes, and is
- * refused there.
- */
-const servesContainedFile = Effect.fn("WebClient.servesContainedFile")(function* (
-  root: string,
-  realRoot: string,
-  url: string,
-) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const contained = (file: string) =>
-    fs.realPath(file).pipe(
-      Effect.map((real) => isWithin(realRoot, real)),
-      // A file that is not there is answered 404, whatever a link says.
-      Effect.orElseSucceed(() => true),
-    );
-  const decoded = yield* Effect.try({
-    try: () => decodeURIComponent(url.split(/[?#]/, 1)[0] ?? ""),
-    catch: () => "undecodable",
-  }).pipe(Effect.option);
-  if (Option.isNone(decoded)) return true;
-  const requested = path.resolveWithin(root, decoded.value.replace(/^\/+/, ""));
-  if (Option.isNone(requested)) return true;
-  const real = yield* fs.realPath(requested.value).pipe(Effect.option);
-  if (Option.isNone(real)) return yield* contained(path.join(root, INDEX));
-  if (!isWithin(realRoot, real.value)) return false;
-  const info = yield* fs.stat(real.value).pipe(Effect.option);
-  return Option.isSome(info) && info.value.type === "Directory"
-    ? yield* contained(path.join(requested.value, INDEX))
-    : true;
-});
+const notFound = HttpServerResponse.empty({ status: 404 });
+
+/** What a request asks the client's folder for. */
+type Target =
+  /** The file at this real path, inside the folder. */
+  | { readonly _tag: "file"; readonly file: string }
+  /** A folder named without its trailing slash, at this local location. */
+  | { readonly _tag: "redirect"; readonly location: string }
+  | { readonly _tag: "not-found" };
+
+const NOT_FOUND: Target = { _tag: "not-found" };
+const fileTarget = (file: string): Target => ({ _tag: "file", file });
+const redirectTarget = (location: string): Target => ({ _tag: "redirect", location });
+
+/** Text types are sent with their encoding, which Vite always writes as UTF-8. */
+const mediaType = (file: string) =>
+  Option.match(Mime.getType(file), {
+    onNone: () => "application/octet-stream",
+    onSome: (type) =>
+      type.startsWith("text/") || type === "application/json" || type === "image/svg+xml"
+        ? `${type}; charset=utf-8`
+        : type,
+  });
+
+const acceptsHtml = (accept: string | undefined) =>
+  accept !== undefined && accept.toLowerCase().includes("text/html");
+
+/** The URL's path, decoded; none for one that does not decode or names a NUL. */
+const decodedPath = (pathname: string) => {
+  try {
+    const decoded = decodeURIComponent(pathname);
+    return decoded.includes("\u0000") ? Option.none() : Option.some(decoded);
+  } catch {
+    return Option.none();
+  }
+};
+
+/** Whether the tags in `ifNoneMatch` include `etag`, compared weakly as a cache does. */
+const matchesEtag = (ifNoneMatch: string, etag: string) => {
+  const opaque = (tag: string) => tag.trim().replace(/^W\//i, "");
+  return (
+    ifNoneMatch.trim() === "*" ||
+    ifNoneMatch.split(",").some((candidate) => opaque(candidate) === opaque(etag))
+  );
+};
 
 /**
- * The routes that serve a built web client from `root`: every `GET` no other
- * route takes.
+ * Whether the browser's copy, described by the request's validators, is still
+ * the file's. `If-None-Match` wins over `If-Modified-Since` (RFC 9110 §13.1.3).
  */
+const stillFresh = (
+  request: HttpServerRequest.HttpServerRequest,
+  response: HttpServerResponse.HttpServerResponse,
+) => {
+  const etag = response.headers["etag"];
+  const ifNoneMatch = request.headers["if-none-match"];
+  if (ifNoneMatch !== undefined) return etag !== undefined && matchesEtag(ifNoneMatch, etag);
+  const ifModifiedSince = request.headers["if-modified-since"];
+  const lastModified = response.headers["last-modified"];
+  if (ifModifiedSince === undefined || lastModified === undefined) return false;
+  const since = Date.parse(ifModifiedSince);
+  const modified = Date.parse(lastModified);
+  return !Number.isNaN(since) && !Number.isNaN(modified) && modified <= since;
+};
+
+/** The routes that serve a built web client from `root`: every `GET` no other route takes. */
 export const routes = (root: string) =>
   Layer.unwrap(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const realRoot = yield* fs.realPath(root);
-      const contained = (url: string) =>
-        servesContainedFile(root, realRoot, url).pipe(
-          Effect.provideService(FileSystem.FileSystem, fs),
-          Effect.provideService(Path.Path, path),
-        );
-      const serve = (yield* HttpStaticServer.make({ root, spa: true })).pipe(
-        Effect.catch(HttpServerRespondable.toResponse),
-      );
+
+      /** Where `location` really is, if that is a file inside the folder. */
+      const containedFile = Effect.fn("WebClient.containedFile")(function* (location: string) {
+        const real = yield* fs.realPath(location).pipe(Effect.option);
+        if (Option.isNone(real) || !isWithin(realRoot, real.value)) return NOT_FOUND;
+        const info = yield* fs.stat(real.value).pipe(Effect.option);
+        return Option.isSome(info) && info.value.type === "File"
+          ? fileTarget(real.value)
+          : NOT_FOUND;
+      });
+
+      /** The one file, or redirect, a request names. */
+      const resolve = Effect.fn("WebClient.resolve")(function* (
+        request: HttpServerRequest.HttpServerRequest,
+        url: URL,
+        decoded: string,
+      ) {
+        // Every leading slash is part of the URL, not the filesystem's root.
+        const requested = path.resolveWithin(root, decoded.replace(/^\/+/, ""));
+        if (Option.isNone(requested)) return NOT_FOUND;
+        const real = yield* fs.realPath(requested.value).pipe(Effect.option);
+        if (Option.isNone(real)) {
+          // A path that names nothing, and could be one of the app's own
+          // routes, gets the app.
+          return path.extname(requested.value) === "" && acceptsHtml(request.headers["accept"])
+            ? yield* containedFile(path.join(root, INDEX))
+            : NOT_FOUND;
+        }
+        if (!isWithin(realRoot, real.value)) return NOT_FOUND;
+        const info = yield* fs.stat(real.value).pipe(Effect.option);
+        if (Option.isNone(info)) return NOT_FOUND;
+        if (info.value.type === "File") return fileTarget(real.value);
+        if (info.value.type !== "Directory") return NOT_FOUND;
+        if (!url.pathname.endsWith("/")) {
+          // One leading slash, so the location stays on this server.
+          const location = `${url.pathname.replace(/^\/+/, "/")}/${url.search}`;
+          return redirectTarget(location);
+        }
+        return yield* containedFile(path.join(real.value, INDEX));
+      });
+
       const handler = Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
-        const requested = pathname(request.url);
-        if (requested.startsWith(API_PREFIX)) return HttpServerResponse.empty({ status: 404 });
-        if (!(yield* contained(request.url))) {
-          return HttpServerResponse.empty({ status: 404 });
+        // The WHATWG parser drops the query and the fragment, and resolves
+        // dot segments, before anything below reads the path.
+        const url = new URL(request.url, "http://localhost");
+        const decoded = decodedPath(url.pathname);
+        if (Option.isNone(decoded) || decoded.value.startsWith(API_PREFIX)) return notFound;
+        const target = yield* resolve(request, url, decoded.value);
+        switch (target._tag) {
+          case "not-found":
+            return notFound;
+          case "redirect":
+            return HttpServerResponse.redirect(target.location, { status: 301 });
+          case "file": {
+            const type = mediaType(target.file);
+            const html = type.startsWith("text/html");
+            const file = yield* HttpServerResponse.file(target.file, { contentType: type }).pipe(
+              Effect.orDie,
+            );
+            const response = HttpServerResponse.setHeaders(file, {
+              "cache-control":
+                decoded.value.startsWith(ASSETS_PREFIX) && !html ? IMMUTABLE : REVALIDATE,
+              "x-content-type-options": "nosniff",
+              ...(html ? HTML_HEADERS : {}),
+            });
+            if (!stillFresh(request, response)) return response;
+            const { etag, "last-modified": lastModified } = response.headers;
+            return HttpServerResponse.empty({
+              status: 304,
+              headers: {
+                "cache-control": response.headers["cache-control"] ?? REVALIDATE,
+                ...(etag === undefined ? {} : { etag }),
+                ...(lastModified === undefined ? {} : { "last-modified": lastModified }),
+              },
+            });
+          }
         }
-        const response = yield* serve;
-        if (response.status >= 400) return response;
-        const html = response.headers["content-type"]?.startsWith("text/html") === true;
-        return HttpServerResponse.setHeaders(response, {
-          "cache-control": requested.startsWith("/assets/") && !html ? IMMUTABLE : REVALIDATE,
-          "x-content-type-options": "nosniff",
-          ...(html ? HTML_HEADERS : {}),
-        });
       });
       return HttpRouter.add("GET", "/*", handler);
     }),

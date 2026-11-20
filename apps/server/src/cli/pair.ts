@@ -29,7 +29,7 @@ const whereToOpen = Effect.fn("pair.whereToOpen")(function* (listener: ListenerS
   if (listener.scheme === "https") {
     return listener.names.length === 0
       ? [
-          `Open https://<the name on the server's certificate>:${listener.port} on the new device and enter it there.`,
+          `Open https://<a name the server's certificate covers>:${listener.port} on the new device and enter it there.`,
         ]
       : [
           "Open J3 Bots on the new device and enter it there:",

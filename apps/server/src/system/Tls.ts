@@ -10,7 +10,7 @@ import * as Schema from "effect/Schema";
 export interface TlsCredentials {
   readonly cert: string;
   readonly key: string;
-  /** The DNS names the certificate is issued for, which clients open it at. */
+  /** The concrete DNS names the certificate is issued for, which clients open it at. */
   readonly names: ReadonlyArray<string>;
 }
 
@@ -30,12 +30,16 @@ class TlsUnusable extends Schema.TaggedError<TlsUnusable>()("TlsUnusable", {
   }
 }
 
-/** `DNS:a.example, IP Address:10.0.0.1` → the DNS names. */
+/**
+ * `DNS:a.example, DNS:*.example, IP Address:10.0.0.1` → `a.example`: the DNS
+ * names a client can open. A wildcard names no one host.
+ */
 const dnsNames = (subjectAltName: string | undefined) =>
   (subjectAltName ?? "")
     .split(",")
     .map((entry) => entry.trim())
-    .flatMap((entry) => (entry.startsWith("DNS:") ? [entry.slice("DNS:".length)] : []));
+    .flatMap((entry) => (entry.startsWith("DNS:") ? [entry.slice("DNS:".length)] : []))
+    .filter((name) => !name.includes("*"));
 
 /**
  * Reads a certificate and key and checks that Node can serve with them, the

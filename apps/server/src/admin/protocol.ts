@@ -21,7 +21,7 @@ export const ListenerStatus = Schema.Struct({
   /** The address bound: one IP address, or `0.0.0.0` for every IPv4 interface. */
   address: Schema.String,
   port: Port,
-  /** With HTTPS, the DNS names the certificate covers: the names clients must open. */
+  /** With HTTPS, the DNS names the certificate covers, wildcards left out: the names clients open. */
   names: Schema.Array(Schema.String),
 });
 export type ListenerStatus = typeof ListenerStatus.Type;
@@ -29,6 +29,8 @@ export type ListenerStatus = typeof ListenerStatus.Type;
 export const AdminStatus = Schema.Struct({
   /** The J3 Bots release that is running. */
   version: Schema.String,
+  /** The server's process id, which tells it from another process on the same socket. */
+  pid: Schema.Int.check(Schema.isGreaterThan(0)),
   startedAt: Schema.DateTimeUtc,
   listener: ListenerStatus,
   /** The loopback port of the bot tool endpoint. */

@@ -4,7 +4,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import { ServerConfig } from "./config.ts";
+import { HOME_ENTRIES, ServerConfig } from "./config.ts";
 
 /** The relative path of a bot's generated system prompt file, inside its workspace. */
 export const SYSTEM_PROMPT_FILE = ".j3/system.md";
@@ -21,6 +21,7 @@ export const SYSTEM_PROMPT_FILE = ".j3/system.md";
  * shared/memory/         user.md and log/<yyyy-mm>.md, every bot's to read
  * shared/skills/
  * attachments/           file bytes, by digest
+ * web/                   where the operator may put a built web client; public
  * ```
  */
 export class Layout extends Context.Service<
@@ -39,13 +40,13 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const { home } = yield* ServerConfig;
     const path = yield* Path.Path;
-    const workspace = (botId: BotId) => path.join(home, "bots", botId);
+    const workspace = (botId: BotId) => path.join(home, HOME_ENTRIES.bots, botId);
     return Layout.of({
       workspace,
       botMemory: (botId) => path.join(workspace(botId), "memory"),
-      sharedMemory: path.join(home, "shared", "memory"),
-      sharedSkills: path.join(home, "shared", "skills"),
-      attachments: path.join(home, "attachments"),
+      sharedMemory: path.join(home, HOME_ENTRIES.shared, "memory"),
+      sharedSkills: path.join(home, HOME_ENTRIES.shared, "skills"),
+      attachments: path.join(home, HOME_ENTRIES.attachments),
     });
   }),
 );

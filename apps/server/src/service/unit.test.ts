@@ -6,6 +6,7 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import { SHELL_OVERRIDES } from "../config.ts";
 import { environmentOf, render, servicePath, type UnitPlan } from "./unit.ts";
 
 const GIB = 1024 ** 3;
@@ -64,7 +65,7 @@ const single = (unit: Map<string, Array<string>>, name: string) => {
   return values[0] ?? "";
 };
 
-it.effect("runs `serve` with the given Node, in the home, restarted when it fails", () =>
+it.effect("runs `serve` with the given Node and the home alone, restarted only when it fails", () =>
   Effect.gen(function* () {
     const unit = settings(yield* render(PI));
     assert.deepStrictEqual(command(single(unit, "ExecStart")), [PI.node, PI.entryPoint, "serve"]);
@@ -73,7 +74,11 @@ it.effect("runs `serve` with the given Node, in the home, restarted when it fail
       `J3_HOME=${PI.home}`,
       `PATH=${PI.searchPath}`,
     ]);
+    // No override from the user manager's environment reaches the server.
+    assert.sameMembers(words(single(unit, "UnsetEnvironment")), [...SHELL_OVERRIDES]);
     assert.strictEqual(single(unit, "Restart"), "on-failure");
+    // A stop ends the server with 130, which is not a failure to restart from.
+    assert.strictEqual(single(unit, "SuccessExitStatus"), "130");
     assert.strictEqual(single(unit, "WantedBy"), "default.target");
   }),
 );

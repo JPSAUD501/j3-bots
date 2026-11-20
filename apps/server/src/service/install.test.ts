@@ -16,8 +16,12 @@ import { Network } from "../system/Network.ts";
 import { Systemd } from "../system/Systemd.ts";
 import { install } from "./install.ts";
 
+/** The process id systemd gives the service's main process. */
+const SERVICE_PID = 4242;
+
 const answering = Schema.decodeSync(Schema.toCodecJson(AdminStatus))({
   version: "0.0.0",
+  pid: SERVICE_PID,
   startedAt: "2026-11-20T08:00:00.000Z",
   listener: { scheme: "http", address: "0.0.0.0", port: 3737, names: [] },
   toolPort: 3739,
@@ -32,9 +36,11 @@ interface Machine {
   readonly configFile: string;
   /** Variables set in the installing shell besides the home. */
   readonly shell: Record<string, string>;
-  /** What the started server answers on its admin socket. */
+  /** What answers on the admin socket before the install. */
+  readonly before: Option.Option<AdminStatus>;
+  /** What answers on the admin socket once the service is (re)started. */
   readonly server: Option.Option<AdminStatus>;
-  /** What systemd says of the unit after it was (re)started. */
+  /** What systemd says of the unit, before and after it was (re)started. */
   readonly active: string;
 }
 
@@ -87,7 +93,7 @@ const installOn = (machine: Machine) =>
       Layer.succeed(
         AdminClient,
         AdminClient.of({
-          status: () => Effect.succeed(machine.server),
+          status: () => Effect.sync(() => (calls.length === 0 ? machine.before : machine.server)),
           startPairing: () => Effect.die("install never pairs"),
         }),
       ),
@@ -96,7 +102,12 @@ const installOn = (machine: Machine) =>
         Systemd.of({
           available: Effect.succeed(true),
           linger: Effect.succeed("yes"),
-          unitState: () => Effect.succeed({ enabled: true, active: machine.active }),
+          unitState: () =>
+            Effect.succeed({
+              enabled: true,
+              active: machine.active,
+              mainPid: machine.active === "active" ? Option.some(SERVICE_PID) : Option.none(),
+            }),
           memoryControllerDelegated: Effect.succeed(true),
           reload: Effect.sync(() => {
             calls.push("reload");
@@ -116,6 +127,7 @@ const installOn = (machine: Machine) =>
 const HEALTHY: Machine = {
   configFile: "{}",
   shell: {},
+  before: Option.none(),
   server: Option.some(answering),
   active: "active",
 };
@@ -160,6 +172,34 @@ it.layer(NodeServices.layer)("service install", (it) => {
     Effect.gen(function* () {
       const { exit } = yield* installOn({ ...HEALTHY, server: Option.none(), active: "failed" });
       assert.deepInclude(failure(exit), { _tag: "ServiceNotInstalled", reason: "failed" });
+      // Another process answering is not the service's server coming up.
+      const other = yield* installOn({
+        ...HEALTHY,
+        server: Option.some({ ...answering, pid: 999 }),
+        active: "failed",
+      });
+      assert.deepInclude(failure(other.exit), { _tag: "ServiceNotInstalled", reason: "failed" });
+    }),
+  );
+
+  it.effect("leaves everything as it was while another server runs for the home", () =>
+    Effect.gen(function* () {
+      const { exit, calls, unit } = yield* installOn({
+        ...HEALTHY,
+        before: Option.some({ ...answering, pid: 999 }),
+        active: "inactive",
+      });
+      assert.deepInclude(failure(exit), {
+        _tag: "ServiceNotInstalled",
+        reason: "running-outside",
+      });
+      assert.include(failure(exit)?.toString() ?? "", "outside the service");
+      assert.deepStrictEqual(calls, []);
+      assert.strictEqual(unit, "previous unit");
+
+      // The service's own server is replaced by the restart.
+      const update = yield* installOn({ ...HEALTHY, before: Option.some(answering) });
+      assert.isTrue(Exit.isSuccess(update.exit));
     }),
   );
 });

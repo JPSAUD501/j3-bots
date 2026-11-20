@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Config from "effect/Config";
-import * as ConfigProvider from "effect/ConfigProvider";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -14,7 +13,7 @@ import * as ServerConfig from "../config.ts";
 import * as Home from "../home/Home.ts";
 import * as Installation from "../installation.ts";
 import { Host } from "../system/Host.ts";
-import { type Linger, Systemd } from "../system/Systemd.ts";
+import { type Linger, Systemd, type UnitState } from "../system/Systemd.ts";
 import * as Unit from "./unit.ts";
 
 // `j3-bots service install`: the server as a systemd user service, started at
@@ -26,14 +25,16 @@ const READY_WITHIN = Duration.seconds(60);
 
 /** The service was not installed, or was installed and did not come up. */
 class ServiceNotInstalled extends Schema.TaggedError<ServiceNotInstalled>()("ServiceNotInstalled", {
-  reason: Schema.Literals(["configuration", "failed", "not-ready"]),
-  /** For `configuration`, what the server would refuse. */
+  reason: Schema.Literals(["configuration", "running-outside", "failed", "not-ready"]),
+  /** For `configuration`, what the server would refuse; for `running-outside`, the home. */
   detail: Schema.String,
 }) {
   override get message(): string {
     switch (this.reason) {
       case "configuration":
         return `The service would not start, so it was left as it was: ${this.detail}`;
+      case "running-outside":
+        return `A J3 Bots server is already running for ${this.detail} outside the service. Stop it, then run this again.`;
       case "failed":
         return "The service is installed, but the server failed to start. Read why with `journalctl --user -u j3-bots -n 100`.";
       case "not-ready":
@@ -52,14 +53,53 @@ interface Installed {
   readonly linger: Linger;
 }
 
-/** Waits, within `READY_WITHIN`, for the started server to answer on its admin socket. */
-const awaitServer = Effect.fn("service.awaitServer")(function* (socket: string) {
+/** Who answers on the admin socket, and what systemd says of the unit meanwhile. */
+interface SocketOwner {
+  /**
+   * `service` when the server answering is the unit's main process,
+   * `other` when another process holds the home, `nobody` when none answers.
+   */
+  readonly owner: "service" | "other" | "nobody";
+  /** What the server answered; none from a release that answers differently. */
+  readonly status: Option.Option<AdminStatus>;
+  readonly unit: UnitState;
+}
+
+const socketOwner = Effect.fn("service.socketOwner")(function* (socket: string) {
   const admin = yield* AdminClient;
   const systemd = yield* Systemd;
+  const answer = yield* admin.status(socket).pipe(Effect.result);
+  const unit = yield* systemd.unitState(Unit.UNIT_NAME);
+  const running = unit.active === "active";
+  if (answer._tag === "Failure") {
+    // A server answers, but not in this release's words: an older release.
+    // The service's own is replaced by the restart; another is not ours to stop.
+    const owner: SocketOwner = {
+      owner: running ? "service" : "other",
+      status: Option.none(),
+      unit,
+    };
+    return owner;
+  }
+  if (Option.isNone(answer.success)) {
+    const owner: SocketOwner = { owner: "nobody", status: Option.none(), unit };
+    return owner;
+  }
+  const ours = running && Option.contains(unit.mainPid, answer.success.value.pid);
+  const owner: SocketOwner = { owner: ours ? "service" : "other", status: answer.success, unit };
+  return owner;
+});
+
+/**
+ * Waits, within `READY_WITHIN`, for the started service's own server to
+ * answer on its admin socket. Another process answering is not it.
+ */
+const awaitServer = Effect.fn("service.awaitServer")(function* (socket: string) {
   const poll = Effect.gen(function* () {
-    const answer = yield* admin.status(socket).pipe(Effect.option, Effect.map(Option.flatten));
-    if (Option.isSome(answer)) return { _tag: "ready", status: answer.value } as const;
-    const unit = yield* systemd.unitState(Unit.UNIT_NAME);
+    const { owner, status, unit } = yield* socketOwner(socket);
+    if (owner === "service" && Option.isSome(status)) {
+      return { _tag: "ready", status: status.value } as const;
+    }
     return unit.active === "failed"
       ? ({ _tag: "failed" } as const)
       : ({ _tag: "waiting" } as const);
@@ -100,20 +140,22 @@ export const install = Effect.gen(function* () {
     host.searchPath,
     yield* Config.option(Config.NonEmptyString("XDG_RUNTIME_DIR")),
   );
-  const asTheService = ConfigProvider.fromEnvRecord({
-    HOME: yield* Config.NonEmptyString("HOME"),
-    J3_HOME: home,
-    PATH: searchPath,
-  });
   const config = yield* Effect.gen(function* () {
     yield* Home.checkPrivate(home);
     return yield* ServerConfig.load;
   }).pipe(
-    Effect.provide(ConfigProvider.layer(asTheService)),
+    Effect.provide(
+      Unit.asTheService({ home: yield* Config.NonEmptyString("HOME"), j3Home: home, searchPath }),
+    ),
     Effect.mapError(
       (refusal) => new ServiceNotInstalled({ reason: "configuration", detail: refusal.message }),
     ),
   );
+
+  // One server per home: the service's would only wait behind another's lock.
+  if ((yield* socketOwner(config.adminSocket)).owner === "other") {
+    return yield* new ServiceNotInstalled({ reason: "running-outside", detail: config.home });
+  }
 
   const unit = yield* Unit.render({
     node: yield* fs.realPath(process.execPath),
