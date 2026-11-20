@@ -58,6 +58,8 @@ interface World {
   readonly platform: string;
   readonly freeBytes: Option.Option<number>;
   readonly ports: (host: string, port: number) => Exclude<PortState["_tag"], "failed">;
+  /** This machine's IPv4 addresses, besides loopback. */
+  readonly addresses: ReadonlyArray<string>;
   /** Every executable on the machine, by its full path. */
   readonly executables: ReadonlyArray<string>;
   /** This shell's `PATH`. */
@@ -85,6 +87,7 @@ const HEALTHY: World = {
   platform: "linux",
   freeBytes: Option.some(20 * GIB),
   ports: () => "free",
+  addresses: ["192.168.1.20"],
   executables: ["/usr/bin/claude", "/usr/bin/codex"],
   searchPath: "/usr/bin",
   unitPath: "/usr/bin",
@@ -139,9 +142,9 @@ const diagnoseIn = (changes: Partial<World> = {}) =>
       Layer.succeed(
         Network,
         Network.of({
-          ipv4Addresses: Effect.succeed([
-            { interface: "wlan0", address: "192.168.1.20", internal: false },
-          ]),
+          ipv4Addresses: Effect.succeed(
+            world.addresses.map((address) => ({ interface: "wlan0", address, internal: false })),
+          ),
         }),
       ),
       Layer.succeed(
@@ -240,6 +243,19 @@ it.layer(NodeServices.layer)("doctor", (it) => {
       assertFlagged(named(checks, "Configuration"), "problem", "config.json");
       assert.strictEqual(named(checks, "Service").status, "ok");
     }),
+  );
+
+  it.effect(
+    "reads the running server even when its configuration would refuse the next start",
+    () =>
+      Effect.gen(function* () {
+        // Serving "lan", the machine gained a public address after the server started.
+        const { checks } = yield* diagnoseIn({ addresses: ["192.168.1.20", "203.0.113.7"] });
+        assertFlagged(named(checks, "Configuration"), "problem", "203.0.113.7");
+        const server = named(checks, "Server");
+        assert.strictEqual(server.status, "ok");
+        assert.include(server.summary, "is running at http://0.0.0.0:3737");
+      }),
   );
 
   it.effect("finds a data directory other users can open a problem, as the server does", () =>

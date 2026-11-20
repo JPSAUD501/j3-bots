@@ -645,6 +645,13 @@ export const diagnose = Effect.gen(function* () {
   const shellSettings = Option.isSome(unitText)
     ? yield* overridesCheck(yield* ServerConfig.resolveConfigFile.pipe(Effect.provide(described)))
     : Option.none<Check>();
+  // The running server is found from the home alone and asked whatever the
+  // configuration says now: a setting that would refuse the next start does
+  // not stop the server that is running.
+  const live = yield* liveServer(
+    yield* ServerConfig.resolveAdminSocket.pipe(Effect.provide(described)),
+    Option.isSome(unitText),
+  );
   const loaded = yield* ServerConfig.load.pipe(Effect.provide(described), Effect.result);
   if (loaded._tag === "Failure") {
     checks.push(
@@ -656,6 +663,7 @@ export const diagnose = Effect.gen(function* () {
       ),
     );
     checks.push(yield* homeCheck(yield* ServerConfig.resolveHome.pipe(Effect.provide(described))));
+    checks.push(serverCheck(live));
     checks.push(...(yield* serviceChecks(unitText)));
     if (Option.isSome(shellSettings)) checks.push(shellSettings.value);
     return checks;
@@ -674,7 +682,6 @@ export const diagnose = Effect.gen(function* () {
   checks.push(yield* homeCheck(config.home));
   checks.push(yield* diskCheck(config.home));
 
-  const live = yield* liveServer(config.adminSocket, Option.isSome(unitText));
   // Only a server the report describes lends it live diagnostics.
   const status = live._tag === "described" ? Option.some(live.status) : Option.none();
   checks.push(serverCheck(live));
