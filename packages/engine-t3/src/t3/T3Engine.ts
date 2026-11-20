@@ -88,6 +88,7 @@ import { cursorFor, makeBatches, type BatchPlace } from "./Batches.ts";
 import { makePrivateFiles } from "./PrivateFiles.ts";
 import { instanceIdFor, provision, type InstanceSpec } from "./Provision.ts";
 import { baseUrl, stateChanges, supervise, type ProcessState } from "./Supervisor.ts";
+import { upload } from "./upload.ts";
 import {
   activeTurn,
   applyEvent,
@@ -839,7 +840,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       mimeType: metadata.mediaType,
       sizeBytes: input.size,
     }).pipe(Effect.orDie);
-    const upload = yield* rpc["attachments.createUploadUrl"](request).pipe(
+    const signed = yield* rpc["attachments.createUploadUrl"](request).pipe(
       Effect.timeoutOrElse({
         duration: COMMAND_TIMEOUT,
         orElse: () => Effect.fail(new EngineIndeterminate()),
@@ -852,20 +853,17 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     );
     const bytes = yield* fs.readFile(input.path).pipe(Effect.orDie);
     const token = yield* currentToken;
-    yield* http
-      .execute(
-        HttpClientRequest.post(`${baseUrl(options.port)}${upload.relativeUrl}`).pipe(
-          HttpClientRequest.bearerToken(Redacted.value(token)),
-          HttpClientRequest.bodyUint8Array(bytes, metadata.mediaType),
-        ),
-      )
-      .pipe(
-        Effect.flatMap(HttpClientResponse.filterStatusOk),
-        Effect.mapError(() => new EngineIndeterminate()),
-      );
+    yield* upload(
+      http,
+      HttpClientRequest.post(`${baseUrl(options.port)}${signed.relativeUrl}`).pipe(
+        HttpClientRequest.bearerToken(Redacted.value(token)),
+        HttpClientRequest.bodyUint8Array(bytes, metadata.mediaType),
+      ),
+      { size: bytes.byteLength, commandTimeout: COMMAND_TIMEOUT },
+    );
     const now = yield* DateTime.now;
     return {
-      id: EngineAttachmentId.make(upload.attachmentId),
+      id: EngineAttachmentId.make(signed.attachmentId),
       usableUntil: DateTime.addDuration(now, STAGED_LIFETIME),
     };
   });
