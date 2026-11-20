@@ -14,7 +14,7 @@ J3 Bots does not run models itself. It drives an unmodified [T3 Code](https://gi
 | ---------------- | ------------------------------------------------------------------------------ |
 | Product concepts | Drafted                                                                        |
 | Architecture     | Drafted; the engine integration path is verified against a live T3 Code server |
-| Prompts          | Architecture drafted; base prompt at v0                                        |
+| Prompts          | Architecture drafted; base prompt at v0.3                                      |
 | Design language  | Direction drafted; no mockups yet                                              |
 | Code             | Foundation: toolchain, client contract, engine interface, server skeleton      |
 

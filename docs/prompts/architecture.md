@@ -48,7 +48,7 @@ Two texts J3 Bots does not write are always in front of the model.
 
 **The harness's own prompt** is written for coding work in a terminal. It is much larger than anything else here. Long answers are acceptable there, Markdown structure is encouraged, and the final assistant message is the answer. This is the text J3 Bots' base prompt pushes against hardest.
 
-**T3 Code's instructions** are appended to the system prompt whenever T3 Code's MCP server is attached, which is every session. At the pinned commit they measure 6,245 bytes for Claude Code and 7,639 for Codex, about 1,500 to 2,000 tokens, cached with the rest of the system prompt. They open with "Ordinary coding tasks need no T3 tools", so most of the text is conditional guidance, and most of it does not conflict with anything. Read in `packages/provider-core/src/server/orchestrationInstructions.ts`, `runtimeInstructions.ts` and `ClaudeAdapterV2.ts`.
+**T3 Code's instructions** are appended to the system prompt whenever T3 Code's MCP server is attached, which is every session. At commit `9bb92a4`, a little after the pinned engine, they measure 6,245 bytes for Claude Code and 7,639 for Codex, about 1,500 to 2,000 tokens, cached with the rest of the system prompt. They open with "Ordinary coding tasks need no T3 tools", so most of the text is conditional guidance, and most of it does not conflict with anything. Read in `packages/provider-core/src/server/orchestrationInstructions.ts`, `runtimeInstructions.ts` and `ClaudeAdapterV2.ts`.
 
 Neither can be removed without modifying T3 Code. The base prompt deals with T3 Code's text part by part:
 
