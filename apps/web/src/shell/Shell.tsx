@@ -2,23 +2,32 @@
 import type {
   Bot,
   EngineStatus,
+  Entry,
   EntryId,
   EntryTarget,
   RosterItem,
   RosterItemKey,
 } from "@j3-bots/contracts";
 import { useEffect, useEffectEvent, useId, useRef, useState, type ReactElement } from "react";
-import { BotsProvider } from "../app/context";
+import { BotsProvider, useI18n } from "../app/context";
 import { AppShell, type Region } from "../components/AppShell";
 import { Composer } from "../components/Composer";
 import { ConversationHeader } from "../components/ConversationHeader";
 import { BotDetails, RoomDetails } from "../components/DetailsPanel";
-import { FirstRun, NoSelection, QuietConversation } from "../components/EmptyStates";
+import {
+  Connecting,
+  ConversationGone,
+  FirstRun,
+  NoSelection,
+  QuietConversation,
+} from "../components/EmptyStates";
 import { Roster } from "../components/Roster";
-import { SettingsMenu } from "../components/SettingsMenu";
+import { SettingsButton, SignOutDevice } from "../components/SettingsDialog";
+import { Button } from "../components/ui/button";
 import { Timeline } from "../components/Timeline";
 import { filterRoster, orderRoster, rosterKeyOf, rosterKeyText } from "../presentation/roster";
 import type { ShellData, ShellIntents } from "./data";
+import { useNewestSeen } from "../lib/useNewestSeen";
 import { useShellLayout } from "./layout";
 import { isEditable, shellShortcuts } from "./shortcuts";
 
@@ -56,21 +65,24 @@ interface ShellProps {
 /** The whole interface: roster, conversation and details, from data and intents. */
 export function Shell({ data, intents, navigation, keyboard = true }: ShellProps) {
   const { selected, detailsOpen } = navigation;
+  const { t } = useI18n();
   const shortcuts = shellShortcuts();
-  const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>({});
+  const { dictate, editProfile } = intents;
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const titleRef = useRef<HTMLButtonElement>(null);
   const detailsHeadingRef = useRef<HTMLHeadingElement>(null);
   const detailsHeadingId = useId();
-  const timelineRef = useRef<HTMLDivElement>(null);
+  // State, not a ref: each conversation mounts its own timeline, and what watches it follows.
+  const [timeline, setTimeline] = useState<HTMLDivElement | null>(null);
   const rosterRef = useRef<HTMLElement>(null);
   const [containerRef, layout] = useShellLayout();
 
-  const bots = data.roster.flatMap((item) => (item._tag === "bot" ? [item.bot] : []));
+  const rosterItems = data.roster ?? [];
+  const bots = rosterItems.flatMap((item) => (item._tag === "bot" ? [item.bot] : []));
   const item =
     selected === null
       ? null
-      : (data.roster.find((i) =>
+      : (rosterItems.find((i) =>
           i._tag === "bot"
             ? selected._tag === "bot" && i.bot.id === selected.botId
             : selected._tag === "room" && i.room.id === selected.roomId,
@@ -124,7 +136,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
       event.preventDefault();
       navigation.setDetailsOpen(false);
     } else if (shortcuts.nextBot.matches(event) || shortcuts.previousBot.matches(event)) {
-      const rows = orderRoster(filterRoster(data.roster, ""));
+      const rows = orderRoster(filterRoster(rosterItems, ""));
       if (rows.length === 0) return;
       const forward = shortcuts.nextBot.matches(event);
       const index = item === null ? -1 : rows.indexOf(item);
@@ -158,17 +170,33 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
     return () => window.removeEventListener("keydown", listener);
   }, [keyboard]);
 
-  if (data.roster.length === 0) {
+  // What the operator can see of the open conversation, they have read.
+  const shownTarget = item === null ? null : targetOf(rosterKeyOf(item));
+  const shownItems = shownTarget === null ? null : data.conversation(shownTarget).items;
+  useNewestSeen(timeline, (id) => {
+    const seen = shownItems?.find((i): i is Entry => i._tag !== "outgoing" && i.id === id);
+    if (shownTarget !== null && seen !== undefined) intents.markRead(shownTarget, seen.order);
+  });
+
+  if (data.roster === null || data.roster.length === 0) {
     return (
-      <div className="flex h-full flex-col pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]">
-        <FirstRun
-          engine={data.engine}
-          onCreateBot={(name, primary) =>
-            intents
-              .createBot(name, primary)
-              .then((botId) => navigation.select({ _tag: "bot", botId }))
-          }
-        />
+      <div className="flex h-full flex-col pt-(--inset-top) pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]">
+        {data.roster === null ? (
+          <Connecting />
+        ) : (
+          <FirstRun
+            engine={data.engine}
+            onCreateBot={(name, primary) =>
+              intents
+                .createBot(name, primary)
+                .then((botId) => navigation.select({ _tag: "bot", botId }))
+            }
+          />
+        )}
+        {/* Settings live in the roster's footer; before there is a roster, this is the way out. */}
+        <div className="flex shrink-0 justify-center px-4 pb-3">
+          <SignOutDevice onSignOut={intents.signOut} quiet />
+        </div>
       </div>
     );
   }
@@ -180,7 +208,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
       rowLink={navigation.rowLink}
       onNewBot={intents.newBot}
       onNewRoom={intents.newRoom}
-      footer={<SettingsMenu />}
+      footer={<SettingsButton data={data} intents={intents} />}
       ref={rosterRef}
     />
   );
@@ -190,14 +218,13 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
   if (item !== null) {
     const key = rosterKeyOf(item);
     const target = targetOf(key);
-    const entries = data.entries(target);
-    const draft = drafts[rosterKeyText(key)] ?? "";
+    const view = data.conversation(target);
+    const draft = data.draft(target);
+    const offer = data.offer(target);
     const recipient = item._tag === "bot" ? item.bot.profile.name : item.room.name;
     const toggleDetails = () => navigation.setDetailsOpen(!detailsOpen);
     const goToEntry = (entryId: EntryId) => {
-      const card = timelineRef.current?.querySelector<HTMLElement>(
-        `[data-entry-id="${CSS.escape(entryId)}"]`,
-      );
+      const card = timeline?.querySelector<HTMLElement>(`[data-entry-id="${CSS.escape(entryId)}"]`);
       card?.scrollIntoView({ block: "center" });
       card?.focus({ preventScroll: true });
     };
@@ -219,19 +246,35 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
           stopShortcut={shortcuts.stop}
           titleRef={titleRef}
         />
-        {entries.length === 0 && item._tag === "bot" ? (
+        {view.phase === "not-found" ? (
+          <ConversationGone onBack={() => navigation.select(null)} />
+        ) : view.phase === "ready" && view.items.length === 0 && item._tag === "bot" ? (
           <QuietConversation bot={item.bot} />
         ) : (
           // Reversed, so the view stays pinned to the newest entry as entries arrive. One per
           // conversation, so each opens at its own end rather than where the last one was left.
           <div
             key={`timeline:${rosterKeyText(key)}`}
-            ref={timelineRef}
+            ref={setTimeline}
             className="flex min-h-0 flex-1 flex-col-reverse overflow-y-auto [overflow-anchor:auto]"
           >
             <div className="mx-auto w-full max-w-(--layout-text-column) px-3 py-4 @tablet:px-6">
+              {view.hasOlder && (
+                <div className="flex justify-center pb-2">
+                  <Button
+                    variant="ghost-muted"
+                    size="sm"
+                    aria-disabled={view.loadingOlder}
+                    onClick={() => {
+                      if (!view.loadingOlder) intents.loadOlder(target);
+                    }}
+                  >
+                    {view.loadingOlder ? t("timeline.loadingOlder") : t("timeline.loadOlder")}
+                  </Button>
+                </div>
+              )}
               <Timeline
-                entries={entries}
+                entries={view.items}
                 inRoom={item._tag === "room"}
                 workSteps={data.workSteps}
                 submitting={data.submitting}
@@ -242,15 +285,28 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
         )}
         <div className="mx-auto w-full max-w-(--layout-text-column) px-3 pt-1 pb-[max(--spacing(3),env(safe-area-inset-bottom))] @tablet:px-6">
           <Composer
+            draftKey={rosterKeyText(rosterKeyOf(item))}
             recipient={recipient}
-            value={draft}
-            onValueChange={(value) => setDrafts((d) => ({ ...d, [rosterKeyText(key)]: value }))}
-            onSend={() => {
-              intents.sendMessage(target, draft.trim());
-              setDrafts((d) => ({ ...d, [rosterKeyText(key)]: "" }));
-            }}
-            onAttach={() => intents.attach(target)}
-            onDictate={() => intents.dictate(target)}
+            value={draft.text}
+            onValueChange={(value) => intents.setDraftText(target, value)}
+            files={draft.files}
+            sending={draft.sending}
+            loading={data.draftsLoading}
+            {...(data.draftsFailed ? { unread: { onRetry: intents.retryDrafts } } : {})}
+            notSaved={data.draftNotSaved(target)}
+            onAttachFiles={(files) => intents.attachFiles(target, files)}
+            onDetachFile={(fileKey) => intents.detachFile(target, fileKey)}
+            onSend={() => intents.sendDraft(target)}
+            {...(dictate ? { onDictate: () => dictate(target) } : {})}
+            {...(offer === null
+              ? {}
+              : {
+                  replaced: {
+                    revision: offer,
+                    onRestore: () => intents.restoreDraft(target),
+                    onDismiss: () => intents.dismissDraftOffer(target),
+                  },
+                })}
             inputRef={composerRef}
           />
         </div>
@@ -271,10 +327,12 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
             headingRef={detailsHeadingRef}
             headingId={detailsHeadingId}
             intents={{
-              ...intents,
-              editProfile: () => intents.editProfile(bot.id),
-              freshStart: () => intents.freshStart(bot.id),
+              setRoutineEnabled: intents.setRoutineEnabled,
+              openAttachment: intents.openAttachment,
+              openMemoryFile: (path) => intents.openMemoryFile(bot.id, path),
+              freshStart: () => intents.freshStart(bot.id, bot.profile.name),
               deleteBot: () => intents.deleteBot(bot.id),
+              ...(editProfile ? { editProfile: () => editProfile(bot.id) } : {}),
             }}
           />
         );

@@ -10,6 +10,7 @@ import {
   ServerInfo,
   SocketTicketGrant,
 } from "@j3-bots/contracts";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -27,10 +28,39 @@ export class ServerUnreachable extends Schema.TaggedError<ServerUnreachable>()(
   }
 }
 
-/** The routes a client uses over plain HTTP, before and around the RPC socket. */
-export const make = Effect.fnUntraced(function* (origin: URL) {
+/**
+ * Fails with `onTimeout`'s error unless `effect` ends within `duration`, so a
+ * server or a proxy that accepts a request and never answers it strands
+ * nothing. Running out interrupts the request, which aborts it.
+ */
+export const within =
+  <E2>(duration: Duration.Duration, onTimeout: () => E2) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | E2, R> =>
+    effect.pipe(Effect.timeoutOrElse({ duration, orElse: () => Effect.fail(onTimeout()) }));
+
+/** The slowest link a file transfer is waited for: 32 KiB a second, a poor mobile link. */
+const SLOW_LINK_BYTES_PER_SECOND = 32 * 1024;
+/** The longest any file transfer is waited for, however large. */
+const MAX_TRANSFER_WAIT = Duration.minutes(15);
+
+/**
+ * How long moving a file of `size` bytes, up or down, may take: a request's
+ * wait, plus its bytes over a slow link.
+ */
+export const transferDeadline = (size: number, requestTimeout: Duration.Duration) =>
+  Duration.min(
+    MAX_TRANSFER_WAIT,
+    Duration.sum(requestTimeout, Duration.seconds(size / SLOW_LINK_BYTES_PER_SECOND)),
+  );
+
+/**
+ * The routes a client uses over plain HTTP, before and around the RPC socket.
+ * Each answers within `requestTimeout` or counts as unreachable.
+ */
+export const make = Effect.fnUntraced(function* (origin: URL, requestTimeout: Duration.Duration) {
   const client = yield* HttpClient.HttpClient;
   const url = (path: string) => new URL(path, origin).toString();
+  const answered = within(requestTimeout, () => new ServerUnreachable());
 
   const send = (request: HttpClientRequest.HttpClientRequest) =>
     client.execute(request).pipe(Effect.mapError(() => new ServerUnreachable()));
@@ -48,6 +78,7 @@ export const make = Effect.fnUntraced(function* (origin: URL) {
     Effect.flatMap((response) =>
       response.status === 200 ? decode(response, ServerInfo) : Effect.fail(new ServerUnreachable()),
     ),
+    answered,
   );
 
   const pair = (request: PairRequest) =>
@@ -69,9 +100,14 @@ export const make = Effect.fnUntraced(function* (origin: URL) {
           }
         },
       ),
+      answered,
     );
 
-  /** A 401 means the device is not paired or was revoked. */
+  /**
+   * A 401 carrying the server's own `NotAuthenticated` means the device is not
+   * paired or was revoked. Any other 401 comes from something in between, such
+   * as a reverse proxy whose own login expired: the server was not reached.
+   */
   const socketTicket = (token: Redacted.Redacted<DeviceToken>) =>
     send(
       HttpClientRequest.post(url(HTTP_PATHS.socketTicket)).pipe(
@@ -84,12 +120,13 @@ export const make = Effect.fnUntraced(function* (origin: URL) {
             case 200:
               return decode(response, SocketTicketGrant);
             case 401:
-              return Effect.fail(new NotAuthenticated());
+              return decode(response, NotAuthenticated).pipe(Effect.flatMap(Effect.fail));
             default:
               return Effect.fail(new ServerUnreachable());
           }
         },
       ),
+      answered,
     );
 
   /** The RPC socket's address for one ticket: `ws:` beside `http:`, `wss:` beside `https:`. */

@@ -34,7 +34,10 @@ export const Author = Schema.Union([
 ]);
 export type Author = typeof Author.Type;
 
-export const MessageText = Schema.String.check(Schema.isMaxLength(100_000));
+/** The most characters (UTF-16 code units) one message can hold. */
+export const MAX_MESSAGE_LENGTH = 100_000;
+
+export const MessageText = Schema.String.check(Schema.isMaxLength(MAX_MESSAGE_LENGTH));
 
 /**
  * Who a room message addresses. In a conversation it is always `bots` with no

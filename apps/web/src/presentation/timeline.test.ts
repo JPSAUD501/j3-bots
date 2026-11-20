@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BotId, EntryId, EntryOrder } from "@j3-bots/contracts";
+import { BotId, CommandId, EntryId, EntryOrder } from "@j3-bots/contracts";
+import type { OutgoingMessage } from "@j3-bots/client-runtime";
 import { describe, expect, it } from "vite-plus/test";
 import { at, message } from "../test/fixtures";
 import { buildTimeline } from "./timeline";
@@ -47,5 +48,26 @@ describe("buildTimeline", () => {
       message("2026-11-20T10:01:00Z", scout),
     ]);
     expect(shape(items)).toEqual(["divider", "single", "card", "single"]);
+  });
+
+  it("joins a message on its way to the operator's group, and keeps its key once it arrives", () => {
+    const commandId = CommandId.make("cmd_hello");
+    const outgoing: OutgoingMessage = {
+      _tag: "outgoing",
+      commandId,
+      target: { _tag: "conversation", botId: BotId.make("scout") },
+      text: "hello",
+      attachments: [],
+      mentions: null,
+      createdAt: at("2026-11-20T10:01:00Z"),
+      status: { _tag: "sending" },
+    };
+    const sending = buildTimeline([message("2026-11-20T10:00:00Z"), outgoing]);
+    expect(shape(sending)).toEqual(["divider", "first", "last"]);
+    const arrived = buildTimeline([
+      message("2026-11-20T10:00:00Z"),
+      message("2026-11-20T10:01:00Z", { _tag: "operator" }, "hello", { commandId }),
+    ]);
+    expect(arrived.at(-1)?.key).toBe(sending.at(-1)?.key);
   });
 });

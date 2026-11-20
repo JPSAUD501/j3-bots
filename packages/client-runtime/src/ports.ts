@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { DeviceId, DeviceToken } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
-import type * as Effect from "effect/Effect";
+import * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
 import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import type * as Stream from "effect/Stream";
 
 // What each platform gives the runtime. The runtime imports nothing from a
@@ -42,16 +43,29 @@ export class CredentialStorageError extends Schema.TaggedError<CredentialStorage
 
 /**
  * The device credential in the platform's secure storage: the keychain or
- * keystore on mobile, the OS credential vault on desktop, and on the web the
- * best the browser offers (a non-extractable key wrapping the token in
- * IndexedDB, for example). The runtime keeps no other copy on disk.
+ * keystore on mobile, the OS credential vault on desktop, and on the web
+ * IndexedDB, which only pages of the server's own origin can read. The
+ * runtime keeps no other copy on disk.
  */
 export class CredentialStore extends Context.Service<
   CredentialStore,
   {
     readonly load: Effect.Effect<Option.Option<DeviceCredential>, CredentialStorageError>;
     readonly save: (credential: DeviceCredential) => Effect.Effect<void, CredentialStorageError>;
-    readonly clear: Effect.Effect<void, CredentialStorageError>;
+    /**
+     * Deletes `credential`, unless storage holds another one: a pairing
+     * another window made since. The comparison and the deletion are one
+     * transaction. Succeeds with the credential storage holds afterwards.
+     */
+    readonly clear: (
+      credential: DeviceCredential,
+    ) => Effect.Effect<Option.Option<DeviceCredential>, CredentialStorageError>;
+    /**
+     * Emits each time another window of this client saved or cleared the
+     * credential, so this one loads it again: a browser's other tabs of the
+     * same origin. A platform with one window never emits.
+     */
+    readonly changes: Stream.Stream<void>;
   }
 >()("@j3-bots/client-runtime/ports/CredentialStore") {}
 
@@ -71,3 +85,160 @@ export class Network extends Context.Service<
     readonly changes: Stream.Stream<NetworkStatus>;
   }
 >()("@j3-bots/client-runtime/ports/Network") {}
+
+/**
+ * What the client keeps on the device besides the credential: `drafts`, each
+ * conversation's unsent text and the files already uploaded for it, and
+ * `outbox`, messages the operator sent that the server has not accepted yet.
+ * Neither holds a secret, but both hold conversation text. Each record belongs
+ * to the pairing that wrote it: a window shows, keeps and sends only the
+ * records of the pairing it follows, and those of a pairing that ended go.
+ */
+export const LocalTable = Schema.Literals(["drafts", "outbox"]);
+export type LocalTable = typeof LocalTable.Type;
+
+/** One of the client's records as it is or is to be: its value, or `null` for none. */
+export interface LocalRecord {
+  readonly table: LocalTable;
+  readonly key: string;
+  readonly value: string | null;
+}
+
+/** The device's storage for the client's own records could not be read or written. */
+export class LocalStorageError extends Schema.TaggedError<LocalStorageError>()(
+  "LocalStorageError",
+  { operation: Schema.Literals(["read", "write", "remove"]) },
+) {
+  override get message(): string {
+    return `The client's local storage failed to ${this.operation}.`;
+  }
+}
+
+/**
+ * Records the client keeps between launches so nothing the operator typed is
+ * lost to a reload or a crash: IndexedDB on the web, the app's own storage
+ * elsewhere. Values are text the runtime encodes and decodes with its own
+ * schemas. Each record is written alone, so two windows of one client never
+ * overwrite each other's records. When the storage fails, the client carries
+ * on with what it holds in memory.
+ */
+export class ClientStorage extends Context.Service<
+  ClientStorage,
+  {
+    /** Every record of `table`, by key. */
+    readonly readAll: (
+      table: LocalTable,
+    ) => Effect.Effect<ReadonlyMap<string, string>, LocalStorageError>;
+    readonly write: (
+      table: LocalTable,
+      key: string,
+      value: string,
+    ) => Effect.Effect<void, LocalStorageError>;
+    readonly remove: (table: LocalTable, key: string) => Effect.Effect<void, LocalStorageError>;
+    /** Removes every record of `table`. */
+    readonly clear: (table: LocalTable) => Effect.Effect<void, LocalStorageError>;
+    /**
+     * Applies every change or none, in one transaction, so a record moved from
+     * one table to another is never in both and never in neither. The same
+     * transaction first reads each record of `expected`: unless every one
+     * still holds the value given, it writes nothing and succeeds with `false`.
+     *
+     * Given `pairing`, the same transaction also reads the device's
+     * credential, and writes nothing, succeeding with `false`, unless it is
+     * that pairing's. A record of a pairing that has ended is then never
+     * written, however late a window learns that it ended. A platform whose
+     * credential storage cannot take part in the transaction must keep its own
+     * copy of the paired device id, written in the same transaction as the
+     * credential, where this one can read it. On the web both are in one
+     * IndexedDB database.
+     */
+    readonly commit: (
+      changes: ReadonlyArray<LocalRecord>,
+      expected?: ReadonlyArray<LocalRecord>,
+      pairing?: DeviceId,
+    ) => Effect.Effect<boolean, LocalStorageError>;
+    /**
+     * Emits a table each time another window of this client changed it, so
+     * this one reads it again: a browser's other tabs of the same origin. A
+     * platform with one window never emits.
+     */
+    readonly changes: Stream.Stream<LocalTable>;
+  }
+>()("@j3-bots/client-runtime/ports/ClientStorage") {}
+
+/**
+ * Locks every window of this client on the device shares, so that what one
+ * guards runs in one window at a time: the Web Locks API in a browser, an
+ * in-process lock where the client has one window. A page served over plain
+ * HTTP on a local network has no Web Locks API; each of its tabs then locks
+ * for itself alone.
+ */
+export class WindowLocks extends Context.Service<
+  WindowLocks,
+  {
+    /**
+     * Runs `effect` once this window holds the lock `name`, and lets go of it
+     * when `effect` ends. Interrupted while it waits, it gives up the request.
+     */
+    readonly withLock: <A, E, R>(
+      name: string,
+      effect: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E, R>;
+  }
+>()("@j3-bots/client-runtime/ports/WindowLocks") {}
+
+/** Locks held within this process only, for a platform with one window. */
+export const makeInProcessLocks = (): WindowLocks["Service"] => {
+  const locks = new Map<string, Semaphore.Semaphore>();
+  const lockFor = (name: string) => {
+    const known = locks.get(name);
+    if (known !== undefined) return known;
+    const made = Semaphore.makeUnsafe(1);
+    locks.set(name, made);
+    return made;
+  };
+  return WindowLocks.of({
+    withLock: Effect.fn("WindowLocks.withLock")(function* <A, E, R>(
+      name: string,
+      effect: Effect.Effect<A, E, R>,
+    ) {
+      return yield* lockFor(name).withPermits(1)(effect);
+    }),
+  });
+};
+
+/** One upload, as the runtime asks the platform to send it. */
+export interface UploadRequest {
+  readonly url: string;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly body: Blob;
+  /** Called as the body's bytes leave the device, with how many have so far. */
+  readonly onProgress: (sent: number) => void;
+}
+
+/** The server's answer to an upload, before the runtime reads it. */
+export interface UploadResponse {
+  /** The address that answered, after any redirect (`XMLHttpRequest.responseURL`). */
+  readonly url: string;
+  readonly status: number;
+  readonly body: string;
+}
+
+/** The upload did not reach the server, or its answer did not come back. */
+export class TransferFailed extends Schema.TaggedError<TransferFailed>()("TransferFailed", {}) {
+  override get message(): string {
+    return "The file transfer failed.";
+  }
+}
+
+/**
+ * Sends a file's bytes to the server and reports progress as they go, which
+ * `fetch` cannot do: `XMLHttpRequest` in a browser, the platform's upload task
+ * elsewhere. Interrupting the effect aborts the transfer.
+ */
+export class FileTransfer extends Context.Service<
+  FileTransfer,
+  {
+    readonly upload: (request: UploadRequest) => Effect.Effect<UploadResponse, TransferFailed>;
+  }
+>()("@j3-bots/client-runtime/ports/FileTransfer") {}

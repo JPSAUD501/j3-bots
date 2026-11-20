@@ -2,12 +2,25 @@
 import type { Device, DeviceId, PairingCode } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import type * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Scope from "effect/Scope";
 import { Connection, type NotPaired } from "../connection/Connection.ts";
 import { Actions, intentResult, type IntentResult } from "../intents/Actions.ts";
 import { Cell, type Readable } from "../Store.ts";
 import { loading, markStale, ready, type Synced } from "./synced.ts";
+
+/** How long revoking a device waits for the server's answer. */
+const REVOKE_WAIT = Duration.seconds(10);
+
+/**
+ * What revoking a device did. `unanswered`: no answer came within ten
+ * seconds, so the device may or may not be revoked; the list is read again
+ * once the server answers, and shows which.
+ */
+export type RevokeResult = IntentResult | { readonly _tag: "unanswered" };
 
 /**
  * The paired devices. Read when each socket opens and after every change made
@@ -24,10 +37,12 @@ export class Devices extends Context.Service<
       NotPaired
     >;
     /**
+     * Revokes a device, waiting at most ten seconds for the server. Unless it
+     * did, the list is read again once connected, which shows what happened.
      * Revoking this device itself closes its socket before the answer can
      * arrive: the result is then `not-paired`, and the connection `unpaired`.
      */
-    readonly revoke: (deviceId: DeviceId) => Effect.Effect<IntentResult>;
+    readonly revoke: (deviceId: DeviceId) => Effect.Effect<RevokeResult>;
   }
 >()("@j3-bots/client-runtime/stores/Devices") {}
 
@@ -36,6 +51,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const connection = yield* Connection;
     const actions = yield* Actions;
+    const scope = yield* Scope.Scope;
     const state = new Cell<Synced<ReadonlyArray<Device>>>(loading);
     const show = (devices: ReadonlyArray<Device>) => Effect.sync(() => state.set(ready(devices)));
 
@@ -57,14 +73,19 @@ export const layer = Layer.effect(
       const commandId = yield* actions.commandId;
       const exit = yield* connection
         .call((client) => client["device.revoke"]({ commandId, deviceId }))
-        .pipe(Effect.exit);
-      const result = intentResult(exit);
+        .pipe(Effect.exit, Effect.timeoutOption(REVOKE_WAIT));
+      const result: RevokeResult = Option.match(exit, {
+        onNone: () => ({ _tag: "unanswered" }),
+        onSome: intentResult,
+      });
       if (result._tag === "done") {
         state.update((current) =>
           current._tag === "ready"
             ? { ...current, value: current.value.filter((device) => device.id !== deviceId) }
             : current,
         );
+      } else {
+        yield* refresh.pipe(Effect.ignore, Effect.forkIn(scope));
       }
       return result;
     });

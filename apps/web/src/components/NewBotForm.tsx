@@ -1,0 +1,79 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import { useId, useState } from "react";
+import { useI18n } from "../app/context";
+import { cn } from "../lib/cn";
+import { Button } from "./ui/button";
+import { Checkbox } from "./ui/checkbox";
+
+interface NewBotFormProps {
+  /** Whether "primary" starts checked: the first bot is the primary one unless the operator says otherwise. */
+  readonly primaryAtFirst: boolean;
+  /** Resolves once the bot exists. */
+  readonly onCreate: (name: string, primary: boolean) => Promise<void>;
+  /** Absent where there is nothing to go back to. */
+  readonly onCancel?: () => void;
+  readonly className?: string;
+}
+
+/**
+ * A name, and whether the bot becomes the primary one; the bot asks the rest
+ * itself. Create stays focusable while it cannot act, and pressing it then
+ * does nothing, as in pairing and the composer.
+ */
+export function NewBotForm({ primaryAtFirst, onCreate, onCancel, className }: NewBotFormProps) {
+  const { t } = useI18n();
+  const nameId = useId();
+  const [name, setName] = useState("");
+  const [primary, setPrimary] = useState(primaryAtFirst);
+  const [state, setState] = useState<"editing" | "creating" | "failed">("editing");
+  const trimmed = name.trim();
+  const ready = trimmed !== "" && state !== "creating";
+  const submit = (
+    <Button type="submit" variant="primary" aria-disabled={!ready}>
+      {t("firstRun.create.submit")}
+    </Button>
+  );
+  return (
+    <form
+      className={cn("flex flex-col gap-3", className)}
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!ready) return;
+        setState("creating");
+        onCreate(trimmed, primary).then(
+          () => setState("editing"),
+          () => setState("failed"),
+        );
+      }}
+    >
+      <label htmlFor={nameId} className="sr-only">
+        {t("firstRun.create.name")}
+      </label>
+      <input
+        id={nameId}
+        value={name}
+        maxLength={40}
+        onChange={(event) => setName(event.currentTarget.value)}
+        placeholder={t("firstRun.create.placeholder")}
+        className="h-9 rounded-md border border-input bg-surface px-3 text-sm placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:h-11"
+      />
+      <label className="flex items-start gap-2 text-xs text-muted-foreground">
+        <span className="mt-px">
+          <Checkbox checked={primary} onCheckedChange={setPrimary} />
+        </span>
+        <span>{t("firstRun.create.primary")}</span>
+      </label>
+      <p role="alert" className="text-xs text-blocked empty:hidden">
+        {state === "failed" ? t("firstRun.create.failed") : null}
+      </p>
+      {onCancel === undefined ? (
+        submit
+      ) : (
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button onClick={onCancel}>{t("newBot.cancel")}</Button>
+          {submit}
+        </div>
+      )}
+    </form>
+  );
+}

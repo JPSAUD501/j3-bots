@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type {
   ApprovalDecision,
-  AttachmentId,
+  Attachment,
   BotId,
+  CommandId,
   Entry,
   EntryId,
+  MessageEntry,
   QuestionAnswers,
   RoutineId,
   WorkStep,
 } from "@j3-bots/contracts";
+import type { ConversationItem } from "@j3-bots/client-runtime";
 import type * as Redacted from "effect/Redacted";
 import { useBots } from "../app/context";
 import { buildTimeline } from "../presentation/timeline";
@@ -31,15 +34,22 @@ export interface TimelineIntents {
   readonly declineSecret: (entryId: EntryId) => void;
   readonly retryNotice: (entryId: EntryId) => void;
   readonly retryMessage: (entryId: EntryId) => void;
+  /** Sends again a message this device could not send. */
+  readonly resendMessage: (commandId: CommandId) => void;
+  /** Takes a message this device could not send out of the conversation. */
+  readonly discardMessage: (commandId: CommandId) => void;
+  /** A fold opened: its steps are worth reading until it closes. */
   readonly openWorkFold: (entryId: EntryId) => void;
-  readonly openAttachment: (attachmentId: AttachmentId) => void;
+  readonly closeWorkFold: (entryId: EntryId) => void;
+  readonly openAttachment: (attachment: Attachment) => void;
   readonly openHandoff: (entryId: EntryId) => void;
   readonly openRoutine: (routineId: RoutineId) => void;
   readonly openConversation: (botId: BotId) => void;
 }
 
 interface TimelineProps {
-  readonly entries: ReadonlyArray<Entry>;
+  /** Entries oldest first, then the operator's messages still on their way. */
+  readonly entries: ReadonlyArray<ConversationItem>;
   /** Rooms show who said each message; a bot's conversation has one speaker. */
   readonly inRoom: boolean;
   readonly workSteps: (entryId: EntryId) => ReadonlyArray<WorkStep> | null;
@@ -57,93 +67,116 @@ export function Timeline({ entries, inRoom, workSteps, submitting, intents }: Ti
       {buildTimeline(entries).map((item) => {
         if (item.kind === "divider") return <TimeDivider key={item.key} at={item.at} />;
         if (item.kind === "message") {
-          const { author } = item.entry;
+          const { message } = item;
+          // One element, under one key, from Send to the server's entry, so
+          // nothing in the bubble loses focus when the entry arrives; the entry
+          // id it gains then makes it count toward the read mark.
+          if (message._tag === "outgoing") {
+            return (
+              <div key={item.key}>
+                <MessageBubble
+                  message={message}
+                  position={item.position}
+                  mentionable={mentionable}
+                  onOpenAttachment={intents.openAttachment}
+                  onRetry={() => intents.resendMessage(message.commandId)}
+                  onDiscard={() => intents.discardMessage(message.commandId)}
+                />
+              </div>
+            );
+          }
+          const { author } = message;
           return (
-            <MessageBubble
-              key={item.key}
-              entry={item.entry}
-              position={item.position}
-              speaker={inRoom && author._tag === "bot" ? (bots.get(author.botId) ?? null) : null}
-              mentionable={mentionable}
-              onOpenAttachment={intents.openAttachment}
-              onRetry={() => intents.retryMessage(item.entry.id)}
-              submitting={submitting(item.entry.id)}
-            />
+            <div key={item.key} data-seen-id={message.id}>
+              <MessageBubble
+                message={message}
+                position={item.position}
+                speaker={inRoom && author._tag === "bot" ? (bots.get(author.botId) ?? null) : null}
+                mentionable={mentionable}
+                onOpenAttachment={intents.openAttachment}
+                onRetry={() => intents.retryMessage(message.id)}
+                submitting={submitting(message.id)}
+              />
+            </div>
           );
         }
         const { entry } = item;
-        switch (entry._tag) {
-          case "question":
-            return (
-              <QuestionCard
-                key={item.key}
-                entry={entry}
-                onAnswer={(answers) => intents.answerQuestion(entry.id, answers)}
-                onDismiss={() => intents.dismissQuestion(entry.id)}
-                submitting={submitting(entry.id)}
-              />
-            );
-          case "approval":
-            return (
-              <ApprovalCard
-                key={item.key}
-                entry={entry}
-                onDecide={(decision) => intents.decideApproval(entry.id, decision)}
-                submitting={submitting(entry.id)}
-              />
-            );
-          case "secret-request":
-            return (
-              <SecretRequestCard
-                key={item.key}
-                entry={entry}
-                onProvide={(value) => intents.provideSecret(entry.id, value)}
-                onDecline={() => intents.declineSecret(entry.id)}
-                submitting={submitting(entry.id)}
-              />
-            );
-          case "work-fold":
-            return (
-              <WorkFold
-                key={item.key}
-                entry={entry}
-                steps={workSteps(entry.id)}
-                onOpenChange={(open) => {
-                  if (open) intents.openWorkFold(entry.id);
-                }}
-              />
-            );
-          case "notice":
-            return (
-              <NoticeLine
-                key={item.key}
-                entry={entry}
-                onRetry={() => intents.retryNotice(entry.id)}
-                onOpenConversation={() => {
-                  if (entry.notice._tag === "waiting-in-conversation") {
-                    intents.openConversation(entry.notice.botId);
-                  }
-                }}
-              />
-            );
-          case "handoff":
-            return (
-              <HandoffCard
-                key={item.key}
-                entry={entry}
-                onOpen={() => intents.openHandoff(entry.id)}
-              />
-            );
-          case "routine-change":
-            return (
-              <RoutineChangeCard
-                key={item.key}
-                entry={entry}
-                onOpen={() => intents.openRoutine(entry.routineId)}
-              />
-            );
-        }
+        return (
+          <div key={item.key} data-seen-id={entry.id}>
+            <Card entry={entry} submitting={submitting} workSteps={workSteps} intents={intents} />
+          </div>
+        );
       })}
     </div>
   );
+}
+
+/** One card, notice or fold: every entry that is not a message. */
+function Card({
+  entry,
+  submitting,
+  workSteps,
+  intents,
+}: {
+  entry: Exclude<Entry, MessageEntry>;
+  submitting: TimelineProps["submitting"];
+  workSteps: TimelineProps["workSteps"];
+  intents: TimelineIntents;
+}) {
+  switch (entry._tag) {
+    case "question":
+      return (
+        <QuestionCard
+          entry={entry}
+          onAnswer={(answers) => intents.answerQuestion(entry.id, answers)}
+          onDismiss={() => intents.dismissQuestion(entry.id)}
+          submitting={submitting(entry.id)}
+        />
+      );
+    case "approval":
+      return (
+        <ApprovalCard
+          entry={entry}
+          onDecide={(decision) => intents.decideApproval(entry.id, decision)}
+          submitting={submitting(entry.id)}
+        />
+      );
+    case "secret-request":
+      return (
+        <SecretRequestCard
+          entry={entry}
+          onProvide={(value) => intents.provideSecret(entry.id, value)}
+          onDecline={() => intents.declineSecret(entry.id)}
+          submitting={submitting(entry.id)}
+        />
+      );
+    case "work-fold":
+      return (
+        <WorkFold
+          entry={entry}
+          steps={workSteps(entry.id)}
+          onOpenChange={(open) =>
+            open ? intents.openWorkFold(entry.id) : intents.closeWorkFold(entry.id)
+          }
+        />
+      );
+    case "notice":
+      return (
+        <NoticeLine
+          entry={entry}
+          onRetry={() => intents.retryNotice(entry.id)}
+          onOpenConversation={() => {
+            if (entry.notice._tag === "waiting-in-conversation") {
+              intents.openConversation(entry.notice.botId);
+            }
+          }}
+        />
+      );
+    case "handoff":
+      return <HandoffCard entry={entry} onOpen={() => intents.openHandoff(entry.id)} />;
+    case "routine-change":
+      return (
+        <RoutineChangeCard entry={entry} onOpen={() => intents.openRoutine(entry.routineId)} />
+      );
+  }
 }

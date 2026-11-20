@@ -54,21 +54,21 @@ export function AppShell({
         <aside
           data-active={active === "roster" ? "" : undefined}
           inert={covered}
-          className="hidden w-full shrink-0 flex-col border-border bg-sidebar pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] data-active:flex @max-tablet:pr-[env(safe-area-inset-right)] @tablet:flex @tablet:w-(--layout-roster-width) @tablet:border-e"
+          className="hidden w-full shrink-0 flex-col border-border bg-sidebar pt-(--inset-top) pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] data-active:flex @max-tablet:pr-[env(safe-area-inset-right)] @tablet:flex @tablet:w-(--layout-roster-width) @tablet:border-e"
         >
           {roster}
         </aside>
         <main
           data-active={active === "conversation" ? "" : undefined}
           inert={covered}
-          className="hidden min-w-0 flex-1 flex-col pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] data-active:flex @max-tablet:pl-[env(safe-area-inset-left)] @tablet:flex"
+          className="hidden min-w-0 flex-1 flex-col pt-(--inset-top) pr-[env(safe-area-inset-right)] data-active:flex @max-tablet:pl-[env(safe-area-inset-left)] @tablet:flex"
         >
           {conversation}
         </main>
         {details !== null && layout === "wide" && (
           <aside
             aria-labelledby={detailsHeadingId}
-            className="flex w-(--layout-details-width) shrink-0 flex-col border-s border-border bg-background pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)]"
+            className="flex w-(--layout-details-width) shrink-0 flex-col border-s border-border bg-background pt-(--inset-top) pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)]"
           >
             {details}
           </aside>
@@ -87,7 +87,7 @@ export function AppShell({
               aria-modal
               initialFocus={detailsHeadingRef}
               finalFocus={returnFocusRef}
-              className="absolute inset-0 z-20 flex flex-col bg-background pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] outline-none @max-tablet:pl-[env(safe-area-inset-left)] @tablet:start-auto @tablet:w-(--layout-details-width) @tablet:border-s @tablet:border-border @tablet:shadow-xl"
+              className="absolute inset-0 z-20 flex flex-col bg-background pt-(--inset-top) pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] outline-none @max-tablet:pl-[env(safe-area-inset-left)] @tablet:start-auto @tablet:w-(--layout-details-width) @tablet:border-s @tablet:border-border @tablet:shadow-xl"
             >
               {details}
             </Dialog.Popup>

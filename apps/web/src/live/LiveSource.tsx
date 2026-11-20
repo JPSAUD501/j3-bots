@@ -1,0 +1,466 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import {
+  type ActionState,
+  cardAction,
+  createJ3Client,
+  type Draft,
+  type DraftChangedElsewhere,
+  type J3Client,
+  type Loaded,
+  retryAction,
+  targetKey,
+} from "@j3-bots/client-runtime";
+import {
+  J3ClientProvider,
+  useActions,
+  useBotFiles,
+  useConnection,
+  useConversation,
+  useDevices,
+  useEngineStatus,
+  useJ3Client,
+  useMemory,
+  useReadable,
+  useRoster,
+  useRoutines,
+  useSettings,
+  useWorkSteps,
+} from "@j3-bots/client-runtime/react";
+import type { BotId, EntryId, EntryTarget, MemoryPath, RoomId, WorkStep } from "@j3-bots/contracts";
+import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
+import {
+  createContext,
+  use,
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
+import { useI18n } from "../app/context";
+import { ConnectionBanner } from "../components/ConnectionBanner";
+import { memoryLabel } from "../components/DetailsPanel";
+import { MemoryViewer, type MemoryReading } from "../components/MemoryViewer";
+import { NewBotDialog } from "../components/NewBotDialog";
+import { guessDeviceName, Incompatible, Pairing, StorageFailed } from "../components/Pairing";
+import { type Notice, Toast } from "../components/Toast";
+import type { ConversationView, ShellData, ShellIntents } from "../shell/data";
+import { ShellSourceContext } from "../shell/source";
+import { deliverFile, reserveWindow } from "./openFile";
+import { platform } from "./platform";
+
+let started: Promise<J3Client> | null = null;
+/** One client for the page, made on first use. */
+const client = () => (started ??= createJ3Client(platform));
+
+/**
+ * The shell's source in a build: the client runtime, connected to the server
+ * that serves this page. Before the shell, it answers whatever stands between
+ * the operator and their bots: pairing, a server of another version, storage
+ * the browser refuses.
+ */
+export function LiveSourceProvider({ children }: { children: ReactNode }) {
+  return (
+    <J3ClientProvider client={use(client())}>
+      <Notices>
+        <Gate>{children}</Gate>
+      </Notices>
+    </J3ClientProvider>
+  );
+}
+
+const SayContext = createContext<((text: string) => void) | null>(null);
+
+/** Shows a short sentence in the page's one toast. */
+const useSay = () => {
+  const say = use(SayContext);
+  if (say === null) throw new Error("useSay needs Notices above it.");
+  return say;
+};
+
+/**
+ * The page's toast, above the gate: a notice outlives the screen that asked
+ * for it, as when signing out leaves the shell and another tab's pairing
+ * brings it back.
+ */
+function Notices({ children }: { children: ReactNode }) {
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const say = useCallback(
+    (text: string) => setNotice((previous) => ({ id: (previous?.id ?? 0) + 1, text })),
+    [],
+  );
+  return (
+    <SayContext value={say}>
+      {children}
+      <Toast notice={notice} onDone={() => setNotice(null)} />
+    </SayContext>
+  );
+}
+
+function Screen({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex h-full flex-col pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]">
+      {children}
+    </div>
+  );
+}
+
+function Gate({ children }: { children: ReactNode }) {
+  const j3 = useJ3Client();
+  const connection = useConnection();
+  const [everConnected, setEverConnected] = useState(false);
+  if (connection._tag === "connected" && !everConnected) setEverConnected(true);
+  switch (connection._tag) {
+    case "starting":
+      return null;
+    case "unpaired":
+      return (
+        <Screen>
+          <Pairing
+            reason={connection.reason}
+            defaultName={guessDeviceName(navigator.userAgent)}
+            onPair={j3.pair}
+          />
+        </Screen>
+      );
+    case "incompatible":
+      return (
+        <Screen>
+          <Incompatible />
+        </Screen>
+      );
+    case "storage-failed":
+      return (
+        <Screen>
+          <StorageFailed onRetry={j3.reconnectNow} />
+        </Screen>
+      );
+    case "offline":
+    case "connecting":
+    case "waiting":
+    case "connected":
+      return (
+        <ConnectionBanner
+          state={connection}
+          everConnected={everConnected}
+          onRetryNow={j3.reconnectNow}
+        >
+          <LiveShell>{children}</LiveShell>
+        </ConnectionBanner>
+      );
+  }
+}
+
+const loadingView: ConversationView = {
+  phase: "loading",
+  items: [],
+  hasOlder: false,
+  loadingOlder: false,
+};
+const blankDraft: Draft = { text: "", files: [], sending: false };
+
+const submitting = (state: ActionState | undefined) => state?._tag === "submitting";
+
+/** A read's value once loaded; a list that is gone reads as empty. */
+const loadedList = <A,>(loaded: Loaded<ReadonlyArray<A>> | null): ReadonlyArray<A> | null =>
+  loaded === null || loaded._tag === "loading" ? null : loaded._tag === "ready" ? loaded.value : [];
+
+const subscribeVisibility = (listener: () => void) => {
+  document.addEventListener("visibilitychange", listener);
+  return () => document.removeEventListener("visibilitychange", listener);
+};
+const isVisible = () => document.visibilityState === "visible";
+
+/** Reads one open work fold's steps for as long as it stays open. */
+function FoldReader({
+  foldId,
+  onSteps,
+}: {
+  foldId: EntryId;
+  onSteps: (foldId: EntryId, steps: ReadonlyArray<WorkStep>) => void;
+}) {
+  const state = useWorkSteps(foldId);
+  const report = useEffectEvent(onSteps);
+  useEffect(() => {
+    if (state !== null && state.phase !== "loading") report(foldId, state.steps);
+  }, [foldId, state]);
+  return null;
+}
+
+/** The conversation or room the URL names. */
+const targetOf = (botId: BotId | null, roomId: RoomId | null): EntryTarget | null =>
+  botId !== null
+    ? { _tag: "conversation", botId }
+    : roomId !== null
+      ? { _tag: "room", roomId }
+      : null;
+
+interface MemoryView {
+  readonly botId: BotId;
+  readonly path: MemoryPath;
+  readonly title: string;
+  readonly reading: MemoryReading;
+}
+
+function LiveShell({ children }: { children: ReactNode }) {
+  const j3 = useJ3Client();
+  const { t } = useI18n();
+  const navigate = useNavigate();
+  const params = useParams({ strict: false });
+  const search = useSearch({ strict: false });
+  const botId = params.botId ?? null;
+  const roomId = params.roomId ?? null;
+  const target = targetOf(botId, roomId);
+  const detailsBotId: BotId | null = search.details === true && params.botId ? params.botId : null;
+
+  const connection = useConnection();
+  const roster = useRoster();
+  const engine = useEngineStatus();
+  const settings = useSettings();
+  const settingsSave = useReadable(j3.settingsSave);
+  const devices = useDevices();
+  const actions = useActions();
+  const drafts = useReadable(j3.drafts);
+  const draftOffers = useReadable(j3.draftOffers);
+  const draftsLoading = useReadable(j3.draftsSwitching);
+  const draftsFailed = useReadable(j3.draftsReadFailed);
+  const draftsNotSaved = useReadable(j3.draftsNotSaved);
+  const conversation = useConversation(target);
+  const files = useBotFiles(detailsBotId);
+  const memory = useMemory(detailsBotId === null ? null : { _tag: "bot", botId: detailsBotId });
+  const routines = useRoutines(detailsBotId);
+  const visible = useSyncExternalStore(subscribeVisibility, isVisible, isVisible);
+
+  const [openFolds, setOpenFolds] = useState<ReadonlySet<EntryId>>(new Set());
+  const [steps, setSteps] = useState<ReadonlyMap<EntryId, ReadonlyArray<WorkStep>>>(new Map());
+  const [newBot, setNewBot] = useState(false);
+  const [memoryView, setMemoryView] = useState<MemoryView | null>(null);
+  const say = useSay();
+
+  const view: ConversationView =
+    conversation.state === null
+      ? loadingView
+      : {
+          phase: conversation.state.phase,
+          items: conversation.state.items,
+          hasOlder: conversation.state.hasOlder,
+          loadingOlder: conversation.state.loadingOlder,
+        };
+
+  // The server tells the operator's other devices what is on screen here, and
+  // keeps notifications for it quiet. A hidden page shows nothing.
+  const viewKey = target === null ? null : targetKey(target);
+  useEffect(() => {
+    j3.setView(visible ? targetOf(botId, roomId) : null);
+  }, [j3, botId, roomId, visible]);
+
+  // Another tab sent or changed a draft under this one, and this tab shows it
+  // as stored. Text of this tab's that the device never kept is offered back
+  // beside the composer, for as long as the operator wants it: when this
+  // change put it there, that notice says the draft changed, so the toast
+  // does not, unless Send sent nothing.
+  const changedElsewhere = useEffectEvent(({ whileSending, displaced }: DraftChangedElsewhere) => {
+    if (whileSending) say(t("composer.changedElsewhereWhileSending"));
+    else if (!displaced) say(t("composer.changedElsewhere"));
+  });
+  useEffect(() => j3.onDraftChangedElsewhere(changedElsewhere), [j3]);
+
+  const data: ShellData = {
+    engine: engine._tag === "ready" ? engine.value : null,
+    engineStale: engine._tag === "ready" && engine.stale,
+    roster: roster?.rows ?? null,
+    conversation: (asked) =>
+      viewKey !== null && targetKey(asked) === viewKey ? view : loadingView,
+    draft: (asked) => drafts.get(targetKey(asked)) ?? blankDraft,
+    offer: (asked) => draftOffers.get(targetKey(asked)) ?? null,
+    draftsLoading,
+    draftsFailed,
+    draftNotSaved: (asked) => draftsNotSaved.has(targetKey(asked)),
+    submitting: (entryId) =>
+      submitting(actions.get(cardAction(entryId))) || submitting(actions.get(retryAction(entryId))),
+    workSteps: (entryId) => steps.get(entryId) ?? null,
+    routines: (botId) => (botId === detailsBotId ? loadedList(routines) : null),
+    files: (botId) => (botId === detailsBotId ? loadedList(files) : null),
+    memory: (botId) => (botId === detailsBotId ? loadedList(memory) : null),
+    settings: settings._tag === "ready" ? settings.value : null,
+    settingsSave,
+    devices: devices._tag === "ready" ? devices.value : null,
+    connected: connection._tag === "connected",
+  };
+
+  const openMemoryFile = (botId: BotId, path: MemoryPath) => {
+    const title = memoryLabel(path, t);
+    setMemoryView({ botId, path, title, reading: { _tag: "reading" } });
+    // Two files can share a title, and two bots a path: a late answer for another file is dropped.
+    j3.readMemory({ _tag: "bot", botId }, path).then((result) =>
+      setMemoryView((current) =>
+        current?.botId !== botId || current.path !== path
+          ? current
+          : {
+              ...current,
+              reading:
+                result._tag === "done"
+                  ? { _tag: "read", document: result.value }
+                  : { _tag: "failed" },
+            },
+      ),
+    );
+  };
+
+  const goToBot = (botId: BotId) => navigate({ to: "/bots/$botId", params: { botId } });
+
+  const intents: ShellIntents = {
+    // An answer too long to reach the bot leaves the card open, with what was typed, to shorten.
+    answerQuestion: (entryId, answers) =>
+      void j3.answerCard(entryId, { _tag: "question", answers }).then((result) => {
+        if (
+          result._tag === "failed" &&
+          result.failure._tag === "refused" &&
+          result.failure.error._tag === "Invalid" &&
+          result.failure.error.reason === "answer-length"
+        ) {
+          say(t("question.tooLong"));
+        }
+      }),
+    dismissQuestion: (entryId) => void j3.answerCard(entryId, { _tag: "dismiss" }),
+    decideApproval: (entryId, decision) =>
+      void j3.answerCard(entryId, { _tag: "approval", decision }),
+    provideSecret: (entryId, value) => void j3.provideSecret(entryId, { _tag: "provide", value }),
+    declineSecret: (entryId) => void j3.provideSecret(entryId, { _tag: "decline" }),
+    retryNotice: (entryId) => void j3.retryNotice(entryId),
+    retryMessage: (entryId) => void j3.retryMessage(entryId),
+    resendMessage: (commandId) =>
+      void j3.resend(commandId).then((result) => {
+        if (result._tag === "not-kept") say(t("message.changeNotKept"));
+      }),
+    discardMessage: (commandId) =>
+      void j3.discard(commandId).then((discarded) => {
+        if (!discarded) say(t("message.changeNotKept"));
+      }),
+    openWorkFold: (entryId) => setOpenFolds((open) => new Set(open).add(entryId)),
+    closeWorkFold: (entryId) =>
+      setOpenFolds((open) => new Set([...open].filter((id) => id !== entryId))),
+    openAttachment: (attachment) => {
+      // Reserved now, while the click still lets the page open a window.
+      const reserved = reserveWindow(attachment);
+      j3.download(attachment).then((result) => {
+        if (result._tag === "done") {
+          deliverFile(attachment, result.value.body, reserved);
+          return;
+        }
+        reserved?.close();
+        say(
+          result.reason === "not-found"
+            ? t("file.gone", { name: attachment.name })
+            : t("file.unreachable", { name: attachment.name }),
+        );
+      });
+    },
+    openHandoff: (entryId) => {
+      const handoff = view.items.find((item) => item._tag === "handoff" && item.id === entryId);
+      if (handoff?._tag === "handoff") goToBot(handoff.recipientId);
+    },
+    // A routine has no screen of its own yet: its bot's details list it.
+    openRoutine: () => void navigate({ to: ".", search: (prev) => ({ ...prev, details: true }) }),
+    openConversation: (botId) => void goToBot(botId),
+    setRoutineEnabled: (routineId, enabled) => void j3.setRoutineEnabled(routineId, enabled),
+    setDraftText: j3.setDraftText,
+    attachFiles: (asked, picked) =>
+      j3.attachFiles(
+        asked,
+        picked.map((file) => ({ name: file.name, body: file })),
+      ),
+    detachFile: j3.detachFile,
+    restoreDraft: j3.restoreDraft,
+    retryDrafts: j3.retryDrafts,
+    dismissDraftOffer: j3.dismissDraftOffer,
+    sendDraft: (asked) =>
+      void j3.sendDraft(asked).then((result) => {
+        if (result === "not-kept") say(t("composer.notKept"));
+      }),
+    loadOlder: (asked) => {
+      if (viewKey !== null && targetKey(asked) === viewKey) conversation.loadOlder();
+    },
+    markRead: (asked, through) => {
+      if (viewKey !== null && targetKey(asked) === viewKey) conversation.markRead(through);
+    },
+    stopBot: (botId) => void j3.stopBot(botId),
+    createBot: (name, primary) =>
+      j3.createBot({ name, primary }).then((result) => {
+        if (result._tag === "failed") throw new Error("The bot was not created");
+        return result.value.id;
+      }),
+    newBot: () => setNewBot(true),
+    openMemoryFile,
+    freshStart: (botId, name) =>
+      void j3
+        .freshStart(botId)
+        .then((result) =>
+          say(
+            result._tag === "done"
+              ? t("details.freshStart.done", { name })
+              : t("details.freshStart.failed"),
+          ),
+        ),
+    deleteBot: (botId) =>
+      void j3.deleteBot(botId, false).then((result) => {
+        if (result._tag === "done") void navigate({ to: "/" });
+        else say(t("details.deleteFailed"));
+      }),
+    updateSettings: (changes) => void j3.updateSettings(changes),
+    startPairing: () =>
+      j3
+        .startPairing()
+        .then((result) =>
+          result._tag === "done"
+            ? { _tag: "started", code: result.value.code, expiresAt: result.value.expiresAt }
+            : { _tag: "failed" },
+        ),
+    revokeDevice: (deviceId) => j3.revokeDevice(deviceId).then((result) => result._tag === "done"),
+    refreshDevices: j3.refreshDevices,
+    signOut: () =>
+      j3.signOut().then((result) => {
+        // Another tab paired this browser again meanwhile: it stays signed in
+        // under that pairing. The old one ended unless the server never said so.
+        if (result._tag === "paired-anew") {
+          say(
+            t(
+              result.revoked
+                ? "settings.signOut.pairedAnew"
+                : "settings.signOut.pairedAnewStillListed",
+            ),
+          );
+        }
+        return result._tag !== "failed";
+      }),
+  };
+
+  return (
+    <ShellSourceContext value={{ data, intents }}>
+      {children}
+      {[...openFolds].map((foldId) => (
+        <FoldReader
+          key={foldId}
+          foldId={foldId}
+          onSteps={(id, list) => setSteps((held) => new Map(held).set(id, list))}
+        />
+      ))}
+      <NewBotDialog
+        open={newBot}
+        onOpenChange={setNewBot}
+        onCreate={(name, primary) =>
+          intents.createBot(name, primary).then((botId) => {
+            setNewBot(false);
+            void goToBot(botId);
+          })
+        }
+      />
+      <MemoryViewer
+        title={memoryView?.title ?? null}
+        reading={memoryView?.reading ?? { _tag: "reading" }}
+        onClose={() => setMemoryView(null)}
+      />
+    </ShellSourceContext>
+  );
+}

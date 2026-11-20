@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { AttachmentId, Bot, MessageDelivery, MessageEntry } from "@j3-bots/contracts";
+import type { Attachment, Bot } from "@j3-bots/contracts";
+import { type IntentFailure, type MessageStatus, messageStatus } from "@j3-bots/client-runtime";
 import { usePresentation } from "../app/context";
+import type { KeyWith } from "../i18n/i18n";
 import { cn } from "../lib/cn";
 import { clockTime } from "../lib/time";
 import { useFocusAfterActions } from "../lib/useFocusAfterActions";
-import type { GroupPosition } from "../presentation/timeline";
+import type { GroupPosition, TimelineMessage } from "../presentation/timeline";
 import { AvatarShape } from "./BotAvatar";
 import { FileCard } from "./FileCard";
 import { MessageText } from "./MessageText";
@@ -28,10 +30,43 @@ const failedKeys = {
   rejected: "message.failed.rejected",
   unresolved: "message.failed.unresolved",
   stopped: "message.failed.stopped",
-} as const satisfies Record<Extract<MessageDelivery, { _tag: "failed" }>["reason"], string>;
+} as const satisfies Record<Extract<MessageStatus, { _tag: "failed" }>["reason"], KeyWith>;
+
+const notSentKeys = {
+  refused: "message.notSent.refused",
+  "not-paired": "message.notSent.notPaired",
+  unexpected: "message.notSent.unexpected",
+} as const satisfies Record<IntentFailure["_tag"], KeyWith>;
+
+/** What the operator reads under their message, or null when there is nothing to say. */
+const statusKey = (status: MessageStatus, submitting: boolean): KeyWith | null => {
+  switch (status._tag) {
+    case "sending":
+      return "message.sending";
+    case "not-sent":
+      // Too long for the bot's engine is the one refusal the client cannot foresee and the operator can act on.
+      return status.failure._tag === "refused" &&
+        status.failure.error._tag === "Invalid" &&
+        status.failure.error.reason === "message-length"
+        ? "message.notSent.tooLong"
+        : notSentKeys[status.failure._tag];
+    case "unrecorded":
+      return "message.unrecorded";
+    case "queued":
+      return "message.queued";
+    case "delivered":
+      return null;
+    case "cancelled":
+      return "message.cancelled";
+    case "failed":
+      // A retry on its way reads as queued again, which it is about to be.
+      return submitting ? "message.queued" : failedKeys[status.reason];
+  }
+};
 
 interface MessageBubbleProps {
-  readonly entry: MessageEntry;
+  /** A message the server has, or one of the operator's still on its way from this device. */
+  readonly message: TimelineMessage;
   readonly position: GroupPosition;
   /**
    * In a room, who said it: shown above the first bubble of a bot's group, by
@@ -40,39 +75,37 @@ interface MessageBubbleProps {
   readonly speaker?: Bot | null;
   /** Names that `@Name` may mention. */
   readonly mentionable?: ReadonlyArray<string>;
-  readonly onOpenAttachment: (id: AttachmentId) => void;
-  /** Sends a message whose delivery failed again. */
+  readonly onOpenAttachment: (attachment: Attachment) => void;
+  /** Sends again a message that failed, or that this device could not send. */
   readonly onRetry: () => void;
+  /** Takes a message this device could not send out of the conversation. */
+  readonly onDiscard?: () => void;
   /** A retry is on its way: Send again takes no second one. */
   readonly submitting?: boolean;
 }
 
 /** One message: the operator's on the right and dark, a bot's on the left and light. */
 export function MessageBubble({
-  entry,
+  message,
   position,
   speaker = null,
   mentionable,
   onOpenAttachment,
   onRetry,
+  onDiscard,
   submitting = false,
 }: MessageBubbleProps) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
-  const fromOperator = entry.author._tag === "operator";
+  const fromOperator = message._tag === "outgoing" || message.author._tag === "operator";
   const startsGroup = position === "single" || position === "first";
-  const time = clockTime(entry.createdAt, ctx);
-  const { delivery } = entry;
-  const failed = delivery._tag === "failed";
-  // A retry on its way reads as queued again, which it is about to be.
-  const deliveryText =
-    delivery._tag === "pending" || (failed && submitting)
-      ? t("message.queued")
-      : delivery._tag === "cancelled"
-        ? t("message.cancelled")
-        : failed
-          ? t(failedKeys[delivery.reason])
-          : null;
+  const time = clockTime(message.createdAt, ctx);
+  const status = messageStatus(message);
+  const failed = status._tag === "failed" || status._tag === "not-sent";
+  // The device could not record what the server answered: a problem, though nothing to retry.
+  const troubled = failed || status._tag === "unrecorded";
+  const key = statusKey(status, submitting);
+  const deliveryText = key === null ? null : t(key);
   // Sent again, Send again goes; focus that was on it moves to the message, which stays whatever
   // its delivery line then says, even nothing.
   const { target, actions } = useFocusAfterActions<HTMLDivElement>(failed);
@@ -92,7 +125,7 @@ export function MessageBubble({
           <span className="text-xs font-medium">{speaker.profile.name}</span>
         </div>
       )}
-      {entry.text !== "" && (
+      {message.text !== "" && (
         <div
           title={time}
           className={cn(
@@ -102,14 +135,14 @@ export function MessageBubble({
               : ["bg-bubble-bot text-bubble-bot-foreground", botCorners[position]],
           )}
         >
-          <MessageText text={entry.text} mentionable={mentionable ?? []} />
+          <MessageText text={message.text} mentionable={mentionable ?? []} />
         </div>
       )}
-      {entry.attachments.map((attachment) => (
+      {message.attachments.map((attachment) => (
         <FileCard
           key={attachment.id}
           attachment={attachment}
-          onOpen={() => onOpenAttachment(attachment.id)}
+          onOpen={() => onOpenAttachment(attachment)}
         />
       ))}
       {fromOperator && (
@@ -125,7 +158,7 @@ export function MessageBubble({
           <span
             role="status"
             className={cn(
-              failed && !submitting ? "text-blocked" : "text-muted-foreground",
+              troubled && !submitting ? "text-blocked" : "text-muted-foreground",
               // Its end padding sets the text on the line Send again's text ends on.
               !failed && "pe-1",
             )}
@@ -144,6 +177,17 @@ export function MessageBubble({
               {...actions}
             >
               {t("message.retry")}
+            </Button>
+          )}
+          {status._tag === "not-sent" && onDiscard && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 border-0 px-1 text-2xs"
+              onClick={onDiscard}
+              {...actions}
+            >
+              {t("message.discard")}
             </Button>
           )}
         </div>

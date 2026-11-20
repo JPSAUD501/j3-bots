@@ -1,17 +1,26 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type {
-  AttachmentId,
+  Attachment,
+  Bot,
+  BotFile,
   BotId,
   CommandId,
   Device,
   DeviceId,
   EngineStatus as EngineStatusValue,
   EntryId,
+  EntryOrder,
   EntryTarget,
+  MemoryDocument,
+  MemoryFile,
+  MemoryPath,
+  MemoryScope,
   Mentions,
   Notification,
   PairingCode,
   RosterItem,
+  Routine,
+  RoutineId,
   Settings as SettingsValue,
 } from "@j3-bots/contracts";
 import type * as DateTime from "effect/DateTime";
@@ -27,13 +36,26 @@ import type * as HttpClient from "effect/http/HttpClient";
 import type { RpcClientError } from "effect/rpc/RpcClientError";
 import type * as Socket from "effect/socket/Socket";
 import * as Connection from "./connection/Connection.ts";
+import * as Files from "./files/Files.ts";
+import type { MessageProblem } from "./files/limits.ts";
 import * as Actions from "./intents/Actions.ts";
-import type { CredentialStore, Network, ServerAddress } from "./ports.ts";
+import * as SignOut from "./intents/SignOut.ts";
+import type {
+  ClientStorage,
+  CredentialStore,
+  FileTransfer,
+  Network,
+  ServerAddress,
+  WindowLocks,
+} from "./ports.ts";
 import type { Readable } from "./Store.ts";
 import * as Conversations from "./stores/Conversations.ts";
+import * as Details from "./stores/Details.ts";
 import * as Devices from "./stores/Devices.ts";
+import * as Drafts from "./stores/Drafts.ts";
 import * as EngineStatus from "./stores/EngineStatus.ts";
 import * as Presence from "./stores/Presence.ts";
+import type { Loaded } from "./stores/reads.ts";
 import * as Roster from "./stores/Roster.ts";
 import * as Settings from "./stores/Settings.ts";
 import type { Synced } from "./stores/synced.ts";
@@ -43,27 +65,40 @@ import * as WorkSteps from "./stores/WorkSteps.ts";
 export type Platform =
   | ServerAddress
   | CredentialStore
+  | ClientStorage
+  | FileTransfer
   | Network
+  | WindowLocks
   | HttpClient.HttpClient
   | Socket.WebSocketConstructor
   | SecureRandom.SecureRandom;
 
 /** Every service of the client runtime, for applications that use Effect directly. */
-export const layer = Layer.mergeAll(
-  Roster.layer,
-  EngineStatus.layer,
-  Settings.layer,
-  Devices.layer,
-  Conversations.layer,
-  WorkSteps.layer,
-  Presence.layer,
-).pipe(Layer.provideMerge(Actions.layer), Layer.provideMerge(Connection.layer));
+export const layer = SignOut.layer.pipe(
+  Layer.provideMerge(
+    Layer.mergeAll(
+      Roster.layer,
+      EngineStatus.layer,
+      Settings.layer,
+      Devices.layer,
+      Drafts.layer,
+      Details.layer,
+      WorkSteps.layer,
+      Presence.layer,
+    ),
+  ),
+  Layer.provideMerge(Conversations.layer),
+  Layer.provideMerge(Files.layer),
+  Layer.provideMerge(Actions.layer),
+  Layer.provideMerge(Connection.layer),
+);
 
 export interface ConversationHandle {
   readonly target: EntryTarget;
   readonly state: Readable<Conversations.ConversationState>;
   readonly loadOlder: () => void;
-  readonly markRead: () => void;
+  /** Moves the read mark forward to `through`, the newest entry the operator has seen. */
+  readonly markRead: (through: EntryOrder) => void;
   /** Lets go of the conversation. Its subscription ends when nobody else holds it. */
   readonly release: () => void;
 }
@@ -72,6 +107,17 @@ export interface WorkStepsHandle {
   readonly state: Readable<WorkSteps.WorkStepsState>;
   readonly release: () => void;
 }
+
+/** Server state held open until `release`. */
+export interface LoadedHandle<A> {
+  readonly state: Readable<Loaded<A>>;
+  readonly release: () => void;
+}
+
+/** A file's bytes, or why there are none. */
+export type DownloadResult =
+  | { readonly _tag: "done"; readonly value: Files.Download }
+  | { readonly _tag: "failed"; readonly reason: "not-found" | "unreachable" | "not-paired" };
 
 export type PairResult =
   | { readonly _tag: "paired" }
@@ -88,13 +134,15 @@ export interface J3Client {
     readonly code: string;
     readonly deviceName: string;
   }) => Promise<PairResult>;
-  /** Forgets this device's credential here. Resolves `false` if the storage could not be cleared. */
-  readonly forget: () => Promise<boolean>;
+  /** Ends this device's access, and deletes its credential, drafts and unsent messages here. */
+  readonly signOut: () => Promise<SignOut.SignOutResult>;
   readonly reconnectNow: () => void;
 
   readonly roster: Readable<Synced<ReadonlyArray<RosterItem>>>;
   readonly engine: Readable<Synced<EngineStatusValue>>;
   readonly settings: Readable<Synced<SettingsValue>>;
+  /** The latest save of the settings, under way or how it ended. */
+  readonly settingsSave: Readable<Settings.SettingsSave>;
   readonly devices: Readable<Synced<ReadonlyArray<Device>>>;
   /** Actions in flight or just accepted, by `cardAction`, `retryAction` or `stopAction` key. */
   readonly actions: Readable<ReadonlyMap<string, Actions.ActionState>>;
@@ -102,13 +150,84 @@ export interface J3Client {
   readonly openConversation: (target: EntryTarget) => ConversationHandle;
   readonly openWorkSteps: (foldId: EntryId) => WorkStepsHandle;
 
+  /** `invalid` when the message breaks a limit of `message.send`: it was not sent. */
   readonly send: (input: {
     readonly target: EntryTarget;
     readonly text: string;
-    readonly attachments?: ReadonlyArray<AttachmentId>;
+    readonly attachments?: ReadonlyArray<Attachment>;
     readonly mentions?: Mentions;
-  }) => Promise<Actions.IntentResult<EntryId>>;
-  readonly discard: (commandId: CommandId) => void;
+  }) => Promise<
+    Actions.IntentResult<EntryId> | { readonly _tag: "invalid"; readonly problem: MessageProblem }
+  >;
+  /** `not-kept` when the device could not keep the new attempt: nothing was sent. */
+  readonly resend: (
+    commandId: CommandId,
+  ) => Promise<Actions.IntentResult<EntryId> | { readonly _tag: "not-kept" }>;
+  /** Resolves `false` when the device could not keep the change: the message stays as it was. */
+  readonly discard: (commandId: CommandId) => Promise<boolean>;
+
+  /** Every conversation's draft, by `targetKey`. Kept on the device. */
+  readonly drafts: Readable<ReadonlyMap<string, Drafts.Draft>>;
+  readonly setDraftText: (target: EntryTarget, text: string) => void;
+  /** Adds files to the draft and uploads them. */
+  readonly attachFiles: (
+    target: EntryTarget,
+    files: ReadonlyArray<{ readonly name: string; readonly body: Blob }>,
+  ) => void;
+  readonly detachFile: (target: EntryTarget, key: string) => void;
+  /** Sends the draft once and clears it. */
+  readonly sendDraft: (target: EntryTarget) => Promise<Drafts.DraftSendResult>;
+  /**
+   * Calls `listener` for each draft another window sent or changed under this
+   * one; see `Drafts.changedElsewhere`. Returns the function that stops it.
+   */
+  readonly onDraftChangedElsewhere: (
+    listener: (change: Drafts.DraftChangedElsewhere) => void,
+  ) => () => void;
+  /**
+   * The drafts, by `targetKey`, whose text another window's change displaced,
+   * each with the revision of its offer, which grows whenever new text is
+   * displaced: `restoreDraft` puts it back, `dismissDraftOffer` lets it go.
+   */
+  readonly draftOffers: Readable<ReadonlyMap<string, number>>;
+  /**
+   * This window is reading the drafts of the pairing it follows now, after
+   * the pairing changed: the drafts take no change meanwhile.
+   */
+  readonly draftsSwitching: Readable<boolean>;
+  /**
+   * The drafts of the pairing this window follows could not be read: they
+   * take no change until `retryDrafts` reads them.
+   */
+  readonly draftsReadFailed: Readable<boolean>;
+  /** Resolves with whether the drafts are read now. */
+  readonly retryDrafts: () => Promise<boolean>;
+  /**
+   * The drafts, by `targetKey`, the device could not keep as they show: held
+   * in memory only, and saved again until they are.
+   */
+  readonly draftsNotSaved: Readable<ReadonlySet<string>>;
+  /** Puts back the text this window held, never kept, when another window changed the draft. */
+  readonly restoreDraft: (target: EntryTarget) => void;
+  /** Lets go of the text on offer for `restoreDraft`. */
+  readonly dismissDraftOffer: (target: EntryTarget) => void;
+  /** A file's bytes, with this device's credential. */
+  readonly download: (attachment: Attachment) => Promise<DownloadResult>;
+
+  readonly openBotFiles: (botId: BotId) => LoadedHandle<ReadonlyArray<BotFile>>;
+  readonly openMemory: (scope: MemoryScope) => LoadedHandle<ReadonlyArray<MemoryFile>>;
+  readonly readMemory: (
+    scope: MemoryScope,
+    path: MemoryPath,
+  ) => Promise<Actions.IntentResult<MemoryDocument>>;
+  readonly openRoutines: (botId: BotId) => LoadedHandle<ReadonlyArray<Routine>>;
+  readonly setRoutineEnabled: (
+    routineId: RoutineId,
+    enabled: boolean,
+  ) => Promise<Actions.IntentResult<Routine>>;
+  readonly createBot: (draft: Details.BotDraft) => Promise<Actions.IntentResult<Bot>>;
+  readonly freshStart: (botId: BotId) => Promise<Actions.IntentResult>;
+  readonly deleteBot: (botId: BotId, deleteFiles: boolean) => Promise<Actions.IntentResult>;
   readonly retryMessage: (entryId: EntryId) => Promise<Actions.IntentResult>;
   readonly retryNotice: (entryId: EntryId) => Promise<Actions.IntentResult>;
   readonly answerCard: (
@@ -125,7 +244,8 @@ export interface J3Client {
     changes: Settings.SettingsChanges,
   ) => Promise<Actions.IntentResult<SettingsValue>>;
   readonly refreshDevices: () => void;
-  readonly revokeDevice: (deviceId: DeviceId) => Promise<Actions.IntentResult>;
+  /** Waits ten seconds at most; see `Devices.revoke`. */
+  readonly revokeDevice: (deviceId: DeviceId) => Promise<Devices.RevokeResult>;
   readonly startPairing: () => Promise<
     Actions.IntentResult<{ readonly code: PairingCode; readonly expiresAt: DateTime.Utc }>
   >;
@@ -172,6 +292,10 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
         conversations: yield* Conversations.Conversations,
         workSteps: yield* WorkSteps.WorkSteps,
         presence: yield* Presence.Presence,
+        drafts: yield* Drafts.Drafts,
+        files: yield* Files.Files,
+        details: yield* Details.Details,
+        signOut: yield* SignOut.SignOut,
       };
     }),
   );
@@ -194,6 +318,14 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     return { value, release };
   };
 
+  /** Calls `listener` for each item of `stream` until the returned function is called. */
+  const listen = <A>(stream: Stream.Stream<A>, listener: (item: A) => void) => {
+    const fiber = run.fork(
+      stream.pipe(Stream.runForEach((item) => Effect.sync(() => listener(item)))),
+    );
+    return () => fire(Fiber.interrupt(fiber));
+  };
+
   return {
     connection: connection.state,
     pair: (input) =>
@@ -205,18 +337,13 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
           ),
         ),
       ),
-    forget: () =>
-      run.promise(
-        connection.forget.pipe(
-          Effect.as(true),
-          Effect.catchTag("CredentialStorageError", () => Effect.succeed(false)),
-        ),
-      ),
+    signOut: () => run.promise(services.signOut.run),
     reconnectNow: () => fire(connection.reconnectNow),
 
     roster: services.roster.state,
     engine: services.engine.state,
     settings: services.settings.state,
+    settingsSave: services.settings.save,
     devices: services.devices.state,
     actions: services.actions.state,
 
@@ -226,7 +353,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
         target,
         state: value.state,
         loadOlder: () => fire(value.loadOlder),
-        markRead: () => fire(value.markRead),
+        markRead: (through) => fire(value.markRead(through)),
         release,
       };
     },
@@ -235,8 +362,78 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
       return { state: value, release };
     },
 
-    send: (input) => run.promise(conversations.send(input)),
-    discard: (commandId) => fire(conversations.discard(commandId)),
+    send: (input) =>
+      run.promise(
+        conversations
+          .send(input)
+          .pipe(
+            Effect.catchTag("InvalidMessage", ({ problem }) =>
+              Effect.succeed({ _tag: "invalid", problem } as const),
+            ),
+          ),
+      ),
+    resend: (commandId) =>
+      run.promise(
+        conversations
+          .resend(commandId)
+          .pipe(
+            Effect.catchTag("LocalStorageError", () =>
+              Effect.succeed({ _tag: "not-kept" } as const),
+            ),
+          ),
+      ),
+    discard: (commandId) =>
+      run.promise(
+        conversations.discard(commandId).pipe(
+          Effect.as(true),
+          Effect.catchTag("LocalStorageError", () => Effect.succeed(false)),
+        ),
+      ),
+
+    drafts: services.drafts.state,
+    setDraftText: (target, text) => run.sync(services.drafts.setText(target, text)),
+    attachFiles: (target, files) => fire(services.drafts.attach(target, files)),
+    detachFile: (target, key) => fire(services.drafts.detach(target, key)),
+    sendDraft: (target) => run.promise(services.drafts.send(target)),
+    onDraftChangedElsewhere: (listener) => listen(services.drafts.changedElsewhere, listener),
+    draftOffers: services.drafts.offers,
+    draftsSwitching: services.drafts.switching,
+    draftsReadFailed: services.drafts.readFailed,
+    retryDrafts: () => run.promise(services.drafts.retryRead),
+    draftsNotSaved: services.drafts.notSaved,
+    restoreDraft: (target) => fire(services.drafts.restore(target)),
+    dismissDraftOffer: (target) => fire(services.drafts.dismiss(target)),
+    download: (attachment) =>
+      run.promise(
+        services.files.download(attachment).pipe(
+          Effect.map((value): DownloadResult => ({ _tag: "done", value })),
+          Effect.catchTags({
+            AttachmentUnavailable: (error) =>
+              Effect.succeed<DownloadResult>({ _tag: "failed", reason: error.reason }),
+            NotPaired: () =>
+              Effect.succeed<DownloadResult>({ _tag: "failed", reason: "not-paired" }),
+          }),
+        ),
+      ),
+
+    openBotFiles: (botId) => {
+      const { value, release } = hold(services.details.files(botId));
+      return { state: value, release };
+    },
+    openMemory: (scope) => {
+      const { value, release } = hold(services.details.memory(scope));
+      return { state: value, release };
+    },
+    readMemory: (scope, path) => run.promise(services.details.readMemory(scope, path)),
+    openRoutines: (botId) => {
+      const { value, release } = hold(services.details.routines(botId));
+      return { state: value, release };
+    },
+    setRoutineEnabled: (routineId, enabled) =>
+      run.promise(services.details.setRoutineEnabled(routineId, enabled)),
+    createBot: (draft) => run.promise(services.details.createBot(draft)),
+    freshStart: (botId) => run.promise(services.details.freshStart(botId)),
+    deleteBot: (botId, deleteFiles) => run.promise(services.details.deleteBot(botId, deleteFiles)),
     retryMessage: (entryId) => run.promise(conversations.retryMessage(entryId)),
     retryNotice: (entryId) => run.promise(conversations.retryNotice(entryId)),
     answerCard: (entryId, answer) => run.promise(conversations.answerCard(entryId, answer)),
@@ -252,14 +449,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
       ),
 
     setView: (target) => fire(services.presence.setView(target)),
-    onNotification: (listener) => {
-      const fiber = run.fork(
-        services.presence.notifications.pipe(
-          Stream.runForEach((notification) => Effect.sync(() => listener(notification))),
-        ),
-      );
-      return () => fire(Fiber.interrupt(fiber));
-    },
+    onNotification: (listener) => listen(services.presence.notifications, listener),
 
     call: <A, E>(use: (client: Connection.J3RpcClient) => Effect.Effect<A, E | RpcClientError>) =>
       run.promiseExit(connection.call<A, E>(use)),

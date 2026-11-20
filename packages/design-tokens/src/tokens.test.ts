@@ -8,6 +8,7 @@ import {
   over,
   parseColor,
   perceivedDistance,
+  toSrgb8,
   type LinearRgb,
   type Vision,
 } from "./color.ts";
@@ -109,6 +110,18 @@ describe.each(modes)("%s bot palette", (mode) => {
       expect(tooClose).toEqual([]);
     },
   );
+});
+
+describe("8-bit sRGB", () => {
+  it("gives back the hex value it was parsed from", () => {
+    expect(toSrgb8(parseColor("#fcfcfc"))).toEqual([252, 252, 252]);
+    expect(toSrgb8(parseColor("#1a7f37"))).toEqual([26, 127, 55]);
+  });
+
+  it("converts OKLCH to the sRGB a browser shows for it", () => {
+    // CSS Color 4's reference value for sRGB red.
+    expect(toSrgb8(parseColor("oklch(0.62796 0.25768 29.23)"))).toEqual([255, 0, 0]);
+  });
 });
 
 describe("avatar shapes", () => {

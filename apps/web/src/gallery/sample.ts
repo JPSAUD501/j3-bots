@@ -6,6 +6,7 @@
 import {
   AttachmentId,
   BotId,
+  DeviceId,
   EntryId,
   MemoryPath,
   ModelId,
@@ -13,11 +14,13 @@ import {
   RoomId,
   RoutineId,
   RoutineRunId,
+  TimeZone,
   WorkStepId,
   type Attachment,
   type Bot,
   type BotFile,
   type BotState,
+  type Device,
   type EngineStatus,
   type Entry,
   type MemoryFile,
@@ -26,6 +29,7 @@ import {
   type Room,
   type RosterItem,
   type Routine,
+  type Settings,
   type WorkStep,
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
@@ -638,6 +642,30 @@ export function sampleTeam(now: DateTime.Utc) {
     ]),
   );
 
+  const settings: Settings = {
+    operatorName: "Sam",
+    timeZone: TimeZone.make("America/Sao_Paulo"),
+    budgets: { hops: 6, fanOut: 3, concurrentTurns: 4 },
+    notifications: { previews: true },
+  };
+
+  const devices: ReadonlyArray<Device> = [
+    {
+      id: DeviceId.make("laptop"),
+      name: "Firefox on Linux",
+      pairedAt: ago(60 * 24 * 30),
+      lastSeenAt: now,
+      current: true,
+    },
+    {
+      id: DeviceId.make("phone"),
+      name: "Safari on iPhone",
+      pairedAt: ago(60 * 24 * 12),
+      lastSeenAt: ago(95),
+      current: false,
+    },
+  ];
+
   return {
     engine,
     bots,
@@ -649,6 +677,8 @@ export function sampleTeam(now: DateTime.Utc) {
     routines,
     files,
     memory,
+    settings,
+    devices,
   };
 }
 

@@ -1,19 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Bot, EngineStatus, ProviderStatus } from "@j3-bots/contracts";
 import { CheckIcon, CopyIcon } from "lucide-react";
-import { useId, useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { useI18n, usePresentation } from "../app/context";
+import type { I18n } from "../i18n/i18n";
 import { cn } from "../lib/cn";
 import { usageLimitText } from "../presentation/roster";
 import { BotAvatar } from "./BotAvatar";
+import { useConnectionLineShown } from "./ConnectionBanner";
+import { NewBotForm } from "./NewBotForm";
 import { Button } from "./ui/button";
-import { Checkbox } from "./ui/checkbox";
 import { Kbd } from "./ui/kbd";
 
 const idle = { _tag: "idle" } as const;
 
 /** Three idle bots: the picture for screens where the team is still to come. */
-function Ensemble() {
+export function Ensemble() {
   return (
     <span className="flex items-end gap-1.5 [--avatar-cutout:var(--background)]" aria-hidden>
       <BotAvatar avatar={{ shape: "hexagon", color: "teal" }} state={idle} size={36} />
@@ -23,7 +25,7 @@ function Ensemble() {
   );
 }
 
-function Centered({ children }: { children: ReactNode }) {
+export function Centered({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col items-center justify-center gap-4 overflow-y-auto px-6 py-10 text-center">
       {children}
@@ -31,7 +33,7 @@ function Centered({ children }: { children: ReactNode }) {
   );
 }
 
-function Heading({ title, body }: { title: string; body: string }) {
+export function Heading({ title, body }: { title: string; body: ReactNode }) {
   return (
     <div className="flex max-w-sm flex-col gap-1.5">
       <h1 className="text-lg font-medium">{title}</h1>
@@ -53,38 +55,15 @@ interface FirstRunProps {
  */
 export function FirstRun({ engine, onCreateBot }: FirstRunProps) {
   const { t } = useI18n();
-  if (engine === null) {
+  if (engine === null) return <Connecting />;
+  const problem = engineProblem(engine, t);
+  if (problem !== null) {
     return (
       <Centered>
         <Ensemble />
-        <Heading title={t("firstRun.connecting.title")} body={t("firstRun.connecting.body")} />
+        <Heading title={problem.title} body={problem.body} />
       </Centered>
     );
-  }
-  switch (engine.state._tag) {
-    case "starting":
-    case "unavailable":
-      return (
-        <Centered>
-          <Ensemble />
-          <Heading title={t("firstRun.engineDown.title")} body={t("firstRun.engineDown.body")} />
-        </Centered>
-      );
-    case "incompatible":
-      return (
-        <Centered>
-          <Ensemble />
-          <Heading
-            title={t("firstRun.incompatible.title")}
-            body={t("firstRun.incompatible.body", {
-              running: engine.state.runningVersion,
-              pinned: engine.pinnedVersion,
-            })}
-          />
-        </Centered>
-      );
-    case "ready":
-      break;
   }
   if (!engine.providers.some((p) => p.status._tag === "ready")) {
     const signIn = engine.providers.some((p) => p.status._tag === "sign-in-required");
@@ -107,8 +86,82 @@ export function FirstRun({ engine, onCreateBot }: FirstRunProps) {
   return <CreateFirstBot onCreateBot={onCreateBot} />;
 }
 
-/** One provider: its name, its state in words, and the command that signs it in when it needs one. */
-function ProviderRow({ provider }: { provider: ProviderStatus }) {
+/**
+ * What keeps the engine from running bots, and what the operator can do about
+ * it; null when it is ready.
+ */
+export function engineProblem(
+  engine: EngineStatus,
+  t: I18n["t"],
+): { readonly title: string; readonly body: string } | null {
+  const { state } = engine;
+  switch (state._tag) {
+    case "ready":
+      return null;
+    case "starting":
+      return { title: t("engine.starting.title"), body: t("engine.starting.body") };
+    case "incompatible":
+      return {
+        title: t("firstRun.incompatible.title"),
+        body: t("firstRun.incompatible.body", {
+          running: state.runningVersion,
+          pinned: engine.pinnedVersion,
+        }),
+      };
+    case "unavailable":
+      switch (state.reason) {
+        case "down":
+          return { title: t("engine.down.title"), body: t("engine.down.body") };
+        case "port-in-use":
+          return { title: t("engine.portInUse.title"), body: t("engine.portInUse.body") };
+        case "install-failed":
+          return { title: t("engine.installFailed.title"), body: t("engine.installFailed.body") };
+        case "credential-refused":
+          return {
+            title: t("engine.credentialRefused.title"),
+            body: t("engine.credentialRefused.body"),
+          };
+      }
+  }
+}
+
+/** Before the first roster arrives: the server has not answered yet. */
+export function Connecting() {
+  const { t } = useI18n();
+  // When the connection line says why the server is out of reach, saying it here again adds nothing.
+  const explained = useConnectionLineShown();
+  return (
+    <Centered>
+      <Ensemble />
+      {!explained && (
+        <Heading title={t("firstRun.connecting.title")} body={t("firstRun.connecting.body")} />
+      )}
+    </Centered>
+  );
+}
+
+/** A conversation whose bot or room no longer exists, as an old link can open. */
+export function ConversationGone({ onBack }: { onBack: () => void }) {
+  const { t } = useI18n();
+  return (
+    <Centered>
+      <Heading title={t("empty.gone.title")} body={t("empty.gone.body")} />
+      <Button onClick={onBack}>{t("empty.gone.back")}</Button>
+    </Centered>
+  );
+}
+
+/**
+ * One provider: its name, its state in words, and the command that signs it in
+ * when it needs one. `stale` mutes a state reported before a disconnection.
+ */
+export function ProviderRow({
+  provider,
+  stale = false,
+}: {
+  provider: ProviderStatus;
+  stale?: boolean;
+}) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
   const { status } = provider;
@@ -128,7 +181,7 @@ function ProviderRow({ provider }: { provider: ProviderStatus }) {
     <li className="flex flex-col gap-2 rounded-md border border-border px-3 py-2">
       <span className="flex flex-wrap items-baseline justify-between gap-x-3">
         <span>{provider.name}</span>
-        <span className={cn("text-xs", tone)}>{label}</span>
+        <span className={cn("text-xs", stale ? "text-muted-foreground" : tone)}>{label}</span>
       </span>
       {status._tag === "sign-in-required" && (
         <CommandLine
@@ -194,53 +247,11 @@ function CommandLine({ command, copyLabel }: { command: string; copyLabel: strin
 
 function CreateFirstBot({ onCreateBot }: Pick<FirstRunProps, "onCreateBot">) {
   const { t } = useI18n();
-  const [name, setName] = useState("");
-  const [primary, setPrimary] = useState(true);
-  const [state, setState] = useState<"editing" | "creating" | "failed">("editing");
-  const inputId = useId();
-  const trimmed = name.trim();
   return (
     <Centered>
       <Ensemble />
       <Heading title={t("firstRun.create.title")} body={t("firstRun.create.body")} />
-      <form
-        className="flex w-full max-w-xs flex-col gap-3 text-start"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (trimmed === "" || state === "creating") return;
-          setState("creating");
-          onCreateBot(trimmed, primary).then(
-            () => setState("editing"),
-            () => setState("failed"),
-          );
-        }}
-      >
-        <label htmlFor={inputId} className="sr-only">
-          {t("firstRun.create.name")}
-        </label>
-        <input
-          id={inputId}
-          value={name}
-          maxLength={40}
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder={t("firstRun.create.placeholder")}
-          className="h-9 rounded-md border border-input bg-surface px-3 text-sm placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:h-11"
-        />
-        <label className="flex items-start gap-2 text-xs text-muted-foreground">
-          <span className="mt-px">
-            <Checkbox checked={primary} onCheckedChange={setPrimary} />
-          </span>
-          <span>{t("firstRun.create.primary")}</span>
-        </label>
-        <Button type="submit" variant="primary" disabled={trimmed === "" || state === "creating"}>
-          {t("firstRun.create.submit")}
-        </Button>
-        {state === "failed" && (
-          <p role="alert" className="text-xs text-blocked">
-            {t("firstRun.create.failed")}
-          </p>
-        )}
-      </form>
+      <NewBotForm primaryAtFirst onCreate={onCreateBot} className="w-full max-w-xs text-start" />
     </Centered>
   );
 }

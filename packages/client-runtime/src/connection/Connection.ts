@@ -1,5 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { J3Rpcs, Label, PairingCode, PROTOCOL_VERSION, type PairRequest } from "@j3-bots/contracts";
+import {
+  type DeviceId,
+  type DeviceToken,
+  J3Rpcs,
+  Label,
+  PairingCode,
+  PROTOCOL_VERSION,
+  type PairRequest,
+} from "@j3-bots/contracts";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -39,11 +48,8 @@ export type J3RpcClient = RpcClient.RpcClient<RpcGroup.Rpcs<typeof J3Rpcs>, RpcC
 export type ConnectionState =
   /** Reading the device credential. */
   | { readonly _tag: "starting" }
-  /**
-   * No device credential: the client must pair. `revoked` when the server
-   * refused the credential this client had, so the UI can say why.
-   */
-  | { readonly _tag: "unpaired"; readonly revoked: boolean }
+  /** No device credential: the client must pair. `reason` says why, for the UI. */
+  | { readonly _tag: "unpaired"; readonly reason: UnpairedReason }
   /** The platform reports no network. The client tries again when it returns. */
   | { readonly _tag: "offline" }
   | { readonly _tag: "connecting"; readonly attempt: number }
@@ -62,6 +68,20 @@ export type ConnectionState =
   | { readonly _tag: "incompatible"; readonly serverProtocol: number }
   /** The credential storage failed. Nothing is retried until `reconnectNow`. */
   | { readonly _tag: "storage-failed" };
+
+/**
+ * Why the client has no credential. `new`: it never had one. `signed-out`: the
+ * server ended this device's access, or it was signed out here or in another
+ * window. `still-listed`: it signed out here without the server confirming
+ * it, which may list it until another device revokes it.
+ */
+export type UnpairedReason = "new" | "signed-out" | "still-listed";
+
+/**
+ * What forgetting a pairing did. `paired-anew`: storage holds a pairing made
+ * since, here or in another window, which stays, and this window follows it.
+ */
+export type ForgetResult = "forgotten" | "paired-anew";
 
 /** The device is not paired, so the command cannot reach the server. */
 export class NotPaired extends Schema.TaggedError<NotPaired>()("NotPaired", {}) {
@@ -96,6 +116,11 @@ export interface ReconnectSettings {
   readonly maxDelay: Duration.Duration;
   /** How long a socket may take to open. */
   readonly openTimeout: Duration.Duration;
+  /**
+   * How long an HTTP request may take to answer before the server counts as
+   * unreachable. A file transfer is also given time for its bytes: see `transferDeadline`.
+   */
+  readonly requestTimeout: Duration.Duration;
   /** How long an open socket may stay silent before it counts as dropped. */
   readonly pingTimeout: Duration.Duration;
 }
@@ -108,6 +133,7 @@ export class ReconnectPolicy extends Context.Reference<ReconnectSettings>(
       initialDelay: Duration.millis(500),
       maxDelay: Duration.seconds(30),
       openTimeout: Duration.seconds(10),
+      requestTimeout: Duration.seconds(10),
       pingTimeout: Duration.seconds(15),
     }),
   },
@@ -136,6 +162,8 @@ export const normalizePairingCode = (input: string) => input.replace(/[\s-]/g, "
 /** One open socket. `generation` grows with every socket, so a retry can wait for a newer one. */
 interface Session {
   readonly client: J3RpcClient;
+  /** The pairing the socket was opened with: the server acts on its behalf. */
+  readonly pairing: DeviceId;
   readonly generation: number;
   /** Completes when the socket closes. */
   readonly closed: Deferred.Deferred<void>;
@@ -148,7 +176,7 @@ type Slot =
 
 type Credential =
   | { readonly _tag: "loading" }
-  | { readonly _tag: "none"; readonly revoked: boolean }
+  | { readonly _tag: "none"; readonly reason: UnpairedReason }
   | { readonly _tag: "paired"; readonly credential: DeviceCredential };
 
 type AttemptOutcome =
@@ -156,7 +184,9 @@ type AttemptOutcome =
   | { readonly _tag: "dropped" }
   | { readonly _tag: "revoked" }
   | { readonly _tag: "incompatible"; readonly serverProtocol: number }
-  | { readonly _tag: "credential-changed" };
+  | { readonly _tag: "credential-changed" }
+  /** The platform reported the network gone. */
+  | { readonly _tag: "offline" };
 
 const isRpcClientError = Schema.is(RpcClientError);
 
@@ -164,8 +194,8 @@ const isRpcClientError = Schema.is(RpcClientError);
  * The link to the server: pairing, the ticket handshake, the socket, and
  * reconnecting with backoff. Every socket is opened with a fresh single-use
  * ticket, so a refused handshake costs nothing: the next attempt asks for a new
- * ticket, and a 401 from the ticket route is what tells the client it is no
- * longer paired.
+ * ticket, and the server's own `NotAuthenticated` from the ticket route is
+ * what tells the client it is no longer paired.
  */
 export class Connection extends Context.Service<
   Connection,
@@ -179,27 +209,81 @@ export class Connection extends Context.Service<
       readonly code: string;
       readonly deviceName: string;
     }) => Effect.Effect<void, PairingFailed>;
-    /** Forgets this device's credential here. The server still lists it until it is revoked. */
-    readonly forget: Effect.Effect<void, CredentialStorageError>;
+    /**
+     * The pairing this window follows: its device id, or null while the
+     * credential is read and when there is none. It changes in the same step
+     * as the credential this window holds. What the client keeps on the
+     * device belongs to the pairing that wrote it.
+     */
+    readonly pairing: Readable<DeviceId | null>;
+    /**
+     * Deletes the credential of `pairing` from storage, then lets go of it, so
+     * a failure leaves the device as it was. It revokes nothing: `reason` says
+     * whether the server still lists the device. A pairing made since, here
+     * or in another window, is left in storage, and this window follows it,
+     * even when word of it has not reached this window yet: the result says so.
+     */
+    readonly forget: (
+      reason: Exclude<UnpairedReason, "new">,
+      pairing: DeviceId | null,
+    ) => Effect.Effect<ForgetResult, CredentialStorageError>;
+    /**
+     * The pairing the device's credential storage holds now, read afresh:
+     * another window may have changed it since this one last heard.
+     */
+    readonly storedPairing: Effect.Effect<DeviceId | null, CredentialStorageError>;
+    /**
+     * Whether the device's credential storage still holds `pairing`, read
+     * afresh. A pairing that ended never returns, so after a transaction
+     * guarded by `pairing` was refused, this tells whether the pairing ended
+     * or another window changed a record. Storage that cannot be read counts
+     * as ended, so nothing is written meanwhile.
+     */
+    readonly stillPaired: (pairing: DeviceId) => Effect.Effect<boolean>;
     /** Skips the wait before the next attempt, and leaves `incompatible` and `storage-failed`. */
     readonly reconnectNow: Effect.Effect<void>;
+    /**
+     * Whether the server itself refused `pairing`'s credential to this window:
+     * its own word that the pairing ended. A credential another window
+     * deleted, or one this window let go of, says nothing of the server.
+     */
+    readonly refusedByServer: (pairing: DeviceId) => boolean;
     /**
      * Runs `use` on the open socket, waiting for one if there is none. If the
      * socket drops before `use` finishes, runs it again on the next socket, so
      * `use` must be safe to repeat: a command with a fixed command id, or a read.
-     * Fails with `NotPaired` once the device has no credential.
+     * It belongs to the pairing it started under, or, started while the
+     * credential is read, to that of the first socket: it fails with
+     * `NotPaired` once the device has no credential, or a socket of another
+     * pairing opens.
      */
     readonly call: <A, E>(
       use: (client: J3RpcClient) => Effect.Effect<A, E | RpcClientError>,
     ) => Effect.Effect<A, Exclude<E, RpcClientError> | NotPaired>;
     /**
      * Runs `use` on every socket from the moment it opens, interrupting it when
-     * the socket closes. If `use` dies, it waits for the next socket. Ends only
-     * when `use` fails with an error of its own.
+     * the socket closes, with the pairing the socket was opened with. If `use`
+     * dies, it waits for the next socket. Ends only when `use` fails with an
+     * error of its own.
      */
     readonly eachSession: <E>(
-      use: (client: J3RpcClient) => Effect.Effect<void, E | RpcClientError>,
+      use: (client: J3RpcClient, pairing: DeviceId) => Effect.Effect<void, E | RpcClientError>,
     ) => Effect.Effect<never, Exclude<E, RpcClientError>>;
+    /**
+     * The device token of `pairing`, for the HTTP routes that take it as a
+     * bearer: files. Waits while the credential is read; fails with
+     * `NotPaired` unless this window holds `pairing`'s credential.
+     */
+    readonly bearer: (
+      pairing: DeviceId,
+    ) => Effect.Effect<Redacted.Redacted<DeviceToken>, NotPaired>;
+    /** This device's id, as the server knows it. Fails with `NotPaired` without a credential. */
+    readonly deviceId: Effect.Effect<DeviceId, NotPaired>;
+    /**
+     * Waits until a socket is open, which means the server answers and takes
+     * this device's credential. Fails with `NotPaired` once there is none.
+     */
+    readonly awaitConnected: Effect.Effect<void, NotPaired>;
   }
 >()("@j3-bots/client-runtime/connection/Connection") {}
 
@@ -211,15 +295,30 @@ export const layer = Layer.effect(
     const network = yield* Network;
     const makeWebSocket = yield* Socket.WebSocketConstructor;
     const policy = yield* ReconnectPolicy;
-    const http = yield* ServerHttp.make(origin);
+    const http = yield* ServerHttp.make(origin, policy.requestTimeout);
 
     const state = new Cell<ConnectionState>({ _tag: "starting" });
     const slot = yield* SubscriptionRef.make<Slot>({ _tag: "closed" });
     const credential = yield* SubscriptionRef.make<Credential>({ _tag: "loading" });
+    const pairing = new Cell<DeviceId | null>(null);
+    /**
+     * Changes the credential this window holds, and the pairing it follows
+     * with it, in one step: nothing reads one changed and the other not.
+     */
+    const follow = (next: (current: Credential) => Credential) =>
+      SubscriptionRef.updateEffect(credential, (current) =>
+        Effect.sync(() => {
+          const followed = next(current);
+          pairing.set(followed._tag === "paired" ? followed.credential.deviceId : null);
+          return followed;
+        }),
+      );
     const networkStatus = yield* SubscriptionRef.make(yield* network.status);
     // Asks the supervisor to try now. One pending wake is enough.
     const wakes = yield* Queue.sliding<void>(1);
     let generation = 0;
+    // The pairings whose credential the server refused to this window.
+    const refused = new Set<DeviceId>();
 
     yield* network.changes.pipe(
       Stream.runForEach((status) =>
@@ -235,8 +334,51 @@ export const layer = Layer.effect(
 
     const wake = Queue.take(wakes).pipe(Effect.asVoid);
 
+    const sameCredential = (a: DeviceCredential, b: DeviceCredential) =>
+      a.deviceId === b.deviceId && Redacted.value(a.token) === Redacted.value(b.token);
+
+    /**
+     * Deletes `ended` from storage and follows what is left: nothing, or a
+     * pairing another window made after this one last read the credential.
+     */
+    const end = (ended: DeviceCredential, reason: Exclude<UnpairedReason, "new">) =>
+      store.clear(ended).pipe(
+        Effect.flatMap((left) => {
+          const newer = Option.filter(left, (found) => !sameCredential(found, ended));
+          return follow(() =>
+            Option.match(newer, {
+              onNone: (): Credential => ({ _tag: "none", reason }),
+              onSome: (found): Credential => ({ _tag: "paired", credential: found }),
+            }),
+          ).pipe(Effect.as<ForgetResult>(Option.isSome(newer) ? "paired-anew" : "forgotten"));
+        }),
+      );
+
+    // Another window paired or signed out: this one follows. A credential
+    // that is gone was signed out; one that differs was paired anew.
+    yield* store.changes.pipe(
+      Stream.runForEach(() =>
+        store.load.pipe(
+          Effect.flatMap((loaded) =>
+            follow((current): Credential => {
+              if (Option.isNone(loaded)) {
+                return current._tag === "paired" ? { _tag: "none", reason: "signed-out" } : current;
+              }
+              return current._tag === "paired" && sameCredential(current.credential, loaded.value)
+                ? current
+                : { _tag: "paired", credential: loaded.value };
+            }),
+          ),
+          Effect.catchTag("CredentialStorageError", (error) =>
+            Effect.logWarning("Another window changed the credential; it could not be read", error),
+          ),
+        ),
+      ),
+      Effect.forkScoped,
+    );
+
     /** Opens the socket and holds it until it closes. */
-    const holdSocket = (url: string): Effect.Effect<AttemptOutcome> =>
+    const holdSocket = (url: string, paired: DeviceId): Effect.Effect<AttemptOutcome> =>
       Effect.gen(function* () {
         const opened = yield* Deferred.make<void>();
         const closed = yield* Deferred.make<void>();
@@ -270,7 +412,7 @@ export const layer = Layer.effect(
         generation += 1;
         yield* SubscriptionRef.set(slot, {
           _tag: "open",
-          session: { client, generation, closed },
+          session: { client, pairing: paired, generation, closed },
         });
         state.set({ _tag: "connected" });
         yield* Deferred.await(closed);
@@ -285,7 +427,7 @@ export const layer = Layer.effect(
           return { _tag: "incompatible", serverProtocol: info.protocolVersion } as const;
         }
         const grant = yield* http.socketTicket(paired.token);
-        return yield* holdSocket(http.socketUrl(grant.ticket));
+        return yield* holdSocket(http.socketUrl(grant.ticket), paired.deviceId);
       }).pipe(
         Effect.catchTags({
           ServerUnreachable: () => Effect.succeed({ _tag: "unreachable" } as const),
@@ -298,18 +440,33 @@ export const layer = Layer.effect(
             (current) => current._tag !== "paired" || current.credential !== paired,
           ).pipe(Effect.as({ _tag: "credential-changed" } as const)),
         ),
+        // So does losing the network. A socket can outlive it for a long time
+        // without failing; the platform's word that it is gone is reliable.
+        Effect.raceFirst(
+          firstChange(networkStatus, (status) => status === "offline").pipe(
+            Effect.as({ _tag: "offline" } as const),
+          ),
+        ),
       );
 
+    /** Reads the credential and follows it, unless storage fails: succeeds with whether it could. */
+    const tryLoad = store.load.pipe(
+      Effect.option,
+      Effect.flatMap((loaded) =>
+        Option.isNone(loaded)
+          ? Effect.succeed(false)
+          : follow(() =>
+              Option.match(loaded.value, {
+                onNone: (): Credential => ({ _tag: "none", reason: "new" }),
+                onSome: (stored): Credential => ({ _tag: "paired", credential: stored }),
+              }),
+            ).pipe(Effect.as(true)),
+      ),
+    );
+
     const load = Effect.gen(function* () {
-      while (true) {
-        const loaded = yield* store.load.pipe(Effect.option);
-        if (Option.isSome(loaded)) {
-          const next: Credential = Option.match(loaded.value, {
-            onNone: () => ({ _tag: "none", revoked: false }),
-            onSome: (stored) => ({ _tag: "paired", credential: stored }),
-          });
-          return yield* SubscriptionRef.set(credential, next);
-        }
+      while ((yield* SubscriptionRef.get(credential))._tag === "loading") {
+        if (yield* tryLoad) return;
         state.set({ _tag: "storage-failed" });
         yield* wake;
       }
@@ -321,17 +478,21 @@ export const layer = Layer.effect(
       while (true) {
         const current = yield* SubscriptionRef.get(credential);
         if (current._tag !== "paired") {
-          state.set({ _tag: "unpaired", revoked: current._tag === "none" && current.revoked });
+          state.set({ _tag: "unpaired", reason: current._tag === "none" ? current.reason : "new" });
           yield* SubscriptionRef.set(slot, { _tag: "unpaired" });
-          yield* firstChange(credential, (next) => next._tag === "paired");
-          yield* SubscriptionRef.set(slot, { _tag: "closed" });
+          yield* firstChange(credential, (next) => next !== current);
+          if ((yield* SubscriptionRef.get(credential))._tag === "paired") {
+            yield* SubscriptionRef.set(slot, { _tag: "closed" });
+          }
           failures = 0;
           continue;
         }
         if ((yield* SubscriptionRef.get(networkStatus)) === "offline") {
           state.set({ _tag: "offline" });
+          // Signing out, here or in another window, needs no network.
           yield* firstChange(networkStatus, (status) => status !== "offline").pipe(
             Effect.raceFirst(wake),
+            Effect.raceFirst(firstChange(credential, (next) => next !== current)),
           );
           failures = 0;
           continue;
@@ -341,13 +502,18 @@ export const layer = Layer.effect(
         const outcome = yield* attempt(current.credential);
         switch (outcome._tag) {
           case "credential-changed":
+          case "offline":
             failures = 0;
             continue;
           case "revoked":
-            yield* SubscriptionRef.set(credential, { _tag: "none", revoked: true });
-            yield* store.clear.pipe(
+            // The server refused this credential. The refusal may come late,
+            // after another window paired anew: that pairing stays.
+            refused.add(current.credential.deviceId);
+            yield* end(current.credential, "signed-out").pipe(
               Effect.catchTag("CredentialStorageError", (error) =>
-                Effect.logWarning("The revoked credential stays in storage", error),
+                Effect.logWarning("The revoked credential stays in storage", error).pipe(
+                  Effect.andThen(follow(() => ({ _tag: "none", reason: "signed-out" }))),
+                ),
               ),
             );
             continue;
@@ -374,6 +540,9 @@ export const layer = Layer.effect(
         }
       }
     });
+    // Read once before anything else starts, so every store begins with the
+    // pairing this window follows. Storage that fails is read again by `load`.
+    yield* tryLoad;
     yield* Effect.forkScoped(supervise);
 
     const pair = Effect.fn("Connection.pair")(function* (input: {
@@ -409,12 +578,32 @@ export const layer = Layer.effect(
         token: Redacted.make(result.token),
       };
       yield* store.save(paired).pipe(Effect.mapError(() => failed({ _tag: "storage-failed" })));
-      yield* SubscriptionRef.set(credential, { _tag: "paired", credential: paired });
+      yield* follow(() => ({ _tag: "paired", credential: paired }));
     });
 
-    const forget = Effect.gen(function* () {
-      yield* SubscriptionRef.set(credential, { _tag: "none", revoked: false });
-      yield* store.clear;
+    const forget = Effect.fn("Connection.forget")(function* (
+      reason: Exclude<UnpairedReason, "new">,
+      pairing: DeviceId | null,
+    ) {
+      const current = yield* SubscriptionRef.get(credential);
+      if (current._tag !== "paired") {
+        // This window let go of its credential already, but storage decides:
+        // another window's pairing may be there before word of it arrived
+        // here, or the credential that ended may still be there.
+        const stored = yield* store.load;
+        if (Option.isSome(stored) && stored.value.deviceId === pairing) {
+          return yield* end(stored.value, reason);
+        }
+        return yield* follow(() =>
+          Option.match(stored, {
+            onNone: (): Credential => ({ _tag: "none", reason }),
+            onSome: (found): Credential => ({ _tag: "paired", credential: found }),
+          }),
+        ).pipe(Effect.as<ForgetResult>(Option.isSome(stored) ? "paired-anew" : "forgotten"));
+      }
+      // This window already follows a pairing made since: it stays.
+      if (current.credential.deviceId !== pairing) return "paired-anew";
+      return yield* end(current.credential, reason);
     });
 
     const awaitSession = (after: number) =>
@@ -435,12 +624,19 @@ export const layer = Layer.effect(
     const call = <A, E>(
       use: (client: J3RpcClient) => Effect.Effect<A, E | RpcClientError>,
     ): Effect.Effect<A, Exclude<E, RpcClientError> | NotPaired> => {
-      const run = (after: number): Effect.Effect<A, Exclude<E, RpcClientError> | NotPaired> =>
+      const run = (
+        after: number,
+        bound: DeviceId | null,
+      ): Effect.Effect<A, Exclude<E, RpcClientError> | NotPaired> =>
         awaitSession(after).pipe(
-          Effect.flatMap((session) =>
-            use(session.client).pipe(
+          Effect.flatMap((session) => {
+            if (bound !== null && session.pairing !== bound) return Effect.fail(new NotPaired());
+            return use(session.client).pipe(
               Effect.asSome,
               Effect.catchIf(isRpcClientError, () => Effect.succeed(Option.none<A>())),
+              // Closing the socket here, offline or for another credential,
+              // interrupts what is in flight: that is no answer either.
+              Effect.catchCauseIf(Cause.hasInterruptsOnly, () => Effect.succeed(Option.none<A>())),
               // A request in flight when its socket closes may never be
               // answered: the socket's end decides, not the request's.
               Effect.raceFirst(Deferred.await(session.closed).pipe(Effect.as(Option.none<A>()))),
@@ -448,22 +644,22 @@ export const layer = Layer.effect(
                 (answered): Effect.Effect<A, Exclude<E, RpcClientError> | NotPaired> =>
                   Option.isSome(answered)
                     ? Effect.succeed(answered.value)
-                    : run(session.generation),
+                    : run(session.generation, session.pairing),
               ),
-            ),
-          ),
+            );
+          }),
         );
-      return Effect.suspend(() => run(0));
+      return Effect.suspend(() => run(0, pairing.get()));
     };
 
     const eachSession = <E>(
-      use: (client: J3RpcClient) => Effect.Effect<void, E | RpcClientError>,
+      use: (client: J3RpcClient, pairing: DeviceId) => Effect.Effect<void, E | RpcClientError>,
     ): Effect.Effect<never, Exclude<E, RpcClientError>> =>
       SubscriptionRef.changes(slot).pipe(
         Stream.switchMap((current) =>
           current._tag === "open"
             ? Stream.fromEffect(
-                use(current.session.client).pipe(
+                use(current.session.client, current.session.pairing).pipe(
                   Effect.catchIf(isRpcClientError, () => Effect.void),
                   // The server fails a request alone, with a generic defect. The
                   // subscription starts again on the next socket.
@@ -481,13 +677,47 @@ export const layer = Layer.effect(
         Effect.andThen(Effect.never),
       );
 
+    const paired = SubscriptionRef.changes(credential).pipe(
+      Stream.filter((current) => current._tag !== "loading"),
+      Stream.runHead,
+      Effect.flatMap((current) =>
+        Option.isSome(current) && current.value._tag === "paired"
+          ? Effect.succeed(current.value.credential)
+          : Effect.fail(new NotPaired()),
+      ),
+    );
+
+    const storedPairing = store.load.pipe(
+      Effect.map((stored) => Option.getOrNull(Option.map(stored, (found) => found.deviceId))),
+    );
+
     return Connection.of({
       state,
+      pairing,
       pair,
       forget,
+      storedPairing,
+      stillPaired: Effect.fn("Connection.stillPaired")((held: DeviceId) =>
+        storedPairing.pipe(
+          Effect.map((stored) => stored === held),
+          Effect.catchTag("CredentialStorageError", (error) =>
+            Effect.logWarning("The device's pairing could not be read", error).pipe(
+              Effect.as(false),
+            ),
+          ),
+        ),
+      ),
+      refusedByServer: (held) => refused.has(held),
       reconnectNow: Queue.offer(wakes, void 0).pipe(Effect.asVoid),
       call,
       eachSession,
+      bearer: Effect.fn("Connection.bearer")(function* (held: DeviceId) {
+        const current = yield* paired;
+        if (current.deviceId !== held) return yield* new NotPaired();
+        return current.token;
+      }),
+      deviceId: Effect.map(paired, (current) => current.deviceId),
+      awaitConnected: awaitSession(0).pipe(Effect.asVoid),
     });
   }),
 );

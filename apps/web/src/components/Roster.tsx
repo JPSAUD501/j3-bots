@@ -53,7 +53,8 @@ interface RosterProps {
   /** The link a row navigates with, such as a router link to its conversation. */
   readonly rowLink: (item: RosterItem) => ReactElement;
   readonly onNewBot: () => void;
-  readonly onNewRoom: () => void;
+  /** Absent until rooms can be made: the button then makes a bot. */
+  readonly onNewRoom?: (() => void) | undefined;
   readonly footer?: ReactNode;
   /**
    * The roster's landmark. It takes focus only from code, where neither a row
@@ -97,15 +98,23 @@ export function Roster({
             className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
           />
         </label>
-        <Menu>
-          <MenuTrigger render={<Button variant="ghost" size="icon" aria-label={t("roster.new")} />}>
+        {onNewRoom ? (
+          <Menu>
+            <MenuTrigger
+              render={<Button variant="ghost" size="icon" aria-label={t("roster.new")} />}
+            >
+              <PlusIcon />
+            </MenuTrigger>
+            <MenuPopup side="bottom" align="end">
+              <MenuItem onClick={onNewBot}>{t("roster.newBot")}</MenuItem>
+              <MenuItem onClick={onNewRoom}>{t("roster.newRoom")}</MenuItem>
+            </MenuPopup>
+          </Menu>
+        ) : (
+          <Button variant="ghost" size="icon" aria-label={t("roster.newBot")} onClick={onNewBot}>
             <PlusIcon />
-          </MenuTrigger>
-          <MenuPopup side="bottom" align="end">
-            <MenuItem onClick={onNewBot}>{t("roster.newBot")}</MenuItem>
-            <MenuItem onClick={onNewRoom}>{t("roster.newRoom")}</MenuItem>
-          </MenuPopup>
-        </Menu>
+          </Button>
+        )}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {rows.length === 0 ? (

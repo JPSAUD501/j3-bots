@@ -1,5 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { EntryId, EntryTarget, RosterItem } from "@j3-bots/contracts";
+import type {
+  BotFile,
+  BotId,
+  EntryId,
+  EntryOrder,
+  EntryTarget,
+  MemoryFile,
+  MemoryScope,
+  RosterItem,
+  Routine,
+} from "@j3-bots/contracts";
 import {
   createContext,
   createElement,
@@ -14,6 +24,8 @@ import type { ConversationHandle, J3Client, WorkStepsHandle } from "../client.ts
 import { type ActionState, cardAction } from "../intents/Actions.ts";
 import type { Readable } from "../Store.ts";
 import { type ConversationState, targetKey } from "../stores/Conversations.ts";
+import type { Draft } from "../stores/Drafts.ts";
+import type { Loaded } from "../stores/reads.ts";
 import { rosterRows } from "../stores/Roster.ts";
 import type { WorkStepsState } from "../stores/WorkSteps.ts";
 
@@ -64,45 +76,87 @@ export const useRoster = (): {
 export const useCardAction = (entryId: EntryId): ActionState | undefined =>
   useSelected(useJ3Client().actions, (actions) => actions.get(cardAction(entryId)));
 
+/** Every action in flight or just accepted, by key. */
+export const useActions = () => useReadable(useJ3Client().actions);
+
+const emptyDraft: Draft = { text: "", files: [], sending: false };
+
+/** What the operator has written to `target` and not sent, kept on the device. */
+export const useDraft = (target: EntryTarget): Draft => {
+  const key = targetKey(target);
+  return useSelected(useJ3Client().drafts, (drafts) => drafts.get(key) ?? emptyDraft);
+};
+
 const nothing = () => () => {};
 const none = () => null;
 
-/** Holds `open(client)` while the component is mounted and `key` stays the same. */
-const useHeld = <H extends { readonly release: () => void }>(
-  key: string,
-  open: (client: J3Client) => H,
+/**
+ * Holds `open(client, input)` while the component is mounted and the key of
+ * `input` stays the same. A null `input` holds nothing.
+ */
+const useHeld = <I, H extends { readonly release: () => void }>(
+  input: I | null,
+  keyOf: (input: I) => string,
+  open: (client: J3Client, input: I) => H,
 ): H | null => {
   const client = useJ3Client();
+  const key = input === null ? null : keyOf(input);
   const [held, setHeld] = useState<{ readonly key: string; readonly handle: H } | null>(null);
   useEffect(() => {
-    const handle = open(client);
+    if (input === null || key === null) return;
+    const handle = open(client, input);
     setHeld({ key, handle });
     return handle.release;
-    // `open` is a new function every render; `key` says when it opens something else.
+    // `input` and `open` are new every render; `key` says when they mean something else.
   }, [client, key]);
   // For one render after `key` changes, the previous handle is still held.
-  return held?.key === key ? held.handle : null;
+  return held !== null && held.key === key ? held.handle : null;
 };
 
-/**
- * The conversation or room while the component is mounted: its state, or
- * `null` for the first render, and what to call on it.
- */
-export const useConversation = (
-  target: EntryTarget,
-): {
-  readonly state: ConversationState | null;
-  readonly loadOlder: () => void;
-  readonly markRead: () => void;
-} => {
-  const handle: ConversationHandle | null = useHeld(targetKey(target), (client) =>
-    client.openConversation(target),
-  );
-  const state = useSyncExternalStore(
+/** What a held handle's state holds, or `null` when nothing is held yet. */
+const useHeldState = <A>(handle: { readonly state: Readable<A> } | null): A | null =>
+  useSyncExternalStore(
     handle?.state.subscribe ?? nothing,
     handle?.state.get ?? none,
     handle?.state.get ?? none,
   );
+
+const same = (key: string) => key;
+const scopeKey = (scope: MemoryScope) => (scope._tag === "bot" ? `bot:${scope.botId}` : "shared");
+
+/** The files a bot delivered, newest first, while mounted. A null `botId` reads nothing. */
+export const useBotFiles = (botId: BotId | null): Loaded<ReadonlyArray<BotFile>> | null =>
+  useHeldState<Loaded<ReadonlyArray<BotFile>>>(
+    useHeld(botId, same, (client, id) => client.openBotFiles(id)),
+  );
+
+/** The files of a memory scope, while mounted. A null `scope` reads nothing. */
+export const useMemory = (scope: MemoryScope | null): Loaded<ReadonlyArray<MemoryFile>> | null =>
+  useHeldState<Loaded<ReadonlyArray<MemoryFile>>>(
+    useHeld(scope, scopeKey, (client, value) => client.openMemory(value)),
+  );
+
+/** A bot's routines, live, while mounted. A null `botId` reads nothing. */
+export const useRoutines = (botId: BotId | null): Loaded<ReadonlyArray<Routine>> | null =>
+  useHeldState<Loaded<ReadonlyArray<Routine>>>(
+    useHeld(botId, same, (client, id) => client.openRoutines(id)),
+  );
+
+/**
+ * The conversation or room while the component is mounted: its state, or
+ * `null` for the first render or when `target` is null, and what to call on it.
+ */
+export const useConversation = (
+  target: EntryTarget | null,
+): {
+  readonly state: ConversationState | null;
+  readonly loadOlder: () => void;
+  readonly markRead: (through: EntryOrder) => void;
+} => {
+  const handle: ConversationHandle | null = useHeld(target, targetKey, (client, value) =>
+    client.openConversation(value),
+  );
+  const state = useHeldState(handle);
   return {
     state,
     loadOlder: handle?.loadOlder ?? (() => {}),
@@ -112,10 +166,8 @@ export const useConversation = (
 
 /** The steps of a work fold while the component is mounted, or `null` for the first render. */
 export const useWorkSteps = (foldId: EntryId): WorkStepsState | null => {
-  const handle: WorkStepsHandle | null = useHeld(foldId, (client) => client.openWorkSteps(foldId));
-  return useSyncExternalStore(
-    handle?.state.subscribe ?? nothing,
-    handle?.state.get ?? none,
-    handle?.state.get ?? none,
+  const handle: WorkStepsHandle | null = useHeld(foldId, same, (client, id) =>
+    client.openWorkSteps(id),
   );
+  return useHeldState(handle);
 };

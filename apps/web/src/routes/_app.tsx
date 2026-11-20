@@ -2,15 +2,32 @@
 import type { RosterItem, RosterItemKey } from "@j3-bots/contracts";
 import { Link, Outlet, createFileRoute, useNavigate, useParams } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
+import { lazy } from "react";
+import { LiveSourceProvider } from "../live/LiveSource";
 import { Shell } from "../shell/Shell";
 import { useShellSource } from "../shell/source";
+
+// Development serves a sample team, so every screen can be seen without a
+// server, unless VITE_J3_SERVER names a server to run against. Both conditions
+// are constant in a build, so a build always runs on its server and carries
+// no sample.
+const SourceProvider =
+  import.meta.env.DEV && import.meta.env.VITE_J3_SERVER === undefined
+    ? lazy(() =>
+        import("../gallery/sampleSource").then((m) => ({ default: m.SampleSourceProvider })),
+      )
+    : LiveSourceProvider;
 
 const Search = Schema.Struct({ details: Schema.optionalKey(Schema.Boolean) });
 
 /** The app: one shell for every conversation, so the roster keeps its place between them. */
 export const Route = createFileRoute("/_app")({
   validateSearch: Schema.toStandardSchemaV1(Search),
-  component: AppLayout,
+  component: () => (
+    <SourceProvider>
+      <AppLayout />
+    </SourceProvider>
+  ),
 });
 
 /** A roster row is a link to its conversation, so it can be opened in a new tab. */

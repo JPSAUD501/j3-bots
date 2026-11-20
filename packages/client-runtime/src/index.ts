@@ -2,8 +2,10 @@
 export {
   type ConversationHandle,
   createJ3Client,
+  type DownloadResult,
   type J3Client,
   layer,
+  type LoadedHandle,
   type PairResult,
   type Platform,
   type WorkStepsHandle,
@@ -19,7 +21,18 @@ export {
   type PairingFailure,
   ReconnectPolicy,
   type ReconnectSettings,
+  type UnpairedReason,
 } from "./connection/Connection.ts";
+export { type Download } from "./files/Files.ts";
+export {
+  admitFiles,
+  type FileProblem,
+  InvalidMessage,
+  type LocalFile,
+  messageProblem,
+  MessageProblem,
+  normalizeMediaType,
+} from "./files/limits.ts";
 export {
   Actions,
   type ActionState,
@@ -29,13 +42,24 @@ export {
   retryAction,
   stopAction,
 } from "./intents/Actions.ts";
+export { type SignOutResult } from "./intents/SignOut.ts";
 export {
+  ClientStorage,
   CredentialStorageError,
   CredentialStore,
   type DeviceCredential,
+  FileTransfer,
+  type LocalRecord,
+  LocalTable,
+  LocalStorageError,
+  makeInProcessLocks,
   Network,
   type NetworkStatus,
   ServerAddress,
+  TransferFailed,
+  type UploadRequest,
+  type UploadResponse,
+  WindowLocks,
 } from "./ports.ts";
 export { Cell, type Readable, waitFor } from "./Store.ts";
 export {
@@ -50,10 +74,18 @@ export {
   type SecretAnswer,
   targetKey,
 } from "./stores/Conversations.ts";
-export { Devices } from "./stores/Devices.ts";
+export { type BotDraft, freshStartAction } from "./stores/Details.ts";
+export { Devices, type RevokeResult } from "./stores/Devices.ts";
+export {
+  type Draft,
+  type DraftChangedElsewhere,
+  type DraftFile,
+  type DraftSendResult,
+} from "./stores/Drafts.ts";
 export { EngineStatus } from "./stores/EngineStatus.ts";
 export { Presence } from "./stores/Presence.ts";
+export type { Loaded } from "./stores/reads.ts";
 export { needsOperator, Roster, rosterRows } from "./stores/Roster.ts";
-export { Settings, type SettingsChanges } from "./stores/Settings.ts";
+export { Settings, type SettingsChanges, type SettingsSave } from "./stores/Settings.ts";
 export type { Synced } from "./stores/synced.ts";
 export { WorkSteps, type WorkStepsState } from "./stores/WorkSteps.ts";

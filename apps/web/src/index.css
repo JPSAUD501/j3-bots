@@ -11,6 +11,13 @@
     height: 100%;
   }
 
+  /* The top of the screen the device keeps for itself. One layer takes it: the
+     connection line when it shows (it zeroes this for what lies under it), else
+     the shell's regions. */
+  :root {
+    --inset-top: env(safe-area-inset-top);
+  }
+
   body {
     background: var(--background);
     color: var(--foreground);

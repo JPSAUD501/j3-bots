@@ -367,7 +367,7 @@ Each of the server's listeners (this one, the tool endpoint and the admin socket
 - Routines resume the same way.
 - The steps of a work fold stream while the operator has the fold open: every step so far, then each step as it changes, until the fold's turn ends.
 
-Unread has one source of truth: the conversation's read mark against its newest entry. A bot that finished its turn is idle, and its reply is unread until the operator reads it; there is no separate "done" state.
+Unread has one source of truth: the conversation's read mark against its newest entry. A bot that finished its turn is idle, and its reply is unread until the operator reads it; there is no separate "done" state. A client moves the mark forward only through the newest entry the operator can see: on screen, in a window that is showing, with no dialog over the conversation.
 
 **Commands** carry a client-generated id and are idempotent: send a message, answer a card, stop a bot, create or change a bot, a room or a routine, edit memory, change settings. `secret.provide` is the exception: it keeps no receipt, because a receipt would hold the value; a retry that finds the card closed fails with `Conflict("card-closed")` instead.
 

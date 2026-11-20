@@ -84,6 +84,7 @@ export const en = {
   "question.answered": "Answered",
   "question.dismissed": "Dismissed. The bot reads this as a no.",
   "question.expired": "This question expired before it was answered.",
+  "question.tooLong": "Your answer is too long to reach the bot. Shorten it and send it again.",
 
   "secret.title": "Credential",
   "secret.pending": "Needs a credential",
@@ -216,6 +217,8 @@ export const en = {
   "details.freshStartHint":
     "A fresh start clears what {name} is holding in mind. Its conversation, memory, routines and files stay.",
   "details.freshStart": "Start fresh",
+  "details.freshStart.done": "{name} started fresh.",
+  "details.freshStart.failed": "The fresh start didn’t happen. Try again.",
   "details.delete": "Delete {name}",
   "details.delete.title": "Delete {name}?",
   "details.delete.body":
@@ -254,9 +257,6 @@ export const en = {
   "firstRun.connecting.title": "Connecting to J3 Bots",
   "firstRun.connecting.body":
     "Waiting for the J3 Bots server. This page updates as soon as it answers.",
-  "firstRun.engineDown.title": "The engine isn’t running yet",
-  "firstRun.engineDown.body":
-    "J3 Bots starts it and keeps trying. This page updates when it’s ready.",
   "firstRun.incompatible.title": "The engine is the wrong version",
   "firstRun.incompatible.body":
     "The engine is version {running}, and this release of J3 Bots needs {pinned}.",
@@ -286,4 +286,160 @@ export const en = {
   "empty.noSelection.shortcut": "moves to the next one",
   "empty.quiet.speaksFirst": "{name} speaks first. It is getting ready.",
   "empty.quiet.body": "No messages yet. Tell {name} what you need.",
+
+  "message.sending": "Sending…",
+  "message.notSent.refused": "Not sent: the server refused it",
+  "message.notSent.tooLong": "Not sent: too long for this bot’s engine to take in one message",
+  "message.notSent.notPaired": "Not sent: this device is signed out",
+  "message.notSent.unexpected": "Not sent: something went wrong on the server",
+  "message.unrecorded": "This device couldn’t save the server’s answer yet.",
+  "message.discard": "Delete",
+  "message.changeNotKept": "This device couldn’t save that change. Try again.",
+
+  "timeline.loadOlder": "Show earlier messages",
+  "timeline.loadingOlder": "Loading earlier messages…",
+
+  "composer.files": "Files to send",
+  "composer.stillUploading": "Files are still uploading",
+  "composer.file.uploading": "Uploading, {percent}",
+  "composer.file.remove": "Remove {name}",
+  "composer.file.failed": "{name} can’t be sent: {reason}",
+  "composer.file.empty": "The file is empty",
+  "composer.file.tooLarge": "Larger than {size}, the most a file can be",
+  "composer.file.imageTooLarge": "An image can be at most {size}",
+  "composer.file.imagesTooLarge": "Images in one message can add up to {size} at most",
+  "composer.file.tooMany": "A message can carry {count} files at most",
+  "composer.file.nameTooLong": "The file name is too long",
+  "composer.file.refused": "The server refused this file",
+  "composer.file.serverSetup":
+    "The server can’t store files until its setup is fixed; its log says how",
+  "composer.file.notPaired": "This device is signed out",
+  "composer.tooLong": "Too long to send. A message can hold {count} characters at most.",
+  "composer.tooManyFiles": "Too many files to send. A message can carry {count} files at most.",
+  "composer.filesProblem": "Can’t send these files. {reason}.",
+  "composer.notKept":
+    "This device couldn’t keep the message, so it wasn’t sent. It’s still in the message box.",
+  "composer.changedElsewhere":
+    "This draft changed in another tab. This tab now shows it as it is there.",
+  "composer.changedElsewhereWhileSending":
+    "This draft changed in another tab. This tab now shows it as it is there, and sent nothing.",
+  "composer.replaced": "Your earlier text was replaced in another tab.",
+  "composer.restore": "Restore",
+  "composer.dismiss": "Dismiss",
+  "composer.unread": "Couldn’t load your draft.",
+  "composer.unread.retry": "Try again",
+  "composer.notSaved": "Not saved yet",
+  "composer.waitToAttach": "Wait a moment, then add the files again.",
+
+  "file.gone": "{name} is no longer on the server.",
+  "file.unreachable": "{name} couldn’t be opened. Check the connection and try again.",
+
+  "connection.offline": "You’re offline. What you send goes out when you’re back.",
+  "connection.reconnecting": "Reconnecting…",
+  "connection.lost": "Connection to J3 Bots lost.",
+  "connection.unreachable": "Can’t reach J3 Bots.",
+  "connection.retryIn": "Trying again in {seconds} s",
+  "connection.retrying": "Trying again…",
+  "connection.retryNow": "Try now",
+
+  "pairing.title": "Pair this device",
+  "pairing.body":
+    "On the machine that runs J3 Bots, run {command}, or open Settings on a device that’s already paired, and enter the code it shows.",
+  "pairing.signedOut": "This device was signed out. Pair it again to carry on.",
+  "pairing.stillListed":
+    "This device is signed out, but J3 Bots didn’t confirm it, so it may stay listed until you sign it out in Settings on another device.",
+  "pairing.code": "Pairing code",
+  "pairing.deviceName": "Name for this device",
+  "pairing.submit": "Pair",
+  "pairing.pairing": "Pairing…",
+  "pairing.invalid":
+    "That code is wrong, expired or already used. A code works once, within five minutes of being made.",
+  "pairing.rateLimited": "Too many wrong codes. Pairing opens again at {time}.",
+  "pairing.unreachable":
+    "Can’t reach J3 Bots. Check that it’s running and that this device can reach it.",
+  "pairing.incompatible":
+    "This page and the J3 Bots server are different versions. Reload the page.",
+  "pairing.storageFailed":
+    "Paired, but this browser wouldn’t keep the sign-in. Allow site data for this page and pair again.",
+
+  "gate.incompatible.title": "This page is out of date",
+  "gate.incompatible.body":
+    "The J3 Bots server was updated and speaks a newer version. Reload to get the matching page.",
+  "gate.storage.title": "This browser won’t keep the sign-in",
+  "gate.storage.body":
+    "J3 Bots keeps this device’s sign-in in the browser’s site data, and the browser refused. Allow site data for this page, then try again.",
+  "gate.reload": "Reload",
+  "gate.retry": "Try again",
+
+  "engine.starting.title": "The engine is starting",
+  "engine.starting.body": "J3 Bots is starting its engine. This page updates when it’s ready.",
+  "engine.down.title": "The engine stopped",
+  "engine.down.body":
+    "J3 Bots is restarting it. If this lasts more than a minute, check the J3 Bots log on the machine it runs on.",
+  "engine.portInUse.title": "The engine’s port is taken",
+  "engine.portInUse.body":
+    "Another program is using the port the engine needs. Stop that program, or set J3_ENGINE_PORT to a free port, and restart J3 Bots.",
+  "engine.installFailed.title": "The engine couldn’t be installed",
+  "engine.installFailed.body":
+    "J3 Bots couldn’t download or check its engine, and keeps trying. Check that the machine is online and has free disk space.",
+  "engine.credentialRefused.title": "The engine refused J3 Bots",
+  "engine.credentialRefused.body":
+    "The engine won’t accept J3 Bots’ credential, even a new one. Restart J3 Bots; if it keeps happening, check its log.",
+
+  "empty.gone.title": "This conversation is gone",
+  "empty.gone.body": "The bot or room it belonged to was deleted.",
+  "empty.gone.back": "Back to the list",
+
+  "newBot.title": "New bot",
+  "newBot.body": "Give it a name. It will ask what you want it for, one question at a time.",
+  "newBot.cancel": "Cancel",
+
+  "details.loading": "Loading…",
+  "details.deleteFailed": "The bot wasn’t deleted. Try again.",
+  "memory.close": "Close",
+  "memory.readFailed": "This file couldn’t be read. Close it and try again.",
+
+  "settings.close": "Close settings",
+  "settings.engine": "Engine",
+  "settings.engine.ready": "Running, version {version}",
+  "settings.engine.lastKnown": "Last known. This device isn’t connected to J3 Bots right now.",
+  "settings.you": "You",
+  "settings.name": "What bots call you",
+  "settings.name.placeholder": "Your name",
+  "settings.timeZone": "Time zone",
+  "settings.timeZone.hint": "Routines run on this clock, and bots tell time by it.",
+  "settings.save": "Save",
+  "settings.saved": "Saved",
+  "settings.saveFailed": "Not saved. Try again.",
+  "settings.save.offline": "Saving is available once this device is connected to J3 Bots again.",
+  "settings.devices": "Devices",
+  "settings.device.current": "This device",
+  "settings.device.neverSeen": "Not connected yet",
+  "settings.device.lastSeen": "Last seen {when}",
+  "settings.device.revoke": "Sign out",
+  "settings.device.revoke.title": "Sign out {name}?",
+  "settings.device.revoke.body": "{name} loses access at once. Pairing it again takes a new code.",
+  "settings.device.revoke.cancel": "Keep it",
+  "settings.device.revoke.pending": "Signing out…",
+  "settings.device.revoke.failed": "Couldn’t confirm {name} is signed out.",
+  "settings.device.revoke.retry": "Try again",
+  "settings.pair": "Pair another device",
+  "settings.pair.again": "Get a new code",
+  "settings.pair.instructions": "Enter this code on the other device:",
+  "settings.pair.expires": "Works once, until {time}",
+  "settings.pair.failed": "No code was made. Try again.",
+  "settings.pair.offline": "Available once this device is connected to J3 Bots again.",
+  "settings.browser": "This browser",
+  "settings.signOut": "Sign out this device",
+  "settings.signOut.hint": "Signing out ends this device’s access and deletes what it keeps here.",
+  "settings.signOut.pending": "Signing out…",
+  "settings.signOut.failed": "Sign-out didn’t finish. Try again.",
+  "settings.signOut.pairedAnew":
+    "Another tab paired this browser again, so it stays signed in. Its old access ended.",
+  "settings.signOut.pairedAnewStillListed":
+    "Another tab paired this browser again, so it stays signed in. Its old access may still show under Devices.",
+  "settings.signOut.title": "Sign out this device?",
+  "settings.signOut.body":
+    "This browser loses access, and pairing it again takes a new code. Drafts and unsent messages are discarded. Your bots and conversations stay on the server.",
+  "settings.signOut.cancel": "Stay signed in",
 } as const;

@@ -2,7 +2,7 @@
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
-import { BotFile, MAX_ATTACHMENTS_PER_MESSAGE } from "./attachment.ts";
+import { BotFile, MessageAttachments } from "./attachment.ts";
 import {
   AttachmentId,
   BotId,
@@ -163,20 +163,18 @@ export const EntryRpcs = RpcGroup.make(
    * `POST /attachments`. `mentions` only applies in a room; leaving it out
    * mentions nobody. Fails with `Invalid("attachment")`, writing nothing, when
    * the files break a limit of the engine that runs the bot: an empty file, an
-   * inline image (GIF, JPEG, PNG or WebP) over 10 MiB, or inline images over
-   * 80 MiB together. Fails with `Invalid("message-length")`, writing nothing,
-   * when the message as the bot would read it is too long for that engine to
-   * take in one message. Fails with `Conflict("room-archived")` in an archived
-   * room.
+   * inline image (`INLINE_IMAGE_MEDIA_TYPES`) over `MAX_INLINE_IMAGE_SIZE`, or
+   * inline images over `MAX_INLINE_IMAGES_SIZE` together. Fails with
+   * `Invalid("message-length")`, writing nothing, when the message as the bot
+   * would read it is too long for that engine to take in one message. Fails
+   * with `Conflict("room-archived")` in an archived room.
    */
   Rpc.make("message.send", {
     payload: {
       ...command,
       target: EntryTarget,
       text: MessageText,
-      attachments: Schema.Array(AttachmentId).check(
-        Schema.isMaxLength(MAX_ATTACHMENTS_PER_MESSAGE),
-      ),
+      attachments: MessageAttachments,
       mentions: Schema.optionalKey(Mentions),
     },
     success: EntryId,
