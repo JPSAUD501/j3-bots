@@ -55,7 +55,7 @@ export const EngineRequest = Schema.Union([
     detail: ApprovalEntry.fields.detail,
     reason: ApprovalEntry.fields.reason,
     exact: ApprovalEntry.fields.exact,
-    allowsSession: ApprovalEntry.fields.allowsSession,
+    sessionGrant: ApprovalEntry.fields.sessionGrant,
   }),
   /**
    * The harness's own question tool, not the bot's `ask`. Question and option

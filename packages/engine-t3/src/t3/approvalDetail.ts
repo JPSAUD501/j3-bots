@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { APPROVAL_TEXT_LENGTH } from "@j3-bots/contracts";
+import { APPROVAL_TEXT_LENGTH, type SessionGrant } from "@j3-bots/contracts";
 import type { OrchestrationV2RuntimeRequest, OrchestrationV2TurnItem } from "@t3tools/contracts";
 import type { EngineRequest } from "../events.ts";
 
@@ -26,7 +26,9 @@ import type { EngineRequest } from "../events.ts";
 // that same `command` untrimmed, taken first under the same non-blank test;
 // only a tool with no `command` gets a title instead, and the item then records
 // the tool's name and its input as JSON. So a Claude Code prompt that trims to
-// the item's input is the command exactly, and it is what the card shows.
+// the item's input is the command exactly, and it is what the card shows. The
+// prompt is then the action, never a reason, even where the card drops a
+// trailing line break the prompt kept.
 
 type Item = OrchestrationV2TurnItem;
 type ApprovalItem = Extract<Item, { type: "approval_request" }>;
@@ -34,7 +36,8 @@ type GatedItem = Extract<Item, { type: "command_execution" | "file_change" }>;
 type RuntimeRequest = OrchestrationV2RuntimeRequest;
 export type Approval = Extract<EngineRequest, { _tag: "approval" }>;
 
-/** The engine's driver for Claude Code, as its items name it. Read at db51b67. */
+/** The engine's drivers for Codex and Claude Code, as its items name them. Read at db51b67. */
+const CODEX = "codex";
 const CLAUDE = "claudeAgent";
 
 const KINDS: Record<ApprovalItem["requestKind"], Approval["kind"]> = {
@@ -70,19 +73,30 @@ const trimmed = (text: string | null | undefined) => {
 };
 
 /**
- * Whether the provider offers a grant for the session when the approval lists
- * no options. Read at db51b67: the engine's own client then offers its default
- * list, which holds "Always allow this session" whatever the kind, and every
- * adapter that leaves the options out takes `acceptForSession`: Codex for a
- * command (`item/commandExecution/requestApproval`), a file change and a
- * permission, Claude Code for any tool, through its permission suggestions.
+ * What a grant for the session allows from then on, by the provider that takes
+ * it and the kind of action shown exactly. Read at db51b67:
+ *
+ * - Codex: `CodexAdapterV2` keeps, per provider thread and runtime mode, the
+ *   request kinds granted for the session. `acceptForSession` adds "command" or
+ *   "file-change", and every later request of that kind is answered
+ *   `acceptForSession` without being asked (`item/commandExecution/requestApproval`,
+ *   `item/fileChange/requestApproval`, and the older `execCommandApproval` and
+ *   `applyPatchApproval`).
+ * - Claude Code: `permissionResultFromDecision` answers with
+ *   `updatedPermissions`: Claude Code's own permission suggestions, moved to the
+ *   session, or, when it suggests none, an allow rule for the whole tool. The
+ *   engine does not record the suggestions, so the rule can be as wide as every
+ *   use of the tool.
+ *
+ * No other provider is listed: what its grant covers is not established, so
+ * none is offered.
  */
-const SESSION_BY_DEFAULT: Record<ApprovalItem["requestKind"], boolean> = {
-  command: true,
-  "file-change": true,
-  "file-read": true,
-  "mcp-elicitation": true,
-  permission: true,
+const SESSION_GRANTS: Record<
+  string,
+  Record<"command" | "file-change", SessionGrant["covers"]> | undefined
+> = {
+  [CODEX]: { command: "every-command", "file-change": "every-file-change" },
+  [CLAUDE]: { command: "similar-commands", "file-change": "similar-file-changes" },
 };
 
 /**
@@ -116,15 +130,17 @@ interface Shown {
   readonly action: string;
   readonly detail: string | null;
   readonly exact: boolean;
+  /** Whether the approval's prompt gave the action, so it is no reason. */
+  readonly fromPrompt: boolean;
 }
 
-/** The command `gated` runs, as `approval` gives it. */
+/** The command `gated` runs, as `approval` gives it, and whether its prompt gave it. */
 const commandOf = (approval: ApprovalItem, gated: GatedItem & { type: "command_execution" }) =>
   gated.nativeItemRef?.driver === CLAUDE
     ? approval.prompt?.trim() === gated.input
-      ? approval.prompt
+      ? { text: approval.prompt, fromPrompt: true }
       : undefined
-    : gated.input;
+    : { text: gated.input, fromPrompt: false };
 
 /** What the held item says exactly, or `undefined` when it does not say what was asked. */
 const exactOf = (
@@ -133,8 +149,17 @@ const exactOf = (
   gated: GatedItem,
 ): Shown | undefined => {
   if (kind === "command" && gated.type === "command_execution") {
-    const command = verbatim(commandOf(approval, gated));
-    return command && { action: command.text, detail: null, exact: command.whole };
+    const given = commandOf(approval, gated);
+    const command = verbatim(given?.text);
+    return (
+      given &&
+      command && {
+        action: command.text,
+        detail: null,
+        exact: command.whole,
+        fromPrompt: given.fromPrompt,
+      }
+    );
   }
   if (kind === "file-change" && gated.type === "file_change") {
     const changes = gated.changes ?? [];
@@ -154,9 +179,26 @@ const exactOf = (
       action: paths.text,
       detail: diff?.text ?? null,
       exact: diff !== undefined && diff.whole && paths.whole,
+      fromPrompt: false,
     };
   }
   return undefined;
+};
+
+/**
+ * What "Allow for session" grants for an exact action of `kind`, or `null` when
+ * the provider takes no such grant here or what it covers is not known. When
+ * the approval lists its options, it takes one only if they hold
+ * `acceptForSession`; when it lists none, the engine's own client offers
+ * "Always allow this session", and Codex and Claude Code take it (Read at
+ * db51b67, `ComposerPendingApprovalActions.tsx`).
+ */
+const sessionGrantOf = (kind: Approval["kind"], approval: ApprovalItem): SessionGrant | null => {
+  if (kind !== "command" && kind !== "file-change") return null;
+  const covers = SESSION_GRANTS[approval.nativeItemRef?.driver ?? ""]?.[kind];
+  const offered =
+    approval.options?.some((option) => option.decision === "acceptForSession") ?? true;
+  return covers !== undefined && offered ? { covers } : null;
 };
 
 /**
@@ -183,26 +225,24 @@ export function approvalOf(
         action: summary?.text ?? exact?.action ?? "Approval",
         detail: null,
         exact: false,
+        fromPrompt: prompt !== undefined,
       };
   // The prompt, when the action came from elsewhere and the prompt says
-  // something else, is the provider's reason for asking. The action is compared
-  // as shown, untrimmed.
+  // something else, is the provider's reason for asking. A text that trims to
+  // the action is the action again, not a reason.
+  const action = shown.action.trim();
   const reasons = [
     trimmed(approval.reason),
-    shown.exact && approval.prompt !== shown.action ? trimmed(approval.prompt) : undefined,
-  ].filter((text): text is string => text !== undefined && text !== shown.action);
+    shown.fromPrompt ? undefined : trimmed(approval.prompt),
+  ].filter((text): text is string => text !== undefined && text !== action);
   const reason = [...new Set(reasons)].join("\n\n").slice(0, MAX_REASON).trim();
-  // A grant for the session allows what is asked again, unseen, so it is offered only for an
-  // action shown exactly, and only when the provider takes one.
-  const sessionOffered =
-    approval.options === undefined
-      ? SESSION_BY_DEFAULT[approval.requestKind]
-      : approval.options.some((option) => option.decision === "acceptForSession");
   return {
     _tag: "approval",
     kind,
-    ...shown,
+    action: shown.action,
+    detail: shown.detail,
+    exact: shown.exact,
     reason: reason === "" ? null : reason,
-    allowsSession: shown.exact && sessionOffered,
+    sessionGrant: shown.exact ? sessionGrantOf(kind, approval) : null,
   };
 }

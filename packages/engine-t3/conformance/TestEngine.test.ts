@@ -25,7 +25,7 @@ const REQUESTS = {
     detail: null,
     reason: null,
     exact: false,
-    allowsSession: false,
+    sessionGrant: null,
   }),
   question: request({
     _tag: "question",

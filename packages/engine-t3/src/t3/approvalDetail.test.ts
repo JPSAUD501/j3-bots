@@ -88,7 +88,7 @@ describe("approvalOf", () => {
       detail: null,
       reason: "Needs network access to reach the staging database",
       exact: true,
-      allowsSession: true,
+      sessionGrant: { covers: "every-command" },
     });
   });
 
@@ -193,6 +193,28 @@ describe("approvalOf", () => {
     assert.strictEqual(shown.reason, null);
   });
 
+  it("never gives a Claude Code command back as the reason, and keeps the reason it gave", () => {
+    // The card drops the prompt's trailing line break; the item has the command trimmed.
+    const prompt = "echo a\\ \n";
+    const asks = request("toolu-3", "claudeAgent");
+    const held = item("toolu-3", { type: "command_execution", input: "echo a\\" }, "claudeAgent");
+    const asked = approval("toolu-3", { requestKind: "command", prompt }, "claudeAgent");
+    const shown = approvalOf(asked, asks, [asked, held]);
+    assert.strictEqual(shown.action, "echo a\\ ");
+    assert.strictEqual(shown.exact, true);
+    assert.strictEqual(shown.reason, null);
+
+    const explained = approval(
+      "toolu-3",
+      { requestKind: "command", prompt, reason: "Writes outside the project" },
+      "claudeAgent",
+    );
+    assert.strictEqual(
+      approvalOf(explained, asks, [explained, held]).reason,
+      "Writes outside the project",
+    );
+  });
+
   it("calls a Claude Code command a summary when its prompt is not the command", () => {
     const asks = request("toolu-2", "claudeAgent");
     const asked = approval(
@@ -208,7 +230,7 @@ describe("approvalOf", () => {
     const shown = approvalOf(asked, asks, [asked, held]);
     assert.strictEqual(shown.action, "Run the migration");
     assert.strictEqual(shown.exact, false);
-    assert.strictEqual(shown.allowsSession, false);
+    assert.strictEqual(shown.sessionGrant, null);
   });
 
   it("calls a command a summary when its last line break continues the line", () => {
@@ -218,30 +240,61 @@ describe("approvalOf", () => {
     assert.strictEqual(approvalOf(asked, asks, [asked, held]).exact, false);
   });
 
-  it("offers a session grant for an exact action when the provider takes one", () => {
-    const asks = request("cmd-6");
-    const held = item("cmd-6", { type: "command_execution", input: "pnpm test" });
-    const offers = (options: ReadonlyArray<unknown> | null) => {
-      const asked = approval("cmd-6", { requestKind: "command", prompt: "pnpm test", options });
-      return approvalOf(asked, asks, [asked, held]).allowsSession;
+  it("says what a session grant covers, as each provider applies it", () => {
+    const diff = "@@ -1 +1 @@\n-a\n+b\n";
+    const grantOf = (
+      driver: string,
+      requestKind: "command" | "file-change",
+      options?: ReadonlyArray<unknown>,
+    ) => {
+      const nativeId = `${driver}-${requestKind}`;
+      const held =
+        requestKind === "command"
+          ? item(nativeId, { type: "command_execution", input: "pnpm test" }, driver)
+          : item(
+              nativeId,
+              {
+                type: "file_change",
+                fileName: "a.txt",
+                diffStr: diff,
+                changes: [{ operation: "update", path: "a.txt" }],
+              },
+              driver,
+            );
+      const asked = approval(
+        nativeId,
+        { requestKind, prompt: "pnpm test", options: options ?? null },
+        driver,
+      );
+      const shown = approvalOf(asked, request(nativeId, driver), [asked, held]);
+      assert.strictEqual(shown.exact, true);
+      return shown.sessionGrant;
     };
-    // The options the provider lists, when it lists them.
-    assert.strictEqual(offers([{ decision: "accept", label: "Allow" }]), false);
-    assert.strictEqual(
-      offers([
+    // Codex grants every later request of the kind.
+    assert.deepStrictEqual(grantOf("codex", "command"), { covers: "every-command" });
+    assert.deepStrictEqual(grantOf("codex", "file-change"), { covers: "every-file-change" });
+    // Claude Code applies its own rule, which can be as wide as the whole tool.
+    assert.deepStrictEqual(grantOf("claudeAgent", "command"), { covers: "similar-commands" });
+    assert.deepStrictEqual(grantOf("claudeAgent", "file-change"), {
+      covers: "similar-file-changes",
+    });
+    // A provider whose grant is not established is offered none.
+    assert.strictEqual(grantOf("opencode", "command"), null);
+    // Options the provider lists decide whether it takes a grant at all.
+    assert.strictEqual(grantOf("codex", "command", [{ decision: "accept", label: "Allow" }]), null);
+    assert.deepStrictEqual(
+      grantOf("codex", "command", [
         { decision: "accept", label: "Allow" },
         { decision: "acceptForSession", label: "Allow for session" },
       ]),
-      true,
+      { covers: "every-command" },
     );
-    // Otherwise the engine's default for the kind, as Codex asks for a command.
-    assert.strictEqual(offers(null), true);
   });
 
   it("offers no session grant for a summary, whatever the provider offers", () => {
     const asked = approval("cmd-7", { requestKind: "command", prompt: "Run the tests" });
     const shown = approvalOf(asked, request("cmd-7"), [asked]);
     assert.strictEqual(shown.exact, false);
-    assert.strictEqual(shown.allowsSession, false);
+    assert.strictEqual(shown.sessionGrant, null);
   });
 });

@@ -171,6 +171,26 @@ const ApprovalText = Schema.String.check(
   Schema.isPattern(/[^\r\n]$/),
 );
 
+/**
+ * What a grant for the session allows without asking again, for the rest of
+ * the session, as the provider applies it:
+ *
+ * - `every-command`, `every-file-change`: every later request of that kind,
+ *   whatever it runs or changes.
+ * - `similar-commands`, `similar-file-changes`: later requests the provider's
+ *   own rule matches. The rule is the provider's and not recorded, so it can be
+ *   as wide as every request of that kind.
+ */
+export const SessionGrant = Schema.Struct({
+  covers: Schema.Literals([
+    "every-command",
+    "every-file-change",
+    "similar-commands",
+    "similar-file-changes",
+  ]),
+});
+export type SessionGrant = typeof SessionGrant.Type;
+
 /** The engine holds a running turn on it. It expires when that turn ends. */
 export const ApprovalEntry = Schema.TaggedStruct("approval", {
   ...entry,
@@ -202,11 +222,12 @@ export const ApprovalEntry = Schema.TaggedStruct("approval", {
    */
   exact: Schema.Boolean,
   /**
-   * Whether the card offers "Allow for session": only when `exact`, and the
-   * provider takes such a grant for this approval. Never for a summary, since
-   * a grant allows again what nobody has seen exactly.
+   * What "Allow for session" would allow from then on, when the card offers
+   * it: only when `exact`, and the provider takes such a grant for this
+   * approval and its scope is known. Null otherwise, and always for a summary,
+   * since a grant allows again what nobody has seen exactly.
    */
-  allowsSession: Schema.Boolean,
+  sessionGrant: Schema.NullOr(SessionGrant),
   status: Schema.Union([
     Schema.TaggedStruct("pending", {}),
     Schema.TaggedStruct("decided", { decision: ApprovalDecision }),

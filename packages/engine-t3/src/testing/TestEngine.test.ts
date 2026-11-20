@@ -433,7 +433,7 @@ describe("TestEngine", () => {
           detail: null,
           reason: null,
           exact: true,
-          allowsSession: false,
+          sessionGrant: null,
         },
       });
       yield* control.pruneHistory(sessionId);
@@ -509,7 +509,7 @@ describe("TestEngine", () => {
           detail: null,
           reason: null,
           exact: true,
-          allowsSession: true,
+          sessionGrant: { covers: "every-command" },
         },
       });
 
