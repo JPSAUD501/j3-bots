@@ -7,10 +7,12 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import { engineFolders, type PrivateFiles } from "./PrivateFiles.ts";
 
 // Everything J3 Bots writes into the engine's data directory and the provider
-// homes it owns. Every file is written whole to a temporary name and renamed,
-// so the engine, which watches its settings file, never reads half of one.
+// homes it owns. Every file is written whole to a new file and renamed
+// (`PrivateFiles`), so the engine, which watches its settings file, never
+// reads half of one.
 
 /** One harness instance, in the shape the engine needs it. */
 export type InstanceSpec =
@@ -46,6 +48,7 @@ interface EnvironmentVariable {
 export interface ProvisionInput {
   /** The engine's `--base-dir`. */
   readonly home: string;
+  readonly files: PrivateFiles;
   readonly instances: ReadonlyArray<InstanceSpec>;
   readonly toolBridge: {
     readonly command: string;
@@ -179,19 +182,9 @@ export const provision = Effect.fn("engine.provision")(function* (input: Provisi
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  const writeAtomically = Effect.fnUntraced(function* (
-    file: string,
-    contents: string,
-    mode: number,
-  ) {
-    const temporary = `${file}.j3.tmp`;
-    yield* fs.writeFileString(temporary, contents, { mode });
-    yield* fs.chmod(temporary, mode);
-    yield* fs.rename(temporary, file);
-  });
   const writeJson = Effect.fnUntraced(function* (file: string, value: unknown) {
     const text = yield* encodeJson(value).pipe(Effect.orDie);
-    yield* writeAtomically(file, `${text}\n`, 0o600);
+    yield* input.files.write(file, `${text}\n`);
   });
 
   const readObject = (file: string) =>
@@ -201,22 +194,20 @@ export const provision = Effect.fn("engine.provision")(function* (input: Provisi
       Effect.orElseSucceed((): Readonly<Record<string, unknown>> => ({})),
     );
 
-  const userdata = path.join(input.home, "userdata");
-  const secrets = path.join(userdata, "secrets");
-  yield* fs.makeDirectory(secrets, { recursive: true, mode: 0o700 });
+  const { userdata, secrets } = engineFolders(path, input.home);
+  yield* input.files.folder(secrets);
   yield* fs.chmod(secrets, 0o700);
 
   for (const spec of input.instances) {
     for (const variable of spec.environment) {
-      yield* writeAtomically(
+      yield* input.files.write(
         path.join(secrets, secretFileName(spec.instanceId, variable.name)),
         Redacted.value(variable.value),
-        0o600,
       );
     }
     switch (spec.kind) {
       case "claude-code": {
-        yield* fs.makeDirectory(spec.home, { recursive: true, mode: 0o700 });
+        yield* input.files.folder(spec.home);
         // Claude Code keeps its own state in `.claude.json`; merge, never replace.
         const stateFile = path.join(spec.home, ".claude.json");
         const state = yield* readObject(stateFile);
@@ -244,8 +235,7 @@ export const provision = Effect.fn("engine.provision")(function* (input: Provisi
         break;
       }
       case "codex": {
-        yield* fs.makeDirectory(spec.home, { recursive: true, mode: 0o700 });
-        yield* writeAtomically(path.join(spec.home, "config.toml"), codexConfig(input), 0o600);
+        yield* input.files.write(path.join(spec.home, "config.toml"), codexConfig(input));
         break;
       }
       case "acp-local":

@@ -12,8 +12,9 @@ import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
-import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { boundedCommand } from "./Command.ts";
+import { engineFolders, type PrivateFiles } from "./PrivateFiles.ts";
 
 // The bearer token J3 Bots signs in to its engine with. It is minted by the
 // engine's own CLI against the engine's data directory, so no pairing step and
@@ -60,11 +61,12 @@ class CredentialMintFailed extends Schema.TaggedError<CredentialMintFailed>()(
   }
 }
 
-const credentialFile = (path: Path.Path, home: string) => path.join(home, "j3", "credential.json");
+const credentialFile = (path: Path.Path, home: string) =>
+  path.join(engineFolders(path, home).j3, "credential.json");
 
 const mint = Effect.fnUntraced(function* (executable: string, home: string) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const command = ChildProcess.make(executable, [
+  const issue = boundedCommand(executable, [
     "auth",
     "session",
     "issue",
@@ -79,7 +81,7 @@ const mint = Effect.fnUntraced(function* (executable: string, home: string) {
   ]);
   const output = yield* Effect.scoped(
     Effect.gen(function* () {
-      const handle = yield* spawner.spawn(command);
+      const handle = yield* spawner.spawn(issue);
       const [stdout, exitCode] = yield* Effect.all(
         [handle.stdout.pipe(Stream.decodeText(), Stream.mkString), handle.exitCode],
         { concurrency: "unbounded" },
@@ -101,20 +103,14 @@ const mint = Effect.fnUntraced(function* (executable: string, home: string) {
 export const issueCredential = Effect.fn("engine.issueCredential")(function* (input: {
   readonly executable: string;
   readonly home: string;
+  readonly files: PrivateFiles;
 }) {
-  const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const file = credentialFile(path, input.home);
   const issued = yield* mint(input.executable, input.home);
   const text = yield* encodeStored(issued).pipe(Effect.orDie);
-  const store = Effect.gen(function* () {
-    yield* fs.makeDirectory(path.dirname(file), { recursive: true, mode: 0o700 });
-    const temporary = `${file}.tmp`;
-    yield* fs.writeFileString(temporary, text, { mode: 0o600 });
-    yield* fs.chmod(temporary, 0o600);
-    yield* fs.rename(temporary, file);
-  });
-  yield* store.pipe(Effect.mapError(() => new CredentialMintFailed({ stage: "store" })));
+  yield* input.files
+    .write(credentialFile(path, input.home), text)
+    .pipe(Effect.mapError(() => new CredentialMintFailed({ stage: "store" })));
   return {
     token: Redacted.make(issued.token),
     expiresAt: issued.expiresAt,
@@ -129,6 +125,7 @@ export const issueCredential = Effect.fn("engine.issueCredential")(function* (in
 export const ensureCredential = Effect.fn("engine.ensureCredential")(function* (input: {
   readonly executable: string;
   readonly home: string;
+  readonly files: PrivateFiles;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;

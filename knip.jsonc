@@ -6,6 +6,11 @@
   // T3 Code's contracts, vendored as is: typechecked here, not ours to prune.
   "ignoreWorkspaces": ["packages/engine-t3/vendor/t3-contracts"],
   "workspaces": {
+    "apps/server": {
+      // The `j3` bridge: the engine starts it as a process, by a path
+      // `src/installation.ts` names, and the production build bundles it.
+      "entry": ["src/bridge/main.ts"],
+    },
     "packages/engine-t3": {
       // The real-engine conformance run (`test:conformance`) and the scripted
       // agent the engine starts as a process: entry points no import reaches.

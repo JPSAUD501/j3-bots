@@ -1,23 +1,49 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import * as EngineLive from "@j3-bots/engine-t3/live";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import { HOME_ENTRIES, homeLayout } from "./home/entries.ts";
+import * as Installation from "./installation.ts";
+import { isWithin, realLocation } from "./paths.ts";
+import { isPrivateAddress, Network } from "./system/Network.ts";
+import * as TlsCredentials from "./system/Tls.ts";
+import { isBuilt } from "./web/built.ts";
+
+/** Where the web client the server serves comes from. */
+type WebClientSource =
+  /** Set in `webClient` or `J3_WEB_CLIENT`: it must hold a built client. */
+  | { readonly _tag: "configured"; readonly directory: string }
+  /** The client built in this checkout, served once it is built. */
+  | { readonly _tag: "bundled"; readonly directory: string };
 
 export interface ServerConfigShape {
   /**
-   * Where J3 Bots keeps its state: the database, the bot workspaces and the
-   * engine's own data directory. Never inside a Git checkout, or the engine
-   * treats every bot workspace as part of that repository.
+   * Where J3 Bots keeps its state: the configuration file, the database, the
+   * bot workspaces and the engine's own data directory. Never inside a Git
+   * checkout, or the engine treats every bot workspace as part of that repository.
    */
   readonly home: string;
+  /** `<home>/config.json`. */
+  readonly configFile: string;
   readonly databasePath: string;
-  /** Loopback by default. Anything wider is the operator's choice. */
+  /** The engine's data directory, `<home>/engine`. */
+  readonly engineHome: string;
+  /**
+   * The address the server listens on. `0.0.0.0` when the setting is `lan`:
+   * every IPv4 interface, which start refuses unless all of them are private.
+   */
   readonly host: string;
+  /**
+   * Whether every connection must reach a loopback or private address, or be
+   * closed unread: with `lan`, over HTTP and HTTPS alike, and on any address
+   * without TLS. Only an address set explicitly with TLS serves others.
+   */
+  readonly privateOnly: boolean;
   readonly port: number;
   /** A certificate and key to serve HTTPS with. Required on a public address. */
   readonly tls: Option.Option<{ readonly certPath: string; readonly keyPath: string }>;
@@ -30,6 +56,13 @@ export interface ServerConfigShape {
    * tool calls to. Always bound to loopback, whatever `host` is.
    */
   readonly toolPort: number;
+  /** The built web client, served on the same origin as the API. */
+  readonly webClient: WebClientSource;
+  /**
+   * The admin socket, `<home>/admin.sock`: how `j3-bots` commands reach the
+   * running server. A Unix socket, so only the operator's user can connect.
+   */
+  readonly adminSocket: string;
 }
 
 export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShape>()(
@@ -39,67 +72,173 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
 /** The configuration names a setting J3 Bots will not run with. */
 class ConfigRefused extends Schema.TaggedError<ConfigRefused>()("ConfigRefused", {
   setting: Schema.String,
-  reason: Schema.Literals(["home-in-git-checkout", "public-address-without-tls", "tls-incomplete"]),
+  reason: Schema.Literals([
+    "home-in-git-checkout",
+    "home-path-too-long",
+    "public-address-without-tls",
+    "lan-has-public-address",
+    "tls-incomplete",
+    "tls-unusable",
+    "web-client-missing",
+    "web-client-holds-state",
+    "web-client-in-home",
+    "web-client-in-state",
+    "state-outside-home",
+    "port-zero",
+    "port-conflict",
+  ]),
+  /** The address, path or value the reason is about. */
+  subject: Schema.String,
 }) {
   override get message(): string {
     switch (this.reason) {
       case "home-in-git-checkout":
-        return `${this.setting} is inside a Git checkout. Choose a folder outside any repository.`;
+        return `${this.setting} (${this.subject}) is inside a Git checkout. Choose a folder outside any repository.`;
+      case "home-path-too-long":
+        return `${this.setting} (${this.subject}) is too long a path for the admin socket inside it. Choose a shorter one.`;
       case "public-address-without-tls":
-        return `${this.setting} is not a loopback or private address. Set J3_TLS_CERT and J3_TLS_KEY to serve it over HTTPS.`;
+        return `${this.setting} (${this.subject}) is not a loopback or private IP address. Use one of this machine's private addresses, written as an IP address, or set a TLS certificate and key to serve it over HTTPS.`;
+      case "lan-has-public-address":
+        return `${this.setting} is "lan", which serves private addresses only, but this machine has the public address ${this.subject}, which "lan" would also listen on. Set it to one private address of this machine or, to serve the public address over HTTPS, to that address with a TLS certificate and key.`;
       case "tls-incomplete":
-        return "J3_TLS_CERT and J3_TLS_KEY must be set together.";
+        return `${this.setting}: a TLS certificate and key must be set together.`;
+      case "tls-unusable":
+        return `${this.setting}: ${this.subject}`;
+      case "web-client-missing":
+        return `${this.setting} (${this.subject}) holds no built web client (no index.html). Build it, or remove the setting to use the one in this checkout.`;
+      case "web-client-holds-state":
+        return `${this.setting} is a folder that holds ${this.subject}, which the server would then publish. Point it at the built client's own folder.`;
+      case "web-client-in-home":
+        return `${this.setting} is inside the data directory ${this.subject}, which the server keeps private. Put the built client in ${this.subject}/web, or outside the data directory.`;
+      case "web-client-in-state":
+        return `${this.setting} is inside ${this.subject}, which the server keeps private. Point it at the built client's own folder.`;
+      case "state-outside-home":
+        return `${this.subject} leads out of the data directory, or to nowhere, through a symbolic link. Everything the server keeps there must stay inside it: replace the link with the folder or file itself, or set ${this.setting} to a folder on the disk you want.`;
+      case "port-zero":
+        return `${this.setting} is 0, but this port is dialed at the number set here. Choose a fixed free port.`;
+      case "port-conflict":
+        return `${this.setting} share port ${this.subject}. Give each its own port.`;
     }
   }
 }
 
-const DEFAULT_PORT = 3737;
-const DEFAULT_ENGINE_PORT = 3738;
-const DEFAULT_TOOL_PORT = 3739;
+/** The configuration file exists but cannot be used as it is. */
+class ConfigFileInvalid extends Schema.TaggedError<ConfigFileInvalid>()("ConfigFileInvalid", {
+  path: Schema.String,
+  detail: Schema.String,
+}) {
+  override get message(): string {
+    return `${this.path} is not valid: ${this.detail}\nFix it, or delete it to have the server write the defaults again.`;
+  }
+}
 
-// A default applies only when a setting is absent. A setting that is present
-// and invalid fails the start, so a typo never silently becomes the default.
-const environment = Config.all({
-  home: Config.option(Config.NonEmptyString("J3_HOME")),
-  host: Config.NonEmptyString("J3_HOST").pipe(Config.withDefault("127.0.0.1")),
-  port: Config.Port("J3_PORT").pipe(Config.withDefault(DEFAULT_PORT)),
-  tlsCert: Config.option(Config.NonEmptyString("J3_TLS_CERT")),
-  tlsKey: Config.option(Config.NonEmptyString("J3_TLS_KEY")),
-  enginePort: Config.Port("J3_ENGINE_PORT").pipe(Config.withDefault(DEFAULT_ENGINE_PORT)),
-  engineBinary: Config.option(Config.NonEmptyString("J3_ENGINE_BINARY")),
-  toolPort: Config.Port("J3_TOOL_PORT").pipe(Config.withDefault(DEFAULT_TOOL_PORT)),
-});
+const CONFIG_FILE = HOME_ENTRIES.config;
+const ADMIN_SOCKET = HOME_ENTRIES.adminSocket;
+/** The shortest `sun_path` among supported systems is 104 bytes, its terminator included. */
+const MAX_SOCKET_PATH_BYTES = 103;
 
-const ipv4 = (host: string) => {
-  const parts = host.split(".");
-  if (parts.length !== 4) return undefined;
-  const octets = parts.map((part) => (/^\d{1,3}$/.test(part) ? Number(part) : Number.NaN));
-  return octets.every((octet) => octet <= 255) ? octets : undefined;
-};
+/** The `host` value that listens on every IPv4 interface, if all of them are private. */
+const LAN = "lan";
+const LAN_ADDRESS = "0.0.0.0";
+
+const Tls = Schema.Struct({ cert: Schema.NonEmptyString, key: Schema.NonEmptyString });
 
 /**
- * Whether plain HTTP is acceptable on `host`: loopback, the private IPv4
- * ranges, carrier-grade NAT (where Tailscale puts its addresses), and IPv6
- * loopback, unique-local and link-local addresses. An unspecified address
- * (`0.0.0.0`, `::`) listens everywhere, public interfaces included, and a host
- * name could resolve anywhere, so neither qualifies.
+ * `<J3_HOME>/config.json`. Every setting is optional; a missing one takes its
+ * default. Unknown keys are refused, so a misspelt setting is never ignored.
  */
-const isPrivateHost = (host: string): boolean => {
-  if (host === "localhost") return true;
-  const octets = ipv4(host);
-  if (octets !== undefined) {
-    const [a = -1, b = -1] = octets;
-    return (
-      a === 127 ||
-      a === 10 ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168) ||
-      (a === 100 && b >= 64 && b <= 127)
-    );
+const ConfigFile = Schema.Struct({
+  host: Schema.optionalKey(Schema.NonEmptyString),
+  port: Schema.optionalKey(Schema.Port),
+  toolPort: Schema.optionalKey(Schema.Port),
+  enginePort: Schema.optionalKey(Schema.Port),
+  webClient: Schema.optionalKey(Schema.NullOr(Schema.NonEmptyString)),
+  tls: Schema.optionalKey(Schema.NullOr(Tls)),
+});
+type ConfigFile = typeof ConfigFile.Type;
+
+/** What a new `config.json` holds: every setting, at its default, for the operator to edit. */
+export const DEFAULTS = {
+  host: LAN,
+  port: 3737,
+  toolPort: 3739,
+  enginePort: 3738,
+  webClient: null,
+  tls: null,
+} satisfies Required<ConfigFile>;
+
+const decodeConfigFile = Schema.decodeUnknownEffect(Schema.fromJsonString(ConfigFile));
+
+/** The text of a new `config.json`: `DEFAULTS`, for the operator to edit. */
+export const DEFAULTS_TEXT = `${Schema.encodeSync(Schema.fromJsonString(ConfigFile, { space: 2 }))(DEFAULTS)}\n`;
+
+/**
+ * The variables that override a setting of the file. A service does not
+ * inherit them from the shell that installs it: it runs with the file.
+ * `J3_ENGINE_BINARY` has no setting in the file; it is for testing an engine
+ * build, and a service never uses it.
+ */
+export const SHELL_OVERRIDES = [
+  "J3_HOST",
+  "J3_PORT",
+  "J3_TOOL_PORT",
+  "J3_ENGINE_PORT",
+  "J3_WEB_CLIENT",
+  "J3_TLS_CERT",
+  "J3_TLS_KEY",
+  "J3_ENGINE_BINARY",
+] as const;
+
+/** What an operator should know about an override set in their shell, once a service runs. */
+export const overrideNote = (name: (typeof SHELL_OVERRIDES)[number], configFile: string) =>
+  name === "J3_ENGINE_BINARY"
+    ? "J3_ENGINE_BINARY is set in this shell. It is for testing an engine build, and the service never uses it: it runs the pinned engine."
+    : `${name} is set in this shell, but the service does not get it. Put the setting in ${configFile} instead.`;
+
+/** Each override, decoded as the server decodes it. */
+const OVERRIDES = {
+  J3_HOST: Config.NonEmptyString("J3_HOST"),
+  J3_PORT: Config.Port("J3_PORT"),
+  J3_TOOL_PORT: Config.Port("J3_TOOL_PORT"),
+  J3_ENGINE_PORT: Config.Port("J3_ENGINE_PORT"),
+  J3_WEB_CLIENT: Config.NonEmptyString("J3_WEB_CLIENT"),
+  J3_TLS_CERT: Config.NonEmptyString("J3_TLS_CERT"),
+  J3_TLS_KEY: Config.NonEmptyString("J3_TLS_KEY"),
+  J3_ENGINE_BINARY: Config.NonEmptyString("J3_ENGINE_BINARY"),
+} satisfies Record<(typeof SHELL_OVERRIDES)[number], Config.Config<string | number>>;
+
+/** The overrides set in this process's environment. */
+export const shellOverrides = Effect.gen(function* () {
+  const set: Array<(typeof SHELL_OVERRIDES)[number]> = [];
+  for (const name of SHELL_OVERRIDES) {
+    if (Option.isSome(yield* Config.option(Config.String(name)))) set.push(name);
   }
-  const v6 = host.toLowerCase().replace(/^\[|\]$/g, "");
-  return v6 === "::1" || /^f[cd][0-9a-f]{2}:/.test(v6) || /^fe[89ab][0-9a-f]:/.test(v6);
-};
+  return set;
+});
+
+/** The overrides set in this process's environment with a value the server refuses. */
+export const invalidShellOverrides = Effect.gen(function* () {
+  const invalid: Array<(typeof SHELL_OVERRIDES)[number]> = [];
+  for (const name of SHELL_OVERRIDES) {
+    const override: Config.Config<string | number> = OVERRIDES[name];
+    if ((yield* Effect.result(Config.option(override)))._tag === "Failure") invalid.push(name);
+  }
+  return invalid;
+});
+
+// A setting in the environment overrides the file. One that is present and
+// invalid fails, so a typo never silently becomes the default.
+const environment = Config.all({
+  home: Config.option(Config.NonEmptyString("J3_HOME")),
+  host: Config.option(OVERRIDES.J3_HOST),
+  port: Config.option(OVERRIDES.J3_PORT),
+  tlsCert: Config.option(OVERRIDES.J3_TLS_CERT),
+  tlsKey: Config.option(OVERRIDES.J3_TLS_KEY),
+  enginePort: Config.option(OVERRIDES.J3_ENGINE_PORT),
+  engineBinary: Config.option(OVERRIDES.J3_ENGINE_BINARY),
+  toolPort: Config.option(OVERRIDES.J3_TOOL_PORT),
+  webClient: Config.option(OVERRIDES.J3_WEB_CLIENT),
+});
 
 /** The nearest folder at or above `start` that holds a `.git` entry, if any. */
 const enclosingCheckout = Effect.fn("enclosingCheckout")(function* (start: string) {
@@ -115,45 +254,272 @@ const enclosingCheckout = Effect.fn("enclosingCheckout")(function* (start: strin
 });
 
 /**
- * Reads `J3_HOME`, `J3_HOST`, `J3_PORT`, `J3_TLS_CERT`, `J3_TLS_KEY`,
- * `J3_ENGINE_PORT`, `J3_ENGINE_BINARY` and `J3_TOOL_PORT`.
+ * Refuses a home inside a Git checkout, by its path as written and by where
+ * its links lead: `J3_HOME` may name a link into a checkout. A home that does
+ * not exist yet is checked through its future parents.
  */
-export const layer = Layer.effect(
-  ServerConfig,
-  Effect.gen(function* () {
-    const path = yield* Path.Path;
-    const env = yield* environment;
+const refuseHomeInCheckout = Effect.fn("refuseHomeInCheckout")(function* (home: string) {
+  const real = yield* realLocation(home);
+  const locations = Option.isSome(real) ? [home, real.value] : [home];
+  for (const location of locations) {
+    if (Option.isSome(yield* enclosingCheckout(location))) {
+      return yield* new ConfigRefused({
+        setting: "J3_HOME",
+        reason: "home-in-git-checkout",
+        subject: home,
+      });
+    }
+  }
+});
 
-    const home = path.resolve(
-      Option.isSome(env.home)
-        ? env.home.value
-        : path.join(yield* Config.NonEmptyString("HOME"), ".j3-bots"),
+/** `J3_HOME`, or `~/.j3-bots`, as an absolute path. */
+export const resolveHome = Effect.gen(function* () {
+  const path = yield* Path.Path;
+  const home = yield* Config.option(Config.NonEmptyString("J3_HOME"));
+  return path.resolve(
+    Option.isSome(home) ? home.value : path.join(yield* Config.NonEmptyString("HOME"), ".j3-bots"),
+  );
+});
+
+/**
+ * The running server's admin socket, `<home>/admin.sock`. It depends on the
+ * home alone, so commands find the server even when this shell's other
+ * settings differ from the ones it runs with.
+ */
+export const resolveAdminSocket = Effect.gen(function* () {
+  const path = yield* Path.Path;
+  return path.join(yield* resolveHome, ADMIN_SOCKET);
+});
+
+/** The configuration file, `<home>/config.json`. */
+export const resolveConfigFile = Effect.gen(function* () {
+  const path = yield* Path.Path;
+  return path.join(yield* resolveHome, CONFIG_FILE);
+});
+
+/** The bots whose workspaces the home holds, by folder name. */
+const workspaceNames = Effect.fn("workspaceNames")(function* (home: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  return yield* fs
+    .readDirectory(path.join(home, HOME_ENTRIES.bots))
+    .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+});
+
+/** The settings in `<home>/config.json`; none when the file does not exist. */
+const readConfigFile = Effect.fn("readConfigFile")(function* (file: string) {
+  const fs = yield* FileSystem.FileSystem;
+  if (!(yield* fs.exists(file))) return {} satisfies ConfigFile;
+  const text = yield* fs.readFileString(file);
+  return yield* decodeConfigFile(text, { onExcessProperty: "error" }).pipe(
+    Effect.mapError((error) => new ConfigFileInvalid({ path: file, detail: error.message })),
+  );
+});
+
+/**
+ * The server's configuration: `J3_HOME` from the environment, every other
+ * setting from the environment, else from `<home>/config.json`, else its
+ * default. Reads only; `Home.initialize` also creates the home and the file.
+ */
+export const load = Effect.gen(function* () {
+  const path = yield* Path.Path;
+  const env = yield* environment;
+  const home = yield* resolveHome;
+  const configFile = path.join(home, CONFIG_FILE);
+  const file = yield* readConfigFile(configFile);
+  const fileSetting = (name: keyof ConfigFile) => `${name} in ${configFile}`;
+
+  yield* refuseHomeInCheckout(home);
+  const adminSocket = path.join(home, ADMIN_SOCKET);
+  if (new TextEncoder().encode(adminSocket).length > MAX_SOCKET_PATH_BYTES) {
+    return yield* new ConfigRefused({
+      setting: "J3_HOME",
+      reason: "home-path-too-long",
+      subject: home,
+    });
+  }
+
+  // TLS from the environment replaces the file's as a pair.
+  if (Option.isSome(env.tlsCert) !== Option.isSome(env.tlsKey)) {
+    return yield* new ConfigRefused({
+      setting: "J3_TLS_CERT and J3_TLS_KEY",
+      reason: "tls-incomplete",
+      subject: "",
+    });
+  }
+  const tls = Option.orElse(
+    Option.zipWith(env.tlsCert, env.tlsKey, (certPath, keyPath) => ({ certPath, keyPath })),
+    () =>
+      Option.map(Option.fromNullishOr(file.tls), ({ cert, key }) => ({
+        certPath: cert,
+        keyPath: key,
+      })),
+  ).pipe(
+    Option.map(({ certPath, keyPath }) => ({
+      certPath: path.resolve(home, certPath),
+      keyPath: path.resolve(home, keyPath),
+    })),
+  );
+
+  if (Option.isSome(tls)) {
+    const loaded = yield* TlsCredentials.load(tls.value).pipe(Effect.result);
+    if (loaded._tag === "Failure") {
+      return yield* new ConfigRefused({
+        setting: Option.isSome(env.tlsCert) ? "J3_TLS_CERT and J3_TLS_KEY" : fileSetting("tls"),
+        reason: "tls-unusable",
+        subject: loaded.failure.message,
+      });
+    }
+  }
+
+  const ports = {
+    port: Option.getOrElse(env.port, () => file.port ?? DEFAULTS.port),
+    toolPort: Option.getOrElse(env.toolPort, () => file.toolPort ?? DEFAULTS.toolPort),
+    enginePort: Option.getOrElse(env.enginePort, () => file.enginePort ?? DEFAULTS.enginePort),
+  };
+  const portSetting = (name: keyof typeof ports, variable: string) =>
+    Option.isSome(env[name]) ? variable : file[name] !== undefined ? fileSetting(name) : name;
+  const portSettings = {
+    port: portSetting("port", "J3_PORT"),
+    toolPort: portSetting("toolPort", "J3_TOOL_PORT"),
+    enginePort: portSetting("enginePort", "J3_ENGINE_PORT"),
+  };
+  // The bridge dials the tool endpoint, and the adapter the engine, at the
+  // number configured: neither can take one the system picks.
+  for (const name of ["toolPort", "enginePort"] as const) {
+    if (ports[name] === 0) {
+      return yield* new ConfigRefused({
+        setting: portSettings[name],
+        reason: "port-zero",
+        subject: "0",
+      });
+    }
+  }
+  const names = ["port", "toolPort", "enginePort"] as const;
+  for (const [index, first] of names.entries()) {
+    for (const second of names.slice(index + 1)) {
+      if (ports[first] !== 0 && ports[first] === ports[second]) {
+        return yield* new ConfigRefused({
+          setting: `${portSettings[first]} and ${portSettings[second]}`,
+          reason: "port-conflict",
+          subject: String(ports[first]),
+        });
+      }
+    }
+  }
+
+  const hostSetting = Option.isSome(env.host)
+    ? "J3_HOST"
+    : file.host !== undefined
+      ? fileSetting("host")
+      : "host";
+  const hostValue = Option.getOrElse(env.host, () => file.host ?? DEFAULTS.host);
+  // `lan` means private addresses only, with or without TLS.
+  if (hostValue === LAN) {
+    const network = yield* Network;
+    const exposed = (yield* network.ipv4Addresses).find(
+      ({ address, internal }) => !internal && !isPrivateAddress(address),
     );
-    // A home that does not exist yet is checked through its future parents.
-    if (Option.isSome(yield* enclosingCheckout(home))) {
-      return yield* new ConfigRefused({ setting: "J3_HOME", reason: "home-in-git-checkout" });
+    if (exposed !== undefined) {
+      return yield* new ConfigRefused({
+        setting: hostSetting,
+        reason: "lan-has-public-address",
+        subject: exposed.address,
+      });
     }
+  } else if (Option.isNone(tls) && !isPrivateAddress(hostValue)) {
+    return yield* new ConfigRefused({
+      setting: hostSetting,
+      reason: "public-address-without-tls",
+      subject: hostValue,
+    });
+  }
+  const configuredWebClient = Option.orElse(env.webClient, () =>
+    Option.fromNullishOr(file.webClient),
+  );
+  const webClientSetting = Option.isSome(env.webClient)
+    ? "J3_WEB_CLIENT"
+    : fileSetting("webClient");
+  let webClient: WebClientSource;
+  if (Option.isSome(configuredWebClient)) {
+    const directory = path.resolve(home, configuredWebClient.value);
+    if (!(yield* isBuilt(directory))) {
+      return yield* new ConfigRefused({
+        setting: webClientSetting,
+        reason: "web-client-missing",
+        subject: directory,
+      });
+    }
+    webClient = { _tag: "configured", directory };
+  } else {
+    webClient = { _tag: "bundled", directory: yield* Installation.bundledWebClient };
+  }
+  // Everything under the client's folder is public, so it and the server's
+  // private state may not overlap, in either direction, links resolved.
+  const refuseWebClient = (reason: ConfigRefused["reason"], subject: string) =>
+    new ConfigRefused({
+      setting:
+        webClient._tag === "configured"
+          ? webClientSetting
+          : `The web client in this checkout (${webClient.directory})`,
+      reason,
+      subject,
+    });
+  const webRoot = Option.getOrElse(yield* realLocation(webClient.directory), () =>
+    path.resolve(webClient.directory),
+  );
+  const realHome = Option.getOrElse(yield* realLocation(home), () => path.resolve(home));
+  if (isWithin(webRoot, realHome)) return yield* refuseWebClient("web-client-holds-state", home);
+  if (isWithin(realHome, webRoot) && !isWithin(path.join(realHome, HOME_ENTRIES.web), webRoot)) {
+    return yield* refuseWebClient("web-client-in-home", home);
+  }
+  const overlapsWebRoot = (real: string) =>
+    isWithin(webRoot, real)
+      ? Option.some("web-client-holds-state" as const)
+      : isWithin(real, webRoot)
+        ? Option.some("web-client-in-state" as const)
+        : Option.none();
+  // The certificate and key may be anywhere but the client's folder.
+  for (const held of Option.match(tls, {
+    onNone: () => [],
+    onSome: ({ certPath, keyPath }) => [certPath, keyPath],
+  })) {
+    const real = Option.getOrElse(yield* realLocation(held), () => held);
+    const overlap = overlapsWebRoot(real);
+    if (Option.isSome(overlap)) return yield* refuseWebClient(overlap.value, held);
+  }
+  // What the server and the engine adapter write stays inside the home,
+  // outside the client's folder.
+  const written = [
+    ...homeLayout(path, home).written(yield* workspaceNames(home)),
+    ...EngineLive.writtenFolders(path, path.join(home, HOME_ENTRIES.engine)),
+  ];
+  for (const held of written) {
+    const real = yield* realLocation(held);
+    const overlap = Option.flatMap(real, overlapsWebRoot);
+    if (Option.isSome(overlap)) return yield* refuseWebClient(overlap.value, held);
+    if (Option.isNone(real) || !isWithin(realHome, real.value)) {
+      return yield* new ConfigRefused({
+        setting: "J3_HOME",
+        reason: "state-outside-home",
+        subject: held,
+      });
+    }
+  }
 
-    if (Option.isSome(env.tlsCert) !== Option.isSome(env.tlsKey)) {
-      return yield* new ConfigRefused({ setting: "J3_TLS_CERT", reason: "tls-incomplete" });
-    }
-    const tls = Option.zipWith(env.tlsCert, env.tlsKey, (certPath, keyPath) => ({
-      certPath: path.resolve(certPath),
-      keyPath: path.resolve(keyPath),
-    }));
-    if (Option.isNone(tls) && !isPrivateHost(env.host)) {
-      return yield* new ConfigRefused({ setting: "J3_HOST", reason: "public-address-without-tls" });
-    }
-
-    return {
-      home,
-      databasePath: path.join(home, "j3.sqlite"),
-      host: env.host,
-      port: env.port,
-      tls,
-      enginePort: env.enginePort,
-      engineBinary: Option.map(env.engineBinary, (binary) => path.resolve(binary)),
-      toolPort: env.toolPort,
-    };
-  }),
-);
+  return {
+    home,
+    configFile,
+    databasePath: path.join(home, HOME_ENTRIES.database),
+    engineHome: path.join(home, HOME_ENTRIES.engine),
+    host: hostValue === LAN ? LAN_ADDRESS : hostValue,
+    privateOnly: hostValue === LAN || Option.isNone(tls),
+    port: ports.port,
+    tls,
+    enginePort: ports.enginePort,
+    engineBinary: Option.map(env.engineBinary, (binary) => path.resolve(binary)),
+    toolPort: ports.toolPort,
+    webClient,
+    adminSocket,
+  } satisfies ServerConfigShape;
+});

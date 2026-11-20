@@ -36,7 +36,9 @@ export const HTTP_PATHS = {
    * without parameters; 413 above `MAX_ATTACHMENT_SIZE`, 400 with
    * `Invalid("attachment")` for an empty body, a name that is blank or over
    * `MAX_ATTACHMENT_NAME_LENGTH` characters, or a media type that is not
-   * `type/subtype` within 100 characters. Uploading the same bytes again gives
+   * `type/subtype` within 100 characters, and 409 with `Conflict("private-location")`,
+   * storing nothing, when the server's attachments folder has been linked out
+   * of its private data. Uploading the same bytes again gives
    * a new attachment with its own name; the bytes are stored once.
    * `GET <path>/<id>` answers the bytes, with the same credential.
    */

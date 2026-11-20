@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// @effect-diagnostics nodeBuiltinImport:off -- Whether another program holds the engine's port takes a trial listen from node:net.
+import * as NodeNet from "node:net";
 import type { EngineStatus } from "@j3-bots/contracts";
 import { ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -14,10 +17,11 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
-import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { boundedCommand } from "./Command.ts";
 import type { Access } from "./Credential.ts";
 import { ORCHESTRATION_PROTOCOL, pin } from "./Pin.ts";
+import { engineFolders, type PrivateFiles } from "./PrivateFiles.ts";
 
 // Runs the engine as a child process and says, at every moment, whether it can
 // take commands. Being down is a state, not a failure: the supervisor restarts
@@ -27,7 +31,8 @@ import { ORCHESTRATION_PROTOCOL, pin } from "./Pin.ts";
 // J3 Bots' credential. An engine J3 Bots started and then lost track of (the
 // server crashed and left it running) is found by the environment id recorded
 // when it started, and stopped before a new one starts. Any other program on
-// the port is left alone.
+// the port, whether or not it answers HTTP, is left alone: the engine waits
+// for the port, as `port-in-use`, instead of being started to fail there.
 
 type UnavailableReason = Extract<EngineStatus["state"], { readonly _tag: "unavailable" }>["reason"];
 
@@ -50,6 +55,8 @@ export interface SupervisorInput<E> {
   readonly checkAccess: Effect.Effect<Access>;
   /** Mints a fresh credential, once the engine refused the current one. */
   readonly reissueCredential: Effect.Effect<void>;
+  /** Where the record of the started process is written. */
+  readonly files: PrivateFiles;
 }
 
 const STARTUP_TIMEOUT = Duration.seconds(90);
@@ -59,6 +66,8 @@ const HEALTH_FAILURES = 3;
 /** A run this long resets the restart backoff. */
 const STABLE_RUN = Duration.minutes(1);
 const BACKOFF_MAX_MS = 30_000;
+/** How long the engine gets to stop on SIGTERM before SIGKILL, when the server stops. */
+const ENGINE_STOP = "10 seconds";
 /** How long a lost engine gets to stop on SIGTERM, and then on SIGKILL. */
 const ORPHAN_TERM_GRACE = Duration.seconds(10);
 const ORPHAN_KILL_GRACE = Duration.seconds(5);
@@ -96,6 +105,23 @@ const probe = Effect.fn("engine.probe")(function* (port: number) {
   );
 });
 
+/**
+ * Whether another program holds `port` on loopback, where the engine listens:
+ * a trial listen there fails with `EADDRINUSE`. Any other failure (the port
+ * may not be bound by this user, say) is the engine's to report when it starts.
+ */
+const portTaken = (port: number) =>
+  Effect.callback<boolean>((resume) => {
+    const server = NodeNet.createServer();
+    server.once("error", (error: NodeJS.ErrnoException) =>
+      resume(Effect.succeed(error.code === "EADDRINUSE")),
+    );
+    server.listen({ host: "127.0.0.1", port, exclusive: true }, () => {
+      server.close(() => resume(Effect.succeed(false)));
+    });
+    return Effect.sync(() => server.close());
+  });
+
 /** The engine process the supervisor last started, recorded under `<home>/j3/`. */
 const EngineProcess = Schema.Struct({ pid: Schema.Int, environmentId: Schema.String });
 const decodeEngineProcess = Schema.decodeUnknownOption(Schema.fromJsonString(EngineProcess));
@@ -112,9 +138,9 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
   const path = yield* Path.Path;
   const { state } = input;
   const check = probe(input.port).pipe(Effect.provideService(HttpClient.HttpClient, http));
-  const recordFile = path.join(input.home, "j3", "engine-process.json");
+  const recordFile = path.join(engineFolders(path, input.home).j3, "engine-process.json");
 
-  const command = ChildProcess.make(
+  const engine = boundedCommand(
     input.executable,
     [
       "serve",
@@ -126,30 +152,23 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
       "127.0.0.1",
       "--no-browser",
     ],
-    {
-      stdin: "ignore",
-      stdout: "ignore",
-      stderr: "ignore",
-      killSignal: "SIGTERM",
-      forceKillAfter: "10 seconds",
-    },
+    { stdin: "ignore", stdout: "ignore", stderr: "ignore" },
+    ENGINE_STOP,
   );
 
   /** Runs a short system command; its exit code, or -1 if it could not run. */
   const system = (executable: string, args: ReadonlyArray<string>) =>
-    spawner
-      .exitCode(ChildProcess.make(executable, [...args], { stdin: "ignore", stderr: "ignore" }))
-      .pipe(
-        Effect.map(Number),
-        Effect.orElseSucceed(() => -1),
-      );
+    spawner.exitCode(boundedCommand(executable, args, { stdin: "ignore", stderr: "ignore" })).pipe(
+      Effect.map(Number),
+      Effect.orElseSucceed(() => -1),
+    );
 
   const isAlive = (pid: number) =>
     system("ps", ["-p", String(pid), "-o", "pid="]).pipe(Effect.map((code) => code === 0));
 
   /** Whether `pid` is an engine serving this data directory, by its command line. */
   const servesHome = (pid: number) =>
-    spawner.string(ChildProcess.make("ps", ["-p", String(pid), "-o", "args="])).pipe(
+    spawner.string(boundedCommand("ps", ["-p", String(pid), "-o", "args="])).pipe(
       Effect.map((args) => {
         const words = args.trim().split(/\s+/);
         return words.includes("serve") && args.includes(` ${input.home} `);
@@ -174,7 +193,7 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
 
   const record = (pid: number, environmentId: string) =>
     encodeEngineProcess({ pid, environmentId }).pipe(
-      Effect.flatMap((text) => fs.writeFileString(recordFile, text, { mode: 0o600 })),
+      Effect.flatMap((text) => input.files.write(recordFile, text)),
       Effect.catch((error) => Effect.logWarning("Recording the engine process failed", error)),
     );
 
@@ -242,15 +261,20 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
   const runOnce = Effect.scoped(
     Effect.gen(function* () {
       const found = yield* check;
-      if (found._tag === "up" && !(yield* stopLostEngine(found.environmentId))) {
-        // Another program holds the port: never ours to stop.
+      // Another program holds the port, an engine of another home or anything
+      // that is not an engine at all: never ours to stop.
+      const taken =
+        found._tag === "up"
+          ? !(yield* stopLostEngine(found.environmentId))
+          : yield* portTaken(input.port);
+      if (taken) {
         yield* SubscriptionRef.set(state, { _tag: "unavailable", reason: "port-in-use" });
         yield* Effect.logWarning(`Port ${input.port} is taken; the engine waits for it.`);
         return true;
       }
       yield* input.beforeStart;
       yield* SubscriptionRef.set(state, { _tag: "starting" });
-      const handle = yield* spawner.spawn(command);
+      const handle = yield* spawner.spawn(engine);
       const exited = yield* handle.exitCode.pipe(Effect.forkScoped);
 
       const healthy = check.pipe(
@@ -290,8 +314,10 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
       return true;
     }),
   ).pipe(
-    Effect.catchCause((cause) =>
-      Effect.logWarning("The engine stopped", cause).pipe(Effect.as(true)),
+    // A failed run is restarted; an interrupt is the scope closing, and ends the loop.
+    Effect.catchCauseIf(
+      (cause) => !Cause.hasInterrupts(cause),
+      (cause) => Effect.logWarning("The engine stopped", cause).pipe(Effect.as(true)),
     ),
   );
 

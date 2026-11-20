@@ -16,7 +16,6 @@ import * as Digest from "effect/crypto/Digest";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
-import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServer from "effect/http/HttpServer";
 import * as NetAddress from "effect/net/NetAddress";
 import * as Rpc from "effect/rpc/Rpc";
@@ -27,6 +26,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as DeviceAuth from "./auth/DeviceAuth.ts";
 import * as Http from "./http.ts";
 import * as RpcSocket from "./RpcSocket.ts";
+import * as Ports from "./system/Ports.ts";
 import * as TestDomain from "./testing/domain.ts";
 
 const SocketRpcs = RpcGroup.make(
@@ -92,11 +92,15 @@ const server = Layer.unwrap(
     const queue = yield* Queue.unbounded<number>();
     yield* pairDevice;
     return Layer.mergeAll(
-      HttpRouter.serve(Layer.mergeAll(Http.routes, RpcSocket.layer(SocketRpcs, handlers(queue)))),
+      Ports.serve(
+        Layer.mergeAll(Http.routes, RpcSocket.layer(SocketRpcs, handlers(queue))),
+        NodeHttpServer.layerTest,
+        { logAddress: false },
+      ),
       Layer.succeed(Ticks, queue),
     );
   }),
-).pipe(Layer.provideMerge(NodeHttpServer.layerTest), Layer.provideMerge(TestDomain.layer));
+).pipe(Layer.provideMerge(TestDomain.layer));
 
 it.layer(server, { excludeTestServices: true })("RPC socket", (it) => {
   it.effect("refuses an upgrade without a valid credential", () =>

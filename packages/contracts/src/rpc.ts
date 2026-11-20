@@ -403,6 +403,8 @@ export const MemoryRpcs = RpcGroup.make(
   /**
    * Replaces a file's text. Fails with `Conflict("stale-revision")` if the file
    * changed since `revision` was read; `revision: null` creates a new file.
+   * Fails with `Conflict("private-location")`, writing nothing, when the
+   * scope's folder has been linked out of the server's private data.
    */
   Rpc.make("memory.write", {
     payload: {

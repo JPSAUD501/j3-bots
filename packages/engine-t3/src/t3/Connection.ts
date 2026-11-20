@@ -3,6 +3,7 @@ import { AuthWebSocketTicketResult, WsRpcGroup } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
 import * as HttpClient from "effect/http/HttpClient";
@@ -51,7 +52,7 @@ const socketUrl = Effect.fn("engine.socketUrl")(function* (input: ConnectionInpu
       Effect.timeout(Duration.seconds(5)),
       Effect.option,
     );
-  if (ticket._tag === "Some") url.searchParams.set("wsTicket", Redacted.value(ticket.value.ticket));
+  if (Option.isSome(ticket)) url.searchParams.set("wsTicket", Redacted.value(ticket.value.ticket));
   return url.toString();
 });
 
@@ -71,11 +72,23 @@ export const makeEngineRpc = Effect.fn("engine.makeEngineRpc")(function* (input:
     Layer.provide(
       Layer.effect(
         Socket.Socket,
-        Socket.makeWebSocket(
-          socketUrl(input).pipe(Effect.provideService(HttpClient.HttpClient, http)),
-          {
-            openTimeout: Duration.seconds(10),
-          },
+        Socket.WebSocketConstructor.use((construct) =>
+          Socket.fromWebSocket(
+            // The URL waits for a credential and buys a ticket, which can take
+            // as long as the engine takes to come up: it is resolved where an
+            // interrupt still reaches it. Only opening the socket and
+            // registering its close are protected.
+            socketUrl(input).pipe(
+              Effect.provideService(HttpClient.HttpClient, http),
+              Effect.flatMap((url) =>
+                Effect.acquireRelease(
+                  Effect.sync(() => construct(url)),
+                  (ws) => Effect.sync(() => ws.close(1000)),
+                ),
+              ),
+            ),
+            { openTimeout: Duration.seconds(10) },
+          ),
         ),
       ),
     ),

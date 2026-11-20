@@ -15,6 +15,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { Engine, type EngineOptions } from "../src/Engine.ts";
 import type { SessionEvent } from "../src/events.ts";
@@ -22,6 +23,7 @@ import { IdempotencyKey, type TurnId } from "../src/ids.ts";
 import { makeEngineRpc } from "../src/t3/Connection.ts";
 import { ensureCredential } from "../src/t3/Credential.ts";
 import { ensureInstalled } from "../src/t3/Install.ts";
+import { makePrivateFiles } from "../src/t3/PrivateFiles.ts";
 import { layer as engineLayer } from "../src/t3/T3Engine.ts";
 import { type Act, Bench } from "./Bench.ts";
 import { scenarios, turnOf } from "./scenarios.ts";
@@ -77,6 +79,8 @@ const options = Effect.map(paths, ({ home, agent }): EngineOptions => ({
   // The scripted agent calls no bot tools.
   toolBridge: { command: "true", args: [] },
   systemPromptFile: ".j3/system.md",
+  // The bench's home is a fresh folder of its own, with no web client to publish through.
+  isPrivate: () => Effect.succeed(true),
 }));
 
 const platform = Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer);
@@ -98,12 +102,16 @@ const bench = Layer.effect(
     const { home, workspace } = yield* paths;
     const run = yield* Clock.currentTimeMillis;
     // A second connection to the engine, as another of its clients.
+    const files = yield* makePrivateFiles(() => Effect.succeed(true)).pipe(
+      Effect.provide(SecureRandom.layerWebCrypto),
+    );
     const executable = yield* ensureInstalled({
       home,
       platform: NodeProcess.platform,
       arch: NodeProcess.arch,
+      files,
     });
-    const { token } = yield* ensureCredential({ executable, home });
+    const { token } = yield* ensureCredential({ executable, home, files });
     const rpc = yield* makeEngineRpc({ port: PORT, token: Effect.succeed(token) });
     let foreign = 0;
 

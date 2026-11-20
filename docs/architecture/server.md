@@ -52,6 +52,8 @@ shared/
 
 Generated files are written by the server from the database and the memory files. A bot never edits them by hand, and the server rewrites them whenever their inputs change.
 
+**Private state stays in the home.** Every location the server writes (each entry of the home but `web`, the shared memory and skills, each bot's workspace with its memory and generated files, the attachments, and the engine's folder with the folders the engine adapter declares it writes there, `j3/` among them) must resolve, symbolic links followed, inside the home's real path and outside the web client's folder. A bot's `skills/` and `files/` are its own: the server creates them once and never writes them, so a link there is the bot's business and refuses nothing. Start refuses a home where a written location does not resolve as it should, naming it. Every write of private state, the adapter's included, checks its folder the same way first, then writes a new file (mode 0600) of a random name there that must not exist yet and renames it into place, so a link made while the server runs (by a bot's own tools, say) is never followed and cannot publish memory or a generated file through the web client. The engine download is the one file written in place, so that an interrupted one resumes: it must be a regular file, its folder and itself are checked the same way, and it is opened so that a link at its name is refused, even one made after the check. A removal (a deleted bot's memory and generated files, an attachment's bytes once nothing refers to them) checks the folder above what it removes the same way, and removes a link there rather than following it. A refused write or removal is logged, and only that bot's workspace or memory, the attachments, or the engine's folder is affected: a memory write or an upload fails with `Conflict("private-location")`, also when a folder inside the memory, such as `log/`, is the link; a generated file or a removal is skipped; the engine is not installed; and every other bot carries on. What this rule does and does not defend against is in [Security](security.md). To keep state on another disk, put the whole home there.
+
 Memory lives in files and not in the database because the bot's own tools can read, search and quote files, and because the operator can read, edit, diff and back them up without J3 Bots. See [decision 0006](../decisions/0006-memory-is-files.md).
 
 ## The wake pipeline
@@ -197,7 +199,7 @@ Because the main session does not see what a side session did, the server keeps 
 
 ## Bot tools
 
-Bots act on J3 Bots through a small MCP server named `j3`. The harness starts it as a local stdio process, one per loaded session; that process forwards each call to the J3 Bots server's tool endpoint, an HTTP listener of its own on `127.0.0.1:J3_TOOL_PORT`, which stays on loopback whatever `J3_HOST` is. It holds no state and does no work of its own, because a host with many recently active bots runs many of them (see [Engine](engine.md#footprint)).
+Bots act on J3 Bots through a small MCP server named `j3`. The harness starts it as a local stdio process, one per loaded session; that process forwards each call to the J3 Bots server's tool endpoint, an HTTP listener of its own on `127.0.0.1:J3_TOOL_PORT`, which stays on loopback whatever `host` is. It holds no state and does no work of its own, because a host with many recently active bots runs many of them (see [Engine](engine.md#footprint)).
 
 The bridge identifies its caller from `T3CODE_THREAD_ID`, an environment variable the engine sets for each stdio MCP server the harness starts, with the session's thread id. The bridge reads it with `sessionOfToolCaller` from `packages/engine-t3` and never names the variable itself. The server maps that id to a session and a bot. A call from an unknown thread is refused. **Verified** on Claude Code on releases `4941` and `4969`, and on Codex from `4969`, the pinned release ([Engine](engine.md#version-pinning)).
 
@@ -315,6 +317,8 @@ Routines that end silently and non-urgent teammate messages never notify.
 
 Clients use one WebSocket to the server, with typed requests and subscriptions defined in `packages/contracts`, plus a few HTTP routes for what a socket does badly (pairing, file transfer).
 
+Each of the server's listeners (this one, the tool endpoint and the admin socket) binds only once its routes are built, so a request that arrives the moment a port opens is answered, never dropped. Node accepts connections as soon as a server binds and answers a request only once a handler is attached; bound first, a listener would leave a request that arrived in between waiting forever. Between the bind and the attach, Effect resumes from Node's listen callback synchronously, with nothing that waits in between, so no request can arrive unhandled. A step a listener takes after binding that does wait, such as setting the admin socket's mode, runs once its handler is attached.
+
 **The socket is authenticated once, at the upgrade.** A client sends its device token as an `Authorization: Bearer` header, or, where it cannot set a header on an upgrade (a browser), a ticket it got from `POST /api/socket-ticket` with that bearer. A ticket works once and only within a minute. An upgrade without a valid credential is answered 401 and never becomes a socket. A browser cannot read that status, so a failed upgrade sends it back to the ticket route, whose own 401 is the signal to pair again ([Clients](clients.md#connecting)). The socket belongs to that device for its whole life, and every request on it acts as that device. Revoking the device closes its sockets at once. This is how T3 Code's own socket works (**Read** at `db51b67`, `apps/server/src/ws.ts`).
 
 **A failure stays with its request.** Each socket runs its own RPC server. A handler that fails unexpectedly fails its own request with a generic "Internal server error", and the cause is logged on the server; the socket and its other subscriptions carry on.
@@ -334,17 +338,26 @@ The server pages history by `order`; a client asks for older entries as the oper
 
 ## Configuration
 
-The server reads its settings from the environment. A default applies only when a setting is absent; a setting that is present but invalid stops the start, so a typo never becomes the default.
+The server reads its settings from `<J3_HOME>/config.json`. On first start, once the configuration and the home pass their checks, it writes that file whole, with every setting at its default; it never replaces one that exists. A setting in the environment overrides the file, and a default applies only when neither has the setting. A setting that is present but invalid stops the start, so a typo never becomes the default. The file refuses unknown keys for the same reason. A port another program holds stops the start with a message that names the port and its setting. Start also refuses two listeners on one port, port `0` for the tool endpoint or the engine (both are dialed at the number configured), and a certificate and key that Node cannot load as a pair. `j3-bots doctor` runs the same checks without starting anything. A service runs with the file alone: it does not get the variables of the shell that installed it.
 
-| Variable | Default | |
-| --- | --- | --- |
-| `J3_HOME` | `~/.j3-bots` | Refused inside a Git checkout, including a folder that does not exist yet whose parent is one |
-| `J3_HOST` | `127.0.0.1` | Plain HTTP is refused on anything but loopback and private ranges (the private IPv4 ranges, carrier-grade NAT, where Tailscale puts its addresses, and IPv6 unique-local and link-local). `0.0.0.0`, `::` and host names count as public |
-| `J3_PORT` | `3737` | |
-| `J3_TLS_CERT`, `J3_TLS_KEY` | none | Set together, they serve HTTPS on any address |
-| `J3_ENGINE_PORT` | `3738` | The engine's loopback port |
-| `J3_ENGINE_BINARY` | the pinned release | For testing an engine build |
-| `J3_TOOL_PORT` | `3739` | The bot tool endpoint's loopback port, which the `j3` bridges call |
+| File | Variable | Default | |
+| --- | --- | --- | --- |
+| | `J3_HOME` | `~/.j3-bots` | Created readable by the operator only. The server does not start while it is owned by another user or open to a group or to other users. Refused inside a Git checkout, including a folder that does not exist yet whose parent is one |
+| `host` | `J3_HOST` | `lan` | `lan` listens on every IPv4 interface and serves private addresses only, with or without TLS. Start refuses it while any of the machine's addresses is public, and each connection to an address that is not loopback or private is closed unread. Any other value is one address, which must exist when the server starts. Without TLS it must be an IP literal in loopback or a private range: the private IPv4 ranges, IPv4 link-local, carrier-grade NAT (100.64.0.0/10, where Tailscale puts its addresses), and IPv6 unique-local and link-local. `0.0.0.0`, `::` and host names, `localhost` included, are refused |
+| `port` | `J3_PORT` | `3737` | `0` lets the system choose; `j3-bots pair` prints the port the server got |
+| `tls` | `J3_TLS_CERT`, `J3_TLS_KEY` | none | A certificate and key (`{ "cert", "key" }` in the file), which serve HTTPS. With them, `host` may be any address, public ones included; `lan` still serves private addresses only. The two variables are set together and replace the file's pair |
+| `enginePort` | `J3_ENGINE_PORT` | `3738` | The engine's loopback port |
+| | `J3_ENGINE_BINARY` | the pinned release | For testing an engine build. Not in the file, and a service never uses it |
+| `toolPort` | `J3_TOOL_PORT` | `3739` | The bot tool endpoint's loopback port, which the `j3` bridges call |
+| `webClient` | `J3_WEB_CLIENT` | this checkout's `apps/web/dist` | The built web client, served on the API's origin. A folder named here must hold an `index.html`. Everything in it is public, so it may not overlap private state in either direction, symbolic links resolved: it may not hold the home, the TLS certificate or key, or anything the home keeps private, nor lie inside any of them. The one place inside the home it may be is `<J3_HOME>/web`. The default is served once it is built |
+
+Relative paths in the file resolve against `J3_HOME`.
+
+**The web client** is served by the same listener as the API, so the two share an origin. The server looks for a built client when it starts and registers its routes then; a client built later is served after a restart. Paths under `/api/` and the server's own routes are never answered with the client. A request for a path without a file extension that accepts HTML, and that names no file, gets `index.html`, for the client's own routing; anything else that names no file is a 404. Files under `/assets/` carry content hashes in their names and are cached for a year as immutable; everything else is revalidated on each use. Each request is resolved once: the request target is parsed as a URL (which drops the query and the fragment and resolves dot segments), its path is decoded and resolved inside the folder, and the file's real path, symbolic links resolved, is checked to lie inside the folder and is the file sent. No second parser reads the target. Paths that leave the folder are refused, and so is a file whose real path lies outside it, a folder's `index.html` and the app's `index.html` included. A folder named without its trailing slash is redirected to it.
+
+**One server per home.** Right after it loads its configuration, before it opens the database or starts the engine, the server checks that the home is private and takes an exclusive lock on `<J3_HOME>/server.lock`, which it holds until it exits. A second server for the same home stops there. The lock is SQLite's, which the kernel releases when the process ends, so a crashed server never leaves the home held.
+
+**The admin socket**, `<J3_HOME>/admin.sock`, is how `j3-bots` commands on the host reach the running server: its status and process id, where it listens (scheme, address, port and, with TLS, the certificate's concrete names), and a pairing code. It is a Unix socket that only the operator's user can open (the home is private, the socket 0600), so it needs no token. A server holding the lock removes a socket left by one that stopped without closing, once it has seen that the file is a socket and that nothing listens on it. Anything else at that path stops the start.
 
 ## Failure handling
 

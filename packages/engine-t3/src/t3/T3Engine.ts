@@ -36,10 +36,10 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
-import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { isInlineImage, normalizeAttachmentMetadata } from "../attachments.ts";
 import {
@@ -71,6 +71,7 @@ import {
   SessionId,
   type SyncToken,
 } from "../ids.ts";
+import { boundedCommand } from "./Command.ts";
 import { makeEngineRpc } from "./Connection.ts";
 import {
   checkAccess,
@@ -84,6 +85,7 @@ import { commandIdFor, messageIdFor, projectIdFor, threadIdFor } from "./Keys.ts
 import { ORCHESTRATION_PROTOCOL, pin } from "./Pin.ts";
 import type { FileChangeItem } from "./approvalDetail.ts";
 import { cursorFor, makeBatches, type BatchPlace } from "./Batches.ts";
+import { makePrivateFiles } from "./PrivateFiles.ts";
 import { instanceIdFor, provision, type InstanceSpec } from "./Provision.ts";
 import { baseUrl, stateChanges, supervise, type ProcessState } from "./Supervisor.ts";
 import {
@@ -238,9 +240,13 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       Effect.andThen(Deferred.succeed(minted, undefined)),
     );
 
+  const files = yield* makePrivateFiles(options.isPrivate).pipe(
+    Effect.provide(SecureRandom.layerWebCrypto),
+  );
   const providerIds = new Set(options.providers.map((provider) => provider.id));
   const provisionEngine = provision({
     home: options.home,
+    files,
     instances: options.providers.map(instanceSpecOf),
     toolBridge: options.toolBridge,
     systemPromptFile: options.systemPromptFile,
@@ -261,10 +267,15 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
    */
   const install = Option.isSome(options.binaryOverride)
     ? Effect.succeed(options.binaryOverride.value)
-    : fs.makeDirectory(options.home, { recursive: true, mode: 0o700 }).pipe(
+    : files.folder(options.home).pipe(
         Effect.mapError(() => new EngineInstallFailed({ reason: "storage", version: pin.version })),
         Effect.andThen(
-          ensureInstalled({ home: options.home, platform: process.platform, arch: process.arch }),
+          ensureInstalled({
+            home: options.home,
+            platform: process.platform,
+            arch: process.arch,
+            files,
+          }),
         ),
         Effect.tapError((error) =>
           Effect.logWarning("Installing the engine failed", error).pipe(
@@ -282,8 +293,10 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     Effect.gen(function* () {
       const executable = yield* install;
       yield* Deferred.succeed(installed, executable);
-      const ensure = platformServices(ensureCredential({ executable, home: options.home }));
-      const reissue = platformServices(issueCredential({ executable, home: options.home })).pipe(
+      const ensure = platformServices(ensureCredential({ executable, home: options.home, files }));
+      const reissue = platformServices(
+        issueCredential({ executable, home: options.home, files }),
+      ).pipe(
         Effect.flatMap(storeCredential),
         Effect.catch((error) => Effect.logWarning("Minting a fresh engine token failed", error)),
       );
@@ -318,6 +331,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
           platformServices,
         ),
         reissueCredential: reissue,
+        files,
       }).pipe(platformServices);
     }),
   );
@@ -1313,7 +1327,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     const executable = yield* Deferred.await(installed);
     const output = yield* spawner
       .string(
-        ChildProcess.make(executable, [
+        boundedCommand(executable, [
           "auth",
           "pairing",
           "create",

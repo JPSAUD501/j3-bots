@@ -3,6 +3,8 @@ import {
   type BotId,
   type CommandError,
   type CommandId,
+  type Conflict,
+  type Invalid,
   MemoryDocument,
   type MemoryFile,
   MemoryPath,
@@ -30,6 +32,13 @@ import {
   withoutFact,
 } from "./facts.ts";
 import { MemoryFiles } from "./MemoryFiles.ts";
+
+/**
+ * Why a memory tool wrote nothing: the file has been linked out of its memory
+ * folder (`Invalid("memory-path")`), or the folder out of private state
+ * (`Conflict("private-location")`).
+ */
+export type MemoryRefused = Invalid | Conflict;
 
 /** Where a bot's memory tool acts: its own memory, or the shared one. */
 export type FactScope = "bot" | "shared";
@@ -64,12 +73,12 @@ export class Memory extends Context.Service<
       readonly fact: string;
       readonly tier: "pinned" | "log";
       readonly scope: FactScope;
-    }) => Effect.Effect<RememberResult>;
+    }) => Effect.Effect<RememberResult, MemoryRefused>;
     readonly forget: (input: {
       readonly botId: BotId;
       readonly fact: string;
       readonly scope: FactScope;
-    }) => Effect.Effect<{ readonly removed: boolean }>;
+    }) => Effect.Effect<{ readonly removed: boolean }, MemoryRefused>;
     readonly recall: (input: {
       readonly botId: BotId;
       readonly query: string;
@@ -155,13 +164,11 @@ export const layer = Layer.effect(
       const others = yield* textsOf(scope, (path) =>
         input.tier === "pinned" ? false : isLog(path) && path !== target,
       );
-      const recorded = yield* files
-        .modify(scope, target, (text) =>
-          holdsFact([text, ...others.map(({ text }) => text)], fact)
-            ? ([false, Option.none()] as const)
-            : ([true, Option.some(appendLine(text, line))] as const),
-        )
-        .pipe(Effect.orDie);
+      const recorded = yield* files.modify(scope, target, (text) =>
+        holdsFact([text, ...others.map(({ text }) => text)], fact)
+          ? ([false, Option.none()] as const)
+          : ([true, Option.some(appendLine(text, line))] as const),
+      );
       if (!recorded) return { recorded: false, reason: "duplicate" } satisfies RememberResult;
       if (input.tier === "pinned") yield* pinnedChanged(scope);
       return { recorded: true } satisfies RememberResult;
@@ -177,12 +184,10 @@ export const layer = Layer.effect(
       const candidates = yield* textsOf(scope, (path) => path === pinned || isLog(path));
       let removed = false;
       for (const { path } of candidates) {
-        const changed = yield* files
-          .modify(scope, path, (text) => {
-            const next = withoutFact(text, input.fact);
-            return [Option.isSome(next), next] as const;
-          })
-          .pipe(Effect.orDie);
+        const changed = yield* files.modify(scope, path, (text) => {
+          const next = withoutFact(text, input.fact);
+          return [Option.isSome(next), next] as const;
+        });
         if (changed && path === pinned) yield* pinnedChanged(scope);
         removed ||= changed;
       }

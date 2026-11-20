@@ -21,13 +21,19 @@ export const layer = Layer.unwrap(
       Layer.provideMerge(
         Layer.succeed(ServerConfig, {
           home,
+          configFile: path.join(home, "config.json"),
           databasePath: path.join(home, "j3.sqlite"),
+          engineHome: path.join(home, "engine"),
           host: "127.0.0.1",
+          privateOnly: true,
           port: 0,
           tls: Option.none(),
           enginePort: 0,
           engineBinary: Option.none(),
           toolPort: 0,
+          // No client is built there, so a test server serves none.
+          webClient: { _tag: "bundled", directory: path.join(home, "web") },
+          adminSocket: path.join(home, "admin.sock"),
         }),
       ),
     );

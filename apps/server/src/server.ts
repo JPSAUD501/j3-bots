@@ -1,50 +1,30 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- NodeHttpServer takes a factory for the Node HTTP server it wraps.
-import * as NodeHttp from "node:http";
-import * as NodeHttps from "node:https";
-import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as EngineLive from "@j3-bots/engine-t3/live";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Logger from "effect/Logger";
-import * as Option from "effect/Option";
-import * as Path from "effect/Path";
+import * as AdminSocket from "./admin/AdminSocket.ts";
 import * as ServerConfig from "./config.ts";
 import * as Domain from "./domain.ts";
+import * as Home from "./home/Home.ts";
 import * as Http from "./http.ts";
-import { SYSTEM_PROMPT_FILE } from "./Layout.ts";
+import * as Installation from "./installation.ts";
+import { SYSTEM_PROMPT_FILE } from "./home/entries.ts";
+import * as Layout from "./Layout.ts";
+import * as Listener from "./listener.ts";
 import * as Sqlite from "./persistence/Sqlite.ts";
+import * as Network from "./system/Network.ts";
+import * as Ports from "./system/Ports.ts";
 import * as ToolEndpoint from "./tools/ToolEndpoint.ts";
-
-const listen = Layer.unwrap(
-  Effect.gen(function* () {
-    const { host, port, tls } = yield* ServerConfig.ServerConfig;
-    const fs = yield* FileSystem.FileSystem;
-    let createServer = () => NodeHttp.createServer();
-    if (Option.isSome(tls)) {
-      const options = yield* Effect.all({
-        cert: fs.readFileString(tls.value.certPath),
-        key: fs.readFileString(tls.value.keyPath),
-      });
-      createServer = () => NodeHttps.createServer(options);
-    }
-    // On shutdown the server stops accepting connections and gives open
-    // requests and sockets this long to finish.
-    return NodeHttpServer.layer(createServer, {
-      host,
-      port,
-      gracefulShutdownTimeout: "5 seconds",
-    });
-  }),
-);
+import * as WebClient from "./web/WebClient.ts";
 
 const logShutdown = Layer.effectDiscard(Effect.addFinalizer(() => Effect.logInfo("Shutting down")));
 
 /**
- * The engine, run under `<J3_HOME>/engine`. Each harness starts this
+ * The engine, run under `<J3_HOME>/engine`, writing only where the home's
+ * containment check allows. Each harness starts this
  * package's `j3` bridge as the bot tools' MCP server, pointed at the tool
  * endpoint on loopback.
  *
@@ -55,10 +35,10 @@ const logShutdown = Layer.effectDiscard(Effect.addFinalizer(() => Effect.logInfo
 const engine = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
-    const path = yield* Path.Path;
-    const bridge = yield* path.fromFileUrl(new URL("./bridge/main.ts", import.meta.url));
+    const bridge = yield* Installation.bridgeEntryPoint;
+    const layout = yield* Layout.Layout;
     return EngineLive.layer({
-      home: path.join(config.home, "engine"),
+      home: config.engineHome,
       port: config.enginePort,
       binaryOverride: config.engineBinary,
       providers: [],
@@ -67,21 +47,30 @@ const engine = Layer.unwrap(
         args: [bridge, "--server", `http://127.0.0.1:${config.toolPort}`],
       },
       systemPromptFile: SYSTEM_PROMPT_FILE,
+      // The adapter's writes go through the same containment check as the server's.
+      isPrivate: (location) => layout.writable(location).pipe(Effect.isSuccess),
     });
   }),
-);
+).pipe(Layer.provide(Layout.layer));
 
 /**
- * The whole server. Built in dependency order: configuration, the migrated
- * database, the engine and the domain, then the HTTP server and the tool
- * endpoint. Interrupting it (SIGINT, SIGTERM) releases everything in reverse.
+ * The whole server. Built in dependency order: configuration, the home taken
+ * for this process (a second server for the same home stops there, before it
+ * opens the database), the migrated database, the engine and the domain, then
+ * the client listener, and then the tool endpoint and the admin socket, which
+ * reports where the client listener bound. Each listener binds only once its
+ * routes are built (`Ports.serve`). Interrupting it (SIGINT, SIGTERM) releases
+ * everything in reverse.
  */
-export const layer = Layer.mergeAll(Http.layer, ToolEndpoint.layer, logShutdown).pipe(
-  Layer.provide(listen),
+export const layer = Layer.mergeAll(ToolEndpoint.layer, AdminSocket.layer, logShutdown).pipe(
+  Layer.provide(Ports.serve(Http.app, Listener.layer, { logAddress: true })),
+  // One decision for the client routes and the admin socket's report.
+  Layer.provide(WebClient.statusLayer),
   Layer.provide(Domain.layer),
   Layer.provide(engine),
   Layer.provide(Sqlite.layer),
-  Layer.provide(ServerConfig.layer),
-  Layer.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
+  Layer.provide(Home.layer),
+  Layer.provide(Home.configLayer),
+  Layer.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer, Network.layer)),
   Layer.provide(Logger.layer([Logger.consoleJson])),
 );

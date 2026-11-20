@@ -63,7 +63,7 @@ Sending something to another person is not reversible. The base prompt holds bot
 
 The first deployment of J3 Bots is on a host that has SSH access to the rest of its owner's network. That is common for a home server and it changes the stakes: a misled bot on that host can reach every machine the host can.
 
-Recommended for any such host, and to be documented in the install guide:
+Recommended for any such host, and set out step by step in [Running on a Raspberry Pi](../operations/running-on-a-pi.md#choose-the-user-it-runs-as):
 
 - Run J3 Bots and its engine as a **dedicated system user** that has no SSH keys, no sudo, and no read access to the operator's home directory.
 - Give that user its own provider sign-ins.
@@ -74,17 +74,23 @@ This is a deployment recommendation, not something J3 Bots enforces. See [open q
 ## The engine's credentials
 
 - The engine listens on loopback only.
-- J3 Bots' engine token carries `orchestration:operate`, which can start a full-access agent. It is minted at start, kept in memory, never written to a log, and replaced before it expires.
+- J3 Bots' engine token carries `orchestration:operate`, which can start a full-access agent. The engine's own CLI mints it, the server keeps it in `<J3_HOME>/engine/j3/credential.json` (mode 0600, inside the private home), never writes it to a log, and replaces it before it expires. A backup of the home contains it.
 - Bots receive no engine credential from J3 Bots. Their sessions get the engine's own per-session MCP token, scoped to their thread, as T3 Code provides to any agent it runs.
 
 ## J3 Bots' own surface
 
 - **Client connections** require a device token. Tokens are stored hashed, listed, and revocable. The socket checks the token, or a single-use ticket bought with it, once at the upgrade; each socket belongs to one device, and revoking the device closes its sockets at once. File routes take the same bearer on every request.
-- **Pairing codes** carry 50 bits (ten Crockford base32 characters), expire after five minutes and work once. Failed attempts are limited across all sources: after five failures in fifteen minutes, pairing is locked for fifteen minutes and every attempt is answered with the time it opens again. A locked-out attacker gets a handful of guesses per quarter hour against a space of 2^50. Codes and failures are kept in memory, so a restart of the server forgets both.
-- **Plain HTTP** is refused at start on any address that is not loopback or private. A public address needs `J3_TLS_CERT` and `J3_TLS_KEY`.
+- **Pairing codes** carry 50 bits (ten Crockford base32 characters), expire after five minutes and work once. Failed attempts are limited across all sources: after five failures in fifteen minutes, pairing is locked for fifteen minutes and every attempt is answered with the time it opens again. A locked-out attacker gets a handful of guesses per quarter hour against a space of 2^50. Codes and failures are kept in memory, so a restart of the server forgets both. A pairing request is capped at 4 KiB, declared or chunked, and refused with 413 before it counts as an attempt or is decoded.
+- **Plain HTTP** reaches only loopback and private addresses. A configured address must be an IP literal in one of those ranges, or start is refused. The default, `lan`, listens on every IPv4 interface and serves only private addresses, over HTTP and over HTTPS alike. Start refuses it while any of the host's addresses is public, and the server then checks each connection as it accepts it: one that reached an address outside those ranges, such as one that appeared after start, is closed before a byte of it is read. A public address needs a TLS certificate and key, and `host` set to that address ([Server: configuration](server.md#configuration)). On a private network, plain HTTP still lets anyone on that network read a device token in transit. Serving HTTPS, for instance on a Tailscale name, closes that gap.
+- **The data directory is private, or the server does not start.** Before it opens the database or binds anything, the server checks that the home is a folder owned by its user, which that user can read, write and search (0700) and which no group and no other user can open (no bit of mode 077 set). `j3-bots doctor` reports a home that fails this as a problem, with the `chmod` or `chown` command that fixes it. The home holds the database, the engine's credential and the admin socket.
+- **Private state stays in the home.** Every location the server or its engine adapter writes must resolve, symbolic links followed, inside the home and outside the web client's folder: at start, and again before each write ([Server: data](server.md#data)).
+
+  This rule protects against misconfiguration and against a link inside the home that would publish private state. It does not defend against a hostile process running as the same user, and that includes a bot's own shell tools: such a process can already write anywhere the user can. The rule therefore stays a cheap, uniform check and does not grow into a sandbox. A refused write affects only the scope that was tampered with (one bot's workspace or memory, the attachments, the engine's folder), never the server or the other bots.
+- **One server per home.** The server holds an exclusive lock on `<J3_HOME>/server.lock` for as long as it runs. The kernel releases it when the process ends, so a crash never leaves the home held, and two servers that start at once cannot both get it.
+- **The admin socket** gives commands on the host a pairing code and the server's status. It takes no token: it is a Unix socket (mode 0600) inside the private home, so only the operator's user can open it. Anyone who can act as that user can already read the database. The server removes a socket a stopped server left behind only while it holds the lock, and only once it has seen that the file is a socket and that nothing listens on it.
 - **A failing request** fails alone, with a generic error; the cause stays in the server log, and the socket's other subscriptions carry on.
 - **Webhook endpoints** authenticate with a secret in the path, compared in constant time, and optionally an HMAC over the body. Bodies are size-limited and rate-limited per routine.
-- **The bot tool endpoint** listens on loopback and accepts calls only from sessions the server created. It identifies the bot from the session and pins each call to the turn it came from, never from an argument the model supplies ([Server: bot tools](server.md#bot-tools)).
+- **The bot tool endpoint** listens on loopback and accepts calls only from sessions the server created. Any program on the host can reach the port, so a call's body is capped at 4 MiB before it is decoded. It identifies the bot from the session and pins each call to the turn it came from, never from an argument the model supplies ([Server: bot tools](server.md#bot-tools)).
 - **Bot scope.** A bot's tools reach its own conversation, memory and routines, the shared memory, and the rooms it belongs to. Nothing in the tool surface returns another bot's conversation or memory. This is isolation of the product surface, not of the filesystem.
 
 ## Secrets

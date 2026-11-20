@@ -10,9 +10,10 @@ import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
-import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { boundedCommand } from "./Command.ts";
 import { archiveName, pin, releaseUrl } from "./Pin.ts";
+import { engineFolders, type PrivateFiles } from "./PrivateFiles.ts";
 
 // Installs the pinned engine release into the J3-owned engine home:
 //
@@ -61,7 +62,7 @@ const releasePlatform = (platform: string, arch: string): Option.Option<string> 
   Option.fromNullishOr(RELEASE_PLATFORMS[platform]?.[arch]);
 
 const runtimeDirectory = (path: Path.Path, home: string) =>
-  path.join(home, "j3", "runtime", pin.version);
+  path.join(engineFolders(path, home).runtime, pin.version);
 
 /** The digest `SHA256SUMS` lists for `file`. */
 const checksumFor = (sums: string, file: string): Option.Option<string> => {
@@ -75,25 +76,80 @@ const checksumFor = (sums: string, file: string): Option.Option<string> => {
 const INSTALLED_MARKER = ".installed";
 
 /**
- * The pinned engine executable, installed if missing. Idempotent: a finished
- * install is detected by its marker and costs one `stat`. Resumable: an
- * interrupted download continues from where it stopped.
+ * Whether the pinned engine is installed under `home`, without installing it
+ * or starting it: what `j3-bots doctor` reports.
  */
-export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (input: {
+export type EngineInstall =
+  | { readonly _tag: "installed"; readonly version: string; readonly executable: string }
+  /** The server downloads it on its first start. */
+  | { readonly _tag: "missing"; readonly version: string }
+  /** No release of the pinned version runs on this platform. */
+  | { readonly _tag: "unsupported-platform"; readonly version: string };
+
+export const inspectInstall = Effect.fn("engine.inspectInstall")(function* (input: {
   readonly home: string;
   readonly platform: string;
   readonly arch: string;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const target = runtimeDirectory(path, input.home);
+  const installed = yield* fs
+    .exists(path.join(target, INSTALLED_MARKER))
+    .pipe(Effect.orElseSucceed(() => false));
+  if (installed) {
+    return {
+      _tag: "installed",
+      version: pin.version,
+      executable: path.join(target, "t3"),
+    } satisfies EngineInstall;
+  }
+  return Option.isSome(releasePlatform(input.platform, input.arch))
+    ? ({ _tag: "missing", version: pin.version } satisfies EngineInstall)
+    : ({ _tag: "unsupported-platform", version: pin.version } satisfies EngineInstall);
+});
+
+/**
+ * The pinned engine executable, installed if missing. Idempotent: a finished
+ * install is detected by its marker, and what an install cut off after it was
+ * published left beside it (its download, its unpacking folder) is removed.
+ * Resumable: an interrupted download continues from where it stopped.
+ */
+export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (input: {
+  readonly home: string;
+  readonly platform: string;
+  readonly arch: string;
+  readonly files: PrivateFiles;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const fail = (reason: EngineInstallFailed["reason"]) =>
     new EngineInstallFailed({ reason, version: pin.version });
   const storage = () => fail("storage");
+  const remove = (location: string) => input.files.remove(location).pipe(Effect.mapError(storage));
 
   const target = runtimeDirectory(path, input.home);
   const executable = path.join(target, "t3");
-  if (yield* fs.exists(path.join(target, INSTALLED_MARKER)).pipe(Effect.orElseSucceed(() => false)))
+  const partial = `${target}.partial`;
+  const staging = `${target}.staging`;
+  if (
+    yield* fs.exists(path.join(target, INSTALLED_MARKER)).pipe(Effect.orElseSucceed(() => false))
+  ) {
+    // A leftover only takes space: the installed engine runs whether or not it goes.
+    yield* Effect.forEach(
+      [partial, staging],
+      (leftover) =>
+        input.files
+          .remove(leftover)
+          .pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning(`Removing ${leftover}, left by an earlier install, failed`, cause),
+            ),
+          ),
+      { discard: true },
+    );
     return executable;
+  }
 
   const platform = releasePlatform(input.platform, input.arch);
   if (Option.isNone(platform)) return yield* fail("unsupported-platform");
@@ -105,6 +161,10 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
       Effect.andThen(Effect.fail(fail("download"))),
     );
 
+  // Checked before anything is fetched, so a link or a folder there fails at
+  // once rather than after a large download; the write itself checks again.
+  const have = yield* input.files.writable(partial).pipe(Effect.mapError(storage));
+
   const sums = yield* client.get(releaseUrl("SHA256SUMS")).pipe(
     Effect.flatMap(HttpClientResponse.filterStatusOk),
     Effect.flatMap((response) => response.text),
@@ -112,13 +172,6 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
   );
   const expected = checksumFor(sums, archive);
   if (Option.isNone(expected)) return yield* fail("unsupported-platform");
-
-  yield* fs.makeDirectory(path.dirname(target), { recursive: true }).pipe(Effect.mapError(storage));
-  const partial = `${target}.partial`;
-  const have = yield* fs.stat(partial).pipe(
-    Effect.map((info) => Number(info.size)),
-    Effect.orElseSucceed(() => 0),
-  );
 
   // Resume with a range request; a server that ignores it sends the whole file again.
   const response = yield* client
@@ -133,12 +186,17 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
     return yield* download(`status ${response.status}`);
   }
   if (response.status !== 416) {
-    yield* response.stream.pipe(
-      Stream.run(fs.sink(partial, { flag: appending ? "a" : "w" })),
-      Effect.catch(download),
-    );
+    yield* input.files
+      .writeStream(
+        partial,
+        appending,
+        response.stream.pipe(Stream.catch((cause) => Stream.fromEffect(download(cause)))),
+      )
+      .pipe(Effect.catchTags({ StorageExposed: storage, PlatformError: storage }));
   }
 
+  // Checked again before it is read: the download may have taken long.
+  yield* input.files.writable(partial).pipe(Effect.mapError(storage));
   const hash = NodeCrypto.createHash("sha256");
   yield* fs.stream(partial).pipe(
     Stream.runForEach((chunk) => Effect.sync(() => hash.update(chunk))),
@@ -146,17 +204,34 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
   );
   if (hash.digest("hex") !== expected.value) {
     // A corrupt partial would fail the same way forever; start over next time.
-    yield* fs.remove(partial).pipe(Effect.ignore);
+    yield* remove(partial);
     return yield* fail("checksum");
   }
 
-  const staging = `${target}.staging`;
-  yield* fs.remove(staging, { recursive: true }).pipe(Effect.ignore);
-  yield* fs.makeDirectory(staging, { recursive: true }).pipe(Effect.mapError(storage));
+  // The runtime folder is checked again: the download may have taken long.
+  // Whatever is at the staging name is removed (a link itself, never what it
+  // leads to), and the folder is then created only if nothing is there, so a
+  // link planted in between is never followed into.
+  yield* input.files.folder(path.dirname(staging)).pipe(Effect.mapError(storage));
+  yield* remove(staging);
+  yield* fs.makeDirectory(staging, { mode: 0o700 }).pipe(Effect.mapError(storage));
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  // tar says why it failed, such as a full disk, on the server's stderr,
+  // which the journal keeps; a tar that could not run is logged here.
   const exit = yield* spawner
-    .exitCode(ChildProcess.make("tar", ["-xzf", partial, "-C", staging]))
-    .pipe(Effect.orElseSucceed(() => -1));
+    .exitCode(
+      boundedCommand("tar", ["-xzf", partial, "-C", staging], {
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "inherit",
+      }),
+    )
+    .pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("Running tar to unpack the engine failed", cause),
+      ),
+      Effect.orElseSucceed(() => -1),
+    );
   if (exit !== 0) return yield* fail("extract");
 
   // The archive holds the server either at its root or in one top-level folder.
@@ -171,9 +246,9 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
   yield* fs
     .writeFileString(path.join(root, INSTALLED_MARKER), `${expected.value}\n`)
     .pipe(Effect.mapError(storage));
-  yield* fs.remove(target, { recursive: true }).pipe(Effect.ignore);
+  yield* remove(target);
   yield* fs.rename(root, target).pipe(Effect.mapError(storage));
-  yield* fs.remove(staging, { recursive: true }).pipe(Effect.ignore);
-  yield* fs.remove(partial).pipe(Effect.ignore);
+  yield* remove(staging);
+  yield* remove(partial);
   return executable;
 });

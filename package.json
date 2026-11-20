@@ -4,6 +4,7 @@
   "license": "AGPL-3.0-or-later",
   "type": "module",
   "scripts": {
+    "build": "vp run -r build",
     "typecheck": "vp run -r typecheck",
     "lint": "scripts/check-spdx.sh && vp lint --report-unused-disable-directives --deny-warnings",
     "fmt": "vp fmt",

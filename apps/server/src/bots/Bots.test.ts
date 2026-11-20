@@ -8,13 +8,16 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
+import { ServerConfig } from "../config.ts";
 import { Entries } from "../entries/Entries.ts";
-import { Layout, SYSTEM_PROMPT_FILE } from "../Layout.ts";
+import { SYSTEM_PROMPT_FILE } from "../home/entries.ts";
+import { Layout } from "../Layout.ts";
 import { Memory } from "../memory/Memory.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import * as TestDomain from "../testing/domain.ts";
 import { BotStore } from "./BotStore.ts";
 import { Bots } from "./Bots.ts";
+import { EngineSessions } from "./EngineSessions.ts";
 
 let commands = 0;
 const command = () => CommandId.make(`command-${++commands}`);
@@ -113,6 +116,28 @@ it.effect("removes the conversation and memory but keeps the files unless asked"
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("never removes through a workspace that leads into the web client", () =>
+  Effect.gen(function* () {
+    const bots = yield* Bots;
+    const layout = yield* Layout;
+    const { webClient } = yield* ServerConfig;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const bot = yield* createBot("Ana");
+    // Ana's workspace, generated files and all, is moved into the web client's folder and linked back.
+    const published = path.join(webClient.directory, "ana");
+    yield* fs.makeDirectory(webClient.directory, { recursive: true });
+    yield* fs.rename(layout.workspace(bot.id), published);
+    yield* fs.symlink(published, layout.workspace(bot.id));
+    const before = yield* fs.readDirectory(published);
+
+    yield* bots.remove({ commandId: command(), botId: bot.id, deleteFiles: false });
+
+    assert.includeMembers(before, [".j3", "AGENTS.md", "memory"]);
+    assert.deepStrictEqual(yield* fs.readDirectory(published), before);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect(
   "refuses to delete while the engine cannot retire the bot's project, changing nothing",
   () =>
@@ -133,6 +158,37 @@ it.effect(
       );
       assert.isTrue(Option.isSome(yield* store.find(bot.id)));
     }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("opens every bot's session even when one bot's workspace leads into the web client", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const sessions = yield* EngineSessions;
+    const store = yield* BotStore;
+    const layout = yield* Layout;
+    const { webClient } = yield* ServerConfig;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    // Created while the engine is down, so their sessions wait for it.
+    yield* control.setReachable(false);
+    const tampered = yield* createBot("Ana");
+    const other = yield* createBot("Bia");
+    // Ana's workspace is replaced by a link into the web client's folder.
+    const published = path.join(webClient.directory, "ana");
+    yield* fs.makeDirectory(published, { recursive: true });
+    yield* fs.remove(layout.workspace(tampered.id), { recursive: true });
+    yield* fs.symlink(published, layout.workspace(tampered.id));
+    yield* control.setReachable(true);
+
+    // What the reconciliation does for each bot, in turn.
+    yield* sessions.provision(tampered.id);
+    yield* sessions.provision(other.id);
+
+    const opened = yield* store.find(other.id);
+    assert.isTrue(Option.isSome(opened) && Option.isSome(opened.value.engineProjectId));
+    assert.isTrue(yield* fs.exists(path.join(layout.workspace(other.id), SYSTEM_PROMPT_FILE)));
+    assert.deepStrictEqual(yield* fs.readDirectory(published), []);
+  }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect("writes the bot's profile and pinned memory into its generated instructions", () =>

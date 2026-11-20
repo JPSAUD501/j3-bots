@@ -61,6 +61,8 @@ export class Devices extends Context.Service<
     }) => Effect.Effect<PairResult, Invalid | RateLimited>;
     /** Devices not revoked, oldest first, marking the one `current` names. */
     readonly list: (current: DeviceId) => Effect.Effect<ReadonlyArray<Device>>;
+    /** How many devices are paired and not revoked. */
+    readonly pairedCount: Effect.Effect<number>;
   }
 >()("@j3-bots/server/devices/Devices") {}
 
@@ -137,6 +139,15 @@ export const layer = Layer.effect(
       }));
     });
 
-    return Devices.of({ startPairing, pair, list });
+    const pairedCount = SqlSchema.findOne({
+      Request: Schema.Void,
+      Result: Schema.Struct({ count: Schema.Int }),
+      execute: () => sql`SELECT COUNT(*) AS count FROM devices WHERE revoked_at IS NULL`,
+    })(undefined).pipe(
+      Effect.map(({ count }) => count),
+      Effect.orDie,
+    );
+
+    return Devices.of({ startPairing, pair, list, pairedCount });
   }),
 ).pipe(Layer.provide([Digest.layerWebCrypto, SecureRandom.layerWebCrypto]));
