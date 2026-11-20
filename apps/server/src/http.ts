@@ -30,6 +30,7 @@ import { Devices } from "./devices/Devices.ts";
 import * as Webhook from "./routines/webhook.ts";
 import * as Rpc from "./rpc/handlers.ts";
 import * as RpcSocket from "./RpcSocket.ts";
+import * as Ports from "./system/Ports.ts";
 import * as WebClient from "./web/WebClient.ts";
 
 /** 200 once the server is serving, which is after the database is migrated. */
@@ -182,3 +183,12 @@ export const app = Layer.mergeAll(
   RpcSocket.layer(Rpc.ServedRpcs, Rpc.handlers),
   WebClient.layer,
 );
+
+/**
+ * `app` on `server`, with a webhook's secret left out of the request log and
+ * of any trace (`Ports.serve`).
+ */
+export const serve = <S, SE, SR>(
+  server: Layer.Layer<S, SE, SR>,
+  options: { readonly logAddress: boolean },
+) => Ports.serve(app, server, { ...options, redactPath: Webhook.redactPath });

@@ -4,12 +4,12 @@ import { assert, it } from "@effect/vitest";
 import type { RoutineId, RoutineTrigger } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Http from "../http.ts";
-import * as Ports from "../system/Ports.ts";
 import * as TestDomain from "../testing/domain.ts";
 import { command, createBot } from "../testing/turns.ts";
 import * as WebClient from "../web/WebClient.ts";
@@ -68,8 +68,17 @@ const runsOf = (routineId: RoutineId) =>
     `;
   });
 
+/** Every line the server logs while these tests run, as JSON. */
+const logged: Array<string> = [];
+const recordLogs = Logger.layer([
+  Logger.map(Logger.formatJson, (line) => {
+    logged.push(line);
+  }),
+]);
+
 it.layer(
-  Ports.serve(Http.app, NodeHttpServer.layerTest, { logAddress: false }).pipe(
+  Http.serve(NodeHttpServer.layerTest, { logAddress: false }).pipe(
+    Layer.provide(recordLogs),
     Layer.provide(WebClient.statusLayer),
     Layer.provideMerge(TestDomain.layer),
   ),
@@ -163,6 +172,30 @@ it.layer(
       assert.strictEqual(limited.status, 429);
       assert.isAbove(Number(limited.headers["retry-after"]), 0);
       assert.strictEqual((yield* runsOf(routine.id)).length, WEBHOOK_RUNS_PER_MINUTE);
+    }),
+  );
+
+  it.effect("leaves a webhook's secret out of the request log, also where no webhook answers", () =>
+    Effect.gen(function* () {
+      const { routine, path } = yield* webhookRoutine;
+      const [, , routineId = "", secret = ""] = path.split("/");
+      assert.strictEqual((yield* call(path, "{}")).status, 202);
+      // Paths the router may or may not take for the webhook's.
+      for (const other of [
+        `${path}/more`,
+        `/HOOKS/${routineId}/${secret}`,
+        `/%68ooks/${routineId}/${secret}`,
+        `//hooks/${routineId}/${secret}`,
+      ]) {
+        yield* call(other, "{}");
+      }
+      const requests = logged.filter((line) => line.includes("Sent HTTP response"));
+      assert.isTrue(
+        requests.some(
+          (line) => line.includes(`/hooks/${routine.id}/…`) && line.includes('"http.status":202'),
+        ),
+      );
+      assert.isFalse(logged.some((line) => line.includes(secret)));
     }),
   );
 });

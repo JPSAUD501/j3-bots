@@ -4,12 +4,16 @@ import type * as NodeHttp from "node:http";
 import type * as NodeNet from "node:net";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as HttpMiddleware from "effect/http/HttpMiddleware";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServer from "effect/http/HttpServer";
+import * as HttpServerError from "effect/http/HttpServerError";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import type * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 /**
  * Whether the server could listen on an address and port: `in-use` by another
@@ -163,6 +167,43 @@ export const listen = (
     NodeHttpServer.layerHttpServices,
   );
 
+/** A request URL's path: what the request log records of it. */
+const pathOf = (url: string) => url.replace(/[?#].*$/s, "");
+
+/**
+ * `HttpMiddleware.logger`, unless `redactPath` changes the request's path:
+ * then that path holds a credential, and so may what went wrong (a
+ * `RouteNotFound` carries the request), so the request is logged in one line
+ * of its method, the path `redactPath` makes and the status, and nothing else.
+ */
+const requestLog =
+  (redactPath: (path: string) => string) =>
+  <E, R>(
+    app: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
+  ): Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    E,
+    R | HttpServerRequest.HttpServerRequest
+  > =>
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const path = pathOf(request.url);
+      const shown = redactPath(path);
+      if (shown === path) return yield* HttpMiddleware.logger(app);
+      const exit = yield* Effect.exit(app);
+      const response = Exit.isSuccess(exit)
+        ? exit.value
+        : HttpServerError.causeResponseStripped(exit.cause)[0];
+      yield* Effect.log("Sent HTTP response").pipe(
+        Effect.annotateLogs({
+          "http.method": request.method,
+          "http.url": shown,
+          "http.status": response.status,
+        }),
+      );
+      return yield* exit;
+    });
+
 /**
  * `app`'s routes, served on the HTTP server `server` provides.
  *
@@ -174,15 +215,33 @@ export const listen = (
  * same reason, a step of the listener's own that waits, such as setting a
  * socket's mode, goes on the layer this returns, never on `server`.
  * `logAddress` logs where it listens once it serves.
+ *
+ * Each request is logged with its path as `redactPath` makes it. A request
+ * whose path that changes holds a credential there: it is logged with the
+ * path changed, and no trace span is made of it, since a span records the
+ * whole URL.
  */
 export const serve = <A, E, R, S, SE, SR>(
   app: Layer.Layer<A, E, R>,
   server: Layer.Layer<S, SE, SR>,
-  { logAddress }: { readonly logAddress: boolean },
+  {
+    logAddress,
+    redactPath = (path) => path,
+  }: {
+    readonly logAddress: boolean;
+    readonly redactPath?: (path: string) => string;
+  },
 ) => {
+  const holdsCredential = (request: HttpServerRequest.HttpServerRequest) => {
+    const path = pathOf(request.url);
+    return redactPath(path) !== path;
+  };
   const served = Layer.unwrap(
     Effect.map(HttpRouter.toHttpEffect(app), (handler) =>
-      HttpServer.serve(handler, HttpMiddleware.logger).pipe(Layer.provideMerge(server)),
+      HttpServer.serve(handler, requestLog(redactPath)).pipe(
+        Layer.provide(Layer.succeed(HttpMiddleware.TracerDisabledWhen)(holdsCredential)),
+        Layer.provideMerge(server),
+      ),
     ),
   );
   return logAddress ? HttpServer.withLogAddress(served) : served;

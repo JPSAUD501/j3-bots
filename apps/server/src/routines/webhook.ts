@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { RoutineRun } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
@@ -12,6 +14,28 @@ import { RoutineRuns } from "./RoutineRuns.ts";
 
 /** Where a routine's webhook is called: `<WEBHOOK_PATH>/<routine id>/<secret>`. */
 export const WEBHOOK_PATH = "/hooks";
+
+/**
+ * A request path as the request log may show it: under `WEBHOOK_PATH`,
+ * everything after the routine's id is left out, since it holds the secret.
+ * Every path the router could take for a webhook's is covered, whatever it
+ * answers: one with a wrong secret, with more segments, or written with
+ * percent-escapes, doubled slashes or other letter case.
+ */
+export const redactPath = (path: string): string => {
+  const prefix = `${WEBHOOK_PATH}/`;
+  const read = (text: string) => text.replace(/\/{2,}/g, "/");
+  const decoded = Result.getOrElse(
+    Result.try(() => decodeURIComponent(path)),
+    () => path,
+  );
+  const under = [read(path), read(decoded)].find((candidate) =>
+    candidate.toLowerCase().startsWith(prefix),
+  );
+  if (under === undefined) return path;
+  const [routineId = "", ...rest] = under.slice(prefix.length).split("/");
+  return rest.length === 0 ? `${WEBHOOK_PATH}/${routineId}` : `${WEBHOOK_PATH}/${routineId}/…`;
+};
 
 /**
  * The most a webhook request's body may hold. It reaches the bot inside the
@@ -27,7 +51,7 @@ const Params = Schema.Struct({ routineId: Schema.String, secret: Schema.String }
 
 const RunAnswer = Schema.Struct({
   run: Schema.String,
-  status: Schema.Literals(["running", "delivered", "silent", "failed", "skipped"]),
+  status: RoutineRun.fields.status,
 });
 
 const decoder = new TextDecoder("utf-8", { fatal: true });
