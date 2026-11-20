@@ -39,12 +39,14 @@ A bot's permission mode is the engine's runtime mode for its sessions.
 
 | Mode | What it means for a bot |
 | --- | --- |
-| Supervised | Asks before commands and edits |
+| Supervised | Asks before commands and edits. On Codex the sandbox is read-only, so even an approved write fails: a supervised Codex bot can read and answer but not change files |
 | Auto-accept edits | Edits files freely, asks before commands |
 | Auto | An automatic reviewer decides; risky actions become approval cards |
 | Full access | Does anything the operator's user can do |
 
 J3 Bots' default for a new bot is **Auto** where the provider supports it and **Supervised** where it does not. Full access is a choice the operator makes per bot, with a plain statement of what it means.
+
+In every mode, the bot's own `j3` tools run without asking: they only reach J3 Bots, which applies its own rules to each call. The engine's and the harness's other tools keep the mode's rules. The Codex behavior is **Verified** on release `4969`; see [Engine](engine.md#behaviors-j3-bots-designs-around).
 
 J3 Bots adds no sandbox. A bot in full access can read the operator's SSH keys, their other bots' folders, and J3 Bots' own database.
 
@@ -67,7 +69,7 @@ Recommended for any such host, and to be documented in the install guide:
 - Give that user its own provider sign-ins.
 - If a bot needs access to something outside its workspace, grant that one thing.
 
-This is a deployment recommendation, not something J3 Bots enforces. See [open question 4](../open-questions.md).
+This is a deployment recommendation, not something J3 Bots enforces. See [open question 3](../open-questions.md).
 
 ## The engine's credentials
 
