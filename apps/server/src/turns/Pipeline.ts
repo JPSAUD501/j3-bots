@@ -44,6 +44,7 @@ import { transactional } from "../persistence/transaction.ts";
 import { RoomRouting } from "../rooms/RoomRouting.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import { SettingsStore } from "../settings/SettingsStore.ts";
+import { admission } from "./admission.ts";
 import { Ledger, UNDELIVERED, WAKE_COLUMNS, WakeRow } from "./Ledger.ts";
 import {
   type Audience,
@@ -156,6 +157,7 @@ export const layer = Layer.effect(
     const readiness = yield* Readiness;
     const observer = yield* Observer;
     const random = yield* SecureRandom.SecureRandom;
+    const { admitsStart } = admission(sql, settings);
 
     // ---- Operator commands ------------------------------------------------
 
@@ -456,42 +458,6 @@ export const layer = Layer.effect(
         GROUP BY bot_id ORDER BY MIN(priority), MIN(rowid)
       `,
     })(undefined).pipe(Effect.orDie);
-
-    /**
-     * Sessions with work the engine may have, across every bot: what the
-     * concurrency budget counts. That is one fact, read again before each
-     * first send: a turn the events show, or a dispatch sent at least once and
-     * not settled (a delivered one whose continuation is pending included). A
-     * dispatch never sent holds no slot, also while its files wait to be
-     * staged again; it takes one when it is sent.
-     */
-    const busySessions = SqlSchema.findAll({
-      Request: Schema.Void,
-      Result: Schema.Struct({ id: SessionRowId }),
-      execute: () => sql`
-        SELECT s.id FROM sessions s
-        WHERE s.retired_at IS NULL AND s.lost_at IS NULL AND (
-          s.admitted_turn_id IS NOT NULL
-          OR EXISTS (SELECT 1 FROM turns t WHERE t.session_id = s.id AND t.finished_at IS NULL)
-          OR EXISTS (
-            SELECT 1 FROM dispatches d WHERE d.session_id = s.id
-              AND (d.status IN ('accepted', 'delivered') OR (d.status = 'intended' AND d.attempts > 0))
-          )
-        )
-      `,
-    })(undefined).pipe(Effect.orDie);
-
-    /**
-     * Whether a start may be sent into the session now, by the one rule every
-     * start follows, fresh or sent again after its files failed to stage: a
-     * slot is free, or the session already holds one, as when its turn's
-     * continuation is pending.
-     */
-    const admitsStart = Effect.fn("Pipeline.admitsStart")(function* (sessionId: SessionRowId) {
-      const { budgets } = yield* settings.get;
-      const busy = yield* busySessions;
-      return busy.length < budgets.concurrentTurns || busy.some((row) => row.id === sessionId);
-    });
 
     /**
      * Written and never sent, not fenced, and in a session no Stop holds (as

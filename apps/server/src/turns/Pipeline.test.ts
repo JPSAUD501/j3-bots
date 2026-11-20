@@ -545,6 +545,40 @@ it.effect("waits for a turn slot before sending a message whose file failed to s
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("leaves a start unsent when the budget is lowered while its file stages", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    yield* concurrentTurns(2);
+    const ana = yield* createBot("Ana");
+    const anaSession = yield* engineSession(ana.id);
+    const bia = yield* createBot("Bia");
+    const biaSession = yield* engineSession(bia.id);
+    yield* sendToBot(bia.id, "Review the budget.");
+    const biaTurn = yield* nextTurn(bia.id);
+
+    // Ana's start is planned with the second slot, and the operator lowers
+    // the budget to one while its file stages.
+    const staging = yield* control.holdNext("stageAttachment");
+    const message = yield* sendWithFile(ana.id, "Read the notes.");
+    yield* staging.entered;
+    yield* concurrentTurns(1);
+    yield* staging.release;
+    yield* gateSettled(ana.id);
+    assert.strictEqual(yield* timesSent(anaSession, "Read the notes."), 0);
+
+    // It goes once Bia's turn frees the only slot.
+    yield* control.finishTurn({
+      sessionId: biaSession,
+      turnId: biaTurn,
+      outcome: { _tag: "completed" },
+    });
+    yield* turnEnded(bia.id);
+    yield* nextTurn(ana.id);
+    yield* deliveryIs(message, "delivered");
+    assert.strictEqual(yield* timesSent(anaSession, "Read the notes."), 1);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect(
   "sends a message whose file failed to stage with the slot its session's continuation holds",
   () =>

@@ -25,6 +25,8 @@ import { Entries } from "../entries/Entries.ts";
 import { Layout } from "../Layout.ts";
 import { Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
+import { SettingsStore } from "../settings/SettingsStore.ts";
+import { admission } from "./admission.ts";
 import { type DispatchRow, keyOf, Ledger } from "./Ledger.ts";
 import {
   busyBackoff,
@@ -146,6 +148,7 @@ export const layer = Layer.effect(
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const targets = stopTargets(sql);
+    const { admitsStart } = admission(sql, yield* SettingsStore);
     const { sessionLost } = sessionLoss(sql, yield* Entries, ledger, yield* WorkSteps, signals);
 
     const files = SqlSchema.findAll({
@@ -423,31 +426,40 @@ export const layer = Layer.effect(
      * The send's claim: the attempt is counted only if the dispatch is still
      * what was read, and still this send's to make. A recovery owns every key
      * already sent, fenced or not; a first send needs an unfenced dispatch in
-     * a live session no Stop holds. Whether it was claimed.
+     * a live session no Stop holds, and a first start a turn slot, by the
+     * budget as it stands now: it may have changed while the files staged.
+     * One the budget refuses stays unsent, for the dispatcher's next pass.
+     * Whether it was claimed.
      */
-    const claim = Effect.fn("Sender.claim")(function* (row: DispatchRow) {
-      const at = timeText(yield* DateTime.now);
-      const claimed = yield* sql<{ readonly attempts: number }>`
-        UPDATE dispatches SET attempts = attempts + 1, updated_at = ${at}
-        WHERE id = ${row.id} AND status = 'intended' AND attempts = ${row.attempts}
-          AND (
-            attempts > 0
-            OR (
-              fenced_by_stop_id IS NULL
-              AND NOT EXISTS (
-                SELECT 1 FROM stop_targets t
-                WHERE t.session_id = dispatches.session_id AND t.stopped_at IS NULL
+    const claim = (row: DispatchRow) =>
+      transaction(
+        Effect.gen(function* () {
+          if (row.attempts === 0 && row.delivery === "start") {
+            if (!(yield* admitsStart(row.session_id))) return false;
+          }
+          const at = timeText(yield* DateTime.now);
+          const claimed = yield* sql<{ readonly attempts: number }>`
+            UPDATE dispatches SET attempts = attempts + 1, updated_at = ${at}
+            WHERE id = ${row.id} AND status = 'intended' AND attempts = ${row.attempts}
+              AND (
+                attempts > 0
+                OR (
+                  fenced_by_stop_id IS NULL
+                  AND NOT EXISTS (
+                    SELECT 1 FROM stop_targets t
+                    WHERE t.session_id = dispatches.session_id AND t.stopped_at IS NULL
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM sessions s WHERE s.id = dispatches.session_id
+                      AND (s.retired_at IS NOT NULL OR s.lost_at IS NOT NULL)
+                  )
+                )
               )
-              AND NOT EXISTS (
-                SELECT 1 FROM sessions s WHERE s.id = dispatches.session_id
-                  AND (s.retired_at IS NOT NULL OR s.lost_at IS NOT NULL)
-              )
-            )
-          )
-        RETURNING attempts
-      `.pipe(Effect.orDie);
-      return claimed.length > 0;
-    });
+            RETURNING attempts
+          `;
+          return claimed.length > 0;
+        }),
+      ).pipe(Effect.withSpan("Sender.claim"));
 
     /**
      * The last resort when a defect could not be counted: one write that only
