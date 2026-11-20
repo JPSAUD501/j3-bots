@@ -1,6 +1,6 @@
 # Base prompt, v0.3
 
-**Status:** first draft, untested. It has not been run against a model. Expect it to change once the [behavior evals](architecture.md#evaluation) exist.
+**Status:** reviewed in three council rounds, not yet run against a model. Expect it to change once the [behavior evals](architecture.md#evaluation) exist.
 
 This is the text every bot shares. The server renders it into each bot's `.j3/system.md`, followed by the bot's profile and pinned memory. Placeholders in double braces are filled at render time. Above the profile, the only placeholder is `{{user.name}}`, which is the same for every bot of an installation: on Codex the base prompt is set once per provider instance and shared by all bots, so anything per-bot belongs in the profile.
 
