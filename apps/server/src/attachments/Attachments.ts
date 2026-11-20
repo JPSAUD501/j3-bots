@@ -194,7 +194,17 @@ export const layer = Layer.effect(
         const id = AttachmentId.make(yield* ids.make("att"));
         const at = timeText(yield* DateTime.now);
         if (!(yield* fs.exists(target).pipe(Effect.orDie))) {
-          yield* layout.writeFile(target, file.bytes).pipe(
+          // One step an interruption waits out: a rename the file system
+          // finishes after the caller gave up is still counted for removal.
+          yield* Effect.uninterruptible(
+            layout
+              .writeFile(target, file.bytes)
+              .pipe(
+                Effect.andThen(
+                  Effect.sync(() => written.push({ sha256: sha, storage_path: storagePath })),
+                ),
+              ),
+          ).pipe(
             Effect.catchTags({
               // Logged here; the caller learns only that nothing was stored.
               PrivateLocationExposed: (exposed) =>
@@ -204,7 +214,6 @@ export const layer = Layer.effect(
               PlatformError: Effect.die,
             }),
           );
-          written.push({ sha256: sha, storage_path: storagePath });
         }
         yield* Effect.gen(function* () {
           yield* sql`
