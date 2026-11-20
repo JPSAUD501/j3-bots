@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   type ActionState,
+  type BotChanges,
   cardAction,
   createJ3Client,
   type Draft,
   type DraftChangedElsewhere,
   type J3Client,
   type Loaded,
+  type MemoryEdit,
+  memorySaveKey,
   retryAction,
   targetKey,
 } from "@j3-bots/client-runtime";
@@ -26,7 +29,16 @@ import {
   useSettings,
   useWorkSteps,
 } from "@j3-bots/client-runtime/react";
-import type { BotId, EntryId, EntryTarget, MemoryPath, RoomId, WorkStep } from "@j3-bots/contracts";
+import type {
+  Bot,
+  BotId,
+  EntryId,
+  EntryTarget,
+  MemoryPath,
+  MemoryScope,
+  RoomId,
+  WorkStep,
+} from "@j3-bots/contracts";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import {
   createContext,
@@ -34,6 +46,7 @@ import {
   useCallback,
   useEffect,
   useEffectEvent,
+  useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
@@ -41,6 +54,7 @@ import {
 import { useI18n } from "../app/context";
 import { ConnectionBanner } from "../components/ConnectionBanner";
 import { memoryLabel } from "../components/DetailsPanel";
+import { EditBotDialog } from "../components/EditBotDialog";
 import { MemoryViewer, type MemoryReading } from "../components/MemoryViewer";
 import { NewBotDialog } from "../components/NewBotDialog";
 import { guessDeviceName, Incompatible, Pairing, StorageFailed } from "../components/Pairing";
@@ -203,6 +217,8 @@ interface MemoryView {
   readonly reading: MemoryReading;
 }
 
+const memoryScopeOf = (view: MemoryView): MemoryScope => ({ _tag: "bot", botId: view.botId });
+
 function LiveShell({ children }: { children: ReactNode }) {
   const j3 = useJ3Client();
   const { t } = useI18n();
@@ -236,6 +252,11 @@ function LiveShell({ children }: { children: ReactNode }) {
   const [steps, setSteps] = useState<ReadonlyMap<EntryId, ReadonlyArray<WorkStep>>>(new Map());
   const [newBot, setNewBot] = useState(false);
   const [memoryView, setMemoryView] = useState<MemoryView | null>(null);
+  const [editingBot, setEditingBot] = useState<BotId | null>(null);
+  const botSaves = useReadable(j3.botSaves);
+  const memorySaves = useReadable(j3.memorySaves);
+  // What is open now, for a save that ends after its form closed.
+  const open = useRef<{ bot: BotId | null; memory: string | null }>({ bot: null, memory: null });
   const say = useSay();
 
   const view: ConversationView =
@@ -289,9 +310,8 @@ function LiveShell({ children }: { children: ReactNode }) {
     connected: connection._tag === "connected",
   };
 
-  const openMemoryFile = (botId: BotId, path: MemoryPath) => {
-    const title = memoryLabel(path, t);
-    setMemoryView({ botId, path, title, reading: { _tag: "reading" } });
+  /** Reads a memory file into the viewer, unless the viewer has moved on to another one. */
+  const readMemoryFile = (botId: BotId, path: MemoryPath) =>
     // Two files can share a title, and two bots a path: a late answer for another file is dropped.
     j3.readMemory({ _tag: "bot", botId }, path).then((result) =>
       setMemoryView((current) =>
@@ -306,7 +326,60 @@ function LiveShell({ children }: { children: ReactNode }) {
             },
       ),
     );
+
+  const openMemoryFile = (botId: BotId, path: MemoryPath) => {
+    const title = memoryLabel(path, t);
+    open.current.memory = memorySaveKey({ _tag: "bot", botId }, path);
+    setMemoryView({ botId, path, title, reading: { _tag: "reading" } });
+    void readMemoryFile(botId, path);
   };
+
+  const closeMemoryFile = () => {
+    if (memoryView !== null) j3.dismissMemorySave(memoryScopeOf(memoryView), memoryView.path);
+    open.current.memory = null;
+    setMemoryView(null);
+  };
+
+  const writeMemoryFile = (view: MemoryView, edit: MemoryEdit) => {
+    const scope = memoryScopeOf(view);
+    const key = memorySaveKey(scope, view.path);
+    void j3.writeMemory(scope, view.path, edit).then((result) => {
+      if (result._tag === "done") {
+        setMemoryView((current) =>
+          current?.botId !== view.botId || current.path !== view.path
+            ? current
+            : { ...current, reading: { _tag: "read", document: result.value } },
+        );
+      } else if (open.current.memory !== key) {
+        say(t("memory.failedClosed", { file: view.title }));
+      }
+    });
+  };
+
+  const editingBotValue: Bot | null =
+    editingBot === null
+      ? null
+      : (roster?.rows.flatMap((row) =>
+          row._tag === "bot" && row.bot.id === editingBot ? [row.bot] : [],
+        )[0] ?? null);
+
+  const closeBotEditor = () => {
+    if (editingBot !== null) j3.dismissBotSave(editingBot);
+    open.current.bot = null;
+    setEditingBot(null);
+  };
+
+  const updateBot = (bot: Bot, changes: BotChanges) =>
+    void j3.updateBot(bot.id, changes).then((result) => {
+      if (open.current.bot !== bot.id) {
+        if (result._tag === "failed") say(t("editBot.failedClosed", { name: bot.profile.name }));
+        return;
+      }
+      if (result._tag === "done") {
+        open.current.bot = null;
+        setEditingBot(null);
+      }
+    });
 
   const goToBot = (botId: BotId) => navigate({ to: "/bots/$botId", params: { botId } });
 
@@ -392,6 +465,10 @@ function LiveShell({ children }: { children: ReactNode }) {
         return result.value.id;
       }),
     newBot: () => setNewBot(true),
+    editProfile: (botId) => {
+      open.current.bot = botId;
+      setEditingBot(botId);
+    },
     openMemoryFile,
     freshStart: (botId, name) =>
       void j3
@@ -456,10 +533,37 @@ function LiveShell({ children }: { children: ReactNode }) {
           })
         }
       />
+      <EditBotDialog
+        bot={editingBotValue}
+        engine={data.engine}
+        save={editingBot === null ? undefined : botSaves.get(editingBot)}
+        connected={data.connected}
+        onSave={(changes) => {
+          if (editingBotValue !== null) updateBot(editingBotValue, changes);
+        }}
+        onClose={closeBotEditor}
+      />
       <MemoryViewer
         title={memoryView?.title ?? null}
         reading={memoryView?.reading ?? { _tag: "reading" }}
-        onClose={() => setMemoryView(null)}
+        save={
+          memoryView === null
+            ? undefined
+            : memorySaves.get(memorySaveKey(memoryScopeOf(memoryView), memoryView.path))
+        }
+        connected={data.connected}
+        onSave={(edit) => {
+          if (memoryView !== null) writeMemoryFile(memoryView, edit);
+        }}
+        onDiscard={() => {
+          if (memoryView !== null) j3.dismissMemorySave(memoryScopeOf(memoryView), memoryView.path);
+        }}
+        onLoadNewer={() => {
+          if (memoryView === null) return;
+          j3.dismissMemorySave(memoryScopeOf(memoryView), memoryView.path);
+          void readMemoryFile(memoryView.botId, memoryView.path);
+        }}
+        onClose={closeMemoryFile}
       />
     </ShellSourceContext>
   );

@@ -98,7 +98,8 @@ function DetailsSection({
   );
 }
 
-const permissionText: Record<PermissionMode, readonly [KeyWith, KeyWith]> = {
+/** Each permission mode's name and what it lets the bot do. */
+export const permissionText: Record<PermissionMode, readonly [KeyWith, KeyWith]> = {
   supervised: ["permission.supervised", "permission.supervised.description"],
   "auto-accept-edits": ["permission.autoAcceptEdits", "permission.autoAcceptEdits.description"],
   auto: ["permission.auto", "permission.auto.description"],
@@ -111,7 +112,7 @@ export interface BotDetailsIntents {
   readonly openRoutine?: (routineId: RoutineId) => void;
   readonly openAttachment: (attachment: Attachment) => void;
   readonly openMemoryFile: (path: MemoryPath) => void;
-  /** Absent until profiles can be edited. */
+  /** Absent where the bot cannot be edited. */
   readonly editProfile?: () => void;
   readonly freshStart: () => void;
   readonly deleteBot: () => void;
@@ -175,7 +176,7 @@ export function BotDetails({
         </p>
         {intents.editProfile && (
           <Button size="sm" onClick={intents.editProfile}>
-            {t("details.editProfile")}
+            {t("details.editProfile", { name })}
           </Button>
         )}
       </section>

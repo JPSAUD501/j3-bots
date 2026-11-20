@@ -5,7 +5,18 @@
  * translated; everything it shows is.
  */
 import type { DraftFile, PairingFailure } from "@j3-bots/client-runtime";
-import { AttachmentId, type RosterItem, type RosterItemKey } from "@j3-bots/contracts";
+import {
+  AttachmentId,
+  Conflict,
+  type EngineStatus,
+  Invalid,
+  MemoryPath,
+  MemoryRevision,
+  ModelId,
+  ProviderId,
+  type RosterItem,
+  type RosterItemKey,
+} from "@j3-bots/contracts";
 import { avatarShapeNames, botColors, colors, radii, typeScale } from "@j3-bots/design-tokens";
 import * as DateTime from "effect/DateTime";
 import { useId, useState, type ReactNode } from "react";
@@ -16,8 +27,10 @@ import { Composer } from "../components/Composer";
 import { ConversationHeader } from "../components/ConversationHeader";
 import { BotDetails, RoomDetails } from "../components/DetailsPanel";
 import { ConnectionBanner } from "../components/ConnectionBanner";
+import { EditBotForm, type EditBotFormProps } from "../components/EditBotDialog";
 import { FirstRun, NoSelection, QuietConversation } from "../components/EmptyStates";
 import { HandoffCard } from "../components/HandoffCard";
+import { MemoryFile, type MemoryFileProps } from "../components/MemoryViewer";
 import { MessageBubble } from "../components/MessageBubble";
 import { NoticeLine } from "../components/NoticeLine";
 import { Incompatible, Pairing, StorageFailed } from "../components/Pairing";
@@ -87,6 +100,7 @@ export default function GalleryPage() {
               <NoticesSection />
               <ComposerSection />
               <DetailsSection />
+              <EditingSection />
               <EmptyStatesSection />
               <ConnectionSection />
               <ShellSection />
@@ -715,6 +729,132 @@ function DetailsSection() {
         <Pane>
           <RoomDetails room={team.room} onClose={nothing} />
         </Pane>
+      </div>
+    </Section>
+  );
+}
+
+/** The sample engine with Codex signed in, so a bot can move between two providers. */
+const twoProviders: EngineStatus = {
+  ...team.engine,
+  providers: team.engine.providers.map((provider) =>
+    provider.harness === "codex"
+      ? {
+          ...provider,
+          status: { _tag: "ready" },
+          models: [{ id: ModelId.make("gpt-5.5-codex"), name: "GPT-5.5 Codex" }],
+        }
+      : provider,
+  ),
+};
+const toCodex = { providerId: ProviderId.make("codex"), modelId: ModelId.make("gpt-5.5-codex") };
+
+/** An edit form as the dialog holds it, in a frame the size of a sheet. */
+function EditBotVariant({
+  label,
+  ...props
+}: { label: string } & Partial<Omit<EditBotFormProps, "titleId">>) {
+  const titleId = useId();
+  return (
+    <Frame label={label} width={400} height={720}>
+      <div className="h-full bg-background">
+        <EditBotForm
+          bot={team.bots.scout}
+          engine={twoProviders}
+          save={undefined}
+          connected
+          onSave={nothing}
+          onClose={nothing}
+          titleId={titleId}
+          {...props}
+        />
+      </div>
+    </Frame>
+  );
+}
+
+const profileNote = {
+  path: MemoryPath.make("profile.md"),
+  revision: MemoryRevision.make("r2"),
+  text: "# Profile\n\n- Prefers short answers.\n- Ships on Thursdays; no deploys on Fridays.\n- Time zone: America/Sao_Paulo.\n",
+};
+const editedNote = `${profileNote.text}- Reviews pull requests in the morning.\n`;
+
+/** A memory file as the viewer holds it, in a frame the size of a sheet. */
+function MemoryVariant({
+  label,
+  ...props
+}: { label: string } & Partial<Omit<MemoryFileProps, "titleId">>) {
+  const titleId = useId();
+  return (
+    <Frame label={label} width={400} height={360}>
+      <div className="h-full bg-background">
+        <MemoryFile
+          title="Profile note"
+          reading={{ _tag: "read", document: profileNote }}
+          save={undefined}
+          connected
+          onSave={nothing}
+          onDiscard={nothing}
+          onLoadNewer={nothing}
+          onClose={nothing}
+          titleId={titleId}
+          {...props}
+        />
+      </div>
+    </Frame>
+  );
+}
+
+function EditingSection() {
+  const edit = { text: editedNote, revision: MemoryRevision.make("r1") };
+  return (
+    <Section title="Editing a bot and its memory">
+      <div className="flex flex-wrap gap-4">
+        <EditBotVariant label="Edit: as saved; type to try the inline checks" />
+        <EditBotVariant
+          label="Edit: saving, a move to another provider"
+          save={{ _tag: "saving", changes: { model: toCodex, permissionMode: "auto" } }}
+        />
+        <EditBotVariant
+          label="Edit: the engine refused the model"
+          save={{
+            _tag: "failed",
+            changes: { model: toCodex },
+            failure: { _tag: "refused", error: new Invalid({ reason: "model" }) },
+          }}
+        />
+        <EditBotVariant
+          label="Edit: failed, offline"
+          connected={false}
+          engine={team.engine}
+          save={{
+            _tag: "failed",
+            changes: { profile: { title: "Research lead" } },
+            failure: { _tag: "unexpected" },
+          }}
+        />
+      </div>
+      <div className="flex flex-wrap gap-4">
+        <MemoryVariant label="Memory: read" />
+        <MemoryVariant label="Memory: saving" save={{ _tag: "saving", changes: edit }} />
+        <MemoryVariant
+          label="Memory: changed on the server meanwhile"
+          save={{
+            _tag: "failed",
+            changes: edit,
+            failure: { _tag: "refused", error: new Conflict({ reason: "stale-revision" }) },
+          }}
+        />
+        <MemoryVariant
+          label="Memory: linked out of private data, offline"
+          connected={false}
+          save={{
+            _tag: "failed",
+            changes: edit,
+            failure: { _tag: "refused", error: new Conflict({ reason: "private-location" }) },
+          }}
+        />
       </div>
     </Section>
   );
