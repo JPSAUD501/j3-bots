@@ -68,7 +68,12 @@ export const layer = Layer.effect(
     const digest = yield* Digest.Digest;
     const random = yield* SecureRandom.SecureRandom;
     const tickets = new Map<string, { readonly deviceId: DeviceId; readonly expiresAt: number }>();
-    const revocations = new Map<DeviceId, Deferred.Deferred<void>>();
+    // One signal per device that something waits on, dropped when it fires or
+    // when its last waiter leaves.
+    const revocations = new Map<
+      DeviceId,
+      { readonly signal: Deferred.Deferred<void>; waiters: number }
+    >();
 
     const findByTokenHash = SqlSchema.findOneOption({
       Request: Schema.String,
@@ -114,15 +119,6 @@ export const layer = Layer.effect(
       return { ticket, expiresAt: DateTime.makeUnsafe(expiresAt) };
     });
 
-    const signal = (deviceId: DeviceId) => {
-      let revocation = revocations.get(deviceId);
-      if (revocation === undefined) {
-        revocation = Deferred.makeUnsafe<void>();
-        revocations.set(deviceId, revocation);
-      }
-      return revocation;
-    };
-
     const revoke = Effect.fn("DeviceAuth.revoke")(function* (deviceId: DeviceId) {
       const at = DateTime.formatIso(yield* DateTime.now);
       yield* sql`UPDATE devices SET revoked_at = ${at} WHERE id = ${deviceId} AND revoked_at IS NULL`.pipe(
@@ -132,14 +128,34 @@ export const layer = Layer.effect(
       if (Option.isNone(row)) return yield* new NotFound({ resource: "device" });
       for (const [value, ticket] of tickets)
         if (ticket.deviceId === deviceId) tickets.delete(value);
-      yield* Deferred.succeed(signal(deviceId), undefined);
+      const revocation = revocations.get(deviceId);
+      revocations.delete(deviceId);
+      if (revocation !== undefined) yield* Deferred.succeed(revocation.signal, undefined);
     });
 
     const revoked = Effect.fn("DeviceAuth.revoked")(function* (deviceId: DeviceId) {
-      // Take the signal before reading the row, so a revocation in between is not missed.
-      const revocation = signal(deviceId);
-      const row = yield* findById(deviceId).pipe(Effect.orDie);
-      if (Option.isSome(row) && row.value.revoked_at === null) yield* Deferred.await(revocation);
+      // Join the signal before reading the row, so a revocation in between is not missed.
+      const revocation = revocations.get(deviceId) ?? {
+        signal: Deferred.makeUnsafe<void>(),
+        waiters: 0,
+      };
+      revocation.waiters += 1;
+      revocations.set(deviceId, revocation);
+      yield* Effect.gen(function* () {
+        const row = yield* findById(deviceId).pipe(Effect.orDie);
+        if (Option.isSome(row) && row.value.revoked_at === null) {
+          yield* Deferred.await(revocation.signal);
+        }
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            revocation.waiters -= 1;
+            if (revocation.waiters === 0 && revocations.get(deviceId) === revocation) {
+              revocations.delete(deviceId);
+            }
+          }),
+        ),
+      );
     });
 
     return DeviceAuth.of({ authenticate, issueTicket, revoke, revoked });

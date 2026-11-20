@@ -84,7 +84,7 @@ This is a deployment recommendation, not something J3 Bots enforces. See [open q
 - **Plain HTTP** is refused at start on any address that is not loopback or private. A public address needs `J3_TLS_CERT` and `J3_TLS_KEY`.
 - **A failing request** fails alone, with a generic error; the cause stays in the server log, and the socket's other subscriptions carry on.
 - **Webhook endpoints** authenticate with a secret in the path, compared in constant time, and optionally an HMAC over the body. Bodies are size-limited and rate-limited per routine.
-- **The bot tool endpoint** listens on loopback and accepts calls only from sessions the server created. It identifies the bot from the session, never from an argument the model supplies.
+- **The bot tool endpoint** listens on loopback and accepts calls only from sessions the server created. It identifies the bot from the session and pins each call to the turn it came from, never from an argument the model supplies ([Server: bot tools](server.md#bot-tools)).
 - **Bot scope.** A bot's tools reach its own conversation, memory and routines, the shared memory, and the rooms it belongs to. Nothing in the tool surface returns another bot's conversation or memory. This is isolation of the product surface, not of the filesystem.
 
 ## Secrets

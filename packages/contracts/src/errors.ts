@@ -57,6 +57,8 @@ export class Conflict extends Schema.TaggedError<Conflict>()("Conflict", {
     "not-retryable",
     /** The engine cannot take the command right now; retry once it is ready. */
     "engine-unavailable",
+    /** The room is archived: it takes no messages and no changes. */
+    "room-archived",
   ]),
 }) {
   override get message(): string {

@@ -5,8 +5,9 @@ import { EngineProjectId, RequestId, SessionId, TurnId } from "./ids.ts";
 
 /**
  * The engine cannot take commands right now: it is starting, restarting, or its
- * socket is reconnecting. Nothing was applied. Retry the same command, with the
- * same key, once `Engine.status` reports `ready`.
+ * socket is reconnecting. The command was not sent, so nothing was applied.
+ * Retry the same command, with the same key, once `Engine.status` reports
+ * `ready`.
  */
 export class EngineUnavailable extends Schema.TaggedError<EngineUnavailable>()(
   "EngineUnavailable",
@@ -14,6 +15,27 @@ export class EngineUnavailable extends Schema.TaggedError<EngineUnavailable>()(
 ) {
   override get message(): string {
     return "The engine is not reachable.";
+  }
+}
+
+/**
+ * The command was sent, but its reply was lost: the connection dropped or the
+ * engine restarted before it answered. It may or may not have been applied, and
+ * this error never means it was not.
+ *
+ * A keyed command is safe to send again with the same key: the engine applies a
+ * key once. A dispatch is reconciled with `Engine.lookupDispatch` before
+ * anything else is decided, because only the engine's own record can prove
+ * `not-applied`. A command without a key is idempotent by nature, except
+ * `respondSecret`, whose retry is told apart by its `request-closed`
+ * resolution.
+ */
+export class EngineIndeterminate extends Schema.TaggedError<EngineIndeterminate>()(
+  "EngineIndeterminate",
+  {},
+) {
+  override get message(): string {
+    return "The engine did not answer; the command may have been applied.";
   }
 }
 
@@ -45,9 +67,13 @@ export class SessionNotFound extends Schema.TaggedError<SessionNotFound>()("Sess
 }
 
 /**
- * A `start` reached a session that has a turn running or waiting to start:
- * usually one the engine started itself. Nothing was sent. The server
- * dispatches again once the session is idle.
+ * A `start` was refused before it was sent, because the adapter saw a turn
+ * running or waiting to start in the session: usually one the engine started
+ * itself. Nothing was sent. The server dispatches again once the session is
+ * idle.
+ *
+ * Best effort only: a turn can begin between this check and the engine
+ * applying the start, and then the dispatch is accepted as `queued` instead.
  */
 export class SessionBusy extends Schema.TaggedError<SessionBusy>()("SessionBusy", {
   sessionId: SessionId,
@@ -77,6 +103,13 @@ export class ModelUnavailable extends Schema.TaggedError<ModelUnavailable>()("Mo
   }
 }
 
-/** Every engine command can fail this way. */
-export const EngineDown = Schema.Union([EngineUnavailable, EngineIncompatible]);
+/**
+ * Every engine command can fail this way. `EngineUnavailable` and
+ * `EngineIncompatible` applied nothing; `EngineIndeterminate` may have.
+ */
+export const EngineDown = Schema.Union([
+  EngineUnavailable,
+  EngineIndeterminate,
+  EngineIncompatible,
+]);
 export type EngineDown = typeof EngineDown.Type;

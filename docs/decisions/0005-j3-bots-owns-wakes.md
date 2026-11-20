@@ -20,7 +20,7 @@ J3 Bots' server is always on and already has to decide which bot wakes for a roo
 
 Every reason a bot starts a turn is a **wake**, created and dispatched by the J3 Bots server through one pipeline. J3 Bots has its own scheduler and its own webhook endpoints. Bots message each other through J3 Bots' tool. The engine's scheduled tasks and thread-messaging tools are not used.
 
-J3 Bots also owns waiting and priority. A wake waits in J3 Bots' database until its session is idle, and is then started as a new turn; the one message it sends into a running turn is the operator's, steering a turn the operator opened. The engine's message queue is not used.
+J3 Bots also owns waiting and priority. A wake waits in J3 Bots' database until its session is idle, and is then started as a new turn; the one message it sends into a running turn is the operator's, steering a turn with the same audience. J3 Bots never asks the engine to queue a message. The engine still queues a start that meets a turn it began on its own in the same moment, and a steer the agent did not read before its turn ended; J3 Bots follows those rather than fighting them ([Server](../architecture/server.md#3-a-dispatch-is-written-before-the-engine-is-called)).
 
 ## Consequences
 

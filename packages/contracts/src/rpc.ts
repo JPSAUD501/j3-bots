@@ -37,7 +37,7 @@ import {
   MemoryScope,
   MemoryText,
 } from "./memory.ts";
-import { Room, RoomMembers } from "./room.ts";
+import { Room, RoomHopLimit, RoomMembers, RoomName } from "./room.ts";
 import { Routine, RoutineInstruction, RoutineRun, RoutineTrigger } from "./routine.ts";
 import { Budgets, NotificationSettings, Settings, TimeZone } from "./settings.ts";
 
@@ -161,7 +161,10 @@ export const EntryRpcs = RpcGroup.make(
   /**
    * Returns the new message entry. `attachments` are uploaded first with
    * `POST /attachments`. `mentions` only applies in a room; leaving it out
-   * mentions nobody.
+   * mentions nobody. Fails with `Invalid("attachment")`, writing nothing, when
+   * the files break a limit of the engine that runs the bot: an empty file, an
+   * inline image (GIF, JPEG, PNG or WebP) over 10 MiB, or inline images over
+   * 80 MiB together. Fails with `Conflict("room-archived")` in an archived room.
    */
   Rpc.make("message.send", {
     payload: {
@@ -285,22 +288,23 @@ export const RoomRpcs = RpcGroup.make(
   Rpc.make("room.create", {
     payload: {
       ...command,
-      name: Room.fields.name,
+      name: RoomName,
       members: RoomMembers,
       hostId: BotId,
-      hopLimit: Schema.optionalKey(Room.fields.hopLimit),
+      hopLimit: Schema.optionalKey(RoomHopLimit),
     },
     success: Room,
     error: CommandError,
   }),
+  /** Fails with `Conflict("room-archived")` for an archived room. */
   Rpc.make("room.update", {
     payload: {
       ...command,
       roomId: RoomId,
-      name: Schema.optionalKey(Room.fields.name),
+      name: Schema.optionalKey(RoomName),
       members: Schema.optionalKey(RoomMembers),
       hostId: Schema.optionalKey(BotId),
-      hopLimit: Schema.optionalKey(Room.fields.hopLimit),
+      hopLimit: Schema.optionalKey(RoomHopLimit),
       pinned: Schema.optionalKey(Schema.Boolean),
     },
     success: Room,
