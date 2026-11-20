@@ -38,6 +38,7 @@ import type * as Socket from "effect/socket/Socket";
 import * as Connection from "./connection/Connection.ts";
 import * as Files from "./files/Files.ts";
 import * as Actions from "./intents/Actions.ts";
+import * as SignOut from "./intents/SignOut.ts";
 import type {
   ClientStorage,
   CredentialStore,
@@ -70,16 +71,19 @@ export type Platform =
   | SecureRandom.SecureRandom;
 
 /** Every service of the client runtime, for applications that use Effect directly. */
-export const layer = Layer.mergeAll(
-  Roster.layer,
-  EngineStatus.layer,
-  Settings.layer,
-  Devices.layer,
-  Drafts.layer,
-  Details.layer,
-  WorkSteps.layer,
-  Presence.layer,
-).pipe(
+export const layer = SignOut.layer.pipe(
+  Layer.provideMerge(
+    Layer.mergeAll(
+      Roster.layer,
+      EngineStatus.layer,
+      Settings.layer,
+      Devices.layer,
+      Drafts.layer,
+      Details.layer,
+      WorkSteps.layer,
+      Presence.layer,
+    ),
+  ),
   Layer.provideMerge(Conversations.layer),
   Layer.provideMerge(Files.layer),
   Layer.provideMerge(Actions.layer),
@@ -126,8 +130,8 @@ export interface J3Client {
     readonly code: string;
     readonly deviceName: string;
   }) => Promise<PairResult>;
-  /** Forgets this device's credential here. Resolves `false` if the storage could not be cleared. */
-  readonly forget: () => Promise<boolean>;
+  /** Ends this device's access, and deletes its credential, drafts and unsent messages here. */
+  readonly signOut: () => Promise<SignOut.SignOutResult>;
   readonly reconnectNow: () => void;
 
   readonly roster: Readable<Synced<ReadonlyArray<RosterItem>>>;
@@ -243,6 +247,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
         drafts: yield* Drafts.Drafts,
         files: yield* Files.Files,
         details: yield* Details.Details,
+        signOut: yield* SignOut.SignOut,
       };
     }),
   );
@@ -276,13 +281,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
           ),
         ),
       ),
-    forget: () =>
-      run.promise(
-        connection.forget.pipe(
-          Effect.as(true),
-          Effect.catchTag("CredentialStorageError", () => Effect.succeed(false)),
-        ),
-      ),
+    signOut: () => run.promise(services.signOut.run),
     reconnectNow: () => fire(connection.reconnectNow),
 
     roster: services.roster.state,

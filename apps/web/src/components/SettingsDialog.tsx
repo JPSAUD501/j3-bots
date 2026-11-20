@@ -2,6 +2,7 @@
 import { Dialog } from "@base-ui/react/dialog";
 import {
   type Device,
+  type DeviceId,
   type EngineStatus,
   Label,
   type PairingCode,
@@ -29,7 +30,7 @@ import { Confirm } from "./ui/confirm";
 
 type SettingsIntents = Pick<
   ShellIntents,
-  "updateSettings" | "startPairing" | "revokeDevice" | "refreshDevices" | "forgetDevice"
+  "updateSettings" | "startPairing" | "revokeDevice" | "refreshDevices" | "signOut"
 >;
 
 interface SettingsButtonProps {
@@ -85,7 +86,7 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
                 onStartPairing={intents.startPairing}
                 onRevoke={intents.revokeDevice}
               />
-              <BrowserSection onForget={intents.forgetDevice} />
+              <BrowserSection onSignOut={intents.signOut} />
             </div>
           </Dialog.Popup>
         </Dialog.Portal>
@@ -278,43 +279,72 @@ function DevicesSection({
   const ctx = usePresentation();
   const { t } = ctx.i18n;
   const [pairing, setPairing] = useState<Pairing>({ _tag: "idle" });
+  // Revocations under way or failed. One the server confirms leaves the list with its device.
+  const [revoking, setRevoking] = useState<ReadonlyMap<DeviceId, "pending" | "failed">>(new Map());
+  const revoke = (deviceId: DeviceId) => {
+    setRevoking((held) => new Map(held).set(deviceId, "pending"));
+    onRevoke(deviceId).then((done) =>
+      setRevoking((held) => {
+        const next = new Map(held);
+        if (done) next.delete(deviceId);
+        else next.set(deviceId, "failed");
+        return next;
+      }),
+    );
+  };
   return (
     <Section title={t("settings.devices")}>
       {devices === null ? (
         <Loading />
       ) : (
         <ul className="flex flex-col gap-1.5">
-          {devices.map((device) => (
-            <li
-              key={device.id}
-              className="flex items-center gap-3 rounded-md border border-border px-3 py-2"
-            >
-              <span className="flex min-w-0 flex-1 flex-col">
-                <span className="truncate text-sm">{device.name}</span>
-                <span className="text-2xs text-muted-foreground">
-                  {device.current
-                    ? t("settings.device.current")
-                    : device.lastSeenAt === null
-                      ? t("settings.device.neverSeen")
-                      : t("settings.device.lastSeen", {
-                          when: activityTime(device.lastSeenAt, ctx),
-                        })}
+          {devices.map((device) => {
+            const state = revoking.get(device.id);
+            return (
+              <li
+                key={device.id}
+                className="flex items-center gap-3 rounded-md border border-border px-3 py-2"
+              >
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="truncate text-sm">{device.name}</span>
+                  <span className="text-2xs text-muted-foreground">
+                    {device.current
+                      ? t("settings.device.current")
+                      : device.lastSeenAt === null
+                        ? t("settings.device.neverSeen")
+                        : t("settings.device.lastSeen", {
+                            when: activityTime(device.lastSeenAt, ctx),
+                          })}
+                  </span>
+                  <span role="alert" className="text-2xs text-blocked empty:hidden">
+                    {state === "failed" &&
+                      t("settings.device.revoke.failed", { name: device.name })}
+                  </span>
                 </span>
-              </span>
-              {!device.current && (
-                <Confirm
-                  trigger={<Button size="sm" variant="destructive-outline" />}
-                  title={t("settings.device.revoke.title", { name: device.name })}
-                  body={t("settings.device.revoke.body", { name: device.name })}
-                  cancel={t("settings.device.revoke.cancel")}
-                  confirm={t("settings.device.revoke")}
-                  onConfirm={() => void onRevoke(device.id)}
-                >
-                  {t("settings.device.revoke")}
-                </Confirm>
-              )}
-            </li>
-          ))}
+                {!device.current && (
+                  <Confirm
+                    trigger={
+                      <Button
+                        size="sm"
+                        variant="destructive-outline"
+                        aria-disabled={state === "pending"}
+                      />
+                    }
+                    busy={state === "pending"}
+                    title={t("settings.device.revoke.title", { name: device.name })}
+                    body={t("settings.device.revoke.body", { name: device.name })}
+                    cancel={t("settings.device.revoke.cancel")}
+                    confirm={t("settings.device.revoke")}
+                    onConfirm={() => revoke(device.id)}
+                  >
+                    {state === "pending"
+                      ? t("settings.device.revoke.pending")
+                      : t("settings.device.revoke")}
+                  </Confirm>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
       <div className="flex flex-col items-start gap-2">
@@ -349,8 +379,10 @@ function DevicesSection({
 }
 
 /** Choices kept in this browser only, and signing this device out. */
-function BrowserSection({ onForget }: { onForget: () => void }) {
+function BrowserSection({ onSignOut }: { onSignOut: SettingsIntents["signOut"] }) {
   const { t } = useI18n();
+  // Success leaves the app for pairing, so only a failure is ever shown here.
+  const [signOut, setSignOut] = useState<"idle" | "pending" | "failed">("idle");
   const { appearance, language } = usePreferences();
   const appearanceId = useId();
   const languageId = useId();
@@ -410,15 +442,24 @@ function BrowserSection({ onForget }: { onForget: () => void }) {
       <div className="flex flex-col items-start gap-1.5 pt-1">
         <p className="text-xs text-muted-foreground">{t("settings.signOut.hint")}</p>
         <Confirm
-          trigger={<Button size="sm" variant="destructive-outline" />}
+          trigger={
+            <Button size="sm" variant="destructive-outline" aria-disabled={signOut === "pending"} />
+          }
+          busy={signOut === "pending"}
           title={t("settings.signOut.title")}
           body={t("settings.signOut.body")}
           cancel={t("settings.signOut.cancel")}
           confirm={t("settings.signOut")}
-          onConfirm={onForget}
+          onConfirm={() => {
+            setSignOut("pending");
+            onSignOut().then((done) => setSignOut(done ? "idle" : "failed"));
+          }}
         >
-          {t("settings.signOut")}
+          {signOut === "pending" ? t("settings.signOut.pending") : t("settings.signOut")}
         </Confirm>
+        <p role="alert" className="text-xs text-blocked empty:hidden">
+          {signOut === "failed" && t("settings.signOut.failed")}
+        </p>
       </div>
     </Section>
   );

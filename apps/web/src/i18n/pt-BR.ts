@@ -324,7 +324,9 @@ export const ptBR: Catalog = {
   "pairing.title": "Parear este dispositivo",
   "pairing.body":
     "Na máquina que roda o J3 Bots, execute j3-bots pair, ou abra Configurações num dispositivo já pareado, e digite o código que aparecer.",
-  "pairing.revoked": "Este dispositivo saiu da conta. Pareie de novo para continuar.",
+  "pairing.signedOut": "Este dispositivo saiu da conta. Pareie de novo para continuar.",
+  "pairing.stillListed":
+    "Este dispositivo saiu da conta, mas o J3 Bots não respondeu, então ele continua na lista até você desconectá-lo nas Configurações de outro dispositivo.",
   "pairing.code": "Código de pareamento",
   "pairing.deviceName": "Nome deste dispositivo",
   "pairing.submit": "Parear",
@@ -397,6 +399,9 @@ export const ptBR: Catalog = {
   "settings.device.revoke.body":
     "{name} perde o acesso na hora. Para parear de novo, é preciso um código novo.",
   "settings.device.revoke.cancel": "Manter",
+  "settings.device.revoke.pending": "Desconectando…",
+  "settings.device.revoke.failed":
+    "{name} não foi desconectado. Verifique a conexão e tente de novo.",
   "settings.pair": "Parear outro dispositivo",
   "settings.pair.again": "Gerar outro código",
   "settings.pair.instructions": "Digite este código no outro dispositivo:",
@@ -404,9 +409,12 @@ export const ptBR: Catalog = {
   "settings.pair.failed": "Nenhum código foi gerado. Tente de novo.",
   "settings.browser": "Este navegador",
   "settings.signOut": "Sair neste dispositivo",
-  "settings.signOut.hint": "Sair apaga o acesso deste dispositivo aqui.",
+  "settings.signOut.hint": "Sair encerra o acesso deste dispositivo e apaga o que ele guarda aqui.",
+  "settings.signOut.pending": "Saindo…",
+  "settings.signOut.failed":
+    "Este dispositivo não conseguiu apagar o que guarda aqui, então continua conectado. Tente de novo.",
   "settings.signOut.title": "Sair neste dispositivo?",
   "settings.signOut.body":
-    "Este navegador esquece o acesso, e parear de novo exige um código novo. Seus bots e conversas continuam no servidor.",
+    "Este navegador perde o acesso, e parear de novo exige um código novo. Rascunhos e mensagens não enviadas são descartados. Seus bots e conversas continuam no servidor.",
   "settings.signOut.cancel": "Continuar conectado",
 };

@@ -85,7 +85,7 @@ function Gate({ children }: { children: ReactNode }) {
       return (
         <Screen>
           <Pairing
-            revoked={connection.revoked}
+            reason={connection.reason}
             defaultName={guessDeviceName(navigator.userAgent)}
             onPair={j3.pair}
           />
@@ -341,7 +341,7 @@ function LiveShell({ children }: { children: ReactNode }) {
         ),
     revokeDevice: (deviceId) => j3.revokeDevice(deviceId).then((result) => result._tag === "done"),
     refreshDevices: j3.refreshDevices,
-    forgetDevice: () => void j3.forget(),
+    signOut: () => j3.signOut().then((result) => result !== "failed"),
   };
 
   return (

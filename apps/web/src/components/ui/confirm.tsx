@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { AlertDialog } from "@base-ui/react/alert-dialog";
-import type { ReactElement, ReactNode } from "react";
+import { useState, type ReactElement, type ReactNode } from "react";
 import { Button } from "./button";
 
 interface ConfirmProps {
@@ -13,6 +13,8 @@ interface ConfirmProps {
   readonly cancel: string;
   readonly confirm: string;
   readonly onConfirm: () => void;
+  /** The confirmed action is under way: the trigger opens nothing until it ends. */
+  readonly busy?: boolean;
 }
 
 /**
@@ -27,9 +29,11 @@ export function Confirm({
   cancel,
   confirm,
   onConfirm,
+  busy = false,
 }: ConfirmProps) {
+  const [open, setOpen] = useState(false);
   return (
-    <AlertDialog.Root>
+    <AlertDialog.Root open={open} onOpenChange={(next) => setOpen(next && !busy)}>
       <AlertDialog.Trigger render={trigger}>{children}</AlertDialog.Trigger>
       <AlertDialog.Portal>
         <AlertDialog.Backdrop className="fixed inset-0 z-50 bg-scrim transition-opacity duration-(--duration-slow) data-ending-style:opacity-0 data-starting-style:opacity-0" />

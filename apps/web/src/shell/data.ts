@@ -93,6 +93,10 @@ export interface ShellIntents extends TimelineIntents {
   readonly revokeDevice: (deviceId: DeviceId) => Promise<boolean>;
   /** Reads the list of devices again, as when Settings opens. */
   readonly refreshDevices: () => void;
-  /** Signs this device out: its credential is forgotten here and pairing starts over. */
-  readonly forgetDevice: () => void;
+  /**
+   * Ends this device's access and deletes what it keeps here; the app then
+   * returns to pairing. Resolves `false` when that deletion failed and the
+   * device is still signed in.
+   */
+  readonly signOut: () => Promise<boolean>;
 }

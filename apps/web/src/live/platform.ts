@@ -41,39 +41,54 @@ const decodeCredential = Schema.decodeUnknownOption(StoredCredential);
 const encodeCredential = Schema.encodeSync(StoredCredential);
 const CREDENTIAL_KEY = "device";
 
-const credentials = Layer.succeed(
+/**
+ * Tells this origin's other tabs that the stored credential changed, so a
+ * pairing or a sign-out in one takes effect in all of them.
+ */
+const CREDENTIAL_CHANNEL = "j3-bots-credential";
+
+const credentials = Layer.effect(
   CredentialStore,
-  CredentialStore.of({
-    load: Effect.tryPromise({
-      try: () => Idb.get("credentials", CREDENTIAL_KEY),
-      catch: () => new CredentialStorageError({ operation: "load" }),
-    }).pipe(
-      Effect.map((stored) =>
-        stored === undefined
-          ? Option.none()
-          : decodeCredential(stored).pipe(
-              Option.map(({ deviceId, token }) => ({ deviceId, token: Redacted.make(token) })),
-            ),
+  Effect.gen(function* () {
+    const channel = yield* Effect.acquireRelease(
+      Effect.sync(() => new BroadcastChannel(CREDENTIAL_CHANNEL)),
+      (opened) => Effect.sync(() => opened.close()),
+    );
+    // oxlint-disable-next-line unicorn/require-post-message-target-origin -- a BroadcastChannel stays within its origin and takes no target
+    const announce = Effect.sync(() => channel.postMessage(null));
+    return CredentialStore.of({
+      load: Effect.tryPromise({
+        try: () => Idb.get("credentials", CREDENTIAL_KEY),
+        catch: () => new CredentialStorageError({ operation: "load" }),
+      }).pipe(
+        Effect.map((stored) =>
+          stored === undefined
+            ? Option.none()
+            : decodeCredential(stored).pipe(
+                Option.map(({ deviceId, token }) => ({ deviceId, token: Redacted.make(token) })),
+              ),
+        ),
       ),
-    ),
-    save: Effect.fn("CredentialStore.save")((credential: DeviceCredential) =>
-      Effect.tryPromise({
-        try: () =>
-          Idb.put(
-            "credentials",
-            CREDENTIAL_KEY,
-            encodeCredential({
-              deviceId: credential.deviceId,
-              token: Redacted.value(credential.token),
-            }),
-          ),
-        catch: () => new CredentialStorageError({ operation: "save" }),
-      }),
-    ),
-    clear: Effect.tryPromise({
-      try: () => Idb.remove("credentials", CREDENTIAL_KEY),
-      catch: () => new CredentialStorageError({ operation: "clear" }),
-    }),
+      save: Effect.fn("CredentialStore.save")((credential: DeviceCredential) =>
+        Effect.tryPromise({
+          try: () =>
+            Idb.put(
+              "credentials",
+              CREDENTIAL_KEY,
+              encodeCredential({
+                deviceId: credential.deviceId,
+                token: Redacted.value(credential.token),
+              }),
+            ),
+          catch: () => new CredentialStorageError({ operation: "save" }),
+        }).pipe(Effect.andThen(announce)),
+      ),
+      clear: Effect.tryPromise({
+        try: () => Idb.remove("credentials", CREDENTIAL_KEY),
+        catch: () => new CredentialStorageError({ operation: "clear" }),
+      }).pipe(Effect.andThen(announce)),
+      changes: Stream.fromEventListener(channel, "message").pipe(Stream.as(undefined)),
+    });
   }),
 );
 
@@ -101,6 +116,12 @@ const storage = Layer.succeed(
     remove: Effect.fn("ClientStorage.remove")((table: LocalTable, key: string) =>
       Effect.tryPromise({
         try: () => Idb.remove(table, key),
+        catch: () => new LocalStorageError({ operation: "remove" }),
+      }),
+    ),
+    clear: Effect.fn("ClientStorage.clear")((table: LocalTable) =>
+      Effect.tryPromise({
+        try: () => Idb.clear(table),
         catch: () => new LocalStorageError({ operation: "remove" }),
       }),
     ),

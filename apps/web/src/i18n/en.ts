@@ -323,7 +323,9 @@ export const en = {
   "pairing.title": "Pair this device",
   "pairing.body":
     "On the machine that runs J3 Bots, run j3-bots pair, or open Settings on a device that’s already paired, and enter the code it shows.",
-  "pairing.revoked": "This device was signed out. Pair it again to carry on.",
+  "pairing.signedOut": "This device was signed out. Pair it again to carry on.",
+  "pairing.stillListed":
+    "This device is signed out, but J3 Bots couldn’t be reached, so it stays listed until you sign it out in Settings on another device.",
   "pairing.code": "Pairing code",
   "pairing.deviceName": "Name for this device",
   "pairing.submit": "Pair",
@@ -394,6 +396,8 @@ export const en = {
   "settings.device.revoke.title": "Sign out {name}?",
   "settings.device.revoke.body": "{name} loses access at once. Pairing it again takes a new code.",
   "settings.device.revoke.cancel": "Keep it",
+  "settings.device.revoke.pending": "Signing out…",
+  "settings.device.revoke.failed": "{name} wasn’t signed out. Check the connection and try again.",
   "settings.pair": "Pair another device",
   "settings.pair.again": "Get a new code",
   "settings.pair.instructions": "Enter this code on the other device:",
@@ -401,9 +405,12 @@ export const en = {
   "settings.pair.failed": "No code was made. Try again.",
   "settings.browser": "This browser",
   "settings.signOut": "Sign out this device",
-  "settings.signOut.hint": "Signing out forgets this device’s sign-in here.",
+  "settings.signOut.hint": "Signing out ends this device’s access and deletes what it keeps here.",
+  "settings.signOut.pending": "Signing out…",
+  "settings.signOut.failed":
+    "This device couldn’t delete what it keeps here, so it’s still signed in. Try again.",
   "settings.signOut.title": "Sign out this device?",
   "settings.signOut.body":
-    "This browser forgets its sign-in, and pairing it again takes a new code. Your bots and conversations stay on the server.",
+    "This browser loses access, and pairing it again takes a new code. Drafts and unsent messages are discarded. Your bots and conversations stay on the server.",
   "settings.signOut.cancel": "Stay signed in",
 } as const;

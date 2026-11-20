@@ -84,6 +84,12 @@ export async function remove(store: Store, key: string): Promise<void> {
   return committed(transaction);
 }
 
+export async function clear(store: Store): Promise<void> {
+  const transaction = (await database()).transaction(store, "readwrite");
+  transaction.objectStore(store).clear();
+  return committed(transaction);
+}
+
 /** Puts or deletes (`value: null`) each record, all in one transaction: every change or none. */
 export async function commit(
   changes: ReadonlyArray<{

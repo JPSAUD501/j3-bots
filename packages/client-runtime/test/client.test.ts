@@ -36,6 +36,7 @@ import {
 import { Devices } from "../src/stores/Devices.ts";
 import { Drafts } from "../src/stores/Drafts.ts";
 import { Roster } from "../src/stores/Roster.ts";
+import { SignOut } from "../src/intents/SignOut.ts";
 import * as TestPlatform from "./platform.ts";
 
 // The real server's routes, socket and part-1 handlers, over the in-memory
@@ -249,7 +250,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
     Effect.gen(function* () {
       const connection = yield* Connection;
       const refused = yield* waitFor(connection.state, (state) => state._tag === "unpaired");
-      assert.deepStrictEqual(refused, { _tag: "unpaired", revoked: true });
+      assert.deepStrictEqual(refused, { _tag: "unpaired", reason: "signed-out" });
       assert.isTrue(Option.isNone(yield* (yield* CredentialStore).load));
 
       yield* pairAndConnect;
@@ -275,10 +276,60 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       yield* (yield* Server.DeviceAuth).revoke(stored.value.deviceId);
 
       const revoked = yield* waitFor(connection.state, (state) => state._tag === "unpaired");
-      assert.deepStrictEqual(revoked, { _tag: "unpaired", revoked: true });
+      assert.deepStrictEqual(revoked, { _tag: "unpaired", reason: "signed-out" });
       assert.isTrue(Option.isNone(yield* (yield* CredentialStore).load));
       const refused = yield* connection.call((rpc) => rpc["settings.get"]()).pipe(Effect.flip);
       assert.strictEqual(refused._tag, "NotPaired");
+    }).pipe(Effect.provide(client())),
+  );
+
+  it.effect("signs out: the server revokes the device and nothing of it stays here", () =>
+    Effect.gen(function* () {
+      const { gate, sends } = yield* Fakes;
+      const storage = TestPlatform.makeStorage();
+      yield* Effect.gen(function* () {
+        yield* pairAndConnect;
+        const connection = yield* Connection;
+        const deviceId = yield* connection.deviceId;
+        const botId = yield* createBot("Left behind");
+        const target: EntryTarget = { _tag: "conversation", botId };
+        const drafts = yield* Drafts;
+        yield* drafts.setText(target, "half a thought");
+        yield* whenStored(storage, "drafts", targetKey(target), present);
+        yield* gate.close;
+        yield* (yield* Conversations).enqueue({ target, text: "on its way" });
+        yield* Queue.take(sends);
+
+        assert.strictEqual(yield* (yield* SignOut).run, "signed-out");
+
+        const unpaired = yield* waitFor(connection.state, (state) => state._tag === "unpaired");
+        assert.deepStrictEqual(unpaired, { _tag: "unpaired", reason: "signed-out" });
+        assert.isTrue(Option.isNone(yield* (yield* CredentialStore).load));
+        assert.strictEqual((yield* storage.readAll("drafts").pipe(Effect.orDie)).size, 0);
+        assert.strictEqual((yield* storage.readAll("outbox").pipe(Effect.orDie)).size, 0);
+        assert.strictEqual(drafts.state.get().size, 0);
+        const listed = yield* (yield* Server.Devices).list(deviceId);
+        assert.isFalse(listed.some((device) => device.id === deviceId));
+      }).pipe(Effect.ensuring(gate.open), Effect.provide(client(Option.none(), storage)));
+    }),
+  );
+
+  it.effect("signs out without the server, which still lists the device", () =>
+    Effect.gen(function* () {
+      yield* pairAndConnect;
+      const connection = yield* Connection;
+      const deviceId = yield* connection.deviceId;
+      const network = yield* TestPlatform.TestNetwork;
+      yield* network.set("offline");
+      yield* waitFor(connection.state, (state) => state._tag === "offline");
+
+      assert.strictEqual(yield* (yield* SignOut).run, "still-listed");
+
+      const unpaired = yield* waitFor(connection.state, (state) => state._tag === "unpaired");
+      assert.deepStrictEqual(unpaired, { _tag: "unpaired", reason: "still-listed" });
+      assert.isTrue(Option.isNone(yield* (yield* CredentialStore).load));
+      const listed = yield* (yield* Server.Devices).list(deviceId);
+      assert.isTrue(listed.some((device) => device.id === deviceId));
     }).pipe(Effect.provide(client())),
   );
 

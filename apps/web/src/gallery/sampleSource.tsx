@@ -381,7 +381,7 @@ function sampleIntents({ get, update }: Store): ShellIntents {
     editProfile: nothing,
     freshStart: nothing,
     refreshDevices: nothing,
-    forgetDevice: nothing,
+    signOut: () => Promise.resolve(true),
   };
 }
 

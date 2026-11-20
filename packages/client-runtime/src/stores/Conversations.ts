@@ -20,6 +20,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FiberSet from "effect/FiberSet";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import type * as Redacted from "effect/Redacted";
@@ -36,7 +37,7 @@ import {
   retryAction,
 } from "../intents/Actions.ts";
 import { ClientStorage, type LocalChange, type LocalStorageError } from "../ports.ts";
-import { Cell, type Readable } from "../Store.ts";
+import { Cell, type Readable, waitFor } from "../Store.ts";
 import { makeKeyed } from "./keyed.ts";
 
 /** How many older entries one scroll back reads. */
@@ -207,6 +208,12 @@ export class Conversations extends Context.Service<
     readonly retryNotice: (entryId: EntryId) => Effect.Effect<IntentResult>;
     readonly answerCard: (entryId: EntryId, answer: CardAnswer) => Effect.Effect<IntentResult>;
     readonly provideSecret: (entryId: EntryId, answer: SecretAnswer) => Effect.Effect<IntentResult>;
+    /**
+     * Stops every delivery and drops the outbox, here and on the device. It
+     * happens by itself whenever the device has no credential: a message
+     * belongs to the pairing that wrote it.
+     */
+    readonly discardAll: Effect.Effect<void, LocalStorageError>;
   }
 >()("@j3-bots/client-runtime/stores/Conversations") {}
 
@@ -469,6 +476,7 @@ export const layer = Layer.effect(
 
     // Completes, per target, when its last message given to `deliver` is settled.
     const tails = new Map<string, Deferred.Deferred<void>>();
+    const deliveries = yield* FiberSet.make<IntentResult<EntryId>>();
 
     /**
      * Delivers `message` in a fiber of the client's scope once every earlier
@@ -490,7 +498,7 @@ export const layer = Layer.effect(
               return Deferred.succeed(settled, undefined);
             }),
           ),
-          Effect.forkIn(scope),
+          FiberSet.run(deliveries),
         );
       });
 
@@ -605,6 +613,25 @@ export const layer = Layer.effect(
         connection.call((client) => client["secret.provide"]({ entryId, answer })),
       );
 
+    const discardAll = Effect.gen(function* () {
+      yield* FiberSet.clear(deliveries);
+      tails.clear();
+      outbox.set([]);
+      yield* storage.clear("outbox");
+    });
+
+    yield* Effect.gen(function* () {
+      while (true) {
+        yield* waitFor(connection.state, (state) => state._tag === "unpaired");
+        yield* discardAll.pipe(
+          Effect.catchTag("LocalStorageError", (error) =>
+            Effect.logWarning("Unsent messages stay in local storage", error),
+          ),
+        );
+        yield* waitFor(connection.state, (state) => state._tag !== "unpaired");
+      }
+    }).pipe(Effect.forkIn(scope));
+
     return Conversations.of({
       open: stores.acquire,
       send,
@@ -615,6 +642,7 @@ export const layer = Layer.effect(
       retryNotice,
       answerCard,
       provideSecret,
+      discardAll,
     });
   }),
 );

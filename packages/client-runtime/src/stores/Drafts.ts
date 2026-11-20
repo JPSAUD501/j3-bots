@@ -15,6 +15,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
+import { Connection } from "../connection/Connection.ts";
 import { Files, uploadProblem } from "../files/Files.ts";
 import {
   admitFiles,
@@ -22,8 +23,8 @@ import {
   type LocalFile,
   normalizeMediaType,
 } from "../files/limits.ts";
-import { ClientStorage } from "../ports.ts";
-import { Cell, type Readable } from "../Store.ts";
+import { ClientStorage, type LocalStorageError } from "../ports.ts";
+import { Cell, type Readable, waitFor } from "../Store.ts";
 import { Conversations, targetKey } from "./Conversations.ts";
 
 /** A file in the composer, from the moment the operator picks it. */
@@ -99,6 +100,11 @@ export class Drafts extends Context.Service<
      * second finds the draft empty.
      */
     readonly send: (target: EntryTarget, mentions?: Mentions) => Effect.Effect<DraftSendResult>;
+    /**
+     * Stops every upload and drops every draft, here and on the device. It
+     * happens by itself whenever the device has no credential.
+     */
+    readonly discardAll: Effect.Effect<void, LocalStorageError>;
   }
 >()("@j3-bots/client-runtime/stores/Drafts") {}
 
@@ -106,6 +112,7 @@ export const layer = Layer.effect(
   Drafts,
   Effect.gen(function* () {
     const storage = yield* ClientStorage;
+    const connection = yield* Connection;
     const files = yield* Files;
     const conversations = yield* Conversations;
     const scope = yield* Scope.Scope;
@@ -312,6 +319,29 @@ export const layer = Layer.effect(
       );
     });
 
-    return Drafts.of({ state, setText, attach, detach, send });
+    const discardAll = turn.withPermits(1)(
+      Effect.gen(function* () {
+        const running = [...uploads.values()];
+        uploads.clear();
+        yield* Fiber.interruptAll(running);
+        unwritten.clear();
+        state.set(new Map());
+        yield* storage.clear("drafts");
+      }),
+    );
+
+    yield* Effect.gen(function* () {
+      while (true) {
+        yield* waitFor(connection.state, (current) => current._tag === "unpaired");
+        yield* discardAll.pipe(
+          Effect.catchTag("LocalStorageError", (error) =>
+            Effect.logWarning("Drafts stay in local storage", error),
+          ),
+        );
+        yield* waitFor(connection.state, (current) => current._tag !== "unpaired");
+      }
+    }).pipe(Effect.forkIn(scope));
+
+    return Drafts.of({ state, setText, attach, detach, send, discardAll });
   }),
 );

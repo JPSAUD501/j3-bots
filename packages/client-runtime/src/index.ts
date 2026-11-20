@@ -21,6 +21,7 @@ export {
   type PairingFailure,
   ReconnectPolicy,
   type ReconnectSettings,
+  type UnpairedReason,
 } from "./connection/Connection.ts";
 export { type Download } from "./files/Files.ts";
 export {
@@ -38,6 +39,7 @@ export {
   retryAction,
   stopAction,
 } from "./intents/Actions.ts";
+export { type SignOutResult } from "./intents/SignOut.ts";
 export {
   ClientStorage,
   CredentialStorageError,

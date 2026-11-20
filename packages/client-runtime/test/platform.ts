@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -75,6 +76,7 @@ const credentials = (stored: Option.Option<DeviceCredential>) =>
         load: Ref.get(ref),
         save: (credential) => Ref.set(ref, Option.some(credential)),
         clear: Ref.set(ref, Option.none()),
+        changes: Stream.never,
       });
     }),
   );
@@ -94,6 +96,7 @@ export const makeStorage = (options: { readonly refuseCommits?: boolean } = {}) 
     readAll: (name) => Effect.sync(() => new Map(table(name))),
     write: (name, key, value) => Effect.sync(() => void table(name).set(key, value)),
     remove: (name, key) => Effect.sync(() => void table(name).delete(key)),
+    clear: (name) => Effect.sync(() => table(name).clear()),
     commit: (changes) =>
       options.refuseCommits === true
         ? Effect.fail(new LocalStorageError({ operation: "write" }))

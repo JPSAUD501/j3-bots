@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { PairingFailure, PairResult } from "@j3-bots/client-runtime";
+import type { PairingFailure, PairResult, UnpairedReason } from "@j3-bots/client-runtime";
 import * as DateTime from "effect/DateTime";
 import { useEffect, useId, useRef, useState } from "react";
 import { useI18n, usePresentation } from "../app/context";
@@ -38,8 +38,8 @@ const fieldClass =
   "h-10 w-full rounded-md border border-input bg-surface px-3 text-sm placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:h-11";
 
 interface PairingProps {
-  /** The server refused this device's credential: it was signed out somewhere else. */
-  readonly revoked: boolean;
+  /** Why this device has no credential, said above the form unless it never had one. */
+  readonly reason: UnpairedReason;
   readonly onPair: (input: {
     readonly code: string;
     readonly deviceName: string;
@@ -52,7 +52,7 @@ interface PairingProps {
  * The first screen on a new device: the code from `j3-bots pair` and a name
  * for the device. Once paired, the app opens by itself.
  */
-export function Pairing({ revoked, onPair, defaultName }: PairingProps) {
+export function Pairing({ reason, onPair, defaultName }: PairingProps) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
   const codeId = useId();
@@ -98,8 +98,10 @@ export function Pairing({ revoked, onPair, defaultName }: PairingProps) {
     <Centered>
       <Ensemble />
       <Heading title={t("pairing.title")} body={t("pairing.body")} />
-      {revoked && (
-        <p className="max-w-sm rounded-md bg-muted px-3 py-2 text-sm">{t("pairing.revoked")}</p>
+      {reason !== "new" && (
+        <p className="max-w-sm rounded-md bg-muted px-3 py-2 text-sm">
+          {reason === "signed-out" ? t("pairing.signedOut") : t("pairing.stillListed")}
+        </p>
       )}
       <form
         className="flex w-full max-w-xs flex-col gap-3 text-start"

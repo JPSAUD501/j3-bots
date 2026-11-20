@@ -69,6 +69,14 @@ A new client is paired with a one-time code.
 
 A device token grants everything the operator can do in J3 Bots. There are no narrower roles in the first versions.
 
+Signing out a device from its own settings ends its access:
+
+1. It deletes its drafts and unsent messages, which hold conversation text.
+2. If it is connected, it revokes its own credential on the server, waiting up to ten seconds for the answer.
+3. It deletes the credential, and only then returns to pairing. If a deletion fails, the device stays signed in and settings say so.
+
+When the server cannot be reached, the device still signs out here, and the pairing screen says the other devices list it until one of them revokes it. A device keeps no conversation text without a credential: whenever it loses its credential (signed out, revoked, or signed out in another tab), its drafts and unsent messages are discarded. In a browser, every change to the stored credential is announced to the origin's other tabs with `BroadcastChannel`, and each loads it again, so pairing or signing out in one tab takes effect in all of them.
+
 ## Connecting
 
 Every connection is one device's. The server accepts the device token as an `Authorization: Bearer` header on the upgrade, or a single-use ticket bought with it at `POST /api/socket-ticket` and passed as `/ws?ticket=…` within a minute. Either way the server checks the credential once, at the upgrade, and the socket is that device's until it closes.

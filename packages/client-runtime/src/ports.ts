@@ -52,6 +52,12 @@ export class CredentialStore extends Context.Service<
     readonly load: Effect.Effect<Option.Option<DeviceCredential>, CredentialStorageError>;
     readonly save: (credential: DeviceCredential) => Effect.Effect<void, CredentialStorageError>;
     readonly clear: Effect.Effect<void, CredentialStorageError>;
+    /**
+     * Emits each time another window of this client saved or cleared the
+     * credential, so this one loads it again: a browser's other tabs of the
+     * same origin. A platform with one window never emits.
+     */
+    readonly changes: Stream.Stream<void>;
   }
 >()("@j3-bots/client-runtime/ports/CredentialStore") {}
 
@@ -120,6 +126,8 @@ export class ClientStorage extends Context.Service<
       value: string,
     ) => Effect.Effect<void, LocalStorageError>;
     readonly remove: (table: LocalTable, key: string) => Effect.Effect<void, LocalStorageError>;
+    /** Removes every record of `table`. */
+    readonly clear: (table: LocalTable) => Effect.Effect<void, LocalStorageError>;
     /**
      * Applies every change or none, in one transaction, so a record moved from
      * one table to another is never in both and never in neither.

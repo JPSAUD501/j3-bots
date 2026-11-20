@@ -840,7 +840,7 @@ function ConnectionSection() {
           height={560}
         >
           <Pairing
-            revoked={false}
+            reason="new"
             defaultName="Chrome on Android"
             onPair={refused({ _tag: "invalid-code" })}
           />
@@ -851,12 +851,23 @@ function ConnectionSection() {
           height={560}
         >
           <Pairing
-            revoked
+            reason="signed-out"
             defaultName="Safari on iPhone"
             onPair={refused({
               _tag: "rate-limited",
               retryAt: lockedUntil,
             })}
+          />
+        </Frame>
+        <Frame
+          label="Pairing: signed out here without reaching the server"
+          width={390}
+          height={600}
+        >
+          <Pairing
+            reason="still-listed"
+            defaultName="Firefox on Linux"
+            onPair={refused({ _tag: "invalid-code" })}
           />
         </Frame>
         <Frame label="The server speaks another protocol version" width={390} height={360}>
