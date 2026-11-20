@@ -7,6 +7,7 @@ import type {
   DeviceId,
   EngineStatus,
   EntryId,
+  EntryOrder,
   EntryTarget,
   MemoryFile,
   MemoryPath,
@@ -70,6 +71,8 @@ export interface ShellIntents extends TimelineIntents {
   /** Sends the draft once, however often it is called, and clears it. */
   readonly sendDraft: (target: EntryTarget) => void;
   readonly loadOlder: (target: EntryTarget) => void;
+  /** The operator has seen the conversation through this entry. */
+  readonly markRead: (target: EntryTarget, through: EntryOrder) => void;
   readonly stopBot: (botId: BotId) => void;
   /** Absent where there is no dictation. */
   readonly dictate?: (target: EntryTarget) => void;

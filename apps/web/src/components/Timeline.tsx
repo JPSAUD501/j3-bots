@@ -4,7 +4,9 @@ import type {
   Attachment,
   BotId,
   CommandId,
+  Entry,
   EntryId,
+  MessageEntry,
   QuestionAnswers,
   RoutineId,
   WorkStep,
@@ -81,91 +83,96 @@ export function Timeline({ entries, inRoom, workSteps, submitting, intents }: Ti
           }
           const { author } = message;
           return (
-            <MessageBubble
-              key={item.key}
-              message={message}
-              position={item.position}
-              speaker={inRoom && author._tag === "bot" ? (bots.get(author.botId) ?? null) : null}
-              mentionable={mentionable}
-              onOpenAttachment={intents.openAttachment}
-              onRetry={() => intents.retryMessage(message.id)}
-              submitting={submitting(message.id)}
-            />
+            <div key={item.key} data-seen-id={message.id}>
+              <MessageBubble
+                message={message}
+                position={item.position}
+                speaker={inRoom && author._tag === "bot" ? (bots.get(author.botId) ?? null) : null}
+                mentionable={mentionable}
+                onOpenAttachment={intents.openAttachment}
+                onRetry={() => intents.retryMessage(message.id)}
+                submitting={submitting(message.id)}
+              />
+            </div>
           );
         }
         const { entry } = item;
-        switch (entry._tag) {
-          case "question":
-            return (
-              <QuestionCard
-                key={item.key}
-                entry={entry}
-                onAnswer={(answers) => intents.answerQuestion(entry.id, answers)}
-                onDismiss={() => intents.dismissQuestion(entry.id)}
-                submitting={submitting(entry.id)}
-              />
-            );
-          case "approval":
-            return (
-              <ApprovalCard
-                key={item.key}
-                entry={entry}
-                onDecide={(decision) => intents.decideApproval(entry.id, decision)}
-                submitting={submitting(entry.id)}
-              />
-            );
-          case "secret-request":
-            return (
-              <SecretRequestCard
-                key={item.key}
-                entry={entry}
-                onProvide={(value) => intents.provideSecret(entry.id, value)}
-                onDecline={() => intents.declineSecret(entry.id)}
-                submitting={submitting(entry.id)}
-              />
-            );
-          case "work-fold":
-            return (
-              <WorkFold
-                key={item.key}
-                entry={entry}
-                steps={workSteps(entry.id)}
-                onOpenChange={(open) =>
-                  open ? intents.openWorkFold(entry.id) : intents.closeWorkFold(entry.id)
-                }
-              />
-            );
-          case "notice":
-            return (
-              <NoticeLine
-                key={item.key}
-                entry={entry}
-                onRetry={() => intents.retryNotice(entry.id)}
-                onOpenConversation={() => {
-                  if (entry.notice._tag === "waiting-in-conversation") {
-                    intents.openConversation(entry.notice.botId);
-                  }
-                }}
-              />
-            );
-          case "handoff":
-            return (
-              <HandoffCard
-                key={item.key}
-                entry={entry}
-                onOpen={() => intents.openHandoff(entry.id)}
-              />
-            );
-          case "routine-change":
-            return (
-              <RoutineChangeCard
-                key={item.key}
-                entry={entry}
-                onOpen={() => intents.openRoutine(entry.routineId)}
-              />
-            );
-        }
+        return (
+          <div key={item.key} data-seen-id={entry.id}>
+            <Card entry={entry} submitting={submitting} workSteps={workSteps} intents={intents} />
+          </div>
+        );
       })}
     </div>
   );
+}
+
+/** One card, notice or fold: every entry that is not a message. */
+function Card({
+  entry,
+  submitting,
+  workSteps,
+  intents,
+}: {
+  entry: Exclude<Entry, MessageEntry>;
+  submitting: TimelineProps["submitting"];
+  workSteps: TimelineProps["workSteps"];
+  intents: TimelineIntents;
+}) {
+  switch (entry._tag) {
+    case "question":
+      return (
+        <QuestionCard
+          entry={entry}
+          onAnswer={(answers) => intents.answerQuestion(entry.id, answers)}
+          onDismiss={() => intents.dismissQuestion(entry.id)}
+          submitting={submitting(entry.id)}
+        />
+      );
+    case "approval":
+      return (
+        <ApprovalCard
+          entry={entry}
+          onDecide={(decision) => intents.decideApproval(entry.id, decision)}
+          submitting={submitting(entry.id)}
+        />
+      );
+    case "secret-request":
+      return (
+        <SecretRequestCard
+          entry={entry}
+          onProvide={(value) => intents.provideSecret(entry.id, value)}
+          onDecline={() => intents.declineSecret(entry.id)}
+          submitting={submitting(entry.id)}
+        />
+      );
+    case "work-fold":
+      return (
+        <WorkFold
+          entry={entry}
+          steps={workSteps(entry.id)}
+          onOpenChange={(open) =>
+            open ? intents.openWorkFold(entry.id) : intents.closeWorkFold(entry.id)
+          }
+        />
+      );
+    case "notice":
+      return (
+        <NoticeLine
+          entry={entry}
+          onRetry={() => intents.retryNotice(entry.id)}
+          onOpenConversation={() => {
+            if (entry.notice._tag === "waiting-in-conversation") {
+              intents.openConversation(entry.notice.botId);
+            }
+          }}
+        />
+      );
+    case "handoff":
+      return <HandoffCard entry={entry} onOpen={() => intents.openHandoff(entry.id)} />;
+    case "routine-change":
+      return (
+        <RoutineChangeCard entry={entry} onOpen={() => intents.openRoutine(entry.routineId)} />
+      );
+  }
 }

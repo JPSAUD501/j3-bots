@@ -376,6 +376,7 @@ function sampleIntents({ get, update }: Store): ShellIntents {
     openConversation: nothing,
     openMemoryFile: nothing,
     loadOlder: nothing,
+    markRead: nothing,
     newBot: nothing,
     newRoom: nothing,
     editProfile: nothing,

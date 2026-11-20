@@ -2,12 +2,13 @@
 import type {
   Bot,
   EngineStatus,
+  Entry,
   EntryId,
   EntryTarget,
   RosterItem,
   RosterItemKey,
 } from "@j3-bots/contracts";
-import { useEffect, useEffectEvent, useId, useRef, type ReactElement } from "react";
+import { useEffect, useEffectEvent, useId, useRef, useState, type ReactElement } from "react";
 import { BotsProvider, useI18n } from "../app/context";
 import { AppShell, type Region } from "../components/AppShell";
 import { Composer } from "../components/Composer";
@@ -26,6 +27,7 @@ import { Button } from "../components/ui/button";
 import { Timeline } from "../components/Timeline";
 import { filterRoster, orderRoster, rosterKeyOf, rosterKeyText } from "../presentation/roster";
 import type { ShellData, ShellIntents } from "./data";
+import { useNewestSeen } from "../lib/useNewestSeen";
 import { useShellLayout } from "./layout";
 import { isEditable, shellShortcuts } from "./shortcuts";
 
@@ -70,7 +72,8 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
   const titleRef = useRef<HTMLButtonElement>(null);
   const detailsHeadingRef = useRef<HTMLHeadingElement>(null);
   const detailsHeadingId = useId();
-  const timelineRef = useRef<HTMLDivElement>(null);
+  // State, not a ref: each conversation mounts its own timeline, and what watches it follows.
+  const [timeline, setTimeline] = useState<HTMLDivElement | null>(null);
   const rosterRef = useRef<HTMLElement>(null);
   const [containerRef, layout] = useShellLayout();
 
@@ -167,6 +170,14 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
     return () => window.removeEventListener("keydown", listener);
   }, [keyboard]);
 
+  // What the operator can see of the open conversation, they have read.
+  const shownTarget = item === null ? null : targetOf(rosterKeyOf(item));
+  const shownItems = shownTarget === null ? null : data.conversation(shownTarget).items;
+  useNewestSeen(timeline, (id) => {
+    const seen = shownItems?.find((i): i is Entry => i._tag !== "outgoing" && i.id === id);
+    if (shownTarget !== null && seen !== undefined) intents.markRead(shownTarget, seen.order);
+  });
+
   if (data.roster === null || data.roster.length === 0) {
     return (
       <div className="flex h-full flex-col pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]">
@@ -208,9 +219,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
     const recipient = item._tag === "bot" ? item.bot.profile.name : item.room.name;
     const toggleDetails = () => navigation.setDetailsOpen(!detailsOpen);
     const goToEntry = (entryId: EntryId) => {
-      const card = timelineRef.current?.querySelector<HTMLElement>(
-        `[data-entry-id="${CSS.escape(entryId)}"]`,
-      );
+      const card = timeline?.querySelector<HTMLElement>(`[data-entry-id="${CSS.escape(entryId)}"]`);
       card?.scrollIntoView({ block: "center" });
       card?.focus({ preventScroll: true });
     };
@@ -241,7 +250,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
           // conversation, so each opens at its own end rather than where the last one was left.
           <div
             key={`timeline:${rosterKeyText(key)}`}
-            ref={timelineRef}
+            ref={setTimeline}
             className="flex min-h-0 flex-1 flex-col-reverse overflow-y-auto [overflow-anchor:auto]"
           >
             <div className="mx-auto w-full max-w-(--layout-text-column) px-3 py-4 @tablet:px-6">

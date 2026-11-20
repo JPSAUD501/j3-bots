@@ -161,8 +161,8 @@ export interface Conversation {
   readonly state: Readable<ConversationState>;
   /** Reads the page before the oldest entry held. Does nothing while a read runs or at the start. */
   readonly loadOlder: Effect.Effect<void>;
-  /** Moves the operator's read mark to the newest entry held. */
-  readonly markRead: Effect.Effect<void>;
+  /** Moves the operator's read mark forward to `through`, the newest entry they have seen. */
+  readonly markRead: (through: EntryOrder) => Effect.Effect<void>;
 }
 
 /**
@@ -407,16 +407,14 @@ export const layer = Layer.effect(
             );
         });
 
-        const markRead = Effect.suspend(() => {
-          const newest = sorted().at(-1);
-          if (newest === undefined || (readThrough !== null && newest.order <= readThrough)) {
-            return Effect.void;
-          }
-          readThrough = newest.order;
-          return connection
-            .call((client) => client["entries.markRead"]({ target, through: newest.order }))
-            .pipe(Effect.ignore);
-        });
+        const markRead = (through: EntryOrder) =>
+          Effect.suspend(() => {
+            if (readThrough !== null && through <= readThrough) return Effect.void;
+            readThrough = through;
+            return connection
+              .call((client) => client["entries.markRead"]({ target, through }))
+              .pipe(Effect.ignore);
+          });
 
         const unsubscribe = outbox.subscribe(publish);
         const close = () => {

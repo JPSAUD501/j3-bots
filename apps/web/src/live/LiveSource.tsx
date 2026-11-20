@@ -217,13 +217,6 @@ function LiveShell({ children }: { children: ReactNode }) {
     j3.setView(visible ? targetOf(botId, roomId) : null);
   }, [j3, botId, roomId, visible]);
 
-  // What the operator can see, they have read: the newest entry, while the page is visible.
-  const newestId = view.items.findLast((item) => item._tag !== "outgoing")?.id;
-  const { markRead } = conversation;
-  useEffect(() => {
-    if (visible && view.phase === "ready" && newestId !== undefined) markRead();
-  }, [markRead, newestId, visible, view.phase]);
-
   const say = (text: string) => setNotice((previous) => ({ id: (previous?.id ?? 0) + 1, text }));
 
   const data: ShellData = {
@@ -314,6 +307,9 @@ function LiveShell({ children }: { children: ReactNode }) {
       }),
     loadOlder: (asked) => {
       if (viewKey !== null && targetKey(asked) === viewKey) conversation.loadOlder();
+    },
+    markRead: (asked, through) => {
+      if (viewKey !== null && targetKey(asked) === viewKey) conversation.markRead(through);
     },
     stopBot: (botId) => void j3.stopBot(botId),
     createBot: (name, primary) =>

@@ -3,6 +3,7 @@ import type {
   BotFile,
   BotId,
   EntryId,
+  EntryOrder,
   EntryTarget,
   MemoryFile,
   MemoryScope,
@@ -150,7 +151,7 @@ export const useConversation = (
 ): {
   readonly state: ConversationState | null;
   readonly loadOlder: () => void;
-  readonly markRead: () => void;
+  readonly markRead: (through: EntryOrder) => void;
 } => {
   const handle: ConversationHandle | null = useHeld(target, targetKey, (client, value) =>
     client.openConversation(value),

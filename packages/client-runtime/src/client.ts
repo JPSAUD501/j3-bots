@@ -10,6 +10,7 @@ import type {
   DeviceId,
   EngineStatus as EngineStatusValue,
   EntryId,
+  EntryOrder,
   EntryTarget,
   MemoryDocument,
   MemoryFile,
@@ -94,7 +95,8 @@ export interface ConversationHandle {
   readonly target: EntryTarget;
   readonly state: Readable<Conversations.ConversationState>;
   readonly loadOlder: () => void;
-  readonly markRead: () => void;
+  /** Moves the read mark forward to `through`, the newest entry the operator has seen. */
+  readonly markRead: (through: EntryOrder) => void;
   /** Lets go of the conversation. Its subscription ends when nobody else holds it. */
   readonly release: () => void;
 }
@@ -296,7 +298,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
         target,
         state: value.state,
         loadOlder: () => fire(value.loadOlder),
-        markRead: () => fire(value.markRead),
+        markRead: (through) => fire(value.markRead(through)),
         release,
       };
     },
