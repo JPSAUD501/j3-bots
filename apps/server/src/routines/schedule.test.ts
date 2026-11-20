@@ -45,6 +45,13 @@ describe("nextRun", () => {
     assert.strictEqual(next(daily, "2026-03-08T07:30:00.000Z"), "2026-03-09T06:30:00.000Z");
   });
 
+  it("runs every skipped time of a schedule, each moved as late as the gap is long", () => {
+    const twice = schedule("0,30 2 * * *", "America/New_York");
+    assert.strictEqual(next(twice, "2026-03-08T05:00:00.000Z"), "2026-03-08T07:00:00.000Z");
+    assert.strictEqual(next(twice, "2026-03-08T07:00:00.000Z"), "2026-03-08T07:30:00.000Z");
+    assert.strictEqual(next(twice, "2026-03-08T07:30:00.000Z"), "2026-03-09T06:00:00.000Z");
+  });
+
   it("runs a time the clocks repeat once, at its first occurrence", () => {
     // New York repeats 01:00-01:59 on 2026-11-01, first at -04:00, then at -05:00.
     const daily = schedule("30 1 * * *", "America/New_York");
@@ -82,6 +89,18 @@ describe("plannedRun", () => {
       assert.strictEqual(yield* reason(schedule("0 9 * *", "UTC")), "schedule");
       assert.strictEqual(yield* reason(schedule("0 0 9 * * *", "UTC")), "schedule");
       assert.strictEqual(yield* reason(schedule("0 9 * * *", "Mars/Olympus")), "time-zone");
+    }),
+  );
+
+  it.effect("refuses a schedule that names no date that exists", () =>
+    Effect.gen(function* () {
+      const never = schedule("0 0 31 2 *", "UTC");
+      assert.strictEqual(yield* reason(never), "schedule");
+      const result = nextRun(never, now);
+      assert.isTrue(Result.isFailure(result) && result.failure.reason === "schedule");
+      // A date that exists only in leap years is a date.
+      const leap = yield* plannedRun(schedule("0 0 29 2 *", "UTC"), now);
+      assert.deepStrictEqual(leap, Option.some(at("2028-02-29T00:00:00.000Z")));
     }),
   );
 
