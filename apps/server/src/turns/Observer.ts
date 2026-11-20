@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BotId, EntryId, RoomId, WorkStep } from "@j3-bots/contracts";
+import { BotId, type Entry, EntryId, RoomId, WorkStep } from "@j3-bots/contracts";
 import {
   Engine,
   type EngineDown,
@@ -26,6 +26,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -135,6 +136,7 @@ const changesWork = (event: SessionEvent): boolean => {
     case "request-opened":
     case "request-closed":
       return true;
+    case "request-updated":
     case "step":
     case "host-speech":
     case "tool-call":
@@ -148,6 +150,21 @@ const SessionNow = Schema.Struct({
   lost: Schema.BooleanFromBit,
   busy: Schema.BooleanFromBit,
 });
+
+/**
+ * A card with its request's content as the engine now shows it, keeping the
+ * card's id, place and status. Undefined when the request would make another
+ * kind of card, which an engine request never becomes.
+ */
+const withContent = (card: Entry, draft: EntryDraft): Entry | undefined => {
+  if (card._tag === "approval" && draft._tag === "approval")
+    return { ...card, ...draft, status: card.status };
+  if (card._tag === "question" && draft._tag === "question")
+    return { ...card, ...draft, status: card.status };
+  if (card._tag === "secret-request" && draft._tag === "secret-request")
+    return { ...card, ...draft, status: card.status };
+  return undefined;
+};
 
 /** A turn's end, as `turn-finished` and a replacement's ended turns tell it. */
 interface TurnEnd {
@@ -734,7 +751,9 @@ export const layer = Layer.effect(
             kind: request.kind,
             action: request.action,
             detail: request.detail,
-            allowsSession: request.allowsSession,
+            reason: request.reason,
+            exact: request.exact,
+            sessionGrant: request.sessionGrant,
             status: { _tag: "pending" },
           };
         case "question":
@@ -779,13 +798,35 @@ export const layer = Layer.effect(
       }
     };
 
-    /** The request becomes a card in the bot's conversation, once. */
+    /**
+     * An open request's card shows what the engine now records for it, while
+     * it waits. Its status stays: an answer already on its way is the one
+     * sent. A closed request's card no longer changes.
+     */
+    const updateRequest = Effect.fn("Observer.updateRequest")(function* (
+      session: Watched,
+      requestId: RequestId,
+      request: EngineRequest,
+    ) {
+      const known = yield* requestRow({ sessionId: session.id, requestId });
+      if (Option.isNone(known) || known.value.closed_at !== null) return;
+      const found = yield* entries.find(known.value.entry_id);
+      if (Option.isNone(found)) return;
+      const card = found.value.entry;
+      const updated = withContent(card, cardOf(session.bot_id, request));
+      if (updated !== undefined && !Equal.equals(updated, card)) yield* entries.update(updated);
+    }, Effect.orDie);
+
+    /**
+     * The request becomes a card in the bot's conversation, once. A request
+     * already known, as a replacement lists it again, shows what it shows now.
+     */
     const openRequest = Effect.fn("Observer.openRequest")(function* (
       session: Watched,
       open: OpenRequest,
     ) {
       const known = yield* requestRow({ sessionId: session.id, requestId: open.requestId });
-      if (Option.isSome(known)) return;
+      if (Option.isSome(known)) return yield* updateRequest(session, open.requestId, open.request);
       const entry = yield* entries.append({
         target: { _tag: "conversation", botId: session.bot_id },
         entry: cardOf(session.bot_id, open.request),
@@ -966,6 +1007,8 @@ export const layer = Layer.effect(
           );
         case "request-opened":
           return yield* openRequest(session, event.open);
+        case "request-updated":
+          return yield* updateRequest(session, event.requestId, event.request);
         case "request-closed":
           return yield* closeRequest(session, event.requestId, event.resolution);
         case "turn-finished":

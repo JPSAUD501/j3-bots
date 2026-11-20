@@ -116,7 +116,7 @@ const responseFor = (card: Entry, answer: CardAnswer): StoredResponse | "invalid
     case "approval":
       if (card.status._tag !== "pending") return "closed";
       if (answer._tag !== "approval") return "invalid";
-      if (answer.decision === "allow-session" && !card.allowsSession) return "invalid";
+      if (answer.decision === "allow-session" && card.sessionGrant === null) return "invalid";
       return { _tag: "approval", decision: answer.decision };
     case "question":
       if (card.status._tag !== "pending") return "closed";

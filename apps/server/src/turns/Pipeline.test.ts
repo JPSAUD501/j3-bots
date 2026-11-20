@@ -321,7 +321,9 @@ it.effect("sends an engine card's answer again after a restart, once", () =>
           kind: "command",
           action: "rm -rf build",
           detail: null,
-          allowsSession: false,
+          reason: null,
+          exact: true,
+          sessionGrant: null,
         },
       });
       const card = yield* awaitEntry(bot.id, "approval");

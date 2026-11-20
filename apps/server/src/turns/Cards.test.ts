@@ -158,7 +158,15 @@ it.effect("sends an answer when the answer before it hits a defect", () =>
       control.openRequest({
         sessionId: session,
         turnId,
-        request: { _tag: "approval", kind: "command", action, detail: null, allowsSession: false },
+        request: {
+          _tag: "approval",
+          kind: "command",
+          action,
+          detail: null,
+          reason: null,
+          exact: true,
+          sessionGrant: null,
+        },
       });
     yield* approval("rm -rf build");
     const second = yield* approval("rm -rf dist");
@@ -202,3 +210,61 @@ const eventuallyTwoCards = (botId: BotId) =>
       return [first.id, next.id] as const;
     }),
   );
+
+it.effect("shows an open card as the engine updates it, and takes the grant it then offers", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const cards = yield* Cards;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Clean up.");
+    const turnId = yield* nextTurn(bot.id);
+    const requestId = yield* control.openRequest({
+      sessionId: session,
+      turnId,
+      request: {
+        _tag: "approval",
+        kind: "command",
+        action: "Remove the build output",
+        detail: null,
+        reason: null,
+        exact: false,
+        sessionGrant: null,
+      },
+    });
+    const summary = yield* awaitEntry(bot.id, "approval");
+    const allowForSession = {
+      commandId: command(),
+      entryId: summary.id,
+      answer: { _tag: "approval", decision: "allow-session" },
+    } as const;
+    // A summary offers no grant for the session.
+    assert.isTrue(Exit.isFailure(yield* Effect.exit(cards.answer(allowForSession))));
+
+    yield* control.updateRequest({
+      sessionId: session,
+      requestId,
+      request: {
+        _tag: "approval",
+        kind: "command",
+        action: "rm -rf build",
+        detail: null,
+        reason: "Remove the build output",
+        exact: true,
+        sessionGrant: { covers: "every-command" },
+      },
+    });
+    yield* until(awaitEntry(bot.id, "approval").pipe(Effect.map((card) => card.exact)));
+    const exact = yield* awaitEntry(bot.id, "approval");
+    assert.strictEqual(exact.id, summary.id);
+    assert.strictEqual(exact.action, "rm -rf build");
+    assert.deepStrictEqual(exact.status, { _tag: "pending" });
+
+    yield* cards.answer({ ...allowForSession, commandId: command() });
+    yield* cards.respondPending;
+    assert.deepStrictEqual(
+      (yield* control.responses(session)).map((sent) => sent.requestId),
+      [requestId],
+    );
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
