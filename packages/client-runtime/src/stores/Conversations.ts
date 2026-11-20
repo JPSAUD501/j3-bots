@@ -23,6 +23,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FiberSet from "effect/FiberSet";
+import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -71,8 +72,9 @@ export interface OutgoingMessage {
   readonly createdAt: DateTime.Utc;
   /**
    * `sending` until the server accepts it, waiting through disconnections;
-   * `accepted` once it has, until its entry arrives or the conversation
-   * closes; `not-sent` when the server refused it. `unrecorded` when the server answered and the device could
+   * `accepted` once it has, until its entry arrives, the conversation shows
+   * history past it, or the conversation closes; `not-sent` when the server
+   * refused it. `unrecorded` when the server answered and the device could
    * not record the answer: this window keeps trying to record it, and sends
    * nothing again. A message sent again after a reload leaves once accepted:
    * its entry may be older than the history loaded, and shows where it belongs.
@@ -280,6 +282,11 @@ export interface Conversation {
  * attempt: the delivery keeps the conversation's lock until the device holds
  * it, and a window that has an answer the device could not record records it
  * rather than send the attempt again.
+ *
+ * An accepted message leaves the list once the conversation shows its entry,
+ * or once a read of the conversation started after this window knew the
+ * server had it holds no such entry: the entry is then older than the loaded
+ * history, where scrolling back finds it.
  */
 export class Conversations extends Context.Service<
   Conversations,
@@ -378,6 +385,14 @@ export const layer = Layer.effect(
         // Grows with every snapshot; a history page read before one is dropped.
         let epoch = 0;
         let readThrough: EntryOrder | null = null;
+        // Each subscription this store started is a read of the conversation,
+        // numbered; `applied` is the latest whose first frame it holds.
+        let reads = 0;
+        let applied = 0;
+        // Its accepted messages, with the reads it had started when it learned of each.
+        const acceptedAt = new Map<CommandId, number>();
+        // Open when an accepted message waits for a read started after it.
+        const recheck = Latch.makeUnsafe(false);
 
         const sorted = () => [...entries.values()].toSorted((a, b) => a.order - b.order);
 
@@ -405,11 +420,19 @@ export const layer = Layer.effect(
           actions.entryChanged(entry.id);
         };
 
+        /**
+         * Takes out every outgoing message whose entry is here, and every
+         * accepted one a read started after it was accepted shows no entry
+         * for: the server put it before the history loaded.
+         */
         const settle = () => {
-          removeOutgoing(confirmed());
+          const done = confirmed();
+          for (const [commandId, at] of acceptedAt) if (at < applied) done.add(commandId);
+          removeOutgoing(done);
           publish();
         };
 
+        /** Applies `frame`; `read` is the read it is the first frame of, if it is. */
         const onFrame = (
           frame:
             | {
@@ -423,6 +446,7 @@ export const layer = Layer.effect(
                 readonly sequence: Sequence;
                 readonly upsert: ReadonlyArray<Entry>;
               },
+          read: number | null,
         ) => {
           if (frame._tag === "snapshot") {
             // Replaces everything: the server could not tell what changed.
@@ -432,14 +456,37 @@ export const layer = Layer.effect(
             loadingOlder = false;
             epoch += 1;
             phase = "ready";
-          } else {
-            if (sequence !== null && frame.sequence <= sequence) return;
+            sequence = frame.sequence;
+          } else if (sequence === null || frame.sequence > sequence) {
             for (const entry of frame.upsert) take(entry);
+            sequence = frame.sequence;
           }
-          sequence = frame.sequence;
+          // The first frame of a read says how things stood when it started, even when nothing changed.
+          if (read !== null) applied = read;
           stale = false;
           settle();
         };
+
+        /**
+         * Follows the conversation on `client`, and subscribes again, resuming
+         * from what it holds, whenever an accepted message needs a newer read.
+         */
+        const follow = (client: J3RpcClient) =>
+          Effect.suspend(() => {
+            recheck.closeUnsafe();
+            const read = ++reads;
+            let first = true;
+            return client["entries.subscribe"]({ target, after: sequence }).pipe(
+              Stream.runForEach((frame) =>
+                Effect.sync(() => {
+                  onFrame(frame, first ? read : null);
+                  first = false;
+                }),
+              ),
+              Effect.as(false),
+              Effect.raceFirst(recheck.await.pipe(Effect.as(true))),
+            );
+          }).pipe(Effect.repeat({ while: (rechecked) => rechecked }));
 
         const run = connection
           .eachSession((client) =>
@@ -449,8 +496,8 @@ export const layer = Layer.effect(
                 stale = false;
                 publish();
               }
-              return client["entries.subscribe"]({ target, after: sequence }).pipe(
-                Stream.runForEach((frame) => Effect.sync(() => onFrame(frame))),
+              return follow(client).pipe(
+                Effect.asVoid,
                 Effect.ensuring(
                   Effect.sync(() => {
                     stale = true;
@@ -515,7 +562,28 @@ export const layer = Layer.effect(
               .pipe(Effect.ignore);
           });
 
-        const unsubscribe = outbox.subscribe(publish);
+        /**
+         * Notes when this store learns that the server accepted a message to
+         * this conversation. One whose entry it does not hold may be on its
+         * way, or older than the history loaded: only a read started from
+         * then on can tell, so it asks for one.
+         */
+        const onOutbox = () => {
+          const sent = confirmed();
+          const accepted = new Set<CommandId>();
+          for (const { message } of outbox.get()) {
+            if (targetKey(message.target) !== key || message.status._tag !== "accepted") continue;
+            accepted.add(message.commandId);
+            if (acceptedAt.has(message.commandId)) continue;
+            acceptedAt.set(message.commandId, reads);
+            if (!sent.has(message.commandId)) recheck.openUnsafe();
+          }
+          for (const commandId of acceptedAt.keys()) {
+            if (!accepted.has(commandId)) acceptedAt.delete(commandId);
+          }
+          publish();
+        };
+        const unsubscribe = outbox.subscribe(onOutbox);
         const close = () => {
           unsubscribe();
           // The server has these; the next open reads them with the rest.
@@ -613,8 +681,8 @@ export const layer = Layer.effect(
      * Makes this window's list a projection of `stored`, the outbox as the
      * device keeps it, read as the `read`th read, and settles every caller
      * whose attempt has an outcome there. A message this window alone holds
-     * keeps its own state, and so does one accepted, until its entry arrives
-     * or its conversation closes.
+     * keeps its own state, and so does one accepted, until its entry arrives,
+     * history passes it, or its conversation closes.
      */
     const reconcile = Effect.fnUntraced(function* (
       stored: ReadonlyMap<string, { record: StoredRecord; value: string }>,

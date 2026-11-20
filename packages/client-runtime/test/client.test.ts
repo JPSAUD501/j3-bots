@@ -2051,6 +2051,78 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
     });
   });
 
+  it.effect("drops a message another tab delivered once the history loaded starts after it", () =>
+    Effect.gen(function* () {
+      const { sends } = yield* Fakes;
+      const { device, target, botId, credential } = yield* pairedDevice("Busy");
+
+      yield* Effect.gen(function* () {
+        yield* goOffline;
+        const one = yield* Conversations;
+        const conversation = yield* one.open(target);
+        yield* one.enqueue({ target, text: "delivered next door" });
+
+        // A connected tab delivers it, and this one learns that the server has it.
+        const commandId = yield* Effect.gen(function* () {
+          const delivered = yield* Queue.take(sends);
+          yield* whenStored(device.storage, "outbox", delivered, sent);
+          return delivered;
+        }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+        yield* waitFor(conversation.state, (state) =>
+          outgoingIn(state).some((message) => message.status._tag === "accepted"),
+        );
+        // More than a snapshot's worth of entries comes after it.
+        for (let index = 0; index < 101; index++) yield* botSays(botId, `reply ${index}`);
+
+        yield* (yield* TestPlatform.TestNetwork).set("online");
+        const settled = yield* waitFor(
+          conversation.state,
+          (state) => state.phase === "ready" && outgoingIn(state).length === 0,
+        );
+        assert.isTrue(settled.hasOlder);
+        assert.isFalse(
+          settled.items.some((item) => item._tag === "message" && item.commandId === commandId),
+        );
+      }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+    }),
+  );
+
+  it.effect("drops it too when this tab learns of the delivery only once it reconnects", () =>
+    Effect.gen(function* () {
+      const { sends } = yield* Fakes;
+      const { device, target, botId, credential } = yield* pairedDevice("Busier");
+
+      yield* Effect.gen(function* () {
+        yield* goOffline;
+        const one = yield* Conversations;
+        const conversation = yield* one.open(target);
+        yield* one.enqueue({ target, text: "delivered without a word" });
+
+        // A connected tab that tells nobody delivers it.
+        yield* Effect.gen(function* () {
+          const delivered = yield* Queue.take(sends);
+          yield* whenStored(device.storage, "outbox", delivered, sent);
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(client(credential, { ...device, window: device.unannounced })),
+        );
+        assert.deepStrictEqual(
+          outgoingIn(conversation.state.get()).map((message) => message.status._tag),
+          ["sending"],
+        );
+        for (let index = 0; index < 101; index++) yield* botSays(botId, `later ${index}`);
+
+        yield* (yield* TestPlatform.TestNetwork).set("online");
+        const settled = yield* waitFor(
+          conversation.state,
+          (state) => state.phase === "ready" && outgoingIn(state).length === 0,
+        );
+        assert.isTrue(settled.hasOlder);
+        assert.strictEqual(yield* Queue.size(sends), 0);
+      }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+    }),
+  );
+
   it.effect("keeps, and does not send, a draft whose images together are over the limit", () =>
     Effect.gen(function* () {
       const { sends } = yield* Fakes;
