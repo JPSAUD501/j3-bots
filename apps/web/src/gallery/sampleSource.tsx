@@ -24,7 +24,13 @@ import { ShellSourceContext, type ShellSource } from "../shell/source";
 import { ordered, previewOf, type DraftEntry } from "./entries";
 import { SAMPLE_NOW, sampleTeam, type SampleTeam } from "./sample";
 
-type State = Omit<SampleTeam, "bots" | "room" | "attachments">;
+interface State extends Omit<SampleTeam, "bots" | "room" | "attachments"> {
+  /** Cards whose answer is on its way, as it would be to a server. */
+  readonly inFlight: ReadonlySet<EntryId>;
+}
+
+/** How long an answer to a card takes to arrive, so a second click has something to miss. */
+const ANSWER_DELAY = 500;
 
 const keyOf = (target: EntryTarget) =>
   target._tag === "conversation" ? `bot:${target.botId}` : `room:${target.roomId}`;
@@ -126,6 +132,16 @@ function createStore(initial: State): Store {
   };
 }
 
+/** The sample with no bots yet: the first-run screen, with every provider as it is in the sample. */
+const withoutBots = (state: State): State => ({
+  ...state,
+  roster: [],
+  entries: {},
+  routines: {},
+  files: {},
+  memory: {},
+});
+
 function sampleIntents({ get, update }: Store): ShellIntents {
   /** The bot thinks for a moment, then says `text` in `key`. */
   const replyLater = (botId: BotId, key: string, text: string) => {
@@ -146,6 +162,20 @@ function sampleIntents({ get, update }: Store): ShellIntents {
   const resume = (entryId: EntryId, text: string) => {
     const botId = waitingOn(get(), entryId);
     if (botId !== null) replyLater(botId, `bot:${botId}`, text);
+  };
+  /**
+   * An answer to a card: in flight for a moment, then applied, and the bot
+   * that waited on it carries on with `reply`.
+   */
+  const answer = (entryId: EntryId, change: (entry: Entry) => Entry, reply: string) => {
+    update((s) => ({ ...s, inFlight: new Set([...s.inFlight, entryId]) }));
+    window.setTimeout(() => {
+      update((s) => ({
+        ...updateEntry(s, entryId, change),
+        inFlight: new Set([...s.inFlight].filter((id) => id !== entryId)),
+      }));
+      resume(entryId, reply);
+    }, ANSWER_DELAY);
   };
   const nothing = () => {};
 
@@ -171,50 +201,39 @@ function sampleIntents({ get, update }: Store): ShellIntents {
           "Noted. This is the sample team, so nothing really runs, but the message is here.",
         );
     },
-    answerQuestion: (entryId, answers) => {
-      update((s) =>
-        updateEntry(s, entryId, (e) =>
-          e._tag === "question" ? { ...e, status: { _tag: "answered", answers } } : e,
-        ),
-      );
-      resume(entryId, "Thanks, I’ll take it from here.");
-    },
-    dismissQuestion: (entryId) => {
-      update((s) =>
-        updateEntry(s, entryId, (e) =>
-          e._tag === "question" ? { ...e, status: { _tag: "dismissed" } } : e,
-        ),
-      );
-      resume(entryId, "Understood, I’ll leave it as it is.");
-    },
-    decideApproval: (entryId, decision) => {
-      update((s) =>
-        updateEntry(s, entryId, (e) =>
-          e._tag === "approval" ? { ...e, status: { _tag: "decided", decision } } : e,
-        ),
-      );
-      resume(
+    answerQuestion: (entryId, answers) =>
+      answer(
         entryId,
-        decision === "deny" ? "Okay, I won’t run it." : "Done. Staging is on the new version.",
-      );
-    },
-    provideSecret: (entryId) => {
-      // The value is dropped here: the sample has no engine to hand it to.
-      update((s) =>
-        updateEntry(s, entryId, (e) =>
-          e._tag === "secret-request" ? { ...e, status: "provided" } : e,
-        ),
-      );
-      resume(entryId, "Got it, searching fares now.");
-    },
-    declineSecret: (entryId) => {
-      update((s) =>
-        updateEntry(s, entryId, (e) =>
-          e._tag === "secret-request" ? { ...e, status: "declined" } : e,
-        ),
-      );
-      resume(entryId, "No problem. I’ll compare the fares the airlines publish instead.");
-    },
+        (e) => (e._tag === "question" ? { ...e, status: { _tag: "answered", answers } } : e),
+        "Thanks, I’ll take it from here.",
+      ),
+    dismissQuestion: (entryId) =>
+      answer(
+        entryId,
+        (e) => (e._tag === "question" ? { ...e, status: { _tag: "dismissed" } } : e),
+        "Understood, I’ll leave it as it is.",
+      ),
+    decideApproval: (entryId, decision) =>
+      answer(
+        entryId,
+        (e) => (e._tag === "approval" ? { ...e, status: { _tag: "decided", decision } } : e),
+        decision === "deny"
+          ? "Okay, I won’t run it."
+          : "Done. Every invoice on staging has its total now.",
+      ),
+    // The value is dropped here: the sample has no engine to hand it to.
+    provideSecret: (entryId) =>
+      answer(
+        entryId,
+        (e) => (e._tag === "secret-request" ? { ...e, status: "provided" } : e),
+        "Got it, searching trains now.",
+      ),
+    declineSecret: (entryId) =>
+      answer(
+        entryId,
+        (e) => (e._tag === "secret-request" ? { ...e, status: "declined" } : e),
+        "No problem. I’ll use the timetables the rail operators publish instead.",
+      ),
     retryNotice: (entryId) =>
       update((s) =>
         updateEntry(s, entryId, (e) => (e._tag === "notice" ? { ...e, retryable: false } : e)),
@@ -267,6 +286,7 @@ function sampleIntents({ get, update }: Store): ShellIntents {
         };
       });
       replyLater(botId, `bot:${botId}`, `Hi, I’m ${name}. What would you like me to take care of?`);
+      return Promise.resolve(botId);
     },
     deleteBot: (botId) =>
       update((s) => ({
@@ -294,6 +314,7 @@ function toData(state: State): ShellData {
     engine: state.engine,
     roster: state.roster,
     entries: (target) => state.entries[keyOf(target)] ?? [],
+    submitting: (entryId) => state.inFlight.has(entryId),
     workSteps: (entryId) => state.workSteps[entryId] ?? null,
     routines: (botId) => state.routines[botId] ?? [],
     files: (botId) => state.files[botId] ?? [],
@@ -301,9 +322,15 @@ function toData(state: State): ShellData {
   };
 }
 
-/** The sample team, with intents that change it. Each call keeps its own copy. */
-export function useSampleSource(): ShellSource {
-  const [store] = useState(() => createStore(sampleTeam(SAMPLE_NOW)));
+/**
+ * The sample team, with intents that change it. Each call keeps its own copy.
+ * `firstRun` starts it with no bots, at the first-run screen.
+ */
+export function useSampleSource({ firstRun = false }: { firstRun?: boolean } = {}): ShellSource {
+  const [store] = useState(() => {
+    const team: State = { ...sampleTeam(SAMPLE_NOW), inFlight: new Set() };
+    return createStore(firstRun ? withoutBots(team) : team);
+  });
   const state = useSyncExternalStore(store.subscribe, store.get);
   const intents = useMemo(() => sampleIntents(store), [store]);
   return { data: toData(state), intents };

@@ -23,6 +23,8 @@ export interface ShellData {
   readonly engine: EngineStatus | null;
   readonly roster: ReadonlyArray<RosterItem>;
   readonly entries: (target: EntryTarget) => ReadonlyArray<Entry>;
+  /** Whether the operator's answer to a card is still on its way to the server. */
+  readonly submitting: (entryId: EntryId) => boolean;
   /** A work fold's steps, or null while they load. */
   readonly workSteps: (entryId: EntryId) => ReadonlyArray<WorkStep> | null;
   readonly routines: (botId: BotId) => ReadonlyArray<Routine>;
@@ -38,7 +40,8 @@ export interface ShellIntents
   readonly stopBot: (botId: BotId) => void;
   readonly attach: (target: EntryTarget) => void;
   readonly dictate: (target: EntryTarget) => void;
-  readonly createBot: (name: string, primary: boolean) => void;
+  /** Resolves with the new bot's id once the server has created it. */
+  readonly createBot: (name: string, primary: boolean) => Promise<BotId>;
   readonly newBot: () => void;
   readonly newRoom: () => void;
   readonly editProfile: (botId: BotId) => void;
@@ -54,6 +57,7 @@ export const unconnected: { readonly data: ShellData; readonly intents: ShellInt
     engine: null,
     roster: [],
     entries: () => [],
+    submitting: () => false,
     workSteps: () => null,
     routines: () => [],
     files: () => [],
@@ -77,7 +81,7 @@ export const unconnected: { readonly data: ShellData; readonly intents: ShellInt
     stopBot: nothing,
     attach: nothing,
     dictate: nothing,
-    createBot: nothing,
+    createBot: () => Promise.reject(new Error("No J3 Bots server to create a bot on")),
     newBot: nothing,
     newRoom: nothing,
     editProfile: nothing,

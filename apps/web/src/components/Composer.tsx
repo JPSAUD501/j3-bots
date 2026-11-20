@@ -33,7 +33,7 @@ export function Composer({
   const empty = value.trim() === "";
   return (
     <form
-      className="flex items-end gap-1 rounded-[1.25rem] border border-input bg-surface p-1 shadow-xs focus-within:border-foreground/30"
+      className="flex items-end gap-1 rounded-pill border border-input bg-surface p-1 shadow-xs focus-within:border-foreground/30"
       onSubmit={(event) => {
         event.preventDefault();
         if (!empty) onSend();
@@ -61,7 +61,7 @@ export function Composer({
         placeholder={label}
         aria-label={label}
         data-composer=""
-        className="field-sizing-content max-h-[40vh] min-h-8 flex-1 resize-none bg-transparent px-1 py-1.5 text-base outline-none placeholder:text-muted-foreground pointer-coarse:text-lg"
+        className="field-sizing-content max-h-(--layout-composer-max-height) min-h-8 flex-1 resize-none bg-transparent px-1 py-1.5 text-base outline-none placeholder:text-muted-foreground pointer-coarse:text-lg"
       />
       {empty ? (
         <Button

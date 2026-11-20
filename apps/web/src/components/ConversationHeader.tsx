@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Bot, Room } from "@j3-bots/contracts";
-import { ChevronLeftIcon, PanelRightIcon, SquareIcon } from "lucide-react";
-import type { Ref } from "react";
+import type { Bot, EntryId, Room } from "@j3-bots/contracts";
+import { ChevronLeftIcon, ChevronRightIcon, PanelRightIcon, SquareIcon } from "lucide-react";
+import { useState, type Ref } from "react";
 import { useBots, useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
-import { presenceLine } from "../presentation/roster";
+import { memberList, presenceLine, type StatusLine } from "../presentation/roster";
 import { BotAvatar, RoomAvatar } from "./BotAvatar";
 import { toneClass } from "./RosterRow";
 import { Kbd } from "./ui/kbd";
@@ -19,17 +19,32 @@ interface ConversationHeaderProps {
   /** Phones only: back to the roster. */
   readonly onBack: () => void;
   readonly onStop: () => void;
-  readonly stopShortcut: string;
+  /** Brings the card a waiting bot needs answered into view. */
+  readonly onGoToWaiting: (entryId: EntryId) => void;
+  readonly stopShortcut: { readonly label: string; readonly aria: string };
   readonly titleRef?: Ref<HTMLButtonElement>;
 }
 
-/** Who this is, and one line saying what it is doing now. The name opens the details. */
+/** What a bot is doing, as a transition between states: activity text changing within one does not count. */
+const stateOf = (bot: Bot) =>
+  bot.state._tag === "thinking" || bot.state._tag === "working"
+    ? `${bot.state._tag}:${bot.state.stalled}`
+    : bot.state._tag;
+
+/**
+ * Who this is, and one line saying what it is doing now. The name opens the
+ * details; while the bot waits, the line takes the operator to what it waits
+ * on. Changes of state are announced to screen readers, once each.
+ *
+ * Mount one per conversation, so moving to another conversation announces nothing.
+ */
 export function ConversationHeader({
   subject,
   detailsOpen,
   onToggleDetails,
   onBack,
   onStop,
+  onGoToWaiting,
   stopShortcut,
   titleRef,
 }: ConversationHeaderProps) {
@@ -37,20 +52,23 @@ export function ConversationHeader({
   const { t } = useI18n();
   const bots = useBots();
   const name = subject._tag === "bot" ? subject.bot.profile.name : subject.room.name;
-  const line =
+  const line: StatusLine | null =
     subject._tag === "bot"
       ? presenceLine(subject.bot, ctx)
-      : {
-          text: t("room.members", {
-            names: new Intl.ListFormat(ctx.i18n.locale, { type: "conjunction" }).format(
-              subject.room.members.map((id) => bots.get(id)?.profile.name ?? t("bot.unknown")),
-            ),
-          }),
-          tone: "muted" as const,
-        };
+      : { text: t("room.members", { names: memberList(subject.room, ctx) }), tone: "muted" };
+  const waitingOn =
+    subject._tag === "bot" && subject.bot.state._tag === "waiting"
+      ? subject.bot.state.entryId
+      : null;
   const running =
     subject._tag === "bot" &&
     (subject.bot.state._tag === "thinking" || subject.bot.state._tag === "working");
+
+  // The announcement is fixed at each change of state; the first state is not announced.
+  const state = subject._tag === "bot" ? stateOf(subject.bot) : null;
+  const [announced, setAnnounced] = useState({ state, text: "" });
+  if (announced.state !== state) setAnnounced({ state, text: line?.text ?? "" });
+
   return (
     <header className="flex h-14 shrink-0 items-center gap-1 border-b border-border px-2 @tablet:px-3">
       <Button
@@ -62,14 +80,8 @@ export function ConversationHeader({
       >
         <ChevronLeftIcon />
       </Button>
-      <button
-        ref={titleRef}
-        type="button"
-        onClick={onToggleDetails}
-        aria-expanded={detailsOpen}
-        aria-label={t("conversation.openDetails", { name })}
-        className="flex min-w-0 items-center gap-2.5 rounded-md px-1.5 py-1 text-start hover:bg-muted"
-      >
+      {/* The title button stretches over the whole block, so a click anywhere opens the details. */}
+      <div className="relative flex min-w-0 items-center gap-2.5 rounded-md px-1.5 py-1 has-[[data-title]:hover]:bg-muted has-[[data-title]:focus-visible]:outline-2 has-[[data-title]:focus-visible]:outline-accent">
         {subject._tag === "bot" ? (
           <BotAvatar avatar={subject.bot.profile.avatar} state={subject.bot.state} size={28} />
         ) : (
@@ -81,21 +93,52 @@ export function ConversationHeader({
             })}
           />
         )}
-        <span className="flex min-w-0 flex-col">
-          <span className="truncate text-sm font-medium">{name}</span>
-          {line && (
-            <span className={cn("truncate text-2xs", toneClass[line.tone])} aria-live="polite">
-              {line.text}
-            </span>
-          )}
+        <span className="flex min-w-0 flex-col items-start">
+          <button
+            ref={titleRef}
+            type="button"
+            data-title=""
+            onClick={onToggleDetails}
+            aria-expanded={detailsOpen}
+            aria-label={t("conversation.openDetails", { name })}
+            className="flex min-w-0 items-center gap-0.5 text-start text-sm font-medium outline-none after:absolute after:inset-0 after:rounded-md"
+          >
+            <span className="truncate">{name}</span>
+            {/* Phones have no pane button: the chevron says the name opens more. */}
+            <ChevronRightIcon
+              aria-hidden
+              className="size-3.5 shrink-0 text-muted-foreground @tablet:hidden"
+            />
+          </button>
+          {line &&
+            (waitingOn !== null ? (
+              <button
+                type="button"
+                onClick={() => onGoToWaiting(waitingOn)}
+                aria-label={t("presence.waiting.goTo")}
+                className={cn(
+                  "relative z-10 max-w-full truncate rounded-sm text-2xs underline-offset-2 hover:underline",
+                  toneClass[line.tone],
+                )}
+              >
+                {line.text}
+              </button>
+            ) : (
+              <span className={cn("max-w-full truncate text-2xs", toneClass[line.tone])}>
+                {line.text}
+              </span>
+            ))}
         </span>
-      </button>
+      </div>
+      <span className="sr-only" aria-live="polite">
+        {announced.text}
+      </span>
       <span className="ms-auto flex items-center gap-1">
         {running && (
-          <Button size="sm" onClick={onStop} aria-keyshortcuts={stopShortcut}>
+          <Button size="sm" onClick={onStop} aria-keyshortcuts={stopShortcut.aria}>
             <SquareIcon className="size-3 fill-current" aria-hidden />
             {t("conversation.stop")}
-            <Kbd className="hidden pointer-fine:inline-flex">{stopShortcut}</Kbd>
+            <Kbd className="hidden pointer-fine:inline-flex">{stopShortcut.label}</Kbd>
           </Button>
         )}
         <Button

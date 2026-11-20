@@ -19,6 +19,7 @@ export const ptBR: Catalog = {
   "presence.thinking": "Pensando",
   "presence.working": "Trabalhando",
   "presence.waiting": "Esperando por você",
+  "presence.waiting.goTo": "Esperando por você: ir para o pedido",
   "presence.stalled": "Sem atividade há {duration}",
 
   "failure.usageLimit": "Limite de uso atingido",
@@ -48,6 +49,11 @@ export const ptBR: Catalog = {
   "time.yesterdayAt": "Ontem às {time}",
   "time.tomorrowAt": "Amanhã às {time}",
   "time.dayAt": "{day} às {time}",
+  "time.inSentence.today": "às {time}",
+  "time.inSentence.yesterday": "ontem às {time}",
+  "time.inSentence.tomorrow": "amanhã às {time}",
+  "time.inSentence.day": "{day} às {time}",
+  "time.inSentence.date": "em {date}",
 
   "conversation.back": "Voltar para os bots",
   "conversation.openDetails": "Mostrar detalhes de {name}",
@@ -65,7 +71,7 @@ export const ptBR: Catalog = {
   "question.typeAnswer": "Digite uma resposta",
   "question.typeInstead": "Ou digite uma resposta",
   "question.send": "Enviar resposta",
-  "question.dismiss": "Dispensar",
+  "question.dismiss": "Dispensar como um não",
   "question.answered": "Respondida",
   "question.dismissed": "Dispensada. O bot entende isso como um não.",
   "question.expired": "Esta pergunta expirou antes de ser respondida.",
@@ -80,11 +86,13 @@ export const ptBR: Catalog = {
   "secret.declined": "Recusada. O bot segue sem ela.",
   "secret.expired": "Este pedido expirou antes de ser respondido.",
   "question.recommended": "Recomendada",
+  "question.destructive": "Perde algo",
   "approval.kind.command": "Quer executar um comando",
   "approval.kind.fileChange": "Quer alterar um arquivo",
   "approval.kind.fileRead": "Quer ler um arquivo",
   "approval.kind.tool": "Quer usar uma ferramenta",
   "approval.kind.other": "Pede permissão",
+  "approval.detail": "Tudo o que vai fazer",
   "approval.showDetail": "Mostrar tudo o que vai fazer",
   "approval.allowOnce": "Permitir uma vez",
   "approval.allowSession": "Permitir nesta sessão",
@@ -106,7 +114,7 @@ export const ptBR: Catalog = {
 
   "notice.chainHops": "Os bots pararam de responder uns aos outros aqui. A sala espera por você.",
   "notice.chainFanOut": "Nem todos os bots foram chamados: uma mensagem só pode acordar alguns.",
-  "notice.undelivered": "Uma resposta não chegou.",
+  "notice.undelivered": "Uma resposta não chegou",
   "notice.waitingInConversation": "{name} está esperando por você na própria conversa.",
   "notice.retry": "Tentar de novo",
   "notice.openConversation": "Abrir",
@@ -120,14 +128,22 @@ export const ptBR: Catalog = {
   "routine.change.resumed": "Rotina retomada",
   "routine.change.deleted": "Rotina excluída",
   "routine.paused": "Pausada",
-  "routine.next": "Próxima execução {time}",
-  "routine.lastRun.running": "Em execução desde {time}",
-  "routine.lastRun.delivered": "Última execução {time} trouxe novidades",
-  "routine.lastRun.silent": "Última execução {time} não tinha nada a relatar",
-  "routine.lastRun.failed": "Última execução {time} falhou",
-  "routine.lastRun.skipped": "Última execução {time} foi pulada: a anterior ainda estava rodando",
-  "routine.runs.one": "{count} execução",
-  "routine.runs.other": "{count} execuções",
+  "routine.next": "Próxima execução {when}",
+  "routine.lastRun.running.one": "Em execução agora, começou {when} · {count} execução",
+  "routine.lastRun.running.other": "Em execução agora, começou {when} · {count} execuções",
+  "routine.lastRun.delivered.one": "A última execução trouxe novidades {when} · {count} execução",
+  "routine.lastRun.delivered.other":
+    "A última execução trouxe novidades {when} · {count} execuções",
+  "routine.lastRun.silent.one":
+    "A última execução não tinha nada a relatar {when} · {count} execução",
+  "routine.lastRun.silent.other":
+    "A última execução não tinha nada a relatar {when} · {count} execuções",
+  "routine.lastRun.failed.one": "A última execução falhou {when} · {count} execução",
+  "routine.lastRun.failed.other": "A última execução falhou {when} · {count} execuções",
+  "routine.lastRun.skipped.one":
+    "A última execução foi pulada {when}: a anterior ainda estava rodando · {count} execução",
+  "routine.lastRun.skipped.other":
+    "A última execução foi pulada {when}: a anterior ainda estava rodando · {count} execuções",
 
   "schedule.webhook": "Quando o webhook dela é chamado",
   "schedule.once": "Uma vez, em {when}",
@@ -139,6 +155,11 @@ export const ptBR: Catalog = {
   "schedule.weekends": "Fins de semana às {time}",
   "schedule.onDays": "Toda semana: {days}, às {time}",
   "schedule.monthly": "Todo mês no dia {day}, às {time}",
+  "schedule.daily.zoned": "Todo dia às {time} ({zone})",
+  "schedule.weekdays.zoned": "Dias úteis às {time} ({zone})",
+  "schedule.weekends.zoned": "Fins de semana às {time} ({zone})",
+  "schedule.onDays.zoned": "Toda semana: {days}, às {time} ({zone})",
+  "schedule.monthly.zoned": "Todo mês no dia {day}, às {time} ({zone})",
 
   "composer.label": "Mensagem para {name}",
   "composer.attach": "Anexar um arquivo",
@@ -166,6 +187,10 @@ export const ptBR: Catalog = {
     "Recomeçar limpa o que {name} tem em mente. A conversa, a memória, as rotinas e os arquivos continuam.",
   "details.freshStart": "Recomeçar",
   "details.delete": "Excluir {name}",
+  "details.delete.title": "Excluir {name}?",
+  "details.delete.body":
+    "{name}, a conversa, a memória e as rotinas dele são excluídas, e isso não pode ser desfeito. Os arquivos no espaço de trabalho dele são mantidos.",
+  "details.delete.cancel": "Manter {name}",
 
   "permission.supervised": "Supervisionado",
   "permission.supervised.description": "Pergunta antes de executar comandos ou alterar arquivos.",
@@ -209,7 +234,16 @@ export const ptBR: Catalog = {
   "firstRun.signIn.title": "Entre em um provedor",
   "firstRun.signIn.body":
     "Os bots rodam nas suas próprias assinaturas. Entre em uma delas na máquina que roda o J3 Bots; esta página atualiza quando você entrar.",
-  "firstRun.signIn.needed": "Login necessário",
+  "firstRun.signIn.copy": "Copiar o comando que entra em {name}",
+  "firstRun.signIn.copied": "Copiado",
+  "firstRun.unavailable.title": "Nenhum provedor pode rodar um bot agora",
+  "firstRun.unavailable.body":
+    "O estado de cada provedor está abaixo. Esta página atualiza assim que um deles estiver pronto.",
+  "provider.ready": "Pronto",
+  "provider.signInRequired": "Sem login",
+  "provider.limited": "Limite de uso atingido",
+  "provider.limitedUntil": "Limite de uso atingido, renova {when}",
+  "provider.unavailable": "Indisponível agora",
   "firstRun.create.title": "Conheça seu primeiro bot",
   "firstRun.create.body":
     "Dê um nome a ele. Ele vai perguntar para que você o quer, uma pergunta por vez.",
@@ -218,6 +252,7 @@ export const ptBR: Catalog = {
   "firstRun.create.primary":
     "Tornar meu bot principal: pedidos que não são de ninguém vão para ele.",
   "firstRun.create.submit": "Criar bot",
+  "firstRun.create.failed": "O bot não foi criado. Tente de novo.",
 
   "empty.noSelection.title": "Escolha com quem falar",
   "empty.noSelection.body": "Escolha um bot ou uma sala na lista.",

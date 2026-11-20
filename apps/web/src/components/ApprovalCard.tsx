@@ -4,6 +4,8 @@ import { Collapsible } from "@base-ui/react/collapsible";
 import { ChevronRightIcon, ShieldCheckIcon, ShieldXIcon, ShieldIcon } from "lucide-react";
 import { useI18n } from "../app/context";
 import type { KeyWith } from "../i18n/i18n";
+import { cn } from "../lib/cn";
+import { touchTarget } from "../lib/touchTarget";
 import { CardFrame } from "./CardFrame";
 import { Button } from "./ui/button";
 
@@ -21,13 +23,22 @@ const decisionText: Record<ApprovalDecision, KeyWith> = {
   deny: "approval.denied",
 };
 
-/** A bot asking to do one exact thing its permission mode does not allow outright. */
+const code = "rounded-md bg-code-background px-2.5 py-2 font-mono text-xs leading-5";
+
+/**
+ * A bot asking to do one exact thing its permission mode does not allow
+ * outright. While it waits, everything the action will do is on the card, so
+ * nobody approves from a summary; a decided card folds that away.
+ */
 export function ApprovalCard({
   entry,
   onDecide,
+  submitting = false,
 }: {
   entry: ApprovalEntry;
   onDecide: (decision: ApprovalDecision) => void;
+  /** A decision is on its way: the card takes no second one. */
+  submitting?: boolean;
 }) {
   const { t } = useI18n();
   const { status } = entry;
@@ -43,37 +54,59 @@ export function ApprovalCard({
       <ShieldIcon />
     );
   return (
-    <CardFrame icon={icon} title={t(kindTitle[entry.kind])} attention={pending}>
-      <code className="block rounded-md bg-code-background px-2.5 py-2 font-mono text-xs leading-5 break-all whitespace-pre-wrap">
-        {entry.action}
-      </code>
-      {entry.detail && (
-        <Collapsible.Root>
-          <Collapsible.Trigger className="group flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
-            <ChevronRightIcon
-              className="size-3.5 transition-transform duration-(--duration-state) group-data-panel-open:rotate-90"
-              aria-hidden
-            />
-            {t("approval.showDetail")}
-          </Collapsible.Trigger>
-          <Collapsible.Panel className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-(--duration-slow) ease-standard data-ending-style:h-0 data-starting-style:h-0">
-            <pre className="mt-2 max-h-64 overflow-auto rounded-md bg-code-background px-2.5 py-2 font-mono text-xs leading-5">
-              {entry.detail}
-            </pre>
-          </Collapsible.Panel>
-        </Collapsible.Root>
-      )}
+    <CardFrame icon={icon} title={t(kindTitle[entry.kind])} attention={pending} entryId={entry.id}>
+      <code className={cn(code, "block break-all whitespace-pre-wrap")}>{entry.action}</code>
+      {entry.detail !== null &&
+        (pending ? (
+          // Focusable, so the keyboard can scroll a long plan before deciding.
+          <pre
+            role="region"
+            aria-label={t("approval.detail")}
+            tabIndex={0}
+            className={cn(
+              code,
+              "max-h-64 overflow-auto whitespace-pre-wrap outline-none focus-visible:outline-2 focus-visible:outline-accent",
+            )}
+          >
+            {entry.detail}
+          </pre>
+        ) : (
+          <Collapsible.Root>
+            <Collapsible.Trigger
+              className={cn(
+                "group inline-flex items-center gap-1 rounded-sm text-xs text-muted-foreground hover:text-foreground",
+                touchTarget,
+              )}
+            >
+              <ChevronRightIcon
+                className="size-3.5 transition-transform duration-(--duration-state) group-data-panel-open:rotate-90"
+                aria-hidden
+              />
+              {t("approval.showDetail")}
+            </Collapsible.Trigger>
+            <Collapsible.Panel className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-(--duration-slow) ease-standard data-ending-style:h-0 data-starting-style:h-0">
+              <pre className={cn(code, "mt-2 max-h-64 overflow-auto whitespace-pre-wrap")}>
+                {entry.detail}
+              </pre>
+            </Collapsible.Panel>
+          </Collapsible.Root>
+        ))}
       {pending ? (
         <div className="flex flex-wrap justify-end gap-2">
-          <Button variant="destructive-outline" size="sm" onClick={() => onDecide("deny")}>
+          <Button size="sm" disabled={submitting} onClick={() => onDecide("deny")}>
             {t("approval.deny")}
           </Button>
           {entry.allowsSession && (
-            <Button size="sm" onClick={() => onDecide("allow-session")}>
+            <Button size="sm" disabled={submitting} onClick={() => onDecide("allow-session")}>
               {t("approval.allowSession")}
             </Button>
           )}
-          <Button variant="primary" size="sm" onClick={() => onDecide("allow-once")}>
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={submitting}
+            onClick={() => onDecide("allow-once")}
+          >
             {t("approval.allowOnce")}
           </Button>
         </div>

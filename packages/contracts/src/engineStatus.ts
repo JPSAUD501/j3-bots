@@ -10,6 +10,12 @@ export const UsageWindow = Schema.Struct({
 });
 export type UsageWindow = typeof UsageWindow.Type;
 
+/**
+ * One shell command the operator runs on the machine that hosts J3 Bots, such
+ * as the command that signs a provider's harness in to its own home.
+ */
+export const HostCommand = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000));
+
 export const ProviderStatus = Schema.Struct({
   id: ProviderId,
   name: Label,
@@ -17,7 +23,11 @@ export const ProviderStatus = Schema.Struct({
   harness: Schema.Literals(["claude-code", "codex", "other"]),
   status: Schema.Union([
     Schema.TaggedStruct("ready", {}),
-    Schema.TaggedStruct("sign-in-required", {}),
+    /**
+     * Not signed in. The engine has no sign-in flow for these harnesses, so the
+     * server says which command signs this provider in on the host.
+     */
+    Schema.TaggedStruct("sign-in-required", { command: HostCommand }),
     Schema.TaggedStruct("limited", { resetsAt: Schema.NullOr(Schema.DateTimeUtc) }),
     Schema.TaggedStruct("unavailable", {}),
   ]),

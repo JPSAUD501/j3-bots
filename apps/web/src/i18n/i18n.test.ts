@@ -7,8 +7,12 @@ describe("createI18n", () => {
     expect(createI18n("en").t("roster.noMatch", { query: "Scout" })).toBe(
       "Nothing matches “Scout”.",
     );
-    expect(createI18n("en").plural("routine.runs", 1234)).toBe("1,234 runs");
-    expect(createI18n("pt-BR").plural("routine.runs", 1234)).toBe("1.234 execuções");
+    expect(createI18n("en").plural("routine.lastRun.failed", 1234, { when: "at 9:00 AM" })).toBe(
+      "Last run failed at 9:00 AM · 1,234 runs",
+    );
+    expect(createI18n("pt-BR").plural("routine.lastRun.failed", 1234, { when: "às 09:00" })).toBe(
+      "A última execução falhou às 09:00 · 1.234 execuções",
+    );
   });
 
   it("chooses the plural sentence by the language's rules", () => {

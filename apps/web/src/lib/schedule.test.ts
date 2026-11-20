@@ -4,8 +4,8 @@ import { at, context, plain } from "../test/fixtures";
 import { scheduleInWords } from "./schedule";
 
 const en = context("2026-11-20T17:40:00Z");
-const words = (cron: string, ctx = en) => {
-  const text = scheduleInWords({ _tag: "schedule", cron, timeZone: "America/Sao_Paulo" }, ctx);
+const words = (cron: string, ctx = en, timeZone = "America/Sao_Paulo") => {
+  const text = scheduleInWords({ _tag: "schedule", cron, timeZone }, ctx);
   return text === null ? null : plain(text);
 };
 
@@ -26,6 +26,20 @@ describe("scheduleInWords", () => {
     expect(words("0 17 * * 1,4")).toBe("Every Monday and Thursday at 5:00 PM");
     expect(words("0 10 * * 6,7")).toBe("Weekends at 10:00 AM");
     expect(words("30 16 * * 1,3,5")).toBe("Every Monday, Wednesday, and Friday at 4:30 PM");
+  });
+
+  it("names the schedule's own time zone when it is not the operator's", () => {
+    expect(words("0 9 * * 1,4", en, "Europe/Lisbon")).toBe(
+      "Every Monday and Thursday at 9:00 AM (Western European Time)",
+    );
+    expect(words("47 8 * * 1-5", en, "America/New_York")).toBe(
+      "Weekdays at 8:47 AM (Eastern Time)",
+    );
+    expect(words("0 7 1 * *", context("2026-11-20T17:40:00Z", "pt-BR"), "Asia/Tokyo")).toBe(
+      "Todo mês no dia 1, às 07:00 (Horário Padrão do Japão)",
+    );
+    // An interval is the same everywhere.
+    expect(words("*/30 * * * *", en, "Europe/Lisbon")).toBe("Every 30 minutes");
   });
 
   it("writes the sentence in the reader's language", () => {

@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Bot, EngineStatus, EntryTarget, RosterItem, RosterItemKey } from "@j3-bots/contracts";
-import { useEffect, useEffectEvent, useRef, useState, type ReactElement } from "react";
+import type {
+  Bot,
+  EngineStatus,
+  EntryId,
+  EntryTarget,
+  RosterItem,
+  RosterItemKey,
+} from "@j3-bots/contracts";
+import { useEffect, useEffectEvent, useId, useRef, useState, type ReactElement } from "react";
 import { BotsProvider } from "../app/context";
 import { AppShell, type Region } from "../components/AppShell";
 import { Composer } from "../components/Composer";
@@ -12,6 +19,7 @@ import { SettingsMenu } from "../components/SettingsMenu";
 import { Timeline } from "../components/Timeline";
 import { filterRoster, orderRoster } from "../presentation/roster";
 import type { ShellData, ShellIntents } from "./data";
+import { useShellLayout } from "./layout";
 import { isEditable, shellShortcuts } from "./shortcuts";
 
 interface ShellNavigation {
@@ -60,6 +68,9 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const titleRef = useRef<HTMLButtonElement>(null);
   const detailsHeadingRef = useRef<HTMLHeadingElement>(null);
+  const detailsHeadingId = useId();
+  const timelineRef = useRef<HTMLDivElement>(null);
+  const [containerRef, layout] = useShellLayout();
 
   const bots = data.roster.flatMap((item) => (item._tag === "bot" ? [item.bot] : []));
   const item =
@@ -71,6 +82,8 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
             : selected._tag === "room" && i.room.id === selected.roomId,
         ) ?? null);
   const active: Region = item === null ? "roster" : detailsOpen ? "details" : "conversation";
+  // Below `wide` the details cover the rest, which takes neither focus nor shortcuts meanwhile.
+  const detailsCover = item !== null && detailsOpen && layout !== null && layout !== "wide";
 
   const selectionKey = item === null ? null : draftKey(keyOf(item));
   // Moving to another conversation with a mouse or keyboard puts the cursor in its
@@ -90,7 +103,15 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
 
   const onKeyDown = useEffectEvent((event: KeyboardEvent) => {
     if (event.defaultPrevented) return;
-    if (shortcuts.nextBot.matches(event) || shortcuts.previousBot.matches(event)) {
+    // Keys pressed in a dialog over the shell, such as a confirmation, are that dialog's.
+    if (event.target instanceof Element && event.target.closest("[role=alertdialog]")) return;
+    if (event.key === "Escape" && detailsOpen) {
+      event.preventDefault();
+      navigation.setDetailsOpen(false);
+    } else if (detailsCover) {
+      // The controls every other shortcut reaches are covered.
+      return;
+    } else if (shortcuts.nextBot.matches(event) || shortcuts.previousBot.matches(event)) {
       const rows = orderRoster(filterRoster(data.roster, ""));
       if (rows.length === 0) return;
       const index = item === null ? -1 : rows.indexOf(item);
@@ -109,9 +130,6 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
         event.preventDefault();
         intents.stopBot(item.bot.id);
       }
-    } else if (event.key === "Escape" && detailsOpen) {
-      event.preventDefault();
-      navigation.setDetailsOpen(false);
     }
   });
   useEffect(() => {
@@ -124,7 +142,14 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
   if (data.roster.length === 0) {
     return (
       <div className="flex h-full flex-col">
-        <FirstRun engine={data.engine} onCreateBot={intents.createBot} />
+        <FirstRun
+          engine={data.engine}
+          onCreateBot={(name, primary) =>
+            intents
+              .createBot(name, primary)
+              .then((botId) => navigation.select({ _tag: "bot", botId }))
+          }
+        />
       </div>
     );
   }
@@ -149,9 +174,18 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
     const draft = drafts[draftKey(key)] ?? "";
     const recipient = item._tag === "bot" ? item.bot.profile.name : item.room.name;
     const toggleDetails = () => navigation.setDetailsOpen(!detailsOpen);
+    const goToEntry = (entryId: EntryId) => {
+      const card = timelineRef.current?.querySelector<HTMLElement>(
+        `[data-entry-id="${CSS.escape(entryId)}"]`,
+      );
+      card?.scrollIntoView({ block: "center" });
+      card?.focus({ preventScroll: true });
+    };
     conversation = (
       <>
         <ConversationHeader
+          // One header per conversation: moving to another announces nothing.
+          key={draftKey(key)}
           subject={
             item._tag === "bot" ? { _tag: "bot", bot: item.bot } : { _tag: "room", room: item.room }
           }
@@ -161,19 +195,24 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
           onStop={() => {
             if (item._tag === "bot") intents.stopBot(item.bot.id);
           }}
-          stopShortcut={shortcuts.stop.label}
+          onGoToWaiting={goToEntry}
+          stopShortcut={shortcuts.stop}
           titleRef={titleRef}
         />
         {entries.length === 0 && item._tag === "bot" ? (
           <QuietConversation bot={item.bot} />
         ) : (
           // Reversed, so the view stays pinned to the newest entry as entries arrive.
-          <div className="flex min-h-0 flex-1 flex-col-reverse overflow-y-auto [overflow-anchor:auto]">
+          <div
+            ref={timelineRef}
+            className="flex min-h-0 flex-1 flex-col-reverse overflow-y-auto [overflow-anchor:auto]"
+          >
             <div className="mx-auto w-full max-w-(--layout-text-column) px-3 py-4 @tablet:px-6">
               <Timeline
                 entries={entries}
                 inRoom={item._tag === "room"}
                 workSteps={data.workSteps}
+                submitting={data.submitting}
                 intents={intents}
               />
             </div>
@@ -208,6 +247,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
             modelName={modelName(data.engine, bot)}
             onClose={close}
             headingRef={detailsHeadingRef}
+            headingId={detailsHeadingId}
             intents={{
               ...intents,
               editProfile: () => intents.editProfile(bot.id),
@@ -217,7 +257,14 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
           />
         );
       } else {
-        details = <RoomDetails room={item.room} onClose={close} headingRef={detailsHeadingRef} />;
+        details = (
+          <RoomDetails
+            room={item.room}
+            onClose={close}
+            headingRef={detailsHeadingRef}
+            headingId={detailsHeadingId}
+          />
+        );
       }
     }
   }
@@ -228,7 +275,10 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
         roster={roster}
         conversation={conversation}
         details={details}
+        detailsHeadingId={detailsHeadingId}
         active={active}
+        layout={layout}
+        containerRef={containerRef}
         onCloseDetails={() => navigation.setDetailsOpen(false)}
       />
     </BotsProvider>

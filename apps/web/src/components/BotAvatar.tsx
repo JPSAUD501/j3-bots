@@ -7,6 +7,7 @@ import {
   type BotColor,
 } from "@j3-bots/design-tokens";
 import type { CSSProperties } from "react";
+import { useChanges } from "../lib/useChanges";
 import { avatarAppearance, type AvatarBadge, type AvatarMark } from "../presentation/avatar";
 
 const isShape = (token: string): token is AvatarShapeName => Object.hasOwn(avatarShapes, token);
@@ -38,6 +39,8 @@ interface BotAvatarProps {
 /**
  * A bot's face: its shape filled with its color, one mark inside that changes
  * with the state, and a corner badge when the state concerns the operator.
+ * When the mark changes, the new one comes in and the shape nudges once; an
+ * avatar that mounts already in a state shows it without either.
  */
 export function BotAvatar({
   avatar,
@@ -49,6 +52,9 @@ export function BotAvatar({
 }: BotAvatarProps) {
   const { shape, color } = resolve(avatar);
   const look = avatarAppearance(state, unread);
+  // Keys on the count of changes restart the one-time animations on each change.
+  const changes = useChanges(look.mark);
+  const changed = changes > 0;
   // Small avatars draw a larger mark so it stays legible.
   const markScale = size <= 28 ? 1.3 : 1;
   return (
@@ -62,11 +68,11 @@ export function BotAvatar({
       data-motion={look.motion}
       {...(label === undefined ? { "aria-hidden": true } : { role: "img", "aria-label": label })}
     >
-      <g key={look.mark} className={look.badge ? "avatar-nudge" : undefined}>
+      <g key={changes} className={changed ? "avatar-nudge" : undefined}>
         <path d={shape.path} fill="currentColor" />
       </g>
       <g transform={`translate(${shape.mark.x} ${shape.mark.y}) scale(${markScale})`}>
-        <g key={look.mark} className="avatar-mark-in">
+        <g key={changes} className={changed ? "avatar-mark-in" : undefined}>
           <Mark mark={look.mark} />
         </g>
       </g>
@@ -106,7 +112,8 @@ function Mark({ mark }: { mark: AvatarMark }) {
       );
     case "notch":
       // An open ring, its gap at the top: something is missing, and it is the operator's part.
-      return <path d={`M${at(40)}A${R} ${R} 0 1 1 ${at(-40)}`} {...stroke} />;
+      // The gap is wide enough that the ring never reads as a power symbol.
+      return <path d={`M${at(58)}A${R} ${R} 0 1 1 ${at(-58)}`} {...stroke} />;
     case "slash":
       return (
         <g {...stroke}>

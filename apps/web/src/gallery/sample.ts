@@ -44,7 +44,7 @@ export const ids = {
   iris: BotId.make("iris"),
   pip: BotId.make("pip"),
   moss: BotId.make("moss"),
-  launch: RoomId.make("website-launch"),
+  newsletter: RoomId.make("spring-newsletter"),
 };
 
 /**
@@ -77,7 +77,10 @@ export function sampleTeam(now: DateTime.Utc) {
         id: codex,
         name: "Codex",
         harness: "codex",
-        status: { _tag: "sign-in-required" },
+        status: {
+          _tag: "sign-in-required",
+          command: "CODEX_HOME=~/.j3-bots/providers/codex codex login",
+        },
         models: [],
         usage: [],
       },
@@ -125,7 +128,7 @@ export function sampleTeam(now: DateTime.Utc) {
         _tag: "working",
         since: ago(3),
         stalled: false,
-        activity: "Reading four pages about passkeys",
+        activity: "Reading owner reviews of three e-bikes",
       },
       { primary: true, pinned: true, permissionMode: "auto-accept-edits" },
     ),
@@ -160,10 +163,11 @@ export function sampleTeam(now: DateTime.Utc) {
   } satisfies Record<string, Bot>;
 
   const room: Room = {
-    id: ids.launch,
-    name: "Website launch",
-    members: [ids.atlas, ids.wren, ids.scout],
-    hostId: ids.atlas,
+    id: ids.newsletter,
+    name: "Spring newsletter",
+    status: "active",
+    members: [ids.juniper, ids.wren, ids.scout],
+    hostId: ids.juniper,
     hopLimit: 4,
     pinned: false,
     createdAt: ago(60 * 24 * 7),
@@ -203,22 +207,16 @@ export function sampleTeam(now: DateTime.Utc) {
 
   const attachments = {
     report: {
-      id: AttachmentId.make("passkeys-report"),
-      name: "Passkeys rollout notes.pdf",
+      id: AttachmentId.make("ebike-shortlist"),
+      name: "E-bike shortlist.pdf",
       mediaType: "application/pdf",
-      size: 284_000,
+      size: 212_000,
     },
-    sheet: {
-      id: AttachmentId.make("vendors"),
-      name: "Vendor comparison.xlsx",
-      mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      size: 41_200,
-    },
-    screenshot: {
-      id: AttachmentId.make("checkout"),
-      name: "checkout-staging.png",
-      mediaType: "image/png",
-      size: 1_830_000,
+    photo: {
+      id: AttachmentId.make("workshop-photo"),
+      name: "march-workshop.jpg",
+      mediaType: "image/jpeg",
+      size: 2_410_000,
     },
   } satisfies Record<string, Attachment>;
 
@@ -228,9 +226,9 @@ export function sampleTeam(now: DateTime.Utc) {
     message(
       operator,
       ago(60 * 26),
-      "Can you find out how other teams rolled out passkeys? Two or three examples is enough.",
+      "Which e-bikes would suit a 12 km commute with one steep hill? Three options is plenty.",
     ),
-    message(by(ids.scout), ago(60 * 26 - 1), "On it. I’ll look at public write-ups first."),
+    message(by(ids.scout), ago(60 * 26 - 1), "On it. I’ll start with long-term owner reviews."),
     {
       _tag: "work-fold",
       id: foldId,
@@ -242,7 +240,7 @@ export function sampleTeam(now: DateTime.Utc) {
     message(
       by(ids.scout),
       ago(60 * 26 - 3),
-      "Three teams wrote it up in detail. All kept passwords as a fallback for the first months, and all start with an opt-in prompt after sign-in.\n\nThe common pattern is a `navigator.credentials.create()` call right after a successful login. The clearest guide is https://example.com/passkeys/rollout.",
+      "Three fit. All of them have a mid-drive motor, which is what makes the difference on that hill, and the cheapest needs the larger battery for the round trip.\n\nThe range figures come from owners, not spec sheets: see the `range_km` column. The most useful review is https://example.com/ebikes/long-term.",
       { attachments: [attachments.report] },
     ),
     {
@@ -250,27 +248,28 @@ export function sampleTeam(now: DateTime.Utc) {
       id: entryId("rc"),
       author: by(ids.scout),
       createdAt: ago(60 * 25),
-      routineId: RoutineId.make("morning-briefing"),
-      name: "Morning briefing",
+      routineId: RoutineId.make("price-drop-watch"),
+      name: "Price drop watch",
       change: "created",
       trigger: { _tag: "schedule", cron: "47 8 * * 1-5", timeZone: "America/Sao_Paulo" },
     },
-    message(operator, ago(9), "Ask Wren to turn that into a short note for the team?"),
+    message(operator, ago(9), "Can Wren write to the bike shop about a test ride?"),
     {
       _tag: "handoff",
       id: entryId("h"),
       author: by(ids.scout),
       createdAt: ago(8),
       recipientId: ids.wren,
-      text: "Could you turn the passkeys findings into a five-line note for the team? Plain words, no jargon.",
+      text: "Could you write to the bike shop and ask for a test ride on Saturday morning? Friendly, three lines at most.",
       urgent: false,
     },
     message(
       by(ids.scout),
       ago(8),
-      "Done, Wren has it. Meanwhile I’m checking what our own sign-in page would need.",
+      "Done, Wren has it. Meanwhile I’m checking which of the three the shop has in stock.",
     ),
-    message(operator, ago(1), "Also look at how they handled account recovery", { pending: true }),
+    message(operator, ago(1), "Also check whether any of them fold", { pending: true }),
+    message(operator, ago(1), "And which ones take a child seat", { pending: true }),
   ];
 
   const step = (index: number, rest: Omit<WorkStep, "id">): WorkStep => ({
@@ -281,28 +280,29 @@ export function sampleTeam(now: DateTime.Utc) {
     [foldId]: [
       step(0, {
         kind: "search",
-        label: "passkeys rollout case study",
+        label: "e-bike long-term review steep hill commute",
         status: "completed",
         startedAt: ago(60 * 26 - 1),
         finishedAt: ago(60 * 26 - 1),
       }),
       step(1, {
         kind: "web",
-        label: "Read example.com/passkeys/rollout",
+        label: "Read example.com/ebikes/long-term",
         status: "completed",
         startedAt: ago(60 * 26 - 1),
         finishedAt: ago(60 * 26 - 2),
       }),
       step(2, {
         kind: "web",
-        label: "Read two more write-ups",
+        label: "Read three owner forums",
         status: "completed",
         startedAt: ago(60 * 26 - 2),
         finishedAt: ago(60 * 26 - 2),
       }),
       step(3, {
         kind: "command",
-        label: "pandoc notes.md -o 'Passkeys rollout notes.pdf'",
+        label:
+          "python3 compare.py --specs specs.csv --reviews owner-reviews.csv --sort range_km --out 'E-bike shortlist.pdf'",
         status: "completed",
         startedAt: ago(60 * 26 - 2),
         finishedAt: ago(60 * 26 - 3),
@@ -316,7 +316,7 @@ export function sampleTeam(now: DateTime.Utc) {
       }),
       step(5, {
         kind: "delegation",
-        label: "Asked Wren to check the wording",
+        label: "Asked Juniper whether the shop had replied",
         status: "failed",
         startedAt: ago(60 * 26 - 3),
         finishedAt: ago(60 * 26 - 3),
@@ -328,7 +328,7 @@ export function sampleTeam(now: DateTime.Utc) {
     message(
       by(ids.juniper),
       ago(70),
-      "Morning sweep done: 23 new, 4 worth your time, the rest archived.",
+      "Went through the inbox: 31 new, 3 need you, the rest filed.",
     ),
     {
       _tag: "question",
@@ -339,25 +339,24 @@ export function sampleTeam(now: DateTime.Utc) {
       questions: [
         {
           id: "reply",
-          prompt:
-            "The landlord wants to move Friday’s visit to Monday at 10. What should I tell them?",
+          prompt: "The plumber can come on Thursday at 8 instead of next week. Should I confirm?",
           options: [
             {
               id: "yes",
-              label: "Monday at 10 works",
-              description: "Your calendar is clear then.",
+              label: "Confirm Thursday at 8",
+              description: "Nothing else is on your calendar before 10.",
               style: "recommended",
             },
             {
-              id: "afternoon",
-              label: "Ask for Monday afternoon",
+              id: "later",
+              label: "Ask for later that day",
               description: null,
               style: "default",
             },
             {
               id: "keep",
-              label: "Keep Friday",
-              description: "I’ll say the original time still suits you.",
+              label: "Keep next week",
+              description: "I’ll tell them the original slot still suits you.",
               style: "default",
             },
           ],
@@ -370,17 +369,21 @@ export function sampleTeam(now: DateTime.Utc) {
   ];
 
   const atlasEntries: DraftEntry[] = [
-    message(operator, ago(30), "Ship the checkout fix to staging when the tests pass."),
-    message(by(ids.atlas), ago(12), "Tests pass. Ready to deploy to staging."),
+    message(operator, ago(30), "Run the invoice migration on staging once the backup finishes."),
+    message(
+      by(ids.atlas),
+      ago(12),
+      "Backup finished and checked: 2.1 GB. Ready to migrate staging.",
+    ),
     {
       _tag: "approval",
       id: EntryId.make("atlas-a1"),
       author: by(ids.atlas),
       createdAt: ago(12),
       kind: "command",
-      action: "pnpm deploy --env staging --service checkout",
+      action: "pnpm db:migrate --env staging --to 0042_invoice_totals",
       detail:
-        "pnpm deploy --env staging --service checkout\n  → builds apps/checkout\n  → uploads 14 files to the staging bucket\n  → restarts checkout-staging (about 30 s of downtime)",
+        "pnpm db:migrate --env staging --to 0042_invoice_totals\n  → adds the column invoices.total_cents\n  → fills it for 18,204 invoices, 500 at a time\n  → keeps the billing API read-only for about 40 s\n  → writes the migration log to logs/migrate-0042.txt",
       allowsSession: true,
       status: { _tag: "pending" },
     },
@@ -390,12 +393,12 @@ export function sampleTeam(now: DateTime.Utc) {
     message(
       by(ids.wren),
       ago(2),
-      "Here’s the note for the team. Five lines, as asked:\n\nWe’re adding passkeys to sign-in. Passwords stay for now. After you sign in, you’ll be offered a passkey once. It takes ten seconds. Nothing else changes.",
+      "Here’s the note for the bike shop, three lines as asked:\n\nHi, I’m comparing three e-bikes for a hilly commute and would love to try them. Could I come by on Saturday morning for a test ride? Any time before noon works.",
     ),
   ];
 
   const ledgerEntries: DraftEntry[] = [
-    message(operator, ago(40), "File last week’s receipts, please."),
+    message(operator, ago(40), "Sort last month’s receipts into the tax folder, please."),
     {
       _tag: "notice",
       id: entryId("n"),
@@ -407,17 +410,21 @@ export function sampleTeam(now: DateTime.Utc) {
   ];
 
   const irisEntries: DraftEntry[] = [
-    message(operator, ago(20), "Find me fares to Lisbon for the second week of January."),
+    message(
+      operator,
+      ago(20),
+      "Find me trains from Porto to Madrid for the first weekend of February.",
+    ),
     {
       _tag: "secret-request",
       id: EntryId.make("iris-s1"),
       author: by(ids.iris),
       createdAt: ago(19),
-      label: "Fare search API key",
+      label: "Rail search API key",
       reason:
-        "The fare search site only answers with an account key. I’ll use it for searches and nothing else.",
-      url: "https://fares.example.com/account/keys",
-      placeholder: "fs_live_…",
+        "The rail search service only answers with an account key. I’ll use it for timetable and fare searches and nothing else.",
+      url: "https://rail.example.com/account/keys",
+      placeholder: "rs_live_…",
       status: "pending",
     },
   ];
@@ -426,35 +433,37 @@ export function sampleTeam(now: DateTime.Utc) {
     message(
       by(ids.otto),
       ago(60 * 5),
-      "Tomorrow is clear until 11. I moved the dentist reminder to 9:30 like you asked.",
+      "Thursday is clear after 10. I moved the car inspection to 3:30 like you asked.",
     ),
     message(operator, ago(60 * 5 - 2), "Thanks"),
   ];
 
   const roomEntries: DraftEntry[] = [
-    message(operator, ago(50), "@Atlas where are we with the launch checklist?", {
+    message(operator, ago(50), "@Juniper what’s still missing for the newsletter?", {
       prefix: "r",
-      mentions: [ids.atlas],
+      mentions: [ids.juniper],
     }),
     message(
-      by(ids.atlas),
+      by(ids.juniper),
       ago(49),
-      "Checkout is clean on staging. Copy and the announcement are left. @Wren, can you take the announcement?",
-      { prefix: "r", mentions: [ids.wren] },
+      "The subscriber numbers and the opening paragraph. @Scout, can you pull this quarter’s sign-ups?",
+      { prefix: "r", mentions: [ids.scout] },
     ),
-    message(by(ids.wren), ago(47), "Drafting it now. @Scout, any numbers I can quote?", {
-      prefix: "r",
-      mentions: [ids.scout],
-    }),
     message(
       by(ids.scout),
-      ago(46),
-      "Sign-in time dropped from 14 s to 4 s in the pilot. That’s the one worth quoting.",
+      ago(47),
+      "1,284 new subscribers this quarter, up from 910. Most came through the March workshop.",
       { prefix: "r" },
     ),
-    message(by(ids.wren), ago(45), "Perfect, using that.", {
+    message(
+      by(ids.wren),
+      ago(46),
+      "Then I’ll open with the workshop. @Scout, is there a photo from it we can use?",
+      { prefix: "r", mentions: [ids.scout] },
+    ),
+    message(by(ids.scout), ago(45), "This one. Everyone in it agreed to be in the newsletter.", {
       prefix: "r",
-      attachments: [attachments.screenshot],
+      attachments: [attachments.photo],
     }),
     {
       _tag: "notice",
@@ -468,8 +477,8 @@ export function sampleTeam(now: DateTime.Utc) {
       _tag: "notice",
       id: entryId("rn"),
       author: { _tag: "system" },
-      createdAt: ago(12),
-      notice: { _tag: "waiting-in-conversation", botId: ids.atlas },
+      createdAt: ago(6),
+      notice: { _tag: "waiting-in-conversation", botId: ids.juniper },
       retryable: false,
     },
   ];
@@ -482,7 +491,7 @@ export function sampleTeam(now: DateTime.Utc) {
     [`bot:${ids.ledger}`]: ordered(ledgerEntries),
     [`bot:${ids.iris}`]: ordered(irisEntries),
     [`bot:${ids.otto}`]: ordered(ottoEntries),
-    [`room:${ids.launch}`]: ordered(roomEntries),
+    [`room:${ids.newsletter}`]: ordered(roomEntries),
   };
 
   const lastOf = (key: string) => entries[key]?.at(-1) ?? null;
@@ -498,7 +507,7 @@ export function sampleTeam(now: DateTime.Utc) {
     };
   }
 
-  const roomLast = lastOf(`room:${ids.launch}`);
+  const roomLast = lastOf(`room:${ids.newsletter}`);
   const roster: RosterItem[] = [
     botItem(bots.scout),
     botItem(bots.juniper),
@@ -528,39 +537,40 @@ export function sampleTeam(now: DateTime.Utc) {
     note: null,
   });
 
+  // Run times match the schedules at SAMPLE_NOW: a Friday, 14:40 in São Paulo and 17:40 in Lisbon.
   const routines: Record<string, Routine[]> = {
     [ids.scout]: [
       {
-        id: RoutineId.make("morning-briefing"),
+        id: RoutineId.make("price-drop-watch"),
         botId: ids.scout,
-        name: "Morning briefing",
+        name: "Price drop watch",
         instruction:
-          "Tell me what changed in the repo since yesterday. Say nothing if nothing did.",
+          "Check the three e-bikes on the shortlist for price drops. Say nothing if none dropped.",
         trigger: { _tag: "schedule", cron: "47 8 * * 1-5", timeZone: "America/Sao_Paulo" },
         enabled: true,
         webhookUrl: null,
-        // Run times match the schedules at SAMPLE_NOW, a Friday at 14:40 in São Paulo.
         nextRunAt: ahead(3 * 24 * 60 - 353),
         lastRun: run(353, "delivered"),
         runCount: 18,
       },
       {
-        id: RoutineId.make("competitor-watch"),
+        id: RoutineId.make("lisbon-sync-prep"),
         botId: ids.scout,
-        name: "Competitor watch",
-        instruction: "Check the three competitor changelogs. Report only new features.",
-        trigger: { _tag: "schedule", cron: "0 17 * * 1,4", timeZone: "America/Sao_Paulo" },
+        name: "Lisbon sync prep",
+        instruction: "Before each sync with the Lisbon team, list what I still owe them.",
+        // Saved in the Lisbon team's zone, so it follows their clock through daylight saving.
+        trigger: { _tag: "schedule", cron: "0 9 * * 1,4", timeZone: "Europe/Lisbon" },
         enabled: true,
         webhookUrl: null,
-        nextRunAt: ahead(3 * 24 * 60 + 140),
-        lastRun: run(21 * 60 + 40, "silent"),
+        nextRunAt: ahead(2 * 24 * 60 + 920),
+        lastRun: run(24 * 60 + 520, "silent"),
         runCount: 9,
       },
       {
-        id: RoutineId.make("weekly-report"),
+        id: RoutineId.make("weekend-reading"),
         botId: ids.scout,
-        name: "Weekly team update",
-        instruction: "Summarize the week for the team channel.",
+        name: "Weekend reading",
+        instruction: "Pick three long reads from my saved links for the weekend.",
         trigger: { _tag: "schedule", cron: "30 16 * * 5", timeZone: "America/Sao_Paulo" },
         enabled: false,
         webhookUrl: null,
@@ -571,13 +581,14 @@ export function sampleTeam(now: DateTime.Utc) {
     ],
     [ids.atlas]: [
       {
-        id: RoutineId.make("deploy-finished"),
+        id: RoutineId.make("migration-finished"),
         botId: ids.atlas,
-        name: "Deploy finished",
-        instruction: "When a deploy finishes, tell me if anything looks off.",
+        name: "Migration finished",
+        instruction:
+          "When a migration finishes, tell me how many rows it touched and anything that looks off.",
         trigger: { _tag: "webhook" },
         enabled: true,
-        webhookUrl: "https://j3.local/hooks/deploy-finished",
+        webhookUrl: "https://j3.local/hooks/migration-finished",
         nextRunAt: null,
         lastRun: run(60 * 3, "delivered"),
         runCount: 52,

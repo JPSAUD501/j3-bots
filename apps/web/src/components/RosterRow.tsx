@@ -7,12 +7,13 @@ import type { ComponentProps } from "react";
 import { cn } from "../lib/cn";
 import type { DataAttributes } from "../lib/dataAttributes";
 import { activityTime } from "../lib/time";
+import { avatarAppearance } from "../presentation/avatar";
 import { needsOperator, rosterLine, type LineTone } from "../presentation/roster";
 import { BotAvatar, RoomAvatar } from "./BotAvatar";
 
 export const toneClass: Record<LineTone, string> = {
   default: "text-muted-foreground",
-  muted: "text-muted-foreground/80 italic",
+  muted: "text-muted-foreground italic",
   waiting: "text-waiting",
   blocked: "text-blocked",
 };
@@ -41,9 +42,13 @@ export function RosterRow({
   const line = rosterLine(item, ctx);
   const needs = needsOperator(item);
   const name = item._tag === "bot" ? item.bot.profile.name : item.room.name;
+  // A done bot's avatar already carries the unread badge; other rows mark it with a dot.
+  const unreadDot =
+    item.unread &&
+    (item._tag === "room" || avatarAppearance(item.bot.state, item.unread).badge !== "unread");
   const content = (
     <>
-      <span className="[--avatar-cutout:var(--sidebar)] group-data-selected/row:[--avatar-cutout:var(--muted)]">
+      <span className="[--avatar-cutout:var(--sidebar)] group-hover/row:[--avatar-cutout:var(--muted)] group-data-selected/row:[--avatar-cutout:var(--muted)]">
         {item._tag === "bot" ? (
           <BotAvatar
             avatar={item.bot.profile.avatar}
@@ -61,23 +66,21 @@ export function RosterRow({
             {name}
           </span>
           {item.lastActivityAt && (
-            <span
-              className={cn(
-                "ms-auto shrink-0 text-2xs tabular-nums",
-                item.unread ? "text-accent" : "text-muted-foreground",
-              )}
-            >
+            <span className="ms-auto shrink-0 text-2xs text-muted-foreground tabular-nums">
               {activityTime(item.lastActivityAt, ctx)}
             </span>
           )}
         </span>
         <span className="flex items-center gap-2">
           <span className={cn("truncate text-xs", toneClass[line.tone])}>{line.text}</span>
-          {item.unread && (
-            <span className="ms-auto size-2 shrink-0 rounded-pill bg-accent">
+          {item.unread &&
+            (unreadDot ? (
+              <span className="ms-auto size-2 shrink-0 rounded-pill bg-accent">
+                <span className="sr-only">{t("roster.unread")}</span>
+              </span>
+            ) : (
               <span className="sr-only">{t("roster.unread")}</span>
-            </span>
-          )}
+            ))}
         </span>
       </span>
     </>

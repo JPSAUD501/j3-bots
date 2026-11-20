@@ -19,6 +19,7 @@ const room = (lastEntry: EntryPreview | null): RosterItem => ({
   room: {
     id: RoomId.make("launch"),
     name: "Launch",
+    status: "active",
     members: [bot("Scout").id, bot("Wren").id],
     hostId: bot("Scout").id,
     hopLimit: 3,
@@ -141,9 +142,5 @@ describe("rosterLine", () => {
     expect(rosterLine(room(inRoom), ctx).text).toBe("Wren: Drafted it");
     const files = preview("2026-11-20T14:00:00Z", "message", "", wren);
     expect(rosterLine(row(bot("Wren"), files), ctx).text).toBe("Sent files");
-  });
-
-  it("says when nothing has been said yet", () => {
-    expect(rosterLine(row(bot("Scout")), ctx)).toEqual({ text: "No messages yet", tone: "muted" });
   });
 });

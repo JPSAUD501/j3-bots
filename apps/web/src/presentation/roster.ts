@@ -1,5 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Bot, BotId, Entry, EntryPreview, FailureClass, RosterItem } from "@j3-bots/contracts";
+import type {
+  Bot,
+  BotId,
+  Entry,
+  EntryPreview,
+  FailureClass,
+  Room,
+  RosterItem,
+} from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import { activityTime, millisBetween, shortDuration, type TimeContext } from "../lib/time";
 
@@ -187,6 +195,12 @@ export function presenceLine(bot: Bot, ctx: PresentationContext): StatusLine | n
     case "idle":
       return bot.profile.title === "" ? null : { text: bot.profile.title, tone: "muted" };
   }
+}
+
+/** A room's members by name, as one list in the reader's language. */
+export function memberList(room: Room, ctx: PresentationContext): string {
+  const names = room.members.map((id) => ctx.botName(id) ?? ctx.i18n.t("bot.unknown"));
+  return new Intl.ListFormat(ctx.i18n.locale, { type: "conjunction" }).format(names);
 }
 
 /** A pending question or approval, or a result not yet read. */

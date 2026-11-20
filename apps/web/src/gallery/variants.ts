@@ -136,7 +136,7 @@ export function galleryVariants(now: DateTime.Utc) {
       questions: [
         {
           id: "drafts",
-          prompt: "There are two drafts of the announcement. What should I do with them?",
+          prompt: "I found two exports of last year’s tax folder. What should I do with them?",
           options: [
             option(
               "keep",
@@ -160,11 +160,11 @@ export function galleryVariants(now: DateTime.Utc) {
       questions: [
         {
           id: "sources",
-          prompt: "Which sources should the briefing read?",
+          prompt: "What should the weekly money digest cover?",
           options: [
-            option("repo", "The repository", "Commits and pull requests since yesterday"),
-            option("issues", "Issues"),
-            option("calendar", "Your calendar"),
+            option("charges", "Card charges", "Everything new since last week"),
+            option("bills", "Bills due soon"),
+            option("subscriptions", "Subscriptions that renew this month"),
           ],
           acceptsText: false,
           multiple: true,
@@ -204,7 +204,7 @@ export function galleryVariants(now: DateTime.Utc) {
     }),
     approval("approval-file", {
       kind: "file-change",
-      action: "docs/launch-checklist.md",
+      action: "notes/taxes-2026/checklist.md",
       allowsSession: false,
     }),
     approval("approval-allowed", { status: { _tag: "decided", decision: "allow-session" } }),
@@ -332,14 +332,14 @@ export function galleryVariants(now: DateTime.Utc) {
       _tag: "handoff",
       ...base("handoff"),
       recipientId: ids.wren,
-      text: "Can you tighten the launch announcement to three sentences?",
+      text: "Can you shorten the newsletter’s opening to three sentences?",
       urgent: false,
     },
     {
       _tag: "handoff",
       ...base("handoff-urgent"),
       recipientId: ids.atlas,
-      text: "Checkout is returning errors on staging since the last deploy. Please roll it back.",
+      text: "The billing API on staging is still read-only ten minutes after the migration. Please look now.",
       urgent: true,
     },
   ];
@@ -352,7 +352,7 @@ export function galleryVariants(now: DateTime.Utc) {
     _tag: "routine-change",
     ...base(name),
     routineId: RoutineId.make(`variant-${name}`),
-    name: "Inbox sweep",
+    name: "Bill reminders",
     change: kind,
     trigger,
   });

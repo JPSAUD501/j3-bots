@@ -42,11 +42,13 @@ interface TimelineProps {
   /** Rooms show who said each message; a bot's conversation has one speaker. */
   readonly inRoom: boolean;
   readonly workSteps: (entryId: EntryId) => ReadonlyArray<WorkStep> | null;
+  /** Whether the operator's answer to a card is still on its way. */
+  readonly submitting: (entryId: EntryId) => boolean;
   readonly intents: TimelineIntents;
 }
 
 /** Every entry of a conversation or room, oldest first: bubbles, cards, folds and notices. */
-export function Timeline({ entries, inRoom, workSteps, intents }: TimelineProps) {
+export function Timeline({ entries, inRoom, workSteps, submitting, intents }: TimelineProps) {
   const bots = useBots();
   const mentionable = inRoom ? [...bots.values()].map((bot) => bot.profile.name) : [];
   return (
@@ -75,6 +77,7 @@ export function Timeline({ entries, inRoom, workSteps, intents }: TimelineProps)
                 entry={entry}
                 onAnswer={(answers) => intents.answerQuestion(entry.id, answers)}
                 onDismiss={() => intents.dismissQuestion(entry.id)}
+                submitting={submitting(entry.id)}
               />
             );
           case "approval":
@@ -83,6 +86,7 @@ export function Timeline({ entries, inRoom, workSteps, intents }: TimelineProps)
                 key={item.key}
                 entry={entry}
                 onDecide={(decision) => intents.decideApproval(entry.id, decision)}
+                submitting={submitting(entry.id)}
               />
             );
           case "secret-request":
@@ -92,6 +96,7 @@ export function Timeline({ entries, inRoom, workSteps, intents }: TimelineProps)
                 entry={entry}
                 onProvide={(value) => intents.provideSecret(entry.id, value)}
                 onDecline={() => intents.declineSecret(entry.id)}
+                submitting={submitting(entry.id)}
               />
             );
           case "work-fold":

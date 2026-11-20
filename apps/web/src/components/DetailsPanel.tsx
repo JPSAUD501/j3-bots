@@ -19,12 +19,13 @@ import {
   WebhookIcon,
   XIcon,
 } from "lucide-react";
+import { AlertDialog } from "@base-ui/react/alert-dialog";
 import type { ReactNode, Ref } from "react";
 import { useBots, useI18n, usePresentation } from "../app/context";
 import type { KeyWith } from "../i18n/i18n";
 import { cn } from "../lib/cn";
 import { scheduleInWords } from "../lib/schedule";
-import { activityTime, upcomingTime } from "../lib/time";
+import { activityTime, timeInSentence } from "../lib/time";
 import { BotAvatar } from "./BotAvatar";
 import { FileCard, fileSize } from "./FileCard";
 import { Button } from "./ui/button";
@@ -34,11 +35,13 @@ interface PanelFrameProps {
   readonly title: string;
   readonly onClose: () => void;
   readonly headingRef?: Ref<HTMLHeadingElement> | undefined;
+  /** Names the pane for assistive technology. */
+  readonly headingId?: string | undefined;
   readonly children: ReactNode;
 }
 
 /** The details region's frame. Phones show a back button; wider layouts a close button. */
-function PanelFrame({ title, onClose, headingRef, children }: PanelFrameProps) {
+function PanelFrame({ title, onClose, headingRef, headingId, children }: PanelFrameProps) {
   const { t } = useI18n();
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -54,6 +57,7 @@ function PanelFrame({ title, onClose, headingRef, children }: PanelFrameProps) {
         </Button>
         <h2
           ref={headingRef}
+          id={headingId}
           tabIndex={-1}
           className="truncate px-1 text-sm font-medium outline-none"
         >
@@ -122,6 +126,7 @@ interface BotDetailsProps {
   readonly intents: BotDetailsIntents;
   readonly onClose: () => void;
   readonly headingRef?: Ref<HTMLHeadingElement>;
+  readonly headingId?: string;
 }
 
 /** Answers: what is this bot, and what runs without me. */
@@ -134,12 +139,18 @@ export function BotDetails({
   intents,
   onClose,
   headingRef,
+  headingId,
 }: BotDetailsProps) {
   const { t } = useI18n();
   const { name, title, job, avatar } = bot.profile;
   const [modeLabel, modeDescription] = permissionText[bot.permissionMode];
   return (
-    <PanelFrame title={t("conversation.details")} onClose={onClose} headingRef={headingRef}>
+    <PanelFrame
+      title={t("conversation.details")}
+      onClose={onClose}
+      headingRef={headingRef}
+      headingId={headingId}
+    >
       <section className="flex flex-col items-start gap-3 border-b border-border px-4 py-5">
         <span className="[--avatar-cutout:var(--background)]">
           <BotAvatar avatar={avatar} state={bot.state} size={72} />
@@ -226,9 +237,7 @@ export function BotDetails({
             <Button size="sm" onClick={intents.freshStart}>
               {t("details.freshStart")}
             </Button>
-            <Button size="sm" variant="destructive-outline" onClick={intents.deleteBot}>
-              {t("details.delete", { name })}
-            </Button>
+            <DeleteBot name={name} onDelete={intents.deleteBot} />
           </div>
         </div>
       </DetailsSection>
@@ -236,13 +245,48 @@ export function BotDetails({
   );
 }
 
-const lastRunText: Record<NonNullable<Routine["lastRun"]>["status"], KeyWith<"time">> = {
+/**
+ * Deleting a bot asks first, naming what goes and what stays; the intent is
+ * emitted only once the operator confirms. Cancel is where focus starts.
+ */
+function DeleteBot({ name, onDelete }: { name: string; onDelete: () => void }) {
+  const { t } = useI18n();
+  return (
+    <AlertDialog.Root>
+      <AlertDialog.Trigger render={<Button size="sm" variant="destructive-outline" />}>
+        {t("details.delete", { name })}
+      </AlertDialog.Trigger>
+      <AlertDialog.Portal>
+        <AlertDialog.Backdrop className="fixed inset-0 z-50 bg-scrim transition-opacity duration-(--duration-slow) data-ending-style:opacity-0 data-starting-style:opacity-0" />
+        <AlertDialog.Popup className="fixed inset-x-4 top-1/2 z-50 mx-auto flex max-w-sm -translate-y-1/2 flex-col gap-2 rounded-lg border border-border bg-surface p-5 text-foreground shadow-xl outline-none transition-[opacity,scale] duration-(--duration-slow) data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0">
+          <AlertDialog.Title className="text-lg font-medium">
+            {t("details.delete.title", { name })}
+          </AlertDialog.Title>
+          <AlertDialog.Description className="text-sm text-muted-foreground">
+            {t("details.delete.body", { name })}
+          </AlertDialog.Description>
+          <div className="mt-3 flex flex-wrap justify-end gap-2">
+            <AlertDialog.Close render={<Button />}>
+              {t("details.delete.cancel", { name })}
+            </AlertDialog.Close>
+            <AlertDialog.Close render={<Button variant="destructive" />} onClick={onDelete}>
+              {t("details.delete", { name })}
+            </AlertDialog.Close>
+          </div>
+        </AlertDialog.Popup>
+      </AlertDialog.Portal>
+    </AlertDialog.Root>
+  );
+}
+
+/** The sentence for a routine's last run, which carries the run count too. */
+const lastRunText = {
   running: "routine.lastRun.running",
   delivered: "routine.lastRun.delivered",
   silent: "routine.lastRun.silent",
   failed: "routine.lastRun.failed",
   skipped: "routine.lastRun.skipped",
-};
+} as const satisfies Record<NonNullable<Routine["lastRun"]>["status"], string>;
 
 /** A routine: name, schedule in words, next run, last result, and a switch to pause it. */
 function RoutineRow({
@@ -267,7 +311,7 @@ function RoutineRow({
   const status = !routine.enabled
     ? t("routine.paused")
     : routine.nextRunAt
-      ? t("routine.next", { time: upcomingTime(routine.nextRunAt, ctx) })
+      ? t("routine.next", { when: timeInSentence(routine.nextRunAt, ctx) })
       : null;
   const last = routine.lastRun;
   return (
@@ -297,9 +341,9 @@ function RoutineRow({
               last.status === "failed" ? "text-blocked" : "text-muted-foreground",
             )}
           >
-            {t(lastRunText[last.status], { time: activityTime(last.startedAt, ctx) })}
-            {" · "}
-            {plural("routine.runs", routine.runCount)}
+            {plural(lastRunText[last.status], routine.runCount, {
+              when: timeInSentence(last.startedAt, ctx),
+            })}
           </span>
         )}
       </button>
@@ -360,15 +404,17 @@ export function RoomDetails({
   room,
   onClose,
   headingRef,
+  headingId,
 }: {
   room: Room;
   onClose: () => void;
   headingRef?: Ref<HTMLHeadingElement>;
+  headingId?: string;
 }) {
   const { t, plural } = useI18n();
   const bots = useBots();
   return (
-    <PanelFrame title={room.name} onClose={onClose} headingRef={headingRef}>
+    <PanelFrame title={room.name} onClose={onClose} headingRef={headingRef} headingId={headingId}>
       <DetailsSection title={t("room.membersTitle")}>
         <ul className="flex flex-col gap-2">
           {room.members.map((id) => {

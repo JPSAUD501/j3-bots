@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
+import { touchTarget } from "../lib/touchTarget";
 import { millisBetween, shortDuration } from "../lib/time";
 import { workFoldTitle } from "../presentation/roster";
 
@@ -52,11 +53,12 @@ export function WorkFold({ entry, steps, onOpenChange, defaultOpen = false }: Wo
     <Collapsible.Root
       defaultOpen={defaultOpen}
       onOpenChange={onOpenChange}
-      className="mt-2 self-start"
+      className="mt-2 max-w-(--layout-card-width) self-start"
     >
       <Collapsible.Trigger
         className={cn(
           "group flex items-center gap-1.5 rounded-sm text-xs hover:text-foreground",
+          touchTarget,
           status._tag === "finished" && status.ending === "failed"
             ? "text-blocked"
             : "text-muted-foreground",
@@ -79,17 +81,14 @@ export function WorkFold({ entry, steps, onOpenChange, defaultOpen = false }: Wo
             {steps.map((step) => {
               const Icon = stepIcon[step.kind];
               return (
-                <li
-                  key={`${step.kind}-${step.label}-${step.startedAt.epochMilliseconds}`}
-                  className="flex min-h-7 items-center gap-2 text-xs"
-                >
-                  <Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+                <li key={step.id} className="flex min-h-7 items-start gap-2 py-1 text-xs">
+                  <Icon aria-hidden className="mt-px size-3.5 shrink-0 text-muted-foreground" />
+                  {/* Long commands and paths wrap: every step reads in full without a pointer. */}
                   <span
                     className={cn(
-                      "min-w-0 flex-1 truncate",
-                      step.kind === "command" && "font-mono text-2xs",
+                      "min-w-0 flex-1 break-words",
+                      step.kind === "command" && "font-mono text-2xs break-all whitespace-pre-wrap",
                     )}
-                    title={step.label}
                   >
                     {step.label}
                   </span>

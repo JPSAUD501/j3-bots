@@ -13,7 +13,7 @@ export function HandoffCard({ entry, onOpen }: { entry: HandoffEntry; onOpen: ()
     <button
       type="button"
       onClick={onOpen}
-      className="group mt-2 flex w-full max-w-[min(28rem,92%)] items-start gap-2.5 self-start rounded-md border border-border bg-surface px-3 py-2.5 text-start transition-colors duration-(--duration-fast) hover:bg-muted"
+      className="group mt-2 flex w-full max-w-(--layout-compact-card-width) items-start gap-2.5 self-start rounded-md border border-border bg-surface px-3 py-2.5 text-start transition-colors duration-(--duration-fast) hover:bg-muted"
     >
       <span className="mt-0.5 [--avatar-cutout:var(--surface)]">
         {recipient && <AvatarShape avatar={recipient.profile.avatar} size={18} />}

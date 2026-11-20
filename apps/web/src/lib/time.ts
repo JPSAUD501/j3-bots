@@ -57,6 +57,23 @@ export function upcomingTime(at: DateTime.Utc, ctx: TimeContext): string {
   return fullTime(at, ctx);
 }
 
+/**
+ * A moment inside a sentence, past or future: "at 8:47 AM", "yesterday at 4:12
+ * PM", "tomorrow at 8:47 AM", "Monday at 8:47 AM", "on Nov 13, 2026, 4:12 PM".
+ * The standalone forms above start a line; this one follows a word.
+ */
+export function timeInSentence(at: DateTime.Utc, ctx: TimeContext): string {
+  const days = calendarDaysAgo(at, ctx);
+  const time = clockTime(at, ctx);
+  const { t } = ctx.i18n;
+  if (days === 0) return t("time.inSentence.today", { time });
+  if (days === 1) return t("time.inSentence.yesterday", { time });
+  if (days === -1) return t("time.inSentence.tomorrow", { time });
+  if (Math.abs(days) < 7)
+    return t("time.inSentence.day", { day: format(at, ctx, { weekday: "long" }), time });
+  return t("time.inSentence.date", { date: fullTime(at, ctx) });
+}
+
 /** A moment in full, for when the day matters whatever today is: "Nov 23, 2026, 8:47 AM". */
 export const fullTime = (at: DateTime.Utc, ctx: TimeContext) =>
   format(at, ctx, { dateStyle: "medium", timeStyle: "short" });

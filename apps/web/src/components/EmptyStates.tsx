@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Bot, EngineStatus } from "@j3-bots/contracts";
-import { useId, useState, type ReactNode } from "react";
-import { useI18n } from "../app/context";
+import type { Bot, EngineStatus, ProviderStatus } from "@j3-bots/contracts";
+import { CheckIcon, CopyIcon } from "lucide-react";
+import { useId, useRef, useState, type ReactNode } from "react";
+import { useI18n, usePresentation } from "../app/context";
+import { cn } from "../lib/cn";
+import { timeInSentence } from "../lib/time";
 import { BotAvatar } from "./BotAvatar";
 import { Button } from "./ui/button";
+import { Checkbox } from "./ui/checkbox";
 import { Kbd } from "./ui/kbd";
 
 const idle = { _tag: "idle" } as const;
@@ -39,12 +43,13 @@ function Heading({ title, body }: { title: string; body: string }) {
 interface FirstRunProps {
   /** Null until the server has reported it. */
   readonly engine: EngineStatus | null;
-  readonly onCreateBot: (name: string, primary: boolean) => void;
+  /** Resolves once the bot exists; the shell then opens its conversation. */
+  readonly onCreateBot: (name: string, primary: boolean) => Promise<void>;
 }
 
 /**
- * Before the first bot: checks that the engine runs and a provider is signed
- * in, then asks for a name. No settings form; the bot asks the rest itself.
+ * Before the first bot: checks that the engine runs and a provider is ready,
+ * then asks for a name. No settings form; the bot asks the rest itself.
  */
 export function FirstRun({ engine, onCreateBot }: FirstRunProps) {
   const { t } = useI18n();
@@ -82,19 +87,18 @@ export function FirstRun({ engine, onCreateBot }: FirstRunProps) {
       break;
   }
   if (!engine.providers.some((p) => p.status._tag === "ready")) {
+    const signIn = engine.providers.some((p) => p.status._tag === "sign-in-required");
     return (
       <Centered>
         <Ensemble />
-        <Heading title={t("firstRun.signIn.title")} body={t("firstRun.signIn.body")} />
-        <ul className="flex w-full max-w-xs flex-col gap-1 text-start text-sm">
+        {signIn ? (
+          <Heading title={t("firstRun.signIn.title")} body={t("firstRun.signIn.body")} />
+        ) : (
+          <Heading title={t("firstRun.unavailable.title")} body={t("firstRun.unavailable.body")} />
+        )}
+        <ul className="flex w-full max-w-sm flex-col gap-1.5 text-start text-sm">
           {engine.providers.map((provider) => (
-            <li
-              key={provider.id}
-              className="flex items-center justify-between rounded-md border border-border px-3 py-2"
-            >
-              <span>{provider.name}</span>
-              <span className="text-xs text-waiting">{t("firstRun.signIn.needed")}</span>
-            </li>
+            <ProviderRow key={provider.id} provider={provider} />
           ))}
         </ul>
       </Centered>
@@ -103,10 +107,82 @@ export function FirstRun({ engine, onCreateBot }: FirstRunProps) {
   return <CreateFirstBot onCreateBot={onCreateBot} />;
 }
 
+/** One provider: its name, its state in words, and the command that signs it in when it needs one. */
+function ProviderRow({ provider }: { provider: ProviderStatus }) {
+  const ctx = usePresentation();
+  const { t } = ctx.i18n;
+  const { status } = provider;
+  const [label, tone] = ((): readonly [string, string] => {
+    switch (status._tag) {
+      case "ready":
+        return [t("provider.ready"), "text-success"];
+      case "sign-in-required":
+        return [t("provider.signInRequired"), "text-waiting"];
+      case "limited":
+        return [
+          status.resetsAt === null
+            ? t("provider.limited")
+            : t("provider.limitedUntil", { when: timeInSentence(status.resetsAt, ctx) }),
+          "text-blocked",
+        ];
+      case "unavailable":
+        return [t("provider.unavailable"), "text-muted-foreground"];
+    }
+  })();
+  return (
+    <li className="flex flex-col gap-2 rounded-md border border-border px-3 py-2">
+      <span className="flex flex-wrap items-baseline justify-between gap-x-3">
+        <span>{provider.name}</span>
+        <span className={cn("text-xs", tone)}>{label}</span>
+      </span>
+      {status._tag === "sign-in-required" && (
+        <CommandLine
+          command={status.command}
+          copyLabel={t("firstRun.signIn.copy", { name: provider.name })}
+        />
+      )}
+    </li>
+  );
+}
+
+/** A shell command on one line, scrolled rather than wrapped, with a button that copies it. */
+function CommandLine({ command, copyLabel }: { command: string; copyLabel: string }) {
+  const { t } = useI18n();
+  const [copied, setCopied] = useState(false);
+  const codeRef = useRef<HTMLElement>(null);
+  return (
+    <span className="flex items-center gap-1 rounded-md bg-code-background ps-2.5">
+      <code
+        ref={codeRef}
+        className="min-w-0 flex-1 overflow-x-auto py-1.5 font-mono text-xs whitespace-pre"
+      >
+        {command}
+      </code>
+      <Button
+        variant="ghost-muted"
+        size="icon-sm"
+        aria-label={copied ? t("firstRun.signIn.copied") : copyLabel}
+        onClick={() => {
+          navigator.clipboard.writeText(command).then(
+            () => setCopied(true),
+            // Without clipboard access, select the command so it can be copied by hand.
+            () => {
+              if (codeRef.current) window.getSelection()?.selectAllChildren(codeRef.current);
+            },
+          );
+        }}
+      >
+        {copied ? <CheckIcon /> : <CopyIcon />}
+      </Button>
+    </span>
+  );
+}
+
 function CreateFirstBot({ onCreateBot }: Pick<FirstRunProps, "onCreateBot">) {
   const { t } = useI18n();
   const [name, setName] = useState("");
   const [primary, setPrimary] = useState(true);
+  const [state, setState] = useState<"editing" | "creating" | "failed">("editing");
   const inputId = useId();
   const trimmed = name.trim();
   return (
@@ -117,7 +193,12 @@ function CreateFirstBot({ onCreateBot }: Pick<FirstRunProps, "onCreateBot">) {
         className="flex w-full max-w-xs flex-col gap-3 text-start"
         onSubmit={(event) => {
           event.preventDefault();
-          if (trimmed !== "") onCreateBot(trimmed, primary);
+          if (trimmed === "" || state === "creating") return;
+          setState("creating");
+          onCreateBot(trimmed, primary).then(
+            () => setState("editing"),
+            () => setState("failed"),
+          );
         }}
       >
         <label htmlFor={inputId} className="sr-only">
@@ -129,20 +210,22 @@ function CreateFirstBot({ onCreateBot }: Pick<FirstRunProps, "onCreateBot">) {
           maxLength={40}
           onChange={(e) => setName(e.currentTarget.value)}
           placeholder={t("firstRun.create.placeholder")}
-          className="h-9 rounded-md border border-input bg-surface px-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-accent"
+          className="h-9 rounded-md border border-input bg-surface px-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:h-11"
         />
         <label className="flex items-start gap-2 text-xs text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={primary}
-            onChange={(e) => setPrimary(e.currentTarget.checked)}
-            className="mt-0.5 accent-foreground"
-          />
+          <span className="mt-px">
+            <Checkbox checked={primary} onCheckedChange={setPrimary} />
+          </span>
           <span>{t("firstRun.create.primary")}</span>
         </label>
-        <Button type="submit" variant="primary" disabled={trimmed === ""}>
+        <Button type="submit" variant="primary" disabled={trimmed === "" || state === "creating"}>
           {t("firstRun.create.submit")}
         </Button>
+        {state === "failed" && (
+          <p role="alert" className="text-xs text-blocked">
+            {t("firstRun.create.failed")}
+          </p>
+        )}
       </form>
     </Centered>
   );

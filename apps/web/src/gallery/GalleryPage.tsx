@@ -300,12 +300,13 @@ const timelineIntents: TimelineIntents = {
 };
 
 const workSteps = (entryId: string) => team.workSteps[entryId] ?? null;
+const notSubmitting = () => false;
 
 function BubblesSection() {
   const { bubbles } = variants;
   return (
     <Section title="Bubbles">
-      <Labeled label="Single bubbles: the operator, queued, cancelled, a bot with code, a bot with files">
+      <Labeled label="Single bubbles, with no tightened corner: the operator, queued, cancelled, a bot with code, a bot with files">
         <div className="flex flex-col gap-2">
           <MessageBubble entry={bubbles.operator} position="single" onOpenAttachment={nothing} />
           <MessageBubble entry={bubbles.pending} position="single" onOpenAttachment={nothing} />
@@ -320,6 +321,7 @@ function BubblesSection() {
             entries={team.entries[`bot:${ids.scout}`] ?? []}
             inRoom={false}
             workSteps={workSteps}
+            submitting={notSubmitting}
             intents={timelineIntents}
           />
         </div>
@@ -327,9 +329,10 @@ function BubblesSection() {
       <Labeled label="A room: each speaker named above their messages">
         <div className="max-w-(--layout-text-column)">
           <Timeline
-            entries={team.entries[`room:${ids.launch}`] ?? []}
+            entries={team.entries[`room:${ids.newsletter}`] ?? []}
             inRoom
             workSteps={workSteps}
+            submitting={notSubmitting}
             intents={timelineIntents}
           />
         </div>
@@ -341,17 +344,22 @@ function BubblesSection() {
 function CardsSection() {
   return (
     <Section title="Questions, approvals and credentials">
-      <Labeled label="Question: pending (tap an option), recommended and destructive options, a form, answered, dismissed, expired">
+      <Labeled label="Question: pending (tap an option), recommended and destructive options, a form of radio buttons, checkboxes and text, answered, dismissed, expired">
         <div className="flex flex-col gap-3">
           {variants.questions.map((entry) => (
             <QuestionCard key={entry.id} entry={entry} onAnswer={nothing} onDismiss={nothing} />
           ))}
         </div>
       </Labeled>
-      <Labeled label="Approval: a command with detail, a file change, allowed, denied, expired">
+      <Labeled label="Approval: a command showing everything it will do, a file change, a decision on its way, allowed (its detail folded), denied, expired">
         <div className="flex flex-col gap-3">
-          {variants.approvals.map((entry) => (
-            <ApprovalCard key={entry.id} entry={entry} onDecide={nothing} />
+          {variants.approvals.map((entry, index) => (
+            <ApprovalCard
+              key={entry.id}
+              entry={entry}
+              onDecide={nothing}
+              submitting={index === 2}
+            />
           ))}
         </div>
       </Labeled>
@@ -441,10 +449,11 @@ function ComposerDemo({ initial, recipient }: { initial: string; recipient: stri
 function ComposerSection() {
   return (
     <Section title="Conversation header and composer">
-      <Labeled label="Headers: a working bot (with Stop), a blocked bot, a room">
+      <Labeled label="Headers: a working bot (with Stop), a waiting bot (the line goes to the request), a blocked bot, a room">
         <div className="flex flex-col gap-2">
           {[
             { _tag: "bot", bot: team.bots.scout } as const,
+            { _tag: "bot", bot: team.bots.atlas } as const,
             { _tag: "bot", bot: team.bots.ledger } as const,
             { _tag: "room", room: team.room } as const,
           ].map((subject) => (
@@ -458,7 +467,8 @@ function ComposerSection() {
                 onToggleDetails={nothing}
                 onBack={nothing}
                 onStop={nothing}
-                stopShortcut={shortcuts.stop.label}
+                onGoToWaiting={nothing}
+                stopShortcut={shortcuts.stop}
               />
             </div>
           ))}
@@ -469,7 +479,7 @@ function ComposerSection() {
           <ComposerDemo initial="" recipient={team.bots.scout.profile.name} />
           <ComposerDemo
             initial={
-              "Look at how they handled account recovery too.\nAnd whether any of them dropped passwords entirely."
+              "Ask whether the photo can go on the website too.\nAnd keep the intro under 80 words."
             }
             recipient={team.room.name}
           />
@@ -555,6 +565,11 @@ function Frame({
   );
 }
 
+const signInCommands: Record<string, string> = {
+  "claude-code": "CLAUDE_CONFIG_DIR=~/.j3-bots/providers/claude claude",
+  codex: "CODEX_HOME=~/.j3-bots/providers/codex codex login",
+};
+
 const engines = {
   starting: null,
   down: { ...team.engine, state: { _tag: "unavailable" } },
@@ -563,30 +578,54 @@ const engines = {
     ...team.engine,
     providers: team.engine.providers.map((p) => ({
       ...p,
-      status: { _tag: "sign-in-required" } as const,
+      status: {
+        _tag: "sign-in-required",
+        command: signInCommands[p.harness] ?? p.harness,
+      } as const,
     })),
   },
-  ready: team.engine,
+  unusable: {
+    ...team.engine,
+    providers: team.engine.providers.map((p, index) => ({
+      ...p,
+      status:
+        index === 0
+          ? ({
+              _tag: "limited",
+              resetsAt: team.engine.providers[0]?.usage[0]?.resetsAt ?? null,
+            } as const)
+          : ({ _tag: "unavailable" } as const),
+    })),
+  },
 } as const;
+
+const created = () => Promise.resolve();
 
 function EmptyStatesSection() {
   return (
     <Section title="Empty states">
       <div className="flex flex-wrap gap-4">
         <Frame label="First run: connecting" width={340} height={360}>
-          <FirstRun engine={engines.starting} onCreateBot={nothing} />
+          <FirstRun engine={engines.starting} onCreateBot={created} />
         </Frame>
         <Frame label="First run: engine not running" width={340} height={360}>
-          <FirstRun engine={engines.down} onCreateBot={nothing} />
+          <FirstRun engine={engines.down} onCreateBot={created} />
         </Frame>
         <Frame label="First run: wrong engine version" width={340} height={360}>
-          <FirstRun engine={engines.incompatible} onCreateBot={nothing} />
+          <FirstRun engine={engines.incompatible} onCreateBot={created} />
         </Frame>
-        <Frame label="First run: sign in to a provider" width={340} height={360}>
-          <FirstRun engine={engines.signIn} onCreateBot={nothing} />
+        <Frame
+          label="First run: sign in to a provider, with the command for each"
+          width={400}
+          height={460}
+        >
+          <FirstRun engine={engines.signIn} onCreateBot={created} />
         </Frame>
-        <Frame label="No bots yet: meet the first one" width={340} height={420}>
-          <FirstRun engine={engines.ready} onCreateBot={nothing} />
+        <Frame label="First run: one provider limited, one unavailable" width={400} height={420}>
+          <FirstRun engine={engines.unusable} onCreateBot={created} />
+        </Frame>
+        <Frame label="No bots yet: creating one opens its conversation" width={760} height={480}>
+          <ShellFrame initial={null} firstRun />
         </Frame>
         <Frame label="Nothing selected" width={340} height={360}>
           <NoSelection nextShortcut={shortcuts.nextBot.label} />
@@ -614,11 +653,13 @@ const rowButton = (onClick: () => void) => <button type="button" onClick={onClic
 function ShellFrame({
   initial,
   details = false,
+  firstRun = false,
 }: {
   initial: RosterItemKey | null;
   details?: boolean;
+  firstRun?: boolean;
 }) {
-  const source = useSampleSource();
+  const source = useSampleSource({ firstRun });
   const [selected, setSelected] = useState(initial);
   const [detailsOpen, setDetailsOpen] = useState(details);
   return (
@@ -646,7 +687,7 @@ function ShellSection() {
           <ShellFrame initial={scout} details />
         </Frame>
         <Frame
-          label="Tablet, 900 px: the details lie over the conversation"
+          label="Tablet, 900 px: the details lie over the conversation, which is inert until they close"
           width={900}
           height={640}
         >
@@ -657,7 +698,7 @@ function ShellSection() {
             <ShellFrame initial={null} />
           </Frame>
           <Frame label="Phone: a conversation" width={390} height={760}>
-            <ShellFrame initial={{ _tag: "room", roomId: ids.launch }} />
+            <ShellFrame initial={{ _tag: "room", roomId: ids.newsletter }} />
           </Frame>
           <Frame label="Phone: details" width={390} height={760}>
             <ShellFrame initial={scout} details />
