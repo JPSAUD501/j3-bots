@@ -4,6 +4,7 @@ import {
   cardAction,
   createJ3Client,
   type Draft,
+  type DraftChangedElsewhere,
   type J3Client,
   type Loaded,
   retryAction,
@@ -221,12 +222,13 @@ function LiveShell({ children }: { children: ReactNode }) {
     setNotice((previous) => ({ id: (previous?.id ?? 0) + 1, text, action }));
 
   // Another tab sent or changed a draft under this one: this tab shows it as
-  // stored, and the operator decides whether their text goes back in.
-  const changedElsewhere = useEffectEvent((asked: EntryTarget) =>
-    say(t("composer.changedElsewhere"), {
-      label: t("composer.restoreMine"),
-      run: () => j3.restoreDraft(asked),
-    }),
+  // stored, and when this tab held text the device never kept, the operator
+  // decides whether it goes back in.
+  const changedElsewhere = useEffectEvent(({ target: asked, restorable }: DraftChangedElsewhere) =>
+    say(
+      t("composer.changedElsewhere"),
+      restorable ? { label: t("composer.restoreMine"), run: () => j3.restoreDraft(asked) } : null,
+    ),
   );
   useEffect(() => j3.onDraftChangedElsewhere(changedElsewhere), [j3]);
 

@@ -41,8 +41,9 @@ export interface Draft {
   readonly text: string;
   readonly files: ReadonlyArray<DraftFile>;
   /**
-   * `send` is moving it to the outbox, which takes a few milliseconds. It
-   * takes no change meanwhile: what it holds is what goes.
+   * The operator pressed Send and `send` is moving it to the outbox, which
+   * takes a few milliseconds. It takes no change meanwhile: what it holds is
+   * what goes.
    */
   readonly sending: boolean;
 }
@@ -53,7 +54,7 @@ const empty: Draft = { text: "", files: [], sending: false };
 export type DraftSendResult =
   /** It is on its way, through the outbox. */
   | "sent"
-  /** There was nothing to send. */
+  /** There was nothing to send, or it is already on its way. */
   | "empty"
   /** A file is still uploading or could not be attached. */
   | "not-ready"
@@ -66,6 +67,17 @@ export type DraftSendResult =
    * was sent, and the draft now shows what the device keeps.
    */
   | "changed-elsewhere";
+
+/** A draft another window sent or changed under this one. */
+export interface DraftChangedElsewhere {
+  readonly target: EntryTarget;
+  /**
+   * This window held text the device never kept, which `restore` puts back.
+   * Text the device kept, the other window had in front of it when it sent
+   * or changed the draft, so there is nothing to put back.
+   */
+  readonly restorable: boolean;
+}
 
 /**
  * A draft as the device keeps it: the text and the files already on the
@@ -96,18 +108,46 @@ const localFileOf = (file: DraftFile): LocalFile =>
 
 const isEmpty = (draft: Draft) => draft.text === "" && draft.files.length === 0;
 
+/** What the device keeps of a draft: its text and the files already on the server. */
+interface Kept {
+  readonly text: string;
+  readonly files: ReadonlyArray<Attachment>;
+}
+
+const keptOf = (draft: Draft): Kept => ({
+  text: draft.text,
+  files: draft.files.flatMap((file) => (file._tag === "ready" ? [file.attachment] : [])),
+});
+
+const sameKept = (one: Kept, other: Kept) =>
+  one.text === other.text &&
+  one.files.length === other.files.length &&
+  one.files.every((file, index) => file.id === other.files[index]?.id);
+
+/** The draft a stored record holds: an empty one for no record, `undefined` for one it cannot read. */
+const keptIn = (record: string | undefined): Kept | undefined =>
+  record === undefined ? keptOf(empty) : Option.getOrUndefined(decodeStored(record));
+
 /** A draft as the device keeps it, as this window shows it. */
-const shown = (stored: typeof StoredDraft.Type): Draft => ({
-  text: stored.text,
-  files: stored.files.map((attachment) => ({ _tag: "ready", key: attachment.id, attachment })),
+const shown = (kept: Kept): Draft => ({
+  text: kept.text,
+  files: kept.files.map((attachment) => ({ _tag: "ready", key: attachment.id, attachment })),
   sending: false,
 });
 
 /**
  * Every conversation's draft, kept on the device so a reload loses nothing:
- * its text, and the files already uploaded for it. A file still uploading is
- * kept only in memory. Files upload as soon as they are attached; the draft
- * can be sent once they all have.
+ * its text, and the files already uploaded for it. Files upload as soon as
+ * they are attached; the draft can be sent once they all have.
+ *
+ * One rule keeps a draft whole when several windows hold it. Every operation
+ * on a draft (autosave, deletion, Send, Restore) runs under that draft's lock
+ * and reads its inputs, both the in-memory draft and the expected stored
+ * revision, only after acquiring the lock. Send commits exactly the text and
+ * files the operator pressed Send on, captured at the press, or nothing. Only
+ * what is persisted is ever written: upload progress and failed files live in
+ * memory only. The lock is this window's own; between windows, the stored
+ * revision each write claims decides.
  */
 export class Drafts extends Context.Service<
   Drafts,
@@ -130,16 +170,18 @@ export class Drafts extends Context.Service<
     /**
      * Moves the draft to the outbox in one storage transaction, so a crash
      * leaves it in exactly one of them, and sending twice sends once: the
-     * second finds the draft empty. The transaction claims the draft as this
+     * second finds the draft already on its way. What goes is the draft as it
+     * was at the call, or nothing. The transaction claims the draft as this
      * window last read or wrote it, so two windows never send it twice.
      */
     readonly send: (target: EntryTarget, mentions?: Mentions) => Effect.Effect<DraftSendResult>;
     /**
      * Each draft another window sent or changed while this one was changing
      * or sending it. Nothing this window held was written: it now shows the
-     * draft as the device keeps it, and `restore` puts its text back.
+     * draft as the device keeps it, with its own files still uploading or
+     * refused, and `restore` puts back text the device never kept.
      */
-    readonly changedElsewhere: Stream.Stream<EntryTarget>;
+    readonly changedElsewhere: Stream.Stream<DraftChangedElsewhere>;
     /**
      * Puts back the text this window held when another window changed the
      * draft, as a new change to the draft as it is now.
@@ -173,7 +215,7 @@ export const layer = Layer.effect(
         ),
       );
     const restored = new Map<string, Draft>();
-    // Each draft as the device keeps it, by key, as this window last read or wrote it.
+    // Each draft's stored record, by key, as this window last read or wrote it.
     const known = new Map<string, string>();
     for (const [key, value] of stored) {
       // Even a record this window cannot read is the one its next write claims.
@@ -183,23 +225,22 @@ export const layer = Layer.effect(
     }
     const state = new Cell<ReadonlyMap<string, Draft>>(restored);
     const uploads = new Map<string, Fiber.Fiber<void>>();
-    // The text this window held when another window changed its draft, by key.
+    // Text this window held, never kept, when another window changed its draft, by key.
     const displaced = new Map<string, string>();
-    const changes = yield* PubSub.unbounded<EntryTarget>();
+    const changes = yield* PubSub.unbounded<DraftChangedElsewhere>();
     let nextKey = 0;
 
-    // Writes go through one writer that always writes the latest draft of each
+    // The lock every operation on a draft holds. One guards all of this
+    // window's drafts: each operation takes a few milliseconds.
+    const lock = yield* Semaphore.make(1);
+    const locked = lock.withPermits(1);
+
+    // Autosave goes through one writer that writes the latest draft of each
     // key, so a burst of keystrokes costs a few writes, never a queue of them.
     // Each write claims the draft as this window last read or wrote it, as
-    // `send` does, and the two take turns: a window never writes over what
-    // another window sent or changed.
-    const turn = yield* Semaphore.make(1);
+    // `send` does: a window never writes over what another window sent or changed.
     const unwritten = new Map<string, EntryTarget>();
     const wake = yield* Queue.sliding<void>(1);
-    const persisted = (draft: Draft) => ({
-      text: draft.text,
-      files: draft.files.flatMap((file) => (file._tag === "ready" ? [file.attachment] : [])),
-    });
     const revision = random.randomBytes(12).pipe(Effect.map(Base64Url.encode));
 
     /** Shows `draft` as the draft of `key`. */
@@ -212,20 +253,31 @@ export const layer = Layer.effect(
 
     /**
      * Shows the draft of `target` as the device keeps it, after another window
-     * sent or changed it, and keeps the text this window held for `restore`.
+     * sent or changed it, with this window's files that were never kept on
+     * top. Keeps the text this window held for `restore` when the device never
+     * kept it. Runs under the lock.
      */
     const reload = (target: EntryTarget) => {
       const key = targetKey(target);
       return storage.readAll("drafts").pipe(
         Effect.flatMap((records) => {
           const value = records.get(key);
-          displaced.set(key, (state.get().get(key) ?? empty).text);
+          const held = state.get().get(key) ?? empty;
+          const stored = shown(keptIn(value) ?? keptOf(empty));
+          const restorable =
+            held.text !== "" &&
+            held.text !== stored.text &&
+            held.text !== keptIn(known.get(key))?.text;
+          if (restorable) displaced.set(key, held.text);
+          else displaced.delete(key);
           unwritten.delete(key);
           if (value === undefined) known.delete(key);
           else known.set(key, value);
-          const draft = value === undefined ? Option.none() : decodeStored(value);
-          show(key, Option.isSome(draft) ? shown(draft.value) : empty);
-          return PubSub.publish(changes, target);
+          show(key, {
+            ...stored,
+            files: [...stored.files, ...held.files.filter((file) => file._tag !== "ready")],
+          });
+          return PubSub.publish(changes, { target, restorable });
         }),
         Effect.catchTag("LocalStorageError", (error) =>
           Effect.logWarning("A draft another window changed could not be read", error).pipe(
@@ -237,39 +289,44 @@ export const layer = Layer.effect(
       );
     };
 
-    const writeOne = (target: EntryTarget) => {
-      const key = targetKey(target);
-      const record = persisted(state.get().get(key) ?? empty);
-      const write = Effect.gen(function* () {
+    /** Writes the draft of `target` as it is now, unless the device keeps it so already. Runs under the lock. */
+    const writeOne = Effect.fn("Drafts.write")(
+      function* (target: EntryTarget) {
+        const key = targetKey(target);
+        const record = keptOf(state.get().get(key) ?? empty);
+        const expected = known.get(key);
+        const stored = keptIn(expected);
+        if (stored !== undefined && sameKept(record, stored)) return;
         const value =
           record.text === "" && record.files.length === 0
             ? null
             : yield* encodeStored({ revision: yield* revision, ...record });
         const claimed = yield* storage.commit(
           [{ table: "drafts", key, value }],
-          [{ table: "drafts", key, value: known.get(key) ?? null }],
+          [{ table: "drafts", key, value: expected ?? null }],
         );
         if (!claimed) return yield* reload(target);
         if (value === null) known.delete(key);
         else known.set(key, value);
-      });
-      return write.pipe(
-        Effect.catchTags({
-          LocalStorageError: (error) => Effect.logWarning("A draft is kept in memory only", error),
-          SchemaError: (error) => Effect.logError("A draft could not be encoded", error),
-        }),
-      );
-    };
+      },
+      Effect.catchTags({
+        LocalStorageError: (error) => Effect.logWarning("A draft is kept in memory only", error),
+        SchemaError: (error) => Effect.logError("A draft could not be encoded", error),
+      }),
+    );
     yield* Effect.gen(function* () {
       while (true) {
         yield* Queue.take(wake);
         const targets = [...unwritten.values()];
         unwritten.clear();
-        for (const target of targets) yield* turn.withPermits(1)(writeOne(target));
+        for (const target of targets) yield* locked(writeOne(target));
       }
     }).pipe(Effect.forkIn(scope));
 
-    /** Changes one draft at once, unless it is `sending`, and has the writer keep it. */
+    /**
+     * Changes one draft in memory at once, unless it is `sending`, and has the
+     * writer keep it when what the device keeps of it changed.
+     */
     const changeNow = (target: EntryTarget, update: (draft: Draft) => Draft) => {
       const key = targetKey(target);
       const before = state.get().get(key) ?? empty;
@@ -277,6 +334,7 @@ export const layer = Layer.effect(
       const after = update(before);
       if (after === before) return;
       show(key, after);
+      if (sameKept(keptOf(before), keptOf(after))) return;
       unwritten.set(key, target);
       Queue.offerUnsafe(wake, void 0);
     };
@@ -301,13 +359,15 @@ export const layer = Layer.effect(
     const setText = (target: EntryTarget, text: string) => change(target, withText(text));
 
     const restore = (target: EntryTarget) =>
-      Effect.sync(() => {
-        const key = targetKey(target);
-        const text = displaced.get(key);
-        if (text === undefined || state.get().get(key)?.sending === true) return;
-        displaced.delete(key);
-        changeNow(target, withText(text));
-      });
+      locked(
+        Effect.sync(() => {
+          const key = targetKey(target);
+          const text = displaced.get(key);
+          if (text === undefined || state.get().get(key)?.sending === true) return;
+          displaced.delete(key);
+          changeNow(target, withText(text));
+        }),
+      );
 
     const attach = Effect.fn("Drafts.attach")(function* (
       target: EntryTarget,
@@ -389,17 +449,21 @@ export const layer = Layer.effect(
 
     const send = Effect.fn("Drafts.send")(function* (target: EntryTarget, mentions?: Mentions) {
       const key = targetKey(target);
-      return yield* turn.withPermits(1)(
+      // What the operator pressed Send on, captured at the press.
+      const draft = state.get().get(key) ?? empty;
+      if (draft.sending) return "empty";
+      if (draft.files.some((file) => file._tag !== "ready")) return "not-ready";
+      const text = draft.text.trim();
+      const { files: attachments } = keptOf(draft);
+      if (text === "" && attachments.length === 0) return "empty";
+      if (text.length > MAX_MESSAGE_LENGTH) return "too-long";
+      const pressed: Draft = { ...draft, sending: true };
+      show(key, pressed);
+      return yield* locked(
         Effect.gen(function* () {
-          const draft = state.get().get(key) ?? empty;
-          if (draft.files.some((file) => file._tag !== "ready")) return "not-ready";
-          const text = draft.text.trim();
-          const attachments = draft.files.flatMap((file) =>
-            file._tag === "ready" ? [file.attachment] : [],
-          );
-          if (text === "" && attachments.length === 0) return "empty";
-          if (text.length > MAX_MESSAGE_LENGTH) return "too-long";
-          show(key, { ...draft, sending: true });
+          // A sending draft takes no change, so only another window's change
+          // replaces it, and the notice of that change says why nothing went.
+          if (state.get().get(key) !== pressed) return "changed-elsewhere";
           // The outbox holds the message from here; its delivery outlives the caller.
           const kept = yield* conversations
             .enqueue(
@@ -433,7 +497,7 @@ export const layer = Layer.effect(
       );
     });
 
-    const discardAll = turn.withPermits(1)(
+    const discardAll = locked(
       Effect.gen(function* () {
         const running = [...uploads.values()];
         uploads.clear();

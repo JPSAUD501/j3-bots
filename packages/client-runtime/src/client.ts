@@ -171,8 +171,10 @@ export interface J3Client {
    * Calls `listener` for each draft another window sent or changed under this
    * one; see `Drafts.changedElsewhere`. Returns the function that stops it.
    */
-  readonly onDraftChangedElsewhere: (listener: (target: EntryTarget) => void) => () => void;
-  /** Puts back the text this window held when another window changed the draft. */
+  readonly onDraftChangedElsewhere: (
+    listener: (change: Drafts.DraftChangedElsewhere) => void,
+  ) => () => void;
+  /** Puts back the text this window held, never kept, when another window changed the draft. */
   readonly restoreDraft: (target: EntryTarget) => void;
   /** A file's bytes, with this device's credential. */
   readonly download: (attachment: Attachment) => Promise<DownloadResult>;
@@ -334,7 +336,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     detachFile: (target, key) => fire(services.drafts.detach(target, key)),
     sendDraft: (target) => run.promise(services.drafts.send(target)),
     onDraftChangedElsewhere: (listener) => listen(services.drafts.changedElsewhere, listener),
-    restoreDraft: (target) => run.sync(services.drafts.restore(target)),
+    restoreDraft: (target) => fire(services.drafts.restore(target)),
     download: (attachment) =>
       run.promise(
         services.files.download(attachment).pipe(

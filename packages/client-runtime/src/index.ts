@@ -73,7 +73,12 @@ export {
 } from "./stores/Conversations.ts";
 export { type BotDraft, freshStartAction } from "./stores/Details.ts";
 export { Devices, type RevokeResult } from "./stores/Devices.ts";
-export { type Draft, type DraftFile, type DraftSendResult } from "./stores/Drafts.ts";
+export {
+  type Draft,
+  type DraftChangedElsewhere,
+  type DraftFile,
+  type DraftSendResult,
+} from "./stores/Drafts.ts";
 export { EngineStatus } from "./stores/EngineStatus.ts";
 export { Presence } from "./stores/Presence.ts";
 export type { Loaded } from "./stores/reads.ts";

@@ -292,6 +292,7 @@ const whenStored = (
 
 const present = (record: string | undefined) => record !== undefined;
 const absent = (record: string | undefined) => record === undefined;
+const holds = (text: string) => (record: string | undefined) => record?.includes(text) === true;
 
 const isConnected = (state: ConnectionState) => state._tag === "connected";
 
@@ -923,7 +924,10 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
             // The second tab still shows the draft as it read it, and goes on writing.
             yield* two.setText(first.target, "as read, and more");
 
-            assert.deepStrictEqual(yield* Fiber.join(noticed), Option.some(first.target));
+            assert.deepStrictEqual(
+              yield* Fiber.join(noticed),
+              Option.some({ target: first.target, restorable: true }),
+            );
             assert.isUndefined(two.state.get().get(key));
             yield* whenStored(device.storage, "drafts", key, absent);
             assert.strictEqual((yield* outbox).size, 1);
@@ -957,8 +961,6 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         return { target, credential: yield* savedCredential };
       }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
       const key = targetKey(first.target);
-      const holds = (text: string) => (record: string | undefined) =>
-        record?.includes(text) === true;
 
       yield* Effect.gen(function* () {
         const one = yield* Drafts;
@@ -972,11 +974,168 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
           yield* two.setText(first.target, "shared, from two");
 
-          assert.deepStrictEqual(yield* Fiber.join(noticed), Option.some(first.target));
+          assert.deepStrictEqual(
+            yield* Fiber.join(noticed),
+            Option.some({ target: first.target, restorable: true }),
+          );
           assert.strictEqual(two.state.get().get(key)?.text, "shared, from one");
           yield* whenStored(device.storage, "drafts", key, holds("from one"));
           yield* two.restore(first.target);
           yield* whenStored(device.storage, "drafts", key, holds("from two"));
+        }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+      }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+    }),
+  );
+
+  it.effect("sends nothing when another tab's change replaces the draft while Send waits", () =>
+    Effect.gen(function* () {
+      const commitGate = yield* Latch.make(true);
+      const committing = yield* Queue.unbounded<void>();
+      const device = TestPlatform.makeDevice({ commitGate, committing });
+      const first = yield* Effect.gen(function* () {
+        yield* pairAndConnect;
+        const target: EntryTarget = { _tag: "conversation", botId: yield* createBot("Rivals") };
+        yield* (yield* Drafts).setText(target, "shared");
+        yield* whenStored(device.storage, "drafts", targetKey(target), present);
+        return { target, credential: yield* savedCredential };
+      }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
+      const key = targetKey(first.target);
+
+      yield* Effect.gen(function* () {
+        const one = yield* Drafts;
+        yield* Effect.gen(function* () {
+          const two = yield* Drafts;
+          yield* one.setText(first.target, "shared, from one");
+          yield* whenStored(device.storage, "drafts", key, holds("from one"));
+          const noticed = yield* Stream.runHead(two.changedElsewhere).pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+
+          // The second tab's autosave holds the draft, waiting on the device, as Send is pressed.
+          yield* commitGate.close;
+          yield* Queue.clear(committing);
+          yield* two.setText(first.target, "shared, from two");
+          yield* Queue.take(committing);
+          const sending = yield* two
+            .send(first.target)
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* commitGate.open;
+
+          assert.strictEqual(yield* Fiber.join(sending), "changed-elsewhere");
+          assert.deepStrictEqual(
+            yield* Fiber.join(noticed),
+            Option.some({ target: first.target, restorable: true }),
+          );
+          assert.strictEqual(two.state.get().get(key)?.text, "shared, from one");
+          assert.strictEqual((yield* device.storage.readAll("outbox").pipe(Effect.orDie)).size, 0);
+          yield* whenStored(device.storage, "drafts", key, holds("from one"));
+        }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+      }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+    }),
+  );
+
+  it.effect("never writes back a draft Send moved while its autosave waited", () =>
+    Effect.gen(function* () {
+      const commitGate = yield* Latch.make(true);
+      const device = TestPlatform.makeDevice({ commitGate });
+      yield* Effect.gen(function* () {
+        yield* pairAndConnect;
+        const drafts = yield* Drafts;
+        const target: EntryTarget = { _tag: "conversation", botId: yield* createBot("Hasty") };
+        const later: EntryTarget = { _tag: "conversation", botId: yield* createBot("Later") };
+
+        yield* commitGate.close;
+        yield* drafts.setText(target, "typed and sent at once");
+        const sending = yield* drafts
+          .send(target)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* commitGate.open;
+        assert.strictEqual(yield* Fiber.join(sending), "sent");
+        yield* Queue.take((yield* Fakes).sends);
+
+        // Drafts are kept one after another: once a later one is, the sent one had its turn.
+        yield* drafts.setText(later, "afterwards");
+        yield* whenStored(device.storage, "drafts", targetKey(later), present);
+        const stored = yield* device.storage.readAll("drafts").pipe(Effect.orDie);
+        assert.isUndefined(stored.get(targetKey(target)));
+        assert.isUndefined(drafts.state.get().get(targetKey(target)));
+      }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
+    }),
+  );
+
+  it.effect("keeps a file still uploading when another tab changes the draft", () =>
+    Effect.gen(function* () {
+      const device = TestPlatform.makeDevice();
+      const first = yield* Effect.gen(function* () {
+        yield* pairAndConnect;
+        const target: EntryTarget = { _tag: "conversation", botId: yield* createBot("Uploader") };
+        yield* (yield* Drafts).setText(target, "shared");
+        yield* whenStored(device.storage, "drafts", targetKey(target), present);
+        return { target, credential: yield* savedCredential };
+      }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
+      const key = targetKey(first.target);
+
+      yield* Effect.gen(function* () {
+        const one = yield* Drafts;
+        yield* Effect.gen(function* () {
+          const two = yield* Drafts;
+          yield* one.setText(first.target, "shared, from one");
+          yield* whenStored(device.storage, "drafts", key, holds("from one"));
+          const noticed = yield* Stream.runHead(two.changedElsewhere).pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+
+          yield* two.attach(first.target, [
+            { name: "slow.txt", body: new Blob(["slow"], { type: "text/plain" }) },
+          ]);
+          yield* two.setText(first.target, "shared, from two");
+
+          const notice = yield* Fiber.join(noticed);
+          const shown = two.state.get().get(key);
+          assert.strictEqual(shown?.text, "shared, from one");
+          assert.deepStrictEqual(
+            shown?.files.map((file) => [file._tag, file._tag === "ready" ? null : file.name]),
+            [["uploading", "slow.txt"]],
+          );
+          assert.deepStrictEqual(notice, Option.some({ target: first.target, restorable: true }));
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(client(first.credential, device, neverAnswers(HTTP_PATHS.attachments))),
+        );
+      }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+    }),
+  );
+
+  it.effect("offers no restore when this tab held only what the device kept", () =>
+    Effect.gen(function* () {
+      const device = TestPlatform.makeDevice();
+      const first = yield* Effect.gen(function* () {
+        yield* pairAndConnect;
+        const target: EntryTarget = { _tag: "conversation", botId: yield* createBot("Settled") };
+        yield* (yield* Drafts).setText(target, "shared");
+        yield* whenStored(device.storage, "drafts", targetKey(target), present);
+        return { target, credential: yield* savedCredential };
+      }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
+      const key = targetKey(first.target);
+
+      yield* Effect.gen(function* () {
+        const one = yield* Drafts;
+        yield* Effect.gen(function* () {
+          const two = yield* Drafts;
+          yield* one.setText(first.target, "shared, from one");
+          yield* whenStored(device.storage, "drafts", key, holds("from one"));
+          const noticed = yield* Stream.runHead(two.changedElsewhere).pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+
+          assert.strictEqual(yield* two.send(first.target), "changed-elsewhere");
+          const notice = yield* Fiber.join(noticed);
+
+          // Restoring would put back what the other tab replaced.
+          yield* two.restore(first.target);
+          assert.strictEqual(two.state.get().get(key)?.text, "shared, from one");
+          assert.deepStrictEqual(notice, Option.some({ target: first.target, restorable: false }));
+          assert.strictEqual((yield* device.storage.readAll("outbox").pipe(Effect.orDie)).size, 0);
         }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
       }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
     }),

@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -91,6 +92,8 @@ interface StorageOptions {
   readonly refuseClears?: boolean;
   /** Holds every transaction until the latch opens. */
   readonly commitGate?: Latch.Latch;
+  /** Receives one item as each transaction starts, before the gate. */
+  readonly committing?: Queue.Queue<void>;
 }
 
 /** The device's storage for drafts and unsent messages, in memory. */
@@ -111,7 +114,11 @@ const makeStorage = (options: StorageOptions) => {
     commit: (changes, expected = []) =>
       options.refuseCommits === true
         ? Effect.fail(new LocalStorageError({ operation: "write" }))
-        : (options.commitGate?.await ?? Effect.void).pipe(
+        : (options.committing === undefined
+            ? Effect.void
+            : Queue.offer(options.committing, undefined)
+          ).pipe(
+            Effect.andThen(options.commitGate?.await ?? Effect.void),
             Effect.andThen(
               Effect.sync(() => {
                 const holds = expected.every(
