@@ -53,7 +53,9 @@ export const EngineRequest = Schema.Union([
     kind: ApprovalEntry.fields.kind,
     action: ApprovalEntry.fields.action,
     detail: ApprovalEntry.fields.detail,
-    allowsSession: ApprovalEntry.fields.allowsSession,
+    reason: ApprovalEntry.fields.reason,
+    exact: ApprovalEntry.fields.exact,
+    sessionGrant: ApprovalEntry.fields.sessionGrant,
   }),
   /**
    * The harness's own question tool, not the bot's `ask`. Question and option
@@ -344,6 +346,19 @@ export const SessionEvent = Schema.Union([
   }),
   /** The turn is held on the operator. */
   Schema.TaggedStruct("request-opened", { ...at, open: OpenRequest }),
+  /**
+   * What an open request shows changed while it still waits on the operator:
+   * the engine's record of it reached the adapter after it opened, such as a
+   * file change's diff, which the adapter fetches apart. The server replaces
+   * the card it shows; the request and an answer already on its way stay the
+   * same. Never sent for a request that has closed.
+   */
+  Schema.TaggedStruct("request-updated", {
+    ...at,
+    requestId: RequestId,
+    turnId: TurnId,
+    request: EngineRequest,
+  }),
   Schema.TaggedStruct("request-closed", {
     ...at,
     requestId: RequestId,

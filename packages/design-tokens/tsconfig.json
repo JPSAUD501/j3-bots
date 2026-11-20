@@ -1,0 +1,20 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        // Severities deep-merge with tsconfig.effect.json. The generator and its
+        // test are plain Node scripts that read and write one file.
+        "overrides": [
+          {
+            "include": ["scripts/*.ts", "**/*.test.ts"],
+            "options": { "diagnosticSeverity": { "nodeBuiltinImport": "off" } }
+          }
+        ]
+      }
+    ]
+  },
+  "include": ["src", "scripts"]
+}

@@ -23,7 +23,9 @@ const REQUESTS = {
     kind: "file-change",
     action: "Write notes.txt",
     detail: null,
-    allowsSession: false,
+    reason: null,
+    exact: false,
+    sessionGrant: null,
   }),
   question: request({
     _tag: "question",

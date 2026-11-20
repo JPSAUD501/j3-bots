@@ -1,0 +1,143 @@
+@import "tailwindcss";
+@import "@j3-bots/design-tokens/web.css";
+
+/* Either theme class can be set on any element; the nearest one wins. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
+    line-height: var(--text-base--line-height);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  *,
+  ::before,
+  ::after {
+    border-color: var(--border);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--accent) 24%, transparent);
+  }
+
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+/*
+ * Avatar motion. A state change plays once; the two working states keep a slow,
+ * stepped motion that changes the picture a few times per second, never every
+ * frame. Reduced motion and still avatars keep only the mark's form.
+ */
+@layer components {
+  .avatar :where(.avatar-breathe, .avatar-spin, .avatar-mark-in, .avatar-nudge) {
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+
+  .avatar-breathe {
+    animation: avatar-breathe var(--avatar-breathe-period) steps(var(--avatar-breathe-steps))
+      infinite;
+  }
+
+  .avatar-spin {
+    animation: avatar-spin var(--avatar-spin-period) steps(var(--avatar-spin-steps)) infinite;
+  }
+
+  .avatar-mark-in {
+    animation: avatar-mark-in var(--duration-state) var(--ease-standard);
+  }
+
+  .avatar-nudge {
+    animation: avatar-nudge var(--duration-slow) var(--ease-standard);
+  }
+
+  .avatar[data-still] * {
+    animation: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .avatar * {
+      animation: none;
+    }
+  }
+}
+
+@keyframes avatar-breathe {
+  0%,
+  100% {
+    transform: scale(0.72);
+  }
+  50% {
+    transform: scale(1);
+  }
+}
+
+@keyframes avatar-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes avatar-mark-in {
+  from {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+}
+
+@keyframes avatar-nudge {
+  50% {
+    transform: scale(1.08);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    transition-duration: 0s !important;
+    animation-duration: 0s !important;
+  }
+}
+
+/*
+ * A code block that scrolls, showing where more lies: a soft shade at each edge
+ * with hidden lines past it. Covers in the block's own colour scroll with the
+ * content and hide the shade at an end already reached, so it needs no script
+ * and still shows on touch screens, which hide scroll bars. The block's colour is
+ * translucent, so each cover is drawn twice: the card's surface, then the code
+ * colour over it.
+ */
+@utility code-scroll-shade {
+  --shade: color-mix(in oklab, var(--foreground) 18%, transparent);
+  background:
+    linear-gradient(var(--code-background) 30%, transparent) top / 100% 1.5rem no-repeat local,
+    linear-gradient(var(--surface) 30%, transparent) top / 100% 1.5rem no-repeat local,
+    linear-gradient(transparent, var(--code-background) 70%) bottom / 100% 1.5rem no-repeat local,
+    linear-gradient(transparent, var(--surface) 70%) bottom / 100% 1.5rem no-repeat local,
+    radial-gradient(farthest-side at 50% 0, var(--shade), transparent) top / 100% 0.625rem no-repeat
+      scroll,
+    radial-gradient(farthest-side at 50% 100%, var(--shade), transparent) bottom / 100% 0.625rem
+      no-repeat scroll,
+    var(--code-background);
+}

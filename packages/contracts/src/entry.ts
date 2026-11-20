@@ -156,16 +156,85 @@ export type QuestionEntry = typeof QuestionEntry.Type;
 export const ApprovalDecision = Schema.Literals(["allow-once", "allow-session", "deny"]);
 export type ApprovalDecision = typeof ApprovalDecision.Type;
 
+/** The most an approval's action or detail carries. */
+export const APPROVAL_TEXT_LENGTH = 100_000;
+
+/**
+ * Text an approval shows as given, whitespace and all: never trimmed, so a
+ * command's indentation and a diff's context lines reach the operator intact.
+ * Never blank, and it ends with no line break.
+ */
+const ApprovalText = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(APPROVAL_TEXT_LENGTH),
+  Schema.isPattern(/\S/),
+  Schema.isPattern(/[^\r\n]$/),
+);
+
+/**
+ * An exact file change's text, with what the change does to the file, which
+ * decides what the text is:
+ * - `update`: the file changes in place, or moves; `text` is a unified diff.
+ * - `add`: a new file; `text` is its contents.
+ * - `delete`: the file goes; `text` is the contents it had.
+ * - `null`: the engine did not say; `text` is shown as the provider gave it.
+ *
+ * Only a `update` is read as a diff: the contents of a file can start lines
+ * with `+` or `-` too.
+ */
+export const ApprovalChange = Schema.Struct({
+  operation: Schema.NullOr(Schema.Literals(["add", "delete", "update"])),
+  text: ApprovalText,
+});
+export type ApprovalChange = typeof ApprovalChange.Type;
+
+/**
+ * What a grant for the session allows without asking again, for the rest of
+ * the session, as the provider applies it: every later request of that kind,
+ * whatever it runs or changes.
+ */
+export const SessionGrant = Schema.Struct({
+  covers: Schema.Literals(["every-command", "every-file-change"]),
+});
+export type SessionGrant = typeof SessionGrant.Type;
+
 /** The engine holds a running turn on it. It expires when that turn ends. */
 export const ApprovalEntry = Schema.TaggedStruct("approval", {
   ...entry,
   kind: Schema.Literals(["command", "file-change", "file-read", "tool", "other"]),
-  /** The exact action, in one line: the command, the file, the tool. */
-  action: Label,
-  /** The full command or change, when the one line cannot hold it. */
-  detail: Schema.NullOr(Schema.String.check(Schema.isMaxLength(20_000))),
-  /** Whether "Allow for session" is offered. */
-  allowsSession: Schema.Boolean,
+  /**
+   * What the operator decides on. When `exact`, the engine's own record of it:
+   * the whole command, every line; or the changed files' paths, one per line.
+   * Otherwise the provider's summary of it, which may leave things out. The
+   * card always shows it.
+   */
+  action: ApprovalText,
+  /**
+   * Only with an exact file change of one file: the change, as the engine
+   * gives it. Null otherwise.
+   */
+  detail: Schema.NullOr(ApprovalChange),
+  /**
+   * Why the bot or its provider asks, such as the escalation a sandboxed
+   * command needs. Never the action itself. Null when nothing was said.
+   */
+  reason: Schema.NullOr(
+    Schema.String.check(Schema.isMinLength(1), Schema.isTrimmed(), Schema.isMaxLength(2_000)),
+  ),
+  /**
+   * Whether `action` and `detail` are exactly what will run or change, taken
+   * from the engine's structured record. False when the provider shared only a
+   * summary: the card says so, shows it as prose, and offers no grant for the
+   * session, so nothing unseen is allowed beyond this once.
+   */
+  exact: Schema.Boolean,
+  /**
+   * What "Allow for session" would allow from then on, when the card offers
+   * it: only when `exact`, and the provider takes such a grant for this
+   * approval and its scope is known. Null otherwise, and always for a summary,
+   * since a grant allows again what nobody has seen exactly.
+   */
+  sessionGrant: Schema.NullOr(SessionGrant),
   status: Schema.Union([
     Schema.TaggedStruct("pending", {}),
     Schema.TaggedStruct("decided", { decision: ApprovalDecision }),

@@ -74,8 +74,9 @@ import { toolInputDigest } from "../toolCaller.ts";
 // queue holds reported once per edge, including one the engine puts back on a
 // resume; turns that fail before they start; `j3` tool calls the engine records
 // after the bridge sees them; usage-limit continuations; requests that expire
-// with their turn; host speech; replies lost after a command was applied;
-// staged files that expire; synchronization markers; and resume by cursor with
+// with their turn, and whose card can change while they are open; host
+// speech; replies lost after a command was applied; staged files that expire;
+// synchronization markers; and resume by cursor with
 // replay or a replacement that repeats turns already seen end, as the real
 // engine may. The adapter's conformance suite runs the same scenarios against
 // the real engine, which keeps this double honest.
@@ -175,6 +176,16 @@ export class TestEngineControl extends Context.Service<
       readonly turnId: TurnId;
       readonly request: EngineRequest;
     }) => Effect.Effect<RequestId>;
+    /**
+     * An open request shows something else, as when the adapter fetched a held
+     * file change's diff after the request opened. A request that has closed
+     * is a misuse.
+     */
+    readonly updateRequest: (input: {
+      readonly sessionId: SessionId;
+      readonly requestId: RequestId;
+      readonly request: EngineRequest;
+    }) => Effect.Effect<void>;
     /** The bot called the host's own speech tool. */
     readonly hostSpeech: (input: {
       readonly sessionId: SessionId;
@@ -1171,6 +1182,22 @@ const make = Effect.gen(function* () {
         session.requests.set(open.requestId, open);
         emit(session, at, (stamp) => ({ _tag: "request-opened", ...stamp, open }));
         return open.requestId;
+      }),
+
+    updateRequest: ({ sessionId, requestId, request }) =>
+      Effect.gen(function* () {
+        const session = yield* existingSession(sessionId);
+        const open = session.requests.get(requestId);
+        if (open === undefined) return yield* misuse(`request ${requestId} is not open`);
+        const at = yield* DateTime.now;
+        session.requests.set(requestId, { ...open, request });
+        emit(session, at, (stamp) => ({
+          _tag: "request-updated",
+          ...stamp,
+          requestId,
+          turnId: open.turnId,
+          request,
+        }));
       }),
 
     hostSpeech: ({ sessionId, turnId, text }) =>

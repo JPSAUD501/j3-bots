@@ -1,0 +1,149 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import type {
+  ApprovalDecision,
+  AttachmentId,
+  BotId,
+  Entry,
+  EntryId,
+  QuestionAnswers,
+  RoutineId,
+  WorkStep,
+} from "@j3-bots/contracts";
+import type * as Redacted from "effect/Redacted";
+import { useBots } from "../app/context";
+import { buildTimeline } from "../presentation/timeline";
+import { ApprovalCard } from "./ApprovalCard";
+import { HandoffCard } from "./HandoffCard";
+import { MessageBubble } from "./MessageBubble";
+import { NoticeLine } from "./NoticeLine";
+import { QuestionCard } from "./QuestionCard";
+import { RoutineChangeCard } from "./RoutineChangeCard";
+import { SecretRequestCard } from "./SecretRequestCard";
+import { TimeDivider } from "./TimeDivider";
+import { WorkFold } from "./WorkFold";
+
+/** What the operator can do from a timeline. Each is an intent; the client runtime carries it out. */
+export interface TimelineIntents {
+  readonly answerQuestion: (entryId: EntryId, answers: QuestionAnswers) => void;
+  readonly dismissQuestion: (entryId: EntryId) => void;
+  readonly decideApproval: (entryId: EntryId, decision: ApprovalDecision) => void;
+  readonly provideSecret: (entryId: EntryId, value: Redacted.Redacted<string>) => void;
+  readonly declineSecret: (entryId: EntryId) => void;
+  readonly retryNotice: (entryId: EntryId) => void;
+  readonly retryMessage: (entryId: EntryId) => void;
+  readonly openWorkFold: (entryId: EntryId) => void;
+  readonly openAttachment: (attachmentId: AttachmentId) => void;
+  readonly openHandoff: (entryId: EntryId) => void;
+  readonly openRoutine: (routineId: RoutineId) => void;
+  readonly openConversation: (botId: BotId) => void;
+}
+
+interface TimelineProps {
+  readonly entries: ReadonlyArray<Entry>;
+  /** Rooms show who said each message; a bot's conversation has one speaker. */
+  readonly inRoom: boolean;
+  readonly workSteps: (entryId: EntryId) => ReadonlyArray<WorkStep> | null;
+  /** Whether the operator's answer to a card is still on its way. */
+  readonly submitting: (entryId: EntryId) => boolean;
+  readonly intents: TimelineIntents;
+}
+
+/** Every entry of a conversation or room, oldest first: bubbles, cards, folds and notices. */
+export function Timeline({ entries, inRoom, workSteps, submitting, intents }: TimelineProps) {
+  const bots = useBots();
+  const mentionable = inRoom ? [...bots.values()].map((bot) => bot.profile.name) : [];
+  return (
+    <div className="flex flex-col">
+      {buildTimeline(entries).map((item) => {
+        if (item.kind === "divider") return <TimeDivider key={item.key} at={item.at} />;
+        if (item.kind === "message") {
+          const { author } = item.entry;
+          return (
+            <MessageBubble
+              key={item.key}
+              entry={item.entry}
+              position={item.position}
+              speaker={inRoom && author._tag === "bot" ? (bots.get(author.botId) ?? null) : null}
+              mentionable={mentionable}
+              onOpenAttachment={intents.openAttachment}
+              onRetry={() => intents.retryMessage(item.entry.id)}
+              submitting={submitting(item.entry.id)}
+            />
+          );
+        }
+        const { entry } = item;
+        switch (entry._tag) {
+          case "question":
+            return (
+              <QuestionCard
+                key={item.key}
+                entry={entry}
+                onAnswer={(answers) => intents.answerQuestion(entry.id, answers)}
+                onDismiss={() => intents.dismissQuestion(entry.id)}
+                submitting={submitting(entry.id)}
+              />
+            );
+          case "approval":
+            return (
+              <ApprovalCard
+                key={item.key}
+                entry={entry}
+                onDecide={(decision) => intents.decideApproval(entry.id, decision)}
+                submitting={submitting(entry.id)}
+              />
+            );
+          case "secret-request":
+            return (
+              <SecretRequestCard
+                key={item.key}
+                entry={entry}
+                onProvide={(value) => intents.provideSecret(entry.id, value)}
+                onDecline={() => intents.declineSecret(entry.id)}
+                submitting={submitting(entry.id)}
+              />
+            );
+          case "work-fold":
+            return (
+              <WorkFold
+                key={item.key}
+                entry={entry}
+                steps={workSteps(entry.id)}
+                onOpenChange={(open) => {
+                  if (open) intents.openWorkFold(entry.id);
+                }}
+              />
+            );
+          case "notice":
+            return (
+              <NoticeLine
+                key={item.key}
+                entry={entry}
+                onRetry={() => intents.retryNotice(entry.id)}
+                onOpenConversation={() => {
+                  if (entry.notice._tag === "waiting-in-conversation") {
+                    intents.openConversation(entry.notice.botId);
+                  }
+                }}
+              />
+            );
+          case "handoff":
+            return (
+              <HandoffCard
+                key={item.key}
+                entry={entry}
+                onOpen={() => intents.openHandoff(entry.id)}
+              />
+            );
+          case "routine-change":
+            return (
+              <RoutineChangeCard
+                key={item.key}
+                entry={entry}
+                onOpen={() => intents.openRoutine(entry.routineId)}
+              />
+            );
+        }
+      })}
+    </div>
+  );
+}
