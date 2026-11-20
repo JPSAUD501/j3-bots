@@ -151,8 +151,9 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
 
   yield* input.files.folder(path.dirname(target)).pipe(Effect.mapError(storage));
   const partial = `${target}.partial`;
-  const have = yield* fs.stat(partial).pipe(
-    Effect.map((info) => Number(info.size)),
+  // What a regular file there already holds; `files.writeStream` refuses anything else.
+  const have = yield* fs.lstat(partial).pipe(
+    Effect.map((info) => (info.type === "File" ? Number(info.size) : 0)),
     Effect.orElseSucceed(() => 0),
   );
 
@@ -169,10 +170,13 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
     return yield* download(`status ${response.status}`);
   }
   if (response.status !== 416) {
-    yield* response.stream.pipe(
-      Stream.run(fs.sink(partial, { flag: appending ? "a" : "w" })),
-      Effect.catch(download),
-    );
+    yield* input.files
+      .writeStream(
+        partial,
+        appending,
+        response.stream.pipe(Stream.catch((cause) => Stream.fromEffect(download(cause)))),
+      )
+      .pipe(Effect.catchTags({ StorageExposed: storage, PlatformError: storage }));
   }
 
   const hash = NodeCrypto.createHash("sha256");

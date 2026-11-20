@@ -116,6 +116,28 @@ it.effect("removes the conversation and memory but keeps the files unless asked"
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("never removes through a workspace that leads into the web client", () =>
+  Effect.gen(function* () {
+    const bots = yield* Bots;
+    const layout = yield* Layout;
+    const { webClient } = yield* ServerConfig;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const bot = yield* createBot("Ana");
+    // Ana's workspace, generated files and all, is moved into the web client's folder and linked back.
+    const published = path.join(webClient.directory, "ana");
+    yield* fs.makeDirectory(webClient.directory, { recursive: true });
+    yield* fs.rename(layout.workspace(bot.id), published);
+    yield* fs.symlink(published, layout.workspace(bot.id));
+    const before = yield* fs.readDirectory(published);
+
+    yield* bots.remove({ commandId: command(), botId: bot.id, deleteFiles: false });
+
+    assert.includeMembers(before, [".j3", "AGENTS.md", "memory"]);
+    assert.deepStrictEqual(yield* fs.readDirectory(published), before);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect(
   "refuses to delete while the engine cannot retire the bot's project, changing nothing",
   () =>

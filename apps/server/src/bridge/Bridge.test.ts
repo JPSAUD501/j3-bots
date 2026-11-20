@@ -14,18 +14,17 @@ import * as Stream from "effect/Stream";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
-import * as HttpRouter from "effect/http/HttpRouter";
 import * as SqlClient from "effect/sql/SqlClient";
 import { BotStore } from "../bots/BotStore.ts";
 import { Bots } from "../bots/Bots.ts";
+import * as Ports from "../system/Ports.ts";
 import * as TestDomain from "../testing/domain.ts";
 import * as ToolEndpoint from "../tools/ToolEndpoint.ts";
 import { serve } from "./Bridge.ts";
 
-const endpoint = HttpRouter.serve(ToolEndpoint.routes).pipe(
-  Layer.provideMerge(NodeHttpServer.layerTest),
-  Layer.provideMerge(TestDomain.layer),
-);
+const endpoint = Ports.serve(ToolEndpoint.routes, NodeHttpServer.layerTest, {
+  logAddress: false,
+}).pipe(Layer.provideMerge(TestDomain.layer));
 
 const Reply = Schema.Struct({
   id: Schema.Number,

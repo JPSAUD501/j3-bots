@@ -113,6 +113,8 @@ Open J3 Bots on the new device and enter it there:
 
 `pair` asks the running server for the code over its admin socket, `~/.j3-bots/admin.sock`. Only this user can connect to that socket, so the command works only on the Pi, as the user that runs the service. The addresses come from the server too: the port and scheme it listens on and, with `lan`, the Pi's private addresses, leaving out container and virtual-network interfaces such as `docker0`. Open one of them on the phone or computer you are pairing and enter the code.
 
+In this release the web client is served but not yet connected to the server: the address opens on "Connecting to J3 Bots" and stays there, so the code cannot be entered yet.
+
 A browser treats a plain-HTTP address other than `localhost` as insecure, and on such an address it does not install J3 Bots as an app (a PWA). To install it on a phone, serve HTTPS: put a certificate and key in `tls` (paths relative to the data directory work). With Tailscale, `tailscale cert <machine>.<tailnet>.ts.net` issues one for the Pi's tailnet name. Over HTTPS, `pair` prints the names on the certificate, such as `https://<machine>.<tailnet>.ts.net:3737`, and no bare addresses, which the browser would not accept. A wildcard name names no one host, so it is not printed; for a certificate with only wildcards, open a name it covers.
 
 ## Logs
@@ -178,7 +180,7 @@ Each line is ✓ (fine), `!` (a warning: the server runs, but something is missi
 | Shell settings | With the service installed, a warning for each `J3_*` variable in your shell, which the service does not get, and a problem for one whose value the server would refuse. |
 | Data directory | It is a folder this user owns and can write to, and no group or other user can open it. Otherwise the server does not start, and `doctor` prints the `chmod` or `chown` command that fixes it. |
 | Disk space | Free space where the data directory is: less than 1 GB is a problem, less than 3 GB a warning. |
-| Server | Whether a server answers on the admin socket, its version and the address it listens on. |
+| Server | Whether a server answers on the admin socket, its version and the address it listens on. Something that is not a socket where the admin socket goes is a problem, since no server can start, with the `mv` command that clears it. |
 | Ports | With the server running, the ports it listens on, and a problem if the engine's port was taken. With no server running, that the server's port, the bot tool port and the engine's port are free on their addresses. |
 | Engine | That the pinned engine has a release for this machine, whether it is installed yet, and, with the server running, the state the server reports for it. |
 | Claude Code, Codex | That the harness is on the `PATH` the service runs with (your shell's while the service is not installed), and what the engine reports about the server's providers on it. |
@@ -195,4 +197,3 @@ Each line is ✓ (fine), `!` (a warning: the server runs, but something is missi
 - The server sets up no providers yet. `doctor` warns that no Claude Code or Codex provider is set up, and bots cannot run turns until a release that configures them.
 - The engine adapter does not yet read sign-in or usage state from the engine. For a configured provider it reports "ready", and `doctor` repeats what it reports (**Read** in `packages/engine-t3/src/t3/T3Engine.ts`).
 - `j3-bots pair` prints the code and the addresses but no QR code.
-- The web client is served but not yet connected to the server: it opens on "Connecting to J3 Bots" and stays there, so it cannot take a pairing code or show bots until a release connects it.

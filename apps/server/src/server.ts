@@ -16,6 +16,7 @@ import * as Layout from "./Layout.ts";
 import * as Listener from "./listener.ts";
 import * as Sqlite from "./persistence/Sqlite.ts";
 import * as Network from "./system/Network.ts";
+import * as Ports from "./system/Ports.ts";
 import * as ToolEndpoint from "./tools/ToolEndpoint.ts";
 
 const logShutdown = Layer.effectDiscard(Effect.addFinalizer(() => Effect.logInfo("Shutting down")));
@@ -55,16 +56,13 @@ const engine = Layer.unwrap(
  * The whole server. Built in dependency order: configuration, the home taken
  * for this process (a second server for the same home stops there, before it
  * opens the database), the migrated database, the engine and the domain, then
- * the HTTP server, the tool endpoint and the admin socket. Interrupting it
- * (SIGINT, SIGTERM) releases everything in reverse.
+ * the client listener, and then the tool endpoint and the admin socket, which
+ * reports where the client listener bound. Each listener binds only once its
+ * routes are built (`Ports.serve`). Interrupting it (SIGINT, SIGTERM) releases
+ * everything in reverse.
  */
-export const layer = Layer.mergeAll(
-  Http.layer,
-  ToolEndpoint.layer,
-  AdminSocket.layer,
-  logShutdown,
-).pipe(
-  Layer.provide(Listener.layer),
+export const layer = Layer.mergeAll(ToolEndpoint.layer, AdminSocket.layer, logShutdown).pipe(
+  Layer.provide(Ports.serve(Http.app, Listener.layer, { logAddress: true })),
   Layer.provide(Domain.layer),
   Layer.provide(engine),
   Layer.provide(Sqlite.layer),

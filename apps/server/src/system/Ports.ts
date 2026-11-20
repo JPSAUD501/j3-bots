@@ -7,6 +7,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as HttpMiddleware from "effect/http/HttpMiddleware";
+import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServer from "effect/http/HttpServer";
 
 /**
@@ -160,3 +162,26 @@ export const listen = (
     ),
     NodeHttpServer.layerHttpServices,
   );
+
+/**
+ * `app`'s routes, served on the HTTP server `server` provides.
+ *
+ * The routes are built first and the server second. `NodeHttpServer` listens
+ * as soon as it is made and answers a request only once something is served
+ * on it, so a server bound before its routes are built drops whatever arrives
+ * in between: a client that connects the moment the port opens would wait
+ * forever. Built in this order, the port opens with the routes ready.
+ * `logAddress` logs where it listens once it serves.
+ */
+export const serve = <A, E, R, S, SE, SR>(
+  app: Layer.Layer<A, E, R>,
+  server: Layer.Layer<S, SE, SR>,
+  { logAddress }: { readonly logAddress: boolean },
+) => {
+  const served = Layer.unwrap(
+    Effect.map(HttpRouter.toHttpEffect(app), (handler) =>
+      HttpServer.serve(handler, HttpMiddleware.logger).pipe(Layer.provideMerge(server)),
+    ),
+  );
+  return logAddress ? HttpServer.withLogAddress(served) : served;
+};

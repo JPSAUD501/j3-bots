@@ -74,6 +74,8 @@ interface World {
   readonly memoryDelegated: boolean;
   readonly configFile: Option.Option<string>;
   readonly homeMode: number;
+  /** A regular file where the admin socket goes. */
+  readonly socketBlocked: boolean;
 }
 
 const HEALTHY: World = {
@@ -94,6 +96,7 @@ const HEALTHY: World = {
   memoryDelegated: true,
   configFile: Option.none(),
   homeMode: 0o700,
+  socketBlocked: false,
 };
 
 const diagnoseIn = (changes: Partial<World> = {}) =>
@@ -113,6 +116,7 @@ const diagnoseIn = (changes: Partial<World> = {}) =>
       path.join(home, "config.json"),
       Option.getOrElse(world.configFile, () => JSON.stringify({ webClient: web })),
     );
+    if (world.socketBlocked) yield* fs.writeFileString(path.join(home, "admin.sock"), "");
     if (world.unitInstalled) {
       yield* fs.makeDirectory(path.join(configHome, "systemd", "user"), { recursive: true });
       yield* fs.writeFileString(
@@ -371,6 +375,20 @@ it.layer(NodeServices.layer)("doctor", (it) => {
       const broken = yield* diagnoseIn({ server: "broken" });
       assertFlagged(named(broken.checks, "Server"), "problem");
     }),
+  );
+
+  it.effect(
+    "finds a file where the admin socket goes a problem, with the command that clears it",
+    () =>
+      Effect.gen(function* () {
+        const { checks, home } = yield* diagnoseIn({ server: Option.none(), socketBlocked: true });
+        const server = named(checks, "Server");
+        assertFlagged(server, "problem", `${home}/admin.sock is where the admin socket goes`);
+        assert.include(
+          Option.getOrElse(server.fix, () => ""),
+          `mv ${home}/admin.sock`,
+        );
+      }),
   );
 
   it.effect("with the service installed, describes only the service's own server", () =>

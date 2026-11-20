@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// @effect-diagnostics nodeBuiltinImport:off -- Opening a file so that a link at its name is refused takes O_NOFOLLOW, which Effect's FileSystem cannot pass.
+import * as NodeFs from "node:fs";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import type * as PlatformError from "effect/PlatformError";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Hex from "effect/encoding/Hex";
 
@@ -57,10 +61,64 @@ export interface PrivateFiles {
    * link at `file` itself is replaced, not followed.
    */
   readonly write: (file: string, contents: string) => Effect.Effect<void, StorageError>;
+  /**
+   * Writes `bytes` into `file` (mode 0600 if created), after what it already
+   * holds when `append`, or from empty. `file` must be a regular file or
+   * absent, in a checked folder, and is checked itself; it is opened so that
+   * a link at its name is refused, never followed, even one made after the
+   * check.
+   */
+  readonly writeStream: <E>(
+    file: string,
+    append: boolean,
+    bytes: Stream.Stream<Uint8Array, E>,
+  ) => Effect.Effect<void, StorageError | E>;
 }
 
 /** Random bytes in a temporary file's name: never guessed ahead of the write. */
 const TEMPORARY_NAME_BYTES = 12;
+
+/** A failed `node:fs` call on `file`, as the `PlatformError` Effect's FileSystem fails with. */
+const fsFailure = (method: string, file: string, cause: NodeJS.ErrnoException) =>
+  PlatformError.systemError({
+    _tag:
+      cause.code === "ENOENT"
+        ? "NotFound"
+        : cause.code === "EACCES"
+          ? "PermissionDenied"
+          : "Unknown",
+    module: "FileSystem",
+    method,
+    pathOrDescriptor: file,
+    syscall: cause.syscall,
+    cause,
+  });
+
+/** Opens `file` with `flags` (mode 0600 if created). */
+const openFile = (file: string, flags: number) =>
+  Effect.callback<number, NodeJS.ErrnoException>((resume) => {
+    NodeFs.open(file, flags, 0o600, (error, fd) => {
+      resume(error === null ? Effect.succeed(fd) : Effect.fail(error));
+    });
+  });
+
+const closeFile = (fd: number) =>
+  Effect.callback<void>((resume) => {
+    NodeFs.close(fd, () => resume(Effect.void));
+  });
+
+/** Writes the whole of `chunk` to `fd`, however many writes that takes. */
+const writeAll = (file: string, fd: number, chunk: Uint8Array) =>
+  Effect.callback<void, PlatformError.PlatformError>((resume) => {
+    const from = (offset: number) => {
+      if (offset >= chunk.byteLength) return resume(Effect.void);
+      NodeFs.write(fd, chunk, offset, chunk.byteLength - offset, null, (error, written) => {
+        if (error === null) from(offset + written);
+        else resume(Effect.fail(fsFailure("write", file, error)));
+      });
+    };
+    from(0);
+  });
 
 export const makePrivateFiles = Effect.fnUntraced(function* (
   isPrivate: (location: string) => Effect.Effect<boolean>,
@@ -69,12 +127,14 @@ export const makePrivateFiles = Effect.fnUntraced(function* (
   const path = yield* Path.Path;
   const random = yield* SecureRandom.SecureRandom;
 
+  const refuse = Effect.fnUntraced(function* (location: string) {
+    const exposed = new StorageExposed({ location });
+    yield* Effect.logWarning(exposed.message);
+    return yield* exposed;
+  });
+
   const folder = Effect.fnUntraced(function* (location: string) {
-    if (!(yield* isPrivate(location))) {
-      const exposed = new StorageExposed({ location });
-      yield* Effect.logWarning(exposed.message);
-      return yield* exposed;
-    }
+    if (!(yield* isPrivate(location))) return yield* refuse(location);
     yield* fs.makeDirectory(location, { recursive: true, mode: 0o700 });
   });
 
@@ -89,5 +149,32 @@ export const makePrivateFiles = Effect.fnUntraced(function* (
     );
   });
 
-  return { folder, write } satisfies PrivateFiles;
+  const writeStream = <E>(
+    file: string,
+    append: boolean,
+    bytes: Stream.Stream<Uint8Array, E>,
+  ): Effect.Effect<void, StorageError | E> =>
+    Effect.gen(function* () {
+      yield* folder(path.dirname(file));
+      if (!(yield* isPrivate(file))) return yield* refuse(file);
+      const existing = yield* fs.lstat(file).pipe(
+        Effect.asSome,
+        Effect.catchReason("PlatformError", "NotFound", () => Effect.succeedNone),
+      );
+      if (Option.isSome(existing) && existing.value.type !== "File") return yield* refuse(file);
+      const { O_WRONLY, O_CREAT, O_NOFOLLOW, O_APPEND, O_TRUNC } = NodeFs.constants;
+      const flags = O_WRONLY | O_CREAT | O_NOFOLLOW | (append ? O_APPEND : O_TRUNC);
+      const fd = yield* Effect.acquireRelease(
+        openFile(file, flags).pipe(
+          // ELOOP: a link was put at `file` after the check.
+          Effect.catch((error): Effect.Effect<never, StorageError> =>
+            error.code === "ELOOP" ? refuse(file) : Effect.fail(fsFailure("open", file, error)),
+          ),
+        ),
+        closeFile,
+      );
+      yield* Stream.runForEach(bytes, (chunk) => writeAll(file, fd, chunk));
+    }).pipe(Effect.scoped);
+
+  return { folder, write, writeStream } satisfies PrivateFiles;
 });

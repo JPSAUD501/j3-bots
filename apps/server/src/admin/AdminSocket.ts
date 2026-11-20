@@ -81,7 +81,14 @@ const listen = Layer.unwrap(
   }),
 );
 
-/** The admin socket's routes, listening at `<home>/admin.sock`. */
-export const layer = HttpRouter.serve(routes, { disableListenLog: true }).pipe(
-  Layer.provide(listen),
-);
+const served = Ports.serve(routes, listen, { logAddress: false });
+
+/**
+ * The admin socket's routes, listening at `<home>/admin.sock`. Its server is
+ * its own: the layer offers the rest of the server nothing.
+ */
+export const layer: Layer.Layer<
+  never,
+  Layer.Error<typeof served>,
+  Layer.Services<typeof served>
+> = served;

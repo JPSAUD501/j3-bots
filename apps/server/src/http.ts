@@ -167,10 +167,9 @@ const download = HttpRouter.add(
 /** The routes outside the RPC socket. */
 export const routes = Layer.mergeAll(health, serverInfo, socketTicket, pair, upload, download);
 
-/**
- * Every route, the RPC socket and the web client, served on whichever
- * `HttpServer` is provided.
- */
-export const layer = HttpRouter.serve(
-  Layer.mergeAll(routes, RpcSocket.layer(Rpc.ServedRpcs, Rpc.handlers), WebClient.layer),
+/** Every route, the RPC socket and the web client: what clients are served. */
+export const app = Layer.mergeAll(
+  routes,
+  RpcSocket.layer(Rpc.ServedRpcs, Rpc.handlers),
+  WebClient.layer,
 );

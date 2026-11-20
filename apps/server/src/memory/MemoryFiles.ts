@@ -119,16 +119,20 @@ export const layer = Layer.effect(
     });
 
     /**
-     * `resolve`, for a write: the scope's folder must be private
-     * (`Layout.writable`) before it is created, since a link made while the
-     * server runs may have moved it.
+     * `resolve`, for a write. The scope's folder, and then the file, must be
+     * private (`Layout.writable`), the folder before it is created: a link
+     * made while the server runs, the folder itself or one inside it such as
+     * `log/`, may lead out of private state, and that is a refusal of its own,
+     * not a path out of the scope.
      */
     const resolveForWrite = Effect.fn("MemoryFiles.resolveForWrite")(function* (
       scope: MemoryScope,
       file: MemoryPath,
     ) {
       const root = rootOf(scope);
-      yield* layout.writable(root).pipe(Effect.catchTag("PrivateLocationExposed", exposed));
+      for (const location of [root, path.resolve(root, file)]) {
+        yield* layout.writable(location).pipe(Effect.catchTag("PrivateLocationExposed", exposed));
+      }
       yield* fs.makeDirectory(root, { recursive: true }).pipe(Effect.orDie);
       return yield* resolve(scope, file);
     });

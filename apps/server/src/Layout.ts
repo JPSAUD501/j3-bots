@@ -50,8 +50,8 @@ export class Layout extends Context.Service<
     readonly writable: (location: string) => Effect.Effect<string, PrivateLocationExposed>;
     /**
      * Replaces `file` whole, never half-written: checks its folder with
-     * `writable`, creates it if missing, writes a new file of a random name
-     * there that must not exist yet (so a link planted in its place is never
+     * `writable`, creates it if missing, writes a new file (mode 0600) of a
+     * random name there that must not exist yet (so a link planted in its place is never
      * followed), then renames it over `file`. A link at `file` itself is
      * replaced, not followed.
      */
@@ -105,7 +105,7 @@ export const layer = Layer.effect(
       const suffix = Hex.encode(yield* random.randomBytes(TEMPORARY_NAME_BYTES));
       const temporary = path.join(folder, `.${path.basename(file)}.${suffix}.j3-writing`);
       const contents = typeof data === "string" ? new TextEncoder().encode(data) : data;
-      yield* fs.writeFile(temporary, contents, { flag: "wx" }).pipe(
+      yield* fs.writeFile(temporary, contents, { flag: "wx", mode: 0o600 }).pipe(
         Effect.andThen(fs.rename(temporary, file)),
         Effect.onError(() => fs.remove(temporary, { force: true }).pipe(Effect.ignore)),
       );

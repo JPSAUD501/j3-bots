@@ -535,6 +535,8 @@ const describedConfiguration = Effect.fn("doctor.describedConfiguration")(functi
  */
 type LiveServer =
   | { readonly _tag: "none" }
+  /** Something that is not a socket is where the admin socket goes: no server can start. */
+  | { readonly _tag: "blocked"; readonly summary: string; readonly fix: string }
   | { readonly _tag: "described"; readonly status: AdminStatus }
   | { readonly _tag: "outside"; readonly status: Option.Option<AdminStatus> }
   | { readonly _tag: "garbled" };
@@ -546,6 +548,11 @@ const liveServer = Effect.fn("doctor.liveServer")(function* (
   socket: string,
   serviceInstalled: boolean,
 ) {
+  const path = yield* Home.checkSocketPath(socket).pipe(Effect.result);
+  if (path._tag === "Failure") {
+    const { summary, fix } = path.failure;
+    return { _tag: "blocked", summary, fix } satisfies LiveServer;
+  }
   if (serviceInstalled) {
     const { owner, status } = yield* socketOwner(socket);
     switch (owner) {
@@ -573,6 +580,8 @@ const liveServer = Effect.fn("doctor.liveServer")(function* (
 
 const serverCheck = (live: LiveServer) => {
   switch (live._tag) {
+    case "blocked":
+      return check("Server", "problem", `${live.summary} The server cannot start.`, live.fix);
     case "garbled":
       return check(
         "Server",
@@ -669,6 +678,7 @@ export const diagnose = Effect.gen(function* () {
       );
       break;
     case "none":
+    case "blocked":
       checks.push(yield* freePortsCheck(config));
   }
   checks.push(yield* engineCheck(config, status));

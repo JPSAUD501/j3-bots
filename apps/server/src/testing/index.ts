@@ -3,7 +3,6 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { J3Rpcs } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServer from "effect/http/HttpServer";
 import * as NetAddress from "effect/net/NetAddress";
 import type * as Rpc from "effect/rpc/Rpc";
@@ -12,6 +11,7 @@ import type { CurrentDevice } from "../auth/DeviceAuth.ts";
 import * as Http from "../http.ts";
 import * as Handlers from "../rpc/handlers.ts";
 import * as RpcSocket from "../RpcSocket.ts";
+import * as Ports from "../system/Ports.ts";
 import * as TestDomain from "./domain.ts";
 
 export { DeviceAuth } from "../auth/DeviceAuth.ts";
@@ -35,12 +35,14 @@ type DomainServices = Layer.Success<typeof TestDomain.layer> | CurrentDevice;
  * client can be tested against the whole contract.
  */
 export const layer = (unserved: Layer.Layer<Rpc.ToHandler<UnservedRpcs>, never, DomainServices>) =>
-  HttpRouter.serve(
+  Ports.serve(
     Layer.mergeAll(
       Http.routes,
       RpcSocket.layer(J3Rpcs, Layer.mergeAll(Handlers.handlers, unserved)),
     ),
-  ).pipe(Layer.provideMerge(NodeHttpServer.layerTest), Layer.provideMerge(TestDomain.layer));
+    NodeHttpServer.layerTest,
+    { logAddress: false },
+  ).pipe(Layer.provideMerge(TestDomain.layer));
 
 /** The `http:` origin the test server listens on. */
 export const origin = Effect.gen(function* () {

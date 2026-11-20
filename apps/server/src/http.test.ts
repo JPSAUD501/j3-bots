@@ -11,6 +11,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as HttpServer from "effect/http/HttpServer";
 import * as NetAddress from "effect/net/NetAddress";
 import * as Http from "./http.ts";
+import * as Ports from "./system/Ports.ts";
 import * as TestDomain from "./testing/domain.ts";
 
 /**
@@ -53,7 +54,9 @@ const post = (path: string, body: string, { chunked = false } = {}) =>
 const pairRequest = (name: string) => JSON.stringify({ code: "0000000000", name });
 
 it.layer(
-  Http.layer.pipe(Layer.provideMerge(NodeHttpServer.layerTest), Layer.provide(TestDomain.layer)),
+  Ports.serve(Http.app, NodeHttpServer.layerTest, { logAddress: false }).pipe(
+    Layer.provide(TestDomain.layer),
+  ),
 )("http", (it) => {
   it.effect("tells a client which protocol it speaks before it pairs", () =>
     Effect.gen(function* () {

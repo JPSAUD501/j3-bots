@@ -87,11 +87,26 @@ class HomeBlocked extends Schema.TaggedError<HomeBlocked>()("HomeBlocked", {
   reason: Schema.Literals(["lock-unusable", "not-a-socket"]),
 }) {
   override get message(): string {
+    return `${this.summary} ${this.fix}`;
+  }
+
+  /** What is in the way. */
+  get summary(): string {
     switch (this.reason) {
       case "lock-unusable":
-        return `${this.path}, which keeps a second server off this home, cannot be opened. Check that this user can write to the folder that holds it.`;
+        return `${this.path}, which keeps a second server off this home, cannot be opened.`;
       case "not-a-socket":
-        return `${this.path} is where the admin socket goes, but something else is there. Move it out of the way (\`mv ${shellWord(this.path)} ${shellWord(`${this.path}.old`)}\`), then try again.`;
+        return `${this.path} is where the admin socket goes, but something else is there.`;
+    }
+  }
+
+  /** How to clear it, for the operator to do. */
+  get fix(): string {
+    switch (this.reason) {
+      case "lock-unusable":
+        return "Check that this user can write to the folder that holds it.";
+      case "not-a-socket":
+        return `Move it out of the way (\`mv ${shellWord(this.path)} ${shellWord(`${this.path}.old`)}\`), then try again.`;
     }
   }
 }

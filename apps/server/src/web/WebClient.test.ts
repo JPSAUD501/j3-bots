@@ -14,6 +14,7 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as NetAddress from "effect/net/NetAddress";
+import * as Ports from "../system/Ports.ts";
 import * as WebClient from "./WebClient.ts";
 
 const INDEX = "<!doctype html><title>J3 Bots</title>";
@@ -59,7 +60,7 @@ const serving = <A, E>(
       HttpRouter.add("GET", "/api/server", HttpServerResponse.text("api")),
     );
     return yield* effect.pipe(
-      Effect.provide(HttpRouter.serve(app).pipe(Layer.provideMerge(NodeHttpServer.layerTest))),
+      Effect.provide(Ports.serve(app, NodeHttpServer.layerTest, { logAddress: false })),
     );
   }).pipe(Effect.scoped);
 

@@ -37,17 +37,27 @@ it.effect("refuses to read or write through a link that leaves the memory folder
     const memory = yield* MemoryFiles.MemoryFiles;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const outside = yield* linkOutside("escape", "folder");
+    // The memory folder is in place; the log folder inside it leads out of the home.
+    const outside = yield* linkOutside("log", "folder");
     yield* fs.writeFileString(path.join(outside, "secret.md"), "outside");
 
-    const read = yield* memory.read(shared, MemoryPath.make("escape/secret.md")).pipe(Effect.exit);
+    const read = yield* memory.read(shared, MemoryPath.make("log/secret.md")).pipe(Effect.exit);
     const write = yield* memory
-      .write({ scope: shared, path: MemoryPath.make("escape/new.md"), text: "x", revision: null })
+      .write({ scope: shared, path: MemoryPath.make("log/new.md"), text: "x", revision: null })
+      .pipe(Effect.exit);
+    const appended = yield* memory
+      .modify(shared, MemoryPath.make("log/2026-11.md"), () => [undefined, Option.some("x")])
       .pipe(Effect.exit);
 
     assert.isTrue(Exit.isFailure(read));
-    assert.isTrue(Exit.isFailure(write));
-    assert.isFalse(yield* fs.exists(path.join(outside, "new.md")));
+    // Refused as private state leaving the home, as a link of the folder itself is.
+    for (const exit of [write, appended]) {
+      assert.deepInclude(Option.getOrUndefined(Exit.findErrorOption(exit)), {
+        _tag: "Conflict",
+        reason: "private-location",
+      });
+    }
+    assert.deepStrictEqual(yield* fs.readDirectory(outside), ["secret.md"]);
   }).pipe(Effect.scoped, Effect.provide(files)),
 );
 
@@ -81,6 +91,10 @@ it.effect("writes only over the revision the writer read", () =>
     assert.isTrue(Exit.isFailure(stale));
     const current = yield* memory.read(shared, path);
     assert.strictEqual(Option.getOrThrow(current).text, "two");
+    // Private state: only this user may open it, whatever the umask.
+    const { sharedMemory } = yield* Layout.Layout;
+    const info = yield* (yield* FileSystem.FileSystem).stat(`${sharedMemory}/${path}`);
+    assert.strictEqual(info.mode & 0o777, 0o600);
   }).pipe(Effect.provide(files)),
 );
 

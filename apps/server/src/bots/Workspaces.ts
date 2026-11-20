@@ -167,8 +167,15 @@ export const layer = Layer.effect(
             path.join(workspace, generated),
             path.join(workspace, AGENTS_FILE),
           ];
+      // A link at a target is removed, not followed; a link above one would
+      // lead the removal elsewhere, so its folder is checked first.
       for (const target of targets) {
-        yield* fs.remove(target, { recursive: true, force: true }).pipe(Effect.orDie);
+        yield* layout
+          .writable(path.dirname(target))
+          .pipe(
+            Effect.andThen(fs.remove(target, { recursive: true, force: true })),
+            Effect.catchTags({ PrivateLocationExposed: skipExposed, PlatformError: Effect.die }),
+          );
       }
     });
 

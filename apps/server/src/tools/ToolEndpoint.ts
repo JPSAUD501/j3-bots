@@ -59,6 +59,11 @@ const listen = Layer.unwrap(
   }),
 );
 
-export const layer = HttpRouter.serve(routes, { disableListenLog: true }).pipe(
-  Layer.provide(listen),
-);
+const served = Ports.serve(routes, listen, { logAddress: false });
+
+/** The endpoint, listening. Its server is its own: the layer offers nothing. */
+export const layer: Layer.Layer<
+  never,
+  Layer.Error<typeof served>,
+  Layer.Services<typeof served>
+> = served;

@@ -236,7 +236,10 @@ export const layer = Layer.effect(
       function* (blob: { readonly sha256: string; readonly storage_path: string }) {
         const still = yield* sql`SELECT 1 FROM blobs WHERE sha256 = ${blob.sha256}`;
         if (still.length > 0) return;
-        yield* fs.remove(path.join(layout.attachments, blob.storage_path), { force: true });
+        const file = path.join(layout.attachments, blob.storage_path);
+        // A link above the blob would lead the removal out of private state.
+        yield* layout.writable(path.dirname(file));
+        yield* fs.remove(file, { force: true });
       },
       blobFiles.withPermits(1),
       Effect.catchCause((cause) => Effect.logWarning("A blob's bytes were not removed", cause)),
