@@ -12,8 +12,8 @@ import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
-import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { boundedCommand } from "./Command.ts";
 import { engineFolders, type PrivateFiles } from "./PrivateFiles.ts";
 
 // The bearer token J3 Bots signs in to its engine with. It is minted by the
@@ -66,7 +66,7 @@ const credentialFile = (path: Path.Path, home: string) =>
 
 const mint = Effect.fnUntraced(function* (executable: string, home: string) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const command = ChildProcess.make(executable, [
+  const issue = boundedCommand(executable, [
     "auth",
     "session",
     "issue",
@@ -81,7 +81,7 @@ const mint = Effect.fnUntraced(function* (executable: string, home: string) {
   ]);
   const output = yield* Effect.scoped(
     Effect.gen(function* () {
-      const handle = yield* spawner.spawn(command);
+      const handle = yield* spawner.spawn(issue);
       const [stdout, exitCode] = yield* Effect.all(
         [handle.stdout.pipe(Stream.decodeText(), Stream.mkString), handle.exitCode],
         { concurrency: "unbounded" },

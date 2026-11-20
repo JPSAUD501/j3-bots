@@ -40,7 +40,6 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
-import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { isInlineImage, normalizeAttachmentMetadata } from "../attachments.ts";
 import {
@@ -72,6 +71,7 @@ import {
   SessionId,
   type SyncToken,
 } from "../ids.ts";
+import { boundedCommand } from "./Command.ts";
 import { makeEngineRpc } from "./Connection.ts";
 import {
   checkAccess,
@@ -1327,7 +1327,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     const executable = yield* Deferred.await(installed);
     const output = yield* spawner
       .string(
-        ChildProcess.make(executable, [
+        boundedCommand(executable, [
           "auth",
           "pairing",
           "create",

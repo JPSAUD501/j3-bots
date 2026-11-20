@@ -17,8 +17,8 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
-import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { boundedCommand } from "./Command.ts";
 import type { Access } from "./Credential.ts";
 import { ORCHESTRATION_PROTOCOL, pin } from "./Pin.ts";
 import { engineFolders, type PrivateFiles } from "./PrivateFiles.ts";
@@ -66,6 +66,8 @@ const HEALTH_FAILURES = 3;
 /** A run this long resets the restart backoff. */
 const STABLE_RUN = Duration.minutes(1);
 const BACKOFF_MAX_MS = 30_000;
+/** How long the engine gets to stop on SIGTERM before SIGKILL, when the server stops. */
+const ENGINE_STOP = "10 seconds";
 /** How long a lost engine gets to stop on SIGTERM, and then on SIGKILL. */
 const ORPHAN_TERM_GRACE = Duration.seconds(10);
 const ORPHAN_KILL_GRACE = Duration.seconds(5);
@@ -138,7 +140,7 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
   const check = probe(input.port).pipe(Effect.provideService(HttpClient.HttpClient, http));
   const recordFile = path.join(engineFolders(path, input.home).j3, "engine-process.json");
 
-  const command = ChildProcess.make(
+  const engine = boundedCommand(
     input.executable,
     [
       "serve",
@@ -150,30 +152,23 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
       "127.0.0.1",
       "--no-browser",
     ],
-    {
-      stdin: "ignore",
-      stdout: "ignore",
-      stderr: "ignore",
-      killSignal: "SIGTERM",
-      forceKillAfter: "10 seconds",
-    },
+    { stdin: "ignore", stdout: "ignore", stderr: "ignore" },
+    ENGINE_STOP,
   );
 
   /** Runs a short system command; its exit code, or -1 if it could not run. */
   const system = (executable: string, args: ReadonlyArray<string>) =>
-    spawner
-      .exitCode(ChildProcess.make(executable, [...args], { stdin: "ignore", stderr: "ignore" }))
-      .pipe(
-        Effect.map(Number),
-        Effect.orElseSucceed(() => -1),
-      );
+    spawner.exitCode(boundedCommand(executable, args, { stdin: "ignore", stderr: "ignore" })).pipe(
+      Effect.map(Number),
+      Effect.orElseSucceed(() => -1),
+    );
 
   const isAlive = (pid: number) =>
     system("ps", ["-p", String(pid), "-o", "pid="]).pipe(Effect.map((code) => code === 0));
 
   /** Whether `pid` is an engine serving this data directory, by its command line. */
   const servesHome = (pid: number) =>
-    spawner.string(ChildProcess.make("ps", ["-p", String(pid), "-o", "args="])).pipe(
+    spawner.string(boundedCommand("ps", ["-p", String(pid), "-o", "args="])).pipe(
       Effect.map((args) => {
         const words = args.trim().split(/\s+/);
         return words.includes("serve") && args.includes(` ${input.home} `);
@@ -279,7 +274,7 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
       }
       yield* input.beforeStart;
       yield* SubscriptionRef.set(state, { _tag: "starting" });
-      const handle = yield* spawner.spawn(command);
+      const handle = yield* spawner.spawn(engine);
       const exited = yield* handle.exitCode.pipe(Effect.forkScoped);
 
       const healthy = check.pipe(

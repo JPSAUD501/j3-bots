@@ -10,8 +10,8 @@ import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
-import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { boundedCommand } from "./Command.ts";
 import { archiveName, pin, releaseUrl } from "./Pin.ts";
 import { engineFolders, type PrivateFiles } from "./PrivateFiles.ts";
 
@@ -200,7 +200,7 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
   yield* fs.makeDirectory(staging, { mode: 0o700 }).pipe(Effect.mapError(storage));
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const exit = yield* spawner
-    .exitCode(ChildProcess.make("tar", ["-xzf", partial, "-C", staging]))
+    .exitCode(boundedCommand("tar", ["-xzf", partial, "-C", staging]))
     .pipe(Effect.orElseSucceed(() => -1));
   if (exit !== 0) return yield* fail("extract");
 
