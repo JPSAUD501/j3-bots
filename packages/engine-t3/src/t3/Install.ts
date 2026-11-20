@@ -216,9 +216,22 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
   yield* remove(staging);
   yield* fs.makeDirectory(staging, { mode: 0o700 }).pipe(Effect.mapError(storage));
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  // tar says why it failed, such as a full disk, on the server's stderr,
+  // which the journal keeps; a tar that could not run is logged here.
   const exit = yield* spawner
-    .exitCode(boundedCommand("tar", ["-xzf", partial, "-C", staging]))
-    .pipe(Effect.orElseSucceed(() => -1));
+    .exitCode(
+      boundedCommand("tar", ["-xzf", partial, "-C", staging], {
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "inherit",
+      }),
+    )
+    .pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("Running tar to unpack the engine failed", cause),
+      ),
+      Effect.orElseSucceed(() => -1),
+    );
   if (exit !== 0) return yield* fail("extract");
 
   // The archive holds the server either at its root or in one top-level folder.
