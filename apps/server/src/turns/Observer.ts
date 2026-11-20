@@ -509,6 +509,11 @@ export const layer = Layer.effect(
      * The engine has a turn it has not started, waiting behind another: the
      * dispatch it delivers is accepted, also one whose recovery gave up, so
      * its message is no longer offered to send again.
+     *
+     * Seen first here, the key may have landed after a Stop round's cancels,
+     * held in the queue that Stop left: like a turn that starts after a round,
+     * it opens the next round, which cancels it. Only the first sight does:
+     * a replacement that lists it again finds it accepted.
      */
     const queuedTurn = Effect.fn("Observer.queuedTurn")(function* (
       session: Watched,
@@ -523,6 +528,12 @@ export const layer = Layer.effect(
         UPDATE dispatches SET engine_turn_id = COALESCE(engine_turn_id, ${turnId})
         WHERE id = ${dispatch.value.id}
       `;
+      if (
+        dispatch.value.status !== "accepted" &&
+        (yield* stops.openRound(session.id, dispatch.value.fenced_by_stop_id))
+      ) {
+        yield* sql.afterCommit(signals.stops.fire);
+      }
     }, Effect.orDie);
 
     /** The dispatch that owned a turn is over, with its last outcome. */

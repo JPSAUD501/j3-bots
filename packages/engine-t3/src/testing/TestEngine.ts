@@ -149,7 +149,8 @@ export class TestEngineControl extends Context.Service<
     /**
      * The next `stop` is acknowledged at once, and its effects (the interrupt,
      * the cancels, the disarmed continuation) wait until `release`, as when
-     * the provider's interrupt is slow.
+     * the provider's interrupt is slow. The cancels name the turns waiting
+     * when it was sent: one queued meanwhile stays, held.
      */
     readonly delayNextStopEffects: Effect.Effect<{ readonly release: Effect.Effect<void> }>;
     /**
@@ -789,16 +790,24 @@ const make = Effect.gen(function* () {
 
   /**
    * Stop as it takes effect, after `stop` returned: the engine's own stop holds
-   * the queue and disarms a pending continuation, each waiting turn is
-   * cancelled (taken off the queue first: cancelling one starts no other), the
-   * provider's interrupt ends the running turn, and the background work every
-   * turn left running ends, also in a session whose last turn already ended.
+   * the queue and disarms a pending continuation, each turn in `cancels` (the
+   * turns that waited when the Stop was sent, which the adapter cancels one by
+   * one) is cancelled, taken off the queue first: cancelling one starts no
+   * other. A turn queued since stays, held. The provider's interrupt ends the
+   * running turn, and the background work every turn left running ends, also
+   * in a session whose last turn already ended.
    */
-  const stopSession = (session: SessionRecord, at: DateTime.Utc) => {
+  const stopSession = (
+    session: SessionRecord,
+    at: DateTime.Utc,
+    cancels: ReadonlyArray<TurnId>,
+  ) => {
     for (const turn of session.turns.values()) turn.backgroundWork = false;
     holdWaiting(session, at);
     for (const turn of session.turns.values()) dropContinuation(session, turn, at);
-    for (const turnId of session.waiting.splice(0)) {
+    const cancelled = session.waiting.filter((turnId) => cancels.includes(turnId));
+    for (const turnId of cancelled) session.waiting.splice(session.waiting.indexOf(turnId), 1);
+    for (const turnId of cancelled) {
       const turn = session.turns.get(turnId);
       if (turn !== undefined) endTurn(session, turn, { _tag: "cancelled" }, at, "stop");
     }
@@ -810,7 +819,7 @@ const make = Effect.gen(function* () {
   };
 
   const retire = (session: SessionRecord, at: DateTime.Utc) => {
-    stopSession(session, at);
+    stopSession(session, at, [...session.waiting]);
     session.retired = true;
   };
 
@@ -1122,18 +1131,19 @@ const make = Effect.gen(function* () {
             if (during !== null) {
               turnDuringStop = null;
               const at = yield* DateTime.now;
-              stopSession(session, at);
+              stopSession(session, at, [...session.waiting]);
               const turn = addTurn(session, { _tag: "background" }, at);
               yield* Deferred.succeed(during.started, turn.turnId);
               return yield* Deferred.await(during.reply);
             }
             const delayed = stopEffects;
             stopEffects = null;
+            const cancels = [...session.waiting];
             // The engine answers first; the stop takes effect after.
             yield* Effect.forkDetach(
               (delayed === null ? Effect.yieldNow : Deferred.await(delayed)).pipe(
                 Effect.andThen(DateTime.now),
-                Effect.map((at) => stopSession(session, at)),
+                Effect.map((at) => stopSession(session, at, cancels)),
               ),
             );
           }),

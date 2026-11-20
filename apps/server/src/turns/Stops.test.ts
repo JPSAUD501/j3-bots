@@ -322,6 +322,51 @@ it.effect("stops a run that starts while the Stop's commands are on their way", 
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("stops a fenced key that lands in the queue after the Stop's cancels", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+
+    // A message whose recovery gives up: its key may still land.
+    const late = yield* control.deferNextDispatch;
+    const message = yield* sendToBot(bot.id, "Rotate the keys.");
+    yield* flushed(bot.id);
+    yield* recoverTimes(MAX_INDETERMINATE_ANSWERS - 1);
+    yield* deliveryIs(message, "failed");
+
+    // A turn runs, with another waiting behind it, when the Stop is sent. Its
+    // interrupt is slow, and its cancels name only the turn waiting then.
+    yield* sendToBot(bot.id, "Draft the changelog.");
+    yield* nextTurn(bot.id);
+    yield* control.startEngineTurn(session);
+    const effects = yield* control.delayNextStopEffects;
+    yield* (yield* Stops).stopBot({ commandId: command(), botId: bot.id });
+    yield* until(
+      Effect.map(
+        (yield* SqlClient.SqlClient)<{ readonly n: number }>`
+          SELECT COUNT(*) AS n FROM stop_targets WHERE sent_at IS NOT NULL
+        `,
+        ([row]) => (row?.n ?? 0) > 0,
+      ),
+    );
+
+    // The key lands behind the running turn, after the cancels were sent:
+    // the round missed it, and the queue the Stop leaves holds it.
+    yield* late.land;
+    yield* deliveryIs(message, "pending");
+    yield* effects.release;
+
+    yield* stopSettled;
+    yield* turnEnded(bot.id);
+    yield* deliveryIs(message, "cancelled");
+    const after = yield* sendToBot(bot.id, "Then rotate the certificates.");
+    yield* nextTurn(bot.id);
+    yield* deliveryIs(after, "delivered");
+    assert.strictEqual(yield* timesSent(session, "Rotate the keys."), 1);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("sends a Stop again after its call timed out, with nothing else to wake it", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;
