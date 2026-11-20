@@ -20,6 +20,7 @@ const Settings = Schema.fromJsonString(
     providerInstances: Schema.Record(
       Schema.String,
       Schema.Struct({
+        enabled: Schema.Boolean,
         environment: Schema.Array(
           Schema.Struct({ name: Schema.String, value: Schema.String, sensitive: Schema.Boolean }),
         ),
@@ -166,37 +167,34 @@ describe("provision with a provider connection", () => {
             ({ name, value, sensitive }) => ({ name, value, sensitive }),
           ),
         );
-      const claude = yield* variables("j3-claude");
-      const keyVariable = claude[0]?.name ?? "";
-      assert.match(keyVariable, /^J3_PROVIDER_KEY_[0-9a-f]{24}$/);
-      assert.deepStrictEqual(claude, [
-        { name: keyVariable, value: "", sensitive: true },
+      assert.deepStrictEqual(yield* variables("j3-claude"), [
+        { name: "J3_PROVIDER_KEY", value: "", sensitive: true },
         { name: "ENABLE_TOOL_SEARCH", value: "false", sensitive: false },
       ]);
       assert.deepStrictEqual(yield* variables("j3-codex"), [
-        { name: keyVariable, value: "", sensitive: true },
+        { name: "J3_PROVIDER_KEY", value: "", sensitive: true },
       ]);
 
       const harness = yield* fs.readFileString(path.join(home, "claude-code", "settings.json"));
       assert.deepStrictEqual(JSON.parse(harness), {
         autoMemoryEnabled: false,
         env: { ANTHROPIC_BASE_URL: "http://127.0.0.1:8317" },
-        apiKeyHelper: `printenv ${keyVariable}`,
+        apiKeyHelper: "printenv J3_PROVIDER_KEY",
       });
 
       const config = yield* fs.readFileString(path.join(home, "codex", "config.toml"));
       assert.include(config, 'developer_instructions = "Say \\"done\\" when done."');
       assert.include(config, 'model_provider = "j3"');
       assert.include(config, 'base_url = "http://127.0.0.1:8317/v1"');
-      assert.include(config, `env_key = "${keyVariable}"`);
+      assert.include(config, 'env_key = "J3_PROVIDER_KEY"');
       // Top-level keys come before the first table, or TOML files them under it.
       assert.isBelow(config.indexOf("model_provider ="), config.indexOf("["));
 
-      // One slot per instance, and the committed generation's staged key.
+      // The connection, and one slot per instance.
       const stored = yield* fs.readDirectory(secrets);
       assert.strictEqual(stored.length, 3);
       for (const name of stored) {
-        assert.strictEqual(yield* fs.readFileString(path.join(secrets, name)), "the-key");
+        assert.include(yield* fs.readFileString(path.join(secrets, name)), "the-key");
       }
       assert.notInclude(yield* fs.readFileString(path.join(userdata, "settings.json")), "the-key");
       assert.notInclude(harness, "the-key");
@@ -204,100 +202,96 @@ describe("provision with a provider connection", () => {
     }).pipe(Effect.scoped, Effect.provide(machine)),
   );
 
-  it.effect("keeps the URL and the key of one connection when a change is cut short", () =>
+  it.effect("keeps one connection's URL and key together when a change is cut short", () =>
     Effect.gen(function* () {
-      const { home, files, input, claudeConnection } = yield* setUp;
+      const { home, files, input, claudeConnection, codexConnection } = yield* setUp;
       yield* storeConnection({
         home,
         files,
         connection: { baseUrl: "https://old.example.com", key: Redacted.make("old-key") },
       });
       yield* provision(input);
+      const old = { url: "https://old.example.com", key: "old-key" };
+      const fresh = { url: "https://new.example.com", key: "new-key" };
 
-      // The new key is staged, and the record naming it fails to be written:
-      // the old connection stays whole, now and after the next start.
+      // A store that fails leaves the old connection whole.
       const refused = yield* Effect.exit(
         storeConnection({
           home,
-          files: failingWrite(files, "provider-connection.json"),
+          files: failingWrite(files, "j3-provider-connection.json"),
           connection: { baseUrl: "https://new.example.com", key: Redacted.make("new-key") },
         }),
       );
       assert.isTrue(refused._tag === "Failure");
-      assert.deepStrictEqual(yield* claudeConnection, {
-        url: "https://old.example.com",
-        key: "old-key",
-      });
       yield* provision(input);
-      assert.deepStrictEqual(yield* claudeConnection, {
-        url: "https://old.example.com",
-        key: "old-key",
-      });
+      assert.deepStrictEqual(yield* claudeConnection, old);
+      assert.deepStrictEqual(yield* codexConnection, old);
 
-      // Recorded, and stopped before the engine was given it: the next start
-      // gives the engine the new URL and the new key together.
+      // A provisioning cut short is completed by the next start's.
       yield* storeConnection({
         home,
         files,
         connection: { baseUrl: "https://new.example.com", key: Redacted.make("new-key") },
       });
-      assert.deepStrictEqual(yield* claudeConnection, {
-        url: "https://old.example.com",
-        key: "old-key",
-      });
+      const cut = yield* Effect.exit(
+        provision({ ...input, files: failingWrite(files, "userdata/settings.json") }),
+      );
+      assert.isTrue(cut._tag === "Failure");
       yield* provision(input);
-      assert.deepStrictEqual(yield* claudeConnection, {
-        url: "https://new.example.com",
-        key: "new-key",
+      assert.deepStrictEqual(yield* claudeConnection, fresh);
+      assert.deepStrictEqual(yield* codexConnection, fresh);
+    }).pipe(Effect.scoped, Effect.provide(machine)),
+  );
+});
+
+describe("a harness configuration J3 Bots cannot read", () => {
+  it.effect("is left as it is with its provider turned off, and the other is provisioned", () =>
+    Effect.gen(function* () {
+      const { fs, path, files, input, settings, codexConnection } = yield* setUp;
+      yield* storeConnection({
+        home: input.home,
+        files,
+        connection: { baseUrl: "https://proxy.example.com", key: Redacted.make("the-key") },
+      });
+      const claudeSettings = path.join(input.home, "claude-code", "settings.json");
+      yield* files.folder(path.join(input.home, "claude-code"));
+      yield* files.write(claudeSettings, '{ "model": "opus", ');
+
+      const refused = yield* provision(input);
+      assert.deepStrictEqual(
+        refused.map((error) => error.file),
+        [claudeSettings],
+      );
+      assert.strictEqual(yield* fs.readFileString(claudeSettings), '{ "model": "opus", ');
+      const instances = (yield* settings).providerInstances;
+      assert.strictEqual(instances["j3-claude"]?.enabled, false);
+      assert.strictEqual(instances["j3-codex"]?.enabled, true);
+      assert.deepStrictEqual(yield* codexConnection, {
+        url: "https://proxy.example.com",
+        key: "the-key",
       });
     }).pipe(Effect.scoped, Effect.provide(machine)),
   );
 
-  it.effect(
-    "pairs each URL a harness is given with its own key when provisioning is cut short",
-    () =>
-      Effect.gen(function* () {
-        const { fs, path, home, files, input, secrets, claudeConnection, codexConnection } =
-          yield* setUp;
-        yield* storeConnection({
-          home,
-          files,
-          connection: { baseUrl: "https://old.example.com", key: Redacted.make("old-key") },
-        });
-        yield* provision(input);
-        yield* storeConnection({
-          home,
-          files,
-          connection: { baseUrl: "https://new.example.com", key: Redacted.make("new-key") },
-        });
-        const old = { url: "https://old.example.com", key: "old-key" };
-        const fresh = { url: "https://new.example.com", key: "new-key" };
+  it.effect("is never taken for an empty one when it cannot be read at all", () =>
+    Effect.gen(function* () {
+      const { fs, path, files, input, instances, settings } = yield* setUp;
+      const configFile = path.join(input.home, "codex", "config.toml");
+      yield* files.folder(configFile);
 
-        // Cut before Claude Code's settings name the new URL.
-        const beforeHarness = yield* Effect.exit(
-          provision({ ...input, files: failingWrite(files, "claude-code/settings.json") }),
-        );
-        assert.isTrue(beforeHarness._tag === "Failure");
-        assert.deepStrictEqual(yield* claudeConnection, old);
-        assert.deepStrictEqual(yield* codexConnection, old);
-
-        // Cut after both harnesses name the new URL, before the engine's
-        // settings stop naming the old key.
-        const beforeSettings = yield* Effect.exit(
-          provision({ ...input, files: failingWrite(files, "userdata/settings.json", 2) }),
-        );
-        assert.isTrue(beforeSettings._tag === "Failure");
-        assert.deepStrictEqual(yield* claudeConnection, fresh);
-        assert.deepStrictEqual(yield* codexConnection, fresh);
-
-        // The next provisioning completes it, and the old key is gone.
-        yield* provision(input);
-        assert.deepStrictEqual(yield* claudeConnection, fresh);
-        assert.deepStrictEqual(yield* codexConnection, fresh);
-        for (const name of yield* fs.readDirectory(secrets)) {
-          assert.strictEqual(yield* fs.readFileString(path.join(secrets, name)), "new-key");
-        }
-      }).pipe(Effect.scoped, Effect.provide(machine)),
+      const refused = yield* provision(input);
+      assert.deepStrictEqual(
+        refused.map((error) => error.file),
+        [configFile],
+      );
+      assert.strictEqual((yield* settings).providerInstances["j3-codex"]?.enabled, false);
+      const prompt = yield* Effect.flip(
+        writeBasePrompt({ files, instances, basePrompt: "Ada is your teammate." }),
+      );
+      assert.strictEqual(prompt._tag, "HarnessConfigUnreadable");
+      assert.include(prompt.message, configFile);
+      assert.strictEqual((yield* fs.stat(configFile)).type, "Directory");
+    }).pipe(Effect.scoped, Effect.provide(machine)),
   );
 });
 
@@ -346,19 +340,6 @@ describe("a Codex instance's config.toml", () => {
           'developer_instructions = "Ada is your teammate."',
         ),
       );
-    }).pipe(Effect.scoped, Effect.provide(machine)),
-  );
-
-  it.effect("is left as it is when it is not TOML, and provisioning says which file", () =>
-    Effect.gen(function* () {
-      const { fs, path, files, input } = yield* setUp;
-      const configFile = path.join(input.home, "codex", "config.toml");
-      yield* files.folder(path.join(input.home, "codex"));
-      yield* files.write(configFile, 'model = "gpt-6-luna\n');
-      const refused = yield* Effect.flip(provision(input));
-      assert.strictEqual(refused._tag, "HarnessConfigUnreadable");
-      assert.include(refused.message, configFile);
-      assert.strictEqual(yield* fs.readFileString(configFile), 'model = "gpt-6-luna\n');
     }).pipe(Effect.scoped, Effect.provide(machine)),
   );
 });

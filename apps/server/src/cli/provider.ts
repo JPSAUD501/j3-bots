@@ -7,7 +7,7 @@ import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
 import { Command, Flag, Prompt } from "effect/cli";
 import { AdminClient } from "../admin/AdminClient.ts";
-import { baseUrlForm, providerBaseUrlProblem } from "../admin/protocol.ts";
+import { baseUrlForm, CONNECT_RESTARTS, providerBaseUrlProblem } from "../admin/protocol.ts";
 import * as ServerConfig from "../config.ts";
 import { refuse, userFacing } from "./errors.ts";
 
@@ -104,11 +104,24 @@ const readBaseUrl = Effect.fn("readBaseUrl")(function* (flag: Option.Option<stri
   ).pipe(Effect.mapError(() => refuse("No base URL was read, so nothing changed.")));
 });
 
-const connect = Command.make("connect", { baseUrl: baseUrlFlag }).pipe(
-  Command.withDescription(
-    "Connect Claude Code and Codex to an endpoint that serves their models, such as a proxy in front of your subscriptions. Asks for its base URL unless given, then for its key, or reads the key from standard input. The key is kept only in the engine's secret store.",
+const yesFlag = Flag.Boolean("yes").pipe(
+  Flag.withDefault(false),
+  Flag.withDescription(
+    "Restart the engine without asking, also when bots have work running, which the restart stops.",
   ),
-  Command.withHandler(({ baseUrl }) =>
+);
+
+const bots = (count: number) => (count === 1 ? "1 bot has" : `${count} bots have`);
+
+/** Without a terminal to ask on, a restart that stops work needs `--yes`. */
+const workRunning = (count: number) =>
+  `${bots(count)} work running, and restarting the engine for the new connection stops it. Nothing changed. Run this again with --yes to restart anyway, or once the work is done.`;
+
+const connect = Command.make("connect", { baseUrl: baseUrlFlag, yes: yesFlag }).pipe(
+  Command.withDescription(
+    `Connect Claude Code and Codex to an endpoint that serves their models, such as a proxy in front of your subscriptions. Asks for its base URL unless given, then for its key, or reads the key from standard input. The key is kept only in the engine's secret store. ${CONNECT_RESTARTS}`,
+  ),
+  Command.withHandler(({ baseUrl, yes }) =>
     Effect.gen(function* () {
       const url = yield* readBaseUrl(baseUrl);
       const socket = yield* userFacing(ServerConfig.resolveAdminSocket);
@@ -118,25 +131,44 @@ const connect = Command.make("connect", { baseUrl: baseUrlFlag }).pipe(
         Effect.mapError(() => refuse("No key was read, so nothing changed.")),
       );
       if (key.length === 0) return yield* refuse("The key is empty, so nothing changed.");
-      const answer = yield* userFacing(admin.connectProviders(socket, { baseUrl: url, key }));
-      if (Option.isNone(answer)) return yield* refuse(NOT_RUNNING);
-      const outcome = answer.value;
+      const send = (stopWork: boolean) =>
+        userFacing(admin.connectProviders(socket, { baseUrl: url, key, stopWork })).pipe(
+          Effect.flatMap((answer) =>
+            Option.isNone(answer) ? refuse(NOT_RUNNING) : Effect.succeed(answer.value),
+          ),
+        );
+      let outcome = yield* send(yes);
+      if (outcome._tag === "work-running") {
+        // The key came from standard input: there is no terminal to ask on.
+        if (!(yield* (yield* Stdio.Stdio).stdinIsTerminal)) {
+          return yield* refuse(workRunning(outcome.bots));
+        }
+        const restart = yield* Prompt.run(
+          Prompt.Confirm({
+            message: `${bots(outcome.bots)} work running. Restarting the engine for the new connection stops it. Restart now?`,
+            initial: false,
+          }),
+        ).pipe(Effect.orElseSucceed(() => false));
+        if (!restart) return yield* Console.log("Nothing changed.");
+        outcome = yield* send(true);
+      }
       switch (outcome._tag) {
+        case "work-running":
+          return yield* refuse(workRunning(outcome.bots));
         case "refused":
           return yield* refuse(refused(outcome.active));
-        case "recorded":
+        case "stored":
           return yield* Console.log(
             [
-              `The connection to ${outcome.baseUrl} is stored, but the engine's settings could not be written. The server's log says why: \`journalctl --user -u j3-bots\`.`,
-              "The engine takes it when it next starts: `systemctl --user restart j3-bots`.",
+              `The connection to ${outcome.baseUrl} is stored, and the engine is not back yet: it starts with this connection.`,
+              "`j3-bots doctor` shows when it is ready; the server's log says what holds it up: `journalctl --user -u j3-bots`.",
             ].join("\n"),
           );
-        case "active":
+        case "applied":
           return yield* Console.log(
             [
-              `Claude Code and Codex reach their models through ${outcome.baseUrl} from the next time each starts.`,
-              "One already running keeps the connection it started with, and Codex runs one process for all its work. To put every bot on this connection now, restart J3 Bots: `systemctl --user restart j3-bots`. That stops any work a bot has running.",
-              "`j3-bots doctor` shows when each provider is ready.",
+              `The engine restarted, and Claude Code and Codex now reach their models through ${outcome.baseUrl}.`,
+              "`j3-bots doctor` shows each provider's state.",
             ].join("\n"),
           );
       }

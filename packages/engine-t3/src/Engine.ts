@@ -205,15 +205,15 @@ export interface ProviderConnection {
   readonly key: Redacted.Redacted<string>;
 }
 
-/** Which provider connection is in force after `connectProviders`. */
+/** What became of the connection `connectProviders` was given. */
 export type ConnectionOutcome =
-  /** The new one, handed to the engine. */
-  | { readonly _tag: "active"; readonly baseUrl: string }
+  /** Stored, and the engine restarted with it: every harness runs on it from now on. */
+  | { readonly _tag: "applied"; readonly baseUrl: string }
   /**
-   * The new one, recorded, but the engine's settings could not be written:
-   * the engine gets it when it next starts.
+   * Stored, and the engine is not back yet: still installing, or not ready
+   * within the wait. It starts with this connection whenever it starts.
    */
-  | { readonly _tag: "recorded"; readonly baseUrl: string }
+  | { readonly _tag: "stored"; readonly baseUrl: string }
   /** Not stored: the one before it, if any, stays in force. */
   | { readonly _tag: "refused"; readonly active: string | null };
 
@@ -299,14 +299,14 @@ export class Engine extends Context.Service<
     readonly status: Stream.Stream<EngineStatus>;
 
     /**
-     * Points the Claude Code and Codex instances at `connection`, for the
-     * sessions they start from then on. The key goes to the engine's secret
-     * store and nowhere else: not to a settings or configuration file, not to
-     * a log. The base URL is kept with the engine's data, so the connection
-     * outlives a restart. Setting it again replaces it. The URL and the key
-     * take effect together: a write cut short leaves the connection before
-     * in force, or the new one to be completed at the next start. Answers
-     * which connection is in force.
+     * Points the Claude Code and Codex instances at `connection`. It is
+     * stored, URL and key in one write, in the engine's secret store and
+     * nowhere else: not in a settings or configuration file, not in a log.
+     * Then the engine is restarted: each harness is configured for it only
+     * while the engine is stopped, and every harness starts again with it.
+     * The restart interrupts every turn and every background task running in
+     * the engine; asking the operator first is the caller's. Setting it again
+     * replaces it. Answers what became of it.
      */
     readonly connectProviders: (connection: ProviderConnection) => Effect.Effect<ConnectionOutcome>;
 

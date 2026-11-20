@@ -91,6 +91,7 @@ import { toolInputDigest } from "../toolCaller.ts";
 
 /** The engine methods a test can hold in flight with `holdNext`. */
 export type HeldMethod =
+  | "configureSession"
   | "dispatch"
   | "redispatch"
   | "stageAttachment"
@@ -1079,7 +1080,7 @@ const make = Effect.gen(function* () {
     connectProviders: (input) =>
       Effect.sync(() => {
         connection = Option.some(input.baseUrl);
-        return { _tag: "active", baseUrl: input.baseUrl } as const;
+        return { _tag: "applied", baseUrl: input.baseUrl } as const;
       }),
 
     consoleLink: command(Effect.succeed("http://127.0.0.1/test-engine")),
@@ -1155,12 +1156,15 @@ const make = Effect.gen(function* () {
       ),
 
     configureSession: ({ sessionId, model, permissionMode }) =>
-      command(
-        Effect.gen(function* () {
-          const session = yield* liveSession(sessionId);
-          if (model !== undefined) session.model = model;
-          if (permissionMode !== undefined) session.permissionMode = permissionMode;
-        }),
+      door(
+        "configureSession",
+        command(
+          Effect.gen(function* () {
+            const session = yield* liveSession(sessionId);
+            if (model !== undefined) session.model = model;
+            if (permissionMode !== undefined) session.permissionMode = permissionMode;
+          }),
+        ),
       ),
 
     retireSession: (sessionId) =>

@@ -31,6 +31,8 @@ export class AdminRequestFailed extends Schema.TaggedError<AdminRequestFailed>()
 }
 
 const TIMEOUT = Duration.seconds(10);
+/** A provider connection waits for the engine's restart, up to a minute on the server's side. */
+const CONNECT_TIMEOUT = Duration.seconds(90);
 
 /**
  * The running server, as `j3-bots` commands see it over its admin socket.
@@ -66,6 +68,7 @@ export const layer = Layer.effect(
             request: HttpClientRequest.HttpClientRequest,
           ) => Effect.Effect<HttpClientRequest.HttpClientRequest, HttpBody.HttpBodyError>
         > = Option.none(),
+        timeout: Duration.Duration = TIMEOUT,
       ) =>
       (socket: string) =>
         Effect.gen(function* () {
@@ -81,7 +84,7 @@ export const layer = Layer.effect(
             Effect.flatMap((request) => client.execute(request)),
             Effect.flatMap(HttpClientResponse.filterStatusOk),
             Effect.flatMap(HttpClientResponse.schemaBodyJson(schema)),
-            Effect.timeout(TIMEOUT),
+            Effect.timeout(timeout),
             Effect.asSome,
             // A failure with a body may hold the request, and a body may hold a key.
             Effect.mapError(
@@ -112,6 +115,7 @@ export const layer = Layer.effect(
           "POST",
           ProviderConnectionOutcome,
           Option.some(HttpClientRequest.schemaBodyJson(ProviderConnectionRequest)(request)),
+          CONNECT_TIMEOUT,
         )(socket);
       }),
     });

@@ -13,7 +13,7 @@ export const ADMIN_PATHS = {
   pairing: "/pairing",
   /**
    * `POST`, a `ProviderConnectionRequest`. Answers a `ProviderConnectionOutcome`
-   * once the engine holds the connection, or could not store it.
+   * once the engine restarted with the connection, or it could not.
    */
   providerConnection: "/provider-connection",
 } as const;
@@ -55,6 +55,13 @@ export const PairingGrant = Schema.Struct({
   expiresAt: Schema.DateTimeUtc,
 });
 export type PairingGrant = typeof PairingGrant.Type;
+
+/**
+ * What `j3-bots provider connect` does beyond storing the connection, as the
+ * command's help and `doctor` both say it.
+ */
+export const CONNECT_RESTARTS =
+  "It restarts the engine so the connection applies at once. A restart stops the work bots have running, so when any has, it asks first; `--yes` answers for you.";
 
 /** Hosts that never leave the machine: plain HTTP to them sends the key nowhere. */
 const isLoopback = (hostname: string) =>
@@ -103,15 +110,25 @@ export const ProviderConnectionRequest = Schema.Struct({
   ),
   /** Sent over the private admin socket only, and never logged. */
   key: Schema.NonEmptyString,
+  /**
+   * Whether the operator agreed that the engine's restart stops the work
+   * bots have running. Without it, the server stores nothing while any runs.
+   */
+  stopWork: Schema.Boolean,
 });
 export type ProviderConnectionRequest = typeof ProviderConnectionRequest.Type;
 
-/** Which connection is in force after the request (`Engine.connectProviders`). */
+/** What became of the request (`Engine.connectProviders`). */
 export const ProviderConnectionOutcome = Schema.Union([
-  /** The new one, handed to the engine. */
-  Schema.TaggedStruct("active", { baseUrl: Schema.String }),
-  /** The new one, recorded; the engine gets it when it next starts. */
-  Schema.TaggedStruct("recorded", { baseUrl: Schema.String }),
+  /** Stored, and the engine restarted with it. */
+  Schema.TaggedStruct("applied", { baseUrl: Schema.String }),
+  /** Stored, and the engine is not back yet: it starts with it. */
+  Schema.TaggedStruct("stored", { baseUrl: Schema.String }),
+  /**
+   * Nothing stored: `bots` bots have work running, which the restart would
+   * stop, and the request did not agree to that.
+   */
+  Schema.TaggedStruct("work-running", { bots: Schema.Int.check(Schema.isGreaterThan(0)) }),
   /** Not stored: the one before it, if any, stays in force. */
   Schema.TaggedStruct("refused", { active: Schema.NullOr(Schema.String) }),
 ]);

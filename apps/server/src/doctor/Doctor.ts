@@ -10,7 +10,7 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import rootPackage from "../../../../package.json" with { type: "json" };
 import { AdminClient } from "../admin/AdminClient.ts";
-import type { AdminStatus } from "../admin/protocol.ts";
+import { type AdminStatus, CONNECT_RESTARTS } from "../admin/protocol.ts";
 import * as ServerConfig from "../config.ts";
 import * as Home from "../home/Home.ts";
 import { socketOwner } from "../service/owner.ts";
@@ -331,7 +331,7 @@ const providerCheck = Effect.fn("doctor.provider")(function* (
         harness.name,
         "problem",
         `${provider.name} has no way to reach its models yet.`,
-        `Run \`${provider.status.command}\` as this user.`,
+        `Run \`${provider.status.command}\` as this user. ${CONNECT_RESTARTS}`,
       );
     }
   }

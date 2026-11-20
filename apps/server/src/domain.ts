@@ -32,6 +32,7 @@ import * as Observer from "./turns/Observer.ts";
 import * as Pipeline from "./turns/Pipeline.ts";
 import * as Readiness from "./turns/Readiness.ts";
 import * as Rotations from "./turns/Rotations.ts";
+import * as RunningWork from "./turns/RunningWork.ts";
 import * as Sender from "./turns/Sender.ts";
 import * as SessionGate from "./turns/SessionGate.ts";
 import * as Signals from "./turns/Signals.ts";
@@ -58,6 +59,7 @@ export const layer = Layer.mergeAll(BotTools.layer, Turns.layer).pipe(
       Pipeline.layer,
       Cards.layer,
       Rotations.layer,
+      RunningWork.layer,
     ),
   ),
   Layer.provideMerge(

@@ -19,6 +19,7 @@ import { Devices } from "../devices/Devices.ts";
 import { EngineState } from "../engine/EngineState.ts";
 import { Listener } from "../listener.ts";
 import * as Ports from "../system/Ports.ts";
+import { RunningWork } from "../turns/RunningWork.ts";
 import { WebClientStatus } from "../web/WebClient.ts";
 import {
   ADMIN_PATHS,
@@ -80,11 +81,12 @@ const routes = Layer.mergeAll(
         Effect.option,
       );
       if (request._tag === "None") return HttpServerResponse.empty({ status: 400 });
-      const engine = yield* Engine;
-      const outcome: ProviderConnectionOutcome = yield* engine.connectProviders({
-        baseUrl: request.value.baseUrl,
-        key: Redacted.make(request.value.key),
-      });
+      const { baseUrl, key, stopWork } = request.value;
+      const working = stopWork ? [] : yield* (yield* RunningWork).bots;
+      const outcome: ProviderConnectionOutcome =
+        working.length > 0
+          ? { _tag: "work-running", bots: working.length }
+          : yield* (yield* Engine).connectProviders({ baseUrl, key: Redacted.make(key) });
       return yield* HttpServerResponse.schemaJson(ProviderConnectionOutcome)(outcome).pipe(
         Effect.orDie,
       );

@@ -100,7 +100,13 @@ import {
   writeBasePrompt,
   type InstanceSpec,
 } from "./Provision.ts";
-import { baseUrl, stateChanges, supervise, type ProcessState } from "./Supervisor.ts";
+import {
+  baseUrl,
+  stateChanges,
+  supervise,
+  type ProcessState,
+  type Supervision,
+} from "./Supervisor.ts";
 import { upload } from "./upload.ts";
 import {
   activeTurn,
@@ -161,6 +167,12 @@ const BATCHES_KEPT = 32;
 const STAGED_LIFETIME = Duration.hours(12);
 /** How long a provider report subscription that ended waits before it opens again. */
 const PROVIDER_RESUBSCRIBE = Duration.seconds(5);
+/**
+ * How long `connectProviders` waits for the engine to be back after its
+ * restart. Most of it is the harnesses' own start-up; one taking longer still
+ * gets the connection when it is up.
+ */
+const CONNECT_RESTART_WAIT = Duration.seconds(60);
 
 /** Statuses that tell a client nothing new: two engine reports that differ only in what J3 Bots does not show. */
 const sameStatus = Schema.toEquivalence(EngineStatus);
@@ -307,9 +319,10 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   const basePrompt = yield* Ref.make(
     Option.getOrElse(yield* Stream.runHead(options.basePrompt), () => ""),
   );
-  /** One writer of the engine's settings and the harness homes at a time. */
+  /** One writer of the engine's settings, the connection and the harness homes at a time. */
   const provisioning = yield* Semaphore.make(1);
-  const writeProvisioning = Effect.gen(function* () {
+  /** Run before each start of the engine, while it is stopped (`Supervisor.beforeStart`). */
+  const provisionEngine = Effect.gen(function* () {
     yield* provision({
       home: options.home,
       files,
@@ -318,8 +331,11 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       systemPromptFile: options.systemPromptFile,
       basePrompt: yield* Ref.get(basePrompt),
     });
-  }).pipe(Effect.provideService(FileSystem.FileSystem, fs), Effect.provideService(Path.Path, path));
-  const provisionEngine = provisioning.withPermits(1)(writeProvisioning);
+  }).pipe(
+    provisioning.withPermits(1),
+    Effect.provideService(FileSystem.FileSystem, fs),
+    Effect.provideService(Path.Path, path),
+  );
 
   // A new base prompt reaches Codex through its instances' configuration,
   // which Codex reads for each thread it starts or resumes. Only that key is
@@ -347,17 +363,21 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     Effect.provideService(Path.Path, path),
   );
 
+  /** The supervision loop, once the engine is installed and supervised. */
+  const supervision = yield* Ref.make(Option.none<Supervision>());
+
   /**
-   * Commits the connection, then provisions, which activates it. A commit
-   * that fails leaves the connection before it in force; a provisioning that
-   * fails after the commit leaves the new one to the next start's.
+   * Stores the connection, then restarts the engine, whose next start
+   * provisions it (`provision`). Answers once the engine is back, or after
+   * `CONNECT_RESTART_WAIT` without it: it then gets the connection whenever
+   * it next starts.
    */
   const connectProviders = Effect.fn("Engine.connectProviders")(function* (
     connection: ProviderConnection,
   ) {
     const committed = yield* storeConnection({ home: options.home, files, connection }).pipe(
+      provisioning.withPermits(1),
       Effect.provideService(Path.Path, path),
-      Effect.provide(SecureRandom.layerWebCrypto),
       Effect.as(true),
       Effect.catch((error) =>
         Effect.logWarning("The provider connection was not stored", error).pipe(Effect.as(false)),
@@ -366,21 +386,22 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     if (!committed) {
       return { _tag: "refused", active: yield* connectedNow } satisfies ConnectionOutcome;
     }
-    return yield* writeProvisioning.pipe(
-      Effect.as({ _tag: "active", baseUrl: connection.baseUrl } satisfies ConnectionOutcome),
-      Effect.catch((error) =>
-        Effect.logWarning(
-          "The provider connection was recorded, but the engine's settings could not be written",
-          error,
-        ).pipe(
-          Effect.as({
-            _tag: "recorded",
-            baseUrl: connection.baseUrl,
-          } satisfies ConnectionOutcome),
-        ),
-      ),
+    const stored = { _tag: "stored", baseUrl: connection.baseUrl } satisfies ConnectionOutcome;
+    const running = yield* Ref.get(supervision);
+    // Still installing: the engine's first start provisions it.
+    if (Option.isNone(running)) return stored;
+    yield* Effect.logInfo("Restarting the engine for a new provider connection");
+    yield* running.value.restart;
+    const back = yield* stateChanges(state).pipe(
+      Stream.filter((current) => current._tag === "ready"),
+      Stream.runHead,
+      Effect.timeoutOption(CONNECT_RESTART_WAIT),
+      Effect.map(Option.flatten),
     );
-  }, provisioning.withPermits(1));
+    return Option.isSome(back)
+      ? ({ _tag: "applied", baseUrl: connection.baseUrl } satisfies ConnectionOutcome)
+      : stored;
+  });
 
   const platformServices = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
@@ -450,7 +471,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
           }),
         ),
       );
-      yield* supervise({
+      const supervised = yield* supervise({
         executable,
         home: options.home,
         port: options.port,
@@ -463,6 +484,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
         reissueCredential: reissue,
         files,
       }).pipe(platformServices);
+      yield* Ref.set(supervision, Option.some(supervised));
     }),
   );
 
