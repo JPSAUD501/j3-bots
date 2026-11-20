@@ -1,0 +1,425 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import { Dialog } from "@base-ui/react/dialog";
+import {
+  type Device,
+  type EngineStatus,
+  Label,
+  type PairingCode,
+  type Settings,
+  TimeZone,
+} from "@j3-bots/contracts";
+import type * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import { SettingsIcon, XIcon } from "lucide-react";
+import { useId, useState, type ReactNode } from "react";
+import { useI18n, usePresentation } from "../app/context";
+import {
+  setAppearance,
+  setLanguage,
+  usePreferences,
+  type Appearance,
+  type Language,
+} from "../preferences/preferences";
+import type { ShellData, ShellIntents } from "../shell/data";
+import { activityTime, clockTime } from "../lib/time";
+import { engineProblem, ProviderRow } from "./EmptyStates";
+import { Button } from "./ui/button";
+import { Confirm } from "./ui/confirm";
+
+type SettingsIntents = Pick<
+  ShellIntents,
+  "updateSettings" | "startPairing" | "revokeDevice" | "refreshDevices" | "forgetDevice"
+>;
+
+interface SettingsButtonProps {
+  readonly data: Pick<ShellData, "engine" | "settings" | "devices">;
+  readonly intents: SettingsIntents;
+}
+
+/** The roster's footer: opens everything that is not about one bot. */
+export function SettingsButton({ data, intents }: SettingsButtonProps) {
+  const { t } = useI18n();
+  const titleId = useId();
+  return (
+    <div className="border-t border-border p-2">
+      <Dialog.Root
+        onOpenChange={(open) => {
+          if (open) intents.refreshDevices();
+        }}
+      >
+        <Dialog.Trigger
+          render={<Button variant="ghost-muted" className="w-full justify-start px-2" />}
+        >
+          <SettingsIcon aria-hidden />
+          {t("settings.title")}
+        </Dialog.Trigger>
+        <Dialog.Portal>
+          <Dialog.Backdrop className="fixed inset-0 z-40 bg-scrim transition-opacity duration-(--duration-slow) data-ending-style:opacity-0 data-starting-style:opacity-0" />
+          <Dialog.Popup
+            aria-labelledby={titleId}
+            className="fixed inset-0 z-40 flex flex-col bg-background pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] text-foreground outline-none transition-opacity duration-(--duration-slow) data-ending-style:opacity-0 data-starting-style:opacity-0 tablet:inset-x-4 tablet:top-12 tablet:bottom-12 tablet:mx-auto tablet:max-w-lg tablet:rounded-lg tablet:border tablet:border-border tablet:shadow-xl"
+          >
+            <header className="flex h-14 shrink-0 items-center border-b border-border ps-4 pe-2">
+              <Dialog.Title id={titleId} className="text-sm font-medium">
+                {t("settings.title")}
+              </Dialog.Title>
+              <Dialog.Close
+                render={
+                  <Button
+                    variant="ghost-muted"
+                    size="icon"
+                    className="ms-auto"
+                    aria-label={t("settings.close")}
+                  />
+                }
+              >
+                <XIcon />
+              </Dialog.Close>
+            </header>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <EngineSection engine={data.engine} />
+              <YouSection settings={data.settings} onSave={intents.updateSettings} />
+              <DevicesSection
+                devices={data.devices}
+                onStartPairing={intents.startPairing}
+                onRevoke={intents.revokeDevice}
+              />
+              <BrowserSection onForget={intents.forgetDevice} />
+            </div>
+          </Dialog.Popup>
+        </Dialog.Portal>
+      </Dialog.Root>
+    </div>
+  );
+}
+
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="flex flex-col gap-3 border-b border-border px-4 py-4 last:border-b-0">
+      <h3 className="text-xs font-medium text-muted-foreground">{title}</h3>
+      {children}
+    </section>
+  );
+}
+
+function Loading() {
+  const { t } = useI18n();
+  return <p className="text-xs text-muted-foreground">{t("details.loading")}</p>;
+}
+
+const fieldClass =
+  "h-9 w-full rounded-md border border-input bg-surface px-3 text-sm placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:h-11";
+
+/** Whether the engine runs, and if not, why and what to do; then each provider. */
+function EngineSection({ engine }: { engine: EngineStatus | null }) {
+  const { t } = useI18n();
+  if (engine === null) {
+    return (
+      <Section title={t("settings.engine")}>
+        <Loading />
+      </Section>
+    );
+  }
+  const problem = engineProblem(engine, t);
+  return (
+    <Section title={t("settings.engine")}>
+      {problem === null ? (
+        <p className="text-sm">{t("settings.engine.ready", { version: engine.pinnedVersion })}</p>
+      ) : (
+        <div className="flex flex-col gap-1">
+          <p className="text-sm font-medium text-blocked">{problem.title}</p>
+          <p className="text-sm text-muted-foreground">{problem.body}</p>
+        </div>
+      )}
+      {engine.providers.length > 0 && (
+        <ul className="flex flex-col gap-1.5 text-sm">
+          {engine.providers.map((provider) => (
+            <ProviderRow key={provider.id} provider={provider} />
+          ))}
+        </ul>
+      )}
+    </Section>
+  );
+}
+
+const decodeName = Schema.decodeUnknownOption(Label);
+const decodeTimeZone = Schema.decodeUnknownOption(TimeZone);
+
+const timeZones = (current: string): ReadonlyArray<string> => {
+  const known = Intl.supportedValuesOf("timeZone");
+  return known.includes(current) ? known : [current, ...known];
+};
+
+/** What bots call the operator, and the time zone routines and times follow. */
+function YouSection({
+  settings,
+  onSave,
+}: {
+  settings: Settings | null;
+  onSave: SettingsIntents["updateSettings"];
+}) {
+  const { t } = useI18n();
+  return (
+    <Section title={t("settings.you")}>
+      {settings === null ? (
+        <Loading />
+      ) : (
+        // Keyed, so the form starts again from the saved values when they change.
+        <YouForm
+          key={`${settings.operatorName ?? ""}|${settings.timeZone}`}
+          settings={settings}
+          onSave={onSave}
+        />
+      )}
+    </Section>
+  );
+}
+
+function YouForm({
+  settings,
+  onSave,
+}: {
+  settings: Settings;
+  onSave: SettingsIntents["updateSettings"];
+}) {
+  const { t } = useI18n();
+  const nameId = useId();
+  const zoneId = useId();
+  const [name, setName] = useState(settings.operatorName ?? "");
+  const [zone, setZone] = useState<string>(settings.timeZone);
+  const [state, setState] = useState<"editing" | "saving" | "saved" | "failed">("editing");
+  const trimmed = name.trim();
+  const operatorName = trimmed === "" ? Option.some(null) : decodeName(trimmed);
+  const timeZone = decodeTimeZone(zone);
+  const changed = trimmed !== (settings.operatorName ?? "") || zone !== settings.timeZone;
+  return (
+    <form
+      className="flex flex-col gap-3"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!changed || state === "saving") return;
+        if (Option.isNone(operatorName) || Option.isNone(timeZone)) return;
+        setState("saving");
+        onSave({ operatorName: operatorName.value, timeZone: timeZone.value }).then((saved) =>
+          setState(saved ? "saved" : "failed"),
+        );
+      }}
+    >
+      <div className="flex flex-col gap-1">
+        <label htmlFor={nameId} className="text-xs">
+          {t("settings.name")}
+        </label>
+        <input
+          id={nameId}
+          value={name}
+          maxLength={200}
+          autoComplete="name"
+          placeholder={t("settings.name.placeholder")}
+          onChange={(event) => {
+            setName(event.currentTarget.value);
+            setState("editing");
+          }}
+          className={fieldClass}
+        />
+      </div>
+      <div className="flex flex-col gap-1">
+        <label htmlFor={zoneId} className="text-xs">
+          {t("settings.timeZone")}
+        </label>
+        <select
+          id={zoneId}
+          value={zone}
+          onChange={(event) => {
+            setZone(event.currentTarget.value);
+            setState("editing");
+          }}
+          className={fieldClass}
+        >
+          {timeZones(settings.timeZone).map((value) => (
+            <option key={value} value={value}>
+              {value.replaceAll("_", " ")}
+            </option>
+          ))}
+        </select>
+        <p className="text-2xs text-muted-foreground">{t("settings.timeZone.hint")}</p>
+      </div>
+      <div className="flex items-center gap-3">
+        <Button type="submit" size="sm" aria-disabled={!changed || state === "saving"}>
+          {t("settings.save")}
+        </Button>
+        <p role="status" className="text-xs text-muted-foreground">
+          {state === "saved" && t("settings.saved")}
+          {state === "failed" && <span className="text-blocked">{t("settings.saveFailed")}</span>}
+        </p>
+      </div>
+    </form>
+  );
+}
+
+const shownCode = (code: PairingCode) => `${code.slice(0, 5)}-${code.slice(5)}`;
+
+type Pairing =
+  | { readonly _tag: "idle" }
+  | { readonly _tag: "starting" }
+  | { readonly _tag: "started"; readonly code: PairingCode; readonly expiresAt: DateTime.Utc }
+  | { readonly _tag: "failed" };
+
+/** Every paired device, and a code to pair one more. */
+function DevicesSection({
+  devices,
+  onStartPairing,
+  onRevoke,
+}: {
+  devices: ReadonlyArray<Device> | null;
+  onStartPairing: SettingsIntents["startPairing"];
+  onRevoke: SettingsIntents["revokeDevice"];
+}) {
+  const ctx = usePresentation();
+  const { t } = ctx.i18n;
+  const [pairing, setPairing] = useState<Pairing>({ _tag: "idle" });
+  return (
+    <Section title={t("settings.devices")}>
+      {devices === null ? (
+        <Loading />
+      ) : (
+        <ul className="flex flex-col gap-1.5">
+          {devices.map((device) => (
+            <li
+              key={device.id}
+              className="flex items-center gap-3 rounded-md border border-border px-3 py-2"
+            >
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate text-sm">{device.name}</span>
+                <span className="text-2xs text-muted-foreground">
+                  {device.current
+                    ? t("settings.device.current")
+                    : device.lastSeenAt === null
+                      ? t("settings.device.neverSeen")
+                      : t("settings.device.lastSeen", {
+                          when: activityTime(device.lastSeenAt, ctx),
+                        })}
+                </span>
+              </span>
+              {!device.current && (
+                <Confirm
+                  trigger={<Button size="sm" variant="destructive-outline" />}
+                  title={t("settings.device.revoke.title", { name: device.name })}
+                  body={t("settings.device.revoke.body", { name: device.name })}
+                  cancel={t("settings.device.revoke.cancel")}
+                  confirm={t("settings.device.revoke")}
+                  onConfirm={() => void onRevoke(device.id)}
+                >
+                  {t("settings.device.revoke")}
+                </Confirm>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="flex flex-col items-start gap-2">
+        <Button
+          size="sm"
+          aria-disabled={pairing._tag === "starting"}
+          onClick={() => {
+            if (pairing._tag === "starting") return;
+            setPairing({ _tag: "starting" });
+            onStartPairing().then(setPairing);
+          }}
+        >
+          {pairing._tag === "started" ? t("settings.pair.again") : t("settings.pair")}
+        </Button>
+        <div role="status" className="text-sm">
+          {pairing._tag === "started" && (
+            <div className="flex flex-col gap-1">
+              <p className="text-xs text-muted-foreground">{t("settings.pair.instructions")}</p>
+              <p className="font-mono text-lg tracking-wider">{shownCode(pairing.code)}</p>
+              <p className="text-2xs text-muted-foreground">
+                {t("settings.pair.expires", { time: clockTime(pairing.expiresAt, ctx) })}
+              </p>
+            </div>
+          )}
+          {pairing._tag === "failed" && (
+            <p className="text-xs text-blocked">{t("settings.pair.failed")}</p>
+          )}
+        </div>
+      </div>
+    </Section>
+  );
+}
+
+/** Choices kept in this browser only, and signing this device out. */
+function BrowserSection({ onForget }: { onForget: () => void }) {
+  const { t } = useI18n();
+  const { appearance, language } = usePreferences();
+  const appearanceId = useId();
+  const languageId = useId();
+  const appearances: ReadonlyArray<{ value: Appearance; label: string }> = [
+    { value: "system", label: t("settings.system") },
+    { value: "light", label: t("settings.light") },
+    { value: "dark", label: t("settings.dark") },
+  ];
+  // Each language is named in itself, so it can be found from any other.
+  const languages: ReadonlyArray<{ value: Language; label: string }> = [
+    { value: "system", label: t("settings.system") },
+    { value: "en", label: "English" },
+    { value: "pt-BR", label: "Português (Brasil)" },
+  ];
+  return (
+    <Section title={t("settings.browser")}>
+      <div className="flex flex-col gap-1">
+        <label htmlFor={appearanceId} className="text-xs">
+          {t("settings.appearance")}
+        </label>
+        <select
+          id={appearanceId}
+          value={appearance}
+          onChange={(event) => {
+            const picked = appearances.find((a) => a.value === event.currentTarget.value);
+            if (picked) setAppearance(picked.value);
+          }}
+          className={fieldClass}
+        >
+          {appearances.map(({ value, label }) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="flex flex-col gap-1">
+        <label htmlFor={languageId} className="text-xs">
+          {t("settings.language")}
+        </label>
+        <select
+          id={languageId}
+          value={language}
+          onChange={(event) => {
+            const picked = languages.find((l) => l.value === event.currentTarget.value);
+            if (picked) setLanguage(picked.value);
+          }}
+          className={fieldClass}
+        >
+          {languages.map(({ value, label }) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="flex flex-col items-start gap-1.5 pt-1">
+        <p className="text-xs text-muted-foreground">{t("settings.signOut.hint")}</p>
+        <Confirm
+          trigger={<Button size="sm" variant="destructive-outline" />}
+          title={t("settings.signOut.title")}
+          body={t("settings.signOut.body")}
+          cancel={t("settings.signOut.cancel")}
+          confirm={t("settings.signOut")}
+          onConfirm={onForget}
+        >
+          {t("settings.signOut")}
+        </Confirm>
+      </div>
+    </Section>
+  );
+}

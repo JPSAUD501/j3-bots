@@ -254,9 +254,6 @@ export const ptBR: Catalog = {
   "firstRun.connecting.title": "Conectando ao J3 Bots",
   "firstRun.connecting.body":
     "Aguardando o servidor do J3 Bots. Esta página atualiza assim que ele responder.",
-  "firstRun.engineDown.title": "O motor ainda não está rodando",
-  "firstRun.engineDown.body":
-    "O J3 Bots o inicia e continua tentando. Esta página atualiza quando ele estiver pronto.",
   "firstRun.incompatible.title": "O motor está na versão errada",
   "firstRun.incompatible.body":
     "O motor está na versão {running}, e esta versão do J3 Bots precisa da {pinned}.",
@@ -287,4 +284,127 @@ export const ptBR: Catalog = {
   "empty.noSelection.shortcut": "vai para o próximo",
   "empty.quiet.speaksFirst": "{name} fala primeiro. Está se preparando.",
   "empty.quiet.body": "Nenhuma mensagem ainda. Diga a {name} do que você precisa.",
+
+  "message.sending": "Enviando…",
+  "message.notSent.refused": "Não enviada: o servidor recusou",
+  "message.notSent.notPaired": "Não enviada: este dispositivo saiu da conta",
+  "message.notSent.unexpected": "Não enviada: algo deu errado no servidor",
+  "message.discard": "Apagar",
+
+  "timeline.loadOlder": "Mostrar mensagens anteriores",
+  "timeline.loadingOlder": "Carregando mensagens anteriores…",
+
+  "composer.files": "Arquivos para enviar",
+  "composer.sendAfterUpload": "Enviar quando os arquivos terminarem de subir",
+  "composer.file.uploading": "Enviando, {percent}",
+  "composer.file.remove": "Remover {name}",
+  "composer.file.failed": "{name} não pode ser enviado: {reason}",
+  "composer.file.empty": "O arquivo está vazio",
+  "composer.file.tooLarge": "Maior que {size}, o máximo para um arquivo",
+  "composer.file.imageTooLarge": "Uma imagem pode ter no máximo {size}",
+  "composer.file.imagesTooLarge": "As imagens de uma mensagem podem somar no máximo {size}",
+  "composer.file.tooMany": "Uma mensagem leva no máximo {count} arquivos",
+  "composer.file.nameTooLong": "O nome do arquivo é longo demais",
+  "composer.file.refused": "O servidor recusou este arquivo",
+  "composer.file.notPaired": "Este dispositivo saiu da conta",
+
+  "file.gone": "{name} não está mais no servidor.",
+  "file.unreachable": "Não deu para abrir {name}. Verifique a conexão e tente de novo.",
+
+  "connection.offline": "Você está sem internet. O que enviar sai quando a conexão voltar.",
+  "connection.reconnecting": "Reconectando…",
+  "connection.lost": "A conexão com o J3 Bots caiu.",
+  "connection.unreachable": "Não foi possível falar com o J3 Bots.",
+  "connection.retryIn": "Nova tentativa em {seconds} s",
+  "connection.retrying": "Tentando de novo…",
+  "connection.retryNow": "Tentar agora",
+
+  "pairing.title": "Parear este dispositivo",
+  "pairing.body":
+    "Na máquina que roda o J3 Bots, execute j3-bots pair, ou abra Configurações num dispositivo já pareado, e digite o código que aparecer.",
+  "pairing.revoked": "Este dispositivo saiu da conta. Pareie de novo para continuar.",
+  "pairing.code": "Código de pareamento",
+  "pairing.deviceName": "Nome deste dispositivo",
+  "pairing.submit": "Parear",
+  "pairing.pairing": "Pareando…",
+  "pairing.invalid":
+    "Esse código está errado, expirou ou já foi usado. Um código vale uma vez, até cinco minutos depois de criado.",
+  "pairing.rateLimited": "Códigos errados demais. O pareamento abre de novo às {time}.",
+  "pairing.unreachable":
+    "Não foi possível falar com o J3 Bots. Verifique se ele está rodando e se este dispositivo alcança a máquina.",
+  "pairing.incompatible":
+    "Esta página e o servidor do J3 Bots estão em versões diferentes. Recarregue a página.",
+  "pairing.storageFailed":
+    "Pareado, mas o navegador não guardou o acesso. Permita dados de site para esta página e pareie de novo.",
+
+  "gate.incompatible.title": "Esta página está desatualizada",
+  "gate.incompatible.body":
+    "O servidor do J3 Bots foi atualizado e fala uma versão mais nova. Recarregue para pegar a página certa.",
+  "gate.storage.title": "Este navegador não guarda o acesso",
+  "gate.storage.body":
+    "O J3 Bots guarda o acesso deste dispositivo nos dados de site do navegador, e o navegador recusou. Permita dados de site para esta página e tente de novo.",
+  "gate.reload": "Recarregar",
+  "gate.retry": "Tentar de novo",
+
+  "engine.starting.title": "O motor está iniciando",
+  "engine.starting.body":
+    "O J3 Bots está iniciando o motor. Esta página atualiza quando ele estiver pronto.",
+  "engine.down.title": "O motor parou",
+  "engine.down.body":
+    "O J3 Bots está reiniciando o motor. Se passar de um minuto, veja o log do J3 Bots na máquina onde ele roda.",
+  "engine.portInUse.title": "A porta do motor está ocupada",
+  "engine.portInUse.body":
+    "Outro programa usa a porta de que o motor precisa. Pare esse programa, ou defina J3_ENGINE_PORT com uma porta livre, e reinicie o J3 Bots.",
+  "engine.installFailed.title": "O motor não pôde ser instalado",
+  "engine.installFailed.body":
+    "O J3 Bots não conseguiu baixar ou verificar o motor e continua tentando. Verifique se a máquina tem internet e espaço livre em disco.",
+  "engine.credentialRefused.title": "O motor recusou o J3 Bots",
+  "engine.credentialRefused.body":
+    "O motor não aceita a credencial do J3 Bots, nem uma nova. Reinicie o J3 Bots; se continuar, veja o log dele.",
+
+  "empty.gone.title": "Esta conversa não existe mais",
+  "empty.gone.body": "O bot ou a sala dela foi excluído.",
+  "empty.gone.back": "Voltar para a lista",
+
+  "newBot.title": "Novo bot",
+  "newBot.body": "Dê um nome a ele. Ele vai perguntar para que você o quer, uma pergunta por vez.",
+  "newBot.cancel": "Cancelar",
+
+  "details.loading": "Carregando…",
+  "details.deleteFailed": "O bot não foi excluído. Tente de novo.",
+  "memory.close": "Fechar",
+  "memory.readFailed": "Não deu para ler este arquivo. Feche e tente de novo.",
+
+  "settings.close": "Fechar configurações",
+  "settings.engine": "Motor",
+  "settings.engine.ready": "Rodando, versão {version}",
+  "settings.you": "Você",
+  "settings.name": "Como os bots chamam você",
+  "settings.name.placeholder": "Seu nome",
+  "settings.timeZone": "Fuso horário",
+  "settings.timeZone.hint": "As rotinas seguem este relógio, e os bots dizem as horas por ele.",
+  "settings.save": "Salvar",
+  "settings.saved": "Salvo",
+  "settings.saveFailed": "Não foi salvo. Tente de novo.",
+  "settings.devices": "Dispositivos",
+  "settings.device.current": "Este dispositivo",
+  "settings.device.neverSeen": "Ainda não conectou",
+  "settings.device.lastSeen": "Visto por último {when}",
+  "settings.device.revoke": "Desconectar",
+  "settings.device.revoke.title": "Desconectar {name}?",
+  "settings.device.revoke.body":
+    "{name} perde o acesso na hora. Para parear de novo, é preciso um código novo.",
+  "settings.device.revoke.cancel": "Manter",
+  "settings.pair": "Parear outro dispositivo",
+  "settings.pair.again": "Gerar outro código",
+  "settings.pair.instructions": "Digite este código no outro dispositivo:",
+  "settings.pair.expires": "Vale uma vez, até {time}",
+  "settings.pair.failed": "Nenhum código foi gerado. Tente de novo.",
+  "settings.browser": "Este navegador",
+  "settings.signOut": "Sair neste dispositivo",
+  "settings.signOut.hint": "Sair apaga o acesso deste dispositivo aqui.",
+  "settings.signOut.title": "Sair neste dispositivo?",
+  "settings.signOut.body":
+    "Este navegador esquece o acesso, e parear de novo exige um código novo. Seus bots e conversas continuam no servidor.",
+  "settings.signOut.cancel": "Continuar conectado",
 };

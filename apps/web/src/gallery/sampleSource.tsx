@@ -4,10 +4,13 @@
  * are decided, bots answer after a moment. A stand-in for the client runtime
  * in development only; nothing here reaches a server.
  */
+import type { Draft, DraftFile } from "@j3-bots/client-runtime";
 import {
+  AttachmentId,
   BotId,
   EntryId,
   ModelId,
+  PairingCode,
   ProviderId,
   type Bot,
   type BotState,
@@ -27,7 +30,11 @@ import { SAMPLE_NOW, sampleTeam, type SampleTeam } from "./sample";
 interface State extends Omit<SampleTeam, "bots" | "room" | "attachments"> {
   /** Cards whose answer is on its way, as it would be to a server. */
   readonly inFlight: ReadonlySet<EntryId>;
+  /** Each conversation's unsent text and files, by `keyOf`. */
+  readonly drafts: Readonly<Record<string, Draft>>;
 }
+
+const blankDraft: Draft = { text: "", files: [] };
 
 /** How long an answer to a card takes to arrive, so a second click has something to miss. */
 const ANSWER_DELAY = 500;
@@ -90,14 +97,18 @@ const now = () => DateTime.makeUnsafe(DateTime.toEpochMillis(SAMPLE_NOW) + Date.
 let created = 0;
 const newId = () => EntryId.make(`local-${++created}`);
 
-function message(author: Entry["author"], text: string): DraftEntry {
+function message(
+  author: Entry["author"],
+  text: string,
+  attachments: Extract<Entry, { _tag: "message" }>["attachments"] = [],
+): DraftEntry {
   return {
     _tag: "message",
     id: newId(),
     author,
     createdAt: now(),
     text,
-    attachments: [],
+    attachments,
     mentions: { _tag: "bots", ids: [] },
     delivery: { _tag: "delivered" },
     commandId: null,
@@ -179,11 +190,54 @@ function sampleIntents({ get, update }: Store): ShellIntents {
     inFlight(entryId, change, () => resume(entryId, reply));
   const nothing = () => {};
 
-  return {
-    sendMessage: (target, text) => {
-      if (text === "") return;
+  const changeDraft = (target: EntryTarget, change: (draft: Draft) => Draft) =>
+    update((s) => {
       const key = keyOf(target);
-      update((s) => withEntries(s, key, (es) => appended(es, message({ _tag: "operator" }, text))));
+      return { ...s, drafts: { ...s.drafts, [key]: change(s.drafts[key] ?? blankDraft) } };
+    });
+
+  return {
+    setDraftText: (target, text) => changeDraft(target, (draft) => ({ ...draft, text })),
+    // Files are "uploaded" at once: the sample has no server to send them to.
+    attachFiles: (target, picked) =>
+      changeDraft(target, (draft) => ({
+        ...draft,
+        files: [
+          ...draft.files,
+          ...picked.map((file): DraftFile => {
+            const id = AttachmentId.make(`local-file-${++created}`);
+            return {
+              _tag: "ready",
+              key: id,
+              attachment: {
+                id,
+                name: file.name,
+                mediaType: file.type === "" ? "application/octet-stream" : file.type,
+                size: file.size,
+              },
+            };
+          }),
+        ],
+      })),
+    detachFile: (target, key) =>
+      changeDraft(target, (draft) => ({
+        ...draft,
+        files: draft.files.filter((file) => file.key !== key),
+      })),
+    sendDraft: (target) => {
+      const key = keyOf(target);
+      const draft = get().drafts[key] ?? blankDraft;
+      const text = draft.text.trim();
+      const attachments = draft.files.flatMap((file) =>
+        file._tag === "ready" ? [file.attachment] : [],
+      );
+      if (text === "" && attachments.length === 0) return;
+      update((s) => ({
+        ...withEntries(s, key, (es) =>
+          appended(es, message({ _tag: "operator" }, text, attachments)),
+        ),
+        drafts: { ...s.drafts, [key]: blankDraft },
+      }));
       // In a room, the host answers what is addressed to nobody.
       const room = get().roster.find(
         (i) => i._tag === "room" && target._tag === "room" && i.room.id === target.roomId,
@@ -297,19 +351,37 @@ function sampleIntents({ get, update }: Store): ShellIntents {
         ...s,
         roster: s.roster.filter((item) => !(item._tag === "bot" && item.bot.id === botId)),
       })),
+    updateSettings: (changes) => {
+      update((s) => ({ ...s, settings: { ...s.settings, ...changes } }));
+      return Promise.resolve(true);
+    },
+    startPairing: () =>
+      Promise.resolve({
+        _tag: "started",
+        code: PairingCode.make("7KQ2M9XH4D"),
+        expiresAt: DateTime.makeUnsafe(Date.now() + 5 * 60_000),
+      }),
+    revokeDevice: (deviceId) => {
+      update((s) => ({ ...s, devices: s.devices.filter((device) => device.id !== deviceId) }));
+      return Promise.resolve(true);
+    },
     // Screens for these come later; the sample has nothing to show for them yet.
+    resendMessage: nothing,
+    discardMessage: nothing,
     openWorkFold: nothing,
+    closeWorkFold: nothing,
     openAttachment: nothing,
     openHandoff: nothing,
     openRoutine: nothing,
     openConversation: nothing,
     openMemoryFile: nothing,
-    attach: nothing,
-    dictate: nothing,
+    loadOlder: nothing,
     newBot: nothing,
     newRoom: nothing,
     editProfile: nothing,
     freshStart: nothing,
+    refreshDevices: nothing,
+    forgetDevice: nothing,
   };
 }
 
@@ -317,12 +389,20 @@ function toData(state: State): ShellData {
   return {
     engine: state.engine,
     roster: state.roster,
-    entries: (target) => state.entries[keyOf(target)] ?? [],
+    conversation: (target) => ({
+      phase: "ready",
+      items: state.entries[keyOf(target)] ?? [],
+      hasOlder: false,
+      loadingOlder: false,
+    }),
+    draft: (target) => state.drafts[keyOf(target)] ?? blankDraft,
     submitting: (entryId) => state.inFlight.has(entryId),
     workSteps: (entryId) => state.workSteps[entryId] ?? null,
     routines: (botId) => state.routines[botId] ?? [],
     files: (botId) => state.files[botId] ?? [],
     memory: (botId) => state.memory[botId] ?? [],
+    settings: state.settings,
+    devices: state.devices,
   };
 }
 
@@ -332,7 +412,7 @@ function toData(state: State): ShellData {
  */
 export function useSampleSource({ firstRun = false }: { firstRun?: boolean } = {}): ShellSource {
   const [store] = useState(() => {
-    const team: State = { ...sampleTeam(SAMPLE_NOW), inFlight: new Set() };
+    const team: State = { ...sampleTeam(SAMPLE_NOW), inFlight: new Set(), drafts: {} };
     return createStore(firstRun ? withoutBots(team) : team);
   });
   const state = useSyncExternalStore(store.subscribe, store.get);

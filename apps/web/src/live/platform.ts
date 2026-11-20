@@ -1,0 +1,156 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import {
+  ClientStorage,
+  CredentialStorageError,
+  CredentialStore,
+  type DeviceCredential,
+  FileTransfer,
+  LocalStorageError,
+  type LocalTable,
+  Network,
+  type NetworkStatus,
+  type Platform,
+  ServerAddress,
+  TransferFailed,
+  type UploadRequest,
+  type UploadResponse,
+} from "@j3-bots/client-runtime";
+import { DeviceId, DeviceToken } from "@j3-bots/contracts";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as Socket from "effect/socket/Socket";
+import * as Idb from "./idb";
+
+/**
+ * The device credential, as IndexedDB keeps it. A non-extractable WebCrypto
+ * key would not help: the server is also served over plain HTTP on a local
+ * network, where WebCrypto's subtle API does not exist, and a script running
+ * on this origin could use such a key as freely as read the token.
+ */
+const StoredCredential = Schema.fromJsonString(
+  Schema.Struct({ deviceId: DeviceId, token: DeviceToken }),
+);
+const decodeCredential = Schema.decodeUnknownOption(StoredCredential);
+const encodeCredential = Schema.encodeSync(StoredCredential);
+const CREDENTIAL_KEY = "device";
+
+const credentials = Layer.succeed(
+  CredentialStore,
+  CredentialStore.of({
+    load: Effect.tryPromise({
+      try: () => Idb.get("credentials", CREDENTIAL_KEY),
+      catch: () => new CredentialStorageError({ operation: "load" }),
+    }).pipe(
+      Effect.map((stored) =>
+        stored === undefined
+          ? Option.none()
+          : decodeCredential(stored).pipe(
+              Option.map(({ deviceId, token }) => ({ deviceId, token: Redacted.make(token) })),
+            ),
+      ),
+    ),
+    save: Effect.fn("CredentialStore.save")((credential: DeviceCredential) =>
+      Effect.tryPromise({
+        try: () =>
+          Idb.put(
+            "credentials",
+            CREDENTIAL_KEY,
+            encodeCredential({
+              deviceId: credential.deviceId,
+              token: Redacted.value(credential.token),
+            }),
+          ),
+        catch: () => new CredentialStorageError({ operation: "save" }),
+      }),
+    ),
+    clear: Effect.tryPromise({
+      try: () => Idb.remove("credentials", CREDENTIAL_KEY),
+      catch: () => new CredentialStorageError({ operation: "clear" }),
+    }),
+  }),
+);
+
+const storage = Layer.succeed(
+  ClientStorage,
+  ClientStorage.of({
+    readAll: Effect.fn("ClientStorage.readAll")((table: LocalTable) =>
+      Effect.tryPromise({
+        try: () => Idb.getAll(table),
+        catch: () => new LocalStorageError({ operation: "read" }),
+      }).pipe(
+        Effect.map((records) => {
+          const text = new Map<string, string>();
+          for (const [key, value] of records) if (typeof value === "string") text.set(key, value);
+          return text;
+        }),
+      ),
+    ),
+    write: Effect.fn("ClientStorage.write")((table: LocalTable, key: string, value: string) =>
+      Effect.tryPromise({
+        try: () => Idb.put(table, key, value),
+        catch: () => new LocalStorageError({ operation: "write" }),
+      }),
+    ),
+    remove: Effect.fn("ClientStorage.remove")((table: LocalTable, key: string) =>
+      Effect.tryPromise({
+        try: () => Idb.remove(table, key),
+        catch: () => new LocalStorageError({ operation: "remove" }),
+      }),
+    ),
+  }),
+);
+
+/** Uploads with `XMLHttpRequest`, the one browser API that reports upload progress. */
+const transfer = Layer.succeed(
+  FileTransfer,
+  FileTransfer.of({
+    upload: Effect.fn("FileTransfer.upload")((request: UploadRequest) =>
+      Effect.callback<UploadResponse, TransferFailed>((resume) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", request.url);
+        for (const [name, value] of Object.entries(request.headers)) {
+          xhr.setRequestHeader(name, value);
+        }
+        xhr.upload.onprogress = (event) => request.onProgress(event.loaded);
+        xhr.onload = () => resume(Effect.succeed({ status: xhr.status, body: xhr.responseText }));
+        xhr.onerror = () => resume(Effect.fail(new TransferFailed()));
+        xhr.send(request.body);
+        return Effect.sync(() => xhr.abort());
+      }),
+    ),
+  }),
+);
+
+const statusNow = (): NetworkStatus => (navigator.onLine ? "online" : "offline");
+
+const network = Layer.succeed(
+  Network,
+  Network.of({
+    status: Effect.sync(statusNow),
+    changes: Stream.merge(
+      Stream.fromEventListener(window, "online"),
+      Stream.fromEventListener(window, "offline"),
+    ).pipe(Stream.map(statusNow)),
+  }),
+);
+
+/**
+ * The browser's platform. The server is the page's own origin: the server
+ * serves this app, and the browser sends nothing anywhere else.
+ */
+export const platform: Layer.Layer<Platform> = Layer.mergeAll(
+  Layer.succeed(ServerAddress, { origin: new URL(window.location.origin) }),
+  credentials,
+  storage,
+  transfer,
+  network,
+  FetchHttpClient.layer,
+  Socket.layerWebSocketConstructorGlobal,
+  SecureRandom.layerWebCrypto,
+);

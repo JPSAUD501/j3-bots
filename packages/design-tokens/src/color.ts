@@ -77,6 +77,15 @@ export function inSrgbGamut(color: LinearRgb): boolean {
   return [color.r, color.g, color.b].every((c) => c >= -epsilon && c <= 1 + epsilon);
 }
 
+const fromLinear = (channel: number) =>
+  channel <= 0.0031308 ? channel * 12.92 : 1.055 * channel ** (1 / 2.4) - 0.055;
+
+/** The color as 8-bit sRGB channels, for raster output. Out-of-gamut channels are clipped. */
+export function toSrgb8(color: LinearRgb): readonly [number, number, number] {
+  const channel = (c: number) => Math.round(fromLinear(Math.min(1, Math.max(0, c))) * 255);
+  return [channel(color.r), channel(color.g), channel(color.b)];
+}
+
 /** Composites `top` over an opaque `bottom`. */
 export function over(top: LinearRgb, bottom: LinearRgb): LinearRgb {
   const mix = (t: number, u: number) => t * top.alpha + u * (1 - top.alpha);

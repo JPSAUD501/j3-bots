@@ -253,6 +253,9 @@ importers:
       '@fontsource-variable/inter':
         specifier: 5.3.0
         version: 5.3.0
+      '@j3-bots/client-runtime':
+        specifier: workspace:*
+        version: link:../../packages/client-runtime
       '@j3-bots/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts

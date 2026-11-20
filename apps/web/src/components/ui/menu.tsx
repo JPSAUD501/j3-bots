@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
-import { CheckIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "../../lib/cn";
 import { touchTarget } from "../../lib/touchTarget";
@@ -44,52 +43,3 @@ export function MenuItem({ onClick, children }: { onClick: () => void; children:
     </MenuPrimitive.Item>
   );
 }
-
-export function MenuGroup({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <MenuPrimitive.Group>
-      <MenuPrimitive.GroupLabel className="px-2 pt-1.5 pb-1 text-2xs text-muted-foreground">
-        {label}
-      </MenuPrimitive.GroupLabel>
-      {children}
-    </MenuPrimitive.Group>
-  );
-}
-
-export function MenuRadioGroup<V extends string>({
-  value,
-  onValueChange,
-  options,
-}: {
-  value: V;
-  onValueChange: (value: V) => void;
-  options: ReadonlyArray<{ readonly value: V; readonly label: string }>;
-}) {
-  return (
-    <MenuPrimitive.RadioGroup
-      value={value}
-      onValueChange={(next: unknown) => {
-        const option = options.find((o) => o.value === next);
-        if (option) onValueChange(option.value);
-      }}
-    >
-      {options.map((option) => (
-        <MenuPrimitive.RadioItem
-          key={option.value}
-          value={option.value}
-          closeOnClick
-          className={item}
-        >
-          <span className="flex size-4 items-center justify-center">
-            <MenuPrimitive.RadioItemIndicator>
-              <CheckIcon className="size-3.5" />
-            </MenuPrimitive.RadioItemIndicator>
-          </span>
-          {option.label}
-        </MenuPrimitive.RadioItem>
-      ))}
-    </MenuPrimitive.RadioGroup>
-  );
-}
-
-export const MenuSeparator = () => <MenuPrimitive.Separator className="my-1 h-px bg-border" />;

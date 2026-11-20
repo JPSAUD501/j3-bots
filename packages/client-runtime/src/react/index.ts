@@ -143,10 +143,10 @@ export const useRoutines = (botId: BotId | null): Loaded<ReadonlyArray<Routine>>
 
 /**
  * The conversation or room while the component is mounted: its state, or
- * `null` for the first render, and what to call on it.
+ * `null` for the first render or when `target` is null, and what to call on it.
  */
 export const useConversation = (
-  target: EntryTarget,
+  target: EntryTarget | null,
 ): {
   readonly state: ConversationState | null;
   readonly loadOlder: () => void;

@@ -4,8 +4,10 @@
  * development tool for reviewing the design, so its own headings are not
  * translated; everything it shows is.
  */
-import type { RosterItem, RosterItemKey } from "@j3-bots/contracts";
+import type { DraftFile, PairingFailure } from "@j3-bots/client-runtime";
+import { AttachmentId, type RosterItem, type RosterItemKey } from "@j3-bots/contracts";
 import { avatarShapeNames, botColors, colors, radii, typeScale } from "@j3-bots/design-tokens";
+import * as DateTime from "effect/DateTime";
 import { useState, type ReactNode } from "react";
 import { BotsProvider, ClockProvider, I18nProvider } from "../app/context";
 import { ApprovalCard } from "../components/ApprovalCard";
@@ -13,10 +15,12 @@ import { BotAvatar, RoomAvatar } from "../components/BotAvatar";
 import { Composer } from "../components/Composer";
 import { ConversationHeader } from "../components/ConversationHeader";
 import { BotDetails, RoomDetails } from "../components/DetailsPanel";
+import { ConnectionBanner } from "../components/ConnectionBanner";
 import { FirstRun, NoSelection, QuietConversation } from "../components/EmptyStates";
 import { HandoffCard } from "../components/HandoffCard";
 import { MessageBubble } from "../components/MessageBubble";
 import { NoticeLine } from "../components/NoticeLine";
+import { Incompatible, Pairing, StorageFailed } from "../components/Pairing";
 import { QuestionCard } from "../components/QuestionCard";
 import { RosterRow } from "../components/RosterRow";
 import { RoutineChangeCard } from "../components/RoutineChangeCard";
@@ -84,6 +88,7 @@ export default function GalleryPage() {
               <ComposerSection />
               <DetailsSection />
               <EmptyStatesSection />
+              <ConnectionSection />
               <ShellSection />
             </div>
           </div>
@@ -298,6 +303,9 @@ const timelineIntents: TimelineIntents = {
   openHandoff: nothing,
   openRoutine: nothing,
   openConversation: nothing,
+  resendMessage: nothing,
+  discardMessage: nothing,
+  closeWorkFold: nothing,
 };
 
 const workSteps = (entryId: string) => team.workSteps[entryId] ?? null;
@@ -307,53 +315,66 @@ function BubblesSection() {
   const { bubbles } = variants;
   return (
     <Section title="Bubbles">
-      <Labeled label="Single bubbles, with no tightened corner: the operator, queued, cancelled, refused, perhaps delivered, being sent again, a bot with code, a bot with files">
+      <Labeled label="Single bubbles, with no tightened corner: the operator, queued, cancelled, refused, perhaps delivered, being sent again, on its way from this device, not sent from it, a bot with code, a bot with files">
         <div className="flex flex-col gap-2">
           <MessageBubble
-            entry={bubbles.operator}
+            message={bubbles.operator}
             position="single"
             onOpenAttachment={nothing}
             onRetry={nothing}
           />
           <MessageBubble
-            entry={bubbles.pending}
+            message={bubbles.pending}
             position="single"
             onOpenAttachment={nothing}
             onRetry={nothing}
           />
           <MessageBubble
-            entry={bubbles.cancelled}
+            message={bubbles.cancelled}
             position="single"
             onOpenAttachment={nothing}
             onRetry={nothing}
           />
           <MessageBubble
-            entry={bubbles.failed}
+            message={bubbles.failed}
             position="single"
             onOpenAttachment={nothing}
             onRetry={nothing}
           />
           <MessageBubble
-            entry={bubbles.unresolved}
+            message={bubbles.unresolved}
             position="single"
             onOpenAttachment={nothing}
             onRetry={nothing}
           />
           <MessageBubble
-            entry={bubbles.retrying}
+            message={bubbles.retrying}
             position="single"
             onOpenAttachment={nothing}
             onRetry={nothing}
             submitting
           />
           <MessageBubble
-            entry={bubbles.bot}
+            message={bubbles.sending}
             position="single"
             onOpenAttachment={nothing}
             onRetry={nothing}
           />
           <MessageBubble
-            entry={bubbles.withFiles}
+            message={bubbles.notSent}
+            position="single"
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+            onDiscard={nothing}
+          />
+          <MessageBubble
+            message={bubbles.bot}
+            position="single"
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+          />
+          <MessageBubble
+            message={bubbles.withFiles}
             position="single"
             onOpenAttachment={nothing}
             onRetry={nothing}
@@ -497,15 +518,56 @@ function ApprovalBecomingExact() {
   );
 }
 
-function ComposerDemo({ initial, recipient }: { initial: string; recipient: string }) {
+/** Files in every state the composer shows: uploading, ready, and refused. */
+const draftFiles: ReadonlyArray<DraftFile> = [
+  {
+    _tag: "uploading",
+    key: "photo",
+    name: "Team photo.jpg",
+    mediaType: "image/jpeg",
+    size: 2_400_000,
+    sent: 900_000,
+  },
+  {
+    _tag: "ready",
+    key: "brief",
+    attachment: {
+      id: AttachmentId.make("gallery-brief"),
+      name: "Brief.pdf",
+      mediaType: "application/pdf",
+      size: 184_000,
+    },
+  },
+  {
+    _tag: "failed",
+    key: "video",
+    name: "Launch video.mov",
+    mediaType: "video/quicktime",
+    size: 900_000_000,
+    problem: "too-large",
+  },
+];
+
+function ComposerDemo({
+  initial,
+  recipient,
+  files: initialFiles = [],
+}: {
+  initial: string;
+  recipient: string;
+  files?: ReadonlyArray<DraftFile>;
+}) {
   const [value, setValue] = useState(initial);
+  const [files, setFiles] = useState(initialFiles);
   return (
     <Composer
       recipient={recipient}
       value={value}
       onValueChange={setValue}
+      files={files}
+      onAttachFiles={nothing}
+      onDetachFile={(key) => setFiles((current) => current.filter((file) => file.key !== key))}
       onSend={() => setValue("")}
-      onAttach={nothing}
       onDictate={nothing}
     />
   );
@@ -539,7 +601,7 @@ function ComposerSection() {
           ))}
         </div>
       </Labeled>
-      <Labeled label="Composer: empty, and with a draft">
+      <Labeled label="Composer: empty, with a draft, and with files uploading, ready and refused">
         <div className="flex max-w-(--layout-text-column) flex-col gap-3">
           <ComposerDemo initial="" recipient={team.bots.scout.profile.name} />
           <ComposerDemo
@@ -547,6 +609,11 @@ function ComposerSection() {
               "Ask whether the photo can go on the website too.\nAnd keep the intro under 80 words."
             }
             recipient={team.room.name}
+          />
+          <ComposerDemo
+            initial="The brief and the photo for Friday."
+            recipient={team.bots.scout.profile.name}
+            files={draftFiles}
           />
         </div>
       </Labeled>
@@ -638,6 +705,12 @@ const signInCommands: Record<string, string> = {
 const engines = {
   starting: null,
   down: { ...team.engine, state: { _tag: "unavailable", reason: "down" } },
+  portInUse: { ...team.engine, state: { _tag: "unavailable", reason: "port-in-use" } },
+  installFailed: { ...team.engine, state: { _tag: "unavailable", reason: "install-failed" } },
+  credentialRefused: {
+    ...team.engine,
+    state: { _tag: "unavailable", reason: "credential-refused" },
+  },
   incompatible: { ...team.engine, state: { _tag: "incompatible", runningVersion: "0.1.8" } },
   signIn: {
     ...team.engine,
@@ -682,6 +755,19 @@ function EmptyStatesSection() {
         <Frame label="First run: engine not running" width={340} height={360}>
           <FirstRun engine={engines.down} onCreateBot={created} />
         </Frame>
+        <Frame label="First run: the engine's port is taken" width={340} height={360}>
+          <FirstRun engine={engines.portInUse} onCreateBot={created} />
+        </Frame>
+        <Frame label="First run: the engine did not install" width={340} height={360}>
+          <FirstRun engine={engines.installFailed} onCreateBot={created} />
+        </Frame>
+        <Frame
+          label="First run: the engine refused the server's credential"
+          width={340}
+          height={360}
+        >
+          <FirstRun engine={engines.credentialRefused} onCreateBot={created} />
+        </Frame>
         <Frame label="First run: wrong engine version" width={340} height={360}>
           <FirstRun engine={engines.incompatible} onCreateBot={created} />
         </Frame>
@@ -706,6 +792,78 @@ function EmptyStatesSection() {
         </Frame>
         <Frame label="A new bot, about to speak first" width={340} height={360}>
           <QuietConversation bot={speakingFirst} />
+        </Frame>
+      </div>
+    </Section>
+  );
+}
+
+// Real times: the banner and the lockout count against the device's clock, not the gallery's.
+const retryAt = DateTime.makeUnsafe(Date.now() + 30_000);
+const lockedUntil = DateTime.makeUnsafe(Date.now() + 15 * 60_000);
+
+const refused = (reason: PairingFailure) => () =>
+  Promise.resolve({ _tag: "failed", reason } as const);
+
+function ConnectionSection() {
+  return (
+    <Section title="Connection and pairing">
+      <Labeled label="The connection line: offline, reconnecting, the connection lost with a retry waiting, the server not reached">
+        <div className="flex max-w-(--layout-text-column) flex-col gap-2">
+          <ConnectionBanner state={{ _tag: "offline" }} everConnected onRetryNow={nothing} />
+          <ConnectionBanner
+            state={{ _tag: "connecting", attempt: 2 }}
+            everConnected
+            onRetryNow={nothing}
+          />
+          <ConnectionBanner
+            state={{ _tag: "waiting", reason: "dropped", attempt: 2, retryAt }}
+            everConnected
+            onRetryNow={nothing}
+          />
+          <ConnectionBanner
+            state={{
+              _tag: "waiting",
+              reason: "unreachable",
+              attempt: 1,
+              retryAt,
+            }}
+            everConnected={false}
+            onRetryNow={nothing}
+          />
+        </div>
+      </Labeled>
+      <div className="flex flex-wrap gap-4">
+        <Frame
+          label="Pairing: a new device (any code is refused as wrong)"
+          width={390}
+          height={560}
+        >
+          <Pairing
+            revoked={false}
+            defaultName="Chrome on Android"
+            onPair={refused({ _tag: "invalid-code" })}
+          />
+        </Frame>
+        <Frame
+          label="Pairing: signed out elsewhere (any code meets the lockout)"
+          width={390}
+          height={560}
+        >
+          <Pairing
+            revoked
+            defaultName="Safari on iPhone"
+            onPair={refused({
+              _tag: "rate-limited",
+              retryAt: lockedUntil,
+            })}
+          />
+        </Frame>
+        <Frame label="The server speaks another protocol version" width={390} height={360}>
+          <Incompatible />
+        </Frame>
+        <Frame label="The browser would not keep the sign-in" width={390} height={360}>
+          <StorageFailed onRetry={nothing} />
         </Frame>
       </div>
     </Section>

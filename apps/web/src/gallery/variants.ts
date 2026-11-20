@@ -3,8 +3,10 @@
  * One entry per state the gallery shows beside the sample conversations: every
  * card status, fold ending and notice. Development only.
  */
+import type { OutgoingMessage } from "@j3-bots/client-runtime";
 import {
   AttachmentId,
+  CommandId,
   EntryId,
   EntryOrder,
   RoutineId,
@@ -64,6 +66,22 @@ export function galleryVariants(now: DateTime.Utc) {
     commandId: null,
   });
 
+  /** A message still on this device, on its way or refused. */
+  const outgoing = (
+    name: string,
+    text: string,
+    status: OutgoingMessage["status"],
+  ): OutgoingMessage => ({
+    _tag: "outgoing",
+    commandId: CommandId.make(`variant-${name}`),
+    target: { _tag: "conversation", botId: ids.scout },
+    text,
+    attachments: [],
+    mentions: null,
+    createdAt: ago(1),
+    status,
+  });
+
   const bubbles = {
     operator: message(
       "op",
@@ -85,6 +103,11 @@ export function galleryVariants(now: DateTime.Utc) {
     // Shown while a retry is on its way.
     retrying: message("retrying", { _tag: "operator" }, "And August, if it’s out", {
       delivery: { _tag: "failed", reason: "unresolved" },
+    }),
+    sending: outgoing("sending", "And September", { _tag: "sending" }),
+    notSent: outgoing("not-sent", "And October", {
+      _tag: "not-sent",
+      failure: { _tag: "unexpected" },
     }),
     bot: message(
       "bot",

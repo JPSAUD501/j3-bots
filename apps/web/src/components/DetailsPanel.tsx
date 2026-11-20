@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type {
-  AttachmentId,
+  Attachment,
   Bot,
   BotFile,
   MemoryFile,
@@ -19,7 +19,6 @@ import {
   WebhookIcon,
   XIcon,
 } from "lucide-react";
-import { AlertDialog } from "@base-ui/react/alert-dialog";
 import type { ReactElement, ReactNode, Ref } from "react";
 import { useBots, useI18n, usePresentation } from "../app/context";
 import type { KeyWith } from "../i18n/i18n";
@@ -29,6 +28,7 @@ import { activityTime, timeInSentence } from "../lib/time";
 import { BotAvatar } from "./BotAvatar";
 import { FileCard, fileSize } from "./FileCard";
 import { Button } from "./ui/button";
+import { Confirm } from "./ui/confirm";
 import { Switch } from "./ui/switch";
 
 interface PanelFrameProps {
@@ -107,20 +107,23 @@ const permissionText: Record<PermissionMode, readonly [KeyWith, KeyWith]> = {
 
 export interface BotDetailsIntents {
   readonly setRoutineEnabled: (routineId: RoutineId, enabled: boolean) => void;
-  readonly openRoutine: (routineId: RoutineId) => void;
-  readonly openAttachment: (attachmentId: AttachmentId) => void;
+  /** Absent until a routine has a view of its own: its row then only shows it. */
+  readonly openRoutine?: (routineId: RoutineId) => void;
+  readonly openAttachment: (attachment: Attachment) => void;
   readonly openMemoryFile: (path: MemoryPath) => void;
-  readonly editProfile: () => void;
+  /** Absent until profiles can be edited. */
+  readonly editProfile?: () => void;
   readonly freshStart: () => void;
   readonly deleteBot: () => void;
 }
 
 interface BotDetailsProps {
   readonly bot: Bot;
-  readonly routines: ReadonlyArray<Routine>;
+  /** Null while they load, as for `files` and `memory`. */
+  readonly routines: ReadonlyArray<Routine> | null;
   /** Files the bot delivered, newest first. */
-  readonly files: ReadonlyArray<BotFile>;
-  readonly memory: ReadonlyArray<MemoryFile>;
+  readonly files: ReadonlyArray<BotFile> | null;
+  readonly memory: ReadonlyArray<MemoryFile> | null;
   /** The model's name as the engine reports it, or null if the engine does not offer it now. */
   readonly modelName: string | null;
   readonly intents: BotDetailsIntents;
@@ -144,6 +147,7 @@ export function BotDetails({
   const { t } = useI18n();
   const { name, title, job, avatar } = bot.profile;
   const [modeLabel, modeDescription] = permissionText[bot.permissionMode];
+  const { openRoutine } = intents;
   return (
     <PanelFrame
       title={t("conversation.details")}
@@ -169,13 +173,17 @@ export function BotDetails({
         <p className="text-sm whitespace-pre-wrap">
           {job === "" ? t("details.noJob", { name }) : job}
         </p>
-        <Button size="sm" onClick={intents.editProfile}>
-          {t("details.editProfile")}
-        </Button>
+        {intents.editProfile && (
+          <Button size="sm" onClick={intents.editProfile}>
+            {t("details.editProfile")}
+          </Button>
+        )}
       </section>
 
       <DetailsSection title={t("details.routines")}>
-        {routines.length === 0 ? (
+        {routines === null ? (
+          <Loading />
+        ) : routines.length === 0 ? (
           <p className="text-xs text-muted-foreground">{t("details.noRoutines", { name })}</p>
         ) : (
           <ul className="-mx-2 flex flex-col">
@@ -184,7 +192,7 @@ export function BotDetails({
                 key={routine.id}
                 routine={routine}
                 onToggle={(enabled) => intents.setRoutineEnabled(routine.id, enabled)}
-                onOpen={() => intents.openRoutine(routine.id)}
+                onOpen={openRoutine && (() => openRoutine(routine.id))}
               />
             ))}
           </ul>
@@ -192,7 +200,9 @@ export function BotDetails({
       </DetailsSection>
 
       <DetailsSection title={t("details.files")}>
-        {files.length === 0 ? (
+        {files === null ? (
+          <Loading />
+        ) : files.length === 0 ? (
           <p className="text-xs text-muted-foreground">{t("details.noFiles", { name })}</p>
         ) : (
           <div className="flex flex-col gap-1.5">
@@ -200,7 +210,7 @@ export function BotDetails({
               <FileCard
                 key={attachment.id}
                 attachment={attachment}
-                onOpen={() => intents.openAttachment(attachment.id)}
+                onOpen={() => intents.openAttachment(attachment)}
                 className="w-full"
               />
             ))}
@@ -209,11 +219,15 @@ export function BotDetails({
       </DetailsSection>
 
       <DetailsSection title={t("details.memory")}>
-        <MemoryList
-          files={memory}
-          onOpen={intents.openMemoryFile}
-          empty={t("details.noMemory", { name })}
-        />
+        {memory === null ? (
+          <Loading />
+        ) : (
+          <MemoryList
+            files={memory}
+            onOpen={intents.openMemoryFile}
+            empty={t("details.noMemory", { name })}
+          />
+        )}
       </DetailsSection>
 
       <DetailsSection title={t("details.model")}>
@@ -247,6 +261,11 @@ export function BotDetails({
   );
 }
 
+function Loading() {
+  const { t } = useI18n();
+  return <p className="text-xs text-muted-foreground">{t("details.loading")}</p>;
+}
+
 /**
  * Deleting a bot asks first, naming what goes and what stays; the intent is
  * emitted only once the operator confirms. Cancel is where focus starts.
@@ -254,30 +273,16 @@ export function BotDetails({
 function DeleteBot({ name, onDelete }: { name: string; onDelete: () => void }) {
   const { t } = useI18n();
   return (
-    <AlertDialog.Root>
-      <AlertDialog.Trigger render={<Button size="sm" variant="destructive-outline" />}>
-        {t("details.delete", { name })}
-      </AlertDialog.Trigger>
-      <AlertDialog.Portal>
-        <AlertDialog.Backdrop className="fixed inset-0 z-50 bg-scrim transition-opacity duration-(--duration-slow) data-ending-style:opacity-0 data-starting-style:opacity-0" />
-        <AlertDialog.Popup className="fixed inset-x-4 top-1/2 z-50 mx-auto flex max-w-sm -translate-y-1/2 flex-col gap-2 rounded-lg border border-border bg-surface p-5 text-foreground shadow-xl outline-none transition-[opacity,scale] duration-(--duration-slow) data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0">
-          <AlertDialog.Title className="text-lg font-medium">
-            {t("details.delete.title", { name })}
-          </AlertDialog.Title>
-          <AlertDialog.Description className="text-sm text-muted-foreground">
-            {t("details.delete.body", { name })}
-          </AlertDialog.Description>
-          <div className="mt-3 flex flex-wrap justify-end gap-2">
-            <AlertDialog.Close render={<Button />}>
-              {t("details.delete.cancel", { name })}
-            </AlertDialog.Close>
-            <AlertDialog.Close render={<Button variant="destructive" />} onClick={onDelete}>
-              {t("details.delete", { name })}
-            </AlertDialog.Close>
-          </div>
-        </AlertDialog.Popup>
-      </AlertDialog.Portal>
-    </AlertDialog.Root>
+    <Confirm
+      trigger={<Button size="sm" variant="destructive-outline" />}
+      title={t("details.delete.title", { name })}
+      body={t("details.delete.body", { name })}
+      cancel={t("details.delete.cancel", { name })}
+      confirm={t("details.delete", { name })}
+      onConfirm={onDelete}
+    >
+      {t("details.delete", { name })}
+    </Confirm>
   );
 }
 
@@ -298,7 +303,7 @@ function RoutineRow({
 }: {
   routine: Routine;
   onToggle: (enabled: boolean) => void;
-  onOpen: () => void;
+  onOpen: (() => void) | undefined;
 }) {
   const ctx = usePresentation();
   const { t, pluralParts } = ctx.i18n;
@@ -316,6 +321,37 @@ function RoutineRow({
       ? t("routine.next", { when: timeInSentence(routine.nextRunAt, ctx) })
       : null;
   const last = routine.lastRun;
+  const summaryClass = "flex min-w-0 flex-1 flex-col text-start";
+  const summary = (
+    <>
+      <span className="truncate text-sm">{routine.name}</span>
+      <span
+        className={cn(
+          "text-xs text-muted-foreground",
+          routine.trigger._tag === "schedule" && schedule === routine.trigger.cron && "font-mono",
+        )}
+      >
+        {schedule}
+      </span>
+      {status && <span className="text-2xs text-muted-foreground">{status}</span>}
+      {last && (
+        // Only what went wrong is drawn in the blocked color; the run count stays quiet.
+        <span className="text-2xs text-muted-foreground">
+          {pluralParts<"routine.lastRunWithCount", ReactElement>(
+            "routine.lastRunWithCount",
+            routine.runCount,
+            {
+              lastRun: (
+                <span key="lastRun" className={cn(last.status === "failed" && "text-blocked")}>
+                  {t(lastRunText[last.status], { when: timeInSentence(last.startedAt, ctx) })}
+                </span>
+              ),
+            },
+          )}
+        </span>
+      )}
+    </>
+  );
   return (
     <li className="flex items-start gap-3 rounded-md px-2 py-2 hover:bg-muted/60">
       <Icon
@@ -325,40 +361,19 @@ function RoutineRow({
           routine.enabled ? "text-success" : "text-muted-foreground",
         )}
       />
-      <button type="button" onClick={onOpen} className="flex min-w-0 flex-1 flex-col text-start">
-        <span className="truncate text-sm">{routine.name}</span>
-        <span
-          className={cn(
-            "text-xs text-muted-foreground",
-            routine.trigger._tag === "schedule" && schedule === routine.trigger.cron && "font-mono",
-          )}
-        >
-          {schedule}
-        </span>
-        {status && <span className="text-2xs text-muted-foreground">{status}</span>}
-        {last && (
-          // Only what went wrong is drawn in the blocked color; the run count stays quiet.
-          <span className="text-2xs text-muted-foreground">
-            {pluralParts<"routine.lastRunWithCount", ReactElement>(
-              "routine.lastRunWithCount",
-              routine.runCount,
-              {
-                lastRun: (
-                  <span key="lastRun" className={cn(last.status === "failed" && "text-blocked")}>
-                    {t(lastRunText[last.status], { when: timeInSentence(last.startedAt, ctx) })}
-                  </span>
-                ),
-              },
-            )}
-          </span>
-        )}
-      </button>
+      {onOpen ? (
+        <button type="button" onClick={onOpen} className={summaryClass}>
+          {summary}
+        </button>
+      ) : (
+        <div className={summaryClass}>{summary}</div>
+      )}
       <Switch checked={routine.enabled} onCheckedChange={onToggle} aria-label={routine.name} />
     </li>
   );
 }
 
-function memoryLabel(path: MemoryPath, t: ReturnType<typeof useI18n>["t"]): string {
+export function memoryLabel(path: MemoryPath, t: ReturnType<typeof useI18n>["t"]): string {
   if (path === "profile.md") return t("memory.profileNote");
   const log = /^log\/(.+)\.md$/.exec(path);
   return log?.[1] ? t("memory.log", { period: log[1] }) : path;
