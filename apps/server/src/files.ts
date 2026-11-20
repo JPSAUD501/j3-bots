@@ -57,7 +57,7 @@ export const replaceFile = Effect.fn("files.replaceFile")(function* (
  */
 export const publishFile = Effect.fn("files.publishFile")(function* (
   file: string,
-  data: string,
+  data: string | Uint8Array,
   mode: number,
 ) {
   const fs = yield* FileSystem.FileSystem;

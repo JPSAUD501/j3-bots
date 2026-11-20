@@ -134,11 +134,18 @@ export const install = Effect.gen(function* () {
   // service's to hold, so a free one the system picks stands in for it.
   const address = yield* host.portState(config.host, 0);
   if (address._tag !== "free") {
-    const { summary, fix } = portAdvice(
-      address,
-      { label: "the server", setting: "port", host: config.host, port: config.port },
-      config.configFile,
-    );
+    // A failure the check cannot name is the address's: the configured port was never tried.
+    const { summary, fix } =
+      address._tag === "failed"
+        ? {
+            summary: `Listening on ${config.host} failed with ${address.code}.`,
+            fix: `Check "host" in ${config.configFile}.`,
+          }
+        : portAdvice(
+            address,
+            { label: "the server", setting: "port", host: config.host, port: config.port },
+            config.configFile,
+          );
     return yield* new ServiceNotInstalled({ reason: "configuration", detail: `${summary} ${fix}` });
   }
 
