@@ -48,7 +48,7 @@ j3-bots service install
 
 `doctor` checks the machine before anything starts ([what it checks](#what-doctor-checks)). Fix every ✗ it reports. A `!` is a warning: the server still runs.
 
-`service install` does the following, in this order, and stops at the first step that fails, leaving any installed unit as it was:
+`service install` does the following, in this order, and stops at the first step that fails. A failure in any step before it writes the unit leaves an installed unit as it was:
 
 - checks the configuration as the service will run it, and the data directory, `~/.j3-bots`, which must be open to this user only. A refused configuration leaves the data directory as it was, or uncreated;
 - creates the data directory, readable by this user only, if it does not exist yet;
@@ -58,6 +58,8 @@ j3-bots service install
 - writes the unit `~/.config/systemd/user/j3-bots.service`, whole: to a new file beside it first, which then replaces it, so a full disk or an interruption never leaves half a unit;
 - enables the unit and starts it;
 - waits up to a minute for the service's own server to answer (its process must be the unit's main process), and says whether it did and what state the engine is in.
+
+If the server fails to start or does not answer within that minute, the new unit is already installed, and the service was started with it, or restarted if it was running. Run `j3-bots doctor` to see what state the service and the server are in, then read why in the log: `journalctl --user -u j3-bots -n 100`.
 
 On its first start, the server downloads the engine it is pinned to into `~/.j3-bots/engine`, so the engine may still be starting when `service install` returns.
 
