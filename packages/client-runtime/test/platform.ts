@@ -15,6 +15,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Socket from "effect/socket/Socket";
 import { ReconnectPolicy } from "../src/connection/Connection.ts";
+import { OutboxSweep } from "../src/stores/Conversations.ts";
 import {
   ClientStorage,
   CredentialStore,
@@ -37,6 +38,11 @@ export class TestNetwork extends Context.Service<
     readonly set: (status: NetworkStatus) => Effect.Effect<void>;
     /** Closes every socket the client opened, as a network failure would. */
     readonly dropSockets: Effect.Effect<void>;
+    /**
+     * While `true`, what the server sends on the open sockets never reaches
+     * the client, as on a link that fails one way: requests still arrive.
+     */
+    readonly loseReplies: (lose: boolean) => Effect.Effect<void>;
   }
 >()("@j3-bots/client-runtime/test/platform/TestNetwork") {}
 
@@ -45,6 +51,31 @@ const network = Layer.effectContext(
     const status = yield* SubscriptionRef.make<NetworkStatus>("online");
     const sockets = new Set<Socket.WebSocketLike>();
     const global = yield* Socket.WebSocketConstructor;
+    let losing = false;
+    /** `socket`, whose messages reach the client unless replies are lost. */
+    const lossy = (socket: Socket.WebSocketLike): Socket.WebSocketLike => {
+      const wrapped = new Map<
+        (event: Socket.WebSocketEvent) => void,
+        (event: Socket.WebSocketEvent) => void
+      >();
+      return {
+        get readyState() {
+          return socket.readyState;
+        },
+        addEventListener: (type, listener, options) => {
+          if (type !== "message") return socket.addEventListener(type, listener, options);
+          const filtered = (event: Socket.WebSocketEvent) => {
+            if (!losing) listener(event);
+          };
+          wrapped.set(listener, filtered);
+          socket.addEventListener(type, filtered, options);
+        },
+        removeEventListener: (type, listener) =>
+          socket.removeEventListener(type, wrapped.get(listener) ?? listener),
+        close: (code, reason) => socket.close(code, reason),
+        send: (data) => socket.send(data),
+      };
+    };
     return Context.make(
       Network,
       Network.of({ status: SubscriptionRef.get(status), changes: SubscriptionRef.changes(status) }),
@@ -54,7 +85,7 @@ const network = Layer.effectContext(
         Socket.WebSocketConstructor.of((url, options) => {
           const socket = global(url, options);
           sockets.add(socket);
-          return socket;
+          return lossy(socket);
         }),
       ),
       Context.add(
@@ -65,6 +96,10 @@ const network = Layer.effectContext(
             for (const socket of sockets) socket.close(4000, "dropped by the test");
             sockets.clear();
           }),
+          loseReplies: (lose) =>
+            Effect.sync(() => {
+              losing = lose;
+            }),
         }),
       ),
     );
@@ -105,7 +140,8 @@ interface Watcher {
 /**
  * The device's storage for drafts and unsent messages, in memory, as each
  * window sees it: `view(window)` tells every other window's watchers of the
- * tables it changes.
+ * tables it changes, unless `announce` is false. Like IndexedDB, it reads a
+ * table in the order of its keys.
  */
 const makeStorage = (options: StorageOptions) => {
   const tables = new Map<LocalTable, Map<string, string>>([
@@ -114,15 +150,19 @@ const makeStorage = (options: StorageOptions) => {
   ]);
   const table = (name: LocalTable) => tables.get(name) ?? new Map<string, string>();
   const watchers = new Set<Watcher>();
-  return (window: object) => {
+  return (window: object, announce = true) => {
     const changed = (names: Iterable<LocalTable>) =>
       Effect.sync(() => {
+        if (!announce) return;
         for (const name of new Set(names)) {
           for (const watcher of watchers) if (watcher.window !== window) watcher.tell(name);
         }
       });
     return ClientStorage.of({
-      readAll: (name) => Effect.sync(() => new Map(table(name))),
+      readAll: (name) =>
+        Effect.sync(
+          () => new Map([...table(name)].toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))),
+        ),
       write: (name, key, value) =>
         Effect.sync(() => void table(name).set(key, value)).pipe(Effect.andThen(changed([name]))),
       remove: (name, key) =>
@@ -212,12 +252,22 @@ export interface TestDevice {
   readonly storage: ClientStorage["Service"];
   /** The device's storage as one more window of the client sees it. */
   readonly window: () => ClientStorage["Service"];
+  /**
+   * As `window`, for a window that never tells the others what it changed,
+   * as a tab that closes between a transaction and its announcement.
+   */
+  readonly unannounced: () => ClientStorage["Service"];
   readonly locks: WindowLocks["Service"];
 }
 
 export const makeDevice = (options: StorageOptions = {}): TestDevice => {
   const view = makeStorage(options);
-  return { storage: view({}), window: () => view({}), locks: makeInProcessLocks() };
+  return {
+    storage: view({}),
+    window: () => view({}),
+    unannounced: () => view({}, false),
+    locks: makeInProcessLocks(),
+  };
 };
 
 /**
@@ -241,6 +291,8 @@ export const layer = (
     network,
     http,
     SecureRandom.layerWebCrypto,
+    // Short enough that a test sees a sweep, long enough that most deliveries are told.
+    Layer.succeed(OutboxSweep, Duration.millis(100)),
     Layer.succeed(ReconnectPolicy, {
       initialDelay: Duration.millis(5),
       maxDelay: Duration.millis(20),

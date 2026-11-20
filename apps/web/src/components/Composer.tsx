@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { type DraftFile, type FileProblem, messageProblem } from "@j3-bots/client-runtime";
+import {
+  type DraftFile,
+  type FileProblem,
+  type MessageProblem,
+  messageProblem,
+} from "@j3-bots/client-runtime";
 import {
   MAX_ATTACHMENT_SIZE,
   MAX_ATTACHMENTS_PER_MESSAGE,
@@ -58,6 +63,23 @@ function fileProblemText(problem: FileProblem, i18n: I18n): string {
   }
 }
 
+/** Why the message cannot go as it is, in one sentence. */
+function messageProblemText(problem: MessageProblem, i18n: I18n): string {
+  const { t, locale } = i18n;
+  const count = new Intl.NumberFormat(locale);
+  switch (problem) {
+    case "too-long":
+      return t("composer.tooLong", { count: count.format(MAX_MESSAGE_LENGTH) });
+    case "too-many-files":
+      return t("composer.tooManyFiles", { count: count.format(MAX_ATTACHMENTS_PER_MESSAGE) });
+    case "empty-file":
+      return t("composer.filesProblem", { reason: fileProblemText("empty", i18n) });
+    case "image-too-large":
+    case "images-too-large":
+      return t("composer.filesProblem", { reason: fileProblemText(problem, i18n) });
+  }
+}
+
 const nameOf = (file: DraftFile) => (file._tag === "ready" ? file.attachment.name : file.name);
 
 /**
@@ -66,8 +88,9 @@ const nameOf = (file: DraftFile) => (file._tag === "ready" ? file.attachment.nam
  * pill; the message goes once they all have. With nothing to send, the
  * trailing button dictates where dictation exists. A message over a limit
  * of `message.send` is kept, and says why instead of sending. While Send hands
- * the draft over, the field stays focused but read-only, and files wait. The
- * field draws no ring of its own: the pill takes the focus outline.
+ * the draft over, the field stays focused but read-only, and attaching and
+ * removing files show as unavailable. The field draws no ring of its own: the
+ * pill takes the focus outline.
  */
 export function Composer({
   recipient,
@@ -82,7 +105,7 @@ export function Composer({
   inputRef,
 }: ComposerProps) {
   const i18n = useI18n();
-  const { t, locale } = i18n;
+  const { t } = i18n;
   const pickerRef = useRef<HTMLInputElement>(null);
   const waitingId = useId();
   const label = t("composer.label", { name: recipient });
@@ -136,6 +159,7 @@ export function Composer({
               key={file.key}
               file={file}
               onRemove={onDetachFile ? () => detach(file.key) : undefined}
+              unavailable={sending}
             />
           ))}
         </ul>
@@ -150,7 +174,10 @@ export function Composer({
             <Button
               variant="ghost-muted"
               size="icon-pill"
-              onClick={() => pickerRef.current?.click()}
+              onClick={() => {
+                if (!sending) pickerRef.current?.click();
+              }}
+              aria-disabled={sending}
               aria-label={t("composer.attach")}
             >
               <PlusIcon />
@@ -216,13 +243,7 @@ export function Composer({
         {t("composer.stillUploading")}
       </span>
       <p role="alert" className="px-3 text-xs text-blocked empty:hidden">
-        {problem === "too-long"
-          ? t("composer.tooLong", {
-              count: new Intl.NumberFormat(locale).format(MAX_MESSAGE_LENGTH),
-            })
-          : problem === "too-many-files"
-            ? t("composer.tooManyFiles", { count: String(MAX_ATTACHMENTS_PER_MESSAGE) })
-            : null}
+        {problem === null ? null : messageProblemText(problem, i18n)}
       </p>
     </form>
   );
@@ -232,9 +253,12 @@ export function Composer({
 function DraftFileChip({
   file,
   onRemove,
+  unavailable,
 }: {
   file: DraftFile;
   onRemove: (() => void) | undefined;
+  /** The draft is on its way to the outbox: the file cannot be removed meanwhile. */
+  unavailable: boolean;
 }) {
   const i18n = useI18n();
   const { t, locale } = i18n;
@@ -277,6 +301,7 @@ function DraftFileChip({
           variant="ghost-muted"
           size="icon-sm"
           onClick={onRemove}
+          aria-disabled={unavailable}
           aria-label={t("composer.file.remove", { name })}
         >
           <XIcon />

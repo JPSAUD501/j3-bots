@@ -9,11 +9,14 @@ import {
   HTTP_PATHS,
   J3Rpcs,
   MAX_ATTACHMENTS_PER_MESSAGE,
+  MAX_INLINE_IMAGE_SIZE,
+  MAX_INLINE_IMAGES_SIZE,
   MAX_MESSAGE_LENGTH,
   NotFound,
 } from "@j3-bots/contracts";
 import * as Server from "@j3-bots/server/testing";
 import { assert, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -63,6 +66,8 @@ class Fakes extends Context.Service<
     readonly answers: Queue.Queue<CommandId>;
     /** The entry each `message.send` command made, on any socket. */
     readonly applied: Map<CommandId, EntryId>;
+    /** Texts `message.send` refuses, as the server refuses a message to a bot it no longer has. */
+    readonly refusing: Set<string>;
   }
 >()("@j3-bots/client-runtime/test/client.test/Fakes") {}
 
@@ -74,6 +79,7 @@ const fakes = Layer.effect(
       sends: yield* Queue.unbounded<CommandId>(),
       answers: yield* Queue.unbounded<CommandId>(),
       applied: new Map(),
+      refusing: new Set(),
     });
   }),
 );
@@ -84,7 +90,7 @@ const unserved = Layer.mergeAll(
   J3Rpcs.toLayerHandler(
     "message.send",
     Effect.gen(function* () {
-      const { gate, sends, applied } = yield* Fakes;
+      const { gate, sends, applied, refusing } = yield* Fakes;
       const entries = yield* Server.Entries;
       const files = yield* Server.Attachments;
       const once = Semaphore.makeUnsafe(1);
@@ -92,6 +98,7 @@ const unserved = Layer.mergeAll(
         Effect.gen(function* () {
           yield* Queue.offer(sends, commandId);
           yield* gate.await;
+          if (refusing.has(text)) return yield* new NotFound({ resource: "bot" });
           return yield* once.withPermits(1)(
             Effect.gen(function* () {
               const known = applied.get(commandId);
@@ -294,7 +301,23 @@ const whenStored = (
   );
 
 const present = (record: string | undefined) => record !== undefined;
-const absent = (record: string | undefined) => record === undefined;
+
+const decodeOutboxRecord = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ _tag: Schema.String })),
+);
+/** Whether an outbox record holds a message still to send, rather than what became of one. */
+const pending = (record: string | undefined) =>
+  record !== undefined &&
+  Option.exists(decodeOutboxRecord(record), ({ _tag }) => _tag === "message");
+const sent = (record: string | undefined) => !pending(record);
+/** The command ids of the messages the device keeps to send. */
+const unsent = (storage: ClientStorage["Service"]) =>
+  storage.readAll("outbox").pipe(
+    Effect.orDie,
+    Effect.map((records) =>
+      [...records].flatMap(([commandId, record]) => (pending(record) ? [commandId] : [])),
+    ),
+  );
 const holds = (text: string) => (record: string | undefined) => record?.includes(text) === true;
 
 const decodeDraftRecord = Schema.decodeUnknownOption(
@@ -351,6 +374,44 @@ const botSays = (botId: BotId, text: string) =>
 
 const entryIds = (state: ConversationState) =>
   state.items.flatMap((item) => (item._tag === "outgoing" ? [] : [item.id]));
+
+const outgoingIn = (state: ConversationState) =>
+  state.items.flatMap((item) => (item._tag === "outgoing" ? [item] : []));
+
+/** The platform reports the network gone, and the client follows. */
+const goOffline = Effect.gen(function* () {
+  yield* (yield* TestPlatform.TestNetwork).set("offline");
+  yield* waitFor((yield* Connection).state, (state) => state._tag === "offline");
+});
+
+/** A paired device with one bot, from a client that has closed since. */
+const pairedDevice = (botName: string) =>
+  Effect.gen(function* () {
+    const device = TestPlatform.makeDevice();
+    const first = yield* Effect.gen(function* () {
+      yield* pairAndConnect;
+      return { botId: yield* createBot(botName), credential: yield* savedCredential };
+    }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
+    const target: EntryTarget = { _tag: "conversation", botId: first.botId };
+    return { device, target, credential: first.credential };
+  });
+
+/** Runs `effect` with a wall clock that stands still, and timers that run as usual. */
+const atOneInstant = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.gen(function* () {
+    const live = yield* Clock.Clock;
+    const at = live.currentTimeMillisUnsafe();
+    const stopped: Clock.Clock = {
+      currentTimeMillisUnsafe: () => at,
+      currentTimeMillis: Effect.succeed(at),
+      currentTimeNanosUnsafe: () => BigInt(at) * 1_000_000n,
+      currentTimeNanos: Effect.succeed(BigInt(at) * 1_000_000n),
+      monotonicTimeNanosUnsafe: () => live.monotonicTimeNanosUnsafe(),
+      monotonicTimeNanos: live.monotonicTimeNanos,
+      sleep: (duration) => live.sleep(duration),
+    };
+    return yield* effect.pipe(Effect.provideService(Clock.Clock, stopped));
+  });
 
 it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
   it.effect("pairs with a code typed in any case, then connects", () =>
@@ -794,7 +855,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         const commandId = yield* Queue.take(sends);
         return { botId, commandId, credential: yield* savedCredential };
       }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
-      yield* whenStored(device.storage, "outbox", first.commandId, present);
+      yield* whenStored(device.storage, "outbox", first.commandId, pending);
 
       // The next launch on the same device sends it with the same command id.
       yield* Effect.gen(function* () {
@@ -818,7 +879,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           (item) => item._tag === "message" && item.commandId === first.commandId,
         );
         assert.strictEqual(copies.length, 1);
-        yield* whenStored(device.storage, "outbox", first.commandId, absent);
+        yield* whenStored(device.storage, "outbox", first.commandId, sent);
       }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
     }),
   );
@@ -922,8 +983,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           });
 
           assert.deepStrictEqual(results.toSorted(), ["changed-elsewhere", "sent"]);
-          const outbox = yield* device.storage.readAll("outbox").pipe(Effect.orDie);
-          assert.strictEqual(outbox.size, 1);
+          assert.strictEqual((yield* unsent(device.storage)).length, 1);
           assert.isUndefined(one.state.get().get(key));
           assert.isUndefined(two.state.get().get(key));
           yield* Queue.take(sends);
@@ -950,7 +1010,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           return { target, credential: yield* savedCredential };
         }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
         const key = targetKey(first.target);
-        const outbox = device.storage.readAll("outbox").pipe(Effect.orDie);
+        const outbox = unsent(device.storage);
 
         yield* gate.close;
         yield* Effect.gen(function* () {
@@ -972,7 +1032,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
             );
             assert.isUndefined(two.state.get().get(key));
             yield* whenStored(device.storage, "drafts", key, noDraft);
-            assert.strictEqual((yield* outbox).size, 1);
+            assert.strictEqual((yield* outbox).length, 1);
 
             yield* two.restore(first.target);
             assert.strictEqual(two.state.get().get(key)?.text, "as read, and more");
@@ -982,7 +1042,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
               key,
               (record) => record?.includes("as read, and more") === true,
             );
-            assert.strictEqual((yield* outbox).size, 1);
+            assert.strictEqual((yield* outbox).length, 1);
           }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
         }).pipe(
           Effect.scoped,
@@ -1069,7 +1129,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
             Option.some({ target: first.target, whileSending: true, restorable: true }),
           );
           assert.strictEqual(two.state.get().get(key)?.text, "shared, from one");
-          assert.strictEqual((yield* device.storage.readAll("outbox").pipe(Effect.orDie)).size, 0);
+          assert.strictEqual((yield* unsent(device.storage)).length, 0);
           yield* whenStored(device.storage, "drafts", key, holds("from one"));
         }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
       }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
@@ -1228,7 +1288,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
             notice,
             Option.some({ target: first.target, whileSending: true, restorable: false }),
           );
-          assert.strictEqual((yield* device.storage.readAll("outbox").pipe(Effect.orDie)).size, 0);
+          assert.strictEqual((yield* unsent(device.storage)).length, 0);
         }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
       }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
     }),
@@ -1326,14 +1386,14 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           const drafts = yield* Drafts;
           yield* drafts.setText(target, "left behind");
           assert.strictEqual(yield* drafts.send(target), "sent");
-          const [kept] = (yield* device.storage.readAll("outbox").pipe(Effect.orDie)).keys();
+          const [kept] = yield* unsent(device.storage);
           return kept;
         }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
         if (commandId === undefined) return assert.fail("No message kept");
 
         yield* (yield* TestPlatform.TestNetwork).set("online");
         assert.strictEqual(yield* Queue.take(sends), commandId);
-        yield* whenStored(device.storage, "outbox", commandId, absent);
+        yield* whenStored(device.storage, "outbox", commandId, sent);
       }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
     }),
   );
@@ -1391,7 +1451,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
             [...ids.map(() => ["ready", null]), ["failed", "too-many"]],
           );
           assert.strictEqual(yield* two.send(target), "not-ready");
-          assert.strictEqual((yield* device.storage.readAll("outbox").pipe(Effect.orDie)).size, 0);
+          assert.strictEqual((yield* unsent(device.storage)).length, 0);
         }).pipe(
           Effect.scoped,
           Effect.provide(client(first.credential, device, neverAnswers(HTTP_PATHS.attachments))),
@@ -1426,7 +1486,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         assert.strictEqual(kept?.files.length, MAX_ATTACHMENTS_PER_MESSAGE + 1);
         assert.strictEqual(yield* drafts.send(target), "too-many-files");
         assert.deepStrictEqual(drafts.state.get().get(key), kept);
-        assert.strictEqual((yield* device.storage.readAll("outbox").pipe(Effect.orDie)).size, 0);
+        assert.strictEqual((yield* unsent(device.storage)).length, 0);
       }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
     }),
   );
@@ -1450,7 +1510,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           yield* two.setText(target, "from two");
           yield* whenStored(device.storage, "drafts", key, holds("from two"));
           assert.strictEqual(yield* two.send(target), "sent");
-          yield* whenStored(device.storage, "outbox", yield* Queue.take(sends), absent);
+          yield* whenStored(device.storage, "outbox", yield* Queue.take(sends), sent);
         }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
         const noticed = yield* Stream.runHead(one.changedElsewhere).pipe(
           Effect.forkChild({ startImmediately: true }),
@@ -1516,7 +1576,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         const record = records.get(commandId);
         if (record === undefined) return assert.fail("The message was not kept");
         yield* gate.open;
-        yield* whenStored(device.storage, "outbox", commandId, absent);
+        yield* whenStored(device.storage, "outbox", commandId, sent);
         return { botId, commandId, record, credential: yield* savedCredential };
       }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
       yield* device.storage.write("outbox", first.commandId, first.record).pipe(Effect.orDie);
@@ -1529,7 +1589,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           botId: first.botId,
         });
         assert.strictEqual(yield* Queue.take(sends), first.commandId);
-        yield* whenStored(device.storage, "outbox", first.commandId, absent);
+        yield* whenStored(device.storage, "outbox", first.commandId, sent);
         const settled = yield* waitFor(
           conversation.state,
           (state) =>
@@ -1678,5 +1738,233 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       assert.strictEqual(yield* drafts.send(target), "sent");
       yield* Queue.take((yield* Fakes).sends);
     }).pipe(Effect.scoped, Effect.provide(client())),
+  );
+  it.effect("shows a message another tab could not deliver as not sent", () =>
+    Effect.gen(function* () {
+      const { sends, refusing } = yield* Fakes;
+      const { device, target, credential } = yield* pairedDevice("Gone");
+      refusing.add("for a bot that is gone");
+
+      yield* Effect.gen(function* () {
+        yield* goOffline;
+        const one = yield* Conversations;
+        const conversation = yield* one.open(target);
+        yield* one.enqueue({ target, text: "for a bot that is gone" });
+        const [kept] = outgoingIn(conversation.state.get());
+        if (kept === undefined) return assert.fail("No outgoing message");
+
+        // A connected tab delivers it, and the server refuses it.
+        yield* Effect.gen(function* () {
+          assert.strictEqual(yield* Queue.take(sends), kept.commandId);
+          const refused = yield* waitFor(conversation.state, (state) =>
+            outgoingIn(state).some((message) => message.status._tag === "not-sent"),
+          );
+          assert.deepStrictEqual(
+            outgoingIn(refused).map((message) => messageStatus(message)),
+            [
+              {
+                _tag: "not-sent",
+                failure: { _tag: "refused", error: new NotFound({ resource: "bot" }) },
+              },
+            ],
+          );
+        }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+      }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+    }),
+  );
+
+  it.effect("does nothing when Retry finds the message discarded in another tab", () =>
+    Effect.gen(function* () {
+      const { sends, refusing } = yield* Fakes;
+      const { device, target, credential } = yield* pairedDevice("Refuser");
+      refusing.add("refused, then discarded");
+      const notSent = (state: ConversationState) =>
+        outgoingIn(state).some((message) => message.status._tag === "not-sent");
+
+      yield* Effect.gen(function* () {
+        const one = yield* Conversations;
+        const conversation = yield* one.open(target);
+        yield* one.enqueue({ target, text: "refused, then discarded" });
+        const commandId = yield* Queue.take(sends);
+        yield* waitFor(conversation.state, notSent);
+
+        yield* Effect.gen(function* () {
+          const two = yield* Conversations;
+          yield* waitFor((yield* two.open(target)).state, notSent);
+          yield* two.discard(commandId);
+          // The first tab's Retry comes before it reads the outbox again.
+          assert.deepStrictEqual(yield* one.resend(commandId), {
+            _tag: "failed",
+            failure: { _tag: "unexpected" },
+          });
+        }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+
+        const again = yield* Queue.take(sends).pipe(Effect.timeoutOption("200 millis"));
+        assert.isTrue(Option.isNone(again));
+        assert.deepStrictEqual(yield* unsent(device.storage), []);
+        yield* waitFor(conversation.state, (state) => outgoingIn(state).length === 0);
+      }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+    }),
+  );
+
+  it.effect("sends from a connected tab what a tab was sending when it went offline", () =>
+    Effect.gen(function* () {
+      const { gate, sends } = yield* Fakes;
+      const { device, target, credential } = yield* pairedDevice("Handoff");
+
+      yield* gate.close;
+      yield* Effect.gen(function* () {
+        yield* (yield* Conversations).enqueue({ target, text: "half way" });
+        const commandId = yield* Queue.take(sends);
+        // The server holds the message as the network goes.
+        yield* goOffline;
+
+        yield* Effect.gen(function* () {
+          yield* waitFor((yield* Connection).state, isConnected);
+          const resent = yield* Queue.take(sends).pipe(Effect.timeoutOption("2 seconds"));
+          assert.deepStrictEqual(resent, Option.some(commandId));
+          yield* gate.open;
+          yield* whenStored(device.storage, "outbox", commandId, sent);
+        }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+      }).pipe(
+        Effect.scoped,
+        Effect.ensuring(gate.open),
+        Effect.provide(client(credential, device)),
+      );
+    }),
+  );
+
+  it.effect("settles a send another tab delivered, and does not send it again", () =>
+    Effect.gen(function* () {
+      const { sends, applied } = yield* Fakes;
+      const { device, target, credential } = yield* pairedDevice("Proxy");
+
+      yield* Effect.gen(function* () {
+        yield* goOffline;
+        const one = yield* Conversations;
+        const sending = yield* Effect.forkChild(one.send({ target, text: "through a peer" }), {
+          startImmediately: true,
+        });
+
+        // A connected tab delivers it while this one is offline.
+        const commandId = yield* Effect.gen(function* () {
+          const delivered = yield* Queue.take(sends);
+          yield* whenStored(device.storage, "outbox", delivered, sent);
+          return delivered;
+        }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+        const entryId = applied.get(commandId);
+        if (entryId === undefined) return assert.fail("The server did not apply it");
+        assert.deepStrictEqual(yield* Fiber.join(sending), { _tag: "done", value: entryId });
+
+        yield* (yield* TestPlatform.TestNetwork).set("online");
+        yield* waitFor((yield* Connection).state, isConnected);
+        const again = yield* Queue.take(sends).pipe(Effect.timeoutOption("300 millis"));
+        assert.isTrue(Option.isNone(again));
+      }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+    }),
+  );
+
+  it.effect("sends a message whose tab closed before telling the others", () =>
+    Effect.gen(function* () {
+      const { sends } = yield* Fakes;
+      const { device, target, credential } = yield* pairedDevice("Quiet");
+
+      yield* Effect.gen(function* () {
+        yield* waitFor((yield* Connection).state, isConnected);
+        // Another tab, offline, keeps a message and closes without a word.
+        const commandId = yield* Effect.gen(function* () {
+          yield* goOffline;
+          const conversations = yield* Conversations;
+          const conversation = yield* conversations.open(target);
+          yield* conversations.enqueue({ target, text: "said nothing" });
+          return outgoingIn(conversation.state.get())[0]?.commandId;
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(client(credential, { ...device, window: device.unannounced })),
+        );
+        if (commandId === undefined) return assert.fail("No message kept");
+
+        assert.strictEqual(yield* Queue.take(sends), commandId);
+        yield* whenStored(device.storage, "outbox", commandId, sent);
+      }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+    }),
+  );
+
+  it.effect("sends messages kept in the same millisecond in the order they were kept", () =>
+    Effect.gen(function* () {
+      const { sends } = yield* Fakes;
+      const { device, target, credential } = yield* pairedDevice("Hasty");
+      const texts = ["one", "two", "three", "four", "five", "six"];
+
+      yield* Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const conversation = yield* conversations.open(target);
+        yield* goOffline;
+        for (const text of texts) yield* conversations.enqueue({ target, text });
+
+        yield* (yield* TestPlatform.TestNetwork).set("online");
+        const delivered = yield* waitFor(
+          conversation.state,
+          (state) =>
+            state.phase === "ready" &&
+            outgoingIn(state).length === 0 &&
+            state.items.filter((item) => item._tag === "message").length === texts.length,
+        );
+        const order = delivered.items.flatMap((item) =>
+          item._tag === "message" ? [{ text: item.text, commandId: item.commandId }] : [],
+        );
+        assert.deepStrictEqual(
+          order.map((item) => item.text),
+          texts,
+        );
+        // Each went once, in that order.
+        const received = yield* Effect.forEach(texts, () => Queue.take(sends));
+        assert.deepStrictEqual(
+          received,
+          order.map((item) => item.commandId),
+        );
+      }).pipe(atOneInstant, Effect.scoped, Effect.provide(client(credential, device)));
+    }),
+  );
+
+  it.effect("keeps, and does not send, a draft whose images together are over the limit", () =>
+    Effect.gen(function* () {
+      const { sends } = yield* Fakes;
+      const { device, target, credential } = yield* pairedDevice("Gallery");
+      const key = targetKey(target);
+      // As many of the largest images as a message's images may add up to, and one more,
+      // kept as a draft can be when another tab changed it.
+      const images = Array.from(
+        { length: Math.floor(MAX_INLINE_IMAGES_SIZE / MAX_INLINE_IMAGE_SIZE) + 1 },
+        (_, index) => ({
+          id: `image-${index}`,
+          name: `image-${index}.png`,
+          mediaType: "image/png",
+          size: MAX_INLINE_IMAGE_SIZE,
+        }),
+      );
+      assert.isAtMost(images.length, MAX_ATTACHMENTS_PER_MESSAGE);
+      yield* device.storage
+        .write("drafts", key, JSON.stringify({ revision: "earlier", text: "", files: images }))
+        .pipe(Effect.orDie);
+
+      yield* Effect.gen(function* () {
+        const drafts = yield* Drafts;
+        const kept = drafts.state.get().get(key);
+        assert.strictEqual(yield* drafts.send(target), "images-too-large");
+        assert.deepStrictEqual(drafts.state.get().get(key), kept);
+
+        const ready = (kept?.files ?? []).flatMap((file) =>
+          file._tag === "ready" ? [file.attachment] : [],
+        );
+        const refused = yield* (yield* Conversations)
+          .send({ target, text: "", attachments: ready })
+          .pipe(Effect.flip);
+        assert.strictEqual(refused.problem, "images-too-large");
+
+        assert.deepStrictEqual(yield* unsent(device.storage), []);
+        assert.strictEqual(yield* Queue.size(sends), 0);
+      }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+    }),
   );
 });

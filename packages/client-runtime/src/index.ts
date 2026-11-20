@@ -27,9 +27,10 @@ export { type Download } from "./files/Files.ts";
 export {
   admitFiles,
   type FileProblem,
+  InvalidMessage,
   type LocalFile,
   messageProblem,
-  type MessageProblem,
+  MessageProblem,
   normalizeMediaType,
 } from "./files/limits.ts";
 export {

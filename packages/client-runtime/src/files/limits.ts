@@ -92,19 +92,39 @@ export const admitFiles = (
   });
 };
 
-/** Why a message cannot be sent as it is. */
-export type MessageProblem =
+/** Why a message cannot be sent as it is: each is a limit `message.send` checks. */
+export const MessageProblem = Schema.Literals([
   /** The text is longer than `MAX_MESSAGE_LENGTH`. */
-  | "too-long"
+  "too-long",
   /** It carries more than `MAX_ATTACHMENTS_PER_MESSAGE` files. */
-  | "too-many-files";
+  "too-many-files",
+  /** One of its files is empty. */
+  "empty-file",
+  /** One of its inline images is over `MAX_INLINE_IMAGE_SIZE`. */
+  "image-too-large",
+  /** Its inline images are over `MAX_INLINE_IMAGES_SIZE` together. */
+  "images-too-large",
+]);
+export type MessageProblem = typeof MessageProblem.Type;
+
+/** The message breaks a limit of `message.send`, so it was not sent. */
+export class InvalidMessage extends Schema.TaggedError<InvalidMessage>()("InvalidMessage", {
+  problem: MessageProblem,
+}) {
+  override get message(): string {
+    return `The message cannot be sent: ${this.problem}.`;
+  }
+}
 
 const isMessageText = Schema.is(MessageText);
 const isMessageAttachments = Schema.is(MessageAttachments);
 
 /**
- * Whether a message of `text` and `attachments` can be sent, checked with the
- * schemas `message.send` decodes it with: null when it can, why when it cannot.
+ * Whether a message of `text` and `attachments` can be sent: null when it
+ * can, why when it cannot. It checks everything `message.send` checks, with
+ * the schemas the server decodes the message with and the limits the
+ * contract declares for its files, so a message that passes is refused only
+ * for what the client cannot know.
  */
 export const messageProblem = (
   text: string,
@@ -114,5 +134,10 @@ export const messageProblem = (
   if (!isMessageAttachments(attachments.map((attachment) => attachment.id))) {
     return "too-many-files";
   }
+  if (attachments.some((attachment) => attachment.size === 0)) return "empty-file";
+  const images = attachments.filter(isInlineImage);
+  if (images.some((image) => image.size > MAX_INLINE_IMAGE_SIZE)) return "image-too-large";
+  const total = images.reduce((sum, image) => sum + image.size, 0);
+  if (total > MAX_INLINE_IMAGES_SIZE) return "images-too-large";
   return null;
 };

@@ -310,6 +310,7 @@ export const en = {
   "composer.file.notPaired": "This device is signed out",
   "composer.tooLong": "Too long to send. A message can hold {count} characters at most.",
   "composer.tooManyFiles": "Too many files to send. A message can carry {count} files at most.",
+  "composer.filesProblem": "Can’t send these files. {reason}.",
   "composer.notKept":
     "This device couldn’t keep the message, so it wasn’t sent. It’s still in the message box.",
   "composer.changedElsewhere":

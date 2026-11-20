@@ -20,7 +20,6 @@ import {
   type FileProblem,
   type LocalFile,
   type MessageProblem,
-  messageProblem,
   normalizeMediaType,
 } from "../files/limits.ts";
 import { ClientStorage, type LocalStorageError } from "../ports.ts";
@@ -55,7 +54,7 @@ export type DraftSendResult =
   | "empty"
   /** A file is still uploading or could not be attached. */
   | "not-ready"
-  /** The message breaks a limit of `message.send`; the draft stays as it is. */
+  /** The message breaks a limit of `message.send`, which says which; the draft stays as it is. */
   | MessageProblem
   /** The device could not keep the message, so it stays in the draft. */
   | "not-kept"
@@ -144,12 +143,13 @@ const shown = (kept: Kept): Draft => ({
  *
  * One rule keeps a draft whole when several windows hold it. Every operation
  * on a draft (autosave, deletion, Send, Restore) runs under this window's
- * draft lock (one for all of its drafts) and reads its inputs, both the in-memory draft and the expected stored
- * revision, only after acquiring the lock. Send commits exactly the text and
- * files the operator pressed Send on, captured at the press, or nothing. Only
- * what is persisted is ever written: upload progress and failed files live in
- * memory only. The lock is this window's own; between windows, the stored
- * revision each write claims decides.
+ * draft lock (one for all of its drafts) and reads its inputs, both the
+ * in-memory draft and the expected stored revision, only after acquiring the
+ * lock. Send commits exactly the text and files the operator pressed Send on,
+ * captured at the press, or nothing. Only what is persisted is ever written:
+ * upload progress and failed files live in memory only. The lock is this
+ * window's own; between windows, the stored revision each write claims
+ * decides.
  */
 export class Drafts extends Context.Service<
   Drafts,
@@ -487,8 +487,6 @@ export const layer = Layer.effect(
       const text = draft.text.trim();
       const { files: attachments } = keptOf(draft);
       if (text === "" && attachments.length === 0) return "empty";
-      const problem = messageProblem(text, attachments);
-      if (problem !== null) return problem;
       const pressed: Draft = { ...draft, sending: true };
       show(key, pressed);
       return yield* locked(
@@ -510,11 +508,14 @@ export const layer = Layer.effect(
             )
             .pipe(
               Effect.map((claimed) => (claimed ? "sent" : "changed-elsewhere")),
-              Effect.catchTag("LocalStorageError", (error) =>
-                Effect.logWarning("A message could not be kept; it stays in the draft", error).pipe(
-                  Effect.as("not-kept" as const),
-                ),
-              ),
+              Effect.catchTags({
+                LocalStorageError: (error) =>
+                  Effect.logWarning(
+                    "A message could not be kept; it stays in the draft",
+                    error,
+                  ).pipe(Effect.as("not-kept" as const)),
+                InvalidMessage: (error) => Effect.succeed(error.problem),
+              }),
             );
           switch (kept) {
             case "sent":
@@ -525,9 +526,9 @@ export const layer = Layer.effect(
             case "changed-elsewhere":
               yield* reload(target);
               break;
-            case "not-kept":
+            default:
+              // Not kept, or over a limit of a message: it stays as it was.
               show(key, draft);
-              break;
           }
           return kept;
         }),

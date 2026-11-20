@@ -313,6 +313,7 @@ export const ptBR: Catalog = {
     "Longa demais para enviar. Uma mensagem pode ter no máximo {count} caracteres.",
   "composer.tooManyFiles":
     "Arquivos demais para enviar. Uma mensagem leva no máximo {count} arquivos.",
+  "composer.filesProblem": "Não dá para enviar estes arquivos. {reason}.",
   "composer.notKept":
     "Este dispositivo não conseguiu guardar a mensagem, então ela não foi enviada. Ela continua na caixa de mensagem.",
   "composer.changedElsewhere":

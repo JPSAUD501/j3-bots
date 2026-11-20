@@ -37,6 +37,7 @@ import type { RpcClientError } from "effect/rpc/RpcClientError";
 import type * as Socket from "effect/socket/Socket";
 import * as Connection from "./connection/Connection.ts";
 import * as Files from "./files/Files.ts";
+import type { MessageProblem } from "./files/limits.ts";
 import * as Actions from "./intents/Actions.ts";
 import * as SignOut from "./intents/SignOut.ts";
 import type {
@@ -149,12 +150,15 @@ export interface J3Client {
   readonly openConversation: (target: EntryTarget) => ConversationHandle;
   readonly openWorkSteps: (foldId: EntryId) => WorkStepsHandle;
 
+  /** `invalid` when the message breaks a limit of `message.send`: it was not sent. */
   readonly send: (input: {
     readonly target: EntryTarget;
     readonly text: string;
     readonly attachments?: ReadonlyArray<Attachment>;
     readonly mentions?: Mentions;
-  }) => Promise<Actions.IntentResult<EntryId>>;
+  }) => Promise<
+    Actions.IntentResult<EntryId> | { readonly _tag: "invalid"; readonly problem: MessageProblem }
+  >;
   readonly resend: (commandId: CommandId) => Promise<Actions.IntentResult<EntryId>>;
   readonly discard: (commandId: CommandId) => void;
 
@@ -329,7 +333,16 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
       return { state: value, release };
     },
 
-    send: (input) => run.promise(conversations.send(input)),
+    send: (input) =>
+      run.promise(
+        conversations
+          .send(input)
+          .pipe(
+            Effect.catchTag("InvalidMessage", ({ problem }) =>
+              Effect.succeed({ _tag: "invalid", problem } as const),
+            ),
+          ),
+      ),
     resend: (commandId) => run.promise(conversations.resend(commandId)),
     discard: (commandId) => fire(conversations.discard(commandId)),
 
