@@ -6,10 +6,12 @@ import type {
   MemoryDocument,
   MemoryFile,
   MemoryPath,
+  MemoryRevision,
   MemoryScope,
   ModelChoice,
   PermissionMode,
   Profile,
+  ProfileChanges,
   Routine,
   RoutineId,
 } from "@j3-bots/contracts";
@@ -19,8 +21,13 @@ import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { Connection } from "../connection/Connection.ts";
-import { Actions, intentResult, type IntentResult } from "../intents/Actions.ts";
-import type { Readable } from "../Store.ts";
+import {
+  Actions,
+  type IntentFailure,
+  intentResult,
+  type IntentResult,
+} from "../intents/Actions.ts";
+import { Cell, type Readable, waitFor } from "../Store.ts";
 import { type Loaded, makeLive } from "./reads.ts";
 
 /** How many of a bot's newest files its details list. */
@@ -38,6 +45,39 @@ export interface BotDraft {
   readonly primary?: boolean;
 }
 
+/** What `updateBot` changes. Fields left out keep their value. */
+export interface BotChanges {
+  readonly profile?: Omit<ProfileChanges, "avatar">;
+  readonly model?: ModelChoice;
+  readonly permissionMode?: PermissionMode;
+}
+
+/** What `writeMemory` writes: the file's new text, over the revision the operator read. */
+export interface MemoryEdit {
+  readonly text: string;
+  /** Null creates the file. */
+  readonly revision: MemoryRevision | null;
+}
+
+/**
+ * A save under way, with what it sends, or one that failed, with what it sent
+ * and why, so a form opened after it can offer the operator's edit again. A
+ * save that succeeded leaves nothing: the saved value shows where it lives.
+ */
+export type Save<C> =
+  | { readonly _tag: "saving"; readonly changes: C }
+  | { readonly _tag: "failed"; readonly changes: C; readonly failure: IntentFailure };
+
+/**
+ * How a save ended, or `pairing-changed`: the window follows another pairing
+ * than the one the save started under, or none, so nothing of it shows.
+ */
+export type SaveResult<A> = IntentResult<A> | { readonly _tag: "pairing-changed" };
+
+/** A memory file's key in `memorySaves`. */
+export const memorySaveKey = (scope: MemoryScope, path: MemoryPath) =>
+  `${memoryKey(scope)}/${path}`;
+
 /** `freshStart`'s key in `Actions`, so the button takes no second press while it runs. */
 export const freshStartAction = (botId: BotId) => `fresh-start:${botId}`;
 
@@ -53,7 +93,10 @@ export class Details extends Context.Service<
     readonly files: (
       botId: BotId,
     ) => Effect.Effect<Readable<Loaded<ReadonlyArray<BotFile>>>, never, Scope.Scope>;
-    /** The memory files of a bot, or the shared ones, read again whenever a socket opens. */
+    /**
+     * The memory files of a bot, or the shared ones, read again whenever a
+     * socket opens and after each write from this window.
+     */
     readonly memory: (
       scope: MemoryScope,
     ) => Effect.Effect<Readable<Loaded<ReadonlyArray<MemoryFile>>>, never, Scope.Scope>;
@@ -69,7 +112,33 @@ export class Details extends Context.Service<
       routineId: RoutineId,
       enabled: boolean,
     ) => Effect.Effect<IntentResult<Routine>>;
+    /**
+     * Writes a memory file's text, failing with `Conflict("stale-revision")`
+     * if it changed since `edit.revision` was read.
+     */
+    readonly writeMemory: (
+      scope: MemoryScope,
+      path: MemoryPath,
+      edit: MemoryEdit,
+    ) => Effect.Effect<SaveResult<MemoryDocument>>;
+    /**
+     * The latest write of each memory file, by `memorySaveKey`, while under
+     * way or once failed. Like `botSaves`, it holds only the saves of the
+     * pairing this window follows, and empties when that pairing changes.
+     */
+    readonly memorySaves: Readable<ReadonlyMap<string, Save<MemoryEdit>>>;
+    /** Lets go of a failed write the operator gave up on. One under way stays. */
+    readonly dismissMemorySave: (scope: MemoryScope, path: MemoryPath) => void;
     readonly createBot: (draft: BotDraft) => Effect.Effect<IntentResult<Bot>>;
+    /** Changes a bot's profile, model or permission mode. The roster shows the result. */
+    readonly updateBot: (botId: BotId, changes: BotChanges) => Effect.Effect<SaveResult<Bot>>;
+    /**
+     * The latest update of each bot, while under way or once failed. It
+     * outlives the form that started it, which can close before the answer.
+     */
+    readonly botSaves: Readable<ReadonlyMap<BotId, Save<BotChanges>>>;
+    /** Lets go of a failed update the operator gave up on. One under way stays. */
+    readonly dismissBotSave: (botId: BotId) => void;
     readonly freshStart: (botId: BotId) => Effect.Effect<IntentResult>;
     readonly deleteBot: (botId: BotId, deleteFiles: boolean) => Effect.Effect<IntentResult>;
   }
@@ -93,15 +162,25 @@ export const layer = Layer.effect(
         ),
     });
 
+    // How many writes this window made to each scope's memory, so its list is read again.
+    const written = new Cell<ReadonlyMap<string, number>>(new Map());
+    const writesTo = (key: string) => written.get().get(key) ?? 0;
+
     const memory = makeLive<MemoryScope, ReadonlyArray<MemoryFile>>({
       scope,
       connection,
       keyOf: memoryKey,
-      follow: (memoryScope, client, set) =>
-        client["memory.list"]({ scope: memoryScope }).pipe(
-          Effect.flatMap((list) => set(() => list)),
-          Effect.andThen(Effect.never),
-        ),
+      follow: (memoryScope, client, set) => {
+        const key = memoryKey(memoryScope);
+        // Counted before the read, so a write the read may have missed reads it again.
+        return Effect.suspend(() => {
+          const seen = writesTo(key);
+          return client["memory.list"]({ scope: memoryScope }).pipe(
+            Effect.flatMap((list) => set(() => list)),
+            Effect.andThen(waitFor(written, () => writesTo(key) !== seen)),
+          );
+        }).pipe(Effect.forever);
+      },
     });
 
     // Routines are few, so every socket starts again from a snapshot.
@@ -131,6 +210,101 @@ export const layer = Layer.effect(
       connection
         .call((client) => client["memory.read"]({ scope: memoryScope, path }))
         .pipe(Effect.exit, Effect.map(intentResult));
+
+    const memorySaves = new Cell<ReadonlyMap<string, Save<MemoryEdit>>>(new Map());
+    const botSaves = new Cell<ReadonlyMap<BotId, Save<BotChanges>>>(new Map());
+    // A save belongs to the pairing it started under, and a window shows only
+    // those of the pairing it follows: they go in the step the pairing changes.
+    yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        connection.pairing.subscribe(() => {
+          memorySaves.set(new Map());
+          botSaves.set(new Map());
+        }),
+      ),
+      (stop) => Effect.sync(stop),
+    );
+
+    const dismissFailed = <K, C>(saves: Cell<ReadonlyMap<K, Save<C>>>, key: K) => {
+      if (saves.get().get(key)?._tag !== "failed") return;
+      saves.update((current) => {
+        const next = new Map(current);
+        next.delete(key);
+        return next;
+      });
+    };
+
+    /**
+     * Runs `command` as the latest save of `key` in `saves`, and records how it
+     * ended, unless the pairing changed meanwhile.
+     */
+    const tracked = Effect.fn("Details.tracked")(function* <K, C, A>(
+      saves: Cell<ReadonlyMap<K, Save<C>>>,
+      key: K,
+      changes: C,
+      command: Effect.Effect<IntentResult<A>>,
+    ) {
+      const pairing = connection.pairing.get();
+      const saving: Save<C> = { _tag: "saving", changes };
+      saves.update((current) => new Map(current).set(key, saving));
+      const result = yield* command;
+      // A pairing never returns once it ended, and its saves went with it.
+      if (connection.pairing.get() !== pairing) {
+        const changed: SaveResult<A> = { _tag: "pairing-changed" };
+        return changed;
+      }
+      // A later save of the same thing speaks for itself.
+      if (saves.get().get(key) === saving) {
+        saves.update((current) => {
+          const next = new Map(current);
+          if (result._tag === "done") next.delete(key);
+          else next.set(key, { _tag: "failed", changes, failure: result.failure });
+          return next;
+        });
+      }
+      return result;
+    });
+
+    const writeMemory = Effect.fn("Details.writeMemory")(function* (
+      memoryScope: MemoryScope,
+      path: MemoryPath,
+      edit: MemoryEdit,
+    ) {
+      const commandId = yield* actions.commandId;
+      const result = yield* tracked(
+        memorySaves,
+        memorySaveKey(memoryScope, path),
+        edit,
+        connection
+          .call((client) =>
+            client["memory.write"]({
+              commandId,
+              scope: memoryScope,
+              path,
+              text: edit.text,
+              revision: edit.revision,
+            }),
+          )
+          .pipe(Effect.exit, Effect.map(intentResult)),
+      );
+      if (result._tag === "done") {
+        const key = memoryKey(memoryScope);
+        written.update((current) => new Map(current).set(key, writesTo(key) + 1));
+      }
+      return result;
+    });
+
+    const updateBot = Effect.fn("Details.updateBot")(function* (botId: BotId, changes: BotChanges) {
+      const commandId = yield* actions.commandId;
+      return yield* tracked(
+        botSaves,
+        botId,
+        changes,
+        connection
+          .call((client) => client["bot.update"]({ commandId, botId, ...changes }))
+          .pipe(Effect.exit, Effect.map(intentResult)),
+      );
+    });
 
     const setRoutineEnabled = Effect.fn("Details.setRoutineEnabled")(function* (
       routineId: RoutineId,
@@ -172,9 +346,16 @@ export const layer = Layer.effect(
       files: files.acquire,
       memory: memory.acquire,
       readMemory,
+      writeMemory,
+      memorySaves,
+      dismissMemorySave: (memoryScope, path) =>
+        dismissFailed(memorySaves, memorySaveKey(memoryScope, path)),
       routines: routines.acquire,
       setRoutineEnabled,
       createBot,
+      updateBot,
+      botSaves,
+      dismissBotSave: (botId) => dismissFailed(botSaves, botId),
       freshStart,
       deleteBot,
     });

@@ -5,13 +5,14 @@ import { Radio } from "@base-ui/react/radio";
 import { RadioGroup } from "@base-ui/react/radio-group";
 import type { Question, QuestionAnswers, QuestionEntry, QuestionOption } from "@j3-bots/contracts";
 import { CheckIcon, MessageCircleQuestionIcon } from "lucide-react";
-import { useId, useState, type ReactNode } from "react";
+import { useId, useState } from "react";
 import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
 import { type FocusWatch, useFocusAfterActions } from "../lib/useFocusAfterActions";
 import { assembleAnswers, type QuestionDraft } from "../presentation/question";
 import { CardFrame } from "./CardFrame";
 import { Button } from "./ui/button";
+import { ChoiceIndicator, choiceRow } from "./ui/choice";
 
 interface QuestionCardProps {
   readonly entry: QuestionEntry;
@@ -92,7 +93,7 @@ export function QuestionCard({
                   type="button"
                   aria-disabled={submitting}
                   onClick={() => answer({ [first.id]: { optionIds: [option.id], text: null } })}
-                  className={cn(optionRow, "hover:bg-muted aria-disabled:hover:bg-transparent")}
+                  className={cn(choiceRow, "hover:bg-muted aria-disabled:hover:bg-transparent")}
                 >
                   <OptionText option={option} />
                 </button>
@@ -116,9 +117,6 @@ export function QuestionCard({
     </CardFrame>
   );
 }
-
-const optionRow =
-  "flex min-h-9 w-full items-start gap-2.5 rounded-md border border-input px-3 py-2 text-start text-sm transition-colors duration-(--duration-fast) focus-visible:outline-2 focus-visible:outline-accent aria-disabled:cursor-default data-readonly:cursor-default pointer-coarse:min-h-11";
 
 function QuestionForm({
   questions,
@@ -196,7 +194,7 @@ function QuestionFields({
   const choose = (optionIds: ReadonlyArray<string>) =>
     onChange(textReplacesChoice ? { optionIds, text: "" } : { optionIds });
   const optionClass = cn(
-    optionRow,
+    choiceRow,
     "group/option hover:bg-muted data-checked:border-foreground/60 data-checked:bg-muted data-readonly:hover:bg-transparent",
   );
   return (
@@ -219,11 +217,11 @@ function QuestionFields({
                 readOnly={readOnly}
                 className={optionClass}
               >
-                <Indicator shape="square">
+                <ChoiceIndicator shape="square">
                   <Checkbox.Indicator>
                     <CheckIcon className="size-3" strokeWidth={3} aria-hidden />
                   </Checkbox.Indicator>
-                </Indicator>
+                </ChoiceIndicator>
                 <OptionText option={option} />
               </Checkbox.Root>
             ))}
@@ -241,9 +239,9 @@ function QuestionFields({
           >
             {question.options.map((option) => (
               <Radio.Root key={option.id} value={option.id} className={optionClass}>
-                <Indicator shape="round">
+                <ChoiceIndicator shape="round">
                   <Radio.Indicator className="size-2 rounded-pill bg-background" />
-                </Indicator>
+                </ChoiceIndicator>
                 <OptionText option={option} />
               </Radio.Root>
             ))}
@@ -265,22 +263,6 @@ function QuestionFields({
         />
       )}
     </div>
-  );
-}
-
-/** The drawn box or circle of a choice; the option's own element carries the checked state. */
-function Indicator({ shape, children }: { shape: "square" | "round"; children: ReactNode }) {
-  return (
-    <span
-      aria-hidden
-      className={cn(
-        "mt-0.5 flex size-4 shrink-0 items-center justify-center border border-control-off text-background",
-        "group-data-checked/option:border-foreground group-data-checked/option:bg-foreground",
-        shape === "square" ? "rounded-sm" : "rounded-pill",
-      )}
-    >
-      {children}
-    </span>
   );
 }
 
@@ -342,7 +324,7 @@ function Resolved({
     <div className="flex flex-col gap-2">
       <p className="text-sm font-medium">{question.prompt}</p>
       {chosen.map((option) => (
-        <div key={option.id} className={cn(optionRow, "border-foreground/60 bg-muted")}>
+        <div key={option.id} className={cn(choiceRow, "border-foreground/60 bg-muted")}>
           <OptionText option={option} />
         </div>
       ))}

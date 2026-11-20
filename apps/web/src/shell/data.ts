@@ -111,7 +111,7 @@ export interface ShellIntents extends TimelineIntents {
   readonly newBot: () => void;
   /** Absent until rooms can be made. */
   readonly newRoom?: () => void;
-  /** Absent until profiles can be edited. */
+  /** Opens the form that edits a bot's profile, model and permission mode. Absent where there is none. */
   readonly editProfile?: (botId: BotId) => void;
   readonly openMemoryFile: (botId: BotId, path: MemoryPath) => void;
   /** `name` is the bot's as the operator asked, for what the shell says once it is done. */

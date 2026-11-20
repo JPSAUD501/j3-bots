@@ -130,6 +130,11 @@ export type PairResult =
  */
 export interface J3Client {
   readonly connection: Readable<Connection.ConnectionState>;
+  /**
+   * The pairing this window follows: its device id, or null without one. A
+   * window shows, keeps and sends only the records of the pairing it follows.
+   */
+  readonly pairing: Readable<DeviceId | null>;
   readonly pair: (input: {
     readonly code: string;
     readonly deviceName: string;
@@ -220,12 +225,29 @@ export interface J3Client {
     scope: MemoryScope,
     path: MemoryPath,
   ) => Promise<Actions.IntentResult<MemoryDocument>>;
+  /** See `Details.writeMemory`; `memorySaves` follows it. */
+  readonly writeMemory: (
+    scope: MemoryScope,
+    path: MemoryPath,
+    edit: Details.MemoryEdit,
+  ) => Promise<Details.SaveResult<MemoryDocument>>;
+  /** The latest write of each memory file, by `memorySaveKey`, while under way or once failed. */
+  readonly memorySaves: Readable<ReadonlyMap<string, Details.Save<Details.MemoryEdit>>>;
+  readonly dismissMemorySave: (scope: MemoryScope, path: MemoryPath) => void;
   readonly openRoutines: (botId: BotId) => LoadedHandle<ReadonlyArray<Routine>>;
   readonly setRoutineEnabled: (
     routineId: RoutineId,
     enabled: boolean,
   ) => Promise<Actions.IntentResult<Routine>>;
   readonly createBot: (draft: Details.BotDraft) => Promise<Actions.IntentResult<Bot>>;
+  /** See `Details.updateBot`; `botSaves` follows it. */
+  readonly updateBot: (
+    botId: BotId,
+    changes: Details.BotChanges,
+  ) => Promise<Details.SaveResult<Bot>>;
+  /** The latest update of each bot, while under way or once failed. */
+  readonly botSaves: Readable<ReadonlyMap<BotId, Details.Save<Details.BotChanges>>>;
+  readonly dismissBotSave: (botId: BotId) => void;
   readonly freshStart: (botId: BotId) => Promise<Actions.IntentResult>;
   readonly deleteBot: (botId: BotId, deleteFiles: boolean) => Promise<Actions.IntentResult>;
   readonly retryMessage: (entryId: EntryId) => Promise<Actions.IntentResult>;
@@ -328,6 +350,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
 
   return {
     connection: connection.state,
+    pairing: connection.pairing,
     pair: (input) =>
       run.promise(
         connection.pair(input).pipe(
@@ -425,6 +448,10 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
       return { state: value, release };
     },
     readMemory: (scope, path) => run.promise(services.details.readMemory(scope, path)),
+    writeMemory: (scope, path, edit) =>
+      run.promise(services.details.writeMemory(scope, path, edit)),
+    memorySaves: services.details.memorySaves,
+    dismissMemorySave: services.details.dismissMemorySave,
     openRoutines: (botId) => {
       const { value, release } = hold(services.details.routines(botId));
       return { state: value, release };
@@ -432,6 +459,9 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     setRoutineEnabled: (routineId, enabled) =>
       run.promise(services.details.setRoutineEnabled(routineId, enabled)),
     createBot: (draft) => run.promise(services.details.createBot(draft)),
+    updateBot: (botId, changes) => run.promise(services.details.updateBot(botId, changes)),
+    botSaves: services.details.botSaves,
+    dismissBotSave: services.details.dismissBotSave,
     freshStart: (botId) => run.promise(services.details.freshStart(botId)),
     deleteBot: (botId, deleteFiles) => run.promise(services.details.deleteBot(botId, deleteFiles)),
     retryMessage: (entryId) => run.promise(conversations.retryMessage(entryId)),
