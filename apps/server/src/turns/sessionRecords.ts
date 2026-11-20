@@ -113,7 +113,7 @@ export const sessionRecords = (
  * A session the engine answered it has no such session for
  * (`docs/architecture/server.md`, Sessions). Recorded once, and everything
  * open in it is settled in the same transaction, since nothing runs there any
- * more: its Stop targets are confirmed, a dispatch the engine had whose turn
+ * more: its Stop targets settle, a dispatch the engine had whose turn
  * never started fails as `unresolved` with its wakes failed and retryable, a
  * delivered one finishes interrupted with its turn, every open turn and its
  * work fold end interrupted, and its open requests close. A dispatch not yet
@@ -178,10 +178,10 @@ export const sessionLoss = (
     const at = timeText(now);
     const [lost] = yield* markLost({ sessionId, at });
     if (lost === undefined) return false;
+    // Settled as they stand: each round keeps what the engine answered for it,
+    // a refusal included.
     yield* sql`
-      UPDATE stop_targets SET issued_at = COALESCE(issued_at, ${at}),
-        sent_at = COALESCE(sent_at, ${at}), observed_at = COALESCE(observed_at, ${at}),
-        stopped_at = ${at}
+      UPDATE stop_targets SET stopped_at = ${at}
       WHERE session_id = ${sessionId} AND stopped_at IS NULL
     `;
     const interrupted: TurnOutcome = { _tag: "interrupted" };
