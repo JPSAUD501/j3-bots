@@ -334,24 +334,26 @@ The server pages history by `order`; a client asks for older entries as the oper
 
 ## Configuration
 
-The server reads its settings from `<J3_HOME>/config.json`. On first start it writes that file with every setting at its default. A setting in the environment overrides the file, and a default applies only when neither has the setting. A setting that is present but invalid stops the start, so a typo never becomes the default. The file refuses unknown keys for the same reason. `j3-bots doctor` runs the same checks without starting anything.
+The server reads its settings from `<J3_HOME>/config.json`. On first start it writes that file with every setting at its default. A setting in the environment overrides the file, and a default applies only when neither has the setting. A setting that is present but invalid stops the start, so a typo never becomes the default. The file refuses unknown keys for the same reason. Start also refuses two listeners on one port, port `0` for the tool endpoint or the engine (both are dialed at the number configured), and a certificate and key that Node cannot load as a pair. `j3-bots doctor` runs the same checks without starting anything. A service runs with the file alone: it does not get the variables of the shell that installed it.
 
 | File | Variable | Default | |
 | --- | --- | --- | --- |
-| | `J3_HOME` | `~/.j3-bots` | Created readable by the operator only. Refused inside a Git checkout, including a folder that does not exist yet whose parent is one |
-| `host` | `J3_HOST` | `lan` | `lan` listens on every IPv4 interface, and start refuses it while any of the machine's addresses is public. Any other value is one address. Without TLS, plain HTTP is refused on anything but loopback and private ranges: the private IPv4 ranges, IPv4 link-local, carrier-grade NAT (where Tailscale puts its addresses), and IPv6 unique-local and link-local. `0.0.0.0`, `::` and host names given directly count as public |
-| `port` | `J3_PORT` | `3737` | |
+| | `J3_HOME` | `~/.j3-bots` | Created readable by the operator only. The server does not start while it is owned by another user or open to a group or to other users. Refused inside a Git checkout, including a folder that does not exist yet whose parent is one |
+| `host` | `J3_HOST` | `lan` | `lan` listens on every IPv4 interface. Start refuses it while any of the machine's addresses is public, and each connection to an address that is not loopback or private is closed unread. Any other value is one address, which must exist when the server starts. Without TLS it must be an IP literal in loopback or a private range: the private IPv4 ranges, IPv4 link-local, carrier-grade NAT (100.64.0.0/10, where Tailscale puts its addresses), and IPv6 unique-local and link-local. `0.0.0.0`, `::` and host names, `localhost` included, are refused |
+| `port` | `J3_PORT` | `3737` | `0` lets the system choose; `j3-bots pair` prints the port the server got |
 | `tls` | `J3_TLS_CERT`, `J3_TLS_KEY` | none | A certificate and key (`{ "cert", "key" }` in the file), which serve HTTPS on any address. The two variables are set together and replace the file's pair |
 | `enginePort` | `J3_ENGINE_PORT` | `3738` | The engine's loopback port |
-| | `J3_ENGINE_BINARY` | the pinned release | For testing an engine build |
+| | `J3_ENGINE_BINARY` | the pinned release | For testing an engine build. Not in the file, and a service never uses it |
 | `toolPort` | `J3_TOOL_PORT` | `3739` | The bot tool endpoint's loopback port, which the `j3` bridges call |
-| `webClient` | `J3_WEB_CLIENT` | this checkout's `apps/web/dist` | The built web client, served on the API's origin. A folder named here must hold an `index.html`. The default is served once it is built |
+| `webClient` | `J3_WEB_CLIENT` | this checkout's `apps/web/dist` | The built web client, served on the API's origin. A folder named here must hold an `index.html`. A folder that holds the home or the TLS certificate or key is refused, since everything in it is public. The default is served once it is built |
 
 Relative paths in the file resolve against `J3_HOME`.
 
-**The web client** is served by the same listener as the API, so the two share an origin. Paths under `/api/` and the server's own routes are never answered with the client. Any other path that names no file gets `index.html`, for the client's own routing. Files under `/assets/` carry content hashes in their names and are cached for a year as immutable; everything else is revalidated on each use. Paths that leave the folder are refused.
+**The web client** is served by the same listener as the API, so the two share an origin. The server looks for a built client when it starts and registers its routes then; a client built later is served after a restart. Paths under `/api/` and the server's own routes are never answered with the client. A request for a path without a file extension that accepts HTML, and that names no file, gets `index.html`, for the client's own routing; anything else that names no file is a 404. Files under `/assets/` carry content hashes in their names and are cached for a year as immutable; everything else is revalidated on each use. Paths that leave the folder are refused, and so is a file whose real path, symbolic links resolved, lies outside it, `index.html` included.
 
-**The admin socket**, `<J3_HOME>/admin.sock`, is how `j3-bots` commands on the host reach the running server: its status, and a pairing code. It is a Unix socket that only the operator's user can open (the home is mode 0700, the socket 0600), so it needs no token. It is also the guard against two servers on one home: a server that finds a live socket refuses to start, and one that finds a socket left by a crash removes it.
+**One server per home.** Right after it loads its configuration, before it opens the database or starts the engine, the server checks that the home is private and takes an exclusive lock on `<J3_HOME>/server.lock`, which it holds until it exits. A second server for the same home stops there. The lock is SQLite's, which the kernel releases when the process ends, so a crashed server never leaves the home held.
+
+**The admin socket**, `<J3_HOME>/admin.sock`, is how `j3-bots` commands on the host reach the running server: its status, where it listens (scheme, address, port and, with TLS, the certificate's names), and a pairing code. It is a Unix socket that only the operator's user can open (the home is private, the socket 0600), so it needs no token. A server holding the lock removes a socket left by one that stopped without closing, once it has seen that the file is a socket and that nothing listens on it. Anything else at that path stops the start.
 
 ## Failure handling
 

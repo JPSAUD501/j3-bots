@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
-import { render, type UnitPlan } from "./unit.ts";
+import * as Path from "effect/Path";
+import { environmentOf, render, servicePath, type UnitPlan } from "./unit.ts";
 
 const GIB = 1024 ** 3;
 
@@ -25,6 +28,9 @@ const settings = (unit: string) => {
   }
   return found;
 };
+
+/** `ExecStart=`'s words as systemd reads them, `$$` undone too. */
+const command = (value: string) => words(value).map((word) => word.replaceAll("$$", "$"));
 
 /** One setting's words as systemd reads them: quotes grouped, escapes and `%%` undone. */
 const words = (value: string) => {
@@ -61,7 +67,7 @@ const single = (unit: Map<string, Array<string>>, name: string) => {
 it.effect("runs `serve` with the given Node, in the home, restarted when it fails", () =>
   Effect.gen(function* () {
     const unit = settings(yield* render(PI));
-    assert.deepStrictEqual(words(single(unit, "ExecStart")), [PI.node, PI.entryPoint, "serve"]);
+    assert.deepStrictEqual(command(single(unit, "ExecStart")), [PI.node, PI.entryPoint, "serve"]);
     assert.strictEqual(single(unit, "WorkingDirectory"), PI.home);
     assert.sameMembers((unit.get("Environment") ?? []).flatMap(words), [
       `J3_HOME=${PI.home}`,
@@ -81,16 +87,23 @@ it.effect("leaves a 4 GB Raspberry Pi about 1.6 GB beyond the service's memory",
   }),
 );
 
-it.effect("keeps paths with spaces, quotes and percent signs intact", () =>
+it.effect("keeps paths with spaces, quotes, percent and dollar signs intact", () =>
   Effect.gen(function* () {
     const plan: UnitPlan = {
       ...PI,
-      entryPoint: '/home/pi/my "bots"/100% sure/bin.mjs',
+      entryPoint: '/home/pi/my "bots"/100% sure/$HOME/${USER}/bin.mjs',
       home: "/home/pi/J3 data/50%",
       searchPath: "/opt/my tools/bin:/usr/bin",
     };
-    const unit = settings(yield* render(plan));
-    assert.deepStrictEqual(words(single(unit, "ExecStart")), [plan.node, plan.entryPoint, "serve"]);
+    const text = yield* render(plan);
+    const unit = settings(text);
+    assert.deepStrictEqual(command(single(unit, "ExecStart")), [
+      plan.node,
+      plan.entryPoint,
+      "serve",
+    ]);
+    // What `doctor` reads back from the installed unit.
+    assert.strictEqual(environmentOf(text).get("PATH"), plan.searchPath);
     assert.strictEqual(single(unit, "WorkingDirectory").replaceAll("%%", "%"), plan.home);
     assert.sameMembers((unit.get("Environment") ?? []).flatMap(words), [
       `J3_HOME=${plan.home}`,
@@ -114,3 +127,27 @@ it.effect("refuses values systemd cannot take", () =>
     }
   }),
 );
+
+it.layer(NodeServices.layer)("the service's PATH", (it) => {
+  it.effect("names each folder by its real path, and drops the per-session ones", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.realPath(yield* fs.makeTempDirectoryScoped());
+      const runtime = path.join(root, "run", "user", "1000");
+      const node = path.join(root, "fnm", "node-versions", "v26.13.1", "installation", "bin");
+      const shell = path.join(runtime, "fnm_multishells", "4242_1700000000000");
+      const scratch = path.join(runtime, "scratch");
+      yield* fs.makeDirectory(node, { recursive: true });
+      yield* fs.makeDirectory(scratch, { recursive: true });
+      yield* fs.makeDirectory(path.dirname(shell), { recursive: true });
+      yield* fs.symlink(path.dirname(node), shell);
+
+      const searchPath = [path.join(shell, "bin"), scratch, "/usr/bin", "relative/bin", "/usr/bin"];
+      assert.strictEqual(
+        yield* servicePath(searchPath.join(":"), Option.some(runtime)),
+        [node, "/usr/bin"].join(":"),
+      );
+    }).pipe(Effect.scoped),
+  );
+});

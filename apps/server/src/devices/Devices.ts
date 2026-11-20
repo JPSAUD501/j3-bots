@@ -139,8 +139,12 @@ export const layer = Layer.effect(
       }));
     });
 
-    const pairedCount = deviceRows(undefined).pipe(
-      Effect.map((rows) => rows.length),
+    const pairedCount = SqlSchema.findOne({
+      Request: Schema.Void,
+      Result: Schema.Struct({ count: Schema.Int }),
+      execute: () => sql`SELECT COUNT(*) AS count FROM devices WHERE revoked_at IS NULL`,
+    })(undefined).pipe(
+      Effect.map(({ count }) => count),
       Effect.orDie,
     );
 

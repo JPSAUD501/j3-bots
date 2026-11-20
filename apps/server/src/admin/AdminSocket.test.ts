@@ -2,19 +2,25 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { ServerConfig } from "../config.ts";
 import { Devices } from "../devices/Devices.ts";
+import * as Home from "../home/Home.ts";
+import { Listener } from "../listener.ts";
 import * as TestDomain from "../testing/domain.ts";
 import * as AdminClient from "./AdminClient.ts";
 import * as AdminSocket from "./AdminSocket.ts";
 
+const listener = Layer.succeed(
+  Listener,
+  Listener.of({ scheme: "http", address: "0.0.0.0", port: 3737, names: [] }),
+);
+
 it.layer(AdminClient.layer.pipe(Layer.provideMerge(TestDomain.layer)))("admin socket", (it) => {
   it.effect("pairs a first device through the running server, and only then", () =>
     Effect.gen(function* () {
-      const { adminSocket } = yield* ServerConfig;
+      const { adminSocket, home } = yield* ServerConfig;
       const admin = yield* AdminClient.AdminClient;
       const devices = yield* Devices;
       assert.isTrue(Option.isNone(yield* admin.startPairing(adminSocket)));
@@ -22,6 +28,12 @@ it.layer(AdminClient.layer.pipe(Layer.provideMerge(TestDomain.layer)))("admin so
       yield* Effect.gen(function* () {
         const before = yield* admin.status(adminSocket);
         assert.strictEqual(Option.getOrUndefined(before)?.pairedDevices, 0);
+        assert.deepStrictEqual(Option.getOrUndefined(before)?.listener, {
+          scheme: "http",
+          address: "0.0.0.0",
+          port: 3737,
+          names: [],
+        });
 
         const grant = yield* admin.startPairing(adminSocket);
         assert.isTrue(Option.isSome(grant));
@@ -31,23 +43,17 @@ it.layer(AdminClient.layer.pipe(Layer.provideMerge(TestDomain.layer)))("admin so
         const after = yield* admin.status(adminSocket);
         assert.strictEqual(Option.getOrUndefined(after)?.pairedDevices, 1);
 
-        // A second server for the same home stops before it starts anything.
-        const second = yield* AdminSocket.claim.pipe(Effect.exit);
-        assert.isTrue(Exit.isFailure(second));
-      }).pipe(Effect.provide(AdminSocket.layer), Effect.scoped);
+        // A second server for the same home stops before it opens anything.
+        const second = yield* Home.reserve.pipe(Effect.scoped, Effect.exit);
+        const refusal = Exit.isFailure(second) ? Exit.findErrorOption(second) : Option.none();
+        assert.deepInclude(Option.getOrUndefined(refusal), { _tag: "ServerAlreadyRunning", home });
+      }).pipe(
+        Effect.provide(AdminSocket.layer.pipe(Layer.provide(listener), Layer.provide(Home.layer))),
+        Effect.scoped,
+      );
 
       // Closing removed the socket: the server is gone, not unreachable.
       assert.isTrue(Option.isNone(yield* admin.status(adminSocket)));
-    }),
-  );
-
-  it.effect("takes over the socket a crashed server left behind", () =>
-    Effect.gen(function* () {
-      const { adminSocket } = yield* ServerConfig;
-      const fs = yield* FileSystem.FileSystem;
-      yield* fs.writeFileString(adminSocket, "");
-      yield* AdminSocket.claim;
-      assert.isFalse(yield* fs.exists(adminSocket));
     }),
   );
 });

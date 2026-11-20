@@ -13,10 +13,28 @@ export const ADMIN_PATHS = {
   pairing: "/pairing",
 } as const;
 
+const Port = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 65535 }));
+
+/** Where the running server listens for clients, as it bound it. */
+export const ListenerStatus = Schema.Struct({
+  scheme: Schema.Literals(["http", "https"]),
+  /** The address bound: one IP address, or `0.0.0.0` for every IPv4 interface. */
+  address: Schema.String,
+  port: Port,
+  /** With HTTPS, the DNS names the certificate covers: the names clients must open. */
+  names: Schema.Array(Schema.String),
+});
+export type ListenerStatus = typeof ListenerStatus.Type;
+
 export const AdminStatus = Schema.Struct({
   /** The J3 Bots release that is running. */
   version: Schema.String,
   startedAt: Schema.DateTimeUtc,
+  listener: ListenerStatus,
+  /** The loopback port of the bot tool endpoint. */
+  toolPort: Port,
+  /** The loopback port the engine is run on. */
+  enginePort: Port,
   engine: EngineStatus,
   /** Devices paired and not revoked. */
   pairedDevices: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),

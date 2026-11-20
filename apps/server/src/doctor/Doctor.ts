@@ -3,12 +3,14 @@ import type { EngineStatus, ProviderStatus } from "@j3-bots/contracts";
 import * as EngineLive from "@j3-bots/engine-t3/live";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as NetAddress from "effect/net/NetAddress";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import rootPackage from "../../../../package.json" with { type: "json" };
 import { AdminClient } from "../admin/AdminClient.ts";
 import type { AdminStatus } from "../admin/protocol.ts";
 import * as ServerConfig from "../config.ts";
+import * as Home from "../home/Home.ts";
 import * as Unit from "../service/unit.ts";
 import { Host } from "../system/Host.ts";
 import { Systemd } from "../system/Systemd.ts";
@@ -66,42 +68,37 @@ const nodeCheck = (version: string) =>
         `Install Node ${TESTED_NODE} and run this again with it.`,
       );
 
+const HOME_SUMMARIES: Record<Home.HomeNotPrivate["reason"], (home: string) => string> = {
+  "not-a-folder": (home) => `${home} is not a folder.`,
+  "not-owned": (home) =>
+    `${home} belongs to another user. The server refuses to start until this user owns it.`,
+  "open-to-others": (home) =>
+    `Other users on this machine can open ${home}, which holds the database, the engine's credential and the admin socket. The server refuses to start until only this user can.`,
+};
+
 const homeCheck = Effect.fn("doctor.home")(function* (home: string) {
   const fs = yield* FileSystem.FileSystem;
-  const info = yield* fs.stat(home).pipe(Effect.option);
-  if (Option.isNone(info)) {
+  if (!(yield* fs.exists(home).pipe(Effect.orElseSucceed(() => false)))) {
     return check(
       "Data directory",
       "ok",
       `${home} does not exist yet; the server creates it on its first start.`,
     );
   }
-  if (info.value.type !== "Directory") {
-    return check(
-      "Data directory",
-      "problem",
-      `${home} is not a folder.`,
-      "Move it away, or set J3_HOME to another folder.",
-    );
+  const privacy = yield* Home.checkPrivate(home).pipe(Effect.result);
+  if (privacy._tag === "Failure") {
+    const { reason, fix } = privacy.failure;
+    return check("Data directory", "problem", HOME_SUMMARIES[reason](home), fix);
   }
-  const writable = yield* fs.access(home, { writable: true }).pipe(Effect.isSuccess);
-  if (!writable) {
+  if (!(yield* fs.access(home, { writable: true }).pipe(Effect.isSuccess))) {
     return check(
       "Data directory",
       "problem",
       `${home} is not writable by this user.`,
-      `Give it back to this user: \`chown -R "$(id -un)" ${home}\`.`,
-    );
-  }
-  if ((info.value.mode & 0o077) !== 0) {
-    return check(
-      "Data directory",
-      "warning",
-      `Other users on this machine can read ${home}, which holds the database and the bots' files.`,
       `Run \`chmod 700 ${home}\`.`,
     );
   }
-  return check("Data directory", "ok", `${home}, readable by this user only.`);
+  return check("Data directory", "ok", `${home}, open to this user only.`);
 });
 
 const diskCheck = Effect.fn("doctor.disk")(function* (home: string) {
@@ -130,17 +127,36 @@ const diskCheck = Effect.fn("doctor.disk")(function* (home: string) {
   return check("Disk space", "ok", `${amount} free where ${home} is.`);
 });
 
-const portsCheck = Effect.fn("doctor.ports")(function* (
-  config: ServerConfig.ServerConfigShape,
-  running: boolean,
-) {
-  if (running) {
+/** `http://192.168.1.20:3737`, `https://[fd7a::1]:3737`: where a listener is, for reading. */
+const listenerAddress = (listener: AdminStatus["listener"]) =>
+  `${listener.scheme}://${NetAddress.formatUrlHostString(listener.address)}:${listener.port}`;
+
+/** The running server's ports, as it bound them and as its engine reports. */
+const runningPortsCheck = (status: AdminStatus) => {
+  const { engine, enginePort, toolPort } = status;
+  if (engine.state._tag === "unavailable" && engine.state.reason === "port-in-use") {
     return check(
       "Ports",
-      "ok",
-      `The running server holds ${config.port}, ${config.toolPort} and ${config.enginePort}.`,
+      "problem",
+      `Port ${enginePort}, for the engine, is held by another program, so the engine cannot start.`,
+      `Stop that program (\`ss -ltnp 'sport = :${enginePort}'\` names it), or set "enginePort" in the configuration to a free port and restart the service.`,
     );
   }
+  const engineSide =
+    engine.state._tag === "ready"
+      ? `the engine answers on ${enginePort}`
+      : `the engine's port is ${enginePort}`;
+  return check(
+    "Ports",
+    "ok",
+    `The running server listens on ${listenerAddress(status.listener)}, the bot tools on ${toolPort}, and ${engineSide}.`,
+  );
+};
+
+/** With no server running, whether each port could be listened on now. */
+const freePortsCheck = Effect.fn("doctor.ports")(function* (
+  config: ServerConfig.ServerConfigShape,
+) {
   const host = yield* Host;
   const settingHint = `in ${config.configFile}`;
   const wanted = [
@@ -150,7 +166,7 @@ const portsCheck = Effect.fn("doctor.ports")(function* (
   ];
   for (const { label, host: address, port, setting } of wanted) {
     const state = yield* host.portState(address, port);
-    switch (state) {
+    switch (state._tag) {
       case "free":
         continue;
       case "in-use":
@@ -173,6 +189,13 @@ const portsCheck = Effect.fn("doctor.ports")(function* (
           "problem",
           `This user may not listen on ${address}:${port}.`,
           `Set "${setting}" ${settingHint} to a port above 1023.`,
+        );
+      case "failed":
+        return check(
+          "Ports",
+          "problem",
+          `Listening on ${address}:${port}, for ${label}, failed with ${state.code}.`,
+          `Check "${setting}" and "host" ${settingHint}.`,
         );
     }
   }
@@ -278,14 +301,20 @@ const engineCheck = Effect.fn("doctor.engine")(function* (
 const providerCheck = Effect.fn("doctor.provider")(function* (
   harness: (typeof HARNESSES)[number],
   status: Option.Option<AdminStatus>,
+  servicePath: Option.Option<string>,
 ) {
   const host = yield* Host;
-  const found = yield* host.findExecutable(harness.executable);
+  const found = yield* host.findExecutable(
+    harness.executable,
+    Option.getOrElse(servicePath, () => host.searchPath),
+  );
   if (Option.isNone(found)) {
     return check(
       harness.name,
       "warning",
-      `\`${harness.executable}\` is not on PATH, so bots cannot run on ${harness.name}.`,
+      Option.isSome(servicePath)
+        ? `\`${harness.executable}\` is not on the service's PATH, so bots cannot run on ${harness.name}.`
+        : `\`${harness.executable}\` is not on PATH, so bots cannot run on ${harness.name}.`,
       `Install ${harness.name}, or add its folder to PATH, then run \`j3-bots service install\` again so the service gets that PATH.`,
     );
   }
@@ -384,9 +413,14 @@ const pairingCheck = (status: Option.Option<AdminStatus>) => {
       );
 };
 
-const serviceChecks = Effect.gen(function* () {
-  const systemd = yield* Systemd;
+/** The installed unit's text, if there is one. */
+const installedUnit = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
+  return yield* fs.readFileString(yield* Unit.unitPath).pipe(Effect.option);
+});
+
+const serviceChecks = Effect.fn("doctor.service")(function* (unitText: Option.Option<string>) {
+  const systemd = yield* Systemd;
   if (!(yield* systemd.available)) {
     return [
       check(
@@ -398,8 +432,7 @@ const serviceChecks = Effect.gen(function* () {
     ];
   }
   const checks: Array<Check> = [];
-  const unitFile = yield* Unit.unitPath;
-  if (!(yield* fs.exists(unitFile).pipe(Effect.orElseSucceed(() => false)))) {
+  if (Option.isNone(unitText)) {
     checks.push(
       check(
         "Service",
@@ -418,21 +451,28 @@ const serviceChecks = Effect.gen(function* () {
             "The service has failed.",
             "Read why with `journalctl --user -u j3-bots -n 100`, then `systemctl --user restart j3-bots`.",
           )
-        : unit.active !== "active" && unit.active !== "activating"
+        : unit.active === "activating"
           ? check(
               "Service",
               "warning",
-              `The service is installed but ${unit.active}.`,
-              "Start it with `systemctl --user start j3-bots`.",
+              "The service is starting or restarting.",
+              "Read the log: `journalctl --user -u j3-bots -n 100`.",
             )
-          : !unit.enabled
+          : unit.active !== "active"
             ? check(
                 "Service",
                 "warning",
-                "The service runs but is not enabled, so it will not start again after a reboot.",
-                "Run `systemctl --user enable j3-bots`.",
+                `The service is installed but ${unit.active}.`,
+                "Start it with `systemctl --user start j3-bots`.",
               )
-            : check("Service", "ok", "Installed, enabled and running."),
+            : !unit.enabled
+              ? check(
+                  "Service",
+                  "warning",
+                  "The service runs but is not enabled, so it will not start again after a reboot.",
+                  "Run `systemctl --user enable j3-bots`.",
+                )
+              : check("Service", "ok", "Installed, enabled and running."),
     );
   }
 
@@ -463,12 +503,27 @@ const serviceChecks = Effect.gen(function* () {
   return checks;
 });
 
+/** With the service installed, the overrides in this shell, which it does not get. */
+const overridesCheck = Effect.fn("doctor.overrides")(function* (configFile: string) {
+  const overrides = yield* ServerConfig.shellOverrides;
+  if (overrides.length === 0) return Option.none<Check>();
+  return Option.some(
+    check(
+      "Shell settings",
+      "warning",
+      `${overrides.join(", ")} ${overrides.length === 1 ? "is" : "are"} set in this shell, so this report may not describe the service, which runs with ${configFile}.`,
+      overrides.map((name) => ServerConfig.overrideNote(name, configFile)).join(" "),
+    ),
+  );
+});
+
 /** Every check, in the order the report shows them. */
 export const diagnose = Effect.gen(function* () {
   const host = yield* Host;
   const admin = yield* AdminClient;
   const checks: Array<Check> = [nodeCheck(host.nodeVersion)];
 
+  const unitText = yield* installedUnit;
   const loaded = yield* ServerConfig.load.pipe(Effect.result);
   if (loaded._tag === "Failure") {
     checks.push(
@@ -480,7 +535,7 @@ export const diagnose = Effect.gen(function* () {
       ),
     );
     checks.push(yield* homeCheck(yield* ServerConfig.resolveHome));
-    checks.push(...(yield* serviceChecks));
+    checks.push(...(yield* serviceChecks(unitText)));
     return checks;
   }
   const config = loaded.success;
@@ -511,7 +566,7 @@ export const diagnose = Effect.gen(function* () {
         ? check(
             "Server",
             "ok",
-            `J3 Bots ${status.value.version} is running on port ${config.port}.`,
+            `J3 Bots ${status.value.version} is running at ${listenerAddress(status.value.listener)}.`,
           )
         : check(
             "Server",
@@ -520,11 +575,28 @@ export const diagnose = Effect.gen(function* () {
             "Start it with `systemctl --user start j3-bots`, or `j3-bots serve` in a terminal.",
           ),
   );
-  checks.push(yield* portsCheck(config, Option.isSome(status) || answer._tag === "Failure"));
+  checks.push(
+    Option.isSome(status)
+      ? runningPortsCheck(status.value)
+      : answer._tag === "Failure"
+        ? check(
+            "Ports",
+            "skipped",
+            "A server holds the admin socket, so its ports are not checked.",
+          )
+        : yield* freePortsCheck(config),
+  );
   checks.push(yield* engineCheck(config, status));
-  for (const harness of HARNESSES) checks.push(yield* providerCheck(harness, status));
+  const servicePath = Option.flatMapNullishOr(unitText, (text) =>
+    Unit.environmentOf(text).get("PATH"),
+  );
+  for (const harness of HARNESSES) checks.push(yield* providerCheck(harness, status, servicePath));
   checks.push(yield* webClientCheck(config, status));
   checks.push(pairingCheck(status));
-  checks.push(...(yield* serviceChecks));
+  checks.push(...(yield* serviceChecks(unitText)));
+  if (Option.isSome(unitText)) {
+    const overrides = yield* overridesCheck(config.configFile);
+    if (Option.isSome(overrides)) checks.push(overrides.value);
+  }
   return checks;
 });

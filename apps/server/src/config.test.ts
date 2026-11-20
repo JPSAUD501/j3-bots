@@ -10,11 +10,12 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import { DEFAULTS, initializeHome, load } from "./config.ts";
 import { type InterfaceAddress, Network } from "./system/Network.ts";
+import { TEST_TLS } from "./testing/tls.ts";
 
 const LAN_ONLY: ReadonlyArray<InterfaceAddress> = [
-  { address: "127.0.0.1", internal: true },
-  { address: "192.168.1.20", internal: false },
-  { address: "100.101.102.103", internal: false },
+  { interface: "lo", address: "127.0.0.1", internal: true },
+  { interface: "wlan0", address: "192.168.1.20", internal: false },
+  { interface: "tailscale0", address: "100.101.102.103", internal: false },
 ];
 
 const withEnvironment = <A, E, R>(
@@ -117,11 +118,29 @@ it.layer(NodeServices.layer)("server configuration", (it) => {
   it.effect("serves plain HTTP only on loopback and private addresses", () =>
     Effect.gen(function* () {
       const home = yield* freshHome;
-      for (const host of ["127.0.0.1", "localhost", "192.168.0.10", "169.254.3.4", "::1"]) {
+      for (const host of [
+        "127.0.0.1",
+        "192.168.0.10",
+        "169.254.3.4",
+        "100.64.0.9",
+        "::1",
+        "fd7a::1",
+      ]) {
         const config = yield* withEnvironment(load, { J3_HOME: home, J3_HOST: host });
         assert.strictEqual(config.host, host);
       }
-      for (const host of ["0.0.0.0", "203.0.113.7", "::", "j3.example.com"]) {
+      // Only an IP literal, written as Node binds it: a name could resolve
+      // anywhere, and `010.0.0.1` is not the 10.0.0.1 it looks like.
+      for (const host of [
+        "0.0.0.0",
+        "203.0.113.7",
+        "::",
+        "j3.example.com",
+        "localhost",
+        "010.0.0.1",
+        "[::1]",
+        "100.128.0.1",
+      ]) {
         const exit = yield* withEnvironment(load, { J3_HOME: home, J3_HOST: host }).pipe(
           Effect.exit,
         );
@@ -133,10 +152,23 @@ it.layer(NodeServices.layer)("server configuration", (it) => {
       const withTls = yield* withEnvironment(load, {
         J3_HOME: home,
         J3_HOST: "0.0.0.0",
-        J3_TLS_CERT: "cert.pem",
-        J3_TLS_KEY: "key.pem",
+        J3_TLS_CERT: TEST_TLS.cert,
+        J3_TLS_KEY: TEST_TLS.key,
       });
       assert.isTrue(Option.isSome(withTls.tls));
+
+      // Checked as the HTTPS listener would load them.
+      for (const [cert, key] of [
+        [TEST_TLS.cert, TEST_TLS.cert],
+        [TEST_TLS.cert, "missing-key.pem"],
+      ] as const) {
+        const unusable = yield* withEnvironment(load, {
+          J3_HOME: home,
+          J3_TLS_CERT: cert,
+          J3_TLS_KEY: key,
+        }).pipe(Effect.exit);
+        assert.deepInclude(failure(unusable), { reason: "tls-unusable" });
+      }
 
       const halfTls = yield* withEnvironment(load, { J3_HOME: home, J3_TLS_CERT: "cert.pem" }).pipe(
         Effect.exit,
@@ -153,13 +185,32 @@ it.layer(NodeServices.layer)("server configuration", (it) => {
 
       const exposed = yield* withEnvironment(load, { J3_HOME: home }, [
         ...LAN_ONLY,
-        { address: "198.51.100.4", internal: false },
+        { interface: "eth0", address: "198.51.100.4", internal: false },
       ]).pipe(Effect.exit);
       assert.deepInclude(failure(exposed), {
         setting: "host",
         reason: "lan-has-public-address",
         subject: "198.51.100.4",
       });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("gives each listener its own fixed port", () =>
+    Effect.gen(function* () {
+      const home = yield* freshHome;
+      const shared = yield* withEnvironment(load, { J3_HOME: home, J3_TOOL_PORT: "3737" }).pipe(
+        Effect.exit,
+      );
+      assert.deepInclude(failure(shared), {
+        setting: "port and J3_TOOL_PORT",
+        reason: "port-conflict",
+      });
+      yield* writeConfigFile(home, JSON.stringify({ enginePort: 0 }));
+      const dialed = yield* withEnvironment(load, { J3_HOME: home }).pipe(Effect.exit);
+      assert.deepInclude(failure(dialed), { reason: "port-zero" });
+      // The server's own port may be the system's choice: clients learn it from `pair`.
+      yield* writeConfigFile(home, JSON.stringify({ port: 0 }));
+      assert.strictEqual((yield* withEnvironment(load, { J3_HOME: home })).port, 0);
     }).pipe(Effect.scoped),
   );
 
@@ -180,6 +231,38 @@ it.layer(NodeServices.layer)("server configuration", (it) => {
         _tag: "configured",
         directory: path.join(home, "web"),
       });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("refuses a web client folder that would publish the home or the TLS key", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parent = yield* freshHome;
+      const home = path.join(parent, "home");
+      yield* fs.makeDirectory(home);
+      yield* fs.writeFileString(path.join(parent, "index.html"), "<!doctype html>");
+      yield* fs.symlink(parent, path.join(parent, "linked"));
+
+      for (const webClient of [parent, path.join(parent, "linked")]) {
+        const exit = yield* withEnvironment(load, {
+          J3_HOME: home,
+          J3_WEB_CLIENT: webClient,
+        }).pipe(Effect.exit);
+        assert.deepInclude(failure(exit), { reason: "web-client-holds-state", subject: home });
+      }
+
+      const web = path.join(parent, "web");
+      yield* fs.makeDirectory(web);
+      yield* fs.writeFileString(path.join(web, "index.html"), "<!doctype html>");
+      yield* fs.copyFile(TEST_TLS.key, path.join(web, "key.pem"));
+      const exposedKey = yield* withEnvironment(load, {
+        J3_HOME: home,
+        J3_WEB_CLIENT: web,
+        J3_TLS_CERT: TEST_TLS.cert,
+        J3_TLS_KEY: path.join(web, "key.pem"),
+      }).pipe(Effect.exit);
+      assert.deepInclude(failure(exposedKey), { reason: "web-client-holds-state" });
     }).pipe(Effect.scoped),
   );
 });

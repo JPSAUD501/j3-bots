@@ -1,39 +1,28 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import * as Config from "effect/Config";
+import type { EngineStatus } from "@j3-bots/contracts";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import { Command } from "effect/cli";
 import { AdminClient } from "../admin/AdminClient.ts";
 import * as ServerConfig from "../config.ts";
-import * as Installation from "../installation.ts";
+import { install as installService } from "../service/install.ts";
 import * as Unit from "../service/unit.ts";
-import { Host } from "../system/Host.ts";
 import { Systemd } from "../system/Systemd.ts";
 import { refuse, userFacing } from "./errors.ts";
-
-// The server as a systemd user service: started at login, or at boot with
-// lingering on, and restarted when it fails. Never with sudo: the service
-// runs as the operator's user, in their home.
 
 const LINGER_HINT = [
   "Lingering is off for this user, so the service stops when your last session ends and does not start at boot.",
   'Turn it on once with: sudo loginctl enable-linger "$(id -un)"',
 ].join("\n");
 
-/** Settings the service will not see: it reads `config.json`, not this shell. */
-const SHELL_ONLY_SETTINGS = [
-  "J3_HOST",
-  "J3_PORT",
-  "J3_TOOL_PORT",
-  "J3_ENGINE_PORT",
-  "J3_WEB_CLIENT",
-  "J3_TLS_CERT",
-  "J3_TLS_KEY",
-  "J3_ENGINE_BINARY",
-];
+const ENGINE_STATES: Record<EngineStatus["state"]["_tag"], string> = {
+  starting: "starting",
+  ready: "ready",
+  unavailable: "not available yet",
+  incompatible: "not the version this release needs",
+};
 
 const requireSystemd = Effect.gen(function* () {
   const systemd = yield* Systemd;
@@ -51,42 +40,17 @@ const install = Command.make("install").pipe(
   ),
   Command.withHandler(() =>
     Effect.gen(function* () {
-      const systemd = yield* requireSystemd;
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const host = yield* Host;
-      // The unit starts in the home, so it must exist before the first start.
-      yield* userFacing(ServerConfig.initializeHome);
-      const config = yield* userFacing(ServerConfig.load);
-
-      const unit = yield* userFacing(
-        Unit.render({
-          node: process.execPath,
-          entryPoint: yield* Installation.entryPoint,
-          home: config.home,
-          searchPath: host.searchPath,
-          totalMemoryBytes: host.totalMemoryBytes,
-        }),
-      );
-      const unitFile = yield* Unit.unitPath;
-      yield* userFacing(fs.makeDirectory(path.dirname(unitFile), { recursive: true }));
-      yield* userFacing(fs.writeFileString(unitFile, unit));
-      yield* userFacing(systemd.reload);
-      yield* userFacing(systemd.enableAndRestart(Unit.UNIT_NAME));
-
+      yield* requireSystemd;
+      const installed = yield* userFacing(installService);
+      const { config, server } = installed;
       const lines = [
-        `Installed and started ${Unit.UNIT_NAME} (${unitFile}).`,
+        `Installed and started ${Unit.UNIT_NAME} (${installed.unitFile}). J3 Bots ${server.version} answers.`,
+        `The engine is ${ENGINE_STATES[server.engine.state._tag]}; \`j3-bots doctor\` says more.`,
         `Data: ${config.home}. Settings: ${config.configFile}.`,
         "Logs: journalctl --user -u j3-bots -f",
+        ...installed.overrides.map((name) => ServerConfig.overrideNote(name, config.configFile)),
       ];
-      for (const name of SHELL_ONLY_SETTINGS) {
-        if (Option.isSome(yield* Config.option(Config.String(name)))) {
-          lines.push(
-            `${name} is set in this shell, but the service does not get it. Put the setting in ${config.configFile} instead.`,
-          );
-        }
-      }
-      if ((yield* systemd.linger) !== "yes") lines.push("", LINGER_HINT);
+      if (installed.linger !== "yes") lines.push("", LINGER_HINT);
       yield* Console.log(lines.join("\n"));
     }),
   ),
@@ -129,15 +93,15 @@ const status = Command.make("status").pipe(
       const lines = [
         `${Unit.UNIT_NAME}: ${unit.active}, ${unit.enabled ? "enabled" : "not enabled"}.`,
       ];
-      const config = yield* ServerConfig.load.pipe(Effect.option);
-      if (Option.isSome(config)) {
-        const admin = yield* AdminClient;
-        const running = yield* admin.status(config.value.adminSocket).pipe(Effect.option);
-        if (Option.isSome(running) && Option.isSome(running.value)) {
-          lines.push(`J3 Bots ${running.value.value.version} answers on ${config.value.home}.`);
-        }
+      const admin = yield* AdminClient;
+      const running = yield* admin
+        .status(yield* userFacing(ServerConfig.resolveAdminSocket))
+        .pipe(Effect.option, Effect.map(Option.flatten));
+      if (Option.isSome(running)) {
+        const { version, listener } = running.value;
+        lines.push(`J3 Bots ${version} answers, listening on port ${listener.port}.`);
       }
-      if (unit.active === "failed") {
+      if (unit.active === "failed" || unit.active === "activating") {
         lines.push("Read why with: journalctl --user -u j3-bots -n 100");
       }
       if ((yield* systemd.linger) !== "yes") lines.push("", LINGER_HINT);

@@ -15,24 +15,41 @@ import * as WebClient from "./WebClient.ts";
 const INDEX = "<!doctype html><title>J3 Bots</title>";
 const SCRIPT = "console.log('app')";
 
-/** A built client as Vite lays it out, with a file beside it that must stay private. */
-const fixture = Effect.gen(function* () {
+/**
+ * A built client as Vite lays it out, with a private folder beside it, and
+ * links inside the build that point into that folder. With `linkedIndex`, the
+ * app's `index.html` itself is such a link.
+ */
+const fixture = Effect.fn("fixture")(function* (linkedIndex: boolean) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const parent = yield* fs.makeTempDirectoryScoped();
   const root = path.join(parent, "dist");
+  const secrets = path.join(parent, "private");
   yield* fs.makeDirectory(path.join(root, "assets"), { recursive: true });
-  yield* fs.writeFileString(path.join(root, "index.html"), INDEX);
+  yield* fs.makeDirectory(secrets);
+  yield* fs.writeFileString(path.join(secrets, "secret.txt"), "private");
+  yield* fs.writeFileString(path.join(secrets, "index.html"), "private");
+  yield* fs.writeFileString(path.join(parent, "secret.txt"), "private");
+  if (linkedIndex) {
+    yield* fs.symlink(path.join(secrets, "index.html"), path.join(root, "index.html"));
+  } else {
+    yield* fs.writeFileString(path.join(root, "index.html"), INDEX);
+  }
   yield* fs.writeFileString(path.join(root, "assets", "index-B1x2y3z4.js"), SCRIPT);
   yield* fs.writeFileString(path.join(root, "manifest.webmanifest"), "{}");
-  yield* fs.writeFileString(path.join(parent, "secret.txt"), "private");
+  yield* fs.symlink(path.join(secrets, "secret.txt"), path.join(root, "leak.txt"));
+  yield* fs.symlink(secrets, path.join(root, "linked"));
   return root;
 });
 
 /** Runs `effect` against a server with the client's routes and one API route. */
-const serving = <A, E>(effect: Effect.Effect<A, E, HttpClient.HttpClient>) =>
+const serving = <A, E>(
+  effect: Effect.Effect<A, E, HttpClient.HttpClient>,
+  { linkedIndex = false } = {},
+) =>
   Effect.gen(function* () {
-    const root = yield* fixture;
+    const root = yield* fixture(linkedIndex);
     const app = Layer.mergeAll(
       WebClient.routes(root),
       HttpRouter.add("GET", "/api/server", HttpServerResponse.text("api")),
@@ -94,19 +111,36 @@ it.layer(NodeServices.layer)("web client", (it) => {
     ),
   );
 
-  it.effect("refuses paths that leave the client's folder", () =>
+  it.effect("refuses paths that leave the client's folder, through a link too", () =>
     serving(
       Effect.gen(function* () {
         for (const url of [
           "/assets/..%2f..%2fsecret.txt",
           "/..%2fsecret.txt",
           "/%2e%2e%2fsecret.txt",
+          "/leak.txt",
+          "/linked/secret.txt",
+          "/linked/",
         ]) {
-          const response = yield* get(url);
+          const response = yield* get(url, "text/html");
           assert.strictEqual(response.status, 404, url);
           assert.notInclude(yield* response.text, "private");
         }
       }),
+    ),
+  );
+
+  it.effect("never serves an index.html that links outside the client's folder", () =>
+    serving(
+      Effect.gen(function* () {
+        for (const url of ["/", "/bots/b1/conversation"]) {
+          const response = yield* get(url, "text/html");
+          assert.strictEqual(response.status, 404, url);
+          assert.notInclude(yield* response.text, "private");
+        }
+        assert.strictEqual(yield* (yield* get("/assets/index-B1x2y3z4.js")).text, SCRIPT);
+      }),
+      { linkedIndex: true },
     ),
   );
 });

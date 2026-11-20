@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -17,6 +18,73 @@ export const unitPath = Effect.gen(function* () {
     : path.join(yield* Config.NonEmptyString("HOME"), ".config");
   return path.join(base, "systemd", "user", UNIT_NAME);
 });
+
+/**
+ * The `PATH` the service gets, made from the installing shell's: each folder
+ * by its real path, without the ones under `runtimeDirectory`
+ * (`XDG_RUNTIME_DIR`). A version manager such as fnm puts a per-shell link to
+ * the active Node there, which is gone after a reboot; its real path, where
+ * `npm --global` installs harnesses, stays.
+ */
+export const servicePath = Effect.fn("service.servicePath")(function* (
+  searchPath: string,
+  runtimeDirectory: Option.Option<string>,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const transient = (folder: string) =>
+    Option.isSome(runtimeDirectory) &&
+    (folder === runtimeDirectory.value || folder.startsWith(`${runtimeDirectory.value}/`));
+  const folders: Array<string> = [];
+  for (const entry of searchPath.split(":")) {
+    if (entry === "" || !path.isAbsolute(entry)) continue;
+    const folder = yield* fs.realPath(entry).pipe(Effect.orElseSucceed(() => entry));
+    if (!transient(folder) && !folders.includes(folder)) folders.push(folder);
+  }
+  return folders.join(":");
+});
+
+/**
+ * The `Environment=` assignments of a unit this module rendered, as systemd
+ * reads them: quotes grouped, escapes and `%%` undone.
+ */
+export const environmentOf = (unit: string): ReadonlyMap<string, string> => {
+  const environment = new Map<string, string>();
+  for (const line of unit.split("\n")) {
+    if (!line.startsWith("Environment=")) continue;
+    for (const word of unquote(line.slice("Environment=".length))) {
+      const separator = word.indexOf("=");
+      if (separator > 0) environment.set(word.slice(0, separator), word.slice(separator + 1));
+    }
+  }
+  return environment;
+};
+
+/** The words of one setting's value, the inverse of `quote`. */
+const unquote = (value: string) => {
+  const words: Array<string> = [];
+  let word = "";
+  let quoted = false;
+  let started = false;
+  for (let index = 0; index < value.length; index++) {
+    const char = value[index];
+    if (char === "\\" && quoted) {
+      word += value[++index] ?? "";
+    } else if (char === '"') {
+      quoted = !quoted;
+      started = true;
+    } else if (char === " " && !quoted) {
+      if (started) words.push(word);
+      word = "";
+      started = false;
+    } else {
+      word += char;
+      started = true;
+    }
+  }
+  if (started) words.push(word);
+  return words.map((each) => each.replaceAll("%%", "%"));
+};
 
 /** What the unit runs, and with what. */
 export interface UnitPlan {
@@ -54,6 +122,9 @@ const MIB = 1024 * 1024;
 
 /** systemd expands `%` specifiers in these settings. */
 const escapeSpecifiers = (value: string) => value.replaceAll("%", "%%");
+
+/** `ExecStart=` also expands `$NAME` and `${NAME}` from the environment. */
+const escapeVariables = (value: string) => value.replaceAll("$", "$$");
 
 /** One word of a command line or an environment assignment, quoted when it needs to be. */
 const quote = (value: string) => {
@@ -93,7 +164,7 @@ export const render = Effect.fn("service.render")(function* (plan: UnitPlan) {
     `WorkingDirectory=${escapeSpecifiers(plan.home)}`,
     `Environment=${quote(`J3_HOME=${plan.home}`)}`,
     `Environment=${quote(`PATH=${plan.searchPath}`)}`,
-    `ExecStart=${[plan.node, plan.entryPoint, "serve"].map(quote).join(" ")}`,
+    `ExecStart=${[plan.node, plan.entryPoint, "serve"].map((word) => quote(escapeVariables(word))).join(" ")}`,
     // The server stops the engine and its harnesses itself; systemd ends what
     // is left once the stop times out.
     "KillMode=mixed",

@@ -3,6 +3,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
@@ -78,12 +79,15 @@ export const layer = Layer.effect(
     const must = (args: ReadonlyArray<string>) =>
       systemctl(args).pipe(
         Effect.flatMap((result) =>
-          result._tag === "Some" && result.value.exitCode === 0
+          Option.isSome(result) && result.value.exitCode === 0
             ? Effect.void
             : Effect.fail(
                 new SystemdFailed({
                   command: `systemctl --user ${args.join(" ")}`,
-                  output: result._tag === "Some" ? result.value.output : "systemctl was not found",
+                  output: Option.match(result, {
+                    onNone: () => "systemctl was not found",
+                    onSome: ({ output }) => output,
+                  }),
                 }),
               ),
         ),
@@ -93,11 +97,11 @@ export const layer = Layer.effect(
 
     return Systemd.of({
       available: systemctl(["show-environment"]).pipe(
-        Effect.map((result) => result._tag === "Some" && result.value.exitCode === 0),
+        Effect.map((result) => Option.isSome(result) && result.value.exitCode === 0),
       ),
       linger: run("loginctl", ["show-user", String(uid), "--property=Linger", "--value"]).pipe(
         Effect.map((result) => {
-          if (result._tag === "None" || result.value.exitCode !== 0) return "unknown";
+          if (Option.isNone(result) || result.value.exitCode !== 0) return "unknown";
           const value = result.value.output.trim();
           return value === "yes" ? "yes" : value === "no" ? "no" : "unknown";
         }),
@@ -105,11 +109,14 @@ export const layer = Layer.effect(
       unitState: Effect.fn("Systemd.unitState")((unit: string) =>
         Effect.all({
           enabled: systemctl(["is-enabled", unit]).pipe(
-            Effect.map((result) => result._tag === "Some" && result.value.exitCode === 0),
+            Effect.map((result) => Option.isSome(result) && result.value.exitCode === 0),
           ),
           active: systemctl(["is-active", unit]).pipe(
             Effect.map((result) =>
-              result._tag === "Some" ? result.value.output.trim() || "unknown" : "unknown",
+              Option.match(result, {
+                onNone: () => "unknown",
+                onSome: ({ output }) => output.trim() || "unknown",
+              }),
             ),
           ),
         }),

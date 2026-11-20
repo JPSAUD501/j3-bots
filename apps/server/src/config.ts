@@ -8,7 +8,9 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Installation from "./installation.ts";
-import { isPrivateHost, Network } from "./system/Network.ts";
+import { isWithin, realLocation } from "./paths.ts";
+import { isPrivateAddress, Network } from "./system/Network.ts";
+import * as TlsCredentials from "./system/Tls.ts";
 
 /** Where the web client the server serves comes from. */
 type WebClientSource =
@@ -68,7 +70,11 @@ class ConfigRefused extends Schema.TaggedError<ConfigRefused>()("ConfigRefused",
     "public-address-without-tls",
     "lan-has-public-address",
     "tls-incomplete",
+    "tls-unusable",
     "web-client-missing",
+    "web-client-holds-state",
+    "port-zero",
+    "port-conflict",
   ]),
   /** The address, path or value the reason is about. */
   subject: Schema.String,
@@ -80,13 +86,21 @@ class ConfigRefused extends Schema.TaggedError<ConfigRefused>()("ConfigRefused",
       case "home-path-too-long":
         return `${this.setting} (${this.subject}) is too long a path for the admin socket inside it. Choose a shorter one.`;
       case "public-address-without-tls":
-        return `${this.setting} (${this.subject}) is not a loopback or private address. Set a TLS certificate and key to serve it over HTTPS.`;
+        return `${this.setting} (${this.subject}) is not a loopback or private IP address. Use one of this machine's private addresses, written as an IP address, or set a TLS certificate and key to serve it over HTTPS.`;
       case "lan-has-public-address":
         return `${this.setting} is "lan", but this machine has the public address ${this.subject}, which "lan" would also serve. Set it to one private address of this machine, or set a TLS certificate and key.`;
       case "tls-incomplete":
         return `${this.setting}: a TLS certificate and key must be set together.`;
+      case "tls-unusable":
+        return `${this.setting}: ${this.subject}`;
       case "web-client-missing":
         return `${this.setting} (${this.subject}) holds no built web client (no index.html). Build it, or remove the setting to use the one in this checkout.`;
+      case "web-client-holds-state":
+        return `${this.setting} is a folder that holds ${this.subject}, which the server would then publish. Point it at the built client's own folder.`;
+      case "port-zero":
+        return `${this.setting} is 0, but this port is dialed at the number set here. Choose a fixed free port.`;
+      case "port-conflict":
+        return `${this.setting} share port ${this.subject}. Give each its own port.`;
     }
   }
 }
@@ -139,6 +153,38 @@ export const DEFAULTS = {
 const decodeConfigFile = Schema.decodeUnknownEffect(Schema.fromJsonString(ConfigFile));
 const encodeDefaults = Schema.encodeSync(Schema.fromJsonString(ConfigFile, { space: 2 }));
 
+/**
+ * The variables that override a setting of the file. A service does not
+ * inherit them from the shell that installs it: it runs with the file.
+ * `J3_ENGINE_BINARY` has no setting in the file; it is for testing an engine
+ * build, and a service never uses it.
+ */
+export const SHELL_OVERRIDES = [
+  "J3_HOST",
+  "J3_PORT",
+  "J3_TOOL_PORT",
+  "J3_ENGINE_PORT",
+  "J3_WEB_CLIENT",
+  "J3_TLS_CERT",
+  "J3_TLS_KEY",
+  "J3_ENGINE_BINARY",
+] as const;
+
+/** What an operator should know about an override set in their shell, once a service runs. */
+export const overrideNote = (name: (typeof SHELL_OVERRIDES)[number], configFile: string) =>
+  name === "J3_ENGINE_BINARY"
+    ? "J3_ENGINE_BINARY is set in this shell. It is for testing an engine build, and the service never uses it: it runs the pinned engine."
+    : `${name} is set in this shell, but the service does not get it. Put the setting in ${configFile} instead.`;
+
+/** The overrides set in this process's environment. */
+export const shellOverrides = Effect.gen(function* () {
+  const set: Array<(typeof SHELL_OVERRIDES)[number]> = [];
+  for (const name of SHELL_OVERRIDES) {
+    if (Option.isSome(yield* Config.option(Config.String(name)))) set.push(name);
+  }
+  return set;
+});
+
 // A setting in the environment overrides the file. One that is present and
 // invalid fails, so a typo never silently becomes the default.
 const environment = Config.all({
@@ -173,6 +219,16 @@ export const resolveHome = Effect.gen(function* () {
   return path.resolve(
     Option.isSome(home) ? home.value : path.join(yield* Config.NonEmptyString("HOME"), ".j3-bots"),
   );
+});
+
+/**
+ * The running server's admin socket, `<home>/admin.sock`. It depends on the
+ * home alone, so commands find the server even when this shell's other
+ * settings differ from the ones it runs with.
+ */
+export const resolveAdminSocket = Effect.gen(function* () {
+  const path = yield* Path.Path;
+  return path.join(yield* resolveHome, ADMIN_SOCKET);
 });
 
 /** The settings in `<home>/config.json`; none when the file does not exist. */
@@ -238,6 +294,53 @@ export const load = Effect.gen(function* () {
     })),
   );
 
+  if (Option.isSome(tls)) {
+    const loaded = yield* TlsCredentials.load(tls.value).pipe(Effect.result);
+    if (loaded._tag === "Failure") {
+      return yield* new ConfigRefused({
+        setting: Option.isSome(env.tlsCert) ? "J3_TLS_CERT and J3_TLS_KEY" : fileSetting("tls"),
+        reason: "tls-unusable",
+        subject: loaded.failure.message,
+      });
+    }
+  }
+
+  const ports = {
+    port: Option.getOrElse(env.port, () => file.port ?? DEFAULTS.port),
+    toolPort: Option.getOrElse(env.toolPort, () => file.toolPort ?? DEFAULTS.toolPort),
+    enginePort: Option.getOrElse(env.enginePort, () => file.enginePort ?? DEFAULTS.enginePort),
+  };
+  const portSetting = (name: keyof typeof ports, variable: string) =>
+    Option.isSome(env[name]) ? variable : file[name] !== undefined ? fileSetting(name) : name;
+  const portSettings = {
+    port: portSetting("port", "J3_PORT"),
+    toolPort: portSetting("toolPort", "J3_TOOL_PORT"),
+    enginePort: portSetting("enginePort", "J3_ENGINE_PORT"),
+  };
+  // The bridge dials the tool endpoint, and the adapter the engine, at the
+  // number configured: neither can take one the system picks.
+  for (const name of ["toolPort", "enginePort"] as const) {
+    if (ports[name] === 0) {
+      return yield* new ConfigRefused({
+        setting: portSettings[name],
+        reason: "port-zero",
+        subject: "0",
+      });
+    }
+  }
+  const names = ["port", "toolPort", "enginePort"] as const;
+  for (const [index, first] of names.entries()) {
+    for (const second of names.slice(index + 1)) {
+      if (ports[first] !== 0 && ports[first] === ports[second]) {
+        return yield* new ConfigRefused({
+          setting: `${portSettings[first]} and ${portSettings[second]}`,
+          reason: "port-conflict",
+          subject: String(ports[first]),
+        });
+      }
+    }
+  }
+
   const hostSetting = Option.isSome(env.host)
     ? "J3_HOST"
     : file.host !== undefined
@@ -248,7 +351,7 @@ export const load = Effect.gen(function* () {
     if (hostValue === LAN) {
       const network = yield* Network;
       const exposed = (yield* network.ipv4Addresses).find(
-        ({ address, internal }) => !internal && !isPrivateHost(address),
+        ({ address, internal }) => !internal && !isPrivateAddress(address),
       );
       if (exposed !== undefined) {
         return yield* new ConfigRefused({
@@ -257,7 +360,7 @@ export const load = Effect.gen(function* () {
           subject: exposed.address,
         });
       }
-    } else if (!isPrivateHost(hostValue)) {
+    } else if (!isPrivateAddress(hostValue)) {
       return yield* new ConfigRefused({
         setting: hostSetting,
         reason: "public-address-without-tls",
@@ -268,12 +371,15 @@ export const load = Effect.gen(function* () {
   const configuredWebClient = Option.orElse(env.webClient, () =>
     Option.fromNullishOr(file.webClient),
   );
+  const webClientSetting = Option.isSome(env.webClient)
+    ? "J3_WEB_CLIENT"
+    : fileSetting("webClient");
   let webClient: WebClientSource;
   if (Option.isSome(configuredWebClient)) {
     const directory = path.resolve(home, configuredWebClient.value);
     if (!(yield* fs.exists(path.join(directory, "index.html")))) {
       return yield* new ConfigRefused({
-        setting: Option.isSome(env.webClient) ? "J3_WEB_CLIENT" : fileSetting("webClient"),
+        setting: webClientSetting,
         reason: "web-client-missing",
         subject: directory,
       });
@@ -282,6 +388,27 @@ export const load = Effect.gen(function* () {
   } else {
     webClient = { _tag: "bundled", directory: yield* Installation.bundledWebClient };
   }
+  // Everything under the client's folder is public: it must hold no state.
+  const webRoot = yield* realLocation(webClient.directory);
+  const state = [
+    home,
+    ...Option.match(tls, {
+      onNone: () => [],
+      onSome: ({ certPath, keyPath }) => [certPath, keyPath],
+    }),
+  ];
+  for (const held of state) {
+    if (isWithin(webRoot, yield* realLocation(held))) {
+      return yield* new ConfigRefused({
+        setting:
+          webClient._tag === "configured"
+            ? webClientSetting
+            : `The web client in this checkout (${webClient.directory})`,
+        reason: "web-client-holds-state",
+        subject: held,
+      });
+    }
+  }
 
   return {
     home,
@@ -289,11 +416,11 @@ export const load = Effect.gen(function* () {
     databasePath: path.join(home, "j3.sqlite"),
     engineHome: path.join(home, "engine"),
     host: hostValue === LAN ? LAN_ADDRESS : hostValue,
-    port: Option.getOrElse(env.port, () => file.port ?? DEFAULTS.port),
+    port: ports.port,
     tls,
-    enginePort: Option.getOrElse(env.enginePort, () => file.enginePort ?? DEFAULTS.enginePort),
+    enginePort: ports.enginePort,
     engineBinary: Option.map(env.engineBinary, (binary) => path.resolve(binary)),
-    toolPort: Option.getOrElse(env.toolPort, () => file.toolPort ?? DEFAULTS.toolPort),
+    toolPort: ports.toolPort,
     webClient,
     adminSocket,
   } satisfies ServerConfigShape;

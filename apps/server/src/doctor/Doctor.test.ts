@@ -31,6 +31,9 @@ const running = (overrides: { engine?: object; pairedDevices?: number } = {}) =>
   Schema.decodeUnknownSync(Schema.toCodecJson(AdminStatus))({
     version: "0.0.0",
     startedAt: "2026-11-20T08:00:00.000Z",
+    listener: { scheme: "http", address: "0.0.0.0", port: 3737, names: [] },
+    toolPort: 3739,
+    enginePort: 3738,
     engine: {
       state: { _tag: "ready" },
       pinnedVersion: "0.1.11",
@@ -46,8 +49,15 @@ interface World {
   readonly nodeVersion: string;
   readonly platform: string;
   readonly freeBytes: Option.Option<number>;
-  readonly ports: (host: string, port: number) => PortState;
+  readonly ports: (host: string, port: number) => Exclude<PortState["_tag"], "failed">;
+  /** Every executable on the machine, by its full path. */
   readonly executables: ReadonlyArray<string>;
+  /** This shell's `PATH`. */
+  readonly searchPath: string;
+  /** The installed unit's `PATH`. */
+  readonly unitPath: string;
+  /** Variables set in this shell besides the home and the folders. */
+  readonly environment: Record<string, string>;
   readonly server: Option.Option<AdminStatus> | "broken";
   readonly systemd: boolean;
   readonly unitInstalled: boolean;
@@ -63,7 +73,10 @@ const HEALTHY: World = {
   platform: "linux",
   freeBytes: Option.some(20 * GIB),
   ports: () => "free",
-  executables: ["claude", "codex"],
+  executables: ["/usr/bin/claude", "/usr/bin/codex"],
+  searchPath: "/usr/bin",
+  unitPath: "/usr/bin",
+  environment: {},
   server: Option.some(running()),
   systemd: true,
   unitInstalled: true,
@@ -87,12 +100,16 @@ const diagnoseIn = (changes: Partial<World> = {}) =>
     yield* fs.chmod(home, world.homeMode);
     yield* fs.makeDirectory(web);
     yield* fs.writeFileString(path.join(web, "index.html"), "<!doctype html>");
-    if (Option.isSome(world.configFile)) {
-      yield* fs.writeFileString(path.join(home, "config.json"), world.configFile.value);
-    }
+    yield* fs.writeFileString(
+      path.join(home, "config.json"),
+      Option.getOrElse(world.configFile, () => JSON.stringify({ webClient: web })),
+    );
     if (world.unitInstalled) {
       yield* fs.makeDirectory(path.join(configHome, "systemd", "user"), { recursive: true });
-      yield* fs.writeFileString(path.join(configHome, "systemd", "user", "j3-bots.service"), "");
+      yield* fs.writeFileString(
+        path.join(configHome, "systemd", "user", "j3-bots.service"),
+        `[Service]\nEnvironment="PATH=${world.unitPath}"\n`,
+      );
     }
 
     const fakes = Layer.mergeAll(
@@ -100,14 +117,16 @@ const diagnoseIn = (changes: Partial<World> = {}) =>
         ConfigProvider.fromEnvRecord({
           HOME: root,
           J3_HOME: home,
-          J3_WEB_CLIENT: web,
           XDG_CONFIG_HOME: configHome,
+          ...world.environment,
         }),
       ),
       Layer.succeed(
         Network,
         Network.of({
-          ipv4Addresses: Effect.succeed([{ address: "192.168.1.20", internal: false }]),
+          ipv4Addresses: Effect.succeed([
+            { interface: "wlan0", address: "192.168.1.20", internal: false },
+          ]),
         }),
       ),
       Layer.succeed(
@@ -118,12 +137,17 @@ const diagnoseIn = (changes: Partial<World> = {}) =>
           arch: "arm64",
           totalMemoryBytes: 4 * GIB,
           userName: "pi",
-          searchPath: "/usr/bin",
+          searchPath: world.searchPath,
           freeSpace: () => Effect.succeed(world.freeBytes),
-          portState: (host, port) => Effect.succeed(world.ports(host, port)),
-          findExecutable: (name) =>
+          portState: (host, port) => Effect.succeed({ _tag: world.ports(host, port) }),
+          findExecutable: (name, searchPath) =>
             Effect.succeed(
-              world.executables.includes(name) ? Option.some(`/usr/bin/${name}`) : Option.none(),
+              Option.fromNullishOr(
+                searchPath
+                  .split(":")
+                  .map((folder) => `${folder}/${name}`)
+                  .find((candidate) => world.executables.includes(candidate)),
+              ),
             ),
         }),
       ),
@@ -132,7 +156,7 @@ const diagnoseIn = (changes: Partial<World> = {}) =>
         AdminClient.of({
           status: () =>
             world.server === "broken"
-              ? Effect.fail(new AdminRequestFailed({ path: "/status" }))
+              ? Effect.fail(new AdminRequestFailed({ path: "/status", cause: "garbled answer" }))
               : Effect.succeed(world.server),
           startPairing: () => Effect.die("doctor never pairs"),
         }),
@@ -202,11 +226,13 @@ it.layer(NodeServices.layer)("doctor", (it) => {
     }),
   );
 
-  it.effect("checks who can read the data directory", () =>
+  it.effect("finds a data directory other users can open a problem, as the server does", () =>
     Effect.gen(function* () {
-      assertFlagged(
-        named((yield* diagnoseIn({ homeMode: 0o755 })).checks, "Data directory"),
-        "warning",
+      const open = named((yield* diagnoseIn({ homeMode: 0o755 })).checks, "Data directory");
+      assertFlagged(open, "problem");
+      assert.include(
+        Option.getOrElse(open.fix, () => ""),
+        "chmod 700",
       );
     }),
   );
@@ -229,9 +255,23 @@ it.layer(NodeServices.layer)("doctor", (it) => {
       assertFlagged(named(taken.checks, "Ports"), "problem", "3739");
       const elsewhere = yield* diagnoseIn({ server: Option.none(), ports: () => "not-local" });
       assertFlagged(named(elsewhere.checks, "Ports"), "problem");
-      // The running server's own ports are not a conflict.
+      // The running server's own ports are not a conflict; it says where it listens.
       const held = yield* diagnoseIn({ ports: () => "in-use" });
       assert.strictEqual(named(held.checks, "Ports").status, "ok");
+      assert.include(named(held.checks, "Ports").summary, "http://0.0.0.0:3737");
+      // Its engine's port is as the engine reports it.
+      const blocked = yield* diagnoseIn({
+        server: Option.some(
+          running({
+            engine: {
+              state: { _tag: "unavailable", reason: "port-in-use" },
+              pinnedVersion: "0.1.11",
+              providers: [],
+            },
+          }),
+        ),
+      });
+      assertFlagged(named(blocked.checks, "Ports"), "problem", "3738");
     }),
   );
 
@@ -271,9 +311,22 @@ it.layer(NodeServices.layer)("doctor", (it) => {
 
   it.effect("checks each harness is found and signed in, from the engine's provider status", () =>
     Effect.gen(function* () {
-      const missing = yield* diagnoseIn({ executables: ["codex"] });
+      const missing = yield* diagnoseIn({ executables: ["/usr/bin/codex"] });
       assertFlagged(named(missing.checks, "Claude Code"), "warning", "claude");
       assert.strictEqual(named(missing.checks, "Codex").status, "ok");
+
+      // With the service installed, a harness counts where the service looks.
+      const shellOnly = yield* diagnoseIn({
+        executables: ["/usr/bin/codex", "/run/user/1000/fnm_multishells/1_2/bin/claude"],
+        searchPath: "/run/user/1000/fnm_multishells/1_2/bin:/usr/bin",
+      });
+      assertFlagged(named(shellOnly.checks, "Claude Code"), "warning", "service's PATH");
+      const noService = yield* diagnoseIn({
+        unitInstalled: false,
+        executables: ["/usr/bin/codex", "/opt/claude/bin/claude"],
+        searchPath: "/opt/claude/bin:/usr/bin",
+      });
+      assert.strictEqual(named(noService.checks, "Claude Code").status, "ok");
 
       const signedOut = yield* diagnoseIn({
         server: Option.some(
@@ -312,6 +365,8 @@ it.layer(NodeServices.layer)("doctor", (it) => {
       assertFlagged(named(failed.checks, "Service"), "problem");
       const disabled = yield* diagnoseIn({ unit: { enabled: false, active: "active" } });
       assertFlagged(named(disabled.checks, "Service"), "warning");
+      const restarting = yield* diagnoseIn({ unit: { enabled: true, active: "activating" } });
+      assertFlagged(named(restarting.checks, "Service"), "warning", "restarting");
 
       const noLinger = yield* diagnoseIn({ linger: "no" });
       assertFlagged(named(noLinger.checks, "Start at boot"), "warning");
@@ -325,6 +380,18 @@ it.layer(NodeServices.layer)("doctor", (it) => {
 
       const noManager = yield* diagnoseIn({ systemd: false });
       assertFlagged(named(noManager.checks, "Service"), "warning");
+    }),
+  );
+
+  it.effect("warns that this shell's overrides do not reach the installed service", () =>
+    Effect.gen(function* () {
+      const overridden = yield* diagnoseIn({ environment: { J3_PORT: "4000" } });
+      assertFlagged(named(overridden.checks, "Shell settings"), "warning", "J3_PORT");
+      const notInstalled = yield* diagnoseIn({
+        unitInstalled: false,
+        environment: { J3_PORT: "4000" },
+      });
+      assert.isUndefined(notInstalled.checks.find((check) => check.name === "Shell settings"));
     }),
   );
 });

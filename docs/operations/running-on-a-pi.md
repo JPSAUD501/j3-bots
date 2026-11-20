@@ -52,17 +52,19 @@ j3-bots service install
 
 - creates the data directory, `~/.j3-bots`, readable by this user only;
 - writes `~/.j3-bots/config.json` with the defaults;
+- checks the configuration as the service will run it, and stops there, leaving any installed unit as it was, if the server would refuse it;
 - writes the unit `~/.config/systemd/user/j3-bots.service`;
-- enables the unit and starts it.
+- enables the unit and starts it;
+- waits up to a minute for the server to answer, and says whether it did and what state the engine is in.
 
-On its first start, the server downloads the engine it is pinned to into `~/.j3-bots/engine`.
+On its first start, the server downloads the engine it is pinned to into `~/.j3-bots/engine`, so the engine may still be starting when `service install` returns.
 
-The unit records the absolute path of the Node that ran `service install`, this checkout's server bundle and the `PATH` of the shell you ran it from, so the engine finds the harnesses. Two cases need `service install` again:
+The unit records the real path of the Node that ran `service install`, this checkout's server bundle and the `PATH` of the shell you ran it from, so the engine finds the harnesses. Each folder on that `PATH` is recorded by its real path, and folders under `XDG_RUNTIME_DIR`, such as the per-shell links fnm makes, are left out because they are gone after a reboot. Two cases need `service install` again:
 
 - after you install Node somewhere else;
 - after you install a harness in a folder that was not on that `PATH`.
 
-The service does not see `J3_*` variables from your shell; `service install` names any it finds. Put lasting settings in `config.json`.
+The service does not see `J3_*` variables from your shell: it runs with `config.json` alone. `service install` checks the configuration without them and names any it finds, and `doctor` warns about them while the service is installed. Put lasting settings in `config.json`. `J3_ENGINE_BINARY` is for testing an engine build by hand; it has no `config.json` key, and the service never uses it.
 
 If you did not create a dedicated user, turn lingering on for your own user so that the service survives a logout and starts at boot. `doctor` and `service install` both remind you:
 
@@ -91,7 +93,7 @@ sudo loginctl enable-linger "$(id -un)"
 }
 ```
 
-`"host": "lan"` serves every IPv4 address of the Pi, as long as each one is private: a home network, or Tailscale. Edit the file, then run `systemctl --user restart j3-bots`. An unknown key or an invalid value stops the start with a message that names it. The full list, with the environment variables that override each setting, is in [Server: configuration](../architecture/server.md#configuration).
+`"host": "lan"` serves every IPv4 address of the Pi, as long as each one is private: a home network, or Tailscale. The server refuses to start while any of them is public, and it closes, unread, any connection that reaches it on an address that is not private, such as one that appears after it started. On a Pi behind a carrier's modem, an address in 100.64.0.0/10 may be the carrier's NAT rather than Tailscale; it counts as private, so check `ip addr` before you rely on it. A `host` set to one address must be an IP address the Pi has when the service starts at boot, or the start fails; `lan` has no such dependency. Edit the file, then run `systemctl --user restart j3-bots`. An unknown key or an invalid value stops the start with a message that names it. The full list, with the environment variables that override each setting, is in [Server: configuration](../architecture/server.md#configuration).
 
 ## Pair a device
 
@@ -108,9 +110,9 @@ Open J3 Bots on the new device and enter it there:
   http://100.101.102.103:3737
 ```
 
-`pair` asks the running server for the code over its admin socket, `~/.j3-bots/admin.sock`. Only this user can connect to that socket, so the command works only on the Pi, as the user that runs the service. Open one of the addresses on the phone or computer you are pairing and enter the code.
+`pair` asks the running server for the code over its admin socket, `~/.j3-bots/admin.sock`. Only this user can connect to that socket, so the command works only on the Pi, as the user that runs the service. The addresses come from the server too: the port and scheme it listens on and, with `lan`, the Pi's private addresses, leaving out container and virtual-network interfaces such as `docker0`. Open one of them on the phone or computer you are pairing and enter the code.
 
-A browser treats a plain-HTTP address other than `localhost` as insecure, and on such an address it does not install J3 Bots as an app (a PWA). To install it on a phone, serve HTTPS: put a certificate and key in `tls` (paths relative to the data directory work). With Tailscale, `tailscale cert <machine>.<tailnet>.ts.net` issues one for the Pi's tailnet name. Pair at `https://<machine>.<tailnet>.ts.net:3737` afterwards.
+A browser treats a plain-HTTP address other than `localhost` as insecure, and on such an address it does not install J3 Bots as an app (a PWA). To install it on a phone, serve HTTPS: put a certificate and key in `tls` (paths relative to the data directory work). With Tailscale, `tailscale cert <machine>.<tailnet>.ts.net` issues one for the Pi's tailnet name. Over HTTPS, `pair` prints the names on the certificate, such as `https://<machine>.<tailnet>.ts.net:3737`, and no bare addresses, which the browser would not accept.
 
 ## Logs
 
@@ -142,12 +144,12 @@ Everything J3 Bots keeps is in the data directory: the configuration, the databa
 
 ```sh
 systemctl --user stop j3-bots
-tar -C ~/.j3-bots --exclude=./engine/j3/runtime --exclude=./admin.sock \
-  -czf ~/j3-bots-$(date +%F).tar.gz .
+(umask 077 && tar -C ~/.j3-bots --exclude=./engine/j3/runtime --exclude=./admin.sock \
+  -czf ~/j3-bots-$(date +%F).tar.gz .)
 systemctl --user start j3-bots
 ```
 
-`engine/j3/runtime` is the downloaded engine, which the server downloads again. The archive holds the bots' files and the device tokens' hashes, so keep it where only you can read it.
+`umask 077` creates the archive readable by you alone from the start. It holds the bots' files, the device tokens' hashes and `engine/j3/credential.json`, the bearer credential the server signs in to its engine with, which lets whoever has it start agents with full access. Keep it where only you can read it. `engine/j3/runtime` is the downloaded engine, which the server downloads again.
 
 To restore:
 
@@ -171,16 +173,17 @@ Each line is ✓ (fine), `!` (a warning: the server runs, but something is missi
 | Check | What it looks at |
 | --- | --- |
 | Node | The Node running it has the major version J3 Bots is built on. |
-| Configuration | `config.json` and the `J3_*` variables decode and pass the checks the server makes at start. Two examples: a public address without TLS, and a data directory inside a Git checkout. |
-| Data directory | It is a folder, this user can write to it, and other users cannot read it. |
+| Configuration | `config.json` and the `J3_*` variables decode and pass the checks the server makes at start. Some examples: a public address without TLS, two settings on one port, a TLS certificate and key that do not load as a pair, a web client folder that holds the data directory, and a data directory inside a Git checkout. |
+| Shell settings | With the service installed, a warning for each `J3_*` variable in your shell, which the service does not get. |
+| Data directory | It is a folder this user owns and can write to, and no group or other user can open it. Otherwise the server does not start, and `doctor` prints the `chmod` or `chown` command that fixes it. |
 | Disk space | Free space where the data directory is: less than 1 GB is a problem, less than 3 GB a warning. |
-| Server | Whether a server answers on the admin socket, and which version. |
-| Ports | With no server running, that the server's port, the bot tool port and the engine's port are free on their addresses. |
+| Server | Whether a server answers on the admin socket, its version and the address it listens on. |
+| Ports | With the server running, the ports it listens on, and a problem if the engine's port was taken. With no server running, that the server's port, the bot tool port and the engine's port are free on their addresses. |
 | Engine | That the pinned engine has a release for this machine, whether it is installed yet, and, with the server running, the state the server reports for it. |
-| Claude Code, Codex | That the harness is on `PATH`, and what the engine reports about the server's providers on it. |
+| Claude Code, Codex | That the harness is on the `PATH` the service runs with (your shell's while the service is not installed), and what the engine reports about the server's providers on it. |
 | Web client | That a built web client is there, and that the running server serves it. |
 | Pairing | How many devices are paired. |
-| Service | That the unit is installed, enabled and running, and has not failed. |
+| Service | That the unit is installed, enabled and running, and has not failed. A unit that is still `activating` is a warning: it is starting or restarting, and the log says which. |
 | Start at boot | That lingering is on for this user. |
 | Memory limit | That the kernel lets the service's `MemoryHigh` apply. |
 
@@ -191,5 +194,3 @@ Each line is ✓ (fine), `!` (a warning: the server runs, but something is missi
 - The server sets up no providers yet. `doctor` warns that no Claude Code or Codex provider is set up, and bots cannot run turns until a release that configures them.
 - The engine adapter does not yet read sign-in or usage state from the engine. For a configured provider it reports "ready", and `doctor` repeats what it reports (**Read** in `packages/engine-t3/src/t3/T3Engine.ts`).
 - `j3-bots pair` prints the code and the addresses but no QR code.
-- When the engine cannot start, the server may not exit on SIGTERM, and systemd kills it after 30 seconds. Its data is safe: the database is SQLite in WAL mode.
-- `"lan"` checks the machine's addresses when the server starts. A public IPv4 address that appears later (for example, the Pi plugged straight into a modem) would be served too, until the next start refuses it.

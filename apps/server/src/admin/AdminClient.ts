@@ -16,7 +16,7 @@ import * as Socket from "./socket.ts";
 /** The admin socket answered, but not as the server should. */
 export class AdminRequestFailed extends Schema.TaggedError<AdminRequestFailed>()(
   "AdminRequestFailed",
-  { path: Schema.String },
+  { path: Schema.String, cause: Schema.Defect() },
 ) {
   override get message(): string {
     return `The running server did not answer ${this.path} as expected. Check its log with \`journalctl --user -u j3-bots\`.`;
@@ -59,7 +59,7 @@ export const layer = Layer.effect(
             Effect.flatMap(HttpClientResponse.schemaBodyJson(schema)),
             Effect.timeout(TIMEOUT),
             Effect.asSome,
-            Effect.mapError(() => new AdminRequestFailed({ path })),
+            Effect.mapError((cause) => new AdminRequestFailed({ path, cause })),
           );
         }).pipe(
           Effect.provide(

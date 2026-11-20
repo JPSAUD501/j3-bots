@@ -3,25 +3,31 @@
 import * as NodeNet from "node:net";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 
 /**
  * What is at an admin socket path: nothing, a server that accepts a
- * connection, or a file a server left behind when it stopped without closing.
+ * connection, a socket nothing listens on (its server stopped without
+ * closing), or something that is not a socket at all.
  */
-export type SocketState = "absent" | "live" | "stale";
+export type SocketState = "absent" | "live" | "stale" | "not-a-socket";
 
 export const probe = Effect.fn("AdminSocket.probe")(function* (path: string) {
   const fs = yield* FileSystem.FileSystem;
-  if (!(yield* fs.exists(path).pipe(Effect.orElseSucceed(() => false)))) return "absent";
+  const info = yield* fs.lstat(path).pipe(Effect.option);
+  if (Option.isNone(info)) return "absent";
+  if (info.value.type !== "Socket") return "not-a-socket";
   return yield* Effect.callback<SocketState>((resume) => {
     const socket = NodeNet.connect({ path });
     socket.once("connect", () => {
       socket.destroy();
       resume(Effect.succeed("live"));
     });
-    socket.once("error", () => {
+    socket.once("error", (error: NodeJS.ErrnoException) => {
       socket.destroy();
-      resume(Effect.succeed("stale"));
+      // Only a refusal proves that nothing listens; anything else (EACCES,
+      // EAGAIN on a full backlog) leaves the socket to whoever made it.
+      resume(Effect.succeed(error.code === "ECONNREFUSED" ? "stale" : "live"));
     });
     return Effect.sync(() => socket.destroy());
   });

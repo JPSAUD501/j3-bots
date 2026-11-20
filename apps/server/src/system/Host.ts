@@ -15,9 +15,15 @@ import * as Path from "effect/Path";
 /**
  * Whether the server could listen on an address and port right now:
  * `in-use` by another program, `not-local` when the address is not one of
- * this machine's, `denied` when the user may not bind it.
+ * this machine's, `denied` when the user may not bind it, or another error,
+ * by its code.
  */
-export type PortState = "free" | "in-use" | "not-local" | "denied";
+export type PortState =
+  | { readonly _tag: "free" }
+  | { readonly _tag: "in-use" }
+  | { readonly _tag: "not-local" }
+  | { readonly _tag: "denied" }
+  | { readonly _tag: "failed"; readonly code: string };
 
 /** The facts about this machine that `j3-bots doctor` and `service` read. */
 export class Host extends Context.Service<
@@ -29,13 +35,16 @@ export class Host extends Context.Service<
     readonly totalMemoryBytes: number;
     /** The login name the server runs as. */
     readonly userName: string;
-    /** `PATH` as this process has it, which a service unit is given. */
+    /** `PATH` as this process has it, from which a service unit's is made. */
     readonly searchPath: string;
     /** Bytes free to this user on the filesystem holding `path`, or its nearest existing parent. */
     readonly freeSpace: (path: string) => Effect.Effect<Option.Option<number>>;
     readonly portState: (host: string, port: number) => Effect.Effect<PortState>;
-    /** The first executable file named `name` on `searchPath`. */
-    readonly findExecutable: (name: string) => Effect.Effect<Option.Option<string>>;
+    /** The first executable file named `name` in the folders of `searchPath`. */
+    readonly findExecutable: (
+      name: string,
+      searchPath: string,
+    ) => Effect.Effect<Option.Option<string>>;
   }
 >()("@j3-bots/server/system/Host") {}
 
@@ -43,18 +52,19 @@ const trialListen = (host: string, port: number) =>
   Effect.callback<PortState>((resume) => {
     const server = NodeNet.createServer();
     server.once("error", (error: NodeJS.ErrnoException) => {
-      resume(
-        Effect.succeed(
-          error.code === "EADDRINUSE"
-            ? "in-use"
-            : error.code === "EADDRNOTAVAIL"
-              ? "not-local"
-              : "denied",
-        ),
-      );
+      switch (error.code) {
+        case "EADDRINUSE":
+          return resume(Effect.succeed({ _tag: "in-use" }));
+        case "EADDRNOTAVAIL":
+          return resume(Effect.succeed({ _tag: "not-local" }));
+        case "EACCES":
+          return resume(Effect.succeed({ _tag: "denied" }));
+        default:
+          return resume(Effect.succeed({ _tag: "failed", code: error.code ?? error.message }));
+      }
     });
     server.listen({ host, port, exclusive: true }, () => {
-      server.close(() => resume(Effect.succeed("free")));
+      server.close(() => resume(Effect.succeed({ _tag: "free" })));
     });
     return Effect.sync(() => server.close());
   });
@@ -94,8 +104,8 @@ export const layer = Layer.effect(
         );
       }),
       portState: trialListen,
-      findExecutable: Effect.fn("Host.findExecutable")(function* (name: string) {
-        for (const folder of searchPath.split(NodePath.delimiter)) {
+      findExecutable: Effect.fn("Host.findExecutable")(function* (name: string, folders: string) {
+        for (const folder of folders.split(NodePath.delimiter)) {
           if (folder === "") continue;
           const candidate = path.join(folder, name);
           const info = yield* fs.stat(candidate).pipe(Effect.option);
