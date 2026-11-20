@@ -7,7 +7,6 @@ import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import * as NetAddress from "effect/net/NetAddress";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import rootPackage from "../../../../package.json" with { type: "json" };
 import { AdminClient } from "../admin/AdminClient.ts";
 import type { AdminStatus } from "../admin/protocol.ts";
@@ -17,6 +16,7 @@ import * as Unit from "../service/unit.ts";
 import { Host } from "../system/Host.ts";
 import { type PortUse, portAdvice } from "../system/Ports.ts";
 import { Systemd } from "../system/Systemd.ts";
+import { isBuilt } from "../web/built.ts";
 
 // `j3-bots doctor`: everything the server needs from this machine, checked
 // one by one, each answer a plain sentence and, when something is wrong, the
@@ -343,12 +343,7 @@ const webClientCheck = Effect.fn("doctor.webClient")(function* (
   config: ServerConfig.ServerConfigShape,
   status: Option.Option<AdminStatus>,
 ) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const built = yield* fs
-    .exists(path.join(config.webClient.directory, "index.html"))
-    .pipe(Effect.orElseSucceed(() => false));
-  if (!built) {
+  if (!(yield* isBuilt(config.webClient.directory))) {
     return check(
       "Web client",
       "warning",

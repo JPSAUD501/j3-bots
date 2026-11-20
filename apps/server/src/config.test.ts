@@ -361,4 +361,53 @@ it.layer(NodeServices.layer)("server configuration", (it) => {
       }
     }).pipe(Effect.scoped),
   );
+
+  it.effect("refuses a home whose memory leads into the web client or out of the home", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* freshHome;
+      const home = path.join(root, "home");
+      const web = path.join(root, "web");
+      yield* fs.makeDirectory(web, { recursive: true });
+      yield* fs.writeFileString(path.join(web, "index.html"), "<!doctype html>");
+      const refusal = withEnvironment(load, { J3_HOME: home, J3_WEB_CLIENT: web }).pipe(
+        Effect.exit,
+        Effect.map(failure),
+      );
+
+      // Each memory folder sits inside a real folder of the home; only the
+      // memory itself is a link.
+      for (const memory of ["shared/memory", "bots/b1/memory"]) {
+        const linked = path.join(home, memory);
+        yield* fs.makeDirectory(path.dirname(linked), { recursive: true });
+
+        const published = path.join(web, memory.replaceAll("/", "-"));
+        yield* fs.makeDirectory(published);
+        yield* fs.symlink(published, linked);
+        assert.deepInclude(
+          yield* refusal,
+          { reason: "web-client-holds-state", subject: linked },
+          memory,
+        );
+        yield* fs.remove(linked);
+
+        const elsewhere = path.join(root, "elsewhere", memory.replaceAll("/", "-"));
+        yield* fs.makeDirectory(elsewhere, { recursive: true });
+        yield* fs.symlink(elsewhere, linked);
+        assert.deepInclude(
+          yield* refusal,
+          { reason: "state-outside-home", subject: linked },
+          memory,
+        );
+        yield* fs.remove(linked);
+      }
+      assert.deepInclude(
+        (yield* withEnvironment(load, { J3_HOME: home, J3_WEB_CLIENT: web })).webClient,
+        {
+          directory: web,
+        },
+      );
+    }).pipe(Effect.scoped),
+  );
 });

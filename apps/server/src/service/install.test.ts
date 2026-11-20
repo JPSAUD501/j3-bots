@@ -9,7 +9,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { AdminClient } from "../admin/AdminClient.ts";
+import { AdminClient, AdminRequestFailed } from "../admin/AdminClient.ts";
 import { AdminStatus } from "../admin/protocol.ts";
 import { Host } from "../system/Host.ts";
 import { Network } from "../system/Network.ts";
@@ -36,8 +36,13 @@ interface Machine {
   readonly configFile: string;
   /** Variables set in the installing shell besides the home. */
   readonly shell: Record<string, string>;
-  /** What answers on the admin socket before the install. */
-  readonly before: Option.Option<AdminStatus>;
+  /**
+   * What answers on the admin socket before the install; `unreadable` for a
+   * server that answers in other words than this release's.
+   */
+  readonly before: Option.Option<AdminStatus> | "unreadable";
+  /** Whether the kernel says the unit's main process holds the socket, if it can say. */
+  readonly holder: Option.Option<boolean>;
   /** What answers on the admin socket once the service is (re)started. */
   readonly server: Option.Option<AdminStatus>;
   /** What systemd says of the unit, before and after it was (re)started. */
@@ -88,12 +93,18 @@ const installOn = (machine: Machine) =>
           freeSpace: () => Effect.succeedNone,
           portState: () => Effect.succeed({ _tag: "free" }),
           findExecutable: () => Effect.succeedNone,
+          holdsSocket: () => Effect.succeed(machine.holder),
         }),
       ),
       Layer.succeed(
         AdminClient,
         AdminClient.of({
-          status: () => Effect.sync(() => (calls.length === 0 ? machine.before : machine.server)),
+          status: (socket) =>
+            calls.length > 0
+              ? Effect.succeed(machine.server)
+              : machine.before === "unreadable"
+                ? Effect.fail(new AdminRequestFailed({ path: socket, cause: "unreadable" }))
+                : Effect.succeed(machine.before),
           startPairing: () => Effect.die("install never pairs"),
         }),
       ),
@@ -128,6 +139,7 @@ const HEALTHY: Machine = {
   configFile: "{}",
   shell: {},
   before: Option.none(),
+  holder: Option.none(),
   server: Option.some(answering),
   active: "active",
 };
@@ -201,5 +213,35 @@ it.layer(NodeServices.layer)("service install", (it) => {
       const update = yield* installOn({ ...HEALTHY, before: Option.some(answering) });
       assert.isTrue(Exit.isSuccess(update.exit));
     }),
+  );
+
+  it.effect(
+    "replaces a server that answers in other words only once it is known to be the service's",
+    () =>
+      Effect.gen(function* () {
+        // An older release run by the service: its main process holds the socket.
+        const upgrade = yield* installOn({
+          ...HEALTHY,
+          before: "unreadable",
+          holder: Option.some(true),
+        });
+        assert.isTrue(Exit.isSuccess(upgrade.exit));
+
+        const outside = yield* installOn({
+          ...HEALTHY,
+          before: "unreadable",
+          holder: Option.some(false),
+        });
+        assert.deepInclude(failure(outside.exit), { reason: "running-outside" });
+
+        // The kernel cannot say which process it is: nothing is touched.
+        const unknown = yield* installOn({ ...HEALTHY, before: "unreadable" });
+        assert.deepInclude(failure(unknown.exit), {
+          _tag: "ServiceNotInstalled",
+          reason: "owner-unknown",
+        });
+        assert.deepStrictEqual(unknown.calls, []);
+        assert.strictEqual(unknown.unit, "previous unit");
+      }),
   );
 });

@@ -22,6 +22,16 @@ export const unitPath = Effect.gen(function* () {
 });
 
 /**
+ * The `J3_HOME` of the unit installed at `unitFile`: the home its server
+ * runs with, whatever this shell's is. `None` for a unit that names none.
+ */
+export const installedHome = Effect.fn("service.installedHome")(function* (unitFile: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const unit = yield* fs.readFileString(unitFile);
+  return Option.fromNullishOr(environmentOf(unit).get("J3_HOME"));
+});
+
+/**
  * The `PATH` the service gets, made from the installing shell's: each folder
  * by its real path, without the ones under `runtimeDirectory`
  * (`XDG_RUNTIME_DIR`). A version manager such as fnm puts a per-shell link to

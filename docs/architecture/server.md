@@ -52,6 +52,8 @@ shared/
 
 Generated files are written by the server from the database and the memory files. A bot never edits them by hand, and the server rewrites them whenever their inputs change.
 
+**Private state stays in the home.** Every location the server writes (each entry of the home but `web`, the shared memory and skills, each bot's workspace, memory and generated files, the attachments and the engine's folder) must resolve, symbolic links followed, inside the home's real path and outside the web client's folder. Start refuses a home where one does not, naming it. Every write of private state checks its target the same way first, so a link made while the server runs (by a bot's own tools, say) cannot publish memory or a generated file through the web client: the write is refused. To keep state on another disk, put the whole home there.
+
 Memory lives in files and not in the database because the bot's own tools can read, search and quote files, and because the operator can read, edit, diff and back them up without J3 Bots. See [decision 0006](../decisions/0006-memory-is-files.md).
 
 ## The wake pipeline

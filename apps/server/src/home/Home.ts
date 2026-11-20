@@ -9,7 +9,8 @@ import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Socket from "../admin/socket.ts";
-import { HOME_ENTRIES, ServerConfig } from "../config.ts";
+import { ServerConfig } from "../config.ts";
+import { HOME_ENTRIES } from "./entries.ts";
 
 // The home holds the database, the bots' files, the engine's credential and
 // the admin socket, which takes no token because only the operator's user can

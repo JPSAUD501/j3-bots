@@ -138,6 +138,7 @@ export const layer = Layer.effect(
       yield* blobFiles.withPermits(1)(
         Effect.gen(function* () {
           if (!(yield* fs.exists(target))) {
+            yield* layout.writable(target);
             yield* fs.makeDirectory(path.dirname(target), { recursive: true });
             const aside = `${target}.${id}.writing`;
             yield* fs.writeFile(aside, input.bytes);

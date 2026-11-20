@@ -7,10 +7,12 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import { HOME_ENTRIES, homeLayout } from "./home/entries.ts";
 import * as Installation from "./installation.ts";
 import { isWithin, realLocation } from "./paths.ts";
 import { isPrivateAddress, Network } from "./system/Network.ts";
 import * as TlsCredentials from "./system/Tls.ts";
+import { isBuilt } from "./web/built.ts";
 
 /** Where the web client the server serves comes from. */
 type WebClientSource =
@@ -75,6 +77,7 @@ class ConfigRefused extends Schema.TaggedError<ConfigRefused>()("ConfigRefused",
     "web-client-holds-state",
     "web-client-in-home",
     "web-client-in-state",
+    "state-outside-home",
     "port-zero",
     "port-conflict",
   ]),
@@ -103,6 +106,8 @@ class ConfigRefused extends Schema.TaggedError<ConfigRefused>()("ConfigRefused",
         return `${this.setting} is inside the data directory ${this.subject}, which the server keeps private. Put the built client in ${this.subject}/web, or outside the data directory.`;
       case "web-client-in-state":
         return `${this.setting} is inside ${this.subject}, which the server keeps private. Point it at the built client's own folder.`;
+      case "state-outside-home":
+        return `${this.subject} leads out of the data directory, or to nowhere, through a symbolic link. Everything the server keeps there must stay inside it: replace the link with the folder or file itself, or set ${this.setting} to a folder on the disk you want.`;
       case "port-zero":
         return `${this.setting} is 0, but this port is dialed at the number set here. Choose a fixed free port.`;
       case "port-conflict":
@@ -120,26 +125,6 @@ class ConfigFileInvalid extends Schema.TaggedError<ConfigFileInvalid>()("ConfigF
     return `${this.path} is not valid: ${this.detail}\nFix it, or delete it to have the server write the defaults again.`;
   }
 }
-
-/**
- * What the home holds, by name (see `docs/architecture/server.md#data`).
- * Everything but `web` is private.
- */
-export const HOME_ENTRIES = {
-  config: "config.json",
-  database: "j3.sqlite",
-  engine: "engine",
-  /** One workspace per bot, `bots/<bot>`. */
-  bots: "bots",
-  /** Memory and skills every bot reads. */
-  shared: "shared",
-  attachments: "attachments",
-  adminSocket: "admin.sock",
-  /** Held by the one server running for the home. */
-  lock: "server.lock",
-  /** The one place in the home a web client may be put: the server keeps nothing there. */
-  web: "web",
-} as const;
 
 const CONFIG_FILE = HOME_ENTRIES.config;
 const ADMIN_SOCKET = HOME_ENTRIES.adminSocket;
@@ -285,31 +270,13 @@ export const resolveConfigFile = Effect.gen(function* () {
   return path.join(yield* resolveHome, CONFIG_FILE);
 });
 
-/**
- * Everything private the home holds, each bot's workspace on its own (one may
- * be a link to another folder), and the TLS certificate and key.
- */
-const privateLocations = Effect.fn("privateLocations")(function* (
-  home: string,
-  tls: Option.Option<{ readonly certPath: string; readonly keyPath: string }>,
-) {
+/** The bots whose workspaces the home holds, by folder name. */
+const workspaceNames = Effect.fn("workspaceNames")(function* (home: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const bots = path.join(home, HOME_ENTRIES.bots);
-  const workspaces = yield* fs.readDirectory(bots).pipe(Effect.orElseSucceed(() => []));
-  const { config, database, engine, shared, attachments, adminSocket, lock } = HOME_ENTRIES;
-  return [
-    ...[config, engine, HOME_ENTRIES.bots, shared, attachments, adminSocket, lock].map((entry) =>
-      path.join(home, entry),
-    ),
-    // SQLite keeps its journal beside the database.
-    ...["", "-wal", "-shm"].map((suffix) => path.join(home, `${database}${suffix}`)),
-    ...workspaces.map((workspace) => path.join(bots, workspace)),
-    ...Option.match(tls, {
-      onNone: () => [],
-      onSome: ({ certPath, keyPath }) => [certPath, keyPath],
-    }),
-  ];
+  return yield* fs
+    .readDirectory(path.join(home, HOME_ENTRIES.bots))
+    .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
 });
 
 /** The settings in `<home>/config.json`; none when the file does not exist. */
@@ -328,7 +295,6 @@ const readConfigFile = Effect.fn("readConfigFile")(function* (file: string) {
  * default. Reads only; `layer` also creates the home and the file.
  */
 export const load = Effect.gen(function* () {
-  const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const env = yield* environment;
   const home = yield* resolveHome;
@@ -458,7 +424,7 @@ export const load = Effect.gen(function* () {
   let webClient: WebClientSource;
   if (Option.isSome(configuredWebClient)) {
     const directory = path.resolve(home, configuredWebClient.value);
-    if (!(yield* fs.exists(path.join(directory, "index.html")))) {
+    if (!(yield* isBuilt(directory))) {
       return yield* new ConfigRefused({
         setting: webClientSetting,
         reason: "web-client-missing",
@@ -480,16 +446,42 @@ export const load = Effect.gen(function* () {
       reason,
       subject,
     });
-  const webRoot = yield* realLocation(webClient.directory);
-  const realHome = yield* realLocation(home);
+  const webRoot = Option.getOrElse(yield* realLocation(webClient.directory), () =>
+    path.resolve(webClient.directory),
+  );
+  const realHome = Option.getOrElse(yield* realLocation(home), () => path.resolve(home));
   if (isWithin(webRoot, realHome)) return yield* refuseWebClient("web-client-holds-state", home);
   if (isWithin(realHome, webRoot) && !isWithin(path.join(realHome, HOME_ENTRIES.web), webRoot)) {
     return yield* refuseWebClient("web-client-in-home", home);
   }
-  for (const held of yield* privateLocations(home, tls)) {
+  const overlapsWebRoot = (real: string) =>
+    isWithin(webRoot, real)
+      ? Option.some("web-client-holds-state" as const)
+      : isWithin(real, webRoot)
+        ? Option.some("web-client-in-state" as const)
+        : Option.none();
+  // The certificate and key may be anywhere but the client's folder.
+  for (const held of Option.match(tls, {
+    onNone: () => [],
+    onSome: ({ certPath, keyPath }) => [certPath, keyPath],
+  })) {
+    const real = Option.getOrElse(yield* realLocation(held), () => held);
+    const overlap = overlapsWebRoot(real);
+    if (Option.isSome(overlap)) return yield* refuseWebClient(overlap.value, held);
+  }
+  // What the server writes stays inside the home, outside the client's folder.
+  const written = homeLayout(path, home).written(yield* workspaceNames(home));
+  for (const held of written) {
     const real = yield* realLocation(held);
-    if (isWithin(webRoot, real)) return yield* refuseWebClient("web-client-holds-state", held);
-    if (isWithin(real, webRoot)) return yield* refuseWebClient("web-client-in-state", held);
+    const overlap = Option.flatMap(real, overlapsWebRoot);
+    if (Option.isSome(overlap)) return yield* refuseWebClient(overlap.value, held);
+    if (Option.isNone(real) || !isWithin(realHome, real.value)) {
+      return yield* new ConfigRefused({
+        setting: "J3_HOME",
+        reason: "state-outside-home",
+        subject: held,
+      });
+    }
   }
 
   return {

@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import { MemoryPath } from "@j3-bots/contracts";
+import { BotId, MemoryPath } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import { ServerConfig } from "../config.ts";
 import * as Layout from "../Layout.ts";
 import * as TestDatabase from "../testing/database.ts";
 import * as MemoryFiles from "./MemoryFiles.ts";
@@ -81,4 +82,38 @@ it.effect("writes only over the revision the writer read", () =>
     const current = yield* memory.read(shared, path);
     assert.strictEqual(Option.getOrThrow(current).text, "two");
   }).pipe(Effect.provide(files)),
+);
+
+it.effect(
+  "never writes memory into the web client's folder through a link made while it runs",
+  () =>
+    Effect.gen(function* () {
+      const memory = yield* MemoryFiles.MemoryFiles;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const layout = yield* Layout.Layout;
+      const { webClient } = yield* ServerConfig;
+      const botId = BotId.make("b1");
+      const scopes = [
+        { scope: shared, folder: layout.sharedMemory },
+        { scope: { _tag: "bot", botId } as const, folder: layout.botMemory(botId) },
+      ];
+      for (const [index, { scope, folder }] of scopes.entries()) {
+        const published = path.join(webClient.directory, `memory-${index}`);
+        yield* fs.makeDirectory(published, { recursive: true });
+        yield* fs.makeDirectory(path.dirname(folder), { recursive: true });
+        yield* fs.symlink(published, folder);
+
+        const write = yield* memory
+          .write({ scope, path: MemoryPath.make("user.md"), text: "private", revision: null })
+          .pipe(Effect.exit);
+        const appended = yield* memory
+          .modify(scope, MemoryPath.make("log/2026-11.md"), () => [undefined, Option.some("x")])
+          .pipe(Effect.exit);
+
+        assert.isTrue(Exit.isFailure(write));
+        assert.isTrue(Exit.isFailure(appended));
+        assert.deepStrictEqual(yield* fs.readDirectory(published), []);
+      }
+    }).pipe(Effect.provide(files)),
 );

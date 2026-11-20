@@ -4,9 +4,11 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import { Command } from "effect/cli";
 import { AdminClient } from "../admin/AdminClient.ts";
 import * as ServerConfig from "../config.ts";
+import { HOME_ENTRIES } from "../home/entries.ts";
 import { install as installService } from "../service/install.ts";
 import * as Unit from "../service/unit.ts";
 import { Systemd } from "../system/Systemd.ts";
@@ -56,6 +58,15 @@ const install = Command.make("install").pipe(
   ),
 );
 
+/**
+ * The home the installed unit runs its server with, from the unit itself;
+ * this shell's when the unit names none.
+ */
+const serviceHome = Effect.fn("service.serviceHome")(function* (unitFile: string) {
+  const installed = yield* userFacing(Unit.installedHome(unitFile));
+  return Option.isSome(installed) ? installed.value : yield* userFacing(ServerConfig.resolveHome);
+});
+
 const uninstall = Command.make("uninstall").pipe(
   Command.withDescription("Stop the service and remove it. The data directory is kept."),
   Command.withHandler(() =>
@@ -66,10 +77,10 @@ const uninstall = Command.make("uninstall").pipe(
       if (!(yield* userFacing(fs.exists(unitFile)))) {
         return yield* Console.log("The service is not installed.");
       }
+      const home = yield* serviceHome(unitFile);
       yield* userFacing(systemd.disableAndStop(Unit.UNIT_NAME));
       yield* userFacing(fs.remove(unitFile));
       yield* userFacing(systemd.reload);
-      const home = yield* userFacing(ServerConfig.resolveHome);
       yield* Console.log(`Stopped and removed ${Unit.UNIT_NAME}. Your data in ${home} is kept.`);
     }),
   ),
@@ -83,21 +94,28 @@ const status = Command.make("status").pipe(
     Effect.gen(function* () {
       const systemd = yield* requireSystemd;
       const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const unitFile = yield* Unit.unitPath;
       if (!(yield* userFacing(fs.exists(unitFile)))) {
         return yield* Console.log(
           "The service is not installed. Install it with `j3-bots service install`.",
         );
       }
+      const home = yield* serviceHome(unitFile);
       const unit = yield* systemd.unitState(Unit.UNIT_NAME);
       const lines = [
-        `${Unit.UNIT_NAME}: ${unit.active}, ${unit.enabled ? "enabled" : "not enabled"}.`,
+        `${Unit.UNIT_NAME}: ${unit.active}, ${unit.enabled ? "enabled" : "not enabled"}. Data: ${home}.`,
       ];
       const admin = yield* AdminClient;
       const running = yield* admin
-        .status(yield* userFacing(ServerConfig.resolveAdminSocket))
+        .status(path.join(home, HOME_ENTRIES.adminSocket))
         .pipe(Effect.option, Effect.map(Option.flatten));
-      if (Option.isSome(running)) {
+      // Only the service's own server: another one may hold the home meanwhile.
+      if (
+        Option.isSome(running) &&
+        unit.active === "active" &&
+        Option.contains(unit.mainPid, running.value.pid)
+      ) {
         const { version, listener } = running.value;
         lines.push(`J3 Bots ${version} answers, listening on port ${listener.port}.`);
       }

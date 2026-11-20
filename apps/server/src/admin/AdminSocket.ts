@@ -6,14 +6,16 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Path from "effect/Path";
 import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import packageJson from "../../package.json" with { type: "json" };
 import { ServerConfig } from "../config.ts";
 import { Devices } from "../devices/Devices.ts";
 import { EngineState } from "../engine/EngineState.ts";
 import { Listener } from "../listener.ts";
+import * as Ports from "../system/Ports.ts";
+import { isBuilt } from "../web/built.ts";
 import { ADMIN_PATHS, AdminStatus, PairingGrant } from "./protocol.ts";
 
 // The admin socket: how `j3-bots pair` and `j3-bots doctor` reach the running
@@ -28,11 +30,7 @@ const routes = Layer.mergeAll(
       const startedAt = yield* DateTime.now;
       const { webClient, toolPort, enginePort } = yield* ServerConfig;
       const listener = yield* Listener;
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const served = yield* fs
-        .exists(path.join(webClient.directory, "index.html"))
-        .pipe(Effect.orElseSucceed(() => false));
+      const served = yield* isBuilt(webClient.directory);
       return HttpRouter.add(
         "GET",
         ADMIN_PATHS.status,
@@ -71,10 +69,15 @@ const listen = Layer.unwrap(
     const { adminSocket } = yield* ServerConfig;
     const fs = yield* FileSystem.FileSystem;
     // Node removes the socket file when the server closes.
-    return NodeHttpServer.layer(() => NodeHttp.createServer(), {
-      path: adminSocket,
-      gracefulShutdownTimeout: "1 second",
-    }).pipe(Layer.tap(() => fs.chmod(adminSocket, 0o600)));
+    return Layer.mergeAll(
+      Layer.effect(HttpServer.HttpServer)(
+        Ports.makeServer(() => NodeHttp.createServer(), {
+          path: adminSocket,
+          gracefulShutdownTimeout: "1 second",
+        }),
+      ),
+      NodeHttpServer.layerHttpServices,
+    ).pipe(Layer.tap(() => fs.chmod(adminSocket, 0o600)));
   }),
 );
 

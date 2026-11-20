@@ -19,6 +19,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Digest from "effect/crypto/Digest";
 import { Layout } from "../Layout.ts";
+import { realLocation } from "../paths.ts";
 
 const decodePath = Schema.decodeUnknownOption(MemoryPath);
 
@@ -84,33 +85,31 @@ export const layer = Layer.effect(
     };
 
     /**
-     * `target` with every link resolved, through its nearest parent that exists.
-     * `None` when a link on the way points nowhere: writing through it could
-     * create a file anywhere.
+     * The file's absolute path, refused unless it stays inside the scope's
+     * folder, links resolved. A write also needs the folder itself to be
+     * private (`Layout.writable`): a link made while the server runs may have
+     * moved it.
      */
-    const realNearest = Effect.fn("MemoryFiles.realNearest")(function* (target: string) {
-      const missing: Array<string> = [];
-      let existing = target;
-      // `lstat` sees a link itself, even one whose target is missing.
-      while (Option.isNone(yield* fs.lstat(existing).pipe(Effect.option))) {
-        missing.unshift(path.basename(existing));
-        existing = path.dirname(existing);
-      }
-      const real = yield* fs.realPath(existing).pipe(Effect.option);
-      return Option.map(real, (resolved) => path.join(resolved, ...missing));
-    });
-
-    /** The file's absolute path, refused unless it stays inside the scope's folder. */
     const resolve = Effect.fn("MemoryFiles.resolve")(function* (
       scope: MemoryScope,
       file: MemoryPath,
+      access: "read" | "write",
     ) {
       const root = rootOf(scope);
+      if (access === "write") {
+        yield* layout.writable(root).pipe(
+          Effect.tapError((exposed) => Effect.logWarning(exposed.message)),
+          Effect.mapError(() => new Invalid({ reason: "memory-path" })),
+        );
+      }
       const realRoot = yield* fs
         .makeDirectory(root, { recursive: true })
         .pipe(Effect.andThen(fs.realPath(root)), Effect.orDie);
       const target = path.resolve(root, file);
-      const real = yield* realNearest(target);
+      const real = yield* realLocation(target).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+      );
       if (!isInside(root, target) || Option.isNone(real) || !isInside(realRoot, real.value)) {
         return yield* new Invalid({ reason: "memory-path" });
       }
@@ -152,7 +151,7 @@ export const layer = Layer.effect(
     }, Effect.orDie);
 
     const read = Effect.fn("MemoryFiles.read")(function* (scope: MemoryScope, file: MemoryPath) {
-      const text = yield* readText(yield* resolve(scope, file));
+      const text = yield* readText(yield* resolve(scope, file, "read"));
       if (Option.isNone(text)) return Option.none<MemoryDocument>();
       const document: MemoryDocument = {
         path: file,
@@ -168,7 +167,7 @@ export const layer = Layer.effect(
       readonly text: string;
       readonly revision: MemoryRevision | null;
     }) {
-      const target = yield* resolve(input.scope, input.path);
+      const target = yield* resolve(input.scope, input.path, "write");
       const current = yield* readText(target);
       const currentRevision = Option.isSome(current) ? yield* revisionOf(current.value) : null;
       if (currentRevision !== input.revision) {
@@ -188,7 +187,7 @@ export const layer = Layer.effect(
       file: MemoryPath,
       change: (text: string) => readonly [A, Option.Option<string>],
     ) {
-      const target = yield* resolve(scope, file);
+      const target = yield* resolve(scope, file, "write");
       const current = yield* readText(target);
       const [result, next] = change(Option.getOrElse(current, () => ""));
       if (Option.isSome(next)) yield* writeText(target, next.value);

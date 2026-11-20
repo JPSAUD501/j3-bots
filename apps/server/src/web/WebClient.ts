@@ -10,6 +10,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Mime from "effect/http/Mime";
 import { ServerConfig } from "../config.ts";
 import { isWithin } from "../paths.ts";
+import { containedFile, INDEX, isBuilt } from "./built.ts";
 
 // The built web client, served on the same origin as the API and the RPC
 // socket, so a browser needs no CORS. A path the client routes itself (no
@@ -36,8 +37,6 @@ const HTML_HEADERS = {
 /** API paths are never the client's, so an unknown one is a 404, not the app. */
 const API_PREFIX = "/api/";
 const ASSETS_PREFIX = "/assets/";
-
-const INDEX = "index.html";
 
 const notFound = HttpServerResponse.empty({ status: 404 });
 
@@ -112,15 +111,11 @@ export const routes = (root: string) =>
       const path = yield* Path.Path;
       const realRoot = yield* fs.realPath(root);
 
-      /** Where `location` really is, if that is a file inside the folder. */
-      const containedFile = Effect.fn("WebClient.containedFile")(function* (location: string) {
-        const real = yield* fs.realPath(location).pipe(Effect.option);
-        if (Option.isNone(real) || !isWithin(realRoot, real.value)) return NOT_FOUND;
-        const info = yield* fs.stat(real.value).pipe(Effect.option);
-        return Option.isSome(info) && info.value.type === "File"
-          ? fileTarget(real.value)
-          : NOT_FOUND;
-      });
+      /** The file at `location`, if it really is a file inside the folder. */
+      const containedTarget = (location: string) =>
+        containedFile(realRoot, location).pipe(
+          Effect.map(Option.match({ onNone: () => NOT_FOUND, onSome: fileTarget })),
+        );
 
       /** The one file, or redirect, a request names. */
       const resolve = Effect.fn("WebClient.resolve")(function* (
@@ -136,7 +131,7 @@ export const routes = (root: string) =>
           // A path that names nothing, and could be one of the app's own
           // routes, gets the app.
           return path.extname(requested.value) === "" && acceptsHtml(request.headers["accept"])
-            ? yield* containedFile(path.join(root, INDEX))
+            ? yield* containedTarget(path.join(root, INDEX))
             : NOT_FOUND;
         }
         if (!isWithin(realRoot, real.value)) return NOT_FOUND;
@@ -149,7 +144,7 @@ export const routes = (root: string) =>
           const location = `${url.pathname.replace(/^\/+/, "/")}/${url.search}`;
           return redirectTarget(location);
         }
-        return yield* containedFile(path.join(real.value, INDEX));
+        return yield* containedTarget(path.join(real.value, INDEX));
       });
 
       const handler = Effect.gen(function* () {
@@ -202,12 +197,7 @@ export const routes = (root: string) =>
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
     const { webClient } = yield* ServerConfig;
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const built = yield* fs
-      .exists(path.join(webClient.directory, "index.html"))
-      .pipe(Effect.orElseSucceed(() => false));
-    if (built) return routes(webClient.directory);
+    if (yield* isBuilt(webClient.directory)) return routes(webClient.directory);
     yield* Effect.logWarning("The web client is not built, so the server does not serve it", {
       directory: webClient.directory,
     });

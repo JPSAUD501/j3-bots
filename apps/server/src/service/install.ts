@@ -25,8 +25,17 @@ const READY_WITHIN = Duration.seconds(60);
 
 /** The service was not installed, or was installed and did not come up. */
 class ServiceNotInstalled extends Schema.TaggedError<ServiceNotInstalled>()("ServiceNotInstalled", {
-  reason: Schema.Literals(["configuration", "running-outside", "failed", "not-ready"]),
-  /** For `configuration`, what the server would refuse; for `running-outside`, the home. */
+  reason: Schema.Literals([
+    "configuration",
+    "running-outside",
+    "owner-unknown",
+    "failed",
+    "not-ready",
+  ]),
+  /**
+   * For `configuration`, what the server would refuse; for `running-outside`,
+   * the home; for `owner-unknown`, the admin socket.
+   */
   detail: Schema.String,
 }) {
   override get message(): string {
@@ -35,6 +44,8 @@ class ServiceNotInstalled extends Schema.TaggedError<ServiceNotInstalled>()("Ser
         return `The service would not start, so it was left as it was: ${this.detail}`;
       case "running-outside":
         return `A J3 Bots server is already running for ${this.detail} outside the service. Stop it, then run this again.`;
+      case "owner-unknown":
+        return `A server answers on ${this.detail}, but not as this release does, and this system cannot tell whether it is the service's (the kernel's /proc does not say which process holds the socket). The unit was left as it was. Stop that server (\`systemctl --user stop j3-bots\` if it is the service), then run this again.`;
       case "failed":
         return "The service is installed, but the server failed to start. Read why with `journalctl --user -u j3-bots -n 100`.";
       case "not-ready":
@@ -56,38 +67,46 @@ interface Installed {
 /** Who answers on the admin socket, and what systemd says of the unit meanwhile. */
 interface SocketOwner {
   /**
-   * `service` when the server answering is the unit's main process,
-   * `other` when another process holds the home, `nobody` when none answers.
+   * `service` when the server answering is the unit's main process, `other`
+   * when another process holds the home, `nobody` when none answers, and
+   * `unknown` when a server answers but which process it is cannot be told.
    */
-  readonly owner: "service" | "other" | "nobody";
+  readonly owner: "service" | "other" | "nobody" | "unknown";
   /** What the server answered; none from a release that answers differently. */
   readonly status: Option.Option<AdminStatus>;
   readonly unit: UnitState;
 }
 
+const ownedBy = (
+  owner: SocketOwner["owner"],
+  status: Option.Option<AdminStatus>,
+  unit: UnitState,
+): SocketOwner => ({ owner, status, unit });
+
 const socketOwner = Effect.fn("service.socketOwner")(function* (socket: string) {
   const admin = yield* AdminClient;
   const systemd = yield* Systemd;
+  const host = yield* Host;
   const answer = yield* admin.status(socket).pipe(Effect.result);
   const unit = yield* systemd.unitState(Unit.UNIT_NAME);
-  const running = unit.active === "active";
-  if (answer._tag === "Failure") {
-    // A server answers, but not in this release's words: an older release.
-    // The service's own is replaced by the restart; another is not ours to stop.
-    const owner: SocketOwner = {
-      owner: running ? "service" : "other",
-      status: Option.none(),
-      unit,
-    };
-    return owner;
+  const mainPid = unit.active === "active" ? unit.mainPid : Option.none<number>();
+  if (answer._tag === "Success") {
+    if (Option.isNone(answer.success)) return ownedBy("nobody", Option.none(), unit);
+    const ours = Option.contains(mainPid, answer.success.value.pid);
+    return ownedBy(ours ? "service" : "other", answer.success, unit);
   }
-  if (Option.isNone(answer.success)) {
-    const owner: SocketOwner = { owner: "nobody", status: Option.none(), unit };
-    return owner;
-  }
-  const ours = running && Option.contains(unit.mainPid, answer.success.value.pid);
-  const owner: SocketOwner = { owner: ours ? "service" : "other", status: answer.success, unit };
-  return owner;
+  // A server answers, but not in this release's words (an older release, or
+  // one that is stuck), so it cannot say which process it is. The kernel can.
+  if (Option.isNone(mainPid)) return ownedBy("other", Option.none(), unit);
+  const held = yield* host.holdsSocket(mainPid.value, socket);
+  return ownedBy(
+    Option.match(held, {
+      onNone: () => "unknown",
+      onSome: (holds) => (holds ? "service" : "other"),
+    }),
+    Option.none(),
+    unit,
+  );
 });
 
 /**
@@ -153,8 +172,15 @@ export const install = Effect.gen(function* () {
   );
 
   // One server per home: the service's would only wait behind another's lock.
-  if ((yield* socketOwner(config.adminSocket)).owner === "other") {
-    return yield* new ServiceNotInstalled({ reason: "running-outside", detail: config.home });
+  // The service's own is replaced by the restart.
+  switch ((yield* socketOwner(config.adminSocket)).owner) {
+    case "other":
+      return yield* new ServiceNotInstalled({ reason: "running-outside", detail: config.home });
+    case "unknown":
+      return yield* new ServiceNotInstalled({
+        reason: "owner-unknown",
+        detail: config.adminSocket,
+      });
   }
 
   const unit = yield* Unit.render({

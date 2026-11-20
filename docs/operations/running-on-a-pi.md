@@ -53,7 +53,7 @@ j3-bots service install
 - creates the data directory, `~/.j3-bots`, readable by this user only;
 - writes `~/.j3-bots/config.json` with the defaults;
 - checks the configuration as the service will run it, and stops there, leaving any installed unit as it was, if the server would refuse it;
-- stops there too if a server you started yourself, with `j3-bots serve`, is already running for the data directory;
+- stops there too if a server you started yourself, with `j3-bots serve`, is already running for the data directory. A server that answers the way this release does names its process, and it is the service's only if that process is the unit's main process. One that answers otherwise, such as an older release, is the service's only if the kernel shows the unit's main process holding the admin socket; when that cannot be told, `service install` stops and asks you to stop that server first;
 - writes the unit `~/.config/systemd/user/j3-bots.service`;
 - enables the unit and starts it;
 - waits up to a minute for the service's own server to answer (its process must be the unit's main process), and says whether it did and what state the engine is in.
@@ -77,7 +77,7 @@ sudo loginctl enable-linger "$(id -un)"
 
 - `Restart=on-failure` restarts the server five seconds after it fails. After five failures in five minutes, systemd stops trying, and `doctor` reports the service as failed.
 - `MemoryHigh` is 60% of the machine's memory: about 2.4 GB on a 4 GB Pi. Above it the kernel reclaims the service's memory first, which leaves room for the rest of the system. It needs the kernel's memory controller. Raspberry Pi OS kernels may disable it. `doctor` reports that case, and the fix is `cgroup_enable=memory` at the end of the single line in `/boot/firmware/cmdline.txt`, then a reboot.
-- On stop, systemd sends SIGTERM to the server alone (`KillMode=mixed`). The server stops the engine and its children itself, and after 30 seconds systemd kills whatever is left. A stop takes at most about 17 seconds: 5 for open requests, 2 for each open WebSocket to close, and 10 for the engine. The server exits with status 130 when SIGTERM stops it, which the unit counts as success (`SuccessExitStatus=130`), so a stop or a restart never leaves the unit `failed`.
+- On stop, systemd sends SIGTERM to the server alone (`KillMode=mixed`). The server stops the engine and its children itself, and after 30 seconds systemd kills whatever is left. A stop takes at most about 17 seconds: 5 for open requests, 2 for open WebSockets to close, and 10 for the engine. A connection still open when the 5 seconds are up, such as one whose request never finished arriving or a TLS handshake that never completed, is cut then, so it cannot hold the stop until systemd kills the engine too. The server exits with status 130 when SIGTERM stops it, which the unit counts as success (`SuccessExitStatus=130`), so a stop or a restart never leaves the unit `failed`.
 
 ## Configuration
 
@@ -165,7 +165,7 @@ To restore:
 j3-bots service uninstall
 ```
 
-This stops the service, disables it and deletes its unit. The data directory stays. Delete `~/.j3-bots` yourself if you mean to.
+This stops the service, disables it and deletes its unit. The data directory stays, and the command names it: the one the unit ran with, which `service status` also shows. Delete it yourself if you mean to.
 
 ## What `doctor` checks
 

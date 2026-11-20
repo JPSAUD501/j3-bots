@@ -11,7 +11,7 @@ import * as Domain from "./domain.ts";
 import * as Home from "./home/Home.ts";
 import * as Http from "./http.ts";
 import * as Installation from "./installation.ts";
-import { SYSTEM_PROMPT_FILE } from "./Layout.ts";
+import { SYSTEM_PROMPT_FILE } from "./home/entries.ts";
 import * as Listener from "./listener.ts";
 import * as Sqlite from "./persistence/Sqlite.ts";
 import * as Network from "./system/Network.ts";

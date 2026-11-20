@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- NodeHttpServer takes a factory for the Node HTTP server it wraps.
+// @effect-diagnostics nodeBuiltinImport:off -- NodeHttpServer takes a factory for the Node HTTP server it wraps, whose sockets a stop must end.
 import type * as NodeHttp from "node:http";
+import type * as NodeNet from "node:net";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -96,8 +97,44 @@ const ListenError = Schema.Struct({ code: Schema.String });
 const decodeListenError = Schema.decodeUnknownOption(ListenError);
 
 /**
- * `NodeHttpServer.layer` for `use`, whose failure to listen names the port and
- * the setting to change instead of a bare `ServeError`.
+ * `NodeHttpServer.make`, with a stop that has an upper bound.
+ *
+ * `NodeHttpServer` waits for open requests only up to
+ * `gracefulShutdownTimeout`, and then waits again, without a bound, for every
+ * connection to end: one whose request never finished arriving, or a TLS
+ * connection still in its handshake, would hold the stop until the service
+ * manager kills the whole service, the engine included. So every connection
+ * is tracked from its `connection` event (which a TLS server emits for the
+ * raw socket too), and those still open once the grace period has passed are
+ * destroyed.
+ */
+export const makeServer = Effect.fn("Ports.makeServer")(function* (
+  createServer: () => NodeHttp.Server,
+  options: NodeHttpServer.Options,
+) {
+  const server = createServer();
+  const sockets = new Set<NodeNet.Socket>();
+  server.on("connection", (socket: NodeNet.Socket) => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+  });
+  const http = yield* NodeHttpServer.make(() => server, options);
+  // Finalizers run in reverse: this one before `NodeHttpServer`'s own
+  // unbounded wait. The routes served on the server are a later layer,
+  // released first, and their release is the graceful close, bounded by
+  // `gracefulShutdownTimeout`. Whatever is still open here has had it.
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      for (const socket of sockets) socket.destroy();
+    }),
+  );
+  return http;
+});
+
+/**
+ * The HTTP server for `use`, whose failure to listen names the port and the
+ * setting to change instead of a bare `ServeError`, and whose stop has an
+ * upper bound (`makeServer`).
  */
 export const listen = (
   createServer: () => NodeHttp.Server,
@@ -107,7 +144,7 @@ export const listen = (
 ) =>
   Layer.mergeAll(
     Layer.effect(HttpServer.HttpServer)(
-      NodeHttpServer.make(createServer, options).pipe(
+      makeServer(createServer, options).pipe(
         Effect.mapError(
           (error) =>
             new ListenFailed({

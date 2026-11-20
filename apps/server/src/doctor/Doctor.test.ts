@@ -142,6 +142,7 @@ const diagnoseIn = (changes: Partial<World> = {}) =>
           searchPath: world.searchPath,
           freeSpace: () => Effect.succeed(world.freeBytes),
           portState: (host, port) => Effect.succeed({ _tag: world.ports(host, port) }),
+          holdsSocket: () => Effect.die("doctor never asks who holds the admin socket"),
           findExecutable: (name, searchPath) =>
             Effect.succeed(
               Option.fromNullishOr(

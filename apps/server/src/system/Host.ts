@@ -34,6 +34,16 @@ export class Host extends Context.Service<
       name: string,
       searchPath: string,
     ) => Effect.Effect<Option.Option<string>>;
+    /**
+     * Whether process `pid` holds the Unix socket that listens at
+     * `socketPath`, as the kernel reports it in `/proc`. `None` when that
+     * cannot be told: no `/proc`, no listening socket at that path in it, or
+     * the process's descriptors unreadable.
+     */
+    readonly holdsSocket: (
+      pid: number,
+      socketPath: string,
+    ) => Effect.Effect<Option.Option<boolean>>;
   }
 >()("@j3-bots/server/system/Host") {}
 
@@ -48,6 +58,25 @@ const trialListen = (host: string, port: number) =>
     });
     return Effect.sync(() => server.close());
   });
+
+/** `__SO_ACCEPTCON`: the socket listens. */
+const LISTENING = 0x10000;
+
+/**
+ * The inodes of the Unix sockets listening at `socketPath`, from the text of
+ * `/proc/net/unix`: `Num RefCount Protocol Flags Type St Inode Path`, the path
+ * last and taking the rest of the line.
+ */
+const listeningInodes = (table: string, socketPath: string) => {
+  const inodes = new Set<string>();
+  for (const line of table.split("\n").slice(1)) {
+    const match = /^\S+\s+\S+\s+\S+\s+([0-9A-Fa-f]+)\s+\S+\s+\S+\s+(\d+) (.*)$/.exec(line);
+    if (match === null) continue;
+    const [, flags = "0", inode = "", path = ""] = match;
+    if ((Number.parseInt(flags, 16) & LISTENING) !== 0 && path === socketPath) inodes.add(inode);
+  }
+  return inodes;
+};
 
 export const layer = Layer.effect(
   Host,
@@ -98,6 +127,23 @@ export const layer = Layer.effect(
           }
         }
         return Option.none();
+      }),
+      holdsSocket: Effect.fn("Host.holdsSocket")(function* (pid: number, socketPath: string) {
+        const table = yield* fs.readFileString("/proc/net/unix").pipe(Effect.option);
+        if (Option.isNone(table)) return Option.none();
+        const inodes = listeningInodes(table.value, socketPath);
+        if (inodes.size === 0) return Option.none();
+        const descriptors = path.join("/proc", String(pid), "fd");
+        const entries = yield* fs.readDirectory(descriptors).pipe(Effect.option);
+        if (Option.isNone(entries)) return Option.none();
+        for (const entry of entries.value) {
+          const target = yield* fs.readLink(path.join(descriptors, entry)).pipe(Effect.option);
+          const inode = Option.flatMap(target, (link) =>
+            Option.fromNullishOr(/^socket:\[(\d+)\]$/.exec(link)?.[1]),
+          );
+          if (Option.isSome(inode) && inodes.has(inode.value)) return Option.some(true);
+        }
+        return Option.some(false);
       }),
     });
   }),

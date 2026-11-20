@@ -13,7 +13,8 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Semaphore from "effect/Semaphore";
 import { EngineState } from "../engine/EngineState.ts";
-import { Layout, SYSTEM_PROMPT_FILE } from "../Layout.ts";
+import { SYSTEM_PROMPT_FILE, WORKSPACE_ENTRIES } from "../home/entries.ts";
+import { Layout } from "../Layout.ts";
 import { MemoryFiles } from "../memory/MemoryFiles.ts";
 import { SettingsStore } from "../settings/SettingsStore.ts";
 import { BotStore } from "./BotStore.ts";
@@ -27,10 +28,8 @@ export const PINNED_FILE = {
 /** What bots call the operator until the operator gives a name. */
 const UNNAMED_OPERATOR = "your user";
 
-/** The workspace's instruction file for harnesses that read one (Codex). */
-const AGENTS_FILE = "AGENTS.md";
-
-const FOLDERS = [".j3", "memory/log", "skills", "files"] as const;
+const { generated, instructions: AGENTS_FILE, memory: MEMORY, skills, files } = WORKSPACE_ENTRIES;
+const FOLDERS = [generated, `${MEMORY}/log`, skills, files] as const;
 
 /**
  * A bot's workspace folder and the files J3 Bots generates in it
@@ -74,6 +73,7 @@ export const layer = Layer.effect(
       Option.match(document, { onNone: () => "", onSome: ({ text }) => text });
 
     const writeFile = Effect.fn("Workspaces.writeFile")(function* (target: string, text: string) {
+      yield* layout.writable(target);
       const aside = `${target}.j3-writing`;
       yield* fs.makeDirectory(path.dirname(target), { recursive: true });
       yield* fs.writeFileString(aside, text);
@@ -113,7 +113,7 @@ export const layer = Layer.effect(
     });
 
     const provision = Effect.fn("Workspaces.provision")(function* (botId: BotId) {
-      const workspace = layout.workspace(botId);
+      const workspace = yield* layout.writable(layout.workspace(botId)).pipe(Effect.orDie);
       for (const folder of FOLDERS) {
         yield* fs
           .makeDirectory(path.join(workspace, folder), { recursive: true })
@@ -128,7 +128,11 @@ export const layer = Layer.effect(
       const workspace = layout.workspace(botId);
       const targets = everything
         ? [workspace]
-        : [layout.botMemory(botId), path.join(workspace, ".j3"), path.join(workspace, AGENTS_FILE)];
+        : [
+            layout.botMemory(botId),
+            path.join(workspace, generated),
+            path.join(workspace, AGENTS_FILE),
+          ];
       for (const target of targets) {
         yield* fs.remove(target, { recursive: true, force: true }).pipe(Effect.orDie);
       }

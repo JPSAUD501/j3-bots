@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// @effect-diagnostics nodeBuiltinImport:off -- Whether another program holds the engine's port takes a trial listen from node:net.
+import * as NodeNet from "node:net";
 import type { EngineStatus } from "@j3-bots/contracts";
 import { ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -28,7 +30,8 @@ import { ORCHESTRATION_PROTOCOL, pin } from "./Pin.ts";
 // J3 Bots' credential. An engine J3 Bots started and then lost track of (the
 // server crashed and left it running) is found by the environment id recorded
 // when it started, and stopped before a new one starts. Any other program on
-// the port is left alone.
+// the port, whether or not it answers HTTP, is left alone: the engine waits
+// for the port, as `port-in-use`, instead of being started to fail there.
 
 type UnavailableReason = Extract<EngineStatus["state"], { readonly _tag: "unavailable" }>["reason"];
 
@@ -96,6 +99,23 @@ const probe = Effect.fn("engine.probe")(function* (port: number) {
     Effect.orElseSucceed((): Probe => ({ _tag: "down" })),
   );
 });
+
+/**
+ * Whether another program holds `port` on loopback, where the engine listens:
+ * a trial listen there fails with `EADDRINUSE`. Any other failure (the port
+ * may not be bound by this user, say) is the engine's to report when it starts.
+ */
+const portTaken = (port: number) =>
+  Effect.callback<boolean>((resume) => {
+    const server = NodeNet.createServer();
+    server.once("error", (error: NodeJS.ErrnoException) =>
+      resume(Effect.succeed(error.code === "EADDRINUSE")),
+    );
+    server.listen({ host: "127.0.0.1", port, exclusive: true }, () => {
+      server.close(() => resume(Effect.succeed(false)));
+    });
+    return Effect.sync(() => server.close());
+  });
 
 /** The engine process the supervisor last started, recorded under `<home>/j3/`. */
 const EngineProcess = Schema.Struct({ pid: Schema.Int, environmentId: Schema.String });
@@ -243,8 +263,13 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
   const runOnce = Effect.scoped(
     Effect.gen(function* () {
       const found = yield* check;
-      if (found._tag === "up" && !(yield* stopLostEngine(found.environmentId))) {
-        // Another program holds the port: never ours to stop.
+      // Another program holds the port, an engine of another home or anything
+      // that is not an engine at all: never ours to stop.
+      const taken =
+        found._tag === "up"
+          ? !(yield* stopLostEngine(found.environmentId))
+          : yield* portTaken(input.port);
+      if (taken) {
         yield* SubscriptionRef.set(state, { _tag: "unavailable", reason: "port-in-use" });
         yield* Effect.logWarning(`Port ${input.port} is taken; the engine waits for it.`);
         return true;

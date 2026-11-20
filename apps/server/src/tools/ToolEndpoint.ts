@@ -14,11 +14,6 @@ import { BotTools } from "./BotTools.ts";
 import { TOOL_CALL_PATH, ToolCallRequest, ToolCallResponse } from "./protocol.ts";
 
 /**
- * Where the `j3` bridges forward bot tool calls. It listens on loopback only,
- * whatever `J3_HOST` is: the bridges run on this machine, started by the
- * engine's harnesses, and nothing else may reach it.
- */
-/**
  * Any program on this machine can reach the endpoint, so a body is read only
  * this far. The largest argument a tool takes is a memory file of 200,000
  * characters, under 1.2 MB as escaped JSON.
@@ -27,6 +22,11 @@ const TOOL_CALL_BODY_LIMIT = 4 * 1024 * 1024;
 
 const decodeToolCall = Schema.decodeUnknownEffect(Schema.fromJsonString(ToolCallRequest));
 
+/**
+ * Where the `j3` bridges forward bot tool calls. It listens on loopback only,
+ * whatever `J3_HOST` is: the bridges run on this machine, started by the
+ * engine's harnesses, and nothing else may reach it.
+ */
 export const routes = HttpRouter.add(
   "POST",
   TOOL_CALL_PATH,
