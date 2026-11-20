@@ -6,17 +6,15 @@ const SEEN_ID = "data-seen-id";
 
 /**
  * How much of an entry must show for it to count as seen: half of it, or, for
- * an entry taller than the timeline, half the timeline's height.
+ * an entry taller than the timeline, half the timeline's height. Such an entry
+ * shows that much exactly when it crosses the timeline's middle line, which
+ * one observer of that line sees at any height; a share of the entry could
+ * not, as the share it takes grows with the entry.
  */
 const SEEN_SHARE = 0.5;
 
-/** Reports often enough as an entry scrolls in for a tall one to cross its share. */
-const THRESHOLDS = Array.from({ length: 21 }, (_, step) => step / 20);
-
-const meaningful = (change: IntersectionObserverEntry) =>
-  change.intersectionRatio >= SEEN_SHARE ||
-  (change.rootBounds !== null &&
-    change.intersectionRect.height >= change.rootBounds.height * SEEN_SHARE);
+/** The timeline narrowed to its middle line. */
+const MIDDLE_LINE = "-50% 0px -50% 0px";
 
 /** A modal dialog hides what it covers from assistive technology; the details pane makes it inert. */
 const covered = (element: Element) => element.closest('[inert], [aria-hidden="true"]') !== null;
@@ -31,28 +29,45 @@ export function useNewestSeen(root: HTMLElement | null, onSeen: (id: string) => 
   const report = useEffectEvent(onSeen);
   useEffect(() => {
     if (root === null) return;
-    const showing = new Set<Element>();
+    const halfShown = new Set<Element>();
+    const onMiddle = new Set<Element>();
     const check = () => {
       if (document.visibilityState !== "visible" || covered(root)) return;
-      const newest = [...root.querySelectorAll(`[${SEEN_ID}]`)].findLast((entry) =>
-        showing.has(entry),
+      const newest = [...root.querySelectorAll(`[${SEEN_ID}]`)].findLast(
+        (entry) => halfShown.has(entry) || onMiddle.has(entry),
       );
       const id = newest?.getAttribute(SEEN_ID) ?? null;
       if (id !== null) report(id);
     };
-    const onScreen = new IntersectionObserver(
-      (changes) => {
-        for (const change of changes) {
-          if (change.isIntersecting && meaningful(change)) showing.add(change.target);
-          else showing.delete(change.target);
-        }
-        check();
-      },
-      { root, threshold: THRESHOLDS },
-    );
+    /** Keeps `meeting` to the entries that meet `rule` as `options` observes them. */
+    const follow = (
+      meeting: Set<Element>,
+      options: IntersectionObserverInit,
+      rule: (change: IntersectionObserverEntry) => boolean,
+    ) =>
+      new IntersectionObserver(
+        (changes) => {
+          for (const change of changes) {
+            if (rule(change)) meeting.add(change.target);
+            else meeting.delete(change.target);
+          }
+          check();
+        },
+        { root, ...options },
+      );
+    const observers = [
+      follow(
+        halfShown,
+        { threshold: [0, SEEN_SHARE] },
+        (change) => change.isIntersecting && change.intersectionRatio >= SEEN_SHARE,
+      ),
+      follow(onMiddle, { rootMargin: MIDDLE_LINE }, (change) => change.isIntersecting),
+    ];
     // Observing an entry twice is a no-op, so every change observes whatever is new.
     const observeEntries = () => {
-      for (const entry of root.querySelectorAll(`[${SEEN_ID}]`)) onScreen.observe(entry);
+      for (const entry of root.querySelectorAll(`[${SEEN_ID}]`)) {
+        for (const observer of observers) observer.observe(entry);
+      }
     };
     observeEntries();
     const arrivals = new MutationObserver(observeEntries);
@@ -66,7 +81,7 @@ export function useNewestSeen(root: HTMLElement | null, onSeen: (id: string) => 
     });
     document.addEventListener("visibilitychange", check);
     return () => {
-      onScreen.disconnect();
+      for (const observer of observers) observer.disconnect();
       arrivals.disconnect();
       covers.disconnect();
       document.removeEventListener("visibilitychange", check);
