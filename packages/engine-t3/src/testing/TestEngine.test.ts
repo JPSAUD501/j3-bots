@@ -352,7 +352,7 @@ describe("TestEngine", () => {
       const control = yield* TestEngine.TestEngineControl;
       const sessionId = yield* openSession;
       const turnId = turnOf(yield* engine.dispatch({ ...start("dispatch-1"), sessionId }));
-      yield* control.startBackgroundWork({ sessionId, turnId, kind: "wakes" });
+      yield* control.startBackgroundWork({ sessionId, turnId });
       yield* control.finishTurn({ sessionId, turnId, outcome: { _tag: "completed" } });
       const before = yield* control.backgroundWorkRunning(sessionId);
 

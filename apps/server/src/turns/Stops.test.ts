@@ -2,7 +2,7 @@
 import { assert, it } from "@effect/vitest";
 import { type BotId, WorkStepId } from "@j3-bots/contracts";
 import type { SessionId } from "@j3-bots/engine-t3";
-import { type BackgroundKind, TestEngineControl } from "@j3-bots/engine-t3/testing";
+import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -308,7 +308,7 @@ it.effect(
       const session = yield* engineSession(bot.id);
       yield* sendToBot(bot.id, "Watch the build.");
       const watching = yield* nextTurn(bot.id);
-      yield* control.startBackgroundWork({ sessionId: session, turnId: watching, kind: "wakes" });
+      yield* control.startBackgroundWork({ sessionId: session, turnId: watching });
       yield* control.finishTurn({
         sessionId: session,
         turnId: watching,
@@ -382,7 +382,7 @@ it.effect("sends a fresh round after the engine refused a Stop while its work st
     const session = yield* engineSession(bot.id);
     yield* sendToBot(bot.id, "Watch the build.");
     const watching = yield* nextTurn(bot.id);
-    yield* control.startBackgroundWork({ sessionId: session, turnId: watching, kind: "wakes" });
+    yield* control.startBackgroundWork({ sessionId: session, turnId: watching });
     yield* control.finishTurn({
       sessionId: session,
       turnId: watching,
@@ -902,14 +902,10 @@ it.effect("sends a fresh round after a restart once an acknowledged round's grac
 );
 
 /** Starts a turn that leaves background work running, and ends it. */
-const leaveBackgroundWork = Effect.fn(function* (
-  botId: BotId,
-  session: SessionId,
-  kind: BackgroundKind = "wakes",
-) {
+const leaveBackgroundWork = Effect.fn(function* (botId: BotId, session: SessionId) {
   const control = yield* TestEngineControl;
   const watching = yield* nextTurn(botId);
-  yield* control.startBackgroundWork({ sessionId: session, turnId: watching, kind });
+  yield* control.startBackgroundWork({ sessionId: session, turnId: watching });
   yield* control.finishTurn({
     sessionId: session,
     turnId: watching,
@@ -975,68 +971,6 @@ it.effect("settles a Stop whose session is lost after the engine refused a round
       FROM stop_targets WHERE round = 0
     `;
     assert.deepStrictEqual(refused, { refused: 1, sent: 0 });
-  }).pipe(Effect.provide(TestDomain.layer)),
-);
-
-// A background shell or a monitor on Claude Code: a task of the provider,
-// which wakes nothing and which the engine's stop interrupts.
-it.effect("stops the background work a room's turn left running when the room is archived", () =>
-  Effect.gen(function* () {
-    const control = yield* TestEngineControl;
-    const bot = yield* createBot("Ana");
-    const session = yield* engineSession(bot.id);
-    const room = yield* roomOf(bot.id);
-    yield* sendInRoom(bot.id, room.id, "Start the dev server.");
-    yield* leaveBackgroundWork(bot.id, session, "provider-task");
-
-    yield* (yield* Rooms).update({
-      commandId: command(),
-      roomId: room.id,
-      changes: { archived: true },
-    });
-
-    yield* stopSettled;
-    assert.isFalse(yield* control.backgroundWorkRunning(session));
-  }).pipe(Effect.provide(TestDomain.layer)),
-);
-
-it.effect("leaves the bot's private work alone when a room whose work has ended is archived", () =>
-  Effect.gen(function* () {
-    const control = yield* TestEngineControl;
-    const sql = yield* SqlClient.SqlClient;
-    const bot = yield* createBot("Ana");
-    const session = yield* engineSession(bot.id);
-    const room = yield* roomOf(bot.id);
-    yield* sendInRoom(bot.id, room.id, "Watch the deploy.");
-    const watching = yield* leaveBackgroundWork(bot.id, session);
-    yield* control.endBackgroundWork(session);
-
-    // A private turn ends with nothing pending: what the room's turn left has ended.
-    yield* sendToBot(bot.id, "Draft the notes.");
-    const drafting = yield* nextTurn(bot.id, watching);
-    yield* control.finishTurn({
-      sessionId: session,
-      turnId: drafting,
-      outcome: { _tag: "completed" },
-    });
-    yield* turnEnded(bot.id);
-
-    // The room is archived while the bot works privately: nothing of the room's is left.
-    yield* sendToBot(bot.id, "Then file them.");
-    const filing = yield* nextTurn(bot.id, drafting);
-    yield* (yield* Rooms).update({
-      commandId: command(),
-      roomId: room.id,
-      changes: { archived: true },
-    });
-    const [recorded] = yield* sql<{ readonly n: number }>`SELECT COUNT(*) AS n FROM stops`;
-    assert.deepStrictEqual(recorded, { n: 0 });
-    yield* control.finishTurn({
-      sessionId: session,
-      turnId: filing,
-      outcome: { _tag: "completed" },
-    });
-    yield* turnEnded(bot.id);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

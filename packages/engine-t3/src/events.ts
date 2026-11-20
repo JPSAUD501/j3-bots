@@ -189,10 +189,8 @@ export const EndedTurn = Schema.Struct({
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   finishedAt: Schema.DateTimeUtc,
   outcome: TurnOutcome,
-  /** As on `turn-finished`. */
-  backgroundWork: Schema.Boolean,
   /** As on `turn-finished`, as it stands now. */
-  backgroundPending: Schema.Boolean,
+  backgroundWork: Schema.Boolean,
   /** As on `turn-finished`, as it stands now: null once it ran or was dropped. */
   continuation: Schema.NullOr(PendingContinuation),
   /** Every step, in its final state. */
@@ -394,16 +392,6 @@ export const SessionEvent = Schema.Union([
      * `background` turn.
      */
     backgroundWork: Schema.Boolean,
-    /**
-     * The session has background work the engine counts as pending once this
-     * turn ended, by the rule its stop applies: what a `stop` sent while no
-     * turn runs interrupts. Unlike `backgroundWork`, it is the session's
-     * (the engine does not ask which turn started the work) and counts work
-     * that never wakes the session: any live command, a dynamic tool not
-     * marked persistent, a task the provider reports, such as a background
-     * shell or a monitor on Claude Code.
-     */
-    backgroundPending: Schema.Boolean,
     /**
      * The engine will resume this turn on its own as a `continuation` turn.
      * Until that turn starts, or `continuation-dropped` arrives, the turn's

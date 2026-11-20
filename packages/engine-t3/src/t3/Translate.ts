@@ -434,15 +434,20 @@ const latestRun = (mirror: Mirror) =>
     .at(-1);
 
 /**
- * The engine's rule for background work once `latest` is the session's latest
- * run (**Read** at `db51b67`, `orchestrationV2PendingBackgroundWork.ts`,
+ * Whether the session has background work the engine counts as pending: what
+ * `thread.stop` interrupts in a session whose latest run has ended, an
+ * interrupt that lands only after the stop answered. The engine's own rule
+ * (**Read** at `db51b67`, `orchestrationV2PendingBackgroundWork.ts`,
  * `derivePendingBackgroundWork`, L261-330, and `pendingBackgroundTurnItems`,
- * L243-258): with that run settled, a task the active provider thread
- * reports, or a live command, dynamic tool or subagent item outside a
- * rolled-back run. The rule is the session's: it does not ask which run
- * started the work.
+ * L243-258), as `Orchestrator.ts`, `dispatchThreadStop` (L14141-14178),
+ * applies it: with no run active and the latest run settled, a task the
+ * active provider thread reports, or a live command, dynamic tool or subagent
+ * item outside a rolled-back run. The rule is the session's: it does not ask
+ * which run started the work.
  */
-const pendingOnceLatest = (mirror: Mirror, latest: Run | undefined): boolean => {
+export const backgroundWorkPending = (mirror: Mirror): boolean => {
+  if ([...mirror.runs.values()].some((run) => ACTIVE_RUN.has(run.status))) return false;
+  const latest = latestRun(mirror);
   if (latest === undefined || !SETTLED_FOR_BACKGROUND.has(latest.status)) return false;
   const active = mirror.thread?.activeProviderThreadId ?? null;
   const tasks = [...mirror.providerThreads.values()].some(
@@ -463,17 +468,6 @@ const pendingOnceLatest = (mirror: Mirror, latest: Run | undefined): boolean => 
     )
   );
 };
-
-/**
- * Whether the session has background work the engine counts as pending: what
- * `thread.stop` interrupts in a session whose latest run has ended, an
- * interrupt that lands only after the stop answered. The engine's own rule
- * (`pendingOnceLatest`), as `Orchestrator.ts`, `dispatchThreadStop`
- * (L14141-14178), applies it: only with no run active.
- */
-export const backgroundWorkPending = (mirror: Mirror): boolean =>
-  ![...mirror.runs.values()].some((run) => ACTIVE_RUN.has(run.status)) &&
-  pendingOnceLatest(mirror, latestRun(mirror));
 
 /** A run that executed, as the engine counts it: neither queued nor cancelled before it started. */
 const wasExecuted = (run: Run) =>
@@ -1381,7 +1375,6 @@ export const diff = (mirror: Mirror, view: View, now: DateTime.Utc): ReadonlyArr
           cause: causeOf(mirror, run),
           outcome: outcomeOf(mirror, run),
           backgroundWork: hasBackgroundWork(mirror, run),
-          backgroundPending: pendingOnceLatest(mirror, run),
           continuation,
         });
       }
@@ -1455,7 +1448,6 @@ export const replacement = (
         finishedAt: run.completedAt ?? run.startedAt ?? run.requestedAt,
         outcome: outcomeOf(mirror, run),
         backgroundWork: hasBackgroundWork(mirror, run),
-        backgroundPending: pendingOnceLatest(mirror, run),
         continuation: continuationOf(mirror, run, now),
         steps: stepsOf(mirror, run),
       });

@@ -138,15 +138,16 @@ export const layer = Layer.effect(
       const at = timeText(yield* DateTime.now);
       const landing = mayLand(sql);
       // Every session of the bot with work in scope that may be in the engine:
-      // a turn running, or one that ended leaving background work running,
-      // which its audience's Stop ends too. A bot Stop reaches every live
-      // session too, for background work the server does not see.
+      // a turn running, or a dispatch the engine has or may yet take. A bot
+      // Stop reaches every live session too, for background work the server
+      // does not see. A room's Stop reaches no background work its turns
+      // left: room turns, and the Stop of their work, arrive with M3
+      // (`docs/architecture/server.md`, Rooms).
       const sessions = yield* sql<{ readonly id: string }>`
         SELECT s.id FROM sessions s WHERE s.bot_id = ${botId} AND s.lost_at IS NULL AND (
           ${scope._tag === "bot" ? sql`(s.retired_at IS NULL AND s.engine_session_id IS NOT NULL) OR` : sql``}
           EXISTS (
-            SELECT 1 FROM turns WHERE session_id = s.id
-              AND (finished_at IS NULL OR background_work = 1) AND ${inScope(scope)}
+            SELECT 1 FROM turns WHERE session_id = s.id AND finished_at IS NULL AND ${inScope(scope)}
           )
           OR EXISTS (
             SELECT 1 FROM dispatches WHERE session_id = s.id AND ${inScope(scope)} AND (

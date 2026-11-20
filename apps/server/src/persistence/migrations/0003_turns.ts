@@ -8,10 +8,10 @@ import * as SqlClient from "effect/sql/SqlClient";
 // retries and how its delivery closed, when a Stop round was issued,
 // acknowledged, observed or refused and its deadlines, a session the engine
 // no longer has or refused as busy, a held queue's resume, the turns a
-// session's events showed and the background work they left, their work steps
-// and `j3` tool calls, host speech already delivered, open cards, an
-// operator's answer still to reach the engine, and a submitted secret whose
-// answer was lost. See `docs/architecture/server.md`.
+// session's events showed, their work steps and `j3` tool calls, host speech
+// already delivered, open cards, an operator's answer still to reach the
+// engine, and a submitted secret whose answer was lost. See
+// `docs/architecture/server.md`.
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -224,10 +224,7 @@ export default Effect.gen(function* () {
   // Every turn the session's events showed starting, with the audience it was
   // admitted with, applied once by its engine id: a replacement that repeats
   // a turn changes nothing. `work_fold_entry_id` is the fold in the bot's
-  // conversation, written with the turn's first step. `background_work` says
-  // the session had background work the engine's stop counts when the turn
-  // ended, until a later turn ends, or the session goes idle, with none
-  // pending: a Stop of the turn's audience still has that work to end.
+  // conversation, written with the turn's first step.
   yield* sql`
     CREATE TABLE turns (
       session_id TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
@@ -239,11 +236,9 @@ export default Effect.gen(function* () {
       finished_at TEXT,
       outcome_json TEXT,
       work_fold_entry_id TEXT REFERENCES entries (id) ON DELETE SET NULL,
-      background_work INTEGER NOT NULL DEFAULT 0 CHECK (background_work IN (0, 1)),
       PRIMARY KEY (session_id, engine_turn_id),
       CHECK (audience = 'room' OR audience_room_id IS NULL),
-      CHECK ((finished_at IS NULL) = (outcome_json IS NULL)),
-      CHECK (background_work = 0 OR finished_at IS NOT NULL)
+      CHECK ((finished_at IS NULL) = (outcome_json IS NULL))
     )
   `;
   yield* sql`CREATE INDEX turns_running ON turns (session_id) WHERE finished_at IS NULL`;

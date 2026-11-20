@@ -286,17 +286,16 @@ export class TestEngineControl extends Context.Service<
       readonly turnId: TurnId;
       readonly text: string;
     }) => Effect.Effect<HostSpeechId>;
-    /** The turn leaves background work of this kind running when it ends. */
+    /**
+     * The turn leaves background work running when it ends, which wakes the
+     * session when it ends, as a delegated task or a command whose completion
+     * wakes it: its turn reports it as `backgroundWork`. The wake it brings is
+     * `startEngineTurn`.
+     */
     readonly startBackgroundWork: (input: {
       readonly sessionId: SessionId;
       readonly turnId: TurnId;
-      readonly kind: BackgroundKind;
     }) => Effect.Effect<void>;
-    /**
-     * The background work every turn of the session left running ends, and
-     * wakes nothing: a wake it brings is `startEngineTurn`.
-     */
-    readonly endBackgroundWork: (sessionId: SessionId) => Effect.Effect<void>;
     /** Whether background work some turn of the session started still runs. */
     readonly backgroundWorkRunning: (sessionId: SessionId) => Effect.Effect<boolean>;
     /**
@@ -346,15 +345,6 @@ export class TestEngineControl extends Context.Service<
   }
 >()("@j3-bots/engine-t3/testing/TestEngine/TestEngineControl") {}
 
-/**
- * Background work a turn leaves running. `wakes`: work that wakes the session
- * when it ends, as a delegated task or a command whose completion wakes it;
- * its turn reports it as `backgroundWork`. `provider-task`: a task the
- * provider reports and the engine's stop interrupts, which wakes nothing, as
- * a background shell or a monitor on Claude Code.
- */
-export type BackgroundKind = "wakes" | "provider-task";
-
 interface SteerRecord {
   readonly key: IdempotencyKey;
   /** Turns waiting when the steer was sent: a follow-up turn runs after these. */
@@ -380,7 +370,8 @@ interface TurnRecord {
     readonly turnId: TurnId;
     readonly resolution: RequestResolution;
   }>;
-  background: BackgroundKind | null;
+  /** It left background work running, which a Stop ends. */
+  background: boolean;
   ended: {
     readonly outcome: TurnOutcome;
     readonly at: DateTime.Utc;
@@ -616,7 +607,7 @@ const make = Effect.gen(function* () {
       toolCalls: new Map(),
       hostSpeech: [],
       closedRequests: [],
-      background: null,
+      background: false,
       ended: null,
     };
     session.turns.set(turn.turnId, turn);
@@ -625,7 +616,7 @@ const make = Effect.gen(function* () {
 
   /** Whether background work some turn of the session left still runs: what the engine's stop counts. */
   const backgroundRuns = (session: SessionRecord) =>
-    [...session.turns.values()].some((turn) => turn.background !== null);
+    [...session.turns.values()].some((turn) => turn.background);
 
   const closeRequest = (
     session: SessionRecord,
@@ -779,8 +770,7 @@ const make = Effect.gen(function* () {
       turnId: turn.turnId,
       cause: turn.cause,
       outcome,
-      backgroundWork: turn.background === "wakes",
-      backgroundPending: backgroundRuns(session),
+      backgroundWork: turn.background,
       continuation,
     }));
     for (const settlement of settlements) emit(session, at, settlement);
@@ -863,7 +853,7 @@ const make = Effect.gen(function* () {
     at: DateTime.Utc,
     cancels: ReadonlyArray<TurnId>,
   ) => {
-    for (const turn of session.turns.values()) turn.background = null;
+    for (const turn of session.turns.values()) turn.background = false;
     holdWaiting(session, at);
     for (const turn of session.turns.values()) dropContinuation(session, turn, at);
     const cancelled = session.waiting.filter((turnId) => cancels.includes(turnId));
@@ -883,8 +873,7 @@ const make = Effect.gen(function* () {
   const stoppable = (session: SessionRecord) =>
     session.running !== null ||
     [...session.turns.values()].some(
-      (turn) =>
-        turn.background !== null || (turn.ended !== null && turn.ended.continuation !== null),
+      (turn) => turn.background || (turn.ended !== null && turn.ended.continuation !== null),
     );
 
   const retire = (session: SessionRecord, at: DateTime.Utc) => {
@@ -925,8 +914,7 @@ const make = Effect.gen(function* () {
           startedAt: turn.startedAt,
           finishedAt: turn.ended.at,
           outcome: turn.ended.outcome,
-          backgroundWork: turn.background === "wakes",
-          backgroundPending: backgroundRuns(session),
+          backgroundWork: turn.background,
           continuation: turn.ended.continuation,
           steps,
         });
@@ -1627,17 +1615,11 @@ const make = Effect.gen(function* () {
         return speech.speechId;
       }),
 
-    startBackgroundWork: ({ sessionId, turnId, kind }) =>
+    startBackgroundWork: ({ sessionId, turnId }) =>
       Effect.gen(function* () {
         const session = yield* existingSession(sessionId);
         const turn = yield* runningTurn(session, turnId);
-        turn.background = kind;
-      }),
-
-    endBackgroundWork: (sessionId) =>
-      Effect.gen(function* () {
-        const session = yield* existingSession(sessionId);
-        for (const turn of session.turns.values()) turn.background = null;
+        turn.background = true;
       }),
 
     backgroundWorkRunning: (sessionId) => Effect.map(existingSession(sessionId), backgroundRuns),

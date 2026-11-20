@@ -258,14 +258,6 @@ const providerThread = (taskIds: ReadonlyArray<string>) =>
     createdAt: at,
     updatedAt: at,
   });
-/** What the turn's `turn-finished` says of background work, from the events `diff` made. */
-const backgroundAtEnd = (events: ReadonlyArray<{ readonly _tag: string }>) =>
-  events.flatMap((event) =>
-    "backgroundPending" in event && "backgroundWork" in event
-      ? [{ backgroundWork: event.backgroundWork, backgroundPending: event.backgroundPending }]
-      : [],
-  );
-
 describe("backgroundWorkPending", () => {
   // The engine's rule (**Read** at `db51b67`, `derivePendingBackgroundWork`).
   it("counts live work left by an ended run, as the engine's stop does", () => {
@@ -297,29 +289,6 @@ describe("backgroundWorkPending", () => {
     // A task only the provider thread reports.
     applyEvent(mirror, providerThread(["task-1"]));
     assert.isTrue(backgroundWorkPending(mirror));
-  });
-
-  // Claude Code reports a background shell or a monitor as a task of its
-  // provider thread, which never wakes the session (**Read** at `db51b67`,
-  // `ClaudeAdapterV2.ts`, L3799-3876).
-  it("tells on a turn's end of work the engine's stop counts, also work that wakes nothing", () => {
-    const mirror = emptyMirror();
-    applyEvent(mirror, run("running", 1));
-    const { view } = replacement(mirror, false, at);
-    applyEvent(mirror, providerThread(["task-1"]));
-    applyEvent(mirror, run("completed", 1));
-    assert.deepStrictEqual(backgroundAtEnd(diff(mirror, view, at)), [
-      { backgroundWork: false, backgroundPending: true },
-    ]);
-
-    // The task ended: the next turn's end tells nothing is pending.
-    applyEvent(mirror, providerThread([]));
-    applyEvent(mirror, run("running", 2));
-    diff(mirror, view, at);
-    applyEvent(mirror, run("completed", 2));
-    assert.deepStrictEqual(backgroundAtEnd(diff(mirror, view, at)), [
-      { backgroundWork: false, backgroundPending: false },
-    ]);
   });
 
   // The stream sends a dynamic tool input above 16 KiB as `{summary, truncated}`
