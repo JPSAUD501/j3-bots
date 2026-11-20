@@ -7,7 +7,7 @@ import * as Option from "effect/Option";
 import { Command } from "effect/cli";
 import * as NetAddress from "effect/net/NetAddress";
 import { AdminClient } from "../admin/AdminClient.ts";
-import type { ListenerStatus } from "../admin/protocol.ts";
+import { type ListenerStatus, PAIRING_CAVEAT } from "../admin/protocol.ts";
 import * as ServerConfig from "../config.ts";
 import { isPrivateAddress, Network } from "../system/Network.ts";
 import { refuse, userFacing } from "./errors.ts";
@@ -17,10 +17,6 @@ const VIRTUAL_INTERFACE = /^(docker|veth|br-|virbr|cni|flannel|cali|podman)/;
 
 const NOT_RUNNING =
   "The server is not running, and pairing codes live in the running server. Start it with `systemctl --user start j3-bots` (or `j3-bots serve`), then run `j3-bots pair` again.";
-
-/** What a code can be entered in, in this release: nothing yet. */
-export const PAIRING_CAVEAT =
-  "In this release the web client cannot complete pairing yet: a code from `j3-bots pair` has nowhere to be entered.";
 
 /**
  * Where a new device reaches the running server, as it listens. Over HTTPS a
