@@ -54,9 +54,12 @@ export type Delivery =
    */
   | { readonly _tag: "start"; readonly freshContext: boolean }
   /**
-   * Add the message to the open turn `turnId`, so it can change course. If that
-   * turn is ending, or its provider can take no steer at all, the engine makes
-   * the message a turn of its own instead: see `DispatchDisposition`.
+   * Add the message to the running turn `turnId`, so it can change course. If
+   * that turn has completed or is completing, or its provider can take no steer
+   * at all, the engine makes the message a turn of its own instead: see
+   * `DispatchDisposition`. It refuses (`DispatchRejected`) a steer into a turn
+   * that waits behind another, or that ended any way but completing. **Read**
+   * at `db51b67`, `resolveMessageDispatchIntent` and `dispatchSteerIntoRun`.
    */
   | { readonly _tag: "steer"; readonly turnId: TurnId };
 
@@ -90,8 +93,8 @@ export type DispatchDisposition =
    */
   | { readonly _tag: "steered"; readonly turnId: TurnId }
   /**
-   * A `steer` became turn `turnId` of its own: the target turn was already
-   * ending, or its provider can neither steer nor restart. It starts at once if
+   * A `steer` became turn `turnId` of its own: the target turn had completed or
+   * was completing, or its provider can neither steer nor restart. It starts at once if
    * the session is idle, or after the running turn otherwise. **Read** at
    * `db51b67`.
    */
