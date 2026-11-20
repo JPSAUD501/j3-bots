@@ -170,16 +170,23 @@ const openingMessageOf = (mirror: Mirror, run: Run): string | undefined => {
 };
 
 /**
- * A steer the engine keeps aside until its target run's provider turn starts.
- * It is no turn while it waits: when the target starts, the engine cancels it
+ * A run that carries a steer the engine keeps aside until its target run's
+ * provider turn starts. When the target starts, the engine cancels the carrier
  * and steers its message into the target (**Read** at `db51b67`,
- * `Orchestrator.ts`, `queued-message.promote-to-steer`). If the target ends
- * first, it runs as the steer's follow-up turn.
+ * `Orchestrator.ts`, `queued-message.promote-to-steer`); when a Stop reaches
+ * the target first, the steer is dropped. Either way the carrier is no turn,
+ * and its cancellation is the steer's, reported as the steer's settlement. It
+ * becomes a turn only as the steer's follow-up: when the target ended first,
+ * any way but Stop.
  */
-const isWaitingSteer = (mirror: Mirror, run: Run) => {
+const isSteerCarrier = (mirror: Mirror, run: Run) => {
   if (run.steerWhenReadyRunId === undefined || hasStarted(run)) return false;
   const target = mirror.runs.get(run.steerWhenReadyRunId);
-  return target !== undefined && !isEnded(target);
+  if (target === undefined || !isEnded(target) || wasStopped(mirror, target)) return true;
+  // Promoted: the engine steered the carrier's message into the target.
+  return [...mirror.items.values()].some(
+    (item) => isSteerItem(item) && item.messageId === run.userMessageId,
+  );
 };
 
 const causeOf = (mirror: Mirror, run: Run): TurnCause => {
@@ -266,6 +273,10 @@ const continuationOf = (mirror: Mirror, run: Run): PendingContinuation | null =>
   }
   return { resumesAt };
 };
+
+/** Whether a usage-limit continuation of an ended run is still to come. */
+export const hasPendingContinuation = (mirror: Mirror) =>
+  [...mirror.runs.values()].some((run) => continuationOf(mirror, run) !== null);
 
 /** Whether a continuation run for `run` exists: its pending continuation ran. */
 const wasContinued = (mirror: Mirror, run: Run) =>
@@ -626,18 +637,20 @@ type Settlement =
   | { readonly _tag: "requeued"; readonly followUp: Run };
 
 /**
- * How a steer settled, once its target run has ended and the engine has
- * decided. **Read** at `db51b67`, `Orchestrator.ts`, `requeueUnreadSteers`:
- * the run took the steer if its item completed; Stop marks an unread steer's
- * item cancelled; any other end queues the steer as a run of its own, opened
- * with the steer's message. A steer still kept aside when its target ends is
- * dropped by a Stop and otherwise runs as that follow-up itself.
+ * How a steer settled, once its target run has ended, from the engine's own
+ * record of it. **Read** at `db51b67`, `Orchestrator.ts`, `requeueUnreadSteers`:
+ * once the run settles, the engine takes a steer whose item is still pending as
+ * unread. It marks it cancelled if Stop reached the run, and otherwise queues
+ * it as a run of its own, opened with the steer's message. Any other item
+ * state is the engine's claim that the run took it: see `steered` in
+ * `events.ts` for the provider paths that claim it without proof. A steer still
+ * kept aside when its target ends is dropped by a Stop and otherwise runs as
+ * that follow-up itself.
  */
 const settlementOf = (mirror: Mirror, steer: SteerRecord): Settlement | undefined => {
   const target = mirror.runs.get(steer.target);
   if (target === undefined || !isEnded(target)) return undefined;
   if (steer.item !== undefined) {
-    if (steer.item.status === "completed") return { _tag: "read" };
     if (steer.item.status === "cancelled") return { _tag: "dropped" };
     const followUp = runsInOrder(mirror).find(
       (run) =>
@@ -645,7 +658,10 @@ const settlementOf = (mirror: Mirror, steer: SteerRecord): Settlement | undefine
         run.steerWhenReadyRunId === undefined &&
         openingMessageOf(mirror, run) === steer.messageId,
     );
-    return followUp === undefined ? undefined : { _tag: "requeued", followUp };
+    if (followUp !== undefined) return { _tag: "requeued", followUp };
+    // Still unread: the engine has not decided yet.
+    if (LIVE_ITEM.has(steer.item.status)) return undefined;
+    return { _tag: "read" };
   }
   if (steer.waiting === undefined) return undefined;
   if (
@@ -721,6 +737,21 @@ interface TurnView {
   continuation: boolean;
 }
 
+/**
+ * The session's queue hold as the subscriber knows it.
+ * - `none`: no hold, or no turn waiting.
+ * - `reported`: held, and a `queue-held` said so.
+ * - `released`: released after a report, with turns still waiting and none
+ *   started or finished since.
+ * - `unreported`: held again right after a release, with no turn started or
+ *   finished in between: the engine's answer to a resume while a replaced
+ *   provider session still runs background work. `background` is the
+ *   background work live at that moment.
+ */
+type HoldView =
+  | { readonly state: "none" | "reported" | "released" }
+  | { readonly state: "unreported"; readonly background: ReadonlySet<string> };
+
 /** What the subscriber has been told. Copied, never shared, between cursors. */
 export interface View {
   readonly turns: Map<string, TurnView>;
@@ -730,6 +761,7 @@ export interface View {
   readonly toolCalls: Map<string, "open" | "closed">;
   /** Steers whose settlement was reported, by message id. */
   readonly steers: Set<string>;
+  hold: HoldView;
 }
 
 const emptyView = (): View => ({
@@ -739,6 +771,7 @@ const emptyView = (): View => ({
   requests: new Map(),
   toolCalls: new Map(),
   steers: new Set(),
+  hold: { state: "none" },
 });
 
 export const copyView = (view: View): View => ({
@@ -748,7 +781,72 @@ export const copyView = (view: View): View => ({
   requests: new Map(view.requests),
   toolCalls: new Map(view.toolCalls),
   steers: new Set(view.steers),
+  hold: view.hold,
 });
+
+/** Turn items of background work still running: what a replaced provider session may be busy with. */
+const liveBackground = (mirror: Mirror): ReadonlySet<string> =>
+  new Set(
+    [...mirror.items.values()].flatMap((item) =>
+      LIVE_ITEM.has(item.status) &&
+      ((item.type === "command_execution" && item.completionWake === "always") ||
+        item.type === "subagent")
+        ? [item.id]
+        : [],
+    ),
+  );
+
+/**
+ * One `queue-held` per hold, and the view moved on. The engine holds a queue
+ * by marking each waiting run, so a hold begins when the first is marked.
+ * `moved` says a turn started or finished in this batch.
+ *
+ * The engine answers a resume with a new hold, before any turn starts, while a
+ * replaced provider session still runs background work (**Read** at `db51b67`,
+ * `Orchestrator.ts`, `startNextQueuedRun`). The engine learns that from the
+ * provider process (`sessionHasBackgroundWork`), which is not on the wire, so
+ * such a hold is reported once some of the background work live when it began
+ * has ended, or a turn starts or finishes, whichever comes first. A turn
+ * starting while the queue stays held reports the hold again too: whatever the
+ * server resumed did not release it.
+ */
+const holdEventsOf = (
+  mirror: Mirror,
+  view: View,
+  moved: { readonly started: boolean; readonly finished: boolean },
+): ReadonlyArray<EventBody> => {
+  const held = isQueueHeld(mirror);
+  const report = (): ReadonlyArray<EventBody> => {
+    view.hold = { state: "reported" };
+    return [{ _tag: "queue-held" }];
+  };
+  const anyMoved = moved.started || moved.finished;
+  const hold = view.hold;
+  switch (hold.state) {
+    case "none":
+      return held ? report() : [];
+    case "reported":
+      if (!held) view.hold = { state: queuedRuns(mirror).length > 0 ? "released" : "none" };
+      return held && moved.started ? report() : [];
+    case "released":
+      if (!held) {
+        if (anyMoved || queuedRuns(mirror).length === 0) view.hold = { state: "none" };
+        return [];
+      }
+      if (anyMoved) return report();
+      view.hold = { state: "unreported", background: liveBackground(mirror) };
+      return [];
+    case "unreported": {
+      if (!held) {
+        view.hold = { state: "none" };
+        return [];
+      }
+      const live = liveBackground(mirror);
+      const ended = [...hold.background].some((id) => !live.has(id));
+      return anyMoved || ended ? report() : [];
+    }
+  }
+};
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 /** A session event before it gets its cursor and time. */
@@ -777,7 +875,7 @@ export const diff = (mirror: Mirror, view: View): ReadonlyArray<EventBody> => {
     const turnId = turnIdOf(run);
     const turn = view.turns.get(run.id) ?? { started: false, finished: false, continuation: false };
     view.turns.set(run.id, turn);
-    if (isWaitingSteer(mirror, run)) continue;
+    if (isSteerCarrier(mirror, run)) continue;
     if (!turn.finished) {
       if (!turn.started && hasStarted(run)) {
         turn.started = true;
@@ -852,6 +950,12 @@ export const diff = (mirror: Mirror, view: View): ReadonlyArray<EventBody> => {
       events.push(steerEventOf(steer, settled));
     }
   }
+  events.push(
+    ...holdEventsOf(mirror, view, {
+      started: events.some((event) => event._tag === "turn-started"),
+      finished: events.some((event) => event._tag === "turn-finished"),
+    }),
+  );
   return events;
 };
 
@@ -883,7 +987,7 @@ export const replacement = (
       !ended ||
       (since !== null &&
         (run.completedAt === null || DateTime.isGreaterThanOrEqualTo(run.completedAt, since)));
-    if (!listed || isWaitingSteer(mirror, run)) continue;
+    if (!listed || isSteerCarrier(mirror, run)) continue;
     if (!ended) {
       openTurns.push({
         turnId,
@@ -942,6 +1046,8 @@ export const replacement = (
       hostSpeech,
       closedRequests,
       steers: steerSettlements,
+      // Stands for a hold the fresh view reports.
+      queueHeld: view.hold.state === "reported",
     },
     view,
   };
@@ -955,18 +1061,9 @@ export const activeTurn = (mirror: Mirror): Option.Option<TurnId> =>
 export const queuedRuns = (mirror: Mirror) =>
   runsInOrder(mirror).filter((run) => run.status === "queued" || run.status === "preparing");
 
-/** Whether the engine holds the session's queue: its waiting runs do not start on their own. */
-export const isQueueHeld = (mirror: Mirror) =>
-  queuedRuns(mirror).some((run) => run.queueHeld === true);
-
 /**
- * Whether a Stop made the hold: the engine's stop holds the queue after the run
- * it reached, which carries the interrupt request (**Read** at `db51b67`,
- * `Orchestrator.ts`, `thread.stop`).
+ * Whether the engine holds the session's queue: its waiting runs do not start
+ * on their own. The engine marks each waiting run, not the thread (**Read** at
+ * `db51b67`, `OrchestrationV2Run.queueHeld`).
  */
-export const isHeldByStop = (mirror: Mirror) => {
-  const lastRan = runsInOrder(mirror)
-    .filter((run) => hasStarted(run))
-    .at(-1);
-  return lastRan !== undefined && wasStopped(mirror, lastRan);
-};
+const isQueueHeld = (mirror: Mirror) => queuedRuns(mirror).some((run) => run.queueHeld === true);

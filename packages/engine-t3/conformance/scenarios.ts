@@ -112,11 +112,8 @@ const steer = Effect.fnUntraced(function* (key: IdempotencyKey, act: Act, turnId
 const turnLevel = (events: ReadonlyArray<SessionEvent>) =>
   events.filter((event) => event._tag !== "step").map((event) => event._tag);
 
-/** The turn a first submission's disposition names. A repeat names none. */
-export const turnOf = (disposition: DispatchDisposition): TurnId => {
-  if (disposition._tag === "applied-earlier") return assert.fail("a first dispatch named no turn");
-  return disposition.turnId;
-};
+/** The turn a disposition names. */
+export const turnOf = (disposition: DispatchDisposition): TurnId => disposition.turnId;
 
 /** Dispatches, and returns the turn the disposition names. */
 const dispatchTurn = Effect.fnUntraced(function* (
@@ -131,20 +128,20 @@ const finished = (events: Watch, turnId: TurnId) =>
   events.next("turn-finished", (event) => event.turnId === turnId);
 
 export const scenarios = (it: Methods) => {
-  it.effect("applies a dispatch key once", () =>
+  it.effect("applies a dispatch key once, and accepts a resend into its own busy turn", () =>
     Effect.gen(function* () {
       const engine = yield* Engine;
       const { sessionId, events, key } = yield* session("key-once");
       const dispatch = { ...(yield* start(key("work"), { _tag: "work" })), sessionId };
 
       const first = yield* engine.dispatch(dispatch);
-      const again = yield* engine.dispatch(dispatch);
       const started = yield* events.next("turn-started");
+      // The session is busy with this key's own turn: a resend is still accepted.
+      yield* engine.redispatch(dispatch);
       yield* engine.stop({ key: key("key-once-stop"), sessionId });
       yield* finished(events, turnOf(first));
 
       assert.strictEqual(first._tag, "started");
-      assert.deepStrictEqual(again, { _tag: "applied-earlier" });
       assert.deepStrictEqual(started.cause, { _tag: "dispatch", key: dispatch.key });
       // One turn for the key, however often it was sent.
       assert.lengthOf(
@@ -233,7 +230,7 @@ export const scenarios = (it: Methods) => {
     }),
   );
 
-  it.effect("steers a turn the engine has only just begun", () =>
+  it.effect("steers a turn the engine has only just begun, with no turn for the carrier", () =>
     Effect.gen(function* () {
       const engine = yield* Engine;
       const bench = yield* Bench;
@@ -257,6 +254,13 @@ export const scenarios = (it: Methods) => {
       assert.deepStrictEqual(disposition, { _tag: "steered", turnId: running.turnId });
       assert.deepStrictEqual([read.key, read.turnId], [steering.key, running.turnId]);
       assert.deepStrictEqual(end.outcome, { _tag: "completed" });
+      // A steer the engine kept aside rode on a run of its own: never a turn.
+      const token = SyncToken.make("conformance-early-steer");
+      yield* engine.synchronize({ sessionId, token });
+      yield* events.next("synchronized", (event) => event.token === token);
+      assert.isTrue(
+        events.seen.every((event) => !("turnId" in event) || event.turnId === running.turnId),
+      );
     }),
   );
 
@@ -300,7 +304,7 @@ export const scenarios = (it: Methods) => {
 
       const late = { ...(yield* steer(key("late"), { _tag: "reply" }, running.turnId)), sessionId };
       const first = yield* engine.dispatch(late).pipe(Effect.flip);
-      const again = yield* engine.dispatch(late).pipe(Effect.flip);
+      const again = yield* engine.redispatch(late).pipe(Effect.flip);
       const token = SyncToken.make("conformance-rejected-steer");
       yield* engine.synchronize({ sessionId, token });
       yield* events.next("synchronized", (event) => event.token === token);

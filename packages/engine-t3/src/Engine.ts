@@ -42,11 +42,11 @@ import type {
  */
 export type Delivery =
   /**
-   * Start a turn. The adapter refuses with `SessionBusy`, sending nothing, when
-   * it already sees a turn running or waiting in the session. That check is
-   * best effort: the engine queues a start that reaches it behind an active
-   * turn, including one the engine started itself, and the dispatch is then
-   * `queued`.
+   * Start a turn. A first `dispatch` is refused with `SessionBusy`, sending
+   * nothing, when the adapter already sees a turn running or waiting in the
+   * session. That check is best effort: the engine queues a start that reaches
+   * it behind an active turn, including one the engine started itself, and the
+   * dispatch is then `queued`.
    *
    * `freshContext` starts it in a new provider conversation with none of the
    * session's earlier context, for a fresh start or a session rebuilt from
@@ -64,9 +64,11 @@ export type Delivery =
   | { readonly _tag: "steer"; readonly turnId: TurnId };
 
 /**
- * How the engine accepted a dispatch. It records acceptance only: delivery is
- * the `turn-started` event whose cause is `dispatch` with the dispatch's key,
- * or, for `steered`, the `steered` event.
+ * How the engine accepted a first `dispatch`. It records acceptance only:
+ * delivery is the `turn-started` event whose cause is `dispatch` with the
+ * dispatch's key, or, for `steered`, the `steered` event. A `redispatch` has
+ * no disposition: the engine's reply to a resend is `{sequence}` whether or not
+ * it applied the key just then.
  */
 export type DispatchDisposition =
   /** A `start` began turn `turnId`. */
@@ -79,10 +81,8 @@ export type DispatchDisposition =
   | { readonly _tag: "queued"; readonly turnId: TurnId }
   /**
    * A `steer` was taken for turn `turnId`. How it settles is decided when that
-   * turn ends, and reported then: `steered` (the turn took it), `steer-dropped`
-   * (Stop ended the turn first) or `steer-requeued` (the turn ended any other
-   * way without taking it, and the engine queued it as a follow-up turn).
-   * **Read** at `db51b67`, `requeueUnreadSteers`.
+   * turn ends, from the engine's own record of the steer, and reported then:
+   * `steered`, `steer-dropped` or `steer-requeued` (see those events).
    *
    * The same holds when the engine cannot steer `turnId` at once: the turn has
    * not started its provider turn yet (the engine keeps the message aside and
@@ -98,14 +98,26 @@ export type DispatchDisposition =
    * the session is idle, or after the running turn otherwise. **Read** at
    * `db51b67`.
    */
-  | { readonly _tag: "new-turn"; readonly turnId: TurnId }
+  | { readonly _tag: "new-turn"; readonly turnId: TurnId };
+
+/** What the engine is given for one dispatch. */
+export interface DispatchInput {
+  readonly key: IdempotencyKey;
+  readonly sessionId: SessionId;
   /**
-   * The key was applied by an earlier submission whose reply was lost, and the
-   * engine does not say how it was accepted. The events report delivery as for
-   * any disposition: a turn whose cause is the key, or a steer settlement for
-   * it.
+   * Exactly what the model receives, as if the user typed it: the wake
+   * envelope is the caller's, stored before the first send.
    */
-  | { readonly _tag: "applied-earlier" };
+  readonly text: string;
+  /**
+   * Checked first with `attachmentLimitViolation`. The staged ids are the one
+   * part of the input that may change between sends of a key: a file whose
+   * `usableUntil` has passed is staged again before any send, first or not,
+   * because the engine claims the files before it looks at the key.
+   */
+  readonly attachments: ReadonlyArray<DispatchAttachment>;
+  readonly delivery: Delivery;
+}
 
 /** A file the message carries, staged first with `Engine.stageAttachment`. */
 export interface DispatchAttachment {
@@ -120,10 +132,11 @@ export interface DispatchAttachment {
 export interface StagedAttachment {
   readonly id: EngineAttachmentId;
   /**
-   * Until when a dispatch can name it. A staged file no dispatch has named is
-   * removed by the engine after that; stage it again (**Read** at `db51b67`,
-   * `apps/server/src/attachmentStore.ts`: unreferenced uploads are swept after
-   * 24 hours; the adapter reports half of that).
+   * Until when a dispatch can name it, first send or resend. The engine
+   * removes an upload no message names after 24 hours, and a claimed one stays
+   * as the source of copies until then (**Read** at `db51b67`,
+   * `apps/server/src/attachmentStore.ts`); the adapter reports half of that.
+   * Past it, stage the file again before the next send.
    */
   readonly usableUntil: DateTime.Utc;
 }
@@ -214,18 +227,17 @@ export interface EngineOptions {
  *   never counts as "not applied".
  * - Methods that take a `key` apply it once, even across engine and server
  *   restarts: calling again with the same key and input applies nothing new.
- *   After `EngineIndeterminate`, that is how the caller learns what happened.
+ *   After `EngineIndeterminate`, that is how the caller learns what happened;
+ *   for a dispatch, the second call is `redispatch`.
  * - Methods without a key are idempotent by nature, except where noted.
  * - It never returns engine identifiers other than the opaque ids in `ids.ts`.
  *
  * The engine holds a session's queue of waiting turns after an engine restart,
  * a provider error, a model or provider change while the replaced provider
- * session still runs background work, and a Stop.
- * The adapter resumes every held queue of a session it streams events for,
- * once for each time the engine holds it: if the engine holds it again in
- * answer to the resume, it stays held until the engine's next change of hold.
- * It never resumes a hold a Stop made, nor any hold of a session while one of
- * its `stop` calls has not returned. The server never resumes a queue itself.
+ * session still runs background work, and a Stop. Each time the queue becomes
+ * held, the session's events carry one `queue-held`; the server answers it with
+ * `resumeQueue`, through its per-session gate. The adapter never resumes a
+ * queue on its own.
  *
  * `@j3-bots/engine-t3/testing` has an in-memory implementation that keeps this
  * contract, for testing the server without an engine.
@@ -287,36 +299,41 @@ export class Engine extends Context.Service<
     readonly retireSession: (sessionId: SessionId) => Effect.Effect<void, EngineDown>;
 
     /**
-     * Sends a message into a session. The text is exactly what the model
-     * receives, as if the user typed it: the wake envelope is the caller's, and
-     * the caller stores it before this call so a retry sends the same text.
+     * Sends a message into a session for the first time: the caller has never
+     * sent this key. The result is acceptance only (see `DispatchDisposition`).
      *
-     * The result is acceptance only (see `DispatchDisposition`).
+     * - `SessionBusy`, `SessionNotFound`: the adapter refused it before
+     *   sending anything. The key was never sent.
+     * - `DispatchRejected`: the engine refused it and applied nothing.
+     * - `EngineIndeterminate`: anything else, including an error the adapter
+     *   cannot identify. Resolve it with `redispatch`, never with `dispatch`.
      *
-     * After `EngineIndeterminate`, call again with the same key and the same
-     * input: the answer to the repeat is the answer for the key. The engine
-     * applies a key once and does not compare the input, so a different input
-     * is never applied. Name staged files that are still usable: the engine
-     * claims them before it checks the key, so stage them again once
-     * `usableUntil` has passed (a copy it claims for a repeat stays unused).
-     * **Read** at `db51b67`, `ThreadMessageIntake.dispatchCommand`.
-     *
-     * - `DispatchRejected`: the engine refused it; nothing was applied, and the
-     *   key is spent.
-     * - `SessionNotFound`: nothing was applied; the key is spent.
-     * - `SessionBusy`: nothing was sent.
+     * Calling it twice with one key is a defect: once a send may have reached
+     * the engine, every later send of the key is a `redispatch`.
      */
-    readonly dispatch: (input: {
-      readonly key: IdempotencyKey;
-      readonly sessionId: SessionId;
-      readonly text: string;
-      /** Checked first with `attachmentLimitViolation`. */
-      readonly attachments: ReadonlyArray<DispatchAttachment>;
-      readonly delivery: Delivery;
-    }) => Effect.Effect<
+    readonly dispatch: (
+      input: DispatchInput,
+    ) => Effect.Effect<
       DispatchDisposition,
       EngineDown | SessionNotFound | SessionBusy | DispatchRejected
     >;
+
+    /**
+     * Sends a key again after a send whose answer was lost, with the same
+     * text, files and delivery (staged ids may be fresh: see `DispatchInput`).
+     * It skips every local check, the busy check included, since the turn
+     * that makes the session busy may be this key's own: it always reaches
+     * the engine with the same command id.
+     *
+     * Success means the engine holds the key as accepted. It says nothing of
+     * how: the engine answers a resend with `{sequence}` whether it applied
+     * the key now or earlier, so the events say where it went, as for any
+     * dispatch. `DispatchRejected` means it was refused and nothing was
+     * applied. `EngineIndeterminate` leaves it open, as before.
+     */
+    readonly redispatch: (
+      input: DispatchInput,
+    ) => Effect.Effect<void, EngineDown | DispatchRejected>;
 
     /**
      * Uploads a file for a later dispatch. The engine mints the id; the caller
@@ -334,19 +351,25 @@ export class Engine extends Context.Service<
     }) => Effect.Effect<StagedAttachment, EngineDown>;
 
     /**
-     * The operator's Stop, for one session. Ends the running turn and the
-     * background work the engine can reach (delegated tasks), cancels every turn
-     * waiting in the engine's queue (they end `cancelled`; the engine's own stop
-     * only holds them), and drops every steer the agent had not read
-     * (`steer-dropped`). Open requests expire. Does nothing to an idle session.
+     * The operator's Stop, for one session: the engine's own stop, which
+     * interrupts the running turn and the background work the engine can
+     * reach (delegated tasks) and holds the queue, then a cancel for each turn
+     * waiting in the engine's queue. It also disarms a pending usage-limit
+     * continuation. Does nothing to an idle session.
      *
-     * It takes several engine commands: the engine's own stop, which ends the
-     * running turn and holds the queue, then a cancel for each waiting turn. A
-     * message that reaches the session in between can release the hold and
-     * start a waiting turn the Stop then misses (**Read** at `db51b67`: a
-     * user's message releases held turns), so send the session no dispatch
-     * until `stop` has returned success. A command the engine refuses as moot
-     * (the turn already ended) counts as done.
+     * Success acknowledges the commands; it does not mean they took effect.
+     * The engine interrupts a provider turn asynchronously (**Read** at
+     * `db51b67`, `Orchestrator.ts`, `dispatchThreadStop`: the interrupt is an
+     * effect run after the commit). The events say when they did: the running
+     * turn's `turn-finished`, a `turn-finished` with `cancelled` for each
+     * waiting turn, `steer-dropped` for each untaken steer and
+     * `continuation-dropped` for a disarmed continuation.
+     *
+     * A message the engine counts as a user's releases the hold Stop put on
+     * the queue, so a dispatch sent between the stop and the cancels starts a
+     * turn the cancels miss (**Read**, `sentByUserFromClient`). The caller
+     * sends a session nothing while a Stop of it is unsettled. A command the
+     * engine refuses as moot (the turn already ended) counts as done.
      *
      * `key` is derived from the Stop command and the session, and stored with
      * the Stop's targets before this call. Wakes J3 Bots holds for the bot are
@@ -355,6 +378,18 @@ export class Engine extends Context.Service<
     readonly stop: (input: {
       readonly key: IdempotencyKey;
       readonly sessionId: SessionId;
+    }) => Effect.Effect<void, EngineDown | SessionNotFound>;
+
+    /**
+     * Releases the session's held queue, in answer to the `queue-held` event
+     * whose cursor is `hold`, which is also its key: a retry sends the same
+     * command. If the engine holds the queue again in answer, as it does while
+     * a replaced provider session still runs background work, the events
+     * carry no new `queue-held` until that cause has passed.
+     */
+    readonly resumeQueue: (input: {
+      readonly sessionId: SessionId;
+      readonly hold: EventCursor;
     }) => Effect.Effect<void, EngineDown | SessionNotFound>;
 
     /**
