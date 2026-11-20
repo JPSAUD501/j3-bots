@@ -27,8 +27,9 @@ const code = "rounded-md bg-code-background px-2.5 py-2 font-mono text-xs leadin
 
 /**
  * A bot asking to do one exact thing its permission mode does not allow
- * outright. While it waits, everything the action will do is on the card, so
- * nobody approves from a summary; a decided card folds that away.
+ * outright. While it waits, the card shows one block: everything the action
+ * will do when the bot spelled it out, else the action itself, so nobody
+ * approves from a summary. A decided card shows the action and folds the rest.
  */
 export function ApprovalCard({
   entry,
@@ -55,42 +56,53 @@ export function ApprovalCard({
     );
   return (
     <CardFrame icon={icon} title={t(kindTitle[entry.kind])} attention={pending} entryId={entry.id}>
-      <code className={cn(code, "block break-all whitespace-pre-wrap")}>{entry.action}</code>
-      {entry.detail !== null &&
-        (pending ? (
-          // Focusable, so the keyboard can scroll a long plan before deciding.
-          <pre
-            role="region"
-            aria-label={t("approval.detail")}
-            tabIndex={0}
-            className={cn(
-              code,
-              "max-h-64 overflow-auto whitespace-pre-wrap outline-none focus-visible:outline-2 focus-visible:outline-accent",
-            )}
-          >
-            {entry.detail}
-          </pre>
-        ) : (
-          <Collapsible.Root>
-            <Collapsible.Trigger
-              className={cn(
-                "group inline-flex items-center gap-1 rounded-sm text-xs text-muted-foreground hover:text-foreground",
-                touchTarget,
-              )}
-            >
-              <ChevronRightIcon
-                className="size-3.5 transition-transform duration-(--duration-state) group-data-panel-open:rotate-90"
-                aria-hidden
-              />
-              {t("approval.showDetail")}
-            </Collapsible.Trigger>
-            <Collapsible.Panel className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-(--duration-slow) ease-standard data-ending-style:h-0 data-starting-style:h-0">
-              <pre className={cn(code, "mt-2 max-h-64 overflow-auto whitespace-pre-wrap")}>
-                {entry.detail}
-              </pre>
-            </Collapsible.Panel>
-          </Collapsible.Root>
-        ))}
+      {pending ? (
+        // One block: the whole plan when the bot gave one, else the action itself. Focusable,
+        // so the keyboard can scroll a long plan before deciding.
+        <pre
+          role="region"
+          aria-label={t("approval.detail")}
+          tabIndex={0}
+          className={cn(
+            code,
+            "max-h-64 overflow-auto whitespace-pre-wrap wrap-anywhere outline-none focus-visible:outline-2 focus-visible:outline-accent",
+          )}
+        >
+          {entry.detail ?? entry.action}
+        </pre>
+      ) : (
+        <>
+          <code className={cn(code, "block whitespace-pre-wrap wrap-anywhere")}>
+            {entry.action}
+          </code>
+          {entry.detail !== null && (
+            <Collapsible.Root>
+              <Collapsible.Trigger
+                className={cn(
+                  "group inline-flex items-center gap-1 rounded-sm text-xs text-muted-foreground hover:text-foreground",
+                  touchTarget,
+                )}
+              >
+                <ChevronRightIcon
+                  className="size-3.5 transition-transform duration-(--duration-state) group-data-panel-open:rotate-90"
+                  aria-hidden
+                />
+                {t("approval.showDetail")}
+              </Collapsible.Trigger>
+              <Collapsible.Panel className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-(--duration-slow) ease-standard data-ending-style:h-0 data-starting-style:h-0">
+                <pre
+                  className={cn(
+                    code,
+                    "mt-2 max-h-64 overflow-auto whitespace-pre-wrap wrap-anywhere",
+                  )}
+                >
+                  {entry.detail}
+                </pre>
+              </Collapsible.Panel>
+            </Collapsible.Root>
+          )}
+        </>
+      )}
       {pending ? (
         <div className="flex flex-wrap justify-end gap-2">
           <Button size="sm" disabled={submitting} onClick={() => onDecide("deny")}>

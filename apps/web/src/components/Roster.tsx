@@ -71,7 +71,7 @@ export function Roster({ items, selected, rowLink, onNewBot, onNewRoom, footer }
       onKeyDown={moveFocus}
     >
       <div className="flex items-center gap-2 px-3 pt-3 pb-2">
-        <label className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md bg-muted px-2.5 text-muted-foreground focus-within:outline-2 focus-within:outline-accent">
+        <label className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md bg-muted px-2.5 text-muted-foreground focus-within:outline-2 focus-within:outline-accent pointer-coarse:h-(--layout-touch-target)">
           <SearchIcon className="size-3.5 shrink-0" aria-hidden />
           <input
             type="search"

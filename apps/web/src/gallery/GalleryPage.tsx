@@ -351,15 +351,10 @@ function CardsSection() {
           ))}
         </div>
       </Labeled>
-      <Labeled label="Approval: a command showing everything it will do, a file change, a decision on its way, allowed (its detail folded), denied, expired">
+      <Labeled label="Approval: a command showing everything it will do, a file change, a decision on its way, allowed (everything it will do, folded away), denied, expired">
         <div className="flex flex-col gap-3">
-          {variants.approvals.map((entry, index) => (
-            <ApprovalCard
-              key={entry.id}
-              entry={entry}
-              onDecide={nothing}
-              submitting={index === 2}
-            />
+          {variants.approvals.map(({ entry, submitting }) => (
+            <ApprovalCard key={entry.id} entry={entry} onDecide={nothing} submitting={submitting} />
           ))}
         </div>
       </Labeled>
@@ -601,6 +596,12 @@ const engines = {
 
 const created = () => Promise.resolve();
 
+/** A bot just created: its first turn has started and nothing is in its conversation yet. */
+const speakingFirst = {
+  ...team.bots.moss,
+  state: { _tag: "thinking", since: SAMPLE_NOW, stalled: false },
+} as const;
+
 function EmptyStatesSection() {
   return (
     <Section title="Empty states">
@@ -634,7 +635,7 @@ function EmptyStatesSection() {
           <QuietConversation bot={team.bots.moss} />
         </Frame>
         <Frame label="A new bot, about to speak first" width={340} height={360}>
-          <QuietConversation bot={team.bots.iris} />
+          <QuietConversation bot={speakingFirst} />
         </Frame>
       </div>
     </Section>
@@ -687,11 +688,12 @@ function ShellSection() {
           <ShellFrame initial={scout} details />
         </Frame>
         <Frame
-          label="Tablet, 900 px: the details lie over the conversation, which is inert until they close"
+          label="Tablet, 900 px: the name opens the details as a modal dialog over the conversation; Escape, the scrim or the close button returns to the title"
           width={900}
           height={640}
         >
-          <ShellFrame initial={{ _tag: "bot", botId: ids.atlas }} details />
+          {/* Closed at first: a dialog open on load would hold the whole gallery's focus. */}
+          <ShellFrame initial={{ _tag: "bot", botId: ids.atlas }} />
         </Frame>
         <div className="flex flex-wrap gap-6">
           <Frame label="Phone, 390 px: the roster" width={390} height={760}>
@@ -700,8 +702,12 @@ function ShellSection() {
           <Frame label="Phone: a conversation" width={390} height={760}>
             <ShellFrame initial={{ _tag: "room", roomId: ids.newsletter }} />
           </Frame>
-          <Frame label="Phone: details" width={390} height={760}>
-            <ShellFrame initial={scout} details />
+          <Frame
+            label="Phone: a bot waiting on an approval; its name opens the details as a dialog"
+            width={390}
+            height={760}
+          >
+            <ShellFrame initial={{ _tag: "bot", botId: ids.atlas }} />
           </Frame>
         </div>
       </div>

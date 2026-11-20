@@ -4,7 +4,7 @@ import { CheckIcon, CopyIcon } from "lucide-react";
 import { useId, useRef, useState, type ReactNode } from "react";
 import { useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
-import { timeInSentence } from "../lib/time";
+import { usageLimitText } from "../presentation/roster";
 import { BotAvatar } from "./BotAvatar";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
@@ -119,12 +119,7 @@ function ProviderRow({ provider }: { provider: ProviderStatus }) {
       case "sign-in-required":
         return [t("provider.signInRequired"), "text-waiting"];
       case "limited":
-        return [
-          status.resetsAt === null
-            ? t("provider.limited")
-            : t("provider.limitedUntil", { when: timeInSentence(status.resetsAt, ctx) }),
-          "text-blocked",
-        ];
+        return [usageLimitText(status.resetsAt, ctx), "text-blocked"];
       case "unavailable":
         return [t("provider.unavailable"), "text-muted-foreground"];
     }
@@ -145,16 +140,31 @@ function ProviderRow({ provider }: { provider: ProviderStatus }) {
   );
 }
 
-/** A shell command on one line, scrolled rather than wrapped, with a button that copies it. */
+/**
+ * A shell command, wrapped so it reads in full on any width, with a button
+ * pinned to its top corner that copies it. Where the page has no clipboard
+ * (served over plain HTTP on the local network) or the browser refuses, the
+ * button selects the command so it can be copied by hand.
+ */
 function CommandLine({ command, copyLabel }: { command: string; copyLabel: string }) {
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
   const codeRef = useRef<HTMLElement>(null);
+  const select = () => {
+    if (codeRef.current) window.getSelection()?.selectAllChildren(codeRef.current);
+  };
+  const copy = () => {
+    if (!("clipboard" in navigator)) {
+      select();
+      return;
+    }
+    navigator.clipboard.writeText(command).then(() => setCopied(true), select);
+  };
   return (
-    <span className="flex items-center gap-1 rounded-md bg-code-background ps-2.5">
+    <span className="flex items-start gap-1 rounded-md bg-code-background ps-2.5">
       <code
         ref={codeRef}
-        className="min-w-0 flex-1 overflow-x-auto py-1.5 font-mono text-xs whitespace-pre"
+        className="min-w-0 flex-1 py-1.5 font-mono text-xs break-all whitespace-pre-wrap"
       >
         {command}
       </code>
@@ -162,15 +172,7 @@ function CommandLine({ command, copyLabel }: { command: string; copyLabel: strin
         variant="ghost-muted"
         size="icon-sm"
         aria-label={copied ? t("firstRun.signIn.copied") : copyLabel}
-        onClick={() => {
-          navigator.clipboard.writeText(command).then(
-            () => setCopied(true),
-            // Without clipboard access, select the command so it can be copied by hand.
-            () => {
-              if (codeRef.current) window.getSelection()?.selectAllChildren(codeRef.current);
-            },
-          );
-        }}
+        onClick={copy}
       >
         {copied ? <CheckIcon /> : <CopyIcon />}
       </Button>
@@ -238,7 +240,8 @@ export function NoSelection({ nextShortcut }: { nextShortcut: string }) {
     <Centered>
       <Ensemble />
       <Heading title={t("empty.noSelection.title")} body={t("empty.noSelection.body")} />
-      <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+      {/* A keyboard shortcut means nothing on a touch screen. */}
+      <p className="hidden items-center gap-1.5 text-xs text-muted-foreground pointer-fine:flex">
         <Kbd>{nextShortcut}</Kbd>
         {t("empty.noSelection.shortcut")}
       </p>

@@ -38,6 +38,12 @@ describe("scheduleInWords", () => {
     expect(words("0 7 1 * *", context("2026-11-20T17:40:00Z", "pt-BR"), "Asia/Tokyo")).toBe(
       "Todo mês no dia 1, às 07:00 (Horário Padrão do Japão)",
     );
+    expect(words("15 * * * *", en, "Asia/Kolkata")).toBe(
+      "Every hour at minute 15 (India Standard Time)",
+    );
+    expect(words("15 * * * *", context("2026-11-20T17:40:00Z", "pt-BR"), "Asia/Kolkata")).toBe(
+      "Toda hora, no minuto 15 (Horário Padrão da Índia)",
+    );
     // An interval is the same everywhere.
     expect(words("*/30 * * * *", en, "Europe/Lisbon")).toBe("Every 30 minutes");
   });

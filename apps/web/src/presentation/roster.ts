@@ -9,15 +9,20 @@ import type {
   RosterItem,
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
-import { activityTime, millisBetween, shortDuration, type TimeContext } from "../lib/time";
+import { millisBetween, shortDuration, timeInSentence, type TimeContext } from "../lib/time";
 
 export interface PresentationContext extends TimeContext {
   /** A bot's display name, or null if it no longer exists. */
   readonly botName: (id: BotId) => string | null;
 }
 
-/** How a line of status is colored. Waiting and blocked are always worded too. */
-export type LineTone = "default" | "muted" | "waiting" | "blocked";
+/**
+ * How a line of status is drawn. `default` is what a bot is doing or last
+ * said; `secondary` a standing fact, such as its title or a room's members;
+ * `empty` stands in for a value that is absent. Waiting and blocked are
+ * always worded too.
+ */
+export type LineTone = "default" | "secondary" | "empty" | "waiting" | "blocked";
 
 export interface StatusLine {
   readonly text: string;
@@ -30,6 +35,18 @@ const firstLine = (text: string) =>
     .replace(/\s+/g, " ")
     .trim();
 
+/**
+ * A reached usage limit, with when it resets when that is known: one sentence
+ * for a bot, its conversation and the provider list, with the day whenever the
+ * reset is not today.
+ */
+export function usageLimitText(resetsAt: DateTime.Utc | null, ctx: TimeContext): string {
+  const { t } = ctx.i18n;
+  return resetsAt === null
+    ? t("failure.usageLimit")
+    : t("failure.usageLimitUntil", { when: timeInSentence(resetsAt, ctx) });
+}
+
 function failureText(
   failure: FailureClass,
   retryAt: DateTime.Utc | null,
@@ -38,9 +55,7 @@ function failureText(
   const { t } = ctx.i18n;
   switch (failure) {
     case "usage-limit":
-      return retryAt === null
-        ? t("failure.usageLimit")
-        : t("failure.usageLimitUntil", { time: activityTime(retryAt, ctx) });
+      return usageLimitText(retryAt, ctx);
     case "provider-error":
       return t("failure.providerError");
     case "permission-error":
@@ -172,7 +187,7 @@ export function rosterLine(item: RosterItem, ctx: PresentationContext): StatusLi
         text: previewSummary(lastEntry, ctx, { inRoom: item._tag === "room", current: false }),
         tone: "default",
       }
-    : { text: t("roster.noMessages"), tone: "muted" };
+    : { text: t("roster.noMessages"), tone: "empty" };
 }
 
 /** The line under a bot's name in its conversation: what it is doing now. */
@@ -193,7 +208,7 @@ export function presenceLine(bot: Bot, ctx: PresentationContext): StatusLine | n
     case "blocked":
       return { text: failureText(state.failure, state.retryAt, ctx), tone: "blocked" };
     case "idle":
-      return bot.profile.title === "" ? null : { text: bot.profile.title, tone: "muted" };
+      return bot.profile.title === "" ? null : { text: bot.profile.title, tone: "secondary" };
   }
 }
 

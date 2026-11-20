@@ -159,6 +159,13 @@ function QuestionFields({
   const { t } = useI18n();
   const promptId = useId();
   const picked = draft?.optionIds ?? [];
+  // Typed text goes with a chosen option, not instead of it, and the field says so.
+  const textLabel =
+    question.options.length === 0
+      ? t("question.typeAnswer")
+      : picked.length > 0
+        ? t("question.addNote")
+        : t("question.typeInstead");
   const optionClass = cn(
     optionRow,
     "group/option hover:bg-muted data-checked:border-foreground/60 data-checked:bg-muted data-disabled:hover:bg-transparent",
@@ -215,10 +222,8 @@ function QuestionFields({
           value={draft?.text ?? ""}
           disabled={disabled}
           onChange={(event) => onChange({ text: event.currentTarget.value })}
-          placeholder={
-            question.options.length > 0 ? t("question.typeInstead") : t("question.typeAnswer")
-          }
-          aria-label={question.options.length > 0 ? t("question.typeInstead") : question.prompt}
+          placeholder={textLabel}
+          aria-label={question.options.length > 0 ? textLabel : question.prompt}
           className="field-sizing-content min-h-9 resize-none rounded-md border border-input bg-surface px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:min-h-11"
         />
       )}

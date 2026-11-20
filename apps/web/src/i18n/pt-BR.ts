@@ -23,7 +23,7 @@ export const ptBR: Catalog = {
   "presence.stalled": "Sem atividade há {duration}",
 
   "failure.usageLimit": "Limite de uso atingido",
-  "failure.usageLimitUntil": "Limite de uso atingido até {time}",
+  "failure.usageLimitUntil": "Limite de uso atingido, renova {when}",
   "failure.providerError": "O provedor retornou um erro",
   "failure.permissionError": "O provedor precisa de um novo login",
   "failure.engineUnavailable": "Não foi possível alcançar o motor",
@@ -70,6 +70,7 @@ export const ptBR: Catalog = {
   "question.pending": "Precisa da sua resposta",
   "question.typeAnswer": "Digite uma resposta",
   "question.typeInstead": "Ou digite uma resposta",
+  "question.addNote": "Acrescente uma observação à resposta",
   "question.send": "Enviar resposta",
   "question.dismiss": "Dispensar como um não",
   "question.answered": "Respondida",
@@ -129,21 +130,13 @@ export const ptBR: Catalog = {
   "routine.change.deleted": "Rotina excluída",
   "routine.paused": "Pausada",
   "routine.next": "Próxima execução {when}",
-  "routine.lastRun.running.one": "Em execução agora, começou {when} · {count} execução",
-  "routine.lastRun.running.other": "Em execução agora, começou {when} · {count} execuções",
-  "routine.lastRun.delivered.one": "A última execução trouxe novidades {when} · {count} execução",
-  "routine.lastRun.delivered.other":
-    "A última execução trouxe novidades {when} · {count} execuções",
-  "routine.lastRun.silent.one":
-    "A última execução não tinha nada a relatar {when} · {count} execução",
-  "routine.lastRun.silent.other":
-    "A última execução não tinha nada a relatar {when} · {count} execuções",
-  "routine.lastRun.failed.one": "A última execução falhou {when} · {count} execução",
-  "routine.lastRun.failed.other": "A última execução falhou {when} · {count} execuções",
-  "routine.lastRun.skipped.one":
-    "A última execução foi pulada {when}: a anterior ainda estava rodando · {count} execução",
-  "routine.lastRun.skipped.other":
-    "A última execução foi pulada {when}: a anterior ainda estava rodando · {count} execuções",
+  "routine.lastRun.running": "Em execução agora, começou {when}",
+  "routine.lastRun.delivered": "A última execução trouxe novidades {when}",
+  "routine.lastRun.silent": "A última execução não tinha nada a relatar {when}",
+  "routine.lastRun.failed": "A última execução falhou {when}",
+  "routine.lastRun.skipped": "A última execução foi pulada {when}: a anterior ainda estava rodando",
+  "routine.lastRunWithCount.one": "{lastRun} · {count} execução",
+  "routine.lastRunWithCount.other": "{lastRun} · {count} execuções",
 
   "schedule.webhook": "Quando o webhook dela é chamado",
   "schedule.once": "Uma vez, em {when}",
@@ -155,6 +148,7 @@ export const ptBR: Catalog = {
   "schedule.weekends": "Fins de semana às {time}",
   "schedule.onDays": "Toda semana: {days}, às {time}",
   "schedule.monthly": "Todo mês no dia {day}, às {time}",
+  "schedule.hourly.zoned": "Toda hora, no minuto {minute} ({zone})",
   "schedule.daily.zoned": "Todo dia às {time} ({zone})",
   "schedule.weekdays.zoned": "Dias úteis às {time} ({zone})",
   "schedule.weekends.zoned": "Fins de semana às {time} ({zone})",
@@ -241,8 +235,6 @@ export const ptBR: Catalog = {
     "O estado de cada provedor está abaixo. Esta página atualiza assim que um deles estiver pronto.",
   "provider.ready": "Pronto",
   "provider.signInRequired": "Sem login",
-  "provider.limited": "Limite de uso atingido",
-  "provider.limitedUntil": "Limite de uso atingido, renova {when}",
   "provider.unavailable": "Indisponível agora",
   "firstRun.create.title": "Conheça seu primeiro bot",
   "firstRun.create.body":

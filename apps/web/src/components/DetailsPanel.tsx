@@ -20,7 +20,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { AlertDialog } from "@base-ui/react/alert-dialog";
-import type { ReactNode, Ref } from "react";
+import type { ReactElement, ReactNode, Ref } from "react";
 import { useBots, useI18n, usePresentation } from "../app/context";
 import type { KeyWith } from "../i18n/i18n";
 import { cn } from "../lib/cn";
@@ -233,14 +233,16 @@ export function BotDetails({
       <DetailsSection title={t("details.workingContext")}>
         <div className="flex flex-col items-start gap-3">
           <p className="text-xs text-muted-foreground">{t("details.freshStartHint", { name })}</p>
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" onClick={intents.freshStart}>
-              {t("details.freshStart")}
-            </Button>
-            <DeleteBot name={name} onDelete={intents.deleteBot} />
-          </div>
+          <Button size="sm" onClick={intents.freshStart}>
+            {t("details.freshStart")}
+          </Button>
         </div>
       </DetailsSection>
+
+      {/* Last and on its own, so the one action that cannot be undone is never next to another. */}
+      <section className="px-4 py-4">
+        <DeleteBot name={name} onDelete={intents.deleteBot} />
+      </section>
     </PanelFrame>
   );
 }
@@ -279,14 +281,14 @@ function DeleteBot({ name, onDelete }: { name: string; onDelete: () => void }) {
   );
 }
 
-/** The sentence for a routine's last run, which carries the run count too. */
-const lastRunText = {
+/** What a routine's last run did; the row adds the run count to make one sentence. */
+const lastRunText: Record<NonNullable<Routine["lastRun"]>["status"], KeyWith<"when">> = {
   running: "routine.lastRun.running",
   delivered: "routine.lastRun.delivered",
   silent: "routine.lastRun.silent",
   failed: "routine.lastRun.failed",
   skipped: "routine.lastRun.skipped",
-} as const satisfies Record<NonNullable<Routine["lastRun"]>["status"], string>;
+};
 
 /** A routine: name, schedule in words, next run, last result, and a switch to pause it. */
 function RoutineRow({
@@ -299,7 +301,7 @@ function RoutineRow({
   onOpen: () => void;
 }) {
   const ctx = usePresentation();
-  const { t, plural } = ctx.i18n;
+  const { t, pluralParts } = ctx.i18n;
   const schedule =
     scheduleInWords(routine.trigger, ctx) ??
     (routine.trigger._tag === "schedule" ? routine.trigger.cron : "");
@@ -335,15 +337,19 @@ function RoutineRow({
         </span>
         {status && <span className="text-2xs text-muted-foreground">{status}</span>}
         {last && (
-          <span
-            className={cn(
-              "text-2xs",
-              last.status === "failed" ? "text-blocked" : "text-muted-foreground",
+          // Only what went wrong is drawn in the blocked color; the run count stays quiet.
+          <span className="text-2xs text-muted-foreground">
+            {pluralParts<"routine.lastRunWithCount", ReactElement>(
+              "routine.lastRunWithCount",
+              routine.runCount,
+              {
+                lastRun: (
+                  <span key="lastRun" className={cn(last.status === "failed" && "text-blocked")}>
+                    {t(lastRunText[last.status], { when: timeInSentence(last.startedAt, ctx) })}
+                  </span>
+                ),
+              },
             )}
-          >
-            {plural(lastRunText[last.status], routine.runCount, {
-              when: timeInSentence(last.startedAt, ctx),
-            })}
           </span>
         )}
       </button>

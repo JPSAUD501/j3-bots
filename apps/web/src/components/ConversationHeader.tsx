@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Bot, EntryId, Room } from "@j3-bots/contracts";
-import { ChevronLeftIcon, ChevronRightIcon, PanelRightIcon, SquareIcon } from "lucide-react";
+import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  CornerDownRightIcon,
+  PanelRightIcon,
+  SquareIcon,
+} from "lucide-react";
 import { useState, type Ref } from "react";
 import { useBots, useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
@@ -55,7 +61,7 @@ export function ConversationHeader({
   const line: StatusLine | null =
     subject._tag === "bot"
       ? presenceLine(subject.bot, ctx)
-      : { text: t("room.members", { names: memberList(subject.room, ctx) }), tone: "muted" };
+      : { text: t("room.members", { names: memberList(subject.room, ctx) }), tone: "secondary" };
   const waitingOn =
     subject._tag === "bot" && subject.bot.state._tag === "waiting"
       ? subject.bot.state.entryId
@@ -112,12 +118,13 @@ export function ConversationHeader({
           </button>
           {line &&
             (waitingOn !== null ? (
+              // On touch screens this line is the button at the end of the header instead.
               <button
                 type="button"
                 onClick={() => onGoToWaiting(waitingOn)}
                 aria-label={t("presence.waiting.goTo")}
                 className={cn(
-                  "relative z-10 max-w-full truncate rounded-sm text-2xs underline-offset-2 hover:underline",
+                  "relative z-10 hidden max-w-full truncate rounded-sm text-2xs underline underline-offset-2 pointer-fine:block",
                   toneClass[line.tone],
                 )}
               >
@@ -133,7 +140,20 @@ export function ConversationHeader({
       <span className="sr-only" aria-live="polite">
         {announced.text}
       </span>
-      <span className="ms-auto flex items-center gap-1">
+      <span className="ms-auto flex shrink-0 items-center gap-1">
+        {waitingOn !== null && (
+          // A finger needs a whole target, apart from the title that opens the details.
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onGoToWaiting(waitingOn)}
+            aria-label={t("presence.waiting.goTo")}
+            className="hidden text-waiting pointer-coarse:inline-flex"
+          >
+            {t("presence.waiting")}
+            <CornerDownRightIcon aria-hidden />
+          </Button>
+        )}
         {running && (
           <Button size="sm" onClick={onStop} aria-keyshortcuts={stopShortcut.aria}>
             <SquareIcon className="size-3 fill-current" aria-hidden />

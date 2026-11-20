@@ -58,7 +58,7 @@ export function MessageBubble({
     >
       {speaker && startsGroup && (
         <div className="flex items-center gap-1.5 ps-1 pt-1">
-          <AvatarShape avatar={speaker.profile.avatar} size={16} />
+          <AvatarShape avatar={speaker.profile.avatar} size={20} />
           <span className="text-xs font-medium">{speaker.profile.name}</span>
         </div>
       )}

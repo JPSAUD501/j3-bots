@@ -82,35 +82,36 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
             : selected._tag === "room" && i.room.id === selected.roomId,
         ) ?? null);
   const active: Region = item === null ? "roster" : detailsOpen ? "details" : "conversation";
-  // Below `wide` the details cover the rest, which takes neither focus nor shortcuts meanwhile.
-  const detailsCover = item !== null && detailsOpen && layout !== null && layout !== "wide";
+  // Below `wide` the details are a modal dialog: it owns focus and every key, Escape
+  // included, and the shell's shortcuts wait until it closes.
+  const detailsModal = layout === "phone" || layout === "tablet";
+  const detailsCover = item !== null && detailsOpen && detailsModal;
 
   const selectionKey = item === null ? null : draftKey(keyOf(item));
   // Moving to another conversation with a mouse or keyboard puts the cursor in its
-  // composer; opening or closing the details moves focus with them. Neither happens
-  // on the first render, so loading a page never scrolls or steals focus.
+  // composer; opening or closing the details beside the conversation moves focus
+  // with them, as the dialog does below `wide`. Neither happens on the first render,
+  // so loading a page never scrolls or steals focus.
   const shown = useRef({ selectionKey, detailsOpen });
   useEffect(() => {
     const before = shown.current;
     shown.current = { selectionKey, detailsOpen };
     if (before.detailsOpen !== detailsOpen) {
+      if (detailsModal) return;
       if (detailsOpen) detailsHeadingRef.current?.focus();
       else titleRef.current?.focus();
     } else if (before.selectionKey !== selectionKey && selectionKey !== null && finePointer()) {
       composerRef.current?.focus();
     }
-  }, [selectionKey, detailsOpen]);
+  }, [selectionKey, detailsOpen, detailsModal]);
 
   const onKeyDown = useEffectEvent((event: KeyboardEvent) => {
-    if (event.defaultPrevented) return;
+    if (event.defaultPrevented || detailsCover) return;
     // Keys pressed in a dialog over the shell, such as a confirmation, are that dialog's.
     if (event.target instanceof Element && event.target.closest("[role=alertdialog]")) return;
     if (event.key === "Escape" && detailsOpen) {
       event.preventDefault();
       navigation.setDetailsOpen(false);
-    } else if (detailsCover) {
-      // The controls every other shortcut reaches are covered.
-      return;
     } else if (shortcuts.nextBot.matches(event) || shortcuts.previousBot.matches(event)) {
       const rows = orderRoster(filterRoster(data.roster, ""));
       if (rows.length === 0) return;
@@ -141,7 +142,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
 
   if (data.roster.length === 0) {
     return (
-      <div className="flex h-full flex-col">
+      <div className="flex h-full flex-col pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]">
         <FirstRun
           engine={data.engine}
           onCreateBot={(name, primary) =>
@@ -218,7 +219,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
             </div>
           </div>
         )}
-        <div className="mx-auto w-full max-w-(--layout-text-column) px-3 pt-1 pb-3 @tablet:px-6">
+        <div className="mx-auto w-full max-w-(--layout-text-column) px-3 pt-1 pb-[max(--spacing(3),env(safe-area-inset-bottom))] @tablet:px-6">
           <Composer
             recipient={recipient}
             value={draft}
@@ -276,6 +277,8 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
         conversation={conversation}
         details={details}
         detailsHeadingId={detailsHeadingId}
+        detailsHeadingRef={detailsHeadingRef}
+        returnFocusRef={titleRef}
         active={active}
         layout={layout}
         containerRef={containerRef}

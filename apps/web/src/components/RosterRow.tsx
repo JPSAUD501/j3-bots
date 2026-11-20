@@ -13,7 +13,8 @@ import { BotAvatar, RoomAvatar } from "./BotAvatar";
 
 export const toneClass: Record<LineTone, string> = {
   default: "text-muted-foreground",
-  muted: "text-muted-foreground italic",
+  secondary: "text-muted-foreground",
+  empty: "text-muted-foreground italic",
   waiting: "text-waiting",
   blocked: "text-blocked",
 };

@@ -128,7 +128,7 @@ export function sampleTeam(now: DateTime.Utc) {
         _tag: "working",
         since: ago(3),
         stalled: false,
-        activity: "Reading owner reviews of three e-bikes",
+        activity: "Checking which of the three the shop has in stock",
       },
       { primary: true, pinned: true, permissionMode: "auto-accept-edits" },
     ),

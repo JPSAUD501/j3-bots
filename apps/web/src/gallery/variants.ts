@@ -170,6 +170,13 @@ export function galleryVariants(now: DateTime.Utc) {
           multiple: true,
         },
         {
+          id: "when",
+          prompt: "When should it arrive?",
+          options: [option("monday", "Monday at 8:00 AM"), option("friday", "Friday at 5:00 PM")],
+          acceptsText: true,
+          multiple: false,
+        },
+        {
           id: "extra",
           prompt: "Anything else it should always mention?",
           options: [],
@@ -197,17 +204,30 @@ export function galleryVariants(now: DateTime.Utc) {
     status: { _tag: "pending" },
     ...extra,
   });
-  const approvals: ReadonlyArray<ApprovalEntry> = [
-    approval("approval", {
-      detail:
-        "rm -rf build/ && pnpm build\n  removes 214 files in build/\n  rebuilds every package (about 40 s)",
-    }),
+  const plan =
+    "rm -rf build/ && pnpm build\n  removes 214 files in build/\n  rebuilds every package (about 40 s)";
+  const approvalEntries: ReadonlyArray<ApprovalEntry> = [
+    approval("approval", { detail: plan }),
     approval("approval-file", {
       kind: "file-change",
       action: "notes/taxes-2026/checklist.md",
       allowsSession: false,
     }),
-    approval("approval-allowed", { status: { _tag: "decided", decision: "allow-session" } }),
+    approval("approval-submitting", {
+      kind: "tool",
+      action: "Add “Pick up the bike” to the shared calendar on Saturday at 10:00 AM",
+    }),
+    approval("approval-allowed", {
+      action: "pnpm --filter site deploy --env staging",
+      detail: [
+        "pnpm --filter site deploy --env staging",
+        "  builds apps/site for production (about 1 min)",
+        "  uploads 38 files to the staging bucket",
+        "  invalidates the staging CDN cache",
+        "  posts the preview link to the #site channel",
+      ].join("\n"),
+      status: { _tag: "decided", decision: "allow-session" },
+    }),
     approval("approval-denied", {
       kind: "tool",
       action: "Send an email to the vendor list",
@@ -215,6 +235,11 @@ export function galleryVariants(now: DateTime.Utc) {
     }),
     approval("approval-expired", { status: { _tag: "expired" } }),
   ];
+  // The operator has just allowed the calendar change, and the decision is on its way.
+  const approvals = approvalEntries.map((entry) => ({
+    entry,
+    submitting: entry.id === id("approval-submitting"),
+  }));
 
   const secret = (
     name: string,

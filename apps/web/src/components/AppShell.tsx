@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { ReactNode, Ref } from "react";
+import { Dialog } from "@base-ui/react/dialog";
+import { useState, type ReactNode, type Ref, type RefObject } from "react";
 import type { ShellLayout } from "../shell/layout";
 
 export type Region = "roster" | "conversation" | "details";
@@ -11,6 +12,10 @@ interface AppShellProps {
   readonly details: ReactNode | null;
   /** The id of the details' heading, which names the pane. */
   readonly detailsHeadingId: string;
+  /** Where focus goes when the details open as a dialog. */
+  readonly detailsHeadingRef: RefObject<HTMLHeadingElement | null>;
+  /** Where focus returns when that dialog closes: the conversation's title. */
+  readonly returnFocusRef: RefObject<HTMLElement | null>;
   /** The region a phone shows; wider layouts show several at once. */
   readonly active: Region;
   /** As measured on `containerRef`; null before the first measure. */
@@ -23,56 +28,71 @@ interface AppShellProps {
  * The three regions. The layout follows the shell's own width, not the
  * window's: one region at a time below `tablet`; roster and conversation side
  * by side from `tablet`, with the details over the conversation as a modal
- * pane; all three side by side from `wide`, where the details are an ordinary
- * region. Below `wide` the regions the details cover are inert, so neither
- * focus nor a pointer reaches them while the details are open.
+ * dialog; all three side by side from `wide`, where the details are an
+ * ordinary region. Each region keeps clear of the screen's safe-area insets
+ * on the edges it touches.
  */
 export function AppShell({
   roster,
   conversation,
   details,
   detailsHeadingId,
+  detailsHeadingRef,
+  returnFocusRef,
   active,
   layout,
   containerRef,
   onCloseDetails,
 }: AppShellProps) {
-  const covered = details !== null && layout !== null && layout !== "wide";
+  // The dialog is drawn inside the shell, so it lies over the shell and not over the page around it.
+  const [frame, setFrame] = useState<HTMLDivElement | null>(null);
+  const modal = layout === "phone" || layout === "tablet";
+  const covered = details !== null && modal;
   return (
     <div ref={containerRef} className="@container h-full w-full">
-      <div className="relative flex h-full w-full overflow-hidden bg-background">
+      <div ref={setFrame} className="relative flex h-full w-full overflow-hidden bg-background">
         <aside
           data-active={active === "roster" ? "" : undefined}
           inert={covered}
-          className="hidden w-full shrink-0 flex-col border-border bg-sidebar data-active:flex @tablet:flex @tablet:w-(--layout-roster-width) @tablet:border-e"
+          className="hidden w-full shrink-0 flex-col border-border bg-sidebar pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] data-active:flex @max-tablet:pr-[env(safe-area-inset-right)] @tablet:flex @tablet:w-(--layout-roster-width) @tablet:border-e"
         >
           {roster}
         </aside>
         <main
           data-active={active === "conversation" ? "" : undefined}
           inert={covered}
-          className="hidden min-w-0 flex-1 flex-col data-active:flex @tablet:flex"
+          className="hidden min-w-0 flex-1 flex-col pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] data-active:flex @max-tablet:pl-[env(safe-area-inset-left)] @tablet:flex"
         >
           {conversation}
         </main>
-        {details !== null && (
-          <>
-            {/* Between tablet and wide the pane lies over the conversation; clicking beside it closes it. */}
-            <div
-              aria-hidden
-              onClick={onCloseDetails}
-              className="absolute inset-0 z-10 hidden bg-scrim @tablet:block @wide:hidden"
-            />
-            <aside
-              data-active={active === "details" ? "" : undefined}
+        {details !== null && layout === "wide" && (
+          <aside
+            aria-labelledby={detailsHeadingId}
+            className="flex w-(--layout-details-width) shrink-0 flex-col border-s border-border bg-background pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)]"
+          >
+            {details}
+          </aside>
+        )}
+        <Dialog.Root
+          open={details !== null && modal}
+          onOpenChange={(open) => {
+            if (!open) onCloseDetails();
+          }}
+        >
+          <Dialog.Portal container={frame}>
+            {/* Beside the pane, the scrim closes it; a phone's pane covers everything. */}
+            <Dialog.Backdrop className="absolute inset-0 z-10 hidden bg-scrim @tablet:block" />
+            <Dialog.Popup
               aria-labelledby={detailsHeadingId}
-              {...(layout === "tablet" ? { role: "dialog", "aria-modal": true } : {})}
-              className="absolute inset-0 z-20 hidden flex-col bg-background data-active:flex @tablet:start-auto @tablet:flex @tablet:w-(--layout-details-width) @tablet:border-s @tablet:shadow-xl @wide:static @wide:shadow-none"
+              aria-modal
+              initialFocus={detailsHeadingRef}
+              finalFocus={returnFocusRef}
+              className="absolute inset-0 z-20 flex flex-col bg-background pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] outline-none @max-tablet:pl-[env(safe-area-inset-left)] @tablet:start-auto @tablet:w-(--layout-details-width) @tablet:border-s @tablet:border-border @tablet:shadow-xl"
             >
               {details}
-            </aside>
-          </>
-        )}
+            </Dialog.Popup>
+          </Dialog.Portal>
+        </Dialog.Root>
       </div>
     </div>
   );

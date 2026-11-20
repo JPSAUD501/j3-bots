@@ -17,7 +17,8 @@ interface ComposerProps {
 
 /**
  * The pill at the bottom of a conversation. Enter sends, Shift+Enter starts a
- * new line. With nothing typed, the trailing button dictates; with text, it sends.
+ * new line. With nothing typed, the trailing button dictates; with text, it
+ * sends. The field draws no ring of its own: the pill takes the focus outline.
  */
 export function Composer({
   recipient,
@@ -33,7 +34,7 @@ export function Composer({
   const empty = value.trim() === "";
   return (
     <form
-      className="flex items-end gap-1 rounded-pill border border-input bg-surface p-1 shadow-xs focus-within:border-foreground/30"
+      className="flex items-end gap-1 rounded-pill border border-input bg-surface p-1 shadow-xs has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:outline-offset-2 has-[textarea:focus-visible]:outline-accent"
       onSubmit={(event) => {
         event.preventDefault();
         if (!empty) onSend();
@@ -61,7 +62,7 @@ export function Composer({
         placeholder={label}
         aria-label={label}
         data-composer=""
-        className="field-sizing-content max-h-(--layout-composer-max-height) min-h-8 flex-1 resize-none bg-transparent px-1 py-1.5 text-base outline-none placeholder:text-muted-foreground pointer-coarse:text-lg"
+        className="field-sizing-content max-h-(--layout-composer-max-height) min-h-8 flex-1 resize-none bg-transparent px-1 py-1.5 text-base outline-none placeholder:text-muted-foreground pointer-coarse:min-h-(--layout-touch-target) pointer-coarse:py-2.5 pointer-coarse:text-lg"
       />
       {empty ? (
         <Button

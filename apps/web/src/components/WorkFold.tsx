@@ -5,7 +5,7 @@ import {
   BotIcon,
   CheckIcon,
   ChevronRightIcon,
-  CircleIcon,
+  EllipsisIcon,
   FileTextIcon,
   GlobeIcon,
   PencilIcon,
@@ -28,7 +28,7 @@ const stepIcon: Record<WorkStep["kind"], typeof TerminalIcon> = {
   web: GlobeIcon,
   tool: WrenchIcon,
   delegation: BotIcon,
-  other: CircleIcon,
+  other: EllipsisIcon,
 };
 
 interface WorkFoldProps {

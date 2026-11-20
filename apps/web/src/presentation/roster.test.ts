@@ -111,17 +111,24 @@ describe("rosterLine", () => {
     });
   });
 
-  it("says until when a usage limit holds, in the blocked tone", () => {
-    const blocked = bot("Scout", {
-      _tag: "blocked",
-      failure: "usage-limit",
-      retryAt: at("2026-11-20T18:30:00Z"),
-    });
-    const line = rosterLine(row(blocked), ctx);
+  it("says when a usage limit resets, in the blocked tone, with the day when it is not today", () => {
+    const limited = (retryAt: string) =>
+      row(bot("Scout", { _tag: "blocked", failure: "usage-limit", retryAt: at(retryAt) }));
+    const line = rosterLine(limited("2026-11-20T18:30:00Z"), ctx);
     expect({ ...line, text: plain(line.text) }).toEqual({
-      text: "Usage limit reached until 3:30 PM",
+      text: "Usage limit reached, resets at 3:30 PM",
       tone: "blocked",
     });
+    expect(plain(rosterLine(limited("2026-11-21T12:00:00Z"), ctx).text)).toBe(
+      "Usage limit reached, resets tomorrow at 9:00 AM",
+    );
+    expect(plain(rosterLine(limited("2026-11-23T12:00:00Z"), ctx).text)).toBe(
+      "Usage limit reached, resets Monday at 9:00 AM",
+    );
+    const pt = context("2026-11-20T15:00:00Z", "pt-BR");
+    expect(plain(rosterLine(limited("2026-11-21T12:00:00Z"), pt).text)).toBe(
+      "Limite de uso atingido, renova amanhã às 09:00",
+    );
   });
 
   it("says how long a stalled turn has been quiet", () => {

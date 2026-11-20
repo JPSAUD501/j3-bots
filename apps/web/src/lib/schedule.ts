@@ -62,7 +62,11 @@ function cronInWords(cron: string, i18n: I18n, zone: string | null): string | nu
   const m = number(minute, 59);
   if (m === null) return null;
   if (hour === "*" && dayOfMonth === "*" && dayOfWeek === "*") {
-    return i18n.t("schedule.hourly", { minute: String(m).padStart(2, "0") });
+    // A zone whose offset is not whole hours moves the minute too, so it is named here as well.
+    const at = String(m).padStart(2, "0");
+    return zone === null
+      ? i18n.t("schedule.hourly", { minute: at })
+      : i18n.t("schedule.hourly.zoned", { minute: at, zone });
   }
 
   const h = number(hour, 23);

@@ -64,6 +64,15 @@ export interface I18n {
   t<K extends MessageKey>(key: K, ...args: Args<K>): string;
   /** A sentence that depends on a count, which fills `{count}`. */
   plural<B extends PluralKey>(key: B, count: number, ...args: PluralArgs<B>): string;
+  /**
+   * A plural sentence split around its other placeholders, whose values stay
+   * as given: for a value drawn apart from the words around it.
+   */
+  pluralParts<B extends PluralKey, V extends object>(
+    key: B,
+    count: number,
+    values: Readonly<Record<Exclude<Params<`${B}.other`>, "count">, V>>,
+  ): ReadonlyArray<string | V>;
 }
 
 const PLACEHOLDER = /\{(\w+)\}/g;
@@ -83,13 +92,30 @@ export function createI18n(locale: Locale): I18n {
     if (!isKey(key)) throw new Error(`Missing message: ${key}`);
     return catalog[key];
   };
+  const pluralText = (key: string, count: number) => {
+    const one = `${key}.one`;
+    return lookup(pluralRules.select(count) === "one" && one in catalog ? one : `${key}.other`);
+  };
   return {
     locale,
     t: (key, ...args) => fill(catalog[key], args[0]),
-    plural: (key, count, ...args) => {
-      const one = `${key}.one`;
-      const text = pluralRules.select(count) === "one" && one in catalog ? one : `${key}.other`;
-      return fill(lookup(text), { ...args[0], count });
+    plural: (key, count, ...args) => fill(pluralText(key, count), { ...args[0], count }),
+    pluralParts: <V extends object>(
+      key: string,
+      count: number,
+      values: Readonly<Record<string, V>>,
+    ) => {
+      const text = fill(pluralText(key, count), { count });
+      const parts: Array<string | V> = [];
+      let from = 0;
+      for (const match of text.matchAll(PLACEHOLDER)) {
+        const value = match[1] === undefined ? undefined : values[match[1]];
+        if (value === undefined) continue;
+        parts.push(text.slice(from, match.index), value);
+        from = match.index + match[0].length;
+      }
+      parts.push(text.slice(from));
+      return parts.filter((part) => part !== "");
     },
   };
 }
