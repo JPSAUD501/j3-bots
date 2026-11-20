@@ -1,6 +1,6 @@
 # J3 Bots
 
-> Design phase: this repository holds the product and architecture plan. There is no application code yet.
+> Design phase: this repository holds the product and architecture plan, and the foundation the code will grow from. Nothing runs a bot yet.
 
 J3 Bots gives you a small team of persistent AI teammates ("bots") that run on your own machine, on the model subscriptions you already pay for.
 
@@ -10,13 +10,13 @@ J3 Bots does not run models itself. It drives an unmodified [T3 Code](https://gi
 
 ## Status
 
-| Area | State |
-| --- | --- |
-| Product concepts | Drafted |
-| Architecture | Drafted; the engine integration path is verified against a live T3 Code server |
-| Prompts | Architecture drafted; base prompt at v0 |
-| Design language | Direction drafted; no mockups yet |
-| Code | Not started |
+| Area             | State                                                                          |
+| ---------------- | ------------------------------------------------------------------------------ |
+| Product concepts | Drafted                                                                        |
+| Architecture     | Drafted; the engine integration path is verified against a live T3 Code server |
+| Prompts          | Architecture drafted; base prompt at v0                                        |
+| Design language  | Direction drafted; no mockups yet                                              |
+| Code             | Foundation: toolchain, client contract, engine interface, server skeleton      |
 
 ## Read next
 
