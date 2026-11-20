@@ -218,8 +218,11 @@ export const layer = Layer.effect(
       readonly botId: BotId;
       readonly deleteFiles: boolean;
     }) {
-      // Outside the transaction, which an engine call must not hold open. A
-      // retry after the deletion finds no bot here and gets the receipt.
+      // Outside the transaction, which an engine call must not hold open, and
+      // first: removing a project already gone succeeds, so a deletion that
+      // fails after it is retried whole, while a project left behind by a
+      // deletion that committed first would never be removed. A retry after
+      // the deletion finds no bot here and gets the receipt.
       if (Option.isSome(yield* store.find(input.botId))) {
         yield* sessions
           .removeProject(input.botId)

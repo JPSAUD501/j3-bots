@@ -113,7 +113,10 @@ export class BotStore extends Context.Service<
     /** Makes no bot primary; the caller then makes one primary, in the same transaction. */
     readonly clearPrimary: (at: DateTime.Utc) => Effect.Effect<ReadonlyArray<BotId>>;
     readonly setEngineProject: (id: BotId, projectId: EngineProjectId) => Effect.Effect<void>;
-    /** Deletes the row, and with it everything the database cascades from it. */
+    /**
+     * Deletes the row, and with it everything the database cascades from it:
+     * its wakes explicitly, before its dispatches. Call it in a transaction.
+     */
     readonly remove: (id: BotId) => Effect.Effect<void>;
   }
 >()("@j3-bots/server/bots/BotStore") {}
@@ -209,7 +212,10 @@ export const layer = Layer.effect(
       yield* sql`UPDATE bots SET engine_project_id = ${projectId} WHERE id = ${id}`;
     }, Effect.orDie);
 
+    // The wakes go first: a wake that reached a dispatch must keep it, so the
+    // cascade to the bot's dispatches would be refused while one remains.
     const remove = Effect.fn("BotStore.remove")(function* (id: BotId) {
+      yield* sql`DELETE FROM wakes WHERE bot_id = ${id}`;
       yield* sql`DELETE FROM bots WHERE id = ${id}`;
     }, Effect.orDie);
 
