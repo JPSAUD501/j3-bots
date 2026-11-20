@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BotId, type ModelChoice, type PermissionMode, ProviderId } from "@j3-bots/contracts";
+import { BotId, ModelChoice, type PermissionMode, ProviderId } from "@j3-bots/contracts";
 import {
   Engine,
   type EngineDown,
@@ -22,8 +22,17 @@ import * as SqlSchema from "effect/sql/SqlSchema";
 import { Ids } from "../Ids.ts";
 import { timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
+import { Signals } from "../turns/Signals.ts";
 import { BotStore } from "./BotStore.ts";
 import { Workspaces } from "./Workspaces.ts";
+
+const sameModel = Schema.toEquivalence(ModelChoice);
+
+/** What a session is configured with from its bot's settings. */
+interface Settings {
+  readonly model: ModelChoice;
+  readonly permissionMode: PermissionMode;
+}
 
 const SessionRow = Schema.Struct({
   id: Schema.String,
@@ -92,6 +101,7 @@ export const layer = Layer.effect(
     const bots = yield* BotStore;
     const workspaces = yield* Workspaces;
     const ids = yield* Ids;
+    const signals = yield* Signals;
     // One provisioning at a time: a bot's creation and the rotator may both
     // find its session missing.
     const provisioning = yield* Semaphore.make(1);
@@ -170,40 +180,49 @@ export const layer = Layer.effect(
         model: selected.bot.model,
         permissionMode: selected.bot.permissionMode,
       });
-      /**
-       * Brings the session to the bot's settings as they stand, if it is
-       * still on their provider, and answers what it applied.
-       */
+      /** The bot's settings as they stand, while it is still on the session's provider. */
+      const settings = (now: Option.Option<{ readonly bot: Settings }>): Settings | null =>
+        Option.isNone(now) || now.value.bot.model.providerId !== session.provider_id
+          ? null
+          : { model: now.value.bot.model, permissionMode: now.value.bot.permissionMode };
+      /** Brings the session to the bot's settings as they stand, and answers what it applied. */
       const align = Effect.fnUntraced(function* () {
-        const now = yield* bots.find(botId);
-        if (Option.isNone(now) || now.value.bot.model.providerId !== session.provider_id) {
-          return null;
-        }
-        const { model, permissionMode } = now.value.bot;
+        const applied = settings(yield* bots.find(botId));
+        if (applied === null) return null;
         yield* engine
-          .configureSession({ sessionId, model, permissionMode })
+          .configureSession({ sessionId, ...applied })
           // Lost meanwhile: the rotator replaces it, with the bot's settings.
           .pipe(Effect.catchTag("SessionNotFound", () => Effect.void));
-        return { model, permissionMode };
+        return applied;
       });
+      /**
+       * Records the engine's session, which makes it take work, only while
+       * the bot's settings are still the ones applied: a change that
+       * committed since found the session unopened and left it to this.
+       * Answers whether it was recorded.
+       */
+      const publish = (applied: Settings | null) =>
+        transaction(
+          Effect.gen(function* () {
+            const now = settings(yield* bots.find(botId));
+            const same =
+              now === null || applied === null
+                ? now === applied
+                : sameModel(now.model, applied.model) &&
+                  now.permissionMode === applied.permissionMode;
+            if (!same) return false;
+            yield* sql`UPDATE sessions SET engine_session_id = ${sessionId} WHERE id = ${session.id}`;
+            // A wake waiting for the bot's session is dispatched now.
+            yield* sql.afterCommit(signals.dispatch.fire);
+            return true;
+          }),
+        ).pipe(Effect.orDie);
       // Before the session takes work: a retried opening answers with the
       // session the engine opened first, with the settings of that attempt,
-      // and the bot's may have changed since.
-      const applied = yield* align();
-      yield* sql`UPDATE sessions SET engine_session_id = ${sessionId} WHERE id = ${session.id}`.pipe(
-        Effect.orDie,
-      );
-      // A change that committed after that found the session unopened, and
-      // left it to this.
-      const now = yield* bots.find(botId);
-      if (
-        applied !== null &&
-        Option.isSome(now) &&
-        (now.value.bot.model.modelId !== applied.model.modelId ||
-          now.value.bot.permissionMode !== applied.permissionMode)
-      ) {
-        yield* align();
-      }
+      // and the bot's may have changed since; and again for each change that
+      // committed while it was aligned.
+      let applied = yield* align();
+      while (!(yield* publish(applied))) applied = yield* align();
     }, provisioning.withPermits(1));
 
     const configure = Effect.fn("EngineSessions.configure")(function* (

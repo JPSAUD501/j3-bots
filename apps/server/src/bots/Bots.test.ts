@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
 import { CommandId, EntryOrder, MemoryPath, type Room } from "@j3-bots/contracts";
+import type { SessionId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -263,4 +265,44 @@ it.effect("writes the bot's profile and pinned memory into its generated instruc
       "The operator reviews pull requests on Fridays",
     );
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "brings a new session to a permission mode changed while it opened, before it takes work",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const bots = yield* Bots;
+      const store = yield* BotStore;
+      const sql = yield* SqlClient.SqlClient;
+      const recorded = (botId: string) =>
+        sql<{ readonly engine_session_id: SessionId | null }>`
+        SELECT engine_session_id FROM sessions WHERE bot_id = ${botId}
+      `.pipe(Effect.map((rows) => rows[0]?.engine_session_id ?? null));
+
+      // The session is aligned once it opened; the change commits meanwhile,
+      // and finds it unopened.
+      const first = yield* control.holdNext("configureSession");
+      const creating = yield* Effect.forkChild(createBot("Ana"));
+      yield* first.entered;
+      const [stored] = yield* store.list;
+      if (stored === undefined) return assert.fail("The bot was not stored");
+      const lowered = stored.bot.permissionMode === "supervised" ? "auto" : "supervised";
+      yield* bots.update({
+        commandId: command(),
+        botId: stored.bot.id,
+        changes: { permissionMode: lowered },
+      });
+      const second = yield* control.holdNext("configureSession");
+      yield* first.release;
+
+      // Aligned again before it takes work: it is not recorded meanwhile.
+      yield* second.entered;
+      assert.isNull(yield* recorded(stored.bot.id));
+      yield* second.release;
+      yield* Fiber.join(creating);
+      const sessionId = yield* recorded(stored.bot.id);
+      if (sessionId === null) return assert.fail("The session was not recorded");
+      assert.strictEqual(yield* control.sessionPermissionMode(sessionId), lowered);
+    }).pipe(Effect.provide(TestDomain.layer)),
 );

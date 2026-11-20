@@ -16,7 +16,11 @@ import type { Signals } from "./Signals.ts";
 import { stopTargets } from "./stopTargets.ts";
 import type { WorkSteps } from "./WorkSteps.ts";
 
-const LostRow = Schema.Struct({ bot_id: BotId, purpose: Schema.Literals(["main", "side"]) });
+const LostRow = Schema.Struct({
+  bot_id: BotId,
+  purpose: Schema.Literals(["main", "side"]),
+  retired_at: Schema.NullOr(Schema.String),
+});
 
 const OpenTurn = Schema.Struct({
   engine_turn_id: TurnId,
@@ -119,8 +123,9 @@ export const sessionRecords = (
  * work fold end interrupted, and its open requests close. A dispatch not yet
  * answered is the sender's, which settles it in the session's gate: it is due
  * at once, whatever its backoff, and the workers are nudged once the loss
- * commits. A main session's loss shows in the bot's conversation, and the
- * rotator gives the bot a new one. Runs in the caller's transaction.
+ * commits. A live main session's loss shows in the bot's conversation, and
+ * the rotator gives the bot a new one; one J3 Bots had retired was replaced
+ * already, so its loss is not told. Runs in the caller's transaction.
  */
 export const sessionLoss = (
   sql: SqlClient.SqlClient,
@@ -140,7 +145,7 @@ export const sessionLoss = (
       UPDATE sessions SET lost_at = ${at}, admitted_turn_id = NULL, admitted_audience = NULL,
         admitted_room_id = NULL
       WHERE id = ${sessionId} AND lost_at IS NULL
-      RETURNING bot_id, purpose
+      RETURNING bot_id, purpose, retired_at
     `,
   });
 
@@ -211,7 +216,8 @@ export const sessionLoss = (
       UPDATE dispatches SET next_attempt_at = NULL
       WHERE session_id = ${sessionId} AND status = 'intended'
     `;
-    if (lost.purpose === "main") {
+    // A session J3 Bots retired was already replaced: its going is no loss to tell.
+    if (lost.purpose === "main" && lost.retired_at === null) {
       yield* notify(lost.bot_id, conversation, { _tag: "session-lost" }, null);
     }
     // What waited on the session may settle, its bot may take work

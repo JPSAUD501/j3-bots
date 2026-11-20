@@ -342,8 +342,9 @@ export const layer = Layer.effect(
         }),
       );
       if (endsBackgroundWork) {
+        // The engine counts work it could not judge as pending, so this may be none.
         yield* Effect.logInfo(
-          "Background work the replaced session still had ends with its retirement",
+          "The replaced session may still have had background work; its retirement ends any",
         ).pipe(Effect.annotateLogs({ botId: retired.bot_id }));
       }
       return "replaced" satisfies Replacement;

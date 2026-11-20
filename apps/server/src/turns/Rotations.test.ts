@@ -19,6 +19,7 @@ import {
   flushed,
   mainSessionId,
   nextTurn,
+  noticesOf,
   recoverTimes,
   sendToBot,
   sendWithFile,
@@ -29,6 +30,7 @@ import {
 } from "../testing/turns.ts";
 import { MAX_INDETERMINATE_ANSWERS, type SessionRowId } from "./model.ts";
 import { Rotations, ROTATE_AFTER_RUNS } from "./Rotations.ts";
+import { Stops } from "./Stops.ts";
 import { Usage } from "./Usage.ts";
 
 /** The operator writes, the bot answers in host speech, and its turn completes. */
@@ -487,5 +489,32 @@ it.effect("reports each turn with its bot and provider, newest first", () =>
       starts,
       starts.toSorted((a, b) => b - a),
     );
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("leaves a session the engine retired out of a later Stop, and tells of no loss", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const stops = yield* Stops;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* exchange(bot.id, session, "Plan the launch.", "Drafted it.");
+    // A dispatch of it whose fate the server never learned: one that may still land.
+    yield* sql`
+      UPDATE dispatches SET status = 'failed', failure_reason = 'unresolved'
+      WHERE session_id = (SELECT id FROM sessions WHERE engine_session_id = ${session})
+    `;
+    yield* (yield* Bots).freshStart({ commandId: command(), botId: bot.id });
+    yield* sessionAfter(bot.id, session);
+    assert.isTrue(yield* retiredInEngine(session));
+
+    yield* stops.stopBot({ commandId: command(), botId: bot.id });
+    yield* stops.runPending;
+    const [targets] = yield* sql<{ readonly n: number }>`
+      SELECT COUNT(*) AS n FROM stop_targets t JOIN sessions s ON s.id = t.session_id
+      WHERE s.engine_session_id = ${session} AND t.stopped_at IS NULL
+    `;
+    assert.strictEqual(targets?.n, 0);
+    assert.notInclude(yield* noticesOf(bot.id), "session-lost");
   }).pipe(Effect.provide(TestDomain.layer)),
 );
