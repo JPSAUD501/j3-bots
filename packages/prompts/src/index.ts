@@ -6,7 +6,9 @@
  *   {@link renderBotInstructions}: a bot's standing instructions, per harness.
  * - {@link renderWake}: the envelope every dispatched message is wrapped in.
  * - {@link tools} and {@link toolList}: the `j3` MCP tools, their descriptions
- *   and the schemas their arguments decode with.
+ *   and the schemas their arguments decode with, within
+ *   {@link MAX_TOOL_INPUT_BYTES}; {@link NO_TURN_REFUSAL}: what a call that
+ *   matches no running turn, such as a subagent's, reads.
  * - {@link PROMPT_VERSION}: one identifier for all of the above.
  *
  * Every function here is pure. `renderWake` draws its nonce from `SecureRandom`.
@@ -42,7 +44,9 @@ export {
 } from "./instructions.ts";
 export {
   DECODE_OPTIONS,
+  MAX_TOOL_INPUT_BYTES,
   type McpTool,
+  NO_TURN_REFUSAL,
   type ToolDefinition,
   type ToolInput,
   type ToolName,

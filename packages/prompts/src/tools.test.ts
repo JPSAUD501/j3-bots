@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
-import { DECODE_OPTIONS, type ToolName, toolList, tools } from "./tools.ts";
+import { DECODE_OPTIONS, MAX_TOOL_INPUT_BYTES, type ToolName, toolList, tools } from "./tools.ts";
 
 const decode = <N extends ToolName>(name: N, input: unknown) =>
   Schema.decodeUnknownExit(tools[name].input, DECODE_OPTIONS)(input);
@@ -89,5 +89,19 @@ describe("j3 tools", () => {
     expect(accepts("set_routine", { action: "delete", id: "r1", at: "2026-11-21T09:00" })).toBe(
       false,
     );
+  });
+
+  it("refuses a call the engine would record only as a summary, by its encoded size", () => {
+    const routine = (instruction: string) => ({
+      action: "create",
+      name: "Digest",
+      instruction,
+      schedule: "3 8 * * *",
+    });
+    // Both instructions are within the field's 10,000 characters.
+    expect(accepts("set_routine", routine("a".repeat(7_000)))).toBe(true);
+    const refused = decode("set_routine", routine("é".repeat(7_000)));
+    expect(refused._tag).toBe("Failure");
+    expect(String(refused)).toContain(`a call carries at most ${MAX_TOOL_INPUT_BYTES}`);
   });
 });

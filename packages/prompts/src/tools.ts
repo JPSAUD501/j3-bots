@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { Avatar, MessageText, Profile, RoutineInstruction } from "@j3-bots/contracts";
+import { Avatar, Profile, RoutineInstruction } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -15,6 +15,41 @@ import * as Schema from "effect/Schema";
 
 /** Unknown arguments are refused rather than ignored, matching `additionalProperties: false`. */
 export const DECODE_OPTIONS = { onExcessProperty: "error" } as const;
+
+/**
+ * The most a call's arguments may weigh, as UTF-8 JSON. The engine replaces a
+ * tool input over 16,384 bytes with a one-line summary before any client sees
+ * it (**Read** at `db51b67`, `WireProjection.ts`, `summarizeDynamicValue`),
+ * and the server could then no longer match the call to the engine's record of
+ * it. The margin covers the engine encoding the input differently.
+ */
+export const MAX_TOOL_INPUT_BYTES = 12_288;
+
+/** The most a bot's message may hold, so a call fits {@link MAX_TOOL_INPUT_BYTES}. */
+const MAX_SPOKEN_TEXT = 4_000;
+
+const inputBytes = (input: unknown): number =>
+  new TextEncoder().encode(JSON.stringify(input)).length;
+
+/** Refuses a call too large for the engine to record, telling the bot how to fit it. */
+const withinInputCap = Schema.makeFilter((input: object) => {
+  const bytes = inputBytes(input);
+  return bytes <= MAX_TOOL_INPUT_BYTES
+    ? true
+    : `The arguments are ${bytes} bytes; a call carries at most ${MAX_TOOL_INPUT_BYTES}. Split a long message into several calls, put long content in a file and attach it, or shorten the field.`;
+});
+
+/** A tool's arguments: the named fields, within {@link MAX_TOOL_INPUT_BYTES}. */
+const toolInput = <const Fields extends Schema.Struct.Fields>(fields: Fields) =>
+  Schema.Struct(fields).check(withinInputCap);
+
+/**
+ * What a bot reads when the server refuses a call it could not match to a
+ * running turn of the bot's session. A subagent's call is one: the engine
+ * records it on the subagent's own thread, never in the bot's turn.
+ */
+export const NO_TURN_REFUSAL =
+  "This call belongs to no running turn of yours: your turn has ended, or you are a subagent or delegated worker. Nothing was sent. A subagent or delegated worker reports in its final reply instead.";
 
 /** For the three tools a delegated worker can see but must not use. */
 const BOT_ONLY =
@@ -33,14 +68,14 @@ const NoInput = Schema.Record(Schema.String, Schema.Never);
 
 const MemoryScope = Schema.Literals(["bot", "shared"]);
 
-const SayInput = Schema.Struct({
+const SayInput = toolInput({
   text: described(
-    MessageText.check(Schema.isMinLength(1)),
-    "The message, written for your user to read.",
+    text(1, MAX_SPOKEN_TEXT),
+    `The message, written for your user to read. At most ${MAX_SPOKEN_TEXT} characters: send a longer result in parts, or as a file.`,
   ),
   attachments: Schema.optionalKey(
     described(
-      Schema.Array(text(1, 2_048)).check(Schema.isMaxLength(10)),
+      Schema.Array(text(1, 1_024)).check(Schema.isMaxLength(10)),
       "Files to attach: paths in your workspace, usually under files/, or URLs.",
     ),
   ),
@@ -74,7 +109,7 @@ const AskOption = Schema.Struct({
   ),
 });
 
-const AskInput = Schema.Struct({
+const AskInput = toolInput({
   prompt: described(text(1, 2_000), "The question, in one or two sentences."),
   options: described(
     Schema.Array(AskOption).check(Schema.isMinLength(1), Schema.isMaxLength(6)),
@@ -88,16 +123,19 @@ const AskInput = Schema.Struct({
   ),
 });
 
-const MessageBotInput = Schema.Struct({
+const MessageBotInput = toolInput({
   to: described(Id, "The teammate's bot id, or the id of a room you are in."),
-  text: described(MessageText.check(Schema.isMinLength(1)), "The actionable point."),
+  text: described(
+    text(1, MAX_SPOKEN_TEXT),
+    `The actionable point, in at most ${MAX_SPOKEN_TEXT} characters.`,
+  ),
   urgent: described(
     Schema.Boolean,
     "True when they must act now or someone is waiting. Otherwise it waits for their next turn.",
   ),
 });
 
-const RememberInput = Schema.Struct({
+const RememberInput = toolInput({
   fact: described(text(1, 1_000), "One self-contained sentence."),
   tier: Schema.optionalKey(
     described(Schema.Literals(["pinned", "log"]), "Defaults to log.").annotate({
@@ -109,14 +147,14 @@ const RememberInput = Schema.Struct({
   ).pipe(Schema.withDecodingDefaultKey(Effect.succeed("bot" as const))),
 });
 
-const ForgetInput = Schema.Struct({
+const ForgetInput = toolInput({
   fact: described(text(1, 1_000), "The fact exactly as it was recorded."),
   scope: Schema.optionalKey(
     described(MemoryScope, "Defaults to bot.").annotate({ default: "bot" }),
   ).pipe(Schema.withDecodingDefaultKey(Effect.succeed("bot" as const))),
 });
 
-const RecallInput = Schema.Struct({
+const RecallInput = toolInput({
   query: described(text(1, 500), "Words or a question to search for."),
   scope: Schema.optionalKey(
     described(MemoryScope, "Search only your own memory or only the shared facts."),
@@ -139,7 +177,7 @@ const LocalTime = Schema.String.check(
 
 const RoutineAction = Schema.Literals(["create", "update", "pause", "resume", "delete"]);
 
-const SetRoutineFields = Schema.Struct({
+const SetRoutineFields = toolInput({
   action: RoutineAction,
   id: Schema.optionalKey(described(Id, "The routine's id. Required except for create.")),
   name: Schema.optionalKey(described(text(1, 200), "A short name your user will recognize.")),
@@ -185,7 +223,7 @@ const SetRoutineInput = SetRoutineFields.check(
   Schema.makeFilter((input) => routineCallProblem(input) ?? true),
 );
 
-const CreateBotInput = Schema.Struct({
+const CreateBotInput = toolInput({
   name: Profile.fields.name,
   title: Schema.optionalKey(described(Profile.fields.title, "A short role, such as Research.")),
   job: Schema.optionalKey(
@@ -193,14 +231,14 @@ const CreateBotInput = Schema.Struct({
   ),
 });
 
-const UpdateBotInput = Schema.Struct({
+const UpdateBotInput = toolInput({
   id: described(Id, "The teammate's bot id."),
   name: Schema.optionalKey(Profile.fields.name),
   title: Schema.optionalKey(Profile.fields.title),
   job: Schema.optionalKey(Profile.fields.job),
 });
 
-const UpdateProfileInput = Schema.Struct({
+const UpdateProfileInput = toolInput({
   name: Schema.optionalKey(Profile.fields.name),
   title: Schema.optionalKey(Profile.fields.title),
   avatar: Schema.optionalKey(
