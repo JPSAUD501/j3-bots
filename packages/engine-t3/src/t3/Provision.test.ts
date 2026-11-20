@@ -257,11 +257,7 @@ describe("a harness configuration J3 Bots cannot read", () => {
       yield* files.folder(path.join(input.home, "claude-code"));
       yield* files.write(claudeSettings, '{ "model": "opus", ');
 
-      const refused = yield* provision(input);
-      assert.deepStrictEqual(
-        refused.map((error) => error.file),
-        [claudeSettings],
-      );
+      yield* provision(input);
       assert.strictEqual(yield* fs.readFileString(claudeSettings), '{ "model": "opus", ');
       const instances = (yield* settings).providerInstances;
       assert.strictEqual(instances["j3-claude"]?.enabled, false);
@@ -279,11 +275,7 @@ describe("a harness configuration J3 Bots cannot read", () => {
       const configFile = path.join(input.home, "codex", "config.toml");
       yield* files.folder(configFile);
 
-      const refused = yield* provision(input);
-      assert.deepStrictEqual(
-        refused.map((error) => error.file),
-        [configFile],
-      );
+      yield* provision(input);
       assert.strictEqual((yield* settings).providerInstances["j3-codex"]?.enabled, false);
       const prompt = yield* Effect.flip(
         writeBasePrompt({ files, instances, basePrompt: "Ada is your teammate." }),

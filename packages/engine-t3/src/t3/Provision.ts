@@ -403,9 +403,9 @@ const claudeSettings = (
  *
  * A harness configuration J3 Bots cannot edit safely is left as it is and its
  * instance is turned off, so the other harnesses still start; each such file
- * is logged by path and answered. A failure to read the connection or the
- * engine's own settings, or to write anything, fails the provisioning, and
- * the engine does not start.
+ * is logged by path, and the provider's status shows it off. A failure to
+ * read the connection or the engine's own settings, or to write anything,
+ * fails the provisioning, and the engine does not start.
  */
 export const provision = Effect.fn("engine.provision")(function* (input: ProvisionInput) {
   const fs = yield* FileSystem.FileSystem;
@@ -471,18 +471,15 @@ export const provision = Effect.fn("engine.provision")(function* (input: Provisi
     }
   });
 
-  const refused: Array<HarnessConfigUnreadable> = [];
   const disabled = new Set<string>();
   for (const spec of input.instances) {
-    const outcome = yield* harness(spec).pipe(
-      Effect.as(null),
+    const written = yield* harness(spec).pipe(
+      Effect.as(true),
       Effect.catchTag("HarnessConfigUnreadable", (error) =>
-        Effect.logWarning(error.message).pipe(Effect.as(error)),
+        Effect.logWarning(error.message).pipe(Effect.as(false)),
       ),
     );
-    if (outcome === null) continue;
-    refused.push(outcome);
-    disabled.add(spec.instanceId);
+    if (!written) disabled.add(spec.instanceId);
   }
 
   for (const spec of input.instances) {
@@ -500,7 +497,6 @@ export const provision = Effect.fn("engine.provision")(function* (input: Provisi
     }
   }
   yield* writeJson(settingsFile, engineSettings(input, connection !== null, disabled, existing));
-  return refused;
 });
 
 /**

@@ -365,12 +365,17 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
 
   /** The supervision loop, once the engine is installed and supervised. */
   const supervision = yield* Ref.make(Option.none<Supervision>());
+  /**
+   * One connection change at a time, through the restart that applies it, so
+   * an engine that came back answers only for the connection it started with.
+   */
+  const connecting = yield* Semaphore.make(1);
 
   /**
    * Stores the connection, then restarts the engine, whose next start
    * provisions it (`provision`). Answers once the engine is back, or after
-   * `CONNECT_RESTART_WAIT` without it: it then gets the connection whenever
-   * it next starts.
+   * `CONNECT_RESTART_WAIT` without it, or at once when nothing will start
+   * the engine again: it then gets the connection whenever it next starts.
    */
   const connectProviders = Effect.fn("Engine.connectProviders")(function* (
     connection: ProviderConnection,
@@ -391,7 +396,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     // Still installing: the engine's first start provisions it.
     if (Option.isNone(running)) return stored;
     yield* Effect.logInfo("Restarting the engine for a new provider connection");
-    yield* running.value.restart;
+    if (!(yield* running.value.restart)) return stored;
     const back = yield* stateChanges(state).pipe(
       Stream.filter((current) => current._tag === "ready"),
       Stream.runHead,
@@ -401,7 +406,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     return Option.isSome(back)
       ? ({ _tag: "applied", baseUrl: connection.baseUrl } satisfies ConnectionOutcome)
       : stored;
-  });
+  }, connecting.withPermits(1));
 
   const platformServices = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(

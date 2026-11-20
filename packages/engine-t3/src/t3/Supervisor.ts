@@ -139,10 +139,12 @@ const encodeEngineProcess = Schema.encodeEffect(Schema.fromJsonString(EngineProc
 export interface Supervision {
   /**
    * Stops the engine, if it runs, and starts it again at once, whatever the
-   * restart backoff. Returns once the engine it stopped is gone and the state
-   * says so, before the new one starts.
+   * restart backoff. Returns `true` once the engine it stopped is gone and
+   * the state says so, before the new one starts; `false` at once when the
+   * loop no longer runs, as after the engine was found incompatible, so
+   * nothing will start the engine again.
    */
-  readonly restart: Effect.Effect<void>;
+  readonly restart: Effect.Effect<boolean>;
 }
 
 /**
@@ -385,13 +387,18 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
     }
   });
 
-  yield* Effect.forkScoped(loop);
+  /** Completed when the loop ends: no restart asked for is answered after that. */
+  const ended = yield* Deferred.make<void>();
+  yield* Effect.forkScoped(loop.pipe(Effect.ensuring(Deferred.succeed(ended, undefined))));
 
   return {
     restart: Effect.gen(function* () {
       const done = yield* Deferred.make<void>();
       yield* Queue.offer(restarts, done);
-      yield* Deferred.await(done);
+      return yield* Effect.raceFirst(
+        Deferred.await(done).pipe(Effect.as(true)),
+        Deferred.await(ended).pipe(Effect.as(false)),
+      );
     }),
   } satisfies Supervision;
 });

@@ -129,6 +129,54 @@ describe("editToml", () => {
     );
   });
 
+  it("replaces each of its tables where it is, keeping the comments with it, and adds a new one at the end", () => {
+    const edit: TomlEdit = {
+      keys: [],
+      owns: [
+        ["model_providers", "j3"],
+        ["mcp_servers", "j3"],
+        ["mcp_servers", "j3-extra"],
+      ],
+      tables: [
+        { path: ["model_providers", "j3"], values: [["base_url", "https://new.example.com/v1"]] },
+        { path: ["mcp_servers", "j3"], values: [["command", "/usr/bin/node"]] },
+        { path: ["mcp_servers", "j3-extra"], values: [["command", "/usr/bin/extra"]] },
+      ],
+    };
+    const text = [
+      "# The bot tools.",
+      "[mcp_servers.j3]",
+      'command = "/old/node"',
+      "",
+      "[projects.x]",
+      'trust_level = "trusted"',
+      "",
+      "# The provider connection.",
+      "[model_providers.j3]",
+      'base_url = "https://old.example.com/v1"',
+      "",
+    ].join("\n");
+    assert.strictEqual(
+      edited(text, edit),
+      [
+        "# The bot tools.",
+        "[mcp_servers.j3]",
+        'command = "/usr/bin/node"',
+        "",
+        "[projects.x]",
+        'trust_level = "trusted"',
+        "",
+        "# The provider connection.",
+        "[model_providers.j3]",
+        'base_url = "https://new.example.com/v1"',
+        "",
+        "[mcp_servers.j3-extra]",
+        'command = "/usr/bin/extra"',
+        "",
+      ].join("\n"),
+    );
+  });
+
   it("leaves a file that is not TOML as it is, and says where without quoting it", () => {
     const result = editToml('key = "the-secret\n[mcp_servers.j3]\n', tools);
     assert.strictEqual(result._tag, "unreadable");

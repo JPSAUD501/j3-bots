@@ -39,7 +39,10 @@ export interface TomlEdit {
    * They are replaced by `tables`.
    */
   readonly owns: ReadonlyArray<ReadonlyArray<string>>;
-  /** The tables this writer wants, in order, where its first table was, or at the end. */
+  /**
+   * The tables this writer wants: each where the file has it, under the
+   * comments above it, and the others at the end, in order.
+   */
   readonly tables: ReadonlyArray<TomlTable>;
 }
 
@@ -633,13 +636,27 @@ export const editToml = (text: string, edit: TomlEdit): TomlEdited => {
     }
   }
 
-  const kept: Array<{ readonly owned: boolean; readonly leading: string; readonly text: string }> =
-    [];
+  // Each of J3 Bots' tables the file has replaces it where it is, under the
+  // comments above it; the others go at the end. An owned table J3 Bots no
+  // longer writes, a sub-table of one included, leaves only its comments.
+  const ours = edit.tables.filter((table) => !inlined.has(table));
+  const replaced = new Set<TomlTable>();
+  const parts = [textOf(top)];
   for (const table of tables) {
     const path = table.header?.path ?? [];
-    const leading = textOf(table.leading);
     if (owned(path)) {
-      kept.push({ owned: true, leading, text: "" });
+      const replacing = ours.find(
+        (candidate) =>
+          !replaced.has(candidate) &&
+          candidate.path.length === path.length &&
+          sameStart(candidate.path, path),
+      );
+      if (replacing !== undefined) replaced.add(replacing);
+      parts.push(
+        [textOf(table.leading), replacing === undefined ? "" : render(replacing)]
+          .filter((part) => part !== "")
+          .join("\n"),
+      );
       continue;
     }
     const body: Array<Statement> = [...table.leading];
@@ -652,29 +669,9 @@ export const editToml = (text: string, edit: TomlEdit): TomlEdited => {
       if (after instanceof Unfollowed) return { _tag: "unreadable", reason: after.reason };
       if (after !== null) body.push(after);
     }
-    kept.push({ owned: false, leading, text: textOf(body) });
+    parts.push(textOf(body));
   }
-
-  // J3 Bots' tables go where its first table was, under the comments above
-  // it, or at the end. The comments above another table it owned stay where
-  // they were.
-  const ours = edit.tables.filter((table) => !inlined.has(table)).map(render);
-  const parts = [textOf(top)];
-  let oursPlaced = false;
-  for (const table of kept) {
-    if (!table.owned) {
-      parts.push(table.text);
-      continue;
-    }
-    if (oursPlaced) {
-      parts.push(table.leading);
-      continue;
-    }
-    const [first, ...rest] = ours;
-    parts.push([table.leading, first ?? ""].filter((part) => part !== "").join("\n"), ...rest);
-    oursPlaced = true;
-  }
-  if (!oursPlaced) parts.push(...ours);
+  parts.push(...ours.filter((table) => !replaced.has(table)).map(render));
   const body = parts.filter((part) => part !== "").join("\n\n");
   const edited = body === "" ? "" : `${body}\n`;
 

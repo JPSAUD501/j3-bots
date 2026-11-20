@@ -167,7 +167,7 @@ const connect = Command.make("connect", { baseUrl: baseUrlFlag, yes: yesFlag }).
         case "applied":
           return yield* Console.log(
             [
-              `The engine restarted, and Claude Code and Codex now reach their models through ${outcome.baseUrl}.`,
+              `The engine restarted with the stored connection: Claude Code and Codex reach their models through ${outcome.baseUrl}.`,
               "`j3-bots doctor` shows each provider's state.",
             ].join("\n"),
           );
