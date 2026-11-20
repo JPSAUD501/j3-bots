@@ -172,6 +172,41 @@ describe("ensureInstalled", () => {
     }).pipe(Effect.scoped, Effect.provide(machine)),
   );
 
+  it.effect("removes what an install cut off after publishing left, and runs the engine", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const installed = ({ runtime, partial, staging }: Workspace) =>
+        Effect.all([
+          fs.makeDirectory(path.join(runtime, pin.version)),
+          fs.writeFileString(path.join(runtime, pin.version, ".installed"), `${DIGEST}\n`),
+          fs.writeFile(partial, ARCHIVE),
+          fs.makeDirectory(path.join(staging, "t3"), { recursive: true }),
+        ]);
+      const requests: Array<string> = [];
+
+      const left = yield* install(requests, { prepare: installed });
+      assert.isUndefined(left.reason);
+      assert.deepStrictEqual(requests, []);
+      assert.isFalse(yield* fs.exists(left.partial));
+      assert.isFalse(yield* fs.exists(left.staging));
+
+      // A leftover that cannot be removed is no reason to stop.
+      const outside = yield* fs.makeTempDirectoryScoped();
+      const kept = yield* install(requests, {
+        homeOnly: true,
+        prepare: (workspace) =>
+          Effect.gen(function* () {
+            yield* fs.remove(workspace.runtime, { recursive: true });
+            yield* fs.symlink(outside, workspace.runtime);
+            yield* installed(workspace);
+          }),
+      });
+      assert.isUndefined(kept.reason);
+      assert.isTrue(yield* fs.exists(path.join(outside, `${pin.version}.partial`)));
+    }).pipe(Effect.scoped, Effect.provide(machine)),
+  );
+
   it.effect(
     "neither reads nor removes through a runtime folder swapped for a link mid-download",
     () =>

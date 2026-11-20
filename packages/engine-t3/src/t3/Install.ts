@@ -111,8 +111,9 @@ export const inspectInstall = Effect.fn("engine.inspectInstall")(function* (inpu
 
 /**
  * The pinned engine executable, installed if missing. Idempotent: a finished
- * install is detected by its marker and costs one `stat`. Resumable: an
- * interrupted download continues from where it stopped.
+ * install is detected by its marker, and what an install cut off after it was
+ * published left beside it (its download, its unpacking folder) is removed.
+ * Resumable: an interrupted download continues from where it stopped.
  */
 export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (input: {
   readonly home: string;
@@ -129,8 +130,26 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
 
   const target = runtimeDirectory(path, input.home);
   const executable = path.join(target, "t3");
-  if (yield* fs.exists(path.join(target, INSTALLED_MARKER)).pipe(Effect.orElseSucceed(() => false)))
+  const partial = `${target}.partial`;
+  const staging = `${target}.staging`;
+  if (
+    yield* fs.exists(path.join(target, INSTALLED_MARKER)).pipe(Effect.orElseSucceed(() => false))
+  ) {
+    // A leftover only takes space: the installed engine runs whether or not it goes.
+    yield* Effect.forEach(
+      [partial, staging],
+      (leftover) =>
+        input.files
+          .remove(leftover)
+          .pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning(`Removing ${leftover}, left by an earlier install, failed`, cause),
+            ),
+          ),
+      { discard: true },
+    );
     return executable;
+  }
 
   const platform = releasePlatform(input.platform, input.arch);
   if (Option.isNone(platform)) return yield* fail("unsupported-platform");
@@ -142,7 +161,6 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
       Effect.andThen(Effect.fail(fail("download"))),
     );
 
-  const partial = `${target}.partial`;
   // Checked before anything is fetched, so a link or a folder there fails at
   // once rather than after a large download; the write itself checks again.
   const have = yield* input.files.writable(partial).pipe(Effect.mapError(storage));
@@ -194,7 +212,6 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
   // Whatever is at the staging name is removed (a link itself, never what it
   // leads to), and the folder is then created only if nothing is there, so a
   // link planted in between is never followed into.
-  const staging = `${target}.staging`;
   yield* input.files.folder(path.dirname(staging)).pipe(Effect.mapError(storage));
   yield* remove(staging);
   yield* fs.makeDirectory(staging, { mode: 0o700 }).pipe(Effect.mapError(storage));
