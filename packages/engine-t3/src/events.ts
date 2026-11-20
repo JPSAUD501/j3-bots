@@ -435,6 +435,13 @@ export const SessionEvent = Schema.Union([
      * only after the stop answered.
      */
     backgroundWork: Schema.Boolean,
+    /**
+     * Turns the engine is starting at once, whose provider turn has not
+     * started: no event has told of them yet, and each will show as
+     * `turn-started`, or end without starting. A Stop sent before one was
+     * created did not reach it.
+     */
+    startingTurns: Schema.Array(TurnId),
   }),
 ]);
 export type SessionEvent = typeof SessionEvent.Type;

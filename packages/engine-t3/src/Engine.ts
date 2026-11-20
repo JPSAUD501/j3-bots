@@ -382,8 +382,9 @@ export class Engine extends Context.Service<
      * turn's `turn-finished`, a `turn-finished` with `cancelled` for each
      * waiting turn, `steer-dropped` for each untaken steer,
      * `continuation-dropped` for a disarmed continuation, and a
-     * `synchronized` without `backgroundWork` for the background work of a
-     * turn that had already ended.
+     * `synchronized` without `backgroundWork` or `startingTurns` for the
+     * background work of a turn that had already ended and for a turn the
+     * engine was starting.
      *
      * A message the engine counts as a user's releases the hold Stop put on
      * the queue, so a dispatch sent between the stop and the cancels starts a

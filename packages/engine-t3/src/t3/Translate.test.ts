@@ -20,6 +20,7 @@ import {
   engineAnswersOf,
   nothingToStop,
   replacement,
+  startingTurns,
 } from "./Translate.ts";
 
 const answers = Schema.decodeUnknownSync(QuestionAnswers);
@@ -305,5 +306,8 @@ describe("what a Stop leaves to run", () => {
     // A turn the engine is starting, which no event has told of yet.
     applyEvent(mirror, run("starting", 3));
     assert.isFalse(nothingToStop(mirror, at));
+    assert.deepStrictEqual(startingTurns(mirror), [TurnId.make("run-3")]);
+    applyEvent(mirror, run("running", 3));
+    assert.deepStrictEqual(startingTurns(mirror), []);
   });
 });

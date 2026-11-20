@@ -347,10 +347,12 @@ export const layer = Layer.effect(
      * those rounds are observed, and the target is confirmed if the events
      * now show nothing left running. Confirmation comes only from here, after
      * a `synchronize`, never from one event as it is applied: the event after
-     * it may start a turn the engine had waiting. Background work the engine
-     * still counts as pending at the marker leaves the rounds unobserved:
-     * the engine interrupts it after the stop answered, and its end is seen
-     * only by synchronizing again, on a later pass.
+     * it may start a turn the engine had waiting. What the engine shows at
+     * the marker that no event tells of leaves the rounds unobserved, so the
+     * session is synchronized again on a later pass: background work it
+     * still counts as pending, which it interrupts after the stop answered,
+     * and a turn it is starting, which a round sent before the turn existed
+     * missed, and whose start opens the next round.
      */
     const observe = Effect.fn("Stops.observe")(function* (
       sessionId: SessionRowId,
@@ -362,7 +364,9 @@ export const layer = Layer.effect(
       `.pipe(Effect.orDie);
       if (sent.length === 0) return "done" satisfies Progress;
       const synced = yield* observer.synchronize(sessionId, engineSessionId).pipe(
-        Effect.map(({ backgroundWork }): Progress => (backgroundWork ? "deferred" : "done")),
+        Effect.map(({ backgroundWork, startingTurns }): Progress =>
+          backgroundWork || startingTurns.length > 0 ? "deferred" : "done",
+        ),
         Effect.catchTags({
           SessionNotFound: () =>
             transaction(sessionLost(sessionId)).pipe(Effect.as("lost" as const)),

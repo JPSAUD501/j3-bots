@@ -342,18 +342,28 @@ it.effect(
 it.effect("stops a run that starts while the Stop's commands are on their way", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;
+    const sql = yield* SqlClient.SqlClient;
+    const stops = yield* Stops;
     const bot = yield* createBot("Ana");
     const session = yield* engineSession(bot.id);
     yield* sendToBot(bot.id, "Index the repository.");
     yield* nextTurn(bot.id);
 
-    // The Stop ends the turn, and background work starts another before the
-    // engine answers; the server sees that start before the acknowledgment.
+    // The Stop ends the turn, and background work creates another before the
+    // engine answers. Its provider is slow to start it: at the marker after
+    // the Stop it is still starting, and no event has told of it.
+    const startup = yield* control.holdNextStartup(session);
     const during = yield* control.startEngineTurnDuringNextStop(session);
-    yield* (yield* Stops).stopBot({ commandId: command(), botId: bot.id });
+    yield* stops.stopBot({ commandId: command(), botId: bot.id });
     const slipped = yield* during.started;
-    yield* until(admittedTurn(bot.id).pipe(Effect.map(Option.contains(slipped))));
     yield* during.reply;
+    yield* stops.runPending;
+    const unsettled = yield* sql<{ readonly n: number }>`
+      SELECT COUNT(*) AS n FROM stop_targets WHERE sent_at IS NOT NULL AND stopped_at IS NULL
+    `;
+    assert.deepStrictEqual(unsettled, [{ n: 1 }]);
+    yield* startup.release;
+    yield* until(admittedTurn(bot.id).pipe(Effect.map(Option.contains(slipped))));
 
     // The round missed that run, so another round stops it.
     yield* turnEnded(bot.id);

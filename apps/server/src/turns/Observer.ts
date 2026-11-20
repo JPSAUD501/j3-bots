@@ -118,6 +118,11 @@ export interface Synchronized {
    * running: what a Stop of an idle session interrupts, after it answered.
    */
   readonly backgroundWork: boolean;
+  /**
+   * Turns the engine is starting that no event has told of yet: a Stop sent
+   * before one was created did not reach it.
+   */
+  readonly startingTurns: ReadonlyArray<TurnId>;
 }
 
 /**
@@ -1102,7 +1107,10 @@ export const layer = Layer.effect(
           const waiting = follow.tokens.get(event.token);
           if (waiting !== undefined) {
             yield* sql.afterCommit(
-              Deferred.succeed(waiting, { backgroundWork: event.backgroundWork }),
+              Deferred.succeed(waiting, {
+                backgroundWork: event.backgroundWork,
+                startingTurns: event.startingTurns,
+              }),
             );
           }
           return;

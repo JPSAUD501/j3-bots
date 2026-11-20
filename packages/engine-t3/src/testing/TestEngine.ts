@@ -79,10 +79,10 @@ import { toolInputDigest } from "../toolCaller.ts";
 // with their turn, and whose card can change while they are open; host
 // speech; replies lost after a command was applied; staged files that expire;
 // calls held in flight, a Stop whose effects lag its acknowledgment, a Stop
-// refused while its work can still run, and a dispatch that waits in the
-// startup queue and lands late; synchronization markers; and resume by cursor
-// with replay or a replacement that repeats turns already seen end, as the
-// real engine may. The adapter's conformance suite runs the same scenarios against
+// refused while its work can still run, a turn whose provider is slow to
+// start it, and a dispatch that waits in the startup queue and lands late;
+// synchronization markers; and resume by cursor with replay or a replacement
+// that repeats turns already seen end, as the real engine may. The adapter's conformance suite runs the same scenarios against
 // the real engine, which keeps this double honest.
 
 /** The engine methods a test can hold in flight with `holdNext`. */
@@ -191,13 +191,22 @@ export class TestEngineControl extends Context.Service<
     /**
      * The next `stop` takes effect before it answers, and then background
      * work starts a turn in the session, which the stop missed: as when a run
-     * begins between a Stop's commands. `started` gives that turn once it
-     * started; the stop answers only after `reply`.
+     * begins between a Stop's commands. `started` gives that turn once the
+     * engine created it; the stop answers only after `reply`.
      */
     readonly startEngineTurnDuringNextStop: (sessionId: SessionId) => Effect.Effect<{
       readonly started: Effect.Effect<TurnId>;
       readonly reply: Effect.Effect<void>;
     }>;
+    /**
+     * The next turn the session starts stays starting, its provider turn not
+     * started, until `release`: no `turn-started` tells of it, and the
+     * session's `synchronized` lists it in `startingTurns`. A turn that ended
+     * meanwhile stays ended.
+     */
+    readonly holdNextStartup: (
+      sessionId: SessionId,
+    ) => Effect.Effect<{ readonly release: Effect.Effect<void> }>;
     /**
      * The engine holds the session's queue of waiting turns, which must not be
      * empty: as after an engine restart, or, with `heldAgainOnResume`, a model
@@ -397,6 +406,10 @@ interface SessionRecord {
   raceNextStart: boolean;
   /** Set by `failNextStart`. */
   failNextStart: FailureClass | null;
+  /** Set by `holdNextStartup`, until the next turn starts. */
+  holdStartup: boolean;
+  /** The turn `holdNextStartup` keeps starting, until released. */
+  heldStartup: TurnId | null;
 }
 
 type AppliedKey =
@@ -759,6 +772,16 @@ const make = Effect.gen(function* () {
       endTurn(session, turn, { _tag: "failed", failure, retryAt: null }, at, "other");
       return;
     }
+    if (session.holdStartup) {
+      session.holdStartup = false;
+      session.heldStartup = turn.turnId;
+      return;
+    }
+    beginTurn(session, turn, at);
+  };
+
+  /** The turn's provider turn starts. */
+  const beginTurn = (session: SessionRecord, turn: TurnRecord, at: DateTime.Utc): void => {
     turn.startedAt = at;
     emit(session, at, (stamp) => ({
       _tag: "turn-started",
@@ -1033,6 +1056,8 @@ const make = Effect.gen(function* () {
             subscribers: new Map(),
             raceNextStart: false,
             failNextStart: null,
+            holdStartup: false,
+            heldStartup: null,
           });
           return sessionId;
         }),
@@ -1286,6 +1311,9 @@ const make = Effect.gen(function* () {
           const backgroundWork =
             session.running === null &&
             [...session.turns.values()].some((turn) => turn.backgroundWork);
+          const starting =
+            session.heldStartup === null ? undefined : session.turns.get(session.heldStartup);
+          const startingTurns = starting?.ended === null ? [starting.turnId] : [];
           for (const [subscriber, state] of session.subscribers) {
             Queue.offerUnsafe(subscriber, {
               _tag: "synchronized",
@@ -1293,6 +1321,7 @@ const make = Effect.gen(function* () {
               at,
               token,
               backgroundWork,
+              startingTurns,
             });
           }
           // Tool calls the engine records late appear only after this marker.
@@ -1396,6 +1425,21 @@ const make = Effect.gen(function* () {
     rejectNextStop: Effect.sync(() => {
       rejectStop = true;
     }),
+
+    holdNextStartup: (sessionId) =>
+      Effect.gen(function* () {
+        const session = yield* existingSession(sessionId);
+        session.holdStartup = true;
+        return {
+          release: Effect.gen(function* () {
+            const turnId = session.heldStartup;
+            session.heldStartup = null;
+            const turn = turnId === null ? undefined : session.turns.get(turnId);
+            if (turn === undefined || turn.ended !== null) return;
+            beginTurn(session, turn, yield* DateTime.now);
+          }),
+        };
+      }),
 
     startEngineTurnDuringNextDispatch: (sessionId) =>
       Effect.gen(function* () {

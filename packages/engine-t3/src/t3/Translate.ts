@@ -1436,6 +1436,18 @@ export const queuedRuns = (mirror: Mirror) =>
   runsInOrder(mirror).filter((run) => run.status === "queued" || run.status === "preparing");
 
 /**
+ * Turns the engine is starting, whose provider turn has not started: a run
+ * the engine began at once, `starting` with no `startedAt` (**Read** at
+ * `db51b67`, `Orchestrator.ts`, `dispatchMessage`, L8451-8461), also one a
+ * provider notification or a background task's completion dispatched; or one
+ * `preparing` its workspace. No event tells of one before it starts.
+ */
+export const startingTurns = (mirror: Mirror): ReadonlyArray<TurnId> =>
+  runsInOrder(mirror)
+    .filter((run) => (run.status === "starting" || run.status === "preparing") && !hasStarted(run))
+    .map(turnIdOf);
+
+/**
  * Whether nothing a Stop targets can still run in the session: no run that
  * has not ended, other than those waiting in the queue, which a Stop cancels
  * one by one; no background work the engine counts as pending; no

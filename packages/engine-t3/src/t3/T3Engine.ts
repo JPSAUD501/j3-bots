@@ -112,6 +112,7 @@ import {
   nothingToStop,
   queuedRuns,
   replacement,
+  startingTurns,
   type EventBody,
   type Mirror,
   type View,
@@ -1239,6 +1240,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
             _tag: "synchronized",
             token,
             backgroundWork: backgroundWorkPending(mirror),
+            startingTurns: startingTurns(mirror),
             cursor: lastCursor,
             at: DateTime.makeUnsafe(yield* Clock.currentTimeMillis),
           });
