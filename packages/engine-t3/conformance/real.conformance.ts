@@ -219,12 +219,14 @@ describe("Engine conformance, real engine only", () => {
         yield* bench.startForeignTurn(sessionId);
 
         yield* killEngine(home);
-        const end = yield* until(
-          queue,
-          "turn-finished",
-          (event) => event.turnId === turnOf(running),
-        );
-        const held = yield* until(queue, "queue-held");
+        // The engine holds the queue as it recovers, before or after it ends the cut turn.
+        let end: Extract<SessionEvent, { readonly _tag: "turn-finished" }> | undefined;
+        let held: Extract<SessionEvent, { readonly _tag: "queue-held" }> | undefined;
+        while (end === undefined || held === undefined) {
+          const event = yield* take(queue);
+          if (isTagged(event, "turn-finished") && event.turnId === turnOf(running)) end = event;
+          if (isTagged(event, "queue-held")) held = event;
+        }
         yield* engineReady;
         yield* engine.resumeQueue({ sessionId, hold: held.cursor });
         const waiting = yield* until(queue, "turn-started");
