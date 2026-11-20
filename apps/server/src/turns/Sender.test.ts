@@ -17,6 +17,7 @@ import {
   createBot,
   deliveryIs,
   engineSession,
+  failedAs,
   flushed,
   gateSettled,
   nextTurn,
@@ -202,6 +203,38 @@ it.effect("stops a room's message that lands after its recovery gave up and the 
     yield* nextTurn(bot.id);
     yield* turnEnded(bot.id);
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "fails as stopped a message that lands after its recovery gave up and a room's Stop drops it",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      const room = yield* roomOf(bot.id);
+
+      const deferred = yield* control.deferNextDispatch;
+      const message = yield* sendToBot(bot.id, "Tag the release.");
+      yield* flushed(bot.id);
+      yield* recoverTimes(MAX_INDETERMINATE_ANSWERS - 1);
+      yield* failedAs(message, "unresolved");
+
+      // The key lands behind a room's turn, and the room's Stop, which does not
+      // cover the operator's own work, cancels it before it starts.
+      yield* sendInRoom(bot.id, room.id, "Plan the launch.");
+      yield* nextTurn(bot.id);
+      yield* deferred.land;
+      yield* deliveryIs(message, "pending");
+      yield* (yield* Rooms).update({
+        commandId: command(),
+        roomId: room.id,
+        changes: { archived: true },
+      });
+      yield* stopSettled;
+      yield* failedAs(message, "stopped");
+      assert.strictEqual(yield* timesSent(session, "Tag the release."), 1);
+    }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect("ends a send that keeps hitting an adapter defect, and lets a Stop settle", () =>

@@ -213,6 +213,17 @@ const delivery = (entryId: EntryId) =>
 export const deliveryIs = (entryId: EntryId, tag: MessageDelivery["_tag"]) =>
   until(delivery(entryId).pipe(Effect.map((found) => found?._tag === tag)));
 
+/** Waits for the message to fail for `reason`. */
+export const failedAs = (
+  entryId: EntryId,
+  reason: Extract<MessageDelivery, { readonly _tag: "failed" }>["reason"],
+) =>
+  until(
+    delivery(entryId).pipe(
+      Effect.map((found) => found?._tag === "failed" && found.reason === reason),
+    ),
+  );
+
 /** Waits for an entry of the kind to appear in the bot's conversation, and returns the latest. */
 export const awaitEntry = <T extends Entry["_tag"]>(botId: BotId, tag: T) =>
   eventually(

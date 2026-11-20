@@ -634,7 +634,11 @@ export const layer = Layer.effect(
         yield* ledger.awaitContinuation(dispatch.id, end.outcome, end.at);
         return;
       }
-      yield* settle(session, dispatch, end.outcome, end.backgroundWork);
+      // A continuation cancelled before it started ran nothing: the work
+      // ended as the turn it was to continue did, as when one is dropped.
+      const ranNothing = end.cause?._tag === "continuation" && end.outcome._tag === "cancelled";
+      const outcome = ranNothing ? (dispatch.outcome_json ?? end.outcome) : end.outcome;
+      yield* settle(session, dispatch, outcome, end.backgroundWork);
     }, Effect.orDie);
 
     const continuationDropped = Effect.fn("Observer.continuationDropped")(function* (

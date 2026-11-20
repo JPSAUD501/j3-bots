@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BotId, EntryId, type MessageDelivery, RoomId } from "@j3-bots/contracts";
+import {
+  BotId,
+  type Entry,
+  EntryId,
+  type MessageDelivery,
+  type Notice,
+  RoomId,
+} from "@j3-bots/contracts";
 import { type DispatchDisposition, IdempotencyKey, TurnId, TurnOutcome } from "@j3-bots/engine-t3";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -302,6 +309,24 @@ export const layer = Layer.effect(
       return rows.length > 0;
     }, Effect.orDie);
 
+    /** The notices that offer a retry of the dispatch's undelivered wakes. */
+    const undeliveredNotices = Effect.fn("Ledger.undeliveredNotices")(function* (
+      dispatchId: DispatchRowId,
+    ) {
+      const rows = yield* sql<{ readonly entry_id: string }>`
+        SELECT entry_id FROM notice_retries
+        WHERE dispatch_id = ${dispatchId} AND reason = 'undelivered'
+      `;
+      const shown: Array<Extract<Entry, { readonly _tag: "notice" }>> = [];
+      for (const row of rows) {
+        const found = yield* entries.find(EntryId.make(row.entry_id));
+        if (Option.isSome(found) && found.value.entry._tag === "notice") {
+          shown.push(found.value.entry);
+        }
+      }
+      return shown;
+    }, Effect.orDie);
+
     /**
      * A notice that the dispatch was not delivered offers a retry exactly
      * while `undeliveredRetryable` holds, read again after every change to the
@@ -312,19 +337,11 @@ export const layer = Layer.effect(
     const refreshNotices = Effect.fn("Ledger.refreshNotices")(function* (
       dispatchId: DispatchRowId,
     ) {
-      const rows = yield* sql<{ readonly entry_id: string }>`
-        SELECT entry_id FROM notice_retries
-        WHERE dispatch_id = ${dispatchId} AND reason = 'undelivered'
-      `;
-      if (rows.length === 0) return;
+      const shown = yield* undeliveredNotices(dispatchId);
+      if (shown.length === 0) return;
       const retryable = yield* undeliveredRetryable(dispatchId);
-      for (const row of rows) {
-        const found = yield* entries.find(EntryId.make(row.entry_id));
-        if (Option.isSome(found) && found.value.entry._tag === "notice") {
-          if (found.value.entry.retryable !== retryable) {
-            yield* entries.update({ ...found.value.entry, retryable });
-          }
-        }
+      for (const entry of shown) {
+        if (entry.retryable !== retryable) yield* entries.update({ ...entry, retryable });
       }
     }, Effect.orDie);
 
@@ -333,7 +350,7 @@ export const layer = Layer.effect(
       Result: FailedWake,
       execute: ({ dispatchId, reason, at }) => sql`
         UPDATE wakes SET status = 'failed', failure_reason = ${reason}, updated_at = ${at}
-        WHERE dispatch_id = ${dispatchId} AND status = 'dispatched'
+        WHERE dispatch_id = ${dispatchId} AND status IN ('dispatched', 'failed')
         RETURNING bot_id, audience, audience_room_id, payload_json
       `,
     });
@@ -359,20 +376,26 @@ export const layer = Layer.effect(
           `;
           break;
         case "failed": {
+          // Wakes the dispatch failed with before, when the engine took it
+          // late, fail again with this reason.
           const failed = yield* failedWakes({ dispatchId, reason: after.reason, at });
           // An answer has no message of its own to show its failure on: a
-          // retryable notice does, where the answer was for.
+          // retryable notice does, where the answer was for. One that failed
+          // before keeps the notice it has, which now shows this failure.
           const answer = failed.find((wake) => wake.payload_json._tag === "answer");
           if (answer !== undefined) {
-            yield* notify(
-              answer.bot_id,
-              audienceOf(answer),
-              {
-                _tag: "turn-failed",
-                failure: after.reason === "unresolved" ? "engine-unavailable" : "unknown",
-              },
-              { dispatchId, reason: "undelivered" },
-            );
+            const notice: Notice = {
+              _tag: "turn-failed",
+              failure: after.reason === "unresolved" ? "engine-unavailable" : "unknown",
+            };
+            const shown = yield* undeliveredNotices(dispatchId);
+            if (shown.length === 0) {
+              yield* notify(answer.bot_id, audienceOf(answer), notice, {
+                dispatchId,
+                reason: "undelivered",
+              });
+            }
+            for (const entry of shown) yield* entries.update({ ...entry, notice });
           }
           break;
         }
