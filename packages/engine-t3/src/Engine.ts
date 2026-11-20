@@ -14,6 +14,7 @@ import type * as Option from "effect/Option";
 import type * as Redacted from "effect/Redacted";
 import type * as Stream from "effect/Stream";
 import type {
+  BackgroundWorkRunning,
   DispatchRejected,
   EngineDown,
   EngineIncompatible,
@@ -271,7 +272,8 @@ export interface EngineOptions {
  *   and `EngineIncompatible` mean nothing was sent. `EngineIndeterminate` means
  *   a command was sent and no reply settled it: it may have been applied, and
  *   never counts as "not applied". Once a call has sent a command, any later
- *   failure of the call is `EngineIndeterminate`, except `DispatchRejected`.
+ *   failure of the call is `EngineIndeterminate`, except `DispatchRejected`
+ *   and `BackgroundWorkRunning`, which the engine answered.
  * - Methods that take a `key` apply it once, even across engine and server
  *   restarts: calling again with the same key and input applies nothing new.
  *   After `EngineIndeterminate`, that is how the caller learns what happened;
@@ -349,12 +351,26 @@ export class Engine extends Context.Service<
      * Changes the model or permission mode of a session, from its next turn.
      * Sends only what differs from what the session runs, so it also brings a
      * session to settings it may already have.
+     *
+     * A change can replace the session's provider session: on Claude Code a
+     * permission mode always does, which ends a turn running there (**Read**
+     * at `db51b67`, `Orchestrator.ts` L4715-4757, `ClaudeAdapterV2.ts` L577).
+     * So it is refused with `SessionBusy`, sending nothing, while the adapter
+     * sees a turn preparing, starting or running in the session; a turn that
+     * only waits in the queue does not count. Like the dispatch's busy check,
+     * a turn the engine starts on its own between the check and the change
+     * is not seen. `BackgroundWorkRunning`: the engine refused a change that
+     * would end the session's background work. A model sent before a refused
+     * permission mode stays applied; calling again sends what still differs.
      */
     readonly configureSession: (input: {
       readonly sessionId: SessionId;
       readonly model?: ModelChoice;
       readonly permissionMode?: PermissionMode;
-    }) => Effect.Effect<void, EngineDown | SessionNotFound | ModelUnavailable>;
+    }) => Effect.Effect<
+      void,
+      EngineDown | SessionNotFound | ModelUnavailable | SessionBusy | BackgroundWorkRunning
+    >;
 
     /**
      * Takes a replaced session out of use, as a rotation does: stops what runs

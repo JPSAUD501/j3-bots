@@ -34,6 +34,9 @@ export default Effect.gen(function* () {
     UPDATE sessions SET settings_pending = 1
     WHERE retired_at IS NULL AND engine_session_id IS NOT NULL
   `;
+  // Whether the bot's conversation was told that its latest settings change
+  // waits for background work in the session: once per change.
+  yield* sql`ALTER TABLE sessions ADD COLUMN settings_held_told INTEGER NOT NULL DEFAULT 0`;
 
   // Where a bot's conversation starts for a digest: the position of its first
   // entry after the operator's latest fresh start. Earlier entries are never

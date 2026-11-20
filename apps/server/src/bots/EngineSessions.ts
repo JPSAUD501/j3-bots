@@ -19,10 +19,14 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
+import { Entries } from "../entries/Entries.ts";
 import { Ids } from "../Ids.ts";
 import { timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
+import { conversation } from "../turns/model.ts";
+import { notices } from "../turns/notices.ts";
 import { SessionGate } from "../turns/SessionGate.ts";
+import { sessionWork } from "../turns/sessionWork.ts";
 import { Signals } from "../turns/Signals.ts";
 import { BotStore } from "./BotStore.ts";
 import { Workspaces } from "./Workspaces.ts";
@@ -49,6 +53,38 @@ interface Pending {
   readonly changes: number;
 }
 
+/**
+ * What became of bringing a bot's main session to the bot's settings.
+ *
+ * - `aligned`: it runs them, or there is nothing to align now (no session
+ *   opened, or one being replaced).
+ * - `turn-running`: a turn runs there, and a change could end it, so it waits
+ *   for that turn's end, which nudges the rotator.
+ * - `background-work`: the engine will not apply it while background work
+ *   runs in the session, which it would end; the bot's conversation is told
+ *   once per change.
+ */
+export type Alignment = "aligned" | "turn-running" | "background-work";
+
+/**
+ * The bot's main session whose gate a settings change holds
+ * (`EngineSessions.inMainSessionGate`), or none when it had none.
+ */
+export interface HeldMainSession {
+  readonly botId: BotId;
+  readonly rowId: string | null;
+}
+
+/**
+ * The bot's main session is no longer the one whose gate the change holds:
+ * replaced, or written meanwhile. The change is made again in the gate of the
+ * one it has now.
+ */
+export class MainSessionMoved extends Schema.TaggedError<MainSessionMoved>()(
+  "MainSessionMoved",
+  {},
+) {}
+
 /** A bot session as the server knows it. */
 export interface BotSession {
   readonly id: string;
@@ -72,9 +108,11 @@ export interface BotSession {
  * change adds one in the transaction that saves it. The dispatcher plans
  * nothing into a session above zero, the sender sends nothing into it and a
  * held engine queue is not resumed there, so no turn starts there with
- * settings the operator replaced. Aligning sends the
- * bot's settings as they stand, in the session's gate, and sets the count back
- * to zero only if no change committed meanwhile.
+ * settings the operator replaced. A change is saved in the session's gate, so
+ * a send already claimed reaches the engine before it, or is refused after.
+ * Aligning sends the bot's settings as they stand, in the session's gate,
+ * once no turn runs there, and sets the count back to zero only if no change
+ * committed meanwhile.
  *
  * Opening and aligning are reconciled rather than done once: after a bot is
  * created or changed, and by the rotator, with backoff, for every live bot
@@ -90,13 +128,28 @@ export class EngineSessions extends Context.Service<
      */
     readonly provision: (
       botId: BotId,
-    ) => Effect.Effect<void, EngineDown | ProjectNotFound | ModelUnavailable | SessionNotFound>;
+    ) => Effect.Effect<
+      Alignment,
+      EngineDown | ProjectNotFound | ModelUnavailable | SessionNotFound
+    >;
+    /**
+     * Runs `change`, which saves a new model or permission mode of the bot,
+     * in the gate of the bot's main session, so it never commits while a send
+     * into that session is on its way to the engine. `change` calls
+     * `settingsChanged` in its transaction; when the bot's main session moved
+     * meanwhile, it runs again in the gate of the one it has now.
+     */
+    readonly inMainSessionGate: <A, E, R>(
+      botId: BotId,
+      change: (held: HeldMainSession) => Effect.Effect<A, E | MainSessionMoved, R>,
+    ) => Effect.Effect<A, Exclude<E, MainSessionMoved>, R>;
     /**
      * Records that the bot's model or permission mode changed: its main
      * session takes no work until the rotator aligned it. Runs in the
-     * caller's transaction, the one that saves the change.
+     * caller's transaction, the one that saves the change, inside
+     * `inMainSessionGate`, whose session it checks is still the bot's.
      */
-    readonly settingsChanged: (botId: BotId) => Effect.Effect<void>;
+    readonly settingsChanged: (held: HeldMainSession) => Effect.Effect<void, MainSessionMoved>;
     /** Removes the bot's project, and every session in it, from the engine. */
     readonly removeProject: (botId: BotId) => Effect.Effect<void, EngineDown>;
     /**
@@ -123,6 +176,8 @@ export const layer = Layer.effect(
     const ids = yield* Ids;
     const signals = yield* Signals;
     const gate = yield* SessionGate;
+    const workOf = sessionWork(sql);
+    const { notify } = notices(sql, yield* Entries);
     // One provisioning at a time: a bot's creation and the rotator may both
     // find its session missing.
     const provisioning = yield* Semaphore.make(1);
@@ -179,15 +234,44 @@ export const layer = Layer.effect(
       Effect.orDie,
     );
 
-    const settingsChanged = Effect.fn("EngineSessions.settingsChanged")(function* (botId: BotId) {
-      const marked = yield* sql`
-        UPDATE sessions SET settings_pending = settings_pending + 1
-        WHERE bot_id = ${botId} AND purpose = 'main' AND retired_at IS NULL
-        RETURNING id
-      `;
+    const mainRowId = (botId: BotId) =>
+      mainSession(botId).pipe(
+        Effect.orDie,
+        Effect.map((row) => (Option.isSome(row) ? row.value.id : null)),
+      );
+
+    const settingsChanged = Effect.fn("EngineSessions.settingsChanged")(function* (
+      held: HeldMainSession,
+    ) {
+      const rowId = yield* mainRowId(held.botId);
+      if (rowId !== held.rowId) return yield* new MainSessionMoved();
+      if (rowId === null) return;
+      // A new change is told of again if it waits for background work.
+      yield* sql`
+        UPDATE sessions SET settings_pending = settings_pending + 1, settings_held_told = 0
+        WHERE id = ${rowId}
+      `.pipe(Effect.orDie);
       // The rotator aligns it.
-      if (marked.length > 0) yield* sql.afterCommit(signals.rotations.fire);
-    }, Effect.orDie);
+      yield* sql.afterCommit(signals.rotations.fire);
+    });
+
+    const isMoved = Schema.is(MainSessionMoved);
+
+    const inMainSessionGate = <A, E, R>(
+      botId: BotId,
+      change: (held: HeldMainSession) => Effect.Effect<A, E | MainSessionMoved, R>,
+    ): Effect.Effect<A, Exclude<E, MainSessionMoved>, R> =>
+      Effect.gen(function* () {
+        for (;;) {
+          const held: HeldMainSession = { botId, rowId: yield* mainRowId(botId) };
+          const attempt = held.rowId === null ? change(held) : gate.run(held.rowId)(change(held));
+          const done = yield* attempt.pipe(
+            Effect.asSome,
+            Effect.catchIf(isMoved, () => Effect.succeedNone),
+          );
+          if (Option.isSome(done)) return done.value;
+        }
+      });
 
     const alignment = SqlSchema.findOneOption({
       Request: Schema.String,
@@ -228,6 +312,23 @@ export const layer = Layer.effect(
       Effect.orDie,
     );
 
+    /**
+     * Tells the bot's conversation, once per change, that its settings wait
+     * for background work in the session.
+     */
+    const heldByBackgroundWork = Effect.fn("EngineSessions.heldByBackgroundWork")(
+      function* (botId: BotId, rowId: string) {
+        const told = yield* sql`
+          UPDATE sessions SET settings_held_told = 1
+          WHERE id = ${rowId} AND settings_pending > 0 AND settings_held_told = 0
+          RETURNING id
+        `;
+        if (told.length > 0) yield* notify(botId, conversation, { _tag: "settings-held" }, null);
+      },
+      transaction,
+      Effect.orDie,
+    );
+
     /** Marks the session aligned, unless a change committed since `changes` were read. */
     const aligned = Effect.fn("EngineSessions.aligned")(function* (rowId: string, changes: number) {
       const cleared = yield* sql`
@@ -245,27 +346,46 @@ export const layer = Layer.effect(
      * replaces it opens with the bot's settings. In the session's gate, so it
      * never crosses a send, and two alignments never cross either: one that
      * read older settings could otherwise reach the engine after a newer one.
+     *
+     * Not while a turn runs there: a change can replace the provider session,
+     * which ends the turn (`Engine.configureSession`), and the turn keeps the
+     * settings it started with. Its end nudges the rotator, which aligns then.
      */
     const align = Effect.fn("EngineSessions.align")(function* (botId: BotId) {
       const session = yield* mainSession(botId).pipe(Effect.orDie);
-      if (Option.isNone(session)) return;
+      if (Option.isNone(session)) return "aligned" as const;
       const rowId = session.value.id;
-      yield* gate.run(rowId)(
+      return yield* gate.run(rowId)(
         Effect.gen(function* () {
           for (;;) {
             const due = yield* pending(botId, rowId);
-            if (due === null) return;
-            yield* engine.configureSession({
-              sessionId: due.sessionId,
-              model: due.model,
-              permissionMode: due.permissionMode,
-            });
+            if (due === null) return "aligned" as const;
+            const work = yield* workOf(rowId);
+            if (work.admitted !== null || work.runningTurns > 0) {
+              return "turn-running" as const;
+            }
+            const refused = yield* engine
+              .configureSession({
+                sessionId: due.sessionId,
+                model: due.model,
+                permissionMode: due.permissionMode,
+              })
+              .pipe(
+                Effect.as(null),
+                Effect.catchTags({
+                  // One the engine started on its own, not seen here yet.
+                  SessionBusy: () => Effect.succeed("turn-running" as const),
+                  BackgroundWorkRunning: () => Effect.succeed("background-work" as const),
+                }),
+              );
+            if (refused === "background-work") yield* heldByBackgroundWork(botId, rowId);
+            if (refused !== null) return refused;
             if (yield* aligned(rowId, due.changes)) {
               // A wake waiting for the session is dispatched now, and a
               // held queue resumed.
               yield* signals.dispatch.fire;
               yield* signals.resumes.fire;
-              return;
+              return "aligned" as const;
             }
           }
         }),
@@ -274,7 +394,7 @@ export const layer = Layer.effect(
 
     const provision = Effect.fn("EngineSessions.provision")(function* (botId: BotId) {
       const found = yield* bots.find(botId);
-      if (Option.isNone(found)) return;
+      if (Option.isNone(found)) return "aligned" as const;
       const { bot, workspacePath, engineProjectId } = found.value;
       yield* workspaces.provision(botId);
       // Asked every time: it answers with the project the workspace already has.
@@ -283,12 +403,12 @@ export const layer = Layer.effect(
         yield* bots.setEngineProject(botId, projectId);
       }
       const selected = yield* selection(botId);
-      if (selected === null) return;
+      if (selected === null) return "aligned" as const;
       const { session } = selected;
       const settings = selected.bot;
       // The bot moved to another provider since the row was written: the
       // rotator replaces the row, which never opens.
-      if (session.provider_id !== settings.model.providerId) return;
+      if (session.provider_id !== settings.model.providerId) return "aligned" as const;
       if (session.engine_session_id === null) {
         const sessionId = yield* engine.openSession({
           key: IdempotencyKey.make(session.id),
@@ -302,7 +422,7 @@ export const layer = Layer.effect(
           Effect.orDie,
         );
       }
-      yield* align(botId);
+      return yield* align(botId);
     }, provisioning.withPermits(1));
 
     const removeProject = Effect.fn("EngineSessions.removeProject")(function* (botId: BotId) {
@@ -322,6 +442,7 @@ export const layer = Layer.effect(
 
     return EngineSessions.of({
       provision,
+      inMainSessionGate,
       settingsChanged,
       removeProject,
       withoutProvisioning: provisioning.withPermits(1),

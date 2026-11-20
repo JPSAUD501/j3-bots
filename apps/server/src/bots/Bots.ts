@@ -63,8 +63,10 @@ export class Bots extends Context.Service<
      * the bot's work in progress, then replaces its main session, with a
      * digest of the conversation. Another model of the same provider, or a
      * permission mode, is applied to the session by the rotator before its
-     * next turn: the session takes no work until the engine has it, retried
-     * while the engine is unavailable (`EngineSessions`).
+     * next turn, once a turn running there has ended: the session takes no
+     * work until the engine has it, retried while the engine is unavailable,
+     * and held while it runs background work the change would end, which the
+     * bot's conversation is told (`EngineSessions`).
      */
     readonly update: (input: {
       readonly commandId: CommandId;
@@ -211,38 +213,46 @@ export const layer = Layer.effect(
       readonly changes: BotChanges;
     }) {
       const { changes: change } = input;
-      const bot = yield* receipts.once({
-        commandId: input.commandId,
-        method: "bot.update",
-        payload: input,
-        result: Bot,
-        apply: Effect.gen(function* () {
-          const before = yield* require(input.botId);
-          if (change.model !== undefined) yield* checkModel(change.model);
-          const at = yield* DateTime.now;
-          if (change.primary === true && !before.bot.primary) yield* makePrimary(at);
-          yield* store.update(input.botId, change, at);
-          if (change.model !== undefined || change.permissionMode !== undefined) {
-            yield* sessions.settingsChanged(input.botId);
-          }
-          // Compared with the provider the bot's live main session runs on, in
-          // this transaction: an earlier change may not have reached it yet.
-          // Moving to another provider is the operator's own action, so it
-          // stops the work in progress before the session is replaced. Moving
-          // back before that keeps the session.
-          if (change.model !== undefined) {
-            const live = yield* liveMainProvider(input.botId);
-            if (Option.isSome(live) && live.value !== change.model.providerId) {
-              yield* stops.record(input.botId, { _tag: "bot" });
-              yield* requestBotRotation(input.botId, "provider-changed");
-            } else if (Option.isSome(live)) {
-              yield* providerRestored(input.botId);
+      /** Saves the change; `settingsChanged` records a new model or permission mode. */
+      const save = <E>(settingsChanged: Effect.Effect<void, E>) =>
+        receipts.once({
+          commandId: input.commandId,
+          method: "bot.update",
+          payload: input,
+          result: Bot,
+          apply: Effect.gen(function* () {
+            const before = yield* require(input.botId);
+            if (change.model !== undefined) yield* checkModel(change.model);
+            const at = yield* DateTime.now;
+            if (change.primary === true && !before.bot.primary) yield* makePrimary(at);
+            yield* store.update(input.botId, change, at);
+            yield* settingsChanged;
+            // Compared with the provider the bot's live main session runs on, in
+            // this transaction: an earlier change may not have reached it yet.
+            // Moving to another provider is the operator's own action, so it
+            // stops the work in progress before the session is replaced. Moving
+            // back before that keeps the session.
+            if (change.model !== undefined) {
+              const live = yield* liveMainProvider(input.botId);
+              if (Option.isSome(live) && live.value !== change.model.providerId) {
+                yield* stops.record(input.botId, { _tag: "bot" });
+                yield* requestBotRotation(input.botId, "provider-changed");
+              } else if (Option.isSome(live)) {
+                yield* providerRestored(input.botId);
+              }
             }
-          }
-          yield* changes.touch({ _tag: "bot", botId: input.botId });
-          return (yield* require(input.botId).pipe(Effect.orDie)).bot;
-        }),
-      });
+            yield* changes.touch({ _tag: "bot", botId: input.botId });
+            return (yield* require(input.botId).pipe(Effect.orDie)).bot;
+          }),
+        });
+      // A new model or permission mode is saved in the gate of the bot's main
+      // session, so no send claimed before it reaches the engine after it.
+      const bot =
+        change.model !== undefined || change.permissionMode !== undefined
+          ? yield* sessions.inMainSessionGate(input.botId, (held) =>
+              save(sessions.settingsChanged(held)),
+            )
+          : yield* save(Effect.void);
       if (change.profile !== undefined || change.model !== undefined) {
         yield* workspaces.render(bot.id);
       }

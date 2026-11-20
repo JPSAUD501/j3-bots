@@ -30,6 +30,7 @@ import {
   type SecretAnswer,
 } from "../Engine.ts";
 import {
+  BackgroundWorkRunning,
   DispatchRejected,
   EngineIndeterminate,
   EngineUnavailable,
@@ -77,7 +78,9 @@ import { toolInputDigest } from "../toolCaller.ts";
 // follow-up turn), and one refused because its turn waits or did not complete; Stop
 // acknowledged before it takes effect, which disarms a pending continuation;
 // queue holds reported once per edge, including one the engine puts back on a
-// resume; turns that fail before they start; `j3` tool calls the engine records
+// resume; a settings change refused while a turn runs, and a permission mode
+// refused while background work runs, as on Claude Code; turns that fail
+// before they start; `j3` tool calls the engine records
 // after the bridge sees them; usage-limit continuations; requests that expire
 // with their turn, and whose card can change while they are open; host
 // speech; replies lost after a command was applied; staged files that expire;
@@ -1161,6 +1164,23 @@ const make = Effect.gen(function* () {
         command(
           Effect.gen(function* () {
             const session = yield* liveSession(sessionId);
+            const changesMode =
+              permissionMode !== undefined && permissionMode !== session.permissionMode;
+            const changesModel =
+              model !== undefined &&
+              (model.providerId !== session.model.providerId ||
+                model.modelId !== session.model.modelId);
+            if (!changesMode && !changesModel) return;
+            // The adapter's check, before anything is sent.
+            if (session.running !== null) {
+              return yield* new SessionBusy({ sessionId, turnId: session.running });
+            }
+            // As for Claude Code, whose permission mode changes only with a new
+            // provider session, which the engine will not start over
+            // background work.
+            if (changesMode && backgroundRuns(session)) {
+              return yield* new BackgroundWorkRunning({ sessionId });
+            }
             if (model !== undefined) session.model = model;
             if (permissionMode !== undefined) session.permissionMode = permissionMode;
           }),

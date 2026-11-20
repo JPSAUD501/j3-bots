@@ -35,8 +35,8 @@ import { WorkSteps } from "./WorkSteps.ts";
 export const ROTATE_AFTER_RUNS = 200;
 
 /**
- * How soon a rotation held by background work looks again: such work may end
- * without an event telling of it.
+ * How soon a rotation or an alignment held by background work looks again:
+ * such work may end without an event telling of it.
  */
 const BACKGROUND_RECHECK = Duration.seconds(30);
 
@@ -97,10 +97,11 @@ const waitsFor = (session: Due): Waits =>
  *
  * It also keeps every live bot's main session opened and running the bot's
  * settings: a missing or unopened one is opened under its existing key, and
- * one with a settings change it was not brought to is aligned, on each pass,
- * with backoff after a failure, so a bot never waits for an engine restart to
- * get one, and never takes work with settings the operator replaced. And it asks
- * for the rotation of a session that ran `ROTATE_AFTER_RUNS` turns.
+ * one with a settings change it was not brought to is aligned once no turn
+ * runs there, on each pass, with backoff after a failure, so a bot never waits
+ * for an engine restart to get one, and never takes work with settings the
+ * operator replaced. And it asks for the rotation of a session that ran
+ * `ROTATE_AFTER_RUNS` turns.
  */
 export class Rotations extends Context.Service<
   Rotations,
@@ -370,7 +371,9 @@ export const layer = Layer.effect(
      * Opens the bot's main session under its existing key, or a new one if it
      * has none, and brings it to the bot's settings. An engine that takes no
      * commands ends the pass, which runs again once it is ready; any other
-     * failure is tried again with backoff.
+     * failure is tried again with backoff. An alignment waiting for a turn is
+     * tried again when the turn ends, which nudges the rotator, and one held
+     * by background work as often as a rotation held by it.
      */
     const open = Effect.fn("Rotations.open")(function* (
       botId: BotId,
@@ -385,6 +388,9 @@ export const layer = Layer.effect(
       const opened = yield* Effect.exit(sessions.provision(botId));
       if (opened._tag === "Success") {
         openFailures.delete(botId);
+        if (opened.value === "background-work") {
+          outcome.until(DateTime.addDuration(now, BACKGROUND_RECHECK));
+        }
         return "done" as const;
       }
       const error = Cause.findErrorOption(opened.cause);
@@ -400,10 +406,7 @@ export const layer = Layer.effect(
       outcome.until(at);
       yield* Effect.logWarning(
         "A bot's main session could not be opened or aligned; it is tried again",
-        {
-          botId,
-          cause: opened.cause,
-        },
+        { botId, cause: opened.cause },
       );
       return "done" as const;
     });

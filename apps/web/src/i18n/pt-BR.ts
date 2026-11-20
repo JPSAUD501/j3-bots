@@ -146,6 +146,8 @@ export const ptBR: Catalog = {
   "notice.waitingInConversation": "{name} está esperando por você na própria conversa.",
   "notice.sessionLost":
     "Perdeu o contexto de trabalho. Novas mensagens esperam até ele ter um novo.",
+  "notice.settingsHeld":
+    "As novas configurações valem quando o trabalho em segundo plano terminar, e as mensagens esperam até lá. Pare o bot para aplicá-las agora.",
   "notice.observationFailed":
     "Não deu para acompanhar o trabalho deste bot. O que aparece aqui pode estar atrasado.",
   "notice.tooLong": "Algo destinado a este bot era longo demais para repassar e ficou de fora.",

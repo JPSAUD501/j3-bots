@@ -315,6 +315,12 @@ export const Notice = Schema.Union([
    */
   Schema.TaggedStruct("session-lost", {}),
   /**
+   * The bot's new model or permission mode waits for background work its
+   * session runs, which applying it would end; its messages wait too. A Stop
+   * ends that work, and the change applies then.
+   */
+  Schema.TaggedStruct("settings-held", {}),
+  /**
    * J3 Bots could not apply what the engine reported for the bot, and keeps
    * trying. What the bot shows may be behind until it succeeds.
    */

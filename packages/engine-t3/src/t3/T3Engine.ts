@@ -54,6 +54,7 @@ import {
   type SecretAnswer,
 } from "../Engine.ts";
 import {
+  BackgroundWorkRunning,
   DispatchRejected,
   EngineIncompatible,
   EngineIndeterminate,
@@ -132,6 +133,7 @@ import {
   queuedRuns,
   replacement,
   runnableTurns,
+  startedTurn,
   toolsToResolve,
   workInShell,
   type EventBody,
@@ -219,6 +221,15 @@ const REJECTIONS: ReadonlySet<string> = new Set([
  * **Read** at `db51b67`, `ThreadMessageIntake.dispatchCommand`.
  */
 const CLAIM_ERROR = "AttachmentClaimError";
+/**
+ * The text of the engine's refusal to change a session's model or permission
+ * mode while the provider session the change replaces runs background work.
+ * The reply carries it as its message, since no class name tells this refusal
+ * from others. **Read** at `db51b67`: `Orchestrator.ts` L4744-4757 and
+ * `ClaudeAdapterV2.ts` L831 word it, `ws.ts` (`userFacingDispatchErrorMessage`)
+ * makes it the reply's message.
+ */
+const BACKGROUND_REFUSAL = "still running background agents or commands";
 /**
  * A reply's cause keeps the engine error's class name and message, and nothing
  * else of it (**Read** at `db51b67`: `ws.ts`, the cause is a `Schema.Defect`).
@@ -843,6 +854,27 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       Effect.asVoid,
     );
 
+  /**
+   * Sends a change of a session's settings. The engine's refusal to end
+   * background work the change would end is `BackgroundWorkRunning`; any other
+   * refusal is handled as `sendSessionCommand` handles it.
+   */
+  const sendSettingsCommand = (sessionId: SessionId, input: OrchestrationV2Command) =>
+    command(input).pipe(
+      Effect.catchTags({
+        EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
+        OrchestrationV2DispatchCommandError: (error) =>
+          afterSending(projection(sessionId)).pipe(
+            Effect.andThen(
+              error.message.includes(BACKGROUND_REFUSAL)
+                ? Effect.fail(new BackgroundWorkRunning({ sessionId }))
+                : refused(error),
+            ),
+          ),
+      }),
+      Effect.asVoid,
+    );
+
   const configureSession = Effect.fn("Engine.configureSession")(function* (input: {
     readonly sessionId: SessionId;
     readonly model?: ModelChoice;
@@ -851,7 +883,8 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     // Only what differs from what the thread runs is sent: a session opened
     // again under its key is the one the engine opened first, as it was
     // opened then, and is set to the caller's settings this way.
-    const thread = (yield* liveProjection(input.sessionId)).thread;
+    const mirror = yield* liveProjection(input.sessionId);
+    const thread = mirror.thread;
     const threadId = ThreadId.make(input.sessionId);
     const wanted = input.model === undefined ? undefined : yield* modelSelection(input.model);
     const selection =
@@ -866,8 +899,15 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       (thread === undefined || thread.runtimeMode !== RUNTIME_MODES[input.permissionMode])
         ? input.permissionMode
         : undefined;
+    if (selection === undefined && mode === undefined) return;
+    // A change may replace the provider session, which ends a turn running in
+    // it: none is sent while one runs.
+    const running = startedTurn(mirror);
+    if (Option.isSome(running)) {
+      return yield* new SessionBusy({ sessionId: input.sessionId, turnId: running.value });
+    }
     if (selection !== undefined) {
-      yield* sendSessionCommand(input.sessionId, {
+      yield* sendSettingsCommand(input.sessionId, {
         type: "thread.model-selection.set",
         commandId: commandId("model", `${input.sessionId}:${yield* uniqueKey}`),
         threadId,
@@ -875,7 +915,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       });
     }
     if (mode !== undefined) {
-      const send = sendSessionCommand(input.sessionId, {
+      const send = sendSettingsCommand(input.sessionId, {
         type: "thread.runtime-mode.set",
         commandId: commandId("mode", `${input.sessionId}:${yield* uniqueKey}`),
         threadId,

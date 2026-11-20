@@ -1688,6 +1688,16 @@ export const replacement = (
 export const activeTurn = (mirror: Mirror): Option.Option<TurnId> =>
   Option.map(Option.fromNullishOr(runsInOrder(mirror).find((run) => !isEnded(run))), turnIdOf);
 
+/**
+ * The turn the engine is preparing, starting or running in the session, if
+ * any; not one that waits in its queue.
+ */
+export const startedTurn = (mirror: Mirror): Option.Option<TurnId> =>
+  Option.map(
+    Option.fromNullishOr(runsInOrder(mirror).find((run) => ACTIVE_RUN.has(run.status))),
+    turnIdOf,
+  );
+
 /** Runs waiting in the engine's queue, steers kept aside included. */
 export const queuedRuns = (mirror: Mirror) =>
   runsInOrder(mirror).filter((run) => run.status === "queued" || run.status === "preparing");

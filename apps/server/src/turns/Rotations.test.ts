@@ -9,7 +9,6 @@ import * as Fiber from "effect/Fiber";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import { Bots } from "../bots/Bots.ts";
-import { Observer } from "./Observer.ts";
 import { BotTools } from "../tools/BotTools.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
@@ -31,6 +30,7 @@ import {
   until,
 } from "../testing/turns.ts";
 import { MAX_INDETERMINATE_ANSWERS, type SessionRowId } from "./model.ts";
+import { Observer } from "./Observer.ts";
 import { Pipeline } from "./Pipeline.ts";
 import { Rotations, ROTATE_AFTER_RUNS } from "./Rotations.ts";
 import { Stops } from "./Stops.ts";
@@ -453,6 +453,81 @@ it.effect("aligns a session again after its alignment failed, before it takes wo
     assert.strictEqual(yield* control.sessionPermissionMode(session), "supervised");
     assert.strictEqual(yield* timesSent(session, "Deploy the release."), 1);
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "applies a permission mode changed during a turn once that turn has ended, leaving the turn whole",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const bots = yield* Bots;
+      yield* TestClock.adjust("1 second");
+      const bot = yield* bots.create({
+        commandId: command(),
+        draft: { name: "Ana", job: "", permissionMode: "full-access" },
+      });
+      const session = yield* engineSession(bot.id);
+      yield* sendToBot(bot.id, "Deploy the release.");
+      const running = yield* nextTurn(bot.id);
+
+      // Changing it now could end the turn: it keeps the mode it started with.
+      yield* bots.update({
+        commandId: command(),
+        botId: bot.id,
+        changes: { permissionMode: "supervised" },
+      });
+      yield* (yield* Rotations).rotateDue;
+      assert.strictEqual(yield* control.sessionPermissionMode(session), "full-access");
+
+      // Its end nudges the rotator, with no backoff to wait out.
+      yield* finish(bot.id, session, running);
+      yield* until(
+        control.sessionPermissionMode(session).pipe(Effect.map((mode) => mode === "supervised")),
+      );
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "holds a permission mode while background work runs, telling the conversation once, and applies it after",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const bots = yield* Bots;
+      const rotations = yield* Rotations;
+      yield* TestClock.adjust("1 second");
+      const bot = yield* bots.create({
+        commandId: command(),
+        draft: { name: "Ana", job: "", permissionMode: "full-access" },
+      });
+      const session = yield* engineSession(bot.id);
+      yield* sendToBot(bot.id, "Start the dev server.");
+      const started = yield* nextTurn(bot.id);
+      yield* control.startBackgroundWork({ sessionId: session, turnId: started });
+      yield* finish(bot.id, session, started);
+
+      // The engine refuses the change while the work runs, which it would end.
+      yield* bots.update({
+        commandId: command(),
+        botId: bot.id,
+        changes: { permissionMode: "supervised" },
+      });
+      yield* rotations.rotateDue;
+      const message = yield* sendToBot(bot.id, "Is it up?");
+      yield* TestClock.adjust("30 seconds");
+      yield* rotations.rotateDue;
+      yield* flushed(bot.id);
+      assert.strictEqual(yield* control.sessionPermissionMode(session), "full-access");
+      assert.strictEqual(yield* timesSent(session, "Is it up?"), 0);
+      const told = (yield* noticesOf(bot.id)).filter((tag) => tag === "settings-held");
+      assert.lengthOf(told, 1);
+
+      // The work ends with no event: the next look applies the change.
+      yield* control.endBackgroundWork(session);
+      yield* TestClock.adjust("30 seconds");
+      yield* nextTurn(bot.id, started);
+      yield* deliveryIs(message, "delivered");
+      assert.strictEqual(yield* control.sessionPermissionMode(session), "supervised");
+    }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect("never opens a session on the provider its bot moved away from", () =>

@@ -97,6 +97,25 @@ export class SessionBusy extends Schema.TaggedError<SessionBusy>()("SessionBusy"
 }
 
 /**
+ * A change of a session's model or permission mode was refused, because the
+ * provider session it would replace still runs background work (a delegated
+ * agent, a command left running) that the change would end. That change was
+ * not applied. It is taken once the background work ends, or after a Stop
+ * ended it. **Read** at `db51b67`, `Orchestrator.ts` (L4744-4757): a Claude
+ * Code session cannot change its permission mode in place, so the change
+ * replaces its provider session, and the engine refuses that while the
+ * session has background work.
+ */
+export class BackgroundWorkRunning extends Schema.TaggedError<BackgroundWorkRunning>()(
+  "BackgroundWorkRunning",
+  { sessionId: SessionId },
+) {
+  override get message(): string {
+    return `The session ${this.sessionId} runs background work that changing its settings would end.`;
+  }
+}
+
+/**
  * The engine refused a dispatch, and nothing of it was applied. The adapter
  * reports it only on positive evidence it can read on `/ws`, by the class name
  * the error's cause keeps:

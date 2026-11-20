@@ -269,7 +269,9 @@ export const BotRpcs = RpcGroup.make(
    * Succeeds once the change is saved. A new model or permission mode reaches
    * the bot's working session before its next turn: until the engine has it,
    * the bot takes no new work, and the server keeps trying while the engine
-   * is unavailable. A turn already running keeps the settings it started with.
+   * is unavailable. A turn already running keeps the settings it started with,
+   * and background work still running holds the change, which a
+   * `settings-held` notice says; a Stop ends both.
    */
   Rpc.make("bot.update", {
     payload: {
