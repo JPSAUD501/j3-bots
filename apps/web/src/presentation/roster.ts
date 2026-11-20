@@ -159,6 +159,8 @@ export function noticeText(
       return t("notice.sessionLost");
     case "observation-failed":
       return t("notice.observationFailed");
+    case "too-long":
+      return t("notice.tooLong");
   }
 }
 

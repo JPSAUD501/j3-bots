@@ -14,12 +14,7 @@ import {
   type QuestionEntry,
   RoomId,
 } from "@j3-bots/contracts";
-import {
-  attachmentLimitViolation,
-  ENGINE_INPUT_LIMIT,
-  engineInputLength,
-  type TurnId,
-} from "@j3-bots/engine-t3";
+import { attachmentLimitViolation, type TurnId } from "@j3-bots/engine-t3";
 import type {
   AskAnswer,
   CatchUpItem,
@@ -27,7 +22,7 @@ import type {
   TeammateMessage,
   Wake,
 } from "@j3-bots/prompts";
-import { renderWake, renderWakeForSize } from "@j3-bots/prompts";
+import { renderWake } from "@j3-bots/prompts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -51,6 +46,14 @@ import { RoomRouting } from "../rooms/RoomRouting.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import { SettingsStore } from "../settings/SettingsStore.ts";
 import { admission } from "./admission.ts";
+import {
+  askAnswer,
+  fitsAlone,
+  fitsEngine,
+  operatorMessage,
+  operatorZone,
+  roomName,
+} from "./envelopes.ts";
 import { Ledger, UNDELIVERED, WAKE_COLUMNS, WakeRow } from "./Ledger.ts";
 import {
   type Audience,
@@ -63,7 +66,8 @@ import {
   SessionRowId,
   TurnsInvariant,
 } from "./model.ts";
-import { inboxPath, Sender, type SendOwner, type SendResult } from "./Sender.ts";
+import { Sender, type SendOwner, type SendResult } from "./Sender.ts";
+import { notices } from "./notices.ts";
 import { isIdle, sessionWork } from "./sessionWork.ts";
 import { Observer } from "./Observer.ts";
 import { Readiness } from "./Readiness.ts";
@@ -100,19 +104,6 @@ const HeldRow = Schema.Struct({
   text: Schema.String,
   created_at: Time,
 });
-
-/**
- * Room `message.send` leaves under the engine's input limit when it checks a
- * message alone: what can render longer when the message is dispatched later.
- * The wake's zone (an IANA name, at most about 30 characters), its weekday,
- * and the message's time, which gains its date once the day has changed, take
- * well under this.
- */
-const DISPATCH_VARIANCE = 1_000;
-
-/** Whether an envelope renders within the engine's input limit, less `reserve`. */
-const fitsEngine = (wake: Wake, reserve = 0): boolean =>
-  engineInputLength(renderWakeForSize(wake)) <= ENGINE_INPUT_LIMIT - reserve;
 
 /**
  * The largest count in `[1, max]` for which `fits` holds, given that it holds
@@ -159,21 +150,6 @@ const userWake = (
   if (first === undefined) return null;
   return { ...wake, answer: null, messages: [first, ...rest] } satisfies Wake;
 };
-
-/** An operator's message as an envelope shows it. */
-const operatorMessage = (
-  at: DateTime.Utc,
-  text: string,
-  files: ReadonlyArray<Attachment>,
-): OperatorMessage => ({
-  at,
-  text,
-  attachments: files.map((file) => ({
-    name: file.name,
-    path: inboxPath(file),
-    mediaType: file.mediaType,
-  })),
-});
 
 /** One planned dispatch: the wakes it carries, into which session, and how. */
 interface Plan {
@@ -248,13 +224,9 @@ export const layer = Layer.effect(
     const observer = yield* Observer;
     const random = yield* SecureRandom.SecureRandom;
     const { admitsStart } = admission(sql, settings);
+    const { notify } = notices(sql, entries);
 
-    /** The operator's zone, in which an envelope gives every time. */
-    const zoneOf = Effect.map(settings.get, (now) =>
-      Option.getOrElse(DateTime.zoneMakeNamed(now.timeZone), () =>
-        DateTime.zoneMakeNamedUnsafe("UTC"),
-      ),
-    );
+    const zoneOf = operatorZone(settings);
 
     // ---- Operator commands ------------------------------------------------
 
@@ -342,7 +314,7 @@ export const layer = Layer.effect(
             [],
             [{ _tag: "message", message: operatorMessage(at, input.text, files) }],
           );
-          if (alone !== null && !fitsEngine(alone, DISPATCH_VARIANCE)) {
+          if (alone !== null && !fitsAlone(alone)) {
             return yield* new Invalid({ reason: "message-length" });
           }
           const entry = yield* entries.append({
@@ -730,31 +702,12 @@ export const layer = Layer.effect(
       const card: QuestionEntry = found.value.entry;
       const row = yield* askCardOf(cardId).pipe(Effect.orDie);
       if (Option.isNone(row)) return null;
-      const values = row.value.option_values_json;
-      const roomId = row.value.audience_room_id;
-      const roomName =
-        roomId === null
-          ? null
-          : Option.match(yield* rooms.find(roomId), {
-              onNone: () => null,
-              onSome: (room) => room.name,
-            });
-      const question = card.questions[0];
-      const status = card.status;
-      const response: AskAnswer["response"] =
-        status._tag === "answered"
-          ? {
-              type: "answered",
-              chosen: (status.answers[question.id]?.optionIds ?? []).flatMap((optionId) => {
-                const option = question.options.find((candidate) => candidate.id === optionId);
-                return option === undefined
-                  ? []
-                  : [{ label: option.label, value: values[optionId] ?? null }];
-              }),
-              text: status.answers[question.id]?.text ?? null,
-            }
-          : { type: "dismissed" };
-      return { question: question.prompt, room: roomName, response } satisfies AskAnswer;
+      return askAnswer({
+        card,
+        status: card.status,
+        values: row.value.option_values_json,
+        room: yield* roomName(rooms, row.value.audience_room_id),
+      });
     });
 
     const notesOf = (botId: BotId) =>
@@ -834,9 +787,14 @@ export const layer = Layer.effect(
      * The envelope for a plan, within the engine's input limit: the head wake,
      * then as much of what the session has not seen as fits, oldest first,
      * then as many of the plan's other wakes as fit, in order. What is left
-     * out stays for a later dispatch, in the same order. The head goes
-     * whatever its size: `message.send` refuses a message that would not fit
-     * alone, and an answer or a system event is far below the limit.
+     * out stays for a later dispatch, in the same order.
+     *
+     * Every writer of a wake checks that it fits alone, so the two cases
+     * below are a defence that never holds the queue: an unseen item that
+     * no envelope could carry, as it would not fit even beside the smallest
+     * wake there is, is left out for good (`dropped`); and a head wake that
+     * does not fit alone goes in an envelope of its own that is never sent
+     * (`oversized`), so the wakes behind it go on.
      */
     const envelopeOf = Effect.fn("Pipeline.envelopeOf")(function* (
       plan: Plan,
@@ -853,27 +811,67 @@ export const layer = Layer.effect(
           new TurnsInvariant({ invariant: `No envelope for ${head.kind} wakes yet` }),
         );
       }
+      const system = (since: ReadonlyArray<CatchUpItem>): Wake => ({
+        ...base,
+        sinceLastTurn: since,
+        kind: "system",
+        event: { name: "undelivered" },
+      });
+      // The smallest envelope there is: one that cannot carry the item alone never will.
+      const carried: Array<Unseen> = [];
+      const dropped: Array<Unseen["source"]> = [];
+      for (const one of unseen) {
+        if (one.item === null || fitsEngine(system([one.item]))) carried.push(one);
+        else dropped.push(one.source);
+      }
       const parts = head.kind === "user" ? yield* Effect.forEach(plan.wakes, partOf) : [];
       const render = (wakes: number, seen: number): Wake | null => {
-        const since = unseen.slice(0, seen).flatMap(({ item }) => (item === null ? [] : [item]));
+        const since = carried.slice(0, seen).flatMap(({ item }) => (item === null ? [] : [item]));
         return head.kind === "system"
-          ? { ...base, sinceLastTurn: since, kind: "system", event: { name: "undelivered" } }
+          ? system(since)
           : userWake(base, since, parts.slice(0, wakes));
       };
       // Nothing left to render takes no room.
       const fits = (wake: Wake | null) => wake === null || fitsEngine(wake);
+      if (!fits(render(1, 0))) {
+        return {
+          wake: render(1, 0),
+          wakes: plan.wakes.slice(0, 1),
+          consumed: [],
+          dropped,
+          oversized: true,
+        };
+      }
       // A system event is never coalesced.
       const most = head.kind === "system" ? 1 : plan.wakes.length;
       const seen =
-        unseen.length > 0 && fits(render(1, 1))
-          ? longestFitting(unseen.length, (count) => fits(render(1, count)))
+        carried.length > 0 && fits(render(1, 1))
+          ? longestFitting(carried.length, (count) => fits(render(1, count)))
           : 0;
       const wakes = longestFitting(most, (count) => fits(render(count, seen)));
       return {
         wake: render(wakes, seen),
         wakes: plan.wakes.slice(0, wakes),
-        consumed: unseen.slice(0, seen).map(({ source }) => source),
+        consumed: carried.slice(0, seen).map(({ source }) => source),
+        dropped,
+        oversized: false,
       };
+    });
+
+    /**
+     * Leaves out for good what the session has not seen and no envelope can
+     * carry, showing it in the bot's conversation, in the caller's transaction.
+     */
+    const dropUnseen = Effect.fn("Pipeline.dropUnseen")(function* (
+      botId: BotId,
+      dropped: ReadonlyArray<Unseen["source"]>,
+    ) {
+      if (dropped.length === 0) return;
+      const notes = dropped.flatMap((row) => (row._tag === "note" ? [row.id] : []));
+      const held = dropped.flatMap((row) => (row._tag === "held" ? [row.id] : []));
+      if (notes.length > 0) yield* sql`DELETE FROM catch_up_notes WHERE ${sql.in("id", notes)}`;
+      if (held.length > 0) yield* sql`DELETE FROM held_messages WHERE ${sql.in("id", held)}`;
+      yield* notify(botId, conversation, { _tag: "too-long" }, null);
     });
 
     /**
@@ -893,6 +891,7 @@ export const layer = Layer.effect(
           `;
           if ((still[0]?.n ?? 0) !== plan.wakes.length) return null;
           const fitted = yield* envelopeOf(plan, yield* sinceLastTurn(plan.botId));
+          yield* dropUnseen(plan.botId, fitted.dropped);
           const { wake } = fitted;
           if (wake === null) {
             // Their messages are gone: nothing to deliver.
@@ -938,6 +937,13 @@ export const layer = Layer.effect(
           }
           if (held.length > 0) {
             yield* sql`UPDATE held_messages SET consumed_dispatch_id = ${id} WHERE ${sql.in("id", held)}`;
+          }
+          if (fitted.oversized) {
+            // The engine would refuse it: it fails as refused, never sent,
+            // and shows where it came from; the bot's next wake goes on.
+            yield* ledger.fail(id, "rejected", { _tag: "failed", reason: "rejected" });
+            yield* sql.afterCommit(signals.dispatch.fire);
+            return null;
           }
           return id;
         }),

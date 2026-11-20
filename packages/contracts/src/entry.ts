@@ -316,6 +316,11 @@ export const Notice = Schema.Union([
    * trying. What the bot shows may be behind until it succeeds.
    */
   Schema.TaggedStruct("observation-failed", {}),
+  /**
+   * Something the bot was to be told before its next turn (a teammate's held
+   * message, what a routine said) was too long to pass on, and was left out.
+   */
+  Schema.TaggedStruct("too-long", {}),
 ]);
 export type Notice = typeof Notice.Type;
 

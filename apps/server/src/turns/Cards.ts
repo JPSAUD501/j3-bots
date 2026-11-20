@@ -18,6 +18,7 @@ import {
   type SecretAnswer,
   SessionId,
 } from "@j3-bots/engine-t3";
+import type { Wake } from "@j3-bots/prompts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -29,9 +30,12 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
 import { Entries } from "../entries/Entries.ts";
+import { Rooms } from "../rooms/Rooms.ts";
+import { SettingsStore } from "../settings/SettingsStore.ts";
 import { json, Time, timeText } from "../persistence/columns.ts";
 import { Ids } from "../Ids.ts";
 import { transactional } from "../persistence/transaction.ts";
+import { askAnswer, fitsAlone, operatorZone, roomName } from "./envelopes.ts";
 import { keyedLock } from "./keyedLock.ts";
 import { Ledger } from "./Ledger.ts";
 import {
@@ -63,6 +67,7 @@ const AskCardRow = Schema.Struct({
   closed_at: Schema.NullOr(Time),
   audience: AudienceColumn,
   audience_room_id: Schema.NullOr(RoomId),
+  option_values_json: json(Schema.Record(Schema.String, Schema.NullOr(Schema.String))),
 });
 
 const RequestRow = Schema.Struct({
@@ -184,6 +189,8 @@ export const layer = Layer.effect(
     const signals = yield* Signals;
     const wakes = yield* Wakes;
     const readiness = yield* Readiness;
+    const rooms = yield* Rooms;
+    const settings = yield* SettingsStore;
     const transaction = transactional(sql);
     const { sessionLost } = sessionLoss(sql, entries, yield* Ledger, yield* WorkSteps, signals);
 
@@ -191,7 +198,8 @@ export const layer = Layer.effect(
       Request: EntryId,
       Result: AskCardRow,
       execute: (entryId) => sql`
-        SELECT closed_at, audience, audience_room_id FROM ask_cards WHERE entry_id = ${entryId}
+        SELECT closed_at, audience, audience_room_id, option_values_json
+        FROM ask_cards WHERE entry_id = ${entryId}
       `,
     });
 
@@ -223,13 +231,27 @@ export const layer = Layer.effect(
       if (answer._tag === "question" && !fits(card.questions, answer.answers, card.origin)) {
         return yield* new Invalid({ reason: "answer" });
       }
-      yield* entries.update({
-        ...card,
-        status:
-          answer._tag === "question"
-            ? { _tag: "answered", answers: answer.answers }
-            : { _tag: "dismissed" },
-      });
+      const status: QuestionEntry["status"] =
+        answer._tag === "question"
+          ? { _tag: "answered", answers: answer.answers }
+          : { _tag: "dismissed" };
+      // The answer wakes the bot in an envelope of its own at the least: one
+      // too long for that is refused, and the card stays open for another.
+      const alone: Wake = {
+        at: yield* DateTime.now,
+        timeZone: yield* operatorZone(settings),
+        sinceLastTurn: [],
+        kind: "user",
+        answer: askAnswer({
+          card,
+          status,
+          values: row.value.option_values_json,
+          room: yield* roomName(rooms, row.value.audience_room_id),
+        }),
+        messages: [],
+      };
+      if (!fitsAlone(alone)) return yield* new Invalid({ reason: "answer-length" });
+      yield* entries.update({ ...card, status });
       if (card.author._tag !== "bot") {
         return yield* Effect.die(new TurnsInvariant({ invariant: "An ask card is a bot's" }));
       }

@@ -356,10 +356,22 @@ export const noticesOf = (botId: BotId) =>
 
 let calls = 0;
 
-/** The bot asks the operator, in its running turn, which region to deploy to. */
-export const askRegion = (botId: BotId, sessionId: SessionId, turnId: TurnId) =>
+/**
+ * The bot asks the operator, in its running turn, which region to deploy to;
+ * with `allowCustom`, a typed answer is taken too.
+ */
+export const askRegion = (
+  botId: BotId,
+  sessionId: SessionId,
+  turnId: TurnId,
+  allowCustom = false,
+) =>
   Effect.gen(function* () {
-    const args = { prompt: "Which region?", options: [{ label: "Europe", value: "eu-west-1" }] };
+    const args = {
+      prompt: "Which region?",
+      options: [{ label: "Europe", value: "eu-west-1" }],
+      allow_custom: allowCustom,
+    };
     yield* (yield* TestEngineControl).toolCall({
       sessionId,
       turnId,

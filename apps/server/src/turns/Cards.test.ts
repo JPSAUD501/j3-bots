@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import type { BotId, Conflict, Invalid, NotFound } from "@j3-bots/contracts";
+import { type BotId, type Conflict, Invalid, type NotFound } from "@j3-bots/contracts";
 import { Engine } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as DateTime from "effect/DateTime";
@@ -15,6 +15,7 @@ import * as Domain from "../domain.ts";
 import { timeText } from "../persistence/columns.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
+  askRegion,
   awaitEntry,
   command,
   conversation,
@@ -313,5 +314,38 @@ it.effect("shows an open card as the engine updates it, and takes the grant it t
       (yield* control.responses(session)).map((sent) => sent.requestId),
       [requestId],
     );
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("refuses an answer too long to reach the bot, and leaves the card open for another", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const cards = yield* Cards;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Deploy the service.");
+    const card = yield* askRegion(bot.id, session, yield* nextTurn(bot.id), true);
+    const typed = (text: string) =>
+      cards.answer({
+        commandId: command(),
+        entryId: card.id,
+        answer: {
+          _tag: "question",
+          answers: { [card.questions[0].id]: { optionIds: [], text } },
+        },
+      });
+
+    // Within the length of a typed answer, but each `<message>` is defused in
+    // the envelope, past the engine's input limit.
+    const refused = yield* Effect.flip(typed("<message>".repeat(10_000)));
+    assert.deepStrictEqual(refused, new Invalid({ reason: "answer-length" }));
+    assert.strictEqual((yield* awaitEntry(bot.id, "question")).status._tag, "pending");
+    const wakes = yield* sql<{ readonly n: number }>`
+      SELECT COUNT(*) AS n FROM wakes WHERE json_extract(payload_json, '$._tag') = 'answer'
+    `;
+    assert.strictEqual(wakes[0]?.n, 0);
+
+    yield* typed("Europe, but eu-central-1.");
+    assert.strictEqual((yield* awaitEntry(bot.id, "question")).status._tag, "answered");
   }).pipe(Effect.provide(TestDomain.layer)),
 );

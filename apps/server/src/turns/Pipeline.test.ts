@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import { type BotId, type EntryTarget, Invalid } from "@j3-bots/contracts";
+import { type BotId, type EntryId, type EntryTarget, Invalid } from "@j3-bots/contracts";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -10,6 +10,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import * as Domain from "../domain.ts";
 import { Entries } from "../entries/Entries.ts";
+import { timeText } from "../persistence/columns.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import { BotTools } from "../tools/BotTools.ts";
 import * as TestDomain from "../testing/domain.ts";
@@ -27,6 +28,7 @@ import {
   gateSettled,
   holdGate,
   nextTurn,
+  noticesOf,
   recoverTimes,
   sendToBot,
   sendWithFile,
@@ -264,6 +266,90 @@ it.effect("refuses a message too long for the engine as the bot would read it", 
     yield* flushed(bot.id);
     yield* deliveryIs(longest, "delivered");
     assert.lengthOf(yield* control.dispatches(session), 1);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+/** Records `user` wakes for the bot's messages, past `message.send`'s checks. */
+const recordMessages = (botId: BotId, entryIds: ReadonlyArray<EntryId>) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql.withTransaction(
+      (yield* Wakes).record(
+        entryIds.map((entryId) => ({
+          botId,
+          kind: "user",
+          audience: { _tag: "conversation" },
+          payload: { _tag: "message", entryId },
+          sourceEntryId: entryId,
+          hops: 0,
+          retryOf: null,
+          cause: { _tag: "operator" },
+        })),
+      ),
+    );
+  });
+
+it.effect("fails a waiting message too long to send alone, and sends the one behind it", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    const inConversation = { _tag: "conversation", botId: bot.id } as const;
+    // Each `<j3` renders as `&lt;j3`: 175,000 characters, which no envelope takes.
+    const tooLong = yield* writeMessage(inConversation, "<j3 ".repeat(25_000));
+    const next = yield* writeMessage(inConversation, "Then draft the plan.");
+    yield* recordMessages(bot.id, [tooLong, next]);
+
+    yield* finishRunning(bot.id);
+    yield* flushed(bot.id);
+    yield* deliveryIs(tooLong, "failed");
+    yield* deliveryIs(next, "delivered");
+    const sent = yield* control.dispatches(session);
+    assert.deepStrictEqual(
+      sent.map(({ text }) => text.includes("Then draft the plan.")),
+      [true],
+    );
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("leaves out, visibly, what the session has not seen and no envelope can carry", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const sql = yield* SqlClient.SqlClient;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    const now = yield* DateTime.now;
+    const note = (id: string, text: string) =>
+      sql`
+        INSERT INTO catch_up_notes (id, bot_id, text, created_at, note_json)
+        VALUES (
+          ${id}, ${bot.id}, ${text}, ${timeText(now)},
+          ${JSON.stringify({
+            _tag: "routine-delivered",
+            routine: "Morning check",
+            at: DateTime.formatIso(now),
+            text,
+          })}
+        )
+      `;
+    yield* note("note-too-long", `Overnight. ${"a".repeat(130_000)}`);
+    yield* note("note-after", "The build is green.");
+
+    const message = yield* sendToBot(bot.id, "What happened overnight?");
+    yield* finishRunning(bot.id);
+    yield* flushed(bot.id);
+    yield* deliveryIs(message, "delivered");
+    const sent = yield* control.dispatches(session);
+    assert.deepStrictEqual(
+      sent.map(({ text }) => [text.includes("Overnight."), text.includes("The build is green.")]),
+      [[false, true]],
+    );
+    const notes = yield* sql<{ readonly id: string }>`SELECT id FROM catch_up_notes`;
+    assert.deepStrictEqual(
+      notes.map((row) => row.id),
+      ["note-after"],
+    );
+    assert.include(yield* noticesOf(bot.id), "too-long");
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

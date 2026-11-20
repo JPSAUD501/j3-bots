@@ -132,6 +132,6 @@ const expanded = (text: string): string => {
  * The length the engine checks against {@link ENGINE_INPUT_LIMIT} for a
  * message whose text is `text`. The server measures every envelope with it
  * before it writes the dispatch, so a dispatch the engine would refuse for its
- * length is never written.
+ * length is never sent.
  */
 export const engineInputLength = (text: string): number => expanded(text).length;

@@ -148,6 +148,7 @@ export const en = {
   "notice.sessionLost": "Lost its working context. New messages wait until it has a new one.",
   "notice.observationFailed":
     "Couldn’t keep up with this bot’s work. What shows here may be behind.",
+  "notice.tooLong": "Something meant for this bot was too long to pass on, so it was left out.",
   "notice.retry": "Try again",
   "notice.openConversation": "Open",
 

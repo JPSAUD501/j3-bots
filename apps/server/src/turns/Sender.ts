@@ -37,6 +37,7 @@ import {
   recoveryBackoff,
   type WakeFailure,
 } from "./model.ts";
+import { inboxPath } from "./inbox.ts";
 import { Observer } from "./Observer.ts";
 import { DEFECT_RETRY } from "./reconciler.ts";
 import { SessionGate } from "./SessionGate.ts";
@@ -44,15 +45,6 @@ import { sessionLoss } from "./sessionRecords.ts";
 import { Signals } from "./Signals.ts";
 import { stopTargets } from "./stopTargets.ts";
 import { WorkSteps } from "./WorkSteps.ts";
-
-/**
- * Where an operator's file is copied in the bot's workspace, relative to it:
- * its name made one path segment, never one that names a folder (`.`, `..`).
- */
-export const inboxPath = (attachment: { readonly id: AttachmentId; readonly name: string }) => {
-  const name = attachment.name.replaceAll(/[/\\]/g, "_");
-  return `files/inbox/${attachment.id}/${/^\.+$/.test(name) ? "_" : name}`;
-};
 
 /** What a send did. */
 export type SendResult =
