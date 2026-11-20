@@ -1087,3 +1087,44 @@ it.effect("stops a run the engine queues on its own after the Stop's cancels", (
     assert.deepStrictEqual(yield* deliveriesOf(session, "Then summarize it."), ["start"]);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
+
+it.effect("opens no round for a refusal its session's loss overtook", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const sql = yield* SqlClient.SqlClient;
+    const stops = yield* Stops;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Watch the build.");
+    yield* leaveBackgroundWork(bot.id, session);
+
+    // The engine refuses the round, and the session is lost before the runner
+    // hears the refusal.
+    yield* control.rejectNextStop;
+    const answer = yield* control.holdNextAnswer("stop");
+    yield* stops.stopBot({ commandId: command(), botId: bot.id });
+    yield* answer.entered;
+    yield* control.loseSession(session);
+    yield* until(
+      sql<{ readonly lost: number }>`
+        SELECT lost_at IS NOT NULL AS lost FROM sessions WHERE engine_session_id = ${session}
+      `.pipe(
+        Effect.orDie,
+        Effect.map(([row]) => row?.lost === 1),
+      ),
+    );
+    yield* answer.release;
+
+    // The round keeps the engine's answer, and the target stays settled.
+    const rounds = sql<{
+      readonly round: number;
+      readonly refused: number;
+      readonly settled: number;
+    }>`
+      SELECT round, rejected_at IS NOT NULL AS refused, stopped_at IS NOT NULL AS settled
+      FROM stop_targets ORDER BY round
+    `.pipe(Effect.orDie);
+    yield* until(Effect.map(rounds, ([first]) => first?.refused === 1));
+    assert.deepStrictEqual(yield* rounds, [{ round: 0, refused: 1, settled: 1 }]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);

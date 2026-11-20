@@ -53,7 +53,10 @@ export const stopKey = (stopId: string, sessionId: string, round: number): Idemp
  *   at once (`openRound`).
  *
  * A session the engine no longer has settles its targets, since nothing runs
- * there.
+ * there, and no round follows one of them: a fresh round is opened only for a
+ * target still unsettled in a session not lost, checked in the transaction
+ * that opens it, so an answer the runner heard before the loss committed
+ * reopens nothing.
  */
 export const stopTargets = (sql: SqlClient.SqlClient) => {
   const now = Effect.map(DateTime.now, timeText);
@@ -88,7 +91,10 @@ export const stopTargets = (sql: SqlClient.SqlClient) => {
     `,
   });
 
-  /** A fresh round after `round`, unless one followed it already: at most one does. */
+  /**
+   * A fresh round after `round`, unless one followed it already (at most one
+   * does), or its target settled meanwhile, also by the loss of its session.
+   */
   const followRound = Effect.fn("stopTargets.followRound")(function* (
     round: { readonly stop_id: string; readonly session_id: SessionRowId; readonly round: number },
     dueAt: DateTime.Utc | null,
@@ -103,6 +109,10 @@ export const stopTargets = (sql: SqlClient.SqlClient) => {
         SELECT 1 FROM stop_targets
         WHERE stop_id = ${round.stop_id} AND session_id = ${round.session_id}
           AND round > ${round.round}
+      ) AND EXISTS (
+        SELECT 1 FROM stop_targets p JOIN sessions s ON s.id = p.session_id
+        WHERE p.stop_id = ${round.stop_id} AND p.session_id = ${round.session_id}
+          AND p.round = ${round.round} AND p.stopped_at IS NULL AND s.lost_at IS NULL
       )
       RETURNING 1 AS n
     `;
@@ -230,15 +240,15 @@ export const stopTargets = (sql: SqlClient.SqlClient) => {
      * delivering a dispatch the Stop fenced reopens that Stop's target even
      * once confirmed: the engine applied the key after the Stop ended
      * everything else, also a key whose recovery gave up (`unresolved`).
-     * Whether one was opened.
+     * A lost session's targets stay settled. Whether one was opened.
      */
     openRound: Effect.fn("stopTargets.openRound")(function* (
       sessionId: SessionRowId,
       fencedBy: string | null,
     ) {
       const targets = yield* sql<{ readonly stop_id: string; readonly round: number }>`
-        SELECT t.stop_id, t.round FROM stop_targets t
-        WHERE t.session_id = ${sessionId}
+        SELECT t.stop_id, t.round FROM stop_targets t JOIN sessions s ON s.id = t.session_id
+        WHERE t.session_id = ${sessionId} AND s.lost_at IS NULL
           AND t.round = (
             SELECT MAX(u.round) FROM stop_targets u
             WHERE u.stop_id = t.stop_id AND u.session_id = t.session_id
@@ -264,7 +274,8 @@ export const stopTargets = (sql: SqlClient.SqlClient) => {
      * refused, and the target gets a fresh round, due once the backoff of the
      * rounds refused since the engine last acknowledged one passes. A newer
      * round, opened meanwhile by a turn that started, goes out on its own
-     * instead.
+     * instead; a target that settled meanwhile, as when its session was lost
+     * after the engine refused, gets none.
      */
     rejectRound: Effect.fn("stopTargets.rejectRound")(function* (round: {
       readonly stop_id: string;
