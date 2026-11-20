@@ -267,8 +267,9 @@ export const layer = Layer.effect(
     /**
      * Whether the engine shows the session quiet as `waits` requires, from a
      * marker taken after its events are known: no turn it can still run, and
-     * for `everything` no background work pending. `quiet-with-background` is
-     * quiet for `turns`, with background work the retirement ends.
+     * for `everything` no background work pending, which counts work the
+     * adapter could not judge yet. `quiet-with-background` is quiet for
+     * `turns`, with background work the retirement ends.
      */
     const engineQuiet = Effect.fn("Rotations.engineQuiet")(function* (
       session: Due,
@@ -279,7 +280,7 @@ export const layer = Layer.effect(
         Effect.map(({ backgroundWork, runnableTurns }) =>
           runnableTurns.length > 0
             ? ("busy" as const)
-            : backgroundWork
+            : backgroundWork === "pending"
               ? waits === "everything"
                 ? ("background" as const)
                 : ("quiet-with-background" as const)

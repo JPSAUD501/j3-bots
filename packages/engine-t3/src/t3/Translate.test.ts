@@ -431,10 +431,12 @@ describe("backgroundWorkOf", () => {
       {
         _tag: "turn-finished",
         turnId: TurnId.make("run-2"),
+        finishedAt: at,
         cause: { _tag: "background" },
         outcome: { _tag: "completed" },
         backgroundWork: true,
         continuation: null,
+        contextRecovered: false,
       },
     ]);
     keep(5, [replacement(mirror, true, at, new Map()).event]);
