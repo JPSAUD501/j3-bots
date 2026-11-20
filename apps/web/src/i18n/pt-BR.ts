@@ -322,7 +322,9 @@ export const ptBR: Catalog = {
     "Este rascunho mudou em outra aba. Esta aba agora mostra o que está lá.",
   "composer.changedElsewhereWhileSending":
     "Este rascunho mudou em outra aba. Esta aba agora mostra o que está lá e não enviou nada.",
-  "composer.restoreMine": "Restaurar meu texto",
+  "composer.replaced": "Seu texto anterior foi substituído em outra aba.",
+  "composer.restore": "Restaurar",
+  "composer.dismiss": "Dispensar",
   "composer.waitToAttach": "Espere um instante e adicione os arquivos de novo.",
 
   "file.gone": "{name} não está mais no servidor.",

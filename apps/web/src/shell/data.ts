@@ -43,6 +43,8 @@ export interface ShellData {
   readonly conversation: (target: EntryTarget) => ConversationView;
   /** What the operator has written to `target` and not sent. */
   readonly draft: (target: EntryTarget) => Draft;
+  /** Text the operator wrote to `target` was replaced in another tab, and can come back. */
+  readonly restorable: (target: EntryTarget) => boolean;
   /** Whether the operator's answer to a card is still on its way to the server. */
   readonly submitting: (entryId: EntryId) => boolean;
   /** A work fold's steps, or null while they load. */
@@ -76,6 +78,10 @@ export interface ShellIntents extends TimelineIntents {
   readonly detachFile: (target: EntryTarget, key: string) => void;
   /** Sends the draft once, however often it is called, and clears it. */
   readonly sendDraft: (target: EntryTarget) => void;
+  /** Puts back the text another tab replaced. */
+  readonly restoreDraft: (target: EntryTarget) => void;
+  /** Lets go of the text another tab replaced. */
+  readonly dismissDraftOffer: (target: EntryTarget) => void;
   readonly loadOlder: (target: EntryTarget) => void;
   /** The operator has seen the conversation through this entry. */
   readonly markRead: (target: EntryTarget, through: EntryOrder) => void;

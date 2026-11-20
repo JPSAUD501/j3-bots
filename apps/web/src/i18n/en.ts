@@ -318,7 +318,9 @@ export const en = {
     "This draft changed in another tab. This tab now shows it as it is there.",
   "composer.changedElsewhereWhileSending":
     "This draft changed in another tab. This tab now shows it as it is there, and sent nothing.",
-  "composer.restoreMine": "Restore my text",
+  "composer.replaced": "Your earlier text was replaced in another tab.",
+  "composer.restore": "Restore",
+  "composer.dismiss": "Dismiss",
   "composer.waitToAttach": "Wait a moment, then add the files again.",
 
   "file.gone": "{name} is no longer on the server.",

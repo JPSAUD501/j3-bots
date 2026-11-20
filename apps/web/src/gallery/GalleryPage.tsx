@@ -8,7 +8,7 @@ import type { DraftFile, PairingFailure } from "@j3-bots/client-runtime";
 import { AttachmentId, type RosterItem, type RosterItemKey } from "@j3-bots/contracts";
 import { avatarShapeNames, botColors, colors, radii, typeScale } from "@j3-bots/design-tokens";
 import * as DateTime from "effect/DateTime";
-import { useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { BotsProvider, ClockProvider, I18nProvider } from "../app/context";
 import { ApprovalCard } from "../components/ApprovalCard";
 import { BotAvatar, RoomAvatar } from "../components/BotAvatar";
@@ -559,16 +559,22 @@ function ComposerDemo({
   recipient,
   files: initialFiles = [],
   sending = false,
+  replaced: initialReplaced = null,
 }: {
   initial: string;
   recipient: string;
   files?: ReadonlyArray<DraftFile>;
   sending?: boolean;
+  /** Text another tab replaced, on offer. */
+  replaced?: string | null;
 }) {
+  const draftKey = useId();
   const [value, setValue] = useState(initial);
   const [files, setFiles] = useState(initialFiles);
+  const [replaced, setReplaced] = useState(initialReplaced);
   return (
     <Composer
+      draftKey={draftKey}
       recipient={recipient}
       value={value}
       onValueChange={setValue}
@@ -578,6 +584,17 @@ function ComposerDemo({
       onDetachFile={(key) => setFiles((current) => current.filter((file) => file.key !== key))}
       onSend={() => setValue("")}
       onDictate={nothing}
+      {...(replaced === null
+        ? {}
+        : {
+            replaced: {
+              onRestore: () => {
+                setValue(replaced);
+                setReplaced(null);
+              },
+              onDismiss: () => setReplaced(null),
+            },
+          })}
     />
   );
 }
@@ -610,7 +627,7 @@ function ComposerSection() {
           ))}
         </div>
       </Labeled>
-      <Labeled label="Composer: empty, with a draft, with files uploading, ready and refused, and handing a draft over, which takes no files dropped on it">
+      <Labeled label="Composer: empty, with a draft, with files uploading, ready and refused, handing a draft over, which takes no files dropped on it, and offering back text another tab replaced">
         <div className="flex max-w-(--layout-text-column) flex-col gap-3">
           <ComposerDemo initial="" recipient={team.bots.scout.profile.name} />
           <ComposerDemo
@@ -628,6 +645,11 @@ function ComposerSection() {
             initial="On its way to the outbox."
             recipient={team.bots.scout.profile.name}
             sending
+          />
+          <ComposerDemo
+            initial="Book the venue for the 14th."
+            recipient={team.bots.atlas.profile.name}
+            replaced="Book the venue for the 14th, and ask about parking."
           />
         </div>
       </Labeled>

@@ -190,6 +190,7 @@ function LiveShell({ children }: { children: ReactNode }) {
   const devices = useDevices();
   const actions = useActions();
   const drafts = useReadable(j3.drafts);
+  const draftOffers = useReadable(j3.draftOffers);
   const conversation = useConversation(target);
   const files = useBotFiles(detailsBotId);
   const memory = useMemory(detailsBotId === null ? null : { _tag: "bot", botId: detailsBotId });
@@ -219,19 +220,16 @@ function LiveShell({ children }: { children: ReactNode }) {
     j3.setView(visible ? targetOf(botId, roomId) : null);
   }, [j3, botId, roomId, visible]);
 
-  const say = (text: string, action: Notice["action"] = null) =>
-    setNotice((previous) => ({ id: (previous?.id ?? 0) + 1, text, action }));
+  const say = (text: string) => setNotice((previous) => ({ id: (previous?.id ?? 0) + 1, text }));
 
-  // Another tab sent or changed a draft under this one: this tab shows it as
-  // stored, and when this tab held text the device never kept, the operator
-  // decides whether it goes back in.
-  const changedElsewhere = useEffectEvent(
-    ({ target: asked, whileSending, restorable }: DraftChangedElsewhere) =>
-      say(
-        t(whileSending ? "composer.changedElsewhereWhileSending" : "composer.changedElsewhere"),
-        restorable ? { label: t("composer.restoreMine"), run: () => j3.restoreDraft(asked) } : null,
-      ),
-  );
+  // Another tab sent or changed a draft under this one, and this tab shows it
+  // as stored. Text of this tab's that the device never kept is offered back
+  // beside the composer, for as long as the operator wants it: that notice
+  // says the draft changed, so the toast does not, unless Send sent nothing.
+  const changedElsewhere = useEffectEvent(({ whileSending, restorable }: DraftChangedElsewhere) => {
+    if (whileSending) say(t("composer.changedElsewhereWhileSending"));
+    else if (!restorable) say(t("composer.changedElsewhere"));
+  });
   useEffect(() => j3.onDraftChangedElsewhere(changedElsewhere), [j3]);
 
   const data: ShellData = {
@@ -241,6 +239,7 @@ function LiveShell({ children }: { children: ReactNode }) {
     conversation: (asked) =>
       viewKey !== null && targetKey(asked) === viewKey ? view : loadingView,
     draft: (asked) => drafts.get(targetKey(asked)) ?? blankDraft,
+    restorable: (asked) => draftOffers.has(targetKey(asked)),
     submitting: (entryId) =>
       submitting(actions.get(cardAction(entryId))) || submitting(actions.get(retryAction(entryId))),
     workSteps: (entryId) => steps.get(entryId) ?? null,
@@ -320,6 +319,8 @@ function LiveShell({ children }: { children: ReactNode }) {
         picked.map((file) => ({ name: file.name, body: file })),
       ),
     detachFile: j3.detachFile,
+    restoreDraft: j3.restoreDraft,
+    dismissDraftOffer: j3.dismissDraftOffer,
     sendDraft: (asked) =>
       void j3.sendDraft(asked).then((result) => {
         if (result === "not-kept") say(t("composer.notKept"));

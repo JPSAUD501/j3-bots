@@ -225,6 +225,8 @@ function sampleIntents({ get, update }: Store): ShellIntents {
         ...draft,
         files: draft.files.filter((file) => file.key !== key),
       })),
+    restoreDraft: nothing,
+    dismissDraftOffer: nothing,
     sendDraft: (target) => {
       const key = keyOf(target);
       const draft = get().drafts[key] ?? blankDraft;
@@ -401,6 +403,8 @@ function toData(state: State): ShellData {
       loadingOlder: false,
     }),
     draft: (target) => state.drafts[keyOf(target)] ?? blankDraft,
+    // The sample is one tab: nothing else replaces its drafts.
+    restorable: () => false,
     submitting: (entryId) => state.inFlight.has(entryId),
     workSteps: (entryId) => state.workSteps[entryId] ?? null,
     routines: (botId) => state.routines[botId] ?? [],

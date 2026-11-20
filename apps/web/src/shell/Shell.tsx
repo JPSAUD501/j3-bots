@@ -284,6 +284,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
         )}
         <div className="mx-auto w-full max-w-(--layout-text-column) px-3 pt-1 pb-[max(--spacing(3),env(safe-area-inset-bottom))] @tablet:px-6">
           <Composer
+            draftKey={rosterKeyText(rosterKeyOf(item))}
             recipient={recipient}
             value={draft.text}
             onValueChange={(value) => intents.setDraftText(target, value)}
@@ -293,6 +294,14 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
             onDetachFile={(fileKey) => intents.detachFile(target, fileKey)}
             onSend={() => intents.sendDraft(target)}
             {...(dictate ? { onDictate: () => dictate(target) } : {})}
+            {...(data.restorable(target)
+              ? {
+                  replaced: {
+                    onRestore: () => intents.restoreDraft(target),
+                    onDismiss: () => intents.dismissDraftOffer(target),
+                  },
+                }
+              : {})}
             inputRef={composerRef}
           />
         </div>

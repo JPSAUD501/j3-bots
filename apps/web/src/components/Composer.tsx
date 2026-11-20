@@ -13,7 +13,7 @@ import {
   MAX_MESSAGE_LENGTH,
 } from "@j3-bots/contracts";
 import { ArrowUpIcon, FileIcon, MicIcon, PlusIcon, XIcon } from "lucide-react";
-import { useId, useRef, useState, type Ref } from "react";
+import { useId, useRef, useState, type RefObject } from "react";
 import { useI18n } from "../app/context";
 import type { I18n } from "../i18n/i18n";
 import { cn } from "../lib/cn";
@@ -21,6 +21,8 @@ import { fileSize } from "./FileCard";
 import { Button } from "./ui/button";
 
 interface ComposerProps {
+  /** Which draft this is. Files the composer did not take are forgotten when it changes. */
+  readonly draftKey: string;
   /** Who the message goes to: a bot's or a room's name. */
   readonly recipient: string;
   readonly value: string;
@@ -35,7 +37,9 @@ interface ComposerProps {
   readonly onSend: () => void;
   /** Without it, the trailing button is always Send. */
   readonly onDictate?: () => void;
-  readonly inputRef?: Ref<HTMLTextAreaElement>;
+  /** Text the operator wrote here was replaced in another tab, and can come back. */
+  readonly replaced?: { readonly onRestore: () => void; readonly onDismiss: () => void };
+  readonly inputRef?: RefObject<HTMLTextAreaElement | null>;
 }
 
 /** Why a file cannot go, in one sentence. */
@@ -90,10 +94,13 @@ const nameOf = (file: DraftFile) => (file._tag === "ready" ? file.attachment.nam
  * of `message.send` is kept, and says why instead of sending. While Send hands
  * the draft over, the field stays focused but read-only, and attaching and
  * removing files show as unavailable; files dropped or pasted meanwhile are not
- * taken, and the composer asks for them again. The field draws no ring of its
+ * taken, and the composer asks for them again. Text replaced in another tab
+ * is offered back above the pill until the operator restores or dismisses it;
+ * either way the focus returns to the field. The field draws no ring of its
  * own: the pill takes the focus outline.
  */
 export function Composer({
+  draftKey,
   recipient,
   value,
   onValueChange,
@@ -103,11 +110,14 @@ export function Composer({
   onDetachFile,
   onSend,
   onDictate,
+  replaced,
   inputRef,
 }: ComposerProps) {
   const i18n = useI18n();
   const { t } = i18n;
   const pickerRef = useRef<HTMLInputElement>(null);
+  const ownFieldRef = useRef<HTMLTextAreaElement>(null);
+  const fieldRef = inputRef ?? ownFieldRef;
   const waitingId = useId();
   const label = t("composer.label", { name: recipient });
   const empty = value.trim() === "" && !files.some((file) => file._tag === "ready");
@@ -120,6 +130,12 @@ export function Composer({
   const ready = !sending && !empty && !uploading && !blocked && problem === null;
   // Files dropped or pasted while Send hands the draft over, which the draft did not take.
   const [notTaken, setNotTaken] = useState(false);
+  // They were not taken for this draft: another conversation's composer does not ask for them.
+  const [notTakenFor, setNotTakenFor] = useState(draftKey);
+  if (notTakenFor !== draftKey) {
+    setNotTakenFor(draftKey);
+    setNotTaken(false);
+  }
   const send = () => {
     if (ready) onSend();
   };
@@ -130,6 +146,11 @@ export function Composer({
   };
   const detach = (key: string) => {
     if (!sending) onDetachFile?.(key);
+  };
+  // The notice leaves with the button that was pressed: the focus goes back to the text.
+  const answerReplaced = (answer: () => void) => {
+    answer();
+    fieldRef.current?.focus();
   };
   const failures = files.flatMap((file) =>
     file._tag === "failed"
@@ -169,9 +190,33 @@ export function Composer({
           ))}
         </ul>
       )}
-      {/* Only a file that cannot go is announced; progress is there to see, not to hear. */}
+      {replaced && (
+        <div className="flex flex-wrap items-center justify-end gap-x-2 ps-3 pe-1 text-xs text-muted-foreground">
+          <p className="me-auto py-1">{t("composer.replaced")}</p>
+          <div className="flex gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                if (!sending) answerReplaced(replaced.onRestore);
+              }}
+              aria-disabled={sending}
+            >
+              {t("composer.restore")}
+            </Button>
+            <Button
+              variant="ghost-muted"
+              size="sm"
+              onClick={() => answerReplaced(replaced.onDismiss)}
+            >
+              {t("composer.dismiss")}
+            </Button>
+          </div>
+        </div>
+      )}
+      {/* Replaced text and a file that cannot go are announced; progress is there to see, not to hear. */}
       <p role="status" className="sr-only">
-        {failures.join(" ")}
+        {[...(replaced ? [t("composer.replaced")] : []), ...failures].join(" ")}
       </p>
       <div className="flex items-end gap-1 rounded-pill border border-input bg-surface p-1 shadow-xs has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:outline-offset-2 has-[textarea:focus-visible]:outline-accent">
         {onAttachFiles && (
@@ -201,7 +246,7 @@ export function Composer({
           </>
         )}
         <textarea
-          ref={inputRef}
+          ref={fieldRef}
           rows={1}
           value={value}
           readOnly={sending}
@@ -251,6 +296,7 @@ export function Composer({
         {t("composer.stillUploading")}
       </span>
       <p role="alert" className="px-3 text-xs text-blocked empty:hidden">
+        {/* Files just dropped and not taken come first: the operator is waiting on them now. */}
         {notTaken
           ? t("composer.waitToAttach")
           : problem === null
