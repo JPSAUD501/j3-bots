@@ -13,11 +13,11 @@ J3 Bots has three clients: a web app, a desktop app and a mobile app. All three 
 - commands: sending a message, answering a card, stopping a bot, each with its own idempotency key and optimistic entry;
 - drafts and unsent messages.
 
-**`packages/design-tokens`** holds colors, type sizes, spacing, radii and motion timings as data, so the web stylesheet and the mobile theme are generated from one source.
+**`packages/design-tokens`** holds colors, the bot palette, the avatar shapes, type sizes, spacing, radii, motion timings and layout sizes as data, so the web stylesheet and the mobile theme are generated from one source. The web stylesheet is generated today; the mobile theme will be generated from the same data.
 
 `client-runtime` imports nothing from a platform. Each app provides it, as services: the server's origin; a credential store over the platform's secure storage (keychain or keystore on mobile, the OS vault on desktop); a source of network status; an HTTP client and a WebSocket constructor (`fetch` and the global `WebSocket` on all three); and a secure random source. The runtime exposes state as values a UI reads synchronously and watches with a listener, so any renderer can use it; React hooks over them live in `@j3-bots/client-runtime/react`.
 
-The rule from T3 Code that J3 Bots adopts as is: **the UI stays dumb.** A component receives state and emits intent. If two clients need the same decision, the decision lives in `client-runtime`.
+The rule from T3 Code that J3 Bots adopts as is: **the UI stays dumb.** A component receives state and emits intent. If two clients need the same decision, the decision lives in `client-runtime`. The web client still keeps the decisions it has made so far (roster order, status lines, timeline grouping, schedules in words) in `apps/web/src/presentation` and `apps/web/src/lib`, free of React, so they can move there unchanged.
 
 ## Web
 
