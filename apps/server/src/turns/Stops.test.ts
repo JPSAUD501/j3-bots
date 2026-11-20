@@ -711,6 +711,70 @@ it.effect("names a room's Stop on the retryable notice of an answer it dropped",
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+/** How the wakes written for a room ended, also once the room is gone. */
+const roomWakes = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql<{ readonly status: string }>`
+    SELECT status FROM wakes WHERE audience = 'room' ORDER BY rowid
+  `;
+  return rows.map((row) => row.status);
+});
+
+it.effect("cancels a deleted room's message that waited in the engine", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    const room = yield* roomOf(bot.id);
+
+    // The room's turn waits in the engine behind a turn of the engine's own.
+    yield* control.startEngineTurnDuringNextDispatch(session);
+    yield* sendInRoom(bot.id, room.id, "Plan the launch.");
+    yield* nextTurn(bot.id);
+    yield* gateSettled(bot.id);
+
+    // The room's Stop drops it after the room is gone: the operator stopped it.
+    yield* (yield* Rooms).remove({ commandId: command(), roomId: room.id });
+    yield* stopSettled;
+    assert.deepStrictEqual(yield* roomWakes, ["cancelled"]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("stops a deleted room's message whose key lands after the room is gone", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    const room = yield* roomOf(bot.id);
+
+    // The room is deleted while the send of its message is undecided, and
+    // the recovery then gives up: its key may still land.
+    const late = yield* control.deferNextDispatch;
+    yield* sendInRoom(bot.id, room.id, "Tag the release.");
+    yield* flushed(bot.id);
+    yield* (yield* Rooms).remove({ commandId: command(), roomId: room.id });
+    yield* recoverTimes(MAX_INDETERMINATE_ANSWERS - 1);
+    yield* stopSettled;
+    assert.deepStrictEqual(yield* roomWakes, ["cancelled"]);
+
+    // It lands: its turn starts for a room that no longer exists, and the
+    // Stop it reopens ends it. The operator stopped it, so it stays cancelled.
+    yield* late.land;
+    yield* until(
+      Effect.map(
+        (yield* SqlClient.SqlClient)<{ readonly n: number }>`
+          SELECT COUNT(*) AS n FROM turns WHERE finished_at IS NOT NULL
+        `,
+        ([row]) => (row?.n ?? 0) > 0,
+      ),
+    );
+    yield* stopSettled;
+    assert.deepStrictEqual(yield* roomWakes, ["cancelled"]);
+    assert.notInclude(yield* noticesOf(bot.id), "turn-failed");
+    assert.strictEqual(yield* timesSent(session, "Tag the release."), 1);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("shows no retryable notice for an answer whose session is lost during a Stop", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;

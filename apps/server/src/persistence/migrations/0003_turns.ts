@@ -37,15 +37,20 @@ export default Effect.gen(function* () {
   // A Stop, as the initial schema describes it. `dispatch_mark` is the highest
   // dispatch `seq` when it was recorded: it covers the work of exactly the
   // dispatches at or below it (`stopTargets.covers`).
+  //
+  // A room's id on a Stop, a dispatch or a turn outlives the room, so it has
+  // no foreign key: deleting a room records its Stop and then deletes it, and
+  // work for it settles later by `covers`, which must still tell that room's
+  // work from another's.
   yield* sql`
     CREATE TABLE stops (
       id TEXT PRIMARY KEY,
       bot_id TEXT NOT NULL REFERENCES bots (id) ON DELETE CASCADE,
       scope TEXT NOT NULL CHECK (scope IN ('bot', 'room')),
-      room_id TEXT REFERENCES rooms (id) ON DELETE SET NULL,
+      room_id TEXT,
       created_at TEXT NOT NULL,
       dispatch_mark INTEGER NOT NULL,
-      CHECK (scope = 'room' OR room_id IS NULL)
+      CHECK ((scope = 'room') = (room_id IS NOT NULL))
     )
   `;
 
@@ -56,7 +61,8 @@ export default Effect.gen(function* () {
   // reused once its row is gone (deleting a bot deletes its dispatches).
   // SQLite serializes writes, so this order is exact where two times in the
   // same millisecond, or a clock stepped back, are not. `id` stays the key
-  // every other table points at.
+  // every other table points at. `audience_room_id` outlives its room, as a
+  // Stop's does.
   //
   // A dispatch the engine answered for (a disposition, a turn) may still fail
   // as `unresolved`: its session was lost before the turn ran, so the recovery
@@ -79,7 +85,7 @@ export default Effect.gen(function* () {
       bot_id TEXT NOT NULL REFERENCES bots (id) ON DELETE CASCADE,
       session_id TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
       audience TEXT NOT NULL CHECK (audience IN ('conversation', 'room')),
-      audience_room_id TEXT REFERENCES rooms (id) ON DELETE SET NULL,
+      audience_room_id TEXT,
       delivery TEXT NOT NULL CHECK (delivery IN ('start', 'steer')),
       steer_turn_id TEXT,
       fresh_context INTEGER NOT NULL DEFAULT 0 CHECK (fresh_context IN (0, 1)),
@@ -103,7 +109,7 @@ export default Effect.gen(function* () {
       next_attempt_at TEXT,
       staging_failures INTEGER NOT NULL DEFAULT 0 CHECK (staging_failures >= 0),
       closed_by TEXT CHECK (closed_by IN ('done', 'ask', 'handoff')),
-      CHECK (audience = 'room' OR audience_room_id IS NULL),
+      CHECK ((audience = 'room') = (audience_room_id IS NOT NULL)),
       CHECK ((delivery = 'steer') = (steer_turn_id IS NOT NULL)),
       CHECK (delivery = 'start' OR fresh_context = 0),
       CHECK (
@@ -223,21 +229,22 @@ export default Effect.gen(function* () {
 
   // Every turn the session's events showed starting, with the audience it was
   // admitted with, applied once by its engine id: a replacement that repeats
-  // a turn changes nothing. `work_fold_entry_id` is the fold in the bot's
+  // a turn changes nothing. Its room's id outlives the room, as a dispatch's
+  // does. `work_fold_entry_id` is the fold in the bot's
   // conversation, written with the turn's first step.
   yield* sql`
     CREATE TABLE turns (
       session_id TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
       engine_turn_id TEXT NOT NULL,
       audience TEXT NOT NULL CHECK (audience IN ('conversation', 'room')),
-      audience_room_id TEXT REFERENCES rooms (id) ON DELETE SET NULL,
+      audience_room_id TEXT,
       started_at TEXT NOT NULL,
       last_activity_at TEXT NOT NULL,
       finished_at TEXT,
       outcome_json TEXT,
       work_fold_entry_id TEXT REFERENCES entries (id) ON DELETE SET NULL,
       PRIMARY KEY (session_id, engine_turn_id),
-      CHECK (audience = 'room' OR audience_room_id IS NULL),
+      CHECK ((audience = 'room') = (audience_room_id IS NOT NULL)),
       CHECK ((finished_at IS NULL) = (outcome_json IS NULL))
     )
   `;

@@ -506,9 +506,12 @@ export const layer = Layer.effect(
           ${timeText(at)}
         )
       `;
+      // The turn's room may be gone: a deleted room's work keeps its id, which
+      // the session's admitted audience, a reference to a room that exists,
+      // does not take. Its speech reaches nobody either way.
       yield* sql`
         UPDATE sessions SET admitted_turn_id = ${turnId}, admitted_audience = ${columns.audience},
-          admitted_room_id = ${columns.roomId}
+          admitted_room_id = (SELECT id FROM rooms WHERE id = ${columns.roomId})
         WHERE id = ${session.id}
       `;
       // A Stop round already sent missed this turn, or the engine applied a
