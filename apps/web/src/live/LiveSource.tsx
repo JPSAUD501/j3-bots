@@ -164,6 +164,8 @@ const targetOf = (botId: BotId | null, roomId: RoomId | null): EntryTarget | nul
       : null;
 
 interface MemoryView {
+  readonly botId: BotId;
+  readonly path: MemoryPath;
   readonly title: string;
   readonly reading: MemoryReading;
 }
@@ -234,13 +236,14 @@ function LiveShell({ children }: { children: ReactNode }) {
 
   const openMemoryFile = (botId: BotId, path: MemoryPath) => {
     const title = memoryLabel(path, t);
-    setMemoryView({ title, reading: { _tag: "reading" } });
+    setMemoryView({ botId, path, title, reading: { _tag: "reading" } });
+    // Two files can share a title, and two bots a path: a late answer for another file is dropped.
     j3.readMemory({ _tag: "bot", botId }, path).then((result) =>
       setMemoryView((current) =>
-        current?.title !== title
+        current?.botId !== botId || current.path !== path
           ? current
           : {
-              title,
+              ...current,
               reading:
                 result._tag === "done"
                   ? { _tag: "read", document: result.value }
