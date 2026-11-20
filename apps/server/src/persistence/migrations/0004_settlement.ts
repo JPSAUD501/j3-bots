@@ -75,13 +75,13 @@ export default Effect.gen(function* () {
   `;
   yield* sql`
     INSERT INTO dispatches_rebuilt (
-      id, bot_id, session_id, audience, audience_room_id, delivery, steer_turn_id,
+      rowid, id, bot_id, session_id, audience, audience_room_id, delivery, steer_turn_id,
       fresh_context, envelope, status, failure_reason, disposition, disposition_turn_id,
       engine_turn_id, continuation_resumes_at, fenced_by_stop_id, outcome_json, attempts,
       created_at, updated_at, indeterminate_answers, next_attempt_at, staging_failures, closed_by
     )
     SELECT
-      id, bot_id, session_id, audience, audience_room_id, delivery, steer_turn_id,
+      rowid, id, bot_id, session_id, audience, audience_room_id, delivery, steer_turn_id,
       fresh_context, envelope, status, failure_reason, disposition, disposition_turn_id,
       engine_turn_id, continuation_resumes_at, fenced_by_stop_id, outcome_json, attempts,
       created_at, updated_at, indeterminate_answers, next_attempt_at, staging_failures, closed_by
