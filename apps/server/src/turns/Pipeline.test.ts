@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import type { BotId, EntryTarget } from "@j3-bots/contracts";
+import { type BotId, type EntryTarget, Invalid } from "@j3-bots/contracts";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -19,6 +19,7 @@ import {
   awaitEntry,
   command,
   concurrentTurns,
+  conversation,
   createBot,
   deliveryIs,
   engineSession,
@@ -191,6 +192,78 @@ it.effect("coalesces waiting wakes only with wakes of the same kind and audience
     assert.notInclude(room_?.text, "in private.");
     assert.notInclude(system?.text, "in private.");
     assert.notInclude(system?.text, "Said in the room.");
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("splits waiting messages too long for one envelope across dispatches, in order", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const sql = yield* SqlClient.SqlClient;
+    const wakes = yield* Wakes;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    // Each fits the engine's input limit alone; the first two together do not.
+    const first = `First. ${"a".repeat(70_000)}`;
+    const second = `Second. ${"b".repeat(70_000)}`;
+    const inConversation = { _tag: "conversation", botId: bot.id } as const;
+    const ids = [
+      yield* writeMessage(inConversation, first),
+      yield* writeMessage(inConversation, second),
+      yield* writeMessage(inConversation, "Third."),
+    ];
+    yield* sql.withTransaction(
+      wakes.record(
+        ids.map((entryId) => ({
+          botId: bot.id,
+          kind: "user",
+          audience: { _tag: "conversation" },
+          payload: { _tag: "message", entryId },
+          sourceEntryId: entryId,
+          hops: 0,
+          retryOf: null,
+          cause: { _tag: "operator" },
+        })),
+      ),
+    );
+
+    const one = yield* finishRunning(bot.id);
+    yield* finishRunning(bot.id, one);
+    yield* flushed(bot.id);
+
+    const sent = yield* control.dispatches(session);
+    assert.deepStrictEqual(
+      sent.map(({ text }) => [
+        text.includes("First."),
+        text.includes("Second."),
+        text.includes("Third."),
+      ]),
+      [
+        [true, false, false],
+        [false, true, true],
+      ],
+    );
+    for (const entryId of ids) yield* deliveryIs(entryId, "delivered");
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("refuses a message too long for the engine as the bot would read it", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+
+    // Within the message limit as typed, but each `<j3` is defused to `&lt;j3`
+    // in the envelope: 175,000 characters.
+    const refused = yield* Effect.flip(sendToBot(bot.id, "<j3 ".repeat(25_000)));
+    assert.deepStrictEqual(refused, new Invalid({ reason: "message-length" }));
+    assert.lengthOf(yield* conversation(bot.id), 0);
+
+    // The longest plain message is taken and delivered.
+    const longest = yield* sendToBot(bot.id, "a".repeat(100_000));
+    yield* finishRunning(bot.id);
+    yield* flushed(bot.id);
+    yield* deliveryIs(longest, "delivered");
+    assert.lengthOf(yield* control.dispatches(session), 1);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

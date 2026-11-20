@@ -21,6 +21,7 @@ export {
   type OperatorMessage,
   type ProfileChange,
   renderWake,
+  renderWakeForSize,
   type RoomEntry,
   type RoomMentions,
   type RoomWake,

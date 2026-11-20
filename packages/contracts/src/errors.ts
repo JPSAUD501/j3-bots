@@ -84,6 +84,7 @@ export class Invalid extends Schema.TaggedError<Invalid>()("Invalid", {
     "time-zone",
     "model",
     "memory-path",
+    "message-length",
   ]),
 }) {
   override get message(): string {

@@ -107,7 +107,8 @@ export interface DispatchInput {
   readonly sessionId: SessionId;
   /**
    * Exactly what the model receives, as if the user typed it: the wake
-   * envelope is the caller's, stored before the first send.
+   * envelope is the caller's, stored before the first send. Checked first
+   * with `engineInputLength` against `ENGINE_INPUT_LIMIT`.
    */
   readonly text: string;
   /**

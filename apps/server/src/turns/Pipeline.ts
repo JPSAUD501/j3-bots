@@ -14,7 +14,12 @@ import {
   type QuestionEntry,
   RoomId,
 } from "@j3-bots/contracts";
-import { attachmentLimitViolation, type TurnId } from "@j3-bots/engine-t3";
+import {
+  attachmentLimitViolation,
+  ENGINE_INPUT_LIMIT,
+  engineInputLength,
+  type TurnId,
+} from "@j3-bots/engine-t3";
 import type {
   AskAnswer,
   CatchUpItem,
@@ -22,7 +27,7 @@ import type {
   TeammateMessage,
   Wake,
 } from "@j3-bots/prompts";
-import { renderWake } from "@j3-bots/prompts";
+import { renderWake, renderWakeForSize } from "@j3-bots/prompts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -94,6 +99,80 @@ const HeldRow = Schema.Struct({
   sender_bot_id: BotId,
   text: Schema.String,
   created_at: Time,
+});
+
+/**
+ * Room `message.send` leaves under the engine's input limit when it checks a
+ * message alone: what can render longer when the message is dispatched later.
+ * The wake's zone (an IANA name, at most about 30 characters), its weekday,
+ * and the message's time, which gains its date once the day has changed, take
+ * well under this.
+ */
+const DISPATCH_VARIANCE = 1_000;
+
+/** Whether an envelope renders within the engine's input limit, less `reserve`. */
+const fitsEngine = (wake: Wake, reserve = 0): boolean =>
+  engineInputLength(renderWakeForSize(wake)) <= ENGINE_INPUT_LIMIT - reserve;
+
+/**
+ * The largest count in `[1, max]` for which `fits` holds, given that it holds
+ * for 1 and, once it fails, fails for every larger count.
+ */
+const longestFitting = (max: number, fits: (count: number) => boolean): number => {
+  let low = 1;
+  let high = max;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (fits(middle)) low = middle;
+    else high = middle - 1;
+  }
+  return low;
+};
+
+/** A planned wake's part of a user envelope; `null` when its message or card is gone. */
+type WakePart =
+  | { readonly _tag: "message"; readonly message: OperatorMessage }
+  | { readonly _tag: "answer"; readonly answer: AskAnswer }
+  | null;
+
+/** Something the session has not seen, with the row the dispatch consumes for it. */
+interface Unseen {
+  readonly item: CatchUpItem | null;
+  readonly source: { readonly _tag: "note" | "held"; readonly id: string };
+}
+
+/** A user envelope from its parts; `null` when none of them is left to deliver. */
+const userWake = (
+  base: { readonly at: DateTime.Utc; readonly timeZone: DateTime.TimeZone.Named },
+  since: ReadonlyArray<CatchUpItem>,
+  parts: ReadonlyArray<WakePart>,
+): Wake | null => {
+  const messages: Array<OperatorMessage> = [];
+  let answer: AskAnswer | null = null;
+  for (const part of parts) {
+    if (part?._tag === "message") messages.push(part.message);
+    else if (part?._tag === "answer") answer = part.answer;
+  }
+  const wake = { ...base, sinceLastTurn: since, kind: "user" } as const;
+  const [first, ...rest] = messages;
+  if (answer !== null) return { ...wake, answer, messages } satisfies Wake;
+  if (first === undefined) return null;
+  return { ...wake, answer: null, messages: [first, ...rest] } satisfies Wake;
+};
+
+/** An operator's message as an envelope shows it. */
+const operatorMessage = (
+  at: DateTime.Utc,
+  text: string,
+  files: ReadonlyArray<Attachment>,
+): OperatorMessage => ({
+  at,
+  text,
+  attachments: files.map((file) => ({
+    name: file.name,
+    path: inboxPath(file),
+    mediaType: file.mediaType,
+  })),
 });
 
 /** One planned dispatch: the wakes it carries, into which session, and how. */
@@ -169,6 +248,13 @@ export const layer = Layer.effect(
     const observer = yield* Observer;
     const random = yield* SecureRandom.SecureRandom;
     const { admitsStart } = admission(sql, settings);
+
+    /** The operator's zone, in which an envelope gives every time. */
+    const zoneOf = Effect.map(settings.get, (now) =>
+      Option.getOrElse(DateTime.zoneMakeNamed(now.timeZone), () =>
+        DateTime.zoneMakeNamedUnsafe("UTC"),
+      ),
+    );
 
     // ---- Operator commands ------------------------------------------------
 
@@ -247,6 +333,18 @@ export const layer = Layer.effect(
           }
           const room = yield* checkMentions(input.target, input.mentions);
           const files = yield* filesOf(input.attachments);
+          // A message is dispatched in one envelope at the least: it must fit
+          // the engine's input limit alone, as it renders now, with room for
+          // what renders longer later.
+          const at = yield* DateTime.now;
+          const alone = userWake(
+            { at, timeZone: yield* zoneOf },
+            [],
+            [{ _tag: "message", message: operatorMessage(at, input.text, files) }],
+          );
+          if (alone !== null && !fitsEngine(alone, DISPATCH_VARIANCE)) {
+            return yield* new Invalid({ reason: "message-length" });
+          }
           const entry = yield* entries.append({
             target: input.target,
             commandId,
@@ -611,25 +709,11 @@ export const layer = Layer.effect(
 
     // ---- Envelopes ----------------------------------------------------------
 
-    const zoneOf = Effect.map(settings.get, (now) =>
-      Option.getOrElse(DateTime.zoneMakeNamed(now.timeZone), () =>
-        DateTime.zoneMakeNamedUnsafe("UTC"),
-      ),
-    );
-
     const operatorMessageOf = Effect.fn("Pipeline.operatorMessageOf")(function* (entryId: EntryId) {
       const found = yield* entries.find(entryId);
       if (Option.isNone(found) || found.value.entry._tag !== "message") return null;
       const message: MessageEntry = found.value.entry;
-      return {
-        at: message.createdAt,
-        text: message.text,
-        attachments: message.attachments.map((file) => ({
-          name: file.name,
-          path: inboxPath(file),
-          mediaType: file.mediaType,
-        })),
-      } satisfies OperatorMessage;
+      return operatorMessage(message.createdAt, message.text, message.attachments);
     });
 
     const askCardOf = SqlSchema.findOneOption({
@@ -693,21 +777,27 @@ export const layer = Layer.effect(
         `,
       })(botId).pipe(Effect.orDie);
 
-    /** What the session has not seen: catch-up notes, then held teammate messages. */
+    /** What the session has not seen, oldest first: catch-up notes, then held teammate messages. */
     const sinceLastTurn = Effect.fn("Pipeline.sinceLastTurn")(function* (botId: BotId) {
-      const items: Array<CatchUpItem> = [];
-      const notes = yield* notesOf(botId);
-      for (const note of notes) {
+      const unseen: Array<Unseen> = [];
+      for (const note of yield* notesOf(botId)) {
         const value = note.note_json;
-        if (value === null) continue;
-        items.push(
-          value._tag === "routine-delivered"
-            ? { type: "routine-delivered", routine: value.routine, at: value.at, text: value.text }
-            : { type: "profile-changed", changes: value.changes },
-        );
+        unseen.push({
+          item:
+            value === null
+              ? null
+              : value._tag === "routine-delivered"
+                ? {
+                    type: "routine-delivered",
+                    routine: value.routine,
+                    at: value.at,
+                    text: value.text,
+                  }
+                : { type: "profile-changed", changes: value.changes },
+          source: { _tag: "note", id: note.id },
+        });
       }
-      const held = yield* heldOf(botId);
-      for (const message of held) {
+      for (const message of yield* heldOf(botId)) {
         const sender = yield* bots.find(message.sender_bot_id);
         const from = Option.match(sender, {
           onNone: () => ({ id: message.sender_bot_id, name: "A former teammate", title: "" }),
@@ -719,44 +809,71 @@ export const layer = Layer.effect(
           text: message.text,
           urgent: false,
         };
-        items.push({ type: "held-message", message: teammate });
+        unseen.push({
+          item: { type: "held-message", message: teammate },
+          source: { _tag: "held", id: message.id },
+        });
       }
-      return { items, notes: notes.map((note) => note.id), held: held.map((row) => row.id) };
+      return unseen;
     });
 
-    const wakeOf = Effect.fn("Pipeline.wakeOf")(function* (
+    const partOf = Effect.fn("Pipeline.partOf")(function* (wake: WakeRow) {
+      const payload = wake.payload_json;
+      if (payload._tag === "message") {
+        const message = yield* operatorMessageOf(payload.entryId);
+        return message === null ? null : ({ _tag: "message", message } satisfies WakePart);
+      }
+      if (payload._tag === "answer") {
+        const answer = yield* answerOf(payload.cardId);
+        return answer === null ? null : ({ _tag: "answer", answer } satisfies WakePart);
+      }
+      return null;
+    });
+
+    /**
+     * The envelope for a plan, within the engine's input limit: the head wake,
+     * then as much of what the session has not seen as fits, oldest first,
+     * then as many of the plan's other wakes as fit, in order. What is left
+     * out stays for a later dispatch, in the same order. The head goes
+     * whatever its size: `message.send` refuses a message that would not fit
+     * alone, and an answer or a system event is far below the limit.
+     */
+    const envelopeOf = Effect.fn("Pipeline.envelopeOf")(function* (
       plan: Plan,
-      since: ReadonlyArray<CatchUpItem>,
+      unseen: ReadonlyArray<Unseen>,
     ) {
-      const base = { at: yield* DateTime.now, timeZone: yield* zoneOf, sinceLastTurn: since };
+      const base = { at: yield* DateTime.now, timeZone: yield* zoneOf };
       const [head] = plan.wakes;
       if (head === undefined) {
         return yield* Effect.die(new TurnsInvariant({ invariant: "A plan carries a wake" }));
       }
-      if (head.kind === "system") {
-        return { ...base, kind: "system", event: { name: "undelivered" } } satisfies Wake;
-      }
-      if (head.kind !== "user") {
+      if (head.kind !== "system" && head.kind !== "user") {
         // Room, teammate and routine envelopes come with their wakes in part 2b.
         return yield* Effect.die(
           new TurnsInvariant({ invariant: `No envelope for ${head.kind} wakes yet` }),
         );
       }
-      const messages: Array<OperatorMessage> = [];
-      let answer: AskAnswer | null = null;
-      for (const wake of plan.wakes) {
-        const payload = wake.payload_json;
-        if (payload._tag === "message") {
-          const message = yield* operatorMessageOf(payload.entryId);
-          if (message !== null) messages.push(message);
-        } else if (payload._tag === "answer") {
-          answer = yield* answerOf(payload.cardId);
-        }
-      }
-      const [first, ...rest] = messages;
-      if (answer !== null) return { ...base, kind: "user", answer, messages } satisfies Wake;
-      if (first === undefined) return null;
-      return { ...base, kind: "user", answer: null, messages: [first, ...rest] } satisfies Wake;
+      const parts = head.kind === "user" ? yield* Effect.forEach(plan.wakes, partOf) : [];
+      const render = (wakes: number, seen: number): Wake | null => {
+        const since = unseen.slice(0, seen).flatMap(({ item }) => (item === null ? [] : [item]));
+        return head.kind === "system"
+          ? { ...base, sinceLastTurn: since, kind: "system", event: { name: "undelivered" } }
+          : userWake(base, since, parts.slice(0, wakes));
+      };
+      // Nothing left to render takes no room.
+      const fits = (wake: Wake | null) => wake === null || fitsEngine(wake);
+      // A system event is never coalesced.
+      const most = head.kind === "system" ? 1 : plan.wakes.length;
+      const seen =
+        unseen.length > 0 && fits(render(1, 1))
+          ? longestFitting(unseen.length, (count) => fits(render(1, count)))
+          : 0;
+      const wakes = longestFitting(most, (count) => fits(render(count, seen)));
+      return {
+        wake: render(wakes, seen),
+        wakes: plan.wakes.slice(0, wakes),
+        consumed: unseen.slice(0, seen).map(({ source }) => source),
+      };
     });
 
     /**
@@ -775,11 +892,11 @@ export const layer = Layer.effect(
             )} AND status = 'pending'
           `;
           if ((still[0]?.n ?? 0) !== plan.wakes.length) return null;
-          const since = yield* sinceLastTurn(plan.botId);
-          const wake = yield* wakeOf(plan, since.items);
+          const fitted = yield* envelopeOf(plan, yield* sinceLastTurn(plan.botId));
+          const { wake } = fitted;
           if (wake === null) {
-            // Its message is gone: nothing to deliver.
-            yield* ledger.cancelWakes(plan.wakes.map((row) => row.id));
+            // Their messages are gone: nothing to deliver.
+            yield* ledger.cancelWakes(fitted.wakes.map((row) => row.id));
             return null;
           }
           const envelope = yield* renderWake(wake).pipe(
@@ -799,7 +916,7 @@ export const layer = Layer.effect(
             )
           `;
           let position = 0;
-          for (const row of plan.wakes) {
+          for (const row of fitted.wakes) {
             for (const file of yield* filesOfWake(row)) {
               yield* sql`
                 INSERT INTO dispatch_attachments (dispatch_id, position, attachment_id)
@@ -811,14 +928,16 @@ export const layer = Layer.effect(
             UPDATE wakes SET status = 'dispatched', dispatch_id = ${id}, updated_at = ${at}
             WHERE ${sql.in(
               "id",
-              plan.wakes.map((row) => row.id),
+              fitted.wakes.map((row) => row.id),
             )}
           `;
-          if (since.notes.length > 0) {
-            yield* sql`UPDATE catch_up_notes SET consumed_dispatch_id = ${id} WHERE ${sql.in("id", since.notes)}`;
+          const notes = fitted.consumed.flatMap((row) => (row._tag === "note" ? [row.id] : []));
+          const held = fitted.consumed.flatMap((row) => (row._tag === "held" ? [row.id] : []));
+          if (notes.length > 0) {
+            yield* sql`UPDATE catch_up_notes SET consumed_dispatch_id = ${id} WHERE ${sql.in("id", notes)}`;
           }
-          if (since.held.length > 0) {
-            yield* sql`UPDATE held_messages SET consumed_dispatch_id = ${id} WHERE ${sql.in("id", since.held)}`;
+          if (held.length > 0) {
+            yield* sql`UPDATE held_messages SET consumed_dispatch_id = ${id} WHERE ${sql.in("id", held)}`;
           }
           return id;
         }),

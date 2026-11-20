@@ -18,6 +18,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { attachmentLimitViolation } from "../attachments.ts";
+import { ENGINE_INPUT_LIMIT, engineInputLength } from "../input.ts";
 import {
   Engine,
   type DispatchAttachment,
@@ -970,9 +971,14 @@ const make = Effect.gen(function* () {
       ? b._tag === "start" && a.freshContext === b.freshContext
       : b._tag === "steer" && a.turnId === b.turnId;
 
-  /** The engine claims the files before it looks at the key. */
-  const claimAttachments = (attachments: ReadonlyArray<DispatchAttachment>) =>
+  /**
+   * The engine claims the files before it looks at the key. It refuses a text
+   * over its input limit too; the server never sends one.
+   */
+  const claimAttachments = (text: string, attachments: ReadonlyArray<DispatchAttachment>) =>
     Effect.gen(function* () {
+      if (engineInputLength(text) > ENGINE_INPUT_LIMIT)
+        return yield* misuse("a text over the engine's input limit");
       const now = yield* DateTime.now;
       for (const attachment of attachments) {
         const usableUntil = staged.get(attachment.stagedId);
@@ -1115,7 +1121,7 @@ const make = Effect.gen(function* () {
           Effect.gen(function* () {
             yield* unbroken;
             const { key, sessionId, delivery } = input;
-            yield* claimAttachments(input.attachments);
+            yield* claimAttachments(input.text, input.attachments);
             if (keys.has(key)) {
               return yield* misuse(`dispatch key ${key} sent again without redispatch`);
             }
@@ -1145,7 +1151,7 @@ const make = Effect.gen(function* () {
             yield* unbroken;
             const { key, sessionId, text, delivery } = input;
             // Staged ids may be fresh on a resend; the rest must match.
-            yield* claimAttachments(input.attachments);
+            yield* claimAttachments(input.text, input.attachments);
             yield* startupQueue(input);
             const previous = yield* priorUse(key, "dispatch");
             if (previous?.command === "dispatch") {
