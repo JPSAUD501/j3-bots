@@ -9,9 +9,11 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import type { AdminStatus } from "../admin/protocol.ts";
 import * as ServerConfig from "../config.ts";
+import { replaceFile } from "../files.ts";
 import * as Home from "../home/Home.ts";
 import * as Installation from "../installation.ts";
 import { Host } from "../system/Host.ts";
+import { portAdvice } from "../system/Ports.ts";
 import { type Linger, Systemd } from "../system/Systemd.ts";
 import { socketOwner } from "./owner.ts";
 import * as Unit from "./unit.ts";
@@ -95,12 +97,13 @@ const awaitServer = Effect.fn("service.awaitServer")(function* (socket: string) 
 });
 
 /**
- * Writes the unit, enables it and (re)starts it, then waits for the server to
- * answer. The configuration is checked first as the service will run it (the
- * home, its `config.json` and the service's `PATH`, none of this shell's
- * overrides), and so is the admin socket's path; anything the server would
- * refuse at start leaves the installed unit untouched, and a refused
- * configuration leaves the home as it was.
+ * Writes the unit, whole, enables it and (re)starts it, then waits for the
+ * server to answer. The configuration is checked first as the service will
+ * run it (the home, its `config.json` and the service's `PATH`, none of this
+ * shell's overrides), and so are the admin socket's path and that `host` is
+ * an address of this machine; anything the server would refuse at start
+ * leaves the installed unit untouched, and a refused configuration leaves the
+ * home as it was.
  */
 export const install = Effect.gen(function* () {
   const systemd = yield* Systemd;
@@ -127,6 +130,18 @@ export const install = Effect.gen(function* () {
     ),
   );
 
+  // The address must still be this machine's: its own port is the running
+  // service's to hold, so a free one the system picks stands in for it.
+  const address = yield* host.portState(config.host, 0);
+  if (address._tag !== "free") {
+    const { summary, fix } = portAdvice(
+      address,
+      { label: "the server", setting: "port", host: config.host, port: config.port },
+      config.configFile,
+    );
+    return yield* new ServiceNotInstalled({ reason: "configuration", detail: `${summary} ${fix}` });
+  }
+
   // One server per home: the service's would only wait behind another's lock.
   // The service's own is replaced by the restart.
   switch ((yield* socketOwner(config.adminSocket)).owner) {
@@ -148,7 +163,7 @@ export const install = Effect.gen(function* () {
   });
   const unitFile = yield* Unit.unitPath;
   yield* fs.makeDirectory(path.dirname(unitFile), { recursive: true });
-  yield* fs.writeFileString(unitFile, unit);
+  yield* replaceFile(unitFile, unit, 0o644);
   yield* systemd.reload;
   yield* systemd.enableAndRestart(Unit.UNIT_NAME);
 

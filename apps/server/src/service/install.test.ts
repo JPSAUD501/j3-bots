@@ -13,6 +13,7 @@ import { AdminClient, AdminRequestFailed } from "../admin/AdminClient.ts";
 import { AdminStatus } from "../admin/protocol.ts";
 import { Host } from "../system/Host.ts";
 import { Network } from "../system/Network.ts";
+import type { PortState } from "../system/Ports.ts";
 import { Systemd } from "../system/Systemd.ts";
 import { install } from "./install.ts";
 
@@ -49,6 +50,8 @@ interface Machine {
   readonly active: string;
   /** Whether a plain file is where the admin socket goes. */
   readonly socketBlocked?: boolean;
+  /** What a trial listen on the configured address finds; free by default. */
+  readonly address?: PortState;
 }
 
 /** Installs on a temporary home with a fake systemd; what it did, and what it returned. */
@@ -96,7 +99,9 @@ const installOn = (machine: Machine) =>
           userName: "pi",
           searchPath: "/usr/bin",
           freeSpace: () => Effect.succeedNone,
-          portState: () => Effect.succeed({ _tag: "free" }),
+          // The configured port is held by the service being reinstalled.
+          portState: (_host, port) =>
+            Effect.succeed(port === 0 ? (machine.address ?? { _tag: "free" }) : { _tag: "in-use" }),
           findExecutable: () => Effect.succeedNone,
           holdsSocket: () => Effect.succeed(machine.holder),
         }),
@@ -193,6 +198,25 @@ it.layer(NodeServices.layer)("service install", (it) => {
       assert.deepStrictEqual(calls, []);
       assert.strictEqual(unit, "previous unit");
     }),
+  );
+
+  it.effect(
+    "leaves the unit as it was when the configured address is no longer this machine's",
+    () =>
+      Effect.gen(function* () {
+        const { exit, calls, unit } = yield* installOn({
+          ...HEALTHY,
+          configFile: JSON.stringify({ host: "192.168.1.99" }),
+          address: { _tag: "not-local" },
+        });
+        assert.deepInclude(failure(exit), { _tag: "ServiceNotInstalled", reason: "configuration" });
+        assert.include(
+          failure(exit)?.toString() ?? "",
+          "192.168.1.99 is not an address of this machine",
+        );
+        assert.deepStrictEqual(calls, []);
+        assert.strictEqual(unit, "previous unit");
+      }),
   );
 
   it.effect("says the server failed to start instead of reporting success", () =>
