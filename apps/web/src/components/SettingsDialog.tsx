@@ -81,7 +81,11 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
             </header>
             <div className="min-h-0 flex-1 overflow-y-auto">
               <EngineSection engine={data.engine} stale={data.engineStale} />
-              <YouSection settings={data.settings} onSave={intents.updateSettings} />
+              <YouSection
+                settings={data.settings}
+                connected={data.connected}
+                onSave={intents.updateSettings}
+              />
               <DevicesSection
                 devices={data.devices}
                 connected={data.connected}
@@ -167,9 +171,11 @@ const timeZones = (current: string): ReadonlyArray<string> => {
 /** What bots call the operator, and the time zone routines and times follow. */
 function YouSection({
   settings,
+  connected,
   onSave,
 }: {
   settings: Settings | null;
+  connected: boolean;
   onSave: SettingsIntents["updateSettings"];
 }) {
   const { t } = useI18n();
@@ -182,6 +188,7 @@ function YouSection({
         <YouForm
           key={`${settings.operatorName ?? ""}|${settings.timeZone}`}
           settings={settings}
+          connected={connected}
           onSave={onSave}
         />
       )}
@@ -189,19 +196,28 @@ function YouSection({
   );
 }
 
+/**
+ * Saving needs the server: offline, Save says why it is unavailable. While a
+ * save is under way the form takes no edit, so what it sends is what it shows
+ * until the server answers.
+ */
 function YouForm({
   settings,
+  connected,
   onSave,
 }: {
   settings: Settings;
+  connected: boolean;
   onSave: SettingsIntents["updateSettings"];
 }) {
   const { t } = useI18n();
   const nameId = useId();
   const zoneId = useId();
+  const offlineId = useId();
   const [name, setName] = useState(settings.operatorName ?? "");
   const [zone, setZone] = useState<string>(settings.timeZone);
   const [state, setState] = useState<"editing" | "saving" | "saved" | "failed">("editing");
+  const saving = state === "saving";
   const trimmed = name.trim();
   const operatorName = trimmed === "" ? Option.some(null) : decodeName(trimmed);
   const timeZone = decodeTimeZone(zone);
@@ -211,7 +227,7 @@ function YouForm({
       className="flex flex-col gap-3"
       onSubmit={(event) => {
         event.preventDefault();
-        if (!changed || state === "saving") return;
+        if (!changed || saving || !connected) return;
         if (Option.isNone(operatorName) || Option.isNone(timeZone)) return;
         setState("saving");
         onSave({ operatorName: operatorName.value, timeZone: timeZone.value }).then((saved) =>
@@ -229,6 +245,7 @@ function YouForm({
           maxLength={200}
           autoComplete="name"
           placeholder={t("settings.name.placeholder")}
+          readOnly={saving}
           onChange={(event) => {
             setName(event.currentTarget.value);
             setState("editing");
@@ -243,7 +260,9 @@ function YouForm({
         <select
           id={zoneId}
           value={zone}
+          aria-readonly={saving}
           onChange={(event) => {
+            if (saving) return;
             setZone(event.currentTarget.value);
             setState("editing");
           }}
@@ -258,7 +277,12 @@ function YouForm({
         <p className="text-2xs text-muted-foreground">{t("settings.timeZone.hint")}</p>
       </div>
       <div className="flex items-center gap-3">
-        <Button type="submit" size="sm" aria-disabled={!changed || state === "saving"}>
+        <Button
+          type="submit"
+          size="sm"
+          aria-disabled={!changed || saving || !connected}
+          aria-describedby={connected ? undefined : offlineId}
+        >
           {t("settings.save")}
         </Button>
         <p role="status" className="text-xs text-muted-foreground">
@@ -266,6 +290,11 @@ function YouForm({
           {state === "failed" && <span className="text-blocked">{t("settings.saveFailed")}</span>}
         </p>
       </div>
+      {!connected && (
+        <p id={offlineId} className="text-xs text-muted-foreground">
+          {t("settings.save.offline")}
+        </p>
+      )}
     </form>
   );
 }

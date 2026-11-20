@@ -395,6 +395,7 @@ export const en = {
   "settings.save": "Save",
   "settings.saved": "Saved",
   "settings.saveFailed": "Not saved. Try again.",
+  "settings.save.offline": "Saving is available once this device is connected to J3 Bots again.",
   "settings.devices": "Devices",
   "settings.device.current": "This device",
   "settings.device.neverSeen": "Not connected yet",

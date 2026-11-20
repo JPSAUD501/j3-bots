@@ -399,6 +399,8 @@ export const ptBR: Catalog = {
   "settings.save": "Salvar",
   "settings.saved": "Salvo",
   "settings.saveFailed": "Não foi salvo. Tente de novo.",
+  "settings.save.offline":
+    "Salvar fica disponível quando este dispositivo voltar a se conectar ao J3 Bots.",
   "settings.devices": "Dispositivos",
   "settings.device.current": "Este dispositivo",
   "settings.device.neverSeen": "Ainda não conectou",
