@@ -8,8 +8,9 @@ import { HTTP_PATHS } from "@j3-bots/contracts";
  *
  * - A page load goes to the network first, so a new build shows at once; only
  *   when the network fails, the server answers with an error of its own (a
- *   5xx, as from a proxy whose server is down), or no answer comes within
- *   `NAVIGATION_WAIT_MS`, does the kept page answer.
+ *   5xx, as from a proxy whose server is down), or the whole page, headers
+ *   and body, does not arrive within `NAVIGATION_WAIT_MS`, does the kept
+ *   page answer.
  * - A file of the shell is answered from the kept copy; its name carries its
  *   content's hash, so the copy is never stale.
  * - The API, the RPC socket and attachments are never answered or kept: they
@@ -20,8 +21,8 @@ import { HTTP_PATHS } from "@j3-bots/contracts";
  */
 /**
  * How long a page load waits for the network before the kept page answers: a
- * server or a proxy that takes the request and never answers would otherwise
- * leave the installed app blank.
+ * server or a proxy that takes the request and never answers, or sends the
+ * headers and then stops, would otherwise leave the installed app blank.
  */
 const NAVIGATION_WAIT_MS = 4000;
 
@@ -61,6 +62,38 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+const keptPage = () => caches.match(CONFIG.page, { cacheName: CONFIG.cache });
+
+// The page from the network, headers and body, within CONFIG.navigationWait,
+// or a failure. Late, a body still arriving is cancelled, which stops its
+// download. The request itself goes as the browser made it: one sent with an
+// abort signal would no longer be a page load to the server or a proxy, so
+// one with no answer yet is left to end on its own.
+const loadPage = (request) =>
+  new Promise((resolve, reject) => {
+    let reader = null;
+    const timer = setTimeout(() => {
+      reject(new Error("The page did not arrive in time"));
+      reader?.cancel();
+    }, CONFIG.navigationWait);
+    fetch(request)
+      .then(async (answer) => {
+        if (answer.body === null) return answer;
+        reader = answer.body.getReader();
+        const chunks = [];
+        for (let read = await reader.read(); !read.done; read = await reader.read()) {
+          chunks.push(read.value);
+        }
+        return new Response(new Blob(chunks), {
+          status: answer.status,
+          statusText: answer.statusText,
+          headers: answer.headers,
+        });
+      })
+      .then(resolve, reject)
+      .finally(() => clearTimeout(timer));
+  });
+
 self.addEventListener("fetch", (event) => {
   const request = event.request;
   if (request.method !== "GET") return;
@@ -68,18 +101,11 @@ self.addEventListener("fetch", (event) => {
   if (url.origin !== self.location.origin) return;
   if (CONFIG.neverCached.some((prefix) => url.pathname.startsWith(prefix))) return;
   if (request.mode === "navigate") {
-    const keptPage = (otherwise) =>
-      caches.match(CONFIG.page, { cacheName: CONFIG.cache }).then((page) => page ?? otherwise);
-    const answered = new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("No answer in time")), CONFIG.navigationWait);
-      fetch(request)
-        .then(resolve, reject)
-        .finally(() => clearTimeout(timer));
-    });
     event.respondWith(
-      answered.then(
-        (response) => (response.status >= 500 ? keptPage(response) : response),
-        () => keptPage(Response.error()),
+      loadPage(request).then(
+        (response) =>
+          response.status >= 500 ? keptPage().then((page) => page ?? response) : response,
+        () => keptPage().then((page) => page ?? Response.error()),
       ),
     );
     return;
