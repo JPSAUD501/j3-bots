@@ -15,7 +15,7 @@ Node and TypeScript, built on Effect: services and layers for structure, Effect 
 
 **Rejected:** plain TypeScript with a small schema library and a hand-written engine client. The probe that verified the protocol was written that way in sixty lines, so it works. The engine's types would be J3 Bots' own copies, kept in step by hand.
 
-Still to verify: T3 Code's contracts package is not published and ships TypeScript source. Consuming it from outside T3 Code's monorepo is [open question 5](../open-questions.md).
+T3 Code's contracts package is not published and ships TypeScript source. J3 Bots vendors it at the pinned commit; see [Engine](../architecture/engine.md#the-engines-contracts).
 
 ## Clients
 
