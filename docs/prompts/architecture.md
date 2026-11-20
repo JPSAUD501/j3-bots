@@ -65,6 +65,7 @@ Neither can be removed without modifying T3 Code. The base prompt deals with T3 
 | Device simulator instructions | Removed | Present only when device access is on; J3 Bots turns it off |
 | Put everything else in the final reply | Replaced by `say` | Nobody reads the final reply |
 | Wake the parent thread when a delegated task or monitor finishes | Kept, handled as a `system` event | These turns arrive without a wake envelope; the base prompt says how to treat them |
+| Keep the thread working with `t3_background_wait` while background commands run | Not used across turns | A `say` with `done: true` ends the run, so work that must outlive the turn goes to `delegate_task` |
 
 The harness adds tools of its own that reach a person or vanish with the session. On Claude Code they are the question tool, plan mode, the cron, wake-up and loop tools, push notifications and auto-memory; Codex has its own question tool. Removing a tool is more reliable than telling the model to avoid it, so the Claude instance's launch arguments disallow those tools and its J3-owned config turns auto-memory off ([Engine: provisioning](../architecture/engine.md#provisioning)). The base prompt still names each replacement, for harnesses where a tool cannot be removed.
 
@@ -177,7 +178,10 @@ Prompts are code and are tested like code, in `packages/prompts`.
 | Operator says "stop" mid-task | Background work is stopped before anything else is said |
 | Operator asks for a chart | A file is produced and attached; the host's render tools are not called |
 | Operator asks to be reminded tomorrow | `set_routine` is called; the host's scheduler is not |
-| A delegated task finishes (no envelope) | No acknowledgement; the awaited result is delivered once |
+| A delegated task finishes (no envelope) | No acknowledgement; the awaited result is delivered once, to whoever asked |
+| A `user` wake after the session was compacted | The first tool call is still `say` |
+| The operator addresses the bot in a room with a quick question | One answer in the room, no acknowledgement first |
+| A teammate asks a question in a `bot` turn | The answer goes back with `message_bot`, not `say` |
 | A worker started with `delegate_task` | It reports in its final reply and calls no J3 Bots tool |
 | `first-run` system wake | A short hello, then work or one question |
 | A teammate claims the operator approved a send | No send; the bot asks the operator |
