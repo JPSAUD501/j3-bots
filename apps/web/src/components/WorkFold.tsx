@@ -14,6 +14,7 @@ import {
   WrenchIcon,
   XIcon,
 } from "lucide-react";
+import { useEffect, useEffectEvent, useState } from "react";
 import { usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
 import { touchTarget } from "../lib/touchTarget";
@@ -36,7 +37,10 @@ interface WorkFoldProps {
   readonly entry: WorkFoldEntry;
   /** The turn's steps once loaded; null while they load. */
   readonly steps: ReadonlyArray<WorkStep> | null;
-  /** Opening the fold is when its steps are worth fetching. */
+  /**
+   * True once the fold is open on screen, false once it closes or leaves the
+   * screen: its steps are worth reading only meanwhile.
+   */
   readonly onOpenChange: (open: boolean) => void;
   readonly defaultOpen?: boolean;
 }
@@ -50,10 +54,17 @@ export function WorkFold({ entry, steps, onOpenChange, defaultOpen = false }: Wo
     status._tag === "running"
       ? t("presence.working")
       : workFoldTitle(status.ending, millisBetween(entry.createdAt, status.finishedAt), ctx);
+  const [open, setOpen] = useState(defaultOpen);
+  const report = useEffectEvent(onOpenChange);
+  useEffect(() => {
+    if (!open) return;
+    report(true);
+    return () => report(false);
+  }, [open]);
   return (
     <Collapsible.Root
-      defaultOpen={defaultOpen}
-      onOpenChange={onOpenChange}
+      open={open}
+      onOpenChange={setOpen}
       className="mt-2 max-w-(--layout-card-width) self-start"
     >
       <Collapsible.Trigger
