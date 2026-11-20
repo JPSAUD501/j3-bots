@@ -36,6 +36,7 @@ import {
 import { Cards } from "./Cards.ts";
 import { busyBackoff, DispatchRowId, MAX_INDETERMINATE_ANSWERS, recoveryBackoff } from "./model.ts";
 import { Pipeline } from "./Pipeline.ts";
+import { DEFECT_RETRY } from "./reconciler.ts";
 import { Wakes } from "./Wakes.ts";
 
 it.effect("delivers a message once when its send's reply is lost while the session is busy", () =>
@@ -539,6 +540,34 @@ it.effect("waits for a turn slot before sending a message whose file failed to s
       outcome: { _tag: "completed" },
     });
     yield* turnEnded(bia.id);
+    yield* nextTurn(ana.id);
+    yield* deliveryIs(message, "delivered");
+    assert.strictEqual(yield* timesSent(anaSession, "Read the notes."), 1);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("sends other bots' messages past a dispatch that cannot be read, and then that one", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const sql = yield* SqlClient.SqlClient;
+    const ana = yield* createBot("Ana");
+    const anaSession = yield* engineSession(ana.id);
+    const bia = yield* createBot("Bia");
+
+    // Ana's file fails to stage, and her dispatch's deadline is stored broken.
+    const staging = yield* control.holdNext("stageAttachment");
+    const message = yield* sendWithFile(ana.id, "Read the notes.");
+    yield* staging.entered;
+    yield* control.loseNextReply;
+    yield* staging.release;
+    yield* gateSettled(ana.id);
+    yield* sql`UPDATE dispatches SET next_attempt_at = 'soon'`.pipe(Effect.orDie);
+
+    yield* sendToBot(bia.id, "Review the budget.");
+    yield* nextTurn(bia.id);
+
+    // Ana's waits, given a readable deadline, and goes once it passes.
+    yield* TestClock.adjust(DEFECT_RETRY);
     yield* nextTurn(ana.id);
     yield* deliveryIs(message, "delivered");
     assert.strictEqual(yield* timesSent(anaSession, "Read the notes."), 1);

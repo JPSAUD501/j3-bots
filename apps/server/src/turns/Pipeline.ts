@@ -27,6 +27,7 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -76,6 +77,16 @@ const AskCardRow = Schema.Struct({
 });
 
 const WaitingBot = Schema.Struct({ bot_id: BotId });
+
+/** What names a dispatch row, read before the rest of it so a broken one can be postponed. */
+const Named = Schema.Struct({ id: DispatchRowId });
+const Unsent = Schema.Struct({
+  id: DispatchRowId,
+  session_id: SessionRowId,
+  delivery: Schema.Literals(["start", "steer"]),
+  next_attempt_at: Schema.NullOr(Time),
+});
+const Due = Schema.Struct({ id: DispatchRowId, next_attempt_at: Schema.NullOr(Time) });
 
 const NoteRow = Schema.Struct({ id: Schema.String, note_json: Schema.NullOr(json(CatchUpNote)) });
 const HeldRow = Schema.Struct({
@@ -460,29 +471,46 @@ export const layer = Layer.effect(
     })(undefined).pipe(Effect.orDie);
 
     /**
+     * The rows a pass reads, each decoded on its own: one that cannot be read
+     * is postponed, so only it waits, and the pass goes on with the others.
+     */
+    const readEach = Effect.fn("Pipeline.readEach")(function* <A>(
+      rows: ReadonlyArray<unknown>,
+      schema: Schema.Decoder<A>,
+    ) {
+      const read: Array<A> = [];
+      for (const raw of rows) {
+        const decoded = yield* Effect.exit(Schema.decodeUnknownEffect(schema)(raw));
+        if (Exit.isSuccess(decoded)) {
+          read.push(decoded.value);
+          continue;
+        }
+        yield* Effect.logError(
+          "A dispatch could not be read; it is tried again later",
+          decoded.cause,
+        );
+        const named = Schema.decodeUnknownOption(Named)(raw);
+        if (Option.isSome(named)) yield* sender.postpone(named.value.id);
+      }
+      return read;
+    });
+
+    /**
      * Written and never sent, not fenced, and in a session no Stop holds (as
      * the send's claim requires): sent before anything new is written, whether
      * or not its bot has a wake pending. One whose files failed to stage waits
      * for its deadline. Every first send is the dispatcher's, under the
      * budget.
      */
-    const unsent = SqlSchema.findAll({
-      Request: Schema.Void,
-      Result: Schema.Struct({
-        id: DispatchRowId,
-        session_id: SessionRowId,
-        delivery: Schema.Literals(["start", "steer"]),
-        next_attempt_at: Schema.NullOr(Time),
-      }),
-      execute: () => sql`
-        SELECT id, session_id, delivery, next_attempt_at FROM dispatches d
-        WHERE status = 'intended' AND attempts = 0 AND fenced_by_stop_id IS NULL
-          AND NOT EXISTS (
-            SELECT 1 FROM stop_targets t WHERE t.session_id = d.session_id AND t.stopped_at IS NULL
-          )
-        ORDER BY rowid
-      `,
-    })(undefined).pipe(Effect.orDie);
+    const unsentRows = sql`
+      SELECT id, session_id, delivery, next_attempt_at FROM dispatches d
+      WHERE status = 'intended' AND attempts = 0 AND fenced_by_stop_id IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM stop_targets t WHERE t.session_id = d.session_id AND t.stopped_at IS NULL
+        )
+      ORDER BY rowid
+    `.pipe(Effect.orDie);
+    const unsent = Effect.flatMap(unsentRows, (rows) => readEach(rows, Unsent));
 
     /** Whether the bot's provider is at its usage limit, which holds automated wakes. */
     const providerLimited = Effect.fn("Pipeline.providerLimited")(function* (botId: BotId) {
@@ -900,15 +928,14 @@ export const layer = Layer.effect(
      * engine may have (sent at least once, fenced or not: a fenced one settles
      * here, with the same backoff). A dispatch never sent is the dispatcher's.
      */
-    const dueRows = SqlSchema.findAll({
-      Request: Schema.Void,
-      Result: Schema.Struct({ id: DispatchRowId, next_attempt_at: Schema.NullOr(Time) }),
-      execute: () => sql`
-        SELECT id, next_attempt_at FROM dispatches
-        WHERE status = 'intended' AND attempts > 0
-        ORDER BY rowid
-      `,
-    })(undefined).pipe(Effect.orDie);
+    const dueRows = sql`
+      SELECT id, next_attempt_at FROM dispatches
+      WHERE status = 'intended' AND attempts > 0
+      ORDER BY rowid
+    `.pipe(
+      Effect.orDie,
+      Effect.flatMap((rows) => readEach(rows, Due)),
+    );
 
     /** A pass of the recovery over what is due, which learns the next deadline. */
     const recoveryPass: Effect.Effect<Pass> = yield* onePassAtATime(

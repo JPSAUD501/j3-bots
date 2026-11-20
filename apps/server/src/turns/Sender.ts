@@ -130,6 +130,11 @@ export class Sender extends Context.Service<
      * or at least defers it, so a broken dispatch never holds up the others.
      */
     readonly send: (dispatchId: DispatchRowId, owner: SendOwner) => Effect.Effect<SendResult>;
+    /**
+     * The last resort for a dispatch that cannot be read: its deadline moves
+     * later, and nothing else of it is read or written.
+     */
+    readonly postpone: (dispatchId: DispatchRowId) => Effect.Effect<void>;
   }
 >()("@j3-bots/server/turns/Sender") {}
 
@@ -472,8 +477,11 @@ export const layer = Layer.effect(
         UPDATE dispatches SET next_attempt_at = ${timeText(next)}
         WHERE id = ${dispatchId} AND status = 'intended'
       `.pipe(Effect.orDie);
-      return "scheduled" satisfies SendResult as SendResult;
     });
+
+    /** A send that could only postpone its dispatch: its owner looks again at the new deadline. */
+    const postponed = (dispatchId: DispatchRowId) =>
+      Effect.as(postpone(dispatchId), "scheduled" satisfies SendResult as SendResult);
 
     /**
      * A defect is logged, and the dispatch goes through `then`, which counts
@@ -494,7 +502,7 @@ export const layer = Layer.effect(
                     (again) =>
                       Effect.andThen(
                         Effect.logError("A dispatch's defect could not be counted", again),
-                        postpone(dispatchId),
+                        postponed(dispatchId),
                       ),
                   ),
                 ),
@@ -663,7 +671,7 @@ export const layer = Layer.effect(
           (cause) =>
             Effect.andThen(
               Effect.logError("A dispatch could not be sent; it is tried again later", cause),
-              postpone(dispatchId),
+              postponed(dispatchId),
             ),
         ),
       );
@@ -684,6 +692,6 @@ export const layer = Layer.effect(
       return result;
     });
 
-    return Sender.of({ send });
+    return Sender.of({ send, postpone });
   }),
 );
