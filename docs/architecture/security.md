@@ -46,7 +46,9 @@ A bot's permission mode is the engine's runtime mode for its sessions.
 
 J3 Bots' default for a new bot is **Auto** where the provider supports it and **Supervised** where it does not. Full access is a choice the operator makes per bot, with a plain statement of what it means.
 
-A changed mode is the bot's from the moment it is saved. A session the engine has not been brought to it, because the engine was restarting or unavailable when the operator changed it, takes no turn until it has been: the server sends no new work into it, retries the change, and only then lets the next turn start ([Server](server.md#sessions), Settings alignment). A turn already running keeps the mode it started with; stopping the bot ends it.
+A changed mode is the bot's from the moment it is saved. A session the engine has not been brought to it takes no turn J3 Bots sends until it has been: the server sends no new work into it, applies the change once no turn runs there, retries it while the engine is restarting or unavailable, and only then lets the next turn start ([Server](server.md#sessions), Settings alignment). A turn already running keeps the mode it started with; stopping the bot ends it. On Claude Code, background work still running also holds the change, since applying it would end that work; the bot's conversation says so, and stopping the bot applies it.
+
+One exception: a turn the engine starts on its own, a usage-limit continuation or a wake from background work that ended, can start between the change and its alignment, and runs with the mode the session still has. The pinned engine offers no way to hold only those starts (**Read** at `db51b67`, `UsageLimitRecoveryWorker.ts`). When lowering a bot's mode must take effect at once, stop the bot after the change.
 
 In every mode, the bot's own `j3` tools run without asking: they only reach J3 Bots, which applies its own rules to each call. The engine's and the harness's other tools keep the mode's rules. The Codex behavior is **Verified** on release `4969`; see [Engine](engine.md#behaviors-j3-bots-designs-around).
 
