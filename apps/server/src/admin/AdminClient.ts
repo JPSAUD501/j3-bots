@@ -7,10 +7,17 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import type * as HttpBody from "effect/http/HttpBody";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
-import { ADMIN_PATHS, AdminStatus, PairingGrant } from "./protocol.ts";
+import {
+  ADMIN_PATHS,
+  AdminStatus,
+  PairingGrant,
+  ProviderConnectionOutcome,
+  ProviderConnectionRequest,
+} from "./protocol.ts";
 import * as Socket from "./socket.ts";
 
 /** The admin socket answered, but not as the server should. */
@@ -38,6 +45,10 @@ export class AdminClient extends Context.Service<
     readonly startPairing: (
       socket: string,
     ) => Effect.Effect<Option.Option<PairingGrant>, AdminRequestFailed>;
+    readonly connectProviders: (
+      socket: string,
+      request: ProviderConnectionRequest,
+    ) => Effect.Effect<Option.Option<ProviderConnectionOutcome>, AdminRequestFailed>;
   }
 >()("@j3-bots/server/admin/AdminClient") {}
 
@@ -46,7 +57,16 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const ask =
-      <A>(path: string, method: "GET" | "POST", schema: Schema.Codec<A, unknown>) =>
+      <A>(
+        path: string,
+        method: "GET" | "POST",
+        schema: Schema.Codec<A, unknown>,
+        body: Option.Option<
+          (
+            request: HttpClientRequest.HttpClientRequest,
+          ) => Effect.Effect<HttpClientRequest.HttpClientRequest, HttpBody.HttpBodyError>
+        > = Option.none(),
+      ) =>
       (socket: string) =>
         Effect.gen(function* () {
           const state = yield* Socket.probe(socket);
@@ -54,12 +74,23 @@ export const layer = Layer.effect(
           const client = yield* HttpClient.HttpClient;
           // The host is never resolved: the agent dials the socket.
           const request = HttpClientRequest.make(method)(`http://localhost${path}`);
-          return yield* client.execute(request).pipe(
+          return yield* Option.match(body, {
+            onNone: () => Effect.succeed(request),
+            onSome: (write) => write(request),
+          }).pipe(
+            Effect.flatMap((request) => client.execute(request)),
             Effect.flatMap(HttpClientResponse.filterStatusOk),
             Effect.flatMap(HttpClientResponse.schemaBodyJson(schema)),
             Effect.timeout(TIMEOUT),
             Effect.asSome,
-            Effect.mapError((cause) => new AdminRequestFailed({ path, cause })),
+            // A failure with a body may hold the request, and a body may hold a key.
+            Effect.mapError(
+              (cause) =>
+                new AdminRequestFailed({
+                  path,
+                  cause: Option.isSome(body) ? "Left out: the request carried a body." : cause,
+                }),
+            ),
           );
         }).pipe(
           Effect.provide(
@@ -72,6 +103,17 @@ export const layer = Layer.effect(
     return AdminClient.of({
       status: ask(ADMIN_PATHS.status, "GET", AdminStatus),
       startPairing: ask(ADMIN_PATHS.pairing, "POST", PairingGrant),
+      connectProviders: Effect.fn("AdminClient.connectProviders")(function* (
+        socket: string,
+        request: ProviderConnectionRequest,
+      ) {
+        return yield* ask(
+          ADMIN_PATHS.providerConnection,
+          "POST",
+          ProviderConnectionOutcome,
+          Option.some(HttpClientRequest.schemaBodyJson(ProviderConnectionRequest)(request)),
+        )(socket);
+      }),
     });
   }),
 );

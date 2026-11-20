@@ -14,6 +14,7 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -119,6 +120,8 @@ export class TestEngineControl extends Context.Service<
   {
     /** While false, every command fails with `EngineUnavailable` and applies nothing. */
     readonly setReachable: (reachable: boolean) => Effect.Effect<void>;
+    /** The base URL of the provider connection last set; never its key. */
+    readonly providerConnection: Effect.Effect<Option.Option<string>>;
     /**
      * The next command is applied, and then its reply is lost: it fails with
      * `EngineIndeterminate`.
@@ -453,6 +456,8 @@ const STAGED_USABLE_FOR = Duration.hours(12);
 const make = Effect.gen(function* () {
   const status = yield* SubscriptionRef.make(initialStatus);
   let reachable = true;
+  /** The base URL of the provider connection, once one is set. */
+  let connection = Option.none<string>();
   let loseReply = false;
   let rejectDispatch = false;
   let rejectStop = false;
@@ -1032,6 +1037,11 @@ const make = Effect.gen(function* () {
   const engine = Engine.of({
     status: SubscriptionRef.changes(status),
 
+    connectProviders: (input) =>
+      Effect.sync(() => {
+        connection = Option.some(input.baseUrl);
+      }),
+
     consoleLink: command(Effect.succeed("http://127.0.0.1/test-engine")),
 
     ensureProject: ({ workspacePath }) =>
@@ -1376,6 +1386,8 @@ const make = Effect.gen(function* () {
   });
 
   const control = TestEngineControl.of({
+    providerConnection: Effect.sync(() => connection),
+
     setReachable: (value) =>
       Effect.gen(function* () {
         reachable = value;

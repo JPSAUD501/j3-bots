@@ -19,6 +19,7 @@ import type {
   EngineIncompatible,
   ModelUnavailable,
   ProjectNotFound,
+  ProviderConnectionRefused,
   RequestClosed,
   SessionBusy,
   SessionNotFound,
@@ -175,7 +176,9 @@ export type ProviderInstance = {
        * The harness's own configuration folder, owned by J3 Bots, so bots do
        * not inherit the operator's personal setup. The adapter writes the `j3`
        * tool server and J3 Bots' launch settings into it, merging with what the
-       * harness keeps there.
+       * harness keeps there. The harness reaches its models through the
+       * provider connection once one is set (`Engine.connectProviders`), and
+       * otherwise through whatever sign-in this folder holds.
        */
       readonly home: string;
     }
@@ -191,6 +194,17 @@ export type ProviderInstance = {
       readonly args: ReadonlyArray<string>;
     }
 );
+
+/**
+ * How the Claude Code and Codex instances reach their models: an endpoint that
+ * speaks both Anthropic's Messages API and OpenAI's Responses API, such as a
+ * proxy in front of the operator's subscriptions, and the key it takes.
+ */
+export interface ProviderConnection {
+  /** The endpoint's base URL, without `/v1`. */
+  readonly baseUrl: string;
+  readonly key: Redacted.Redacted<string>;
+}
 
 /**
  * What the adapter's layer is built from: everything the server knows. The
@@ -220,6 +234,13 @@ export interface EngineOptions {
    * bot when the session next starts its provider.
    */
   readonly systemPromptFile: string;
+  /**
+   * The base prompt every bot shares, rendered: the current text, then every
+   * change. Codex takes it as its instances' `developer_instructions`, since one
+   * Codex process serves every bot of an instance; Claude Code reads it from
+   * each bot's `systemPromptFile`, which the caller writes.
+   */
+  readonly basePrompt: Stream.Stream<string>;
   /**
    * The caller's containment check: whether `location`, links resolved, is
    * still private state the adapter may write. The adapter asks it for every
@@ -265,6 +286,17 @@ export class Engine extends Context.Service<
      * and then on every change. Never fails: an unreachable engine is a state.
      */
     readonly status: Stream.Stream<EngineStatus>;
+
+    /**
+     * Points the Claude Code and Codex instances at `connection`, for the
+     * sessions they start from then on. The key goes to the engine's secret
+     * store and nowhere else: not to a settings or configuration file, not to
+     * a log. The base URL is kept with the engine's data, so the connection
+     * outlives a restart. Setting it again replaces it.
+     */
+    readonly connectProviders: (
+      connection: ProviderConnection,
+    ) => Effect.Effect<void, ProviderConnectionRefused>;
 
     /**
      * A link that opens the engine's own web interface, signed in, for setting

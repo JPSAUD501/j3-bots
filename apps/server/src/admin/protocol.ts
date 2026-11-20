@@ -11,6 +11,11 @@ export const ADMIN_PATHS = {
   status: "/status",
   /** `POST`, no body. Answers a `PairingGrant`: a fresh code for a new device. */
   pairing: "/pairing",
+  /**
+   * `POST`, a `ProviderConnectionRequest`. Answers a `ProviderConnectionOutcome`
+   * once the engine holds the connection, or could not store it.
+   */
+  providerConnection: "/provider-connection",
 } as const;
 
 const Port = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 65535 }));
@@ -50,3 +55,38 @@ export const PairingGrant = Schema.Struct({
   expiresAt: Schema.DateTimeUtc,
 });
 export type PairingGrant = typeof PairingGrant.Type;
+
+/**
+ * Whether `text` is an endpoint's base URL as the engine is given it: `http`
+ * or `https`, with no credentials, query or fragment, and no trailing `/` or
+ * `/v1`, which each harness adds itself. Credentials are refused because the
+ * base URL is kept in plain text; the key travels on its own.
+ */
+export const isProviderBaseUrl = (text: string): boolean => {
+  if (!URL.canParse(text)) return false;
+  const url = new URL(text);
+  return (
+    (url.protocol === "http:" || url.protocol === "https:") &&
+    url.username === "" &&
+    url.password === "" &&
+    url.search === "" &&
+    url.hash === "" &&
+    !text.endsWith("/") &&
+    !url.pathname.endsWith("/v1") &&
+    text.length <= 1000
+  );
+};
+
+export const ProviderConnectionRequest = Schema.Struct({
+  baseUrl: Schema.String.check(
+    Schema.makeFilter(isProviderBaseUrl, { expected: "an http or https base URL" }),
+  ),
+  /** Sent over the private admin socket only, and never logged. */
+  key: Schema.NonEmptyString,
+});
+export type ProviderConnectionRequest = typeof ProviderConnectionRequest.Type;
+
+export const ProviderConnectionOutcome = Schema.Struct({
+  outcome: Schema.Literals(["stored", "refused"]),
+});
+export type ProviderConnectionOutcome = typeof ProviderConnectionOutcome.Type;

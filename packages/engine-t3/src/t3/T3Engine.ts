@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { EngineStatus, ModelChoice, PermissionMode } from "@j3-bots/contracts";
+import { EngineStatus, type ModelChoice, type PermissionMode } from "@j3-bots/contracts";
 import {
   AttachmentCreateUploadUrlInput,
   CommandId,
@@ -17,6 +17,7 @@ import {
   type ChatAttachment,
   type OrchestrationV2Command,
   type OrchestrationV2ThreadStreamItem,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -46,6 +47,7 @@ import {
   Engine,
   type DispatchInput,
   type EngineOptions,
+  type ProviderConnection,
   type ProviderInstance,
   type RequestResponse,
   type SecretAnswer,
@@ -57,6 +59,7 @@ import {
   EngineUnavailable,
   ModelUnavailable,
   ProjectNotFound,
+  ProviderConnectionRefused,
   RequestClosed,
   SessionBusy,
   SessionNotFound,
@@ -88,7 +91,8 @@ import { ORCHESTRATION_PROTOCOL, pin } from "./Pin.ts";
 import type { FileChangeItem } from "./approvalDetail.ts";
 import { cursorFor, makeBatches, type BatchPlace } from "./Batches.ts";
 import { makePrivateFiles } from "./PrivateFiles.ts";
-import { instanceIdFor, provision, type InstanceSpec } from "./Provision.ts";
+import { providerStatuses, providersOfEvent } from "./Providers.ts";
+import { instanceIdFor, provision, storeConnection, type InstanceSpec } from "./Provision.ts";
 import { baseUrl, stateChanges, supervise, type ProcessState } from "./Supervisor.ts";
 import { upload } from "./upload.ts";
 import {
@@ -148,6 +152,12 @@ const SHELL_READ_TIMEOUT = Duration.seconds(3);
 const BATCHES_KEPT = 32;
 /** How long a staged file stays usable: half the engine's 24-hour sweep. */
 const STAGED_LIFETIME = Duration.hours(12);
+/** How long a provider report subscription that ended waits before it opens again. */
+const PROVIDER_RESUBSCRIBE = Duration.seconds(5);
+
+/** Statuses that tell a client nothing new: two engine reports that differ only in what J3 Bots does not show. */
+const sameStatus = Schema.toEquivalence(EngineStatus);
+
 /** Retrying a failed install: from a minute, doubling up to half an hour. */
 const INSTALL_RETRY = Schedule.min([
   Schedule.exponential(Duration.minutes(1)),
@@ -285,13 +295,56 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     Effect.provide(SecureRandom.layerWebCrypto),
   );
   const providerIds = new Set(options.providers.map((provider) => provider.id));
-  const provisionEngine = provision({
-    home: options.home,
-    files,
-    instances: options.providers.map(instanceSpecOf),
-    toolBridge: options.toolBridge,
-    systemPromptFile: options.systemPromptFile,
+  const instances = options.providers.map(instanceSpecOf);
+  /** The base prompt as last rendered, which each provisioning writes for Codex. */
+  const basePrompt = yield* Ref.make(
+    Option.getOrElse(yield* Stream.runHead(options.basePrompt), () => ""),
+  );
+  /** One writer of the engine's settings and the harness homes at a time. */
+  const provisioning = yield* Semaphore.make(1);
+  const writeProvisioning = Effect.gen(function* () {
+    yield* provision({
+      home: options.home,
+      files,
+      instances,
+      toolBridge: options.toolBridge,
+      systemPromptFile: options.systemPromptFile,
+      basePrompt: yield* Ref.get(basePrompt),
+    });
   }).pipe(Effect.provideService(FileSystem.FileSystem, fs), Effect.provideService(Path.Path, path));
+  const provisionEngine = provisioning.withPermits(1)(writeProvisioning);
+
+  // A new base prompt reaches Codex through its instances' configuration,
+  // which Codex reads for each thread it starts or resumes.
+  yield* options.basePrompt.pipe(
+    Stream.runForEach((text) =>
+      Effect.gen(function* () {
+        if (text === (yield* Ref.get(basePrompt))) return;
+        yield* Ref.set(basePrompt, text);
+        yield* provisionEngine.pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("The new base prompt was not written for Codex", error),
+          ),
+        );
+      }),
+    ),
+    Effect.forkScoped,
+  );
+
+  const connectProviders = Effect.fn("Engine.connectProviders")(
+    function* (connection: ProviderConnection) {
+      yield* storeConnection({ home: options.home, files, instances, connection }).pipe(
+        Effect.provideService(Path.Path, path),
+      );
+      yield* writeProvisioning;
+    },
+    provisioning.withPermits(1),
+    Effect.catch((error) =>
+      Effect.logWarning("The provider connection was not stored", error).pipe(
+        Effect.andThen(Effect.fail(new ProviderConnectionRefused())),
+      ),
+    ),
+  );
 
   const platformServices = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
@@ -1493,20 +1546,37 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   // ---------------------------------------------------------------------------
   // Status and console
 
-  const providers: EngineStatus["providers"] = options.providers.map((provider) => ({
-    id: provider.id,
-    name: provider.name,
-    harness: provider.harness === "acp-command" ? "other" : provider.harness,
-    status: { _tag: "ready" },
-    models: [],
-    usage: [],
-  }));
+  /** The engine's own report of its provider instances, kept while it is ready. */
+  const reported = yield* SubscriptionRef.make<ReadonlyArray<ServerProvider>>([]);
+  /**
+   * Every report the engine sends, from a subscription opened again a few
+   * seconds after it ends or fails, for as long as the engine is ready.
+   */
+  const reports = Stream.suspend(() =>
+    rpc["subscribeServerConfig"]({ workspaceSnapshotsOnDemand: true }),
+  ).pipe(
+    Stream.map(providersOfEvent),
+    Stream.filter((providers) => providers !== undefined),
+    Stream.catchCause(() => Stream.empty),
+    Stream.repeat(Schedule.spaced(PROVIDER_RESUBSCRIBE)),
+  );
+  yield* stateChanges(state).pipe(
+    Stream.switchMap((current) => (current._tag === "ready" ? reports : Stream.empty)),
+    Stream.runForEach((providers) => SubscriptionRef.set(reported, providers)),
+    Effect.forkScoped,
+  );
 
-  const status = stateChanges(state).pipe(
-    Stream.map((current): EngineStatus => {
+  const status = Stream.zipLatestWith(
+    stateChanges(state),
+    SubscriptionRef.changes(reported),
+    (current, engineProviders): EngineStatus => {
       switch (current._tag) {
         case "ready":
-          return { state: { _tag: "ready" }, pinnedVersion: pin.version, providers };
+          return {
+            state: { _tag: "ready" },
+            pinnedVersion: pin.version,
+            providers: providerStatuses(options.providers, engineProviders),
+          };
         case "starting":
           return { state: { _tag: "starting" }, pinnedVersion: pin.version, providers: [] };
         case "incompatible":
@@ -1522,8 +1592,8 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
             providers: [],
           };
       }
-    }),
-  );
+    },
+  ).pipe(Stream.changesWith(sameStatus));
 
   const consoleLink = Effect.gen(function* () {
     yield* ready;
@@ -1550,6 +1620,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
 
   return Engine.of({
     status,
+    connectProviders,
     consoleLink,
     ensureProject,
     removeProject,

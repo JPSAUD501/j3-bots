@@ -116,6 +116,7 @@ const installOn = (machine: Machine) =>
                 ? Effect.fail(new AdminRequestFailed({ path: socket, cause: "unreadable" }))
                 : Effect.succeed(machine.before),
           startPairing: () => Effect.die("install never pairs"),
+          connectProviders: () => Effect.die("install never connects providers"),
         }),
       ),
       Layer.succeed(

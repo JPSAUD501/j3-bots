@@ -10,23 +10,42 @@ import * as Stream from "effect/Stream";
 import type { ListenerStatus } from "../admin/protocol.ts";
 import * as Domain from "../domain.ts";
 import * as Listener from "../listener.ts";
+import * as BasePrompt from "../settings/BasePrompt.ts";
+import * as SettingsStore from "../settings/SettingsStore.ts";
 import * as TestDatabase from "./database.ts";
 
-/** The one model the test engine offers. */
+/** The model a bot gets by default: the first the test engine offers. */
 const MODEL = { providerId: ProviderId.make("claude"), modelId: ModelId.make("opus") };
 
-const provider: EngineStatus["providers"][number] = {
-  id: MODEL.providerId,
-  name: "Claude",
-  harness: "claude-code",
-  status: { _tag: "ready" },
-  models: [{ id: MODEL.modelId, name: "Claude Opus" }],
-  usage: [],
+/** A model of a second provider, which a bot can move to. */
+const OTHER_PROVIDER_MODEL = {
+  providerId: ProviderId.make("codex"),
+  modelId: ModelId.make("gpt"),
 };
 
+const providers: EngineStatus["providers"] = [
+  {
+    id: MODEL.providerId,
+    name: "Claude",
+    harness: "claude-code",
+    status: { _tag: "ready" },
+    models: [{ id: MODEL.modelId, name: "Claude Opus" }],
+    usage: [],
+  },
+  {
+    id: OTHER_PROVIDER_MODEL.providerId,
+    name: "Codex",
+    harness: "codex",
+    status: { _tag: "ready" },
+    models: [{ id: OTHER_PROVIDER_MODEL.modelId, name: "GPT" }],
+    usage: [],
+  },
+];
+
 /**
- * The in-memory engine, offering one ready Claude Code provider. The test
- * engine reports no providers of its own, and a bot needs a model to exist.
+ * The in-memory engine, offering a ready Claude Code and a ready Codex
+ * provider. The test engine reports no providers of its own, and a bot needs a
+ * model to exist.
  */
 const engine = Layer.effect(
   Engine,
@@ -34,13 +53,16 @@ const engine = Layer.effect(
     const inner = yield* Engine;
     return Engine.of({
       ...inner,
-      status: inner.status.pipe(Stream.map((status) => ({ ...status, providers: [provider] }))),
+      status: inner.status.pipe(Stream.map((status) => ({ ...status, providers }))),
     });
   }),
 ).pipe(Layer.provideMerge(TestEngine.layer));
 
 /** The database, the home and the engine. */
-const stores = engine.pipe(Layer.provideMerge(TestDatabase.layer));
+const stores = Layer.mergeAll(
+  engine,
+  BasePrompt.layer.pipe(Layer.provide(SettingsStore.layer)),
+).pipe(Layer.provideMerge(TestDatabase.layer));
 
 /**
  * The client listener as a server of the default configuration reports it,

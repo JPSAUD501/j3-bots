@@ -2,13 +2,16 @@
 // @effect-diagnostics nodeBuiltinImport:off -- NodeHttpServer takes a factory for the Node HTTP server it wraps.
 import * as NodeHttp from "node:http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import { Engine } from "@j3-bots/engine-t3";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServer from "effect/http/HttpServer";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import packageJson from "../../package.json" with { type: "json" };
 import { ServerConfig } from "../config.ts";
@@ -17,10 +20,16 @@ import { EngineState } from "../engine/EngineState.ts";
 import { Listener } from "../listener.ts";
 import * as Ports from "../system/Ports.ts";
 import { WebClientStatus } from "../web/WebClient.ts";
-import { ADMIN_PATHS, AdminStatus, PairingGrant } from "./protocol.ts";
+import {
+  ADMIN_PATHS,
+  AdminStatus,
+  PairingGrant,
+  ProviderConnectionOutcome,
+  ProviderConnectionRequest,
+} from "./protocol.ts";
 
-// The admin socket: how `j3-bots pair` and `j3-bots doctor` reach the running
-// server. A Unix socket in the home, which only the operator's user can open,
+// The admin socket: how `j3-bots pair`, `j3-bots doctor` and
+// `j3-bots provider connect` reach the running server. A Unix socket in the home, which only the operator's user can open,
 // so it needs no credential. Nothing on the network reaches it. The server
 // binds it only while it holds the home (`home/Home.ts`), which also removed
 // any socket a stopped server left there.
@@ -61,6 +70,31 @@ const routes = Layer.mergeAll(
       const devices = yield* Devices;
       const grant = yield* devices.startPairing;
       return yield* HttpServerResponse.schemaJson(PairingGrant)(grant).pipe(Effect.orDie);
+    }),
+  ),
+  HttpRouter.add(
+    "POST",
+    ADMIN_PATHS.providerConnection,
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.schemaBodyJson(ProviderConnectionRequest).pipe(
+        Effect.option,
+      );
+      if (request._tag === "None") return HttpServerResponse.empty({ status: 400 });
+      const engine = yield* Engine;
+      const outcome: ProviderConnectionOutcome = yield* engine
+        .connectProviders({
+          baseUrl: request.value.baseUrl,
+          key: Redacted.make(request.value.key),
+        })
+        .pipe(
+          Effect.as({ outcome: "stored" as const }),
+          Effect.catchTag("ProviderConnectionRefused", () =>
+            Effect.succeed({ outcome: "refused" as const }),
+          ),
+        );
+      return yield* HttpServerResponse.schemaJson(ProviderConnectionOutcome)(outcome).pipe(
+        Effect.orDie,
+      );
     }),
   ),
 );

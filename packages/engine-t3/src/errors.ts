@@ -175,6 +175,20 @@ export class ModelUnavailable extends Schema.TaggedError<ModelUnavailable>()("Mo
 }
 
 /**
+ * The provider connection was not stored: a folder it is written in has left
+ * the server's private data, or could not be written. The connection set
+ * before, if any, stays as it was.
+ */
+export class ProviderConnectionRefused extends Schema.TaggedError<ProviderConnectionRefused>()(
+  "ProviderConnectionRefused",
+  {},
+) {
+  override get message(): string {
+    return "The provider connection could not be stored in the engine's data. The server's log says which folder refused it.";
+  }
+}
+
+/**
  * Every engine command can fail this way. `EngineUnavailable` and
  * `EngineIncompatible` applied nothing; `EngineIndeterminate` may have.
  */

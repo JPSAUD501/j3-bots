@@ -4,6 +4,7 @@ import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -56,7 +57,33 @@ export interface ProvisionInput {
   };
   /** Relative to each workspace folder, as Claude Code resolves it. */
   readonly systemPromptFile: string;
+  /** The base prompt every bot shares, which Codex takes as `developer_instructions`. */
+  readonly basePrompt: string;
 }
+
+/**
+ * The provider connection as it is kept with the engine's data: its base URL.
+ * The key is only in the engine's secret store.
+ */
+export const StoredConnection = Schema.Struct({ baseUrl: Schema.String });
+export type StoredConnection = typeof StoredConnection.Type;
+
+/** Where the connection's base URL is kept, in the adapter's own folder. */
+const connectionFile = (path: Path.Path, home: string) =>
+  path.join(engineFolders(path, home).j3, "provider-connection.json");
+
+/**
+ * The variable that carries the connection's key to each harness: Claude
+ * Code reads `ANTHROPIC_AUTH_TOKEN`; Codex reads the variable its model
+ * provider's `env_key` names.
+ */
+const CONNECTION_KEY_VARIABLE = {
+  "claude-code": "ANTHROPIC_AUTH_TOKEN",
+  codex: "J3_PROVIDER_KEY",
+} as const;
+
+/** Codex's name for the connection's model provider. A dot would not survive TOML's dotted keys. */
+const CODEX_MODEL_PROVIDER = "j3";
 
 /** The engine's name for a J3 Bots provider id: a stable slug the engine accepts. */
 export const instanceIdFor = (providerId: string) =>
@@ -123,6 +150,50 @@ const decodeJsonObject = Schema.decodeUnknownOption(Schema.fromJsonString(JsonOb
 const isJsonObject = Schema.is(JsonObject);
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }));
 
+/** One variable as the engine's settings file keeps it. */
+type SettingsVariable =
+  | { readonly name: string; readonly value: string; readonly sensitive: false }
+  /** The value lives in the engine's secret store; the file says only that it exists. */
+  | {
+      readonly name: string;
+      readonly value: "";
+      readonly sensitive: true;
+      readonly valueRedacted: true;
+    };
+
+const secretVariable = (name: string): SettingsVariable => ({
+  name,
+  value: "",
+  sensitive: true,
+  valueRedacted: true,
+});
+
+/**
+ * The variables through which an instance reaches the connection: for Claude
+ * Code the endpoint, the key, and tool search turned off, which an endpoint
+ * other than Anthropic's own may not serve (**Assumed** from the operator's
+ * proxy setup, which turns it off for that reason); for Codex the key its
+ * model provider names.
+ */
+const connectionVariables = (
+  spec: InstanceSpec,
+  connection: StoredConnection | null,
+): ReadonlyArray<SettingsVariable> => {
+  if (connection === null) return [];
+  switch (spec.kind) {
+    case "claude-code":
+      return [
+        { name: "ANTHROPIC_BASE_URL", value: connection.baseUrl, sensitive: false },
+        secretVariable(CONNECTION_KEY_VARIABLE["claude-code"]),
+        { name: "ENABLE_TOOL_SEARCH", value: "false", sensitive: false },
+      ];
+    case "codex":
+      return [secretVariable(CONNECTION_KEY_VARIABLE.codex)];
+    case "acp-local":
+      return [];
+  }
+};
+
 const instanceConfig = (input: ProvisionInput, spec: InstanceSpec) => {
   switch (spec.kind) {
     case "claude-code":
@@ -142,7 +213,11 @@ const instanceConfig = (input: ProvisionInput, spec: InstanceSpec) => {
 };
 
 /** The settings file with J3 Bots' keys and instances merged into what the engine keeps there. */
-const engineSettings = (input: ProvisionInput, existing: Readonly<Record<string, unknown>>) => ({
+const engineSettings = (
+  input: ProvisionInput,
+  connection: StoredConnection | null,
+  existing: Readonly<Record<string, unknown>>,
+) => ({
   ...existing,
   ...ENGINE_SETTINGS,
   providerInstances: Object.fromEntries(
@@ -152,31 +227,52 @@ const engineSettings = (input: ProvisionInput, existing: Readonly<Record<string,
         driver: DRIVERS[spec.kind],
         displayName: spec.name,
         enabled: true,
-        // The value lives in the engine's secret store; the file says only that it exists.
-        environment: spec.environment.map((variable) => ({
-          name: variable.name,
-          value: "",
-          sensitive: true,
-          valueRedacted: true,
-        })),
+        environment: [
+          ...connectionVariables(spec, connection),
+          ...spec.environment.map((variable) => secretVariable(variable.name)),
+        ],
         config: instanceConfig(input, spec),
       },
     ]),
   ),
 });
 
-const tomlString = (value: string) => JSON.stringify(value);
+/**
+ * A TOML basic string. JSON's escapes are TOML's, except that TOML takes
+ * neither a raw DEL nor an escaped lone surrogate, so the text is made well
+ * formed first and DEL is escaped.
+ */
+export const tomlString = (value: string) =>
+  JSON.stringify(value.toWellFormed()).replaceAll("\u007f", "\\u007f");
 
-/** The J3-owned `config.toml` of a Codex instance. J3 Bots owns the whole file. */
-const codexConfig = (input: ProvisionInput) =>
+/**
+ * The J3-owned `config.toml` of a Codex instance. J3 Bots owns the whole file.
+ * Top-level keys come before the first table, as TOML requires.
+ */
+const codexConfig = (input: ProvisionInput, connection: StoredConnection | null) =>
   [
     "# Written by J3 Bots. Changes here are overwritten.",
+    `developer_instructions = ${tomlString(input.basePrompt)}`,
+    ...(connection === null
+      ? []
+      : [
+          `model_provider = ${tomlString(CODEX_MODEL_PROVIDER)}`,
+          "",
+          `[model_providers.${CODEX_MODEL_PROVIDER}]`,
+          'name = "J3 Bots provider connection"',
+          `base_url = ${tomlString(`${connection.baseUrl}/v1`)}`,
+          `env_key = ${tomlString(CONNECTION_KEY_VARIABLE.codex)}`,
+          'wire_api = "responses"',
+        ]),
+    "",
     `[mcp_servers.${TOOL_SERVER}]`,
     `command = ${tomlString(input.toolBridge.command)}`,
     `args = [${input.toolBridge.args.map(tomlString).join(", ")}]`,
     'default_tools_approval_mode = "approve"',
     "",
   ].join("\n");
+
+const decodeConnection = Schema.decodeUnknownOption(Schema.fromJsonString(StoredConnection));
 
 export const provision = Effect.fn("engine.provision")(function* (input: ProvisionInput) {
   const fs = yield* FileSystem.FileSystem;
@@ -195,6 +291,10 @@ export const provision = Effect.fn("engine.provision")(function* (input: Provisi
     );
 
   const { userdata, secrets } = engineFolders(path, input.home);
+  const connection = yield* fs.readFileString(connectionFile(path, input.home)).pipe(
+    Effect.map((text) => Option.getOrNull(decodeConnection(text))),
+    Effect.orElseSucceed(() => null),
+  );
   yield* input.files.folder(secrets);
   yield* fs.chmod(secrets, 0o700);
 
@@ -235,7 +335,11 @@ export const provision = Effect.fn("engine.provision")(function* (input: Provisi
         break;
       }
       case "codex": {
-        yield* input.files.write(path.join(spec.home, "config.toml"), codexConfig(input));
+        yield* input.files.folder(spec.home);
+        yield* input.files.write(
+          path.join(spec.home, "config.toml"),
+          codexConfig(input, connection),
+        );
         break;
       }
       case "acp-local":
@@ -245,5 +349,32 @@ export const provision = Effect.fn("engine.provision")(function* (input: Provisi
 
   const settingsFile = path.join(userdata, "settings.json");
   const existing = yield* readObject(settingsFile);
-  yield* writeJson(settingsFile, engineSettings(input, existing));
+  yield* writeJson(settingsFile, engineSettings(input, connection, existing));
+});
+
+/**
+ * Stores a provider connection: its key in the engine's secret store, once
+ * for each instance that reaches it, then its base URL beside the adapter's
+ * other files. The caller provisions again afterwards, so the instances
+ * name the key.
+ */
+export const storeConnection = Effect.fn("engine.storeConnection")(function* (input: {
+  readonly home: string;
+  readonly files: PrivateFiles;
+  readonly instances: ReadonlyArray<InstanceSpec>;
+  readonly connection: { readonly baseUrl: string; readonly key: Redacted.Redacted<string> };
+}) {
+  const path = yield* Path.Path;
+  const { j3, secrets } = engineFolders(path, input.home);
+  yield* input.files.folder(secrets);
+  for (const spec of input.instances) {
+    if (spec.kind === "acp-local") continue;
+    yield* input.files.write(
+      path.join(secrets, secretFileName(spec.instanceId, CONNECTION_KEY_VARIABLE[spec.kind])),
+      Redacted.value(input.connection.key),
+    );
+  }
+  yield* input.files.folder(j3);
+  const text = yield* encodeJson({ baseUrl: input.connection.baseUrl }).pipe(Effect.orDie);
+  yield* input.files.write(connectionFile(path, input.home), `${text}\n`);
 });
