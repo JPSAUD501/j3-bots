@@ -502,28 +502,33 @@ export const layer = Layer.effect(
         );
 
     /**
-     * What `key` has left to send, oldest first: every window's messages the
-     * device keeps, and this window's own, kept or not. A message another
-     * window already delivered is sent again by its command id, which the
-     * server applies once.
+     * Every message left to send, oldest first: those the device keeps,
+     * whichever window kept them, and this window's own that a caller waits
+     * on, which the device may not keep. A window reads them under the
+     * conversation's lock, after the window before it removed what it
+     * delivered, so a kept message goes once. One a caller waits on goes from
+     * its own window too, by its command id: the server applies it once, and
+     * answers with its entry again. Storage that cannot be read leaves this
+     * window's own.
      */
-    const unsent = (key: string) =>
-      storage.readAll("outbox").pipe(
-        Effect.catchTag("LocalStorageError", (error) =>
-          Effect.logWarning("Unsent messages could not be read", error).pipe(
-            Effect.as(new Map<string, string>()),
-          ),
-        ),
-        Effect.map((records) => {
-          const found = new Map<CommandId, KeptMessage>();
-          for (const message of [...decodeAll(records), ...outbox.get()]) {
-            if (message.status._tag === "sending" && targetKey(message.target) === key) {
-              found.set(message.commandId, { ...message, status: message.status });
-            }
+    const unsent = storage.readAll("outbox").pipe(
+      Effect.map((records) => [
+        ...decodeAll(records),
+        ...outbox.get().filter((message) => waiting.has(message.commandId)),
+      ]),
+      Effect.catchTag("LocalStorageError", (error) =>
+        Effect.logWarning("Unsent messages could not be read", error).pipe(Effect.as(outbox.get())),
+      ),
+      Effect.map((messages) => {
+        const found = new Map<CommandId, KeptMessage>();
+        for (const message of messages) {
+          if (message.status._tag === "sending") {
+            found.set(message.commandId, { ...message, status: message.status });
           }
-          return [...found.values()].toSorted(oldestFirst);
-        }),
-      );
+        }
+        return [...found.values()].toSorted(oldestFirst);
+      }),
+    );
 
     /**
      * Sends what `key` has left, one message at a time, while this window
@@ -538,7 +543,9 @@ export const layer = Layer.effect(
           const tried = new Set<CommandId>();
           while (true) {
             again.delete(key);
-            const next = (yield* unsent(key)).find((message) => !tried.has(message.commandId));
+            const next = (yield* unsent).find(
+              (message) => targetKey(message.target) === key && !tried.has(message.commandId),
+            );
             if (next === undefined) return;
             tried.add(next.commandId);
             yield* deliverNow(next);
@@ -573,17 +580,18 @@ export const layer = Layer.effect(
         );
       });
 
-    /** Starts the delivery of every target this window has a message to send for. */
-    const startEveryDelivery = Effect.suspend(() =>
-      Effect.forEach(
-        new Set(
-          outbox
-            .get()
-            .filter((message) => message.status._tag === "sending")
-            .map((message) => targetKey(message.target)),
+    /**
+     * Starts the delivery of every target with a message left to send, what
+     * the device keeps included: a message another window kept and could not
+     * send before it closed is sent by this one.
+     */
+    const startEveryDelivery = unsent.pipe(
+      Effect.flatMap((messages) =>
+        Effect.forEach(
+          new Set(messages.map((message) => targetKey(message.target))),
+          startDelivery,
+          { discard: true },
         ),
-        startDelivery,
-        { discard: true },
       ),
     );
 
@@ -602,7 +610,21 @@ export const layer = Layer.effect(
           }),
       );
 
-    yield* startEveryDelivery;
+    // What is left to send goes on each connection, and whenever another
+    // window changes the outbox: the window that kept a message may close
+    // before it can send it.
+    yield* Effect.gen(function* () {
+      while (true) {
+        yield* waitFor(connection.state, (state) => state._tag === "connected");
+        yield* startEveryDelivery;
+        yield* waitFor(connection.state, (state) => state._tag !== "connected");
+      }
+    }).pipe(Effect.forkIn(scope));
+    yield* storage.changes.pipe(
+      Stream.filter((table) => table === "outbox"),
+      Stream.runForEach(() => startEveryDelivery),
+      Effect.forkIn(scope),
+    );
 
     const outgoing = Effect.fn("Conversations.outgoing")(function* (input: {
       readonly target: EntryTarget;

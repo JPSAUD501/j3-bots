@@ -1199,18 +1199,49 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
             delivered.items.flatMap((item) => (item._tag === "message" ? [item.commandId] : [])),
             [firstId, secondId],
           );
-          // Then the second tab holds the conversation, and sends both again by
-          // command id, in order; the server applies each once.
-          assert.deepStrictEqual(
-            [yield* Queue.take(sends), yield* Queue.take(sends)],
-            [firstId, secondId],
-          );
+          // Each went once: the second tab finds nothing left to send.
+          const again = yield* Queue.take(sends).pipe(Effect.timeoutOption("100 millis"));
+          assert.isTrue(Option.isNone(again));
         }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
       }).pipe(
         Effect.scoped,
         Effect.ensuring(gate.open),
         Effect.provide(client(first.credential, device)),
       );
+    }),
+  );
+
+  it.effect("sends a message another tab kept offline once that tab has closed", () =>
+    Effect.gen(function* () {
+      const { sends } = yield* Fakes;
+      const device = TestPlatform.makeDevice();
+      const first = yield* Effect.gen(function* () {
+        yield* pairAndConnect;
+        return { botId: yield* createBot("Handover"), credential: yield* savedCredential };
+      }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
+      const target: EntryTarget = { _tag: "conversation", botId: first.botId };
+      const goOffline = Effect.gen(function* () {
+        yield* (yield* TestPlatform.TestNetwork).set("offline");
+        yield* waitFor((yield* Connection).state, (state) => state._tag === "offline");
+      });
+
+      yield* Effect.gen(function* () {
+        yield* goOffline;
+        // Another tab, offline too, keeps a message and closes before it can send it.
+        const commandId = yield* Effect.gen(function* () {
+          yield* goOffline;
+          const drafts = yield* Drafts;
+          yield* drafts.setText(target, "left behind");
+          assert.strictEqual(yield* drafts.send(target), "sent");
+          const [kept] = (yield* device.storage.readAll("outbox").pipe(Effect.orDie)).keys();
+          return kept;
+        }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+        if (commandId === undefined) return assert.fail("No message kept");
+
+        yield* (yield* TestPlatform.TestNetwork).set("online");
+        assert.strictEqual(yield* Queue.take(sends), commandId);
+        yield* whenStored(device.storage, "outbox", commandId, absent);
+      }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
     }),
   );
 

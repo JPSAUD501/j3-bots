@@ -80,14 +80,14 @@ export class Network extends Context.Service<
 >()("@j3-bots/client-runtime/ports/Network") {}
 
 /**
- * What the client keeps on the device besides the credential. Neither holds a
- * secret, but both hold conversation text, so signing out clears them.
+ * What the client keeps on the device besides the credential: `drafts`, each
+ * conversation's unsent text and the files already uploaded for it, and
+ * `outbox`, messages the operator sent that the server has not accepted yet.
+ * Neither holds a secret, but both hold conversation text, so signing out
+ * clears them.
  */
-export type LocalTable =
-  /** Each conversation's unsent text and the files already uploaded for it. */
-  | "drafts"
-  /** Messages the operator sent that the server has not accepted yet. */
-  | "outbox";
+export const LocalTable = Schema.Literals(["drafts", "outbox"]);
+export type LocalTable = typeof LocalTable.Type;
 
 /** One of the client's records as it is or is to be: its value, or `null` for none. */
 export interface LocalRecord {
@@ -139,6 +139,12 @@ export class ClientStorage extends Context.Service<
       changes: ReadonlyArray<LocalRecord>,
       expected?: ReadonlyArray<LocalRecord>,
     ) => Effect.Effect<boolean, LocalStorageError>;
+    /**
+     * Emits a table each time another window of this client changed it, so
+     * this one reads it again: a browser's other tabs of the same origin. A
+     * platform with one window never emits.
+     */
+    readonly changes: Stream.Stream<LocalTable>;
   }
 >()("@j3-bots/client-runtime/ports/ClientStorage") {}
 

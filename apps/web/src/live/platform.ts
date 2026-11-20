@@ -7,7 +7,7 @@ import {
   FileTransfer,
   type LocalRecord,
   LocalStorageError,
-  type LocalTable,
+  LocalTable,
   makeInProcessLocks,
   Network,
   type NetworkStatus,
@@ -22,6 +22,7 @@ import { DeviceId, DeviceToken } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -96,46 +97,81 @@ const credentials = Layer.effect(
 
 const idbRecord = ({ table, key, value }: LocalRecord) => ({ store: table, key, value });
 
-const storage = Layer.succeed(
+/**
+ * Tells this origin's other tabs which table of the client's records changed,
+ * so an unsent message one tab kept is sent by another if the first closes.
+ */
+const STORAGE_CHANNEL = "j3-bots-storage";
+const decodeTable = Schema.decodeUnknownOption(LocalTable);
+
+const storage = Layer.effect(
   ClientStorage,
-  ClientStorage.of({
-    readAll: Effect.fn("ClientStorage.readAll")((table: LocalTable) =>
-      Effect.tryPromise({
-        try: () => Idb.getAll(table),
-        catch: () => new LocalStorageError({ operation: "read" }),
-      }).pipe(
-        Effect.map((records) => {
-          const text = new Map<string, string>();
-          for (const [key, value] of records) if (typeof value === "string") text.set(key, value);
-          return text;
-        }),
-      ),
-    ),
-    write: Effect.fn("ClientStorage.write")((table: LocalTable, key: string, value: string) =>
-      Effect.tryPromise({
-        try: () => Idb.put(table, key, value),
-        catch: () => new LocalStorageError({ operation: "write" }),
-      }),
-    ),
-    remove: Effect.fn("ClientStorage.remove")((table: LocalTable, key: string) =>
-      Effect.tryPromise({
-        try: () => Idb.remove(table, key),
-        catch: () => new LocalStorageError({ operation: "remove" }),
-      }),
-    ),
-    clear: Effect.fn("ClientStorage.clear")((table: LocalTable) =>
-      Effect.tryPromise({
-        try: () => Idb.clear(table),
-        catch: () => new LocalStorageError({ operation: "remove" }),
-      }),
-    ),
-    commit: Effect.fn("ClientStorage.commit")(
-      (changes: ReadonlyArray<LocalRecord>, expected: ReadonlyArray<LocalRecord> = []) =>
+  Effect.gen(function* () {
+    const channel = yield* Effect.acquireRelease(
+      Effect.sync(() => new BroadcastChannel(STORAGE_CHANNEL)),
+      (opened) => Effect.sync(() => opened.close()),
+    );
+    const announce = (tables: Iterable<LocalTable>) =>
+      Effect.sync(() => {
+        // oxlint-disable-next-line unicorn/require-post-message-target-origin -- a BroadcastChannel stays within its origin and takes no target
+        for (const table of new Set(tables)) channel.postMessage(table);
+      });
+    return ClientStorage.of({
+      readAll: Effect.fn("ClientStorage.readAll")((table: LocalTable) =>
         Effect.tryPromise({
-          try: () => Idb.commit(changes.map(idbRecord), expected.map(idbRecord)),
+          try: () => Idb.getAll(table),
+          catch: () => new LocalStorageError({ operation: "read" }),
+        }).pipe(
+          Effect.map((records) => {
+            const text = new Map<string, string>();
+            for (const [key, value] of records) if (typeof value === "string") text.set(key, value);
+            return text;
+          }),
+        ),
+      ),
+      write: Effect.fn("ClientStorage.write")((table: LocalTable, key: string, value: string) =>
+        Effect.tryPromise({
+          try: () => Idb.put(table, key, value),
           catch: () => new LocalStorageError({ operation: "write" }),
-        }),
-    ),
+        }).pipe(Effect.andThen(announce([table]))),
+      ),
+      remove: Effect.fn("ClientStorage.remove")((table: LocalTable, key: string) =>
+        Effect.tryPromise({
+          try: () => Idb.remove(table, key),
+          catch: () => new LocalStorageError({ operation: "remove" }),
+        }).pipe(Effect.andThen(announce([table]))),
+      ),
+      clear: Effect.fn("ClientStorage.clear")((table: LocalTable) =>
+        Effect.tryPromise({
+          try: () => Idb.clear(table),
+          catch: () => new LocalStorageError({ operation: "remove" }),
+        }).pipe(Effect.andThen(announce([table]))),
+      ),
+      commit: Effect.fn("ClientStorage.commit")(
+        (changes: ReadonlyArray<LocalRecord>, expected: ReadonlyArray<LocalRecord> = []) =>
+          Effect.tryPromise({
+            try: () => Idb.commit(changes.map(idbRecord), expected.map(idbRecord)),
+            catch: () => new LocalStorageError({ operation: "write" }),
+          }).pipe(
+            Effect.tap((applied) =>
+              applied ? announce(changes.map((change) => change.table)) : Effect.void,
+            ),
+          ),
+      ),
+      changes: Stream.callback<LocalTable>((queue) =>
+        Effect.acquireRelease(
+          Effect.sync(() => {
+            const listener = (event: MessageEvent) => {
+              const table = decodeTable(event.data);
+              if (Option.isSome(table)) Queue.offerUnsafe(queue, table.value);
+            };
+            channel.addEventListener("message", listener);
+            return listener;
+          }),
+          (listener) => Effect.sync(() => channel.removeEventListener("message", listener)),
+        ),
+      ),
+    });
   }),
 );
 

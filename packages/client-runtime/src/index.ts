@@ -47,7 +47,7 @@ export {
   type DeviceCredential,
   FileTransfer,
   type LocalRecord,
-  type LocalTable,
+  LocalTable,
   LocalStorageError,
   makeInProcessLocks,
   Network,

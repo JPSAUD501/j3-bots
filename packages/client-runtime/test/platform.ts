@@ -96,44 +96,81 @@ interface StorageOptions {
   readonly committing?: Queue.Queue<void>;
 }
 
-/** The device's storage for drafts and unsent messages, in memory. */
+/** One window's watch on the device's storage: what it is told when another window changes it. */
+interface Watcher {
+  readonly window: object;
+  readonly tell: (table: LocalTable) => void;
+}
+
+/**
+ * The device's storage for drafts and unsent messages, in memory, as each
+ * window sees it: `view(window)` tells every other window's watchers of the
+ * tables it changes.
+ */
 const makeStorage = (options: StorageOptions) => {
   const tables = new Map<LocalTable, Map<string, string>>([
     ["drafts", new Map()],
     ["outbox", new Map()],
   ]);
   const table = (name: LocalTable) => tables.get(name) ?? new Map<string, string>();
-  return ClientStorage.of({
-    readAll: (name) => Effect.sync(() => new Map(table(name))),
-    write: (name, key, value) => Effect.sync(() => void table(name).set(key, value)),
-    remove: (name, key) => Effect.sync(() => void table(name).delete(key)),
-    clear: (name) =>
-      options.refuseClears === true
-        ? Effect.fail(new LocalStorageError({ operation: "remove" }))
-        : Effect.sync(() => table(name).clear()),
-    commit: (changes, expected = []) =>
-      options.refuseCommits === true
-        ? Effect.fail(new LocalStorageError({ operation: "write" }))
-        : (options.committing === undefined
-            ? Effect.void
-            : Queue.offer(options.committing, undefined)
-          ).pipe(
-            Effect.andThen(options.commitGate?.await ?? Effect.void),
-            Effect.andThen(
-              Effect.sync(() => {
-                const holds = expected.every(
-                  ({ table: name, key, value }) => (table(name).get(key) ?? null) === value,
-                );
-                if (!holds) return false;
-                for (const { table: name, key, value } of changes) {
-                  if (value === null) table(name).delete(key);
-                  else table(name).set(key, value);
-                }
-                return true;
-              }),
+  const watchers = new Set<Watcher>();
+  return (window: object) => {
+    const changed = (names: Iterable<LocalTable>) =>
+      Effect.sync(() => {
+        for (const name of new Set(names)) {
+          for (const watcher of watchers) if (watcher.window !== window) watcher.tell(name);
+        }
+      });
+    return ClientStorage.of({
+      readAll: (name) => Effect.sync(() => new Map(table(name))),
+      write: (name, key, value) =>
+        Effect.sync(() => void table(name).set(key, value)).pipe(Effect.andThen(changed([name]))),
+      remove: (name, key) =>
+        Effect.sync(() => void table(name).delete(key)).pipe(Effect.andThen(changed([name]))),
+      clear: (name) =>
+        options.refuseClears === true
+          ? Effect.fail(new LocalStorageError({ operation: "remove" }))
+          : Effect.sync(() => table(name).clear()).pipe(Effect.andThen(changed([name]))),
+      commit: (changes, expected = []) =>
+        options.refuseCommits === true
+          ? Effect.fail(new LocalStorageError({ operation: "write" }))
+          : (options.committing === undefined
+              ? Effect.void
+              : Queue.offer(options.committing, undefined)
+            ).pipe(
+              Effect.andThen(options.commitGate?.await ?? Effect.void),
+              Effect.andThen(
+                Effect.sync(() => {
+                  const holds = expected.every(
+                    ({ table: name, key, value }) => (table(name).get(key) ?? null) === value,
+                  );
+                  if (!holds) return false;
+                  for (const { table: name, key, value } of changes) {
+                    if (value === null) table(name).delete(key);
+                    else table(name).set(key, value);
+                  }
+                  return true;
+                }),
+              ),
+              Effect.tap((applied) =>
+                applied ? changed(changes.map((change) => change.table)) : Effect.void,
+              ),
             ),
-          ),
-  });
+      changes: Stream.callback<LocalTable>((queue) =>
+        Effect.acquireRelease(
+          Effect.sync(() => {
+            const watcher: Watcher = {
+              window,
+              tell: (name) => void Queue.offerUnsafe(queue, name),
+            };
+            watchers.add(watcher);
+            return watcher;
+          }),
+          (watcher) => Effect.sync(() => watchers.delete(watcher)),
+        ),
+      ),
+    });
+  };
 };
 
 /**
@@ -171,14 +208,17 @@ const transfer = Layer.effect(
  * after a reload, or another tab of the same browser.
  */
 export interface TestDevice {
+  /** The device's storage, as the test reads it. */
   readonly storage: ClientStorage["Service"];
+  /** The device's storage as one more window of the client sees it. */
+  readonly window: () => ClientStorage["Service"];
   readonly locks: WindowLocks["Service"];
 }
 
-export const makeDevice = (options: StorageOptions = {}): TestDevice => ({
-  storage: makeStorage(options),
-  locks: makeInProcessLocks(),
-});
+export const makeDevice = (options: StorageOptions = {}): TestDevice => {
+  const view = makeStorage(options);
+  return { storage: view({}), window: () => view({}), locks: makeInProcessLocks() };
+};
 
 /**
  * A platform for tests: the credential in memory, a network the test turns
@@ -195,7 +235,7 @@ export const layer = (
   Layer.mergeAll(
     Layer.succeed(ServerAddress, { origin }),
     credentials(stored),
-    Layer.succeed(ClientStorage, device.storage),
+    Layer.sync(ClientStorage, device.window),
     Layer.succeed(WindowLocks, device.locks),
     transfer.pipe(Layer.provide(http)),
     network,
