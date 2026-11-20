@@ -5,6 +5,7 @@ import {
   isOrchestrationV2WorkActive,
   OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProviderFailureClass,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
@@ -72,7 +73,10 @@ export interface Mirror {
   readonly runs: Map<string, Run>;
   readonly items: Map<string, Item>;
   readonly requests: Map<string, RuntimeRequest>;
-  /** Read only for the background work they report (`backgroundWorkPending`). */
+  /**
+   * Read only for the background work they report (`backgroundWorkPending`,
+   * `hasBackgroundWork`), each task attributed to its run (`attributeTasks`).
+   */
   readonly providerThreads: Map<string, ProviderThread>;
   /**
    * `toolInputDigest` of each `j3` tool call's input, by item id, with the
@@ -162,8 +166,12 @@ export const applyEvent = (mirror: Mirror, event: OrchestrationV2DomainEvent): b
     case "provider-thread.updated":
       // No session event is made of it. A provider-thread task ending changes
       // only `backgroundWorkPending`, which the Stop runner reads afresh on
-      // its periodic synchronize while a Stop waits on that work.
-      mirror.providerThreads.set(event.payload.id, event.payload);
+      // its periodic synchronize while a Stop waits on that work. A task
+      // starting is read at its run's end (`hasBackgroundWork`).
+      mirror.providerThreads.set(
+        event.payload.id,
+        attributeTasks(event.payload, mirror.providerThreads.get(event.payload.id), event.runId),
+      );
       return false;
     default:
       // Every thread event carries the whole thread record.
@@ -173,6 +181,34 @@ export const applyEvent = (mirror: Mirror, event: OrchestrationV2DomainEvent): b
       }
       return false;
   }
+};
+
+/**
+ * The provider thread with each of its tasks attributed to the run it first
+ * appeared under, as the engine's projection stamps it: an adapter resends its
+ * whole roster without runs, so a task keeps the run it had, and a new one
+ * takes the run of the event that reported it (**Read** at `db51b67`,
+ * `ProjectionStore.ts`, `attributePendingBackgroundTasks`, L936-954, applied
+ * at L1153-1159). The stream carries the event as the adapter reported it; a
+ * snapshot carries the stamped thread.
+ */
+const attributeTasks = (
+  next: ProviderThread,
+  previous: ProviderThread | undefined,
+  runId: Run["id"] | undefined,
+): ProviderThread => {
+  const tasks = next.pendingBackgroundTasks ?? [];
+  if (tasks.every((task) => task.runId !== undefined)) return next;
+  const known = new Map(
+    (previous?.pendingBackgroundTasks ?? []).map((task) => [task.taskId, task.runId]),
+  );
+  return {
+    ...next,
+    pendingBackgroundTasks: tasks.map((task) => {
+      const owner = task.runId ?? (known.has(task.taskId) ? known.get(task.taskId) : runId);
+      return owner === undefined ? task : { ...task, runId: owner };
+    }),
+  };
 };
 
 /** Whether the session was retired: the engine archived its thread. */
@@ -361,13 +397,37 @@ const outcomeOf = (mirror: Mirror, run: Run): TurnOutcome => {
 
 const LIVE_ITEM: ReadonlySet<Item["status"]> = new Set(["idle", "pending", "running", "waiting"]);
 
-/** Whether work the turn started can still wake the session after it ends. */
+/**
+ * A task the provider reports that holds the agent's completion: the agent
+ * resumes when it ends. The engine's rule (**Read** at `db51b67`,
+ * `orchestrationV2PendingBackgroundWork.ts`, `backgroundWorkHoldsCompletion`,
+ * L102-121): one the agent marked awaited (`contracts/orchestrationV2.ts`,
+ * L1107-1111), or a subagent or background task. A command or a monitor
+ * holds only when awaited: it is as often a dev server or its watchdog as a
+ * wait. Claude Code wakes the session when a background shell or a monitor
+ * ends, awaited or not (**Read**, `ClaudeAdapterV2.ts`, L6207-6208; the
+ * `claude_background_task_wake` and `claude_background_monitor_wake`
+ * fixtures), so one not awaited may still bring a background turn.
+ */
+const holdsCompletion = (task: OrchestrationV2PendingBackgroundTask) =>
+  task.awaited === true || task.kind === "subagent" || task.kind === "background_task";
+
+/**
+ * Whether work the turn started can still wake the session after it ends: a
+ * live subagent, a command whose completion wakes it, or a task the provider
+ * reports under the turn's run that holds the agent's completion.
+ */
 const hasBackgroundWork = (mirror: Mirror, run: Run) =>
   itemsOf(mirror, run).some(
     (item) =>
       LIVE_ITEM.has(item.status) &&
       ((item.type === "command_execution" && item.completionWake === "always") ||
         item.type === "subagent"),
+  ) ||
+  [...mirror.providerThreads.values()].some((thread) =>
+    (thread.pendingBackgroundTasks ?? []).some(
+      (task) => task.runId === run.id && holdsCompletion(task),
+    ),
   );
 
 const ACTIVE_RUN: ReadonlySet<Run["status"]> = new Set(["preparing", "starting", "running"]);

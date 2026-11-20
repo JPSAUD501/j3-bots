@@ -387,9 +387,14 @@ export const SessionEvent = Schema.Union([
     cause: TurnCause,
     outcome: TurnOutcome,
     /**
-     * Background work the bot started in this turn (delegated tasks, background
-     * commands) is still running and may wake the session later with a
-     * `background` turn.
+     * The turn handed off to background work it started, which is still
+     * running and wakes the session when it ends, with a `background` turn: a
+     * delegated task, a command whose completion wakes the session, or a task
+     * the provider reports that holds the agent's completion by the engine's
+     * rule (one the agent marked awaited, a subagent, a background task). A
+     * background shell or a monitor on Claude Code may wake the session too,
+     * but holds it only when the agent marked it awaited: it is as often a dev
+     * server left running as a wait.
      */
     backgroundWork: Schema.Boolean,
     /**

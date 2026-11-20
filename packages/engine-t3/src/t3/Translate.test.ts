@@ -238,26 +238,45 @@ const item = (fields: Record<string, unknown>) =>
   });
 const command = (status: string) =>
   item({ id: "item-command", type: "command_execution", input: "npm run dev", status });
-/** The active provider thread, reporting these background tasks. */
-const providerThread = (taskIds: ReadonlyArray<string>) =>
-  event("provider-thread.updated", {
-    id: "provider-thread-1",
-    driver: "claudeAgent",
-    providerInstanceId: "claude",
-    providerSessionId: null,
-    appThreadId: "thread-1",
-    ownerNodeId: null,
-    nativeThreadRef: null,
-    nativeConversationHeadRef: null,
-    status: "active",
-    firstRunOrdinal: 1,
-    lastRunOrdinal: 2,
-    handoffIds: [],
-    forkedFrom: null,
-    pendingBackgroundTasks: taskIds.map((taskId) => ({ taskId, kind: "command" })),
-    createdAt: at,
-    updatedAt: at,
+/** The active provider thread, reporting these background tasks, in an event of `runId`. */
+const providerThread = (
+  taskIds: ReadonlyArray<string>,
+  tasks: ReadonlyArray<Record<string, unknown>> = taskIds.map((taskId) => ({
+    taskId,
+    kind: "command",
+  })),
+  runId?: string,
+) =>
+  decodeEvent({
+    id: "event-provider-thread",
+    threadId: "thread-1",
+    ...(runId === undefined ? {} : { runId }),
+    occurredAt: at,
+    type: "provider-thread.updated",
+    payload: {
+      id: "provider-thread-1",
+      driver: "claudeAgent",
+      providerInstanceId: "claude",
+      providerSessionId: null,
+      appThreadId: "thread-1",
+      ownerNodeId: null,
+      nativeThreadRef: null,
+      nativeConversationHeadRef: null,
+      status: "active",
+      firstRunOrdinal: 1,
+      lastRunOrdinal: 2,
+      handoffIds: [],
+      forkedFrom: null,
+      pendingBackgroundTasks: tasks,
+      createdAt: at,
+      updatedAt: at,
+    },
   });
+/** What each `turn-finished` among the events `diff` made says of background work. */
+const backgroundAtEnd = (events: ReadonlyArray<{ readonly _tag: string }>) =>
+  events.flatMap((event) =>
+    event._tag === "turn-finished" && "backgroundWork" in event ? [event.backgroundWork] : [],
+  );
 describe("backgroundWorkPending", () => {
   // The engine's rule (**Read** at `db51b67`, `derivePendingBackgroundWork`).
   it("counts live work left by an ended run, as the engine's stop does", () => {
@@ -288,6 +307,38 @@ describe("backgroundWorkPending", () => {
 
     // A task only the provider thread reports.
     applyEvent(mirror, providerThread(["task-1"]));
+    assert.isTrue(backgroundWorkPending(mirror));
+  });
+
+  // Claude Code reports a monitor the agent awaits as a task of its provider
+  // thread, with no run: the engine's projection stamps the run that reported
+  // it (**Read** at `db51b67`, `ProjectionStore.ts`, L936-954; the
+  // `claude_background_monitor_wake` fixture).
+  it("counts a task that holds the agent's completion as the turn's hand-off", () => {
+    const mirror = emptyMirror();
+    applyEvent(mirror, run("running", 1));
+    const { view } = replacement(mirror, false, at);
+    const monitor = { taskId: "task-1", kind: "monitor", awaited: true };
+    applyEvent(mirror, providerThread([], [monitor], "run-1"));
+    applyEvent(mirror, run("completed", 1));
+    assert.deepStrictEqual(backgroundAtEnd(diff(mirror, view, at)), [true]);
+
+    // Still running when the next turn ends: it is the first turn's, not this one's.
+    applyEvent(mirror, providerThread([], [monitor], "run-2"));
+    applyEvent(mirror, run("running", 2));
+    diff(mirror, view, at);
+    applyEvent(mirror, run("completed", 2));
+    assert.deepStrictEqual(backgroundAtEnd(diff(mirror, view, at)), [false]);
+  });
+
+  it("leaves a monitor the agent does not await to wake the session on its own", () => {
+    const mirror = emptyMirror();
+    applyEvent(mirror, run("running", 1));
+    const { view } = replacement(mirror, false, at);
+    applyEvent(mirror, providerThread([], [{ taskId: "task-1", kind: "monitor" }], "run-1"));
+    applyEvent(mirror, run("completed", 1));
+    assert.deepStrictEqual(backgroundAtEnd(diff(mirror, view, at)), [false]);
+    // The engine's stop still counts it.
     assert.isTrue(backgroundWorkPending(mirror));
   });
 

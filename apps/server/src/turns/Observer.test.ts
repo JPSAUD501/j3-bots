@@ -186,6 +186,35 @@ it.effect("reconciles a replaced history by its ids, applying each ended turn on
   }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
 );
 
+// A delegated task, or a task the provider reports that the agent awaits,
+// such as a Claude Code monitor it marked awaited: the turn reports it as
+// `backgroundWork`.
+it.effect("wakes the bot no more when its turn handed off to background work", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const sql = yield* SqlClient.SqlClient;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Watch the deploy.");
+    const watching = yield* nextTurn(bot.id);
+    yield* control.startBackgroundWork({ sessionId: session, turnId: watching });
+    yield* control.finishTurn({
+      sessionId: session,
+      turnId: watching,
+      outcome: { _tag: "completed" },
+    });
+    yield* turnEnded(bot.id);
+    yield* flushed(bot.id);
+
+    const closed = yield* sql<{ readonly closed_by: string | null }>`
+      SELECT closed_by FROM dispatches
+    `;
+    assert.deepStrictEqual(closed, [{ closed_by: "handoff" }]);
+    assert.strictEqual((yield* control.dispatches(session)).length, 1);
+    assert.notInclude(yield* noticesOf(bot.id), "undelivered");
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("streams a fold's steps as they change, until its turn ends", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;
