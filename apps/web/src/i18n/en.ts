@@ -288,7 +288,7 @@ export const en = {
   "message.notSent.refused": "Not sent: the server refused it",
   "message.notSent.notPaired": "Not sent: this device is signed out",
   "message.notSent.unexpected": "Not sent: something went wrong on the server",
-  "message.unrecorded": "This device couldn’t save the server’s answer. Trying again…",
+  "message.unrecorded": "This device couldn’t save the server’s answer yet.",
   "message.discard": "Delete",
 
   "timeline.loadOlder": "Show earlier messages",

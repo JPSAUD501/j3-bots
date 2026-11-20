@@ -289,8 +289,7 @@ export const ptBR: Catalog = {
   "message.notSent.refused": "Não enviada: o servidor recusou",
   "message.notSent.notPaired": "Não enviada: este dispositivo saiu da conta",
   "message.notSent.unexpected": "Não enviada: algo deu errado no servidor",
-  "message.unrecorded":
-    "Este dispositivo não conseguiu guardar a resposta do servidor. Tentando de novo…",
+  "message.unrecorded": "Este dispositivo ainda não conseguiu guardar a resposta do servidor.",
   "message.discard": "Apagar",
 
   "timeline.loadOlder": "Mostrar mensagens anteriores",
