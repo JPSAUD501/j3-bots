@@ -8,7 +8,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import { DEFAULTS, initializeHome, load } from "./config.ts";
+import { DEFAULTS, load } from "./config.ts";
+import { initialize } from "./home/Home.ts";
 import { type InterfaceAddress, Network } from "./system/Network.ts";
 import { TEST_TLS } from "./testing/tls.ts";
 
@@ -88,14 +89,38 @@ it.layer(NodeServices.layer)("server configuration", (it) => {
       const home = path.join(parent, "j3");
       const env = { J3_HOME: home };
 
-      yield* withEnvironment(initializeHome, env);
+      yield* withEnvironment(initialize, env);
       const first = yield* withEnvironment(load, env);
       assert.strictEqual(first.port, DEFAULTS.port);
       assert.strictEqual((yield* fs.stat(home)).mode & 0o777, 0o700);
 
       yield* writeConfigFile(home, JSON.stringify({ port: 4000 }));
-      yield* withEnvironment(initializeHome, env);
+      yield* withEnvironment(initialize, env);
       assert.strictEqual((yield* withEnvironment(load, env)).port, 4000);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("writes nothing in a home it refuses", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      // A home inside the web client's folder, which would publish it.
+      const client = yield* freshHome;
+      yield* fs.writeFileString(path.join(client, "index.html"), "<!doctype html>");
+      const published = path.join(client, "j3");
+      const inClient = yield* withEnvironment(initialize, {
+        J3_HOME: published,
+        J3_WEB_CLIENT: client,
+      }).pipe(Effect.exit);
+      assert.deepInclude(failure(inClient), { reason: "web-client-holds-state" });
+      assert.isFalse(yield* fs.exists(published));
+
+      // A home other users can open.
+      const open = yield* freshHome;
+      yield* fs.chmod(open, 0o755);
+      const shared = yield* withEnvironment(initialize, { J3_HOME: open }).pipe(Effect.exit);
+      assert.deepInclude(failure(shared), { reason: "open-to-others" });
+      assert.isFalse(yield* fs.exists(path.join(open, "config.json")));
     }).pipe(Effect.scoped),
   );
 
@@ -107,7 +132,7 @@ it.layer(NodeServices.layer)("server configuration", (it) => {
       yield* fs.makeDirectory(path.join(checkout, ".git"));
 
       const env = { J3_HOME: path.join(checkout, "state", "j3") };
-      for (const step of [load, initializeHome]) {
+      for (const step of [load, initialize]) {
         const exit = yield* withEnvironment(step, env).pipe(Effect.exit);
         assert.deepInclude(failure(exit), { setting: "J3_HOME", reason: "home-in-git-checkout" });
       }
@@ -118,7 +143,7 @@ it.layer(NodeServices.layer)("server configuration", (it) => {
       yield* fs.makeDirectory(path.join(checkout, "state"));
       yield* fs.symlink(path.join(checkout, "state"), alias);
       for (const home of [alias, path.join(alias, "j3")]) {
-        for (const step of [load, initializeHome]) {
+        for (const step of [load, initialize]) {
           const exit = yield* withEnvironment(step, { J3_HOME: home }).pipe(Effect.exit);
           assert.deepInclude(failure(exit), {
             setting: "J3_HOME",

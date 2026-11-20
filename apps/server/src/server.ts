@@ -67,7 +67,7 @@ export const layer = Layer.mergeAll(ToolEndpoint.layer, AdminSocket.layer, logSh
   Layer.provide(engine),
   Layer.provide(Sqlite.layer),
   Layer.provide(Home.layer),
-  Layer.provide(ServerConfig.layer),
+  Layer.provide(Home.configLayer),
   Layer.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer, Network.layer)),
   Layer.provide(Logger.layer([Logger.consoleJson])),
 );

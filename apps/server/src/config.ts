@@ -4,7 +4,6 @@ import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -169,7 +168,9 @@ export const DEFAULTS = {
 } satisfies Required<ConfigFile>;
 
 const decodeConfigFile = Schema.decodeUnknownEffect(Schema.fromJsonString(ConfigFile));
-const encodeDefaults = Schema.encodeSync(Schema.fromJsonString(ConfigFile, { space: 2 }));
+
+/** The text of a new `config.json`: `DEFAULTS`, for the operator to edit. */
+export const DEFAULTS_TEXT = `${Schema.encodeSync(Schema.fromJsonString(ConfigFile, { space: 2 }))(DEFAULTS)}\n`;
 
 /**
  * The variables that override a setting of the file. A service does not
@@ -318,7 +319,7 @@ const readConfigFile = Effect.fn("readConfigFile")(function* (file: string) {
 /**
  * The server's configuration: `J3_HOME` from the environment, every other
  * setting from the environment, else from `<home>/config.json`, else its
- * default. Reads only; `layer` also creates the home and the file.
+ * default. Reads only; `Home.initialize` also creates the home and the file.
  */
 export const load = Effect.gen(function* () {
   const path = yield* Path.Path;
@@ -522,30 +523,3 @@ export const load = Effect.gen(function* () {
     adminSocket,
   } satisfies ServerConfigShape;
 });
-
-/**
- * Creates the home (readable by the operator only) and, on first run, a
- * `config.json` holding every setting at its default. An existing file is
- * never rewritten.
- */
-export const initializeHome = Effect.gen(function* () {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const home = yield* resolveHome;
-  yield* refuseHomeInCheckout(home);
-  yield* fs.makeDirectory(home, { recursive: true, mode: 0o700 });
-  yield* fs
-    .writeFileString(path.join(home, CONFIG_FILE), `${encodeDefaults(DEFAULTS)}\n`, {
-      flag: "wx",
-      mode: 0o600,
-    })
-    .pipe(
-      Effect.catchIf(
-        (error) => error.reason._tag === "AlreadyExists",
-        () => Effect.void,
-      ),
-    );
-});
-
-/** The configuration for a server about to start: creates its home, then loads. */
-export const layer = Layer.effect(ServerConfig, Effect.andThen(initializeHome, load));

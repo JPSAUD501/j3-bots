@@ -99,7 +99,8 @@ const awaitServer = Effect.fn("service.awaitServer")(function* (socket: string) 
  * answer. The configuration is checked first as the service will run it (the
  * home, its `config.json` and the service's `PATH`, none of this shell's
  * overrides), and so is the admin socket's path; anything the server would
- * refuse at start leaves the installed unit untouched.
+ * refuse at start leaves the installed unit untouched, and a refused
+ * configuration leaves the home as it was.
  */
 export const install = Effect.gen(function* () {
   const systemd = yield* Systemd;
@@ -107,16 +108,14 @@ export const install = Effect.gen(function* () {
   const path = yield* Path.Path;
   const host = yield* Host;
 
-  // The unit starts in the home, so it must exist before the first start.
-  yield* ServerConfig.initializeHome;
   const home = yield* ServerConfig.resolveHome;
   const searchPath = yield* Unit.servicePath(
     host.searchPath,
     yield* Config.option(Config.NonEmptyString("XDG_RUNTIME_DIR")),
   );
   const config = yield* Effect.gen(function* () {
-    yield* Home.checkPrivate(home);
-    const loaded = yield* ServerConfig.load;
+    // The unit starts in the home, so it is created here, once its configuration passes.
+    const loaded = yield* Home.initialize;
     yield* Home.checkSocketPath(loaded.adminSocket);
     return loaded;
   }).pipe(
