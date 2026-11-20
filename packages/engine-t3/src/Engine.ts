@@ -382,9 +382,12 @@ export class Engine extends Context.Service<
      * turn's `turn-finished`, a `turn-finished` with `cancelled` for each
      * waiting turn, `steer-dropped` for each untaken steer,
      * `continuation-dropped` for a disarmed continuation, and a
-     * `synchronized` without `backgroundWork` or `runnableTurns` for the
-     * background work of a turn that had already ended and for a turn the
-     * engine started or queued on its own.
+     * `synchronized` with no `pending` background work and no
+     * `runnableTurns` for the background work of a turn that had already
+     * ended and for a turn the engine started or queued on its own. An
+     * `undecidable` tool such a marker still shows was live when the engine
+     * accepted the stop, which covered it, or started in a turn that began
+     * after: a refusal with one live is never moot.
      *
      * A message the engine counts as a user's releases the hold Stop put on
      * the queue, so a dispatch sent between the stop and the cancels starts a
@@ -394,7 +397,9 @@ export class Engine extends Context.Service<
      * Every command is resolved by its key, as a dispatch is: an error reply
      * is answered by a resend of the same command, whose receipt says whether
      * the engine applied it. A refusal is moot, and counts as done, when
-     * nothing it targets can still run. Otherwise it is `StopRejected`, and
+     * nothing it targets can still run, nor may: background work the
+     * `synchronized` event would call `undecidable` keeps it from being moot.
+     * Otherwise it is `StopRejected`, and
      * the key is spent. `EngineIndeterminate` is resolved by calling again
      * with the same key.
      *
@@ -484,8 +489,8 @@ export class Engine extends Context.Service<
      * session when this was called. Once the server has applied that event, it
      * knows the session's state as of this call: the bot tool bridge uses it to
      * find the `tool-call` a tool request came from. The event also says
-     * whether the session still has background work the engine counts as
-     * pending, which a Stop's interrupt ends only after it answered. Choose
+     * what background work the session still has (`BackgroundWork`), which
+     * a Stop's interrupt ends only after it answered. Choose
      * the token, and start waiting for it, before calling.
      *
      * A stream counts as open from when it is subscribed, so one subscribed

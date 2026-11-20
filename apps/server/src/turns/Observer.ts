@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { BotId, type Entry, EntryId, RoomId, WorkStep } from "@j3-bots/contracts";
 import {
+  type BackgroundWork,
   Engine,
   type EngineDown,
   type EngineIncompatible,
@@ -114,10 +115,10 @@ interface Following {
 /** The session as a `synchronize` left it, beyond what its applied events say. */
 export interface Synchronized {
   /**
-   * Background work the engine counts as pending still runs, with no turn
-   * running: what a Stop of an idle session interrupts, after it answered.
+   * Background work still runs, with no turn running: what a Stop of an idle
+   * session interrupts, after it answered.
    */
-  readonly backgroundWork: boolean;
+  readonly backgroundWork: BackgroundWork;
   /**
    * Turns the engine can still run: waiting in its queue, or preparing,
    * starting or running, also ones no event has told of. A Stop sent before

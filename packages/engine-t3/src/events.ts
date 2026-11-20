@@ -162,6 +162,18 @@ export type ToolCall = typeof ToolCall.Type;
 export const PendingContinuation = Schema.Struct({ resumesAt: Schema.DateTimeUtc });
 export type PendingContinuation = typeof PendingContinuation.Type;
 
+/**
+ * A session's background work as the engine's stop counts it, with no turn
+ * running. `pending`: work the engine counts as pending. `undecidable`:
+ * nothing pending but a dynamic tool whose input the stream cut and no read
+ * returned whole enough to tell whether the agent keeps it running on
+ * purpose. The engine's stop interrupts such a tool unless it is, by its own
+ * rule over the stored input, so it is settled once the engine accepted a
+ * stop that covers it, and never sooner. `none`: nothing.
+ */
+export const BackgroundWork = Schema.Literals(["pending", "undecidable", "none"]);
+export type BackgroundWork = typeof BackgroundWork.Type;
+
 /** A turn that has not ended. */
 export const OpenTurn = Schema.Struct({
   turnId: TurnId,
@@ -435,11 +447,11 @@ export const SessionEvent = Schema.Union([
     ...at,
     token: SyncToken,
     /**
-     * The session has background work the engine counts as pending, with no
-     * turn running: what `stop` interrupts in an idle session, and which ends
-     * only after the stop answered.
+     * The session's background work, with no turn running: what `stop`
+     * interrupts in an idle session, and which ends only after the stop
+     * answered.
      */
-    backgroundWork: Schema.Boolean,
+    backgroundWork: BackgroundWork,
     /**
      * The session's turns the engine can still run: waiting in its queue, or
      * preparing, starting or running. These are what a Stop ends, and a Stop

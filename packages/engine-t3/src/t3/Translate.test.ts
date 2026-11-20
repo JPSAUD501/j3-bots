@@ -13,7 +13,7 @@ import { IdempotencyKey, TurnId } from "../ids.ts";
 import { messageIdFor } from "./Keys.ts";
 import {
   applyEvent,
-  backgroundWorkPending,
+  backgroundWorkOf,
   diff,
   dispositionOf,
   emptyMirror,
@@ -277,20 +277,20 @@ const backgroundAtEnd = (events: ReadonlyArray<{ readonly _tag: string }>) =>
   events.flatMap((event) =>
     event._tag === "turn-finished" && "backgroundWork" in event ? [event.backgroundWork] : [],
   );
-describe("backgroundWorkPending", () => {
+describe("backgroundWorkOf", () => {
   // The engine's rule (**Read** at `db51b67`, `derivePendingBackgroundWork`).
   it("counts live work left by an ended run, as the engine's stop does", () => {
     const mirror = emptyMirror();
     applyEvent(mirror, run("completed", 1));
     applyEvent(mirror, command("running"));
-    assert.isTrue(backgroundWorkPending(mirror));
+    assert.strictEqual(backgroundWorkOf(mirror), "pending");
 
     // A running run is the stop's target instead, and its turn is open.
     applyEvent(mirror, run("running", 2));
-    assert.isFalse(backgroundWorkPending(mirror));
+    assert.strictEqual(backgroundWorkOf(mirror), "none");
     applyEvent(mirror, run("interrupted", 2));
     applyEvent(mirror, command("interrupted"));
-    assert.isFalse(backgroundWorkPending(mirror));
+    assert.strictEqual(backgroundWorkOf(mirror), "none");
 
     // A tool the agent keeps running on purpose is never pending.
     applyEvent(
@@ -303,11 +303,11 @@ describe("backgroundWorkPending", () => {
         status: "running",
       }),
     );
-    assert.isFalse(backgroundWorkPending(mirror));
+    assert.strictEqual(backgroundWorkOf(mirror), "none");
 
     // A task only the provider thread reports.
     applyEvent(mirror, providerThread(["task-1"]));
-    assert.isTrue(backgroundWorkPending(mirror));
+    assert.strictEqual(backgroundWorkOf(mirror), "pending");
   });
 
   // Claude Code reports a monitor the agent awaits as a task of its provider
@@ -339,7 +339,7 @@ describe("backgroundWorkPending", () => {
     applyEvent(mirror, run("completed", 1));
     assert.deepStrictEqual(backgroundAtEnd(diff(mirror, view, at)), [false]);
     // The engine's stop still counts it.
-    assert.isTrue(backgroundWorkPending(mirror));
+    assert.strictEqual(backgroundWorkOf(mirror), "pending");
   });
 
   // The stream sends a dynamic tool input above 16 KiB as `{summary, truncated}`
@@ -359,26 +359,29 @@ describe("backgroundWorkPending", () => {
     );
     // Pending until the fetch tells: the Stop waits that long.
     assert.deepStrictEqual(toolsToResolve(mirror), ["item-tool"]);
-    assert.isTrue(backgroundWorkPending(mirror));
+    assert.strictEqual(backgroundWorkOf(mirror), "pending");
 
     mirror.toolPersistence.set(
       "item-tool",
       Option.getOrThrow(persistenceInItem({ persistent: true, script: "x".repeat(20_000) })),
     );
     assert.deepStrictEqual(toolsToResolve(mirror), []);
-    assert.isFalse(backgroundWorkPending(mirror));
+    assert.strictEqual(backgroundWorkOf(mirror), "none");
 
     mirror.toolPersistence.set(
       "item-tool",
       Option.getOrThrow(persistenceInItem({ script: "x".repeat(20_000) })),
     );
-    assert.isTrue(backgroundWorkPending(mirror));
+    assert.strictEqual(backgroundWorkOf(mirror), "pending");
 
     // No read returned enough of the input to tell: the engine's own stop
-    // still interrupts the tool unless it is persistent, and a Stop does not
-    // wait on it for good.
+    // interrupts the tool unless it is persistent, so it is left to whoever
+    // knows whether the engine accepted a stop that covers it.
     mirror.toolPersistence.set("item-tool", "undecidable");
-    assert.isFalse(backgroundWorkPending(mirror));
+    assert.strictEqual(backgroundWorkOf(mirror), "undecidable");
+    // Work the engine counts outweighs it.
+    applyEvent(mirror, command("running"));
+    assert.strictEqual(backgroundWorkOf(mirror), "pending");
   });
 });
 
@@ -404,6 +407,27 @@ describe("what a Stop leaves to run", () => {
     applyEvent(mirror, run("cancelled", 2));
     applyEvent(mirror, run("interrupted", 3));
     assert.deepStrictEqual(runnableTurns(mirror), []);
+  });
+
+  // The engine refused the stop: it interrupted nothing, so a tool that may
+  // be transient may still be running.
+  it("keeps a refused stop from being moot while a tool no read could decide is live", () => {
+    const mirror = emptyMirror();
+    applyEvent(mirror, run("completed", 1));
+    applyEvent(
+      mirror,
+      item({
+        id: "item-tool",
+        type: "dynamic_tool",
+        toolName: "dev_server",
+        input: { summary: '{"script":"…', truncated: true },
+        status: "running",
+      }),
+    );
+    mirror.toolPersistence.set("item-tool", "undecidable");
+    assert.isFalse(nothingToStop(mirror, at));
+    mirror.toolPersistence.set("item-tool", "persistent");
+    assert.isTrue(nothingToStop(mirror, at));
   });
 
   it("counts a thread the engine deleted as gone, though its record stays", () => {

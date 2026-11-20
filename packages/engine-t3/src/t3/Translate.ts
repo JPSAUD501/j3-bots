@@ -21,6 +21,7 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import type { DispatchDisposition } from "../Engine.ts";
 import type {
+  BackgroundWork,
   EndedTurn,
   EngineRequest,
   HostSpeech,
@@ -74,7 +75,7 @@ export interface Mirror {
   readonly items: Map<string, Item>;
   readonly requests: Map<string, RuntimeRequest>;
   /**
-   * Read only for the background work they report (`backgroundWorkPending`,
+   * Read only for the background work they report (`backgroundWorkOf`,
    * `hasBackgroundWork`), each task attributed to its run (`attributeTasks`).
    */
   readonly providerThreads: Map<string, ProviderThread>;
@@ -165,7 +166,7 @@ export const applyEvent = (mirror: Mirror, event: OrchestrationV2DomainEvent): b
       return true;
     case "provider-thread.updated":
       // No session event is made of it. A provider-thread task ending changes
-      // only `backgroundWorkPending`, which the Stop runner reads afresh on
+      // only `backgroundWorkOf`, which the Stop runner reads afresh on
       // its periodic synchronize while a Stop waits on that work. A task
       // starting is read at its run's end (`hasBackgroundWork`).
       mirror.providerThreads.set(
@@ -456,21 +457,27 @@ const isSummarizedInput = (input: unknown) =>
   input.truncated === true;
 
 /**
- * A dynamic tool the engine never counts as pending: one the agent keeps
- * running on purpose (**Read** at `db51b67`,
+ * How a live dynamic tool counts in the engine's rule. One the agent keeps
+ * running on purpose never counts (**Read** at `db51b67`,
  * `orchestrationV2PendingBackgroundWork.ts`, `pendingBackgroundTurnItems`,
  * L242-258). For an input the stream summarized, the adapter's read of the
- * input tells (`toolPersistence.ts`). Until a read succeeds the tool counts
- * as pending: a Stop then waits on it, and keeps sending fresh rounds while
- * it does. One that is undecidable (no read returns its input whole enough
- * to tell, or reads failed too many times in a row) is not counted, so that
- * it can never hold a Stop open for good.
+ * input tells (`toolPersistence.ts`): until a read settles it, the tool is
+ * pending, so a Stop waits on it and keeps sending fresh rounds while it does.
+ * One no read can decide is `undecidable`: the engine's stop interrupts it
+ * unless it is persistent, by its own rule over the stored input, so it is
+ * settled only once the engine accepted a stop that covers it.
  */
-const isUncountedTool = (mirror: Mirror, item: Item) => {
-  if (item.type !== "dynamic_tool") return false;
-  if (!isSummarizedInput(item.input)) return hasPersistentFlag(item.input);
-  const persistence = mirror.toolPersistence.get(item.id);
-  return persistence === "persistent" || persistence === "undecidable";
+const toolWork = (mirror: Mirror, item: DynamicTool): BackgroundWork => {
+  if (!isSummarizedInput(item.input)) return hasPersistentFlag(item.input) ? "none" : "pending";
+  switch (mirror.toolPersistence.get(item.id)) {
+    case "persistent":
+      return "none";
+    case "undecidable":
+      return "undecidable";
+    case "transient":
+    case undefined:
+      return "pending";
+  }
 };
 
 /** Live dynamic tools whose input the stream summarized: those whose persistence a read tells. */
@@ -498,7 +505,7 @@ const latestRun = (mirror: Mirror) =>
     .at(-1);
 
 /**
- * Whether the session has background work the engine counts as pending: what
+ * The session's background work as the engine's stop counts it: what
  * `thread.stop` interrupts in a session whose latest run has ended, an
  * interrupt that lands only after the stop answered. The engine's own rule
  * (**Read** at `db51b67`, `orchestrationV2PendingBackgroundWork.ts`,
@@ -507,30 +514,32 @@ const latestRun = (mirror: Mirror) =>
  * applies it: with no run active and the latest run settled, a task the
  * active provider thread reports, or a live command, dynamic tool or subagent
  * item outside a rolled-back run. The rule is the session's: it does not ask
- * which run started the work.
+ * which run started the work. `undecidable` when nothing is pending but a
+ * tool whose persistence no read could decide (`toolWork`): whoever decides
+ * on it weighs whether the engine accepted a stop that covers it.
  */
-export const backgroundWorkPending = (mirror: Mirror): boolean => {
-  if ([...mirror.runs.values()].some((run) => ACTIVE_RUN.has(run.status))) return false;
+export const backgroundWorkOf = (mirror: Mirror): BackgroundWork => {
+  if ([...mirror.runs.values()].some((run) => ACTIVE_RUN.has(run.status))) return "none";
   const latest = latestRun(mirror);
-  if (latest === undefined || !SETTLED_FOR_BACKGROUND.has(latest.status)) return false;
+  if (latest === undefined || !SETTLED_FOR_BACKGROUND.has(latest.status)) return "none";
   const active = mirror.thread?.activeProviderThreadId ?? null;
   const tasks = [...mirror.providerThreads.values()].some(
     (thread) =>
       (active === null || thread.id === active) && (thread.pendingBackgroundTasks?.length ?? 0) > 0,
   );
+  if (tasks) return "pending";
   const rolledBack = new Set(
     [...mirror.runs.values()].flatMap((run) => (run.status === "rolled_back" ? [run.id] : [])),
   );
-  return (
-    tasks ||
-    [...mirror.items.values()].some(
-      (item) =>
-        BACKGROUND_ITEM.has(item.type) &&
-        isOrchestrationV2WorkActive(item.status) &&
-        !isUncountedTool(mirror, item) &&
-        (item.runId === null || !rolledBack.has(item.runId)),
-    )
+  const counted = [...mirror.items.values()].flatMap((item) =>
+    BACKGROUND_ITEM.has(item.type) &&
+    isOrchestrationV2WorkActive(item.status) &&
+    (item.runId === null || !rolledBack.has(item.runId))
+      ? [item.type === "dynamic_tool" ? toolWork(mirror, item) : "pending"]
+      : [],
   );
+  if (counted.includes("pending")) return "pending";
+  return counted.includes("undecidable") ? "undecidable" : "none";
 };
 
 /** A run that executed, as the engine counts it: neither queued nor cancelled before it started. */
@@ -1584,9 +1593,10 @@ export const runnableTurns = (mirror: Mirror): ReadonlyArray<TurnId> =>
 /**
  * Whether nothing a Stop targets can still run in the session: no run that
  * has not ended, other than those waiting in the queue, which a Stop cancels
- * one by one; no background work the engine counts as pending; no
- * continuation the engine will start on its own. A refusal of a Stop's
- * command is moot only then.
+ * one by one; no background work the engine counts as pending, and none
+ * it may count, a tool whose persistence no read could decide: the stop was
+ * refused, so nothing covers it; no continuation the engine will start on its
+ * own. A refusal of a Stop's command is moot only then.
  */
 export const nothingToStop = (mirror: Mirror, now: DateTime.Utc): boolean => {
   const waiting = new Set(queuedRuns(mirror).map((run) => run.id));
@@ -1595,7 +1605,7 @@ export const nothingToStop = (mirror: Mirror, now: DateTime.Utc): boolean => {
       (run) =>
         (!isEnded(run) && !waiting.has(run.id)) ||
         (isEnded(run) && continuationOf(mirror, run, now) !== null),
-    ) && !backgroundWorkPending(mirror)
+    ) && backgroundWorkOf(mirror) === "none"
   );
 };
 

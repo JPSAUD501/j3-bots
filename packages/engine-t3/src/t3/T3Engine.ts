@@ -96,7 +96,7 @@ import { upload } from "./upload.ts";
 import {
   activeTurn,
   applyEvent,
-  backgroundWorkPending,
+  backgroundWorkOf,
   changesToFetch,
   copyMirror,
   copyView,
@@ -795,8 +795,10 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
    * Sends one command of a round of a Stop, resolved by its receipt as a
    * dispatch is (`sendByReceipt`). A refusal of a step that has become moot
    * (the run it cancels already ended, nothing the engine's stop targets can
-   * still run) counts as done; any other is `StopRejected`, keyed by the
-   * round, whose key it spends.
+   * still run, nor may) counts as done; any other is `StopRejected`, keyed by
+   * the round, whose key it spends. A refused stop interrupted nothing, so a
+   * live tool whose persistence no read could decide keeps it from being moot
+   * (`nothingToStop`), and the server sends a fresh round.
    */
   const sendStopStep = Effect.fnUntraced(function* (
     round: { readonly key: IdempotencyKey; readonly sessionId: SessionId },
@@ -1397,7 +1399,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
           yield* Queue.offer(output, {
             _tag: "synchronized",
             token,
-            backgroundWork: backgroundWorkPending(mirror),
+            backgroundWork: backgroundWorkOf(mirror),
             runnableTurns: runnableTurns(mirror),
             cursor: lastCursor,
             at: DateTime.makeUnsafe(yield* Clock.currentTimeMillis),
@@ -1440,7 +1442,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
               yield* fetchChanges();
               break;
             case "tool":
-              // No session event is made of it: only `backgroundWorkPending` reads it.
+              // No session event is made of it: only `backgroundWorkOf` reads it.
               mirror.toolPersistence.set(next.itemId, next.persistence);
               break;
             case "fetched":

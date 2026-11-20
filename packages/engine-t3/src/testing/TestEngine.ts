@@ -38,6 +38,7 @@ import {
   StopRejected,
 } from "../errors.ts";
 import type {
+  BackgroundWork,
   EndedTurn,
   EngineRequest,
   HostSpeech,
@@ -1324,7 +1325,9 @@ const make = Effect.gen(function* () {
           if (dropped !== null) return yield* Deferred.succeed(dropped, undefined);
           // Every event is handed to the streams as it happens, so each stream
           // is already caught up: the marker follows what it was last given.
-          const backgroundWork = session.running === null && backgroundRuns(session);
+          // The TestEngine reads every tool's persistence: nothing is undecidable.
+          const backgroundWork: BackgroundWork =
+            session.running === null && backgroundRuns(session) ? "pending" : "none";
           // The running turn, also one whose provider turn has not started, and those waiting.
           const runnableTurns =
             session.running === null ? [...session.waiting] : [session.running, ...session.waiting];
