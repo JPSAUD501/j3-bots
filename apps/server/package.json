@@ -3,6 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "license": "AGPL-3.0-or-later",
+  "bin": {
+    "j3-bots": "./dist/bin.mjs"
+  },
   "type": "module",
   "exports": {
     "./testing": {
@@ -11,7 +14,8 @@
     }
   },
   "scripts": {
-    "start": "node src/bin.ts",
+    "build": "vp pack",
+    "start": "node src/bin.ts serve",
     "typecheck": "effect-tsgo tsrs --noEmit",
     "test": "vp test run --config ../../vite.config.ts --dir ."
   },

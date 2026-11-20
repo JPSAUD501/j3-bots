@@ -1,0 +1,111 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import * as Config from "effect/Config";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+
+/** The systemd user unit J3 Bots installs: `~/.config/systemd/user/j3-bots.service`. */
+export const UNIT_NAME = "j3-bots.service";
+
+/** Where the user's systemd manager reads the unit from. */
+export const unitPath = Effect.gen(function* () {
+  const path = yield* Path.Path;
+  const configHome = yield* Config.option(Config.NonEmptyString("XDG_CONFIG_HOME"));
+  const base = Option.isSome(configHome)
+    ? configHome.value
+    : path.join(yield* Config.NonEmptyString("HOME"), ".config");
+  return path.join(base, "systemd", "user", UNIT_NAME);
+});
+
+/** What the unit runs, and with what. */
+export interface UnitPlan {
+  /** The Node executable, absolute: a unit has no shell to find it on `PATH`. */
+  readonly node: string;
+  /** The CLI's entry point, absolute. */
+  readonly entryPoint: string;
+  /** `J3_HOME`, also the working directory. */
+  readonly home: string;
+  /** The `PATH` the server and the harnesses it starts get, such as where `claude` and `codex` are. */
+  readonly searchPath: string;
+  readonly totalMemoryBytes: number;
+}
+
+/** A value systemd cannot take in a unit, such as a path with a newline. */
+class UnitValueRefused extends Schema.TaggedError<UnitValueRefused>()("UnitValueRefused", {
+  setting: Schema.String,
+  value: Schema.String,
+}) {
+  override get message(): string {
+    return `${this.setting} (${JSON.stringify(this.value)}) cannot be written into a systemd unit. Choose a path without control characters, quotes or backslashes.`;
+  }
+}
+
+/**
+ * The share of the machine's memory past which systemd makes the service give
+ * memory back before it takes more: the server, the engine and every harness
+ * it runs share it. On a 4 GB Raspberry Pi that leaves about 1.6 GB to the
+ * system and everything else. It slows the service down under pressure and
+ * never kills it.
+ */
+const MEMORY_HIGH_SHARE = 0.6;
+
+const MIB = 1024 * 1024;
+
+/** systemd expands `%` specifiers in these settings. */
+const escapeSpecifiers = (value: string) => value.replaceAll("%", "%%");
+
+/** One word of a command line or an environment assignment, quoted when it needs to be. */
+const quote = (value: string) => {
+  const escaped = escapeSpecifiers(value);
+  return /[\s"'\\]/.test(escaped)
+    ? `"${escaped.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`
+    : escaped;
+};
+
+const CONTROL = /[\u0000-\u001f\u007f]/;
+// systemd refuses an executable path with a quote or a backslash, even quoted.
+const UNSAFE_EXECUTABLE = /[\u0000-\u001f\u007f"'\\]/;
+
+/** The unit's text. */
+export const render = Effect.fn("service.render")(function* (plan: UnitPlan) {
+  if (UNSAFE_EXECUTABLE.test(plan.node)) {
+    return yield* new UnitValueRefused({ setting: "Node executable", value: plan.node });
+  }
+  for (const [setting, value] of [
+    ["Entry point", plan.entryPoint],
+    ["J3_HOME", plan.home],
+    ["PATH", plan.searchPath],
+  ] as const) {
+    if (CONTROL.test(value)) return yield* new UnitValueRefused({ setting, value });
+  }
+  const memoryHigh = Math.floor((plan.totalMemoryBytes * MEMORY_HIGH_SHARE) / MIB);
+  return [
+    "[Unit]",
+    "Description=J3 Bots server",
+    // Five failed starts within five minutes stop the restarts; `doctor` says so.
+    "StartLimitIntervalSec=300",
+    "StartLimitBurst=5",
+    "",
+    "[Service]",
+    "Type=simple",
+    // The rest of a line, unquoted: only specifiers are expanded.
+    `WorkingDirectory=${escapeSpecifiers(plan.home)}`,
+    `Environment=${quote(`J3_HOME=${plan.home}`)}`,
+    `Environment=${quote(`PATH=${plan.searchPath}`)}`,
+    `ExecStart=${[plan.node, plan.entryPoint, "serve"].map(quote).join(" ")}`,
+    // The server stops the engine and its harnesses itself; systemd ends what
+    // is left once the stop times out.
+    "KillMode=mixed",
+    "TimeoutStopSec=30",
+    "Restart=on-failure",
+    "RestartSec=5",
+    `MemoryHigh=${memoryHigh}M`,
+    // A harness the kernel kills for memory ends its own turn, not the service.
+    "OOMPolicy=continue",
+    "",
+    "[Install]",
+    "WantedBy=default.target",
+    "",
+  ].join("\n");
+});
