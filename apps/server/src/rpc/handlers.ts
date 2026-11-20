@@ -14,26 +14,19 @@ import { Rooms } from "../rooms/Rooms.ts";
 import { Routines } from "../routines/Routines.ts";
 import { Roster } from "../roster/Roster.ts";
 import { SettingsService } from "../settings/SettingsService.ts";
+import { Presence } from "../presence/Presence.ts";
+import { Cards } from "../turns/Cards.ts";
+import { Pipeline } from "../turns/Pipeline.ts";
+import { Stops } from "../turns/Stops.ts";
+import { WorkSteps } from "../turns/WorkSteps.ts";
 
 /**
- * The RPCs this server answers: `J3Rpcs` without those that start, steer or
- * stop a turn, answer what a turn holds on, or follow one. They come with the
- * wake pipeline. Until then a client's call to one fails as any unknown RPC does.
+ * The RPCs this server answers: `J3Rpcs` without a fresh start, a routine run
+ * on demand and turn usage, which come with session rotation, routines and
+ * usage in part 2b of the server domain. Until then a client's call to one
+ * fails as any unknown RPC does.
  */
-export const ServedRpcs = J3Rpcs.omit(
-  "message.send",
-  "card.answer",
-  "secret.provide",
-  "notice.retry",
-  "message.retry",
-  "bot.stop",
-  "bot.freshStart",
-  "routine.run",
-  "entries.workSteps",
-  "client.view",
-  "notifications.subscribe",
-  "usage.turns",
-);
+export const ServedRpcs = J3Rpcs.omit("bot.freshStart", "routine.run", "usage.turns");
 
 const operator = { _tag: "operator" } as const;
 
@@ -53,6 +46,11 @@ export const handlers = ServedRpcs.toLayer(
     const memory = yield* Memory;
     const settings = yield* SettingsService;
     const devices = yield* Devices;
+    const pipeline = yield* Pipeline;
+    const cards = yield* Cards;
+    const stops = yield* Stops;
+    const workSteps = yield* WorkSteps;
+    const viewer = yield* (yield* Presence).connect;
 
     const botFiles = Effect.fn("rpc.botFiles")(function* (input: {
       readonly botId: BotId;
@@ -70,6 +68,13 @@ export const handlers = ServedRpcs.toLayer(
       "entries.subscribe": ({ target, after }) => entries.subscribe(target, after),
       "entries.history": (input) => entries.history(input),
       "entries.markRead": ({ target, through }) => entries.markRead(target, through),
+      "entries.workSteps": ({ entryId }) => workSteps.follow(entryId),
+      "message.send": (input) => pipeline.sendMessage(input),
+      "message.retry": (input) => pipeline.retryMessage(input),
+      "notice.retry": (input) => pipeline.retryNotice(input),
+      "card.answer": (input) => cards.answer(input),
+      "secret.provide": (input) => cards.provideSecret(input),
+      "bot.stop": (input) => stops.stopBot(input),
       "bot.create": ({ commandId, ...draft }) => bots.create({ commandId, draft }),
       "bot.update": ({ commandId, botId, ...changes }) =>
         bots.update({ commandId, botId, changes }),
@@ -93,6 +98,8 @@ export const handlers = ServedRpcs.toLayer(
       "engine.subscribe": () => engine.status,
       "settings.get": () => settings.get,
       "settings.update": ({ commandId, ...changes }) => settings.update({ commandId, changes }),
+      "client.view": ({ target }) => viewer.view(target),
+      "notifications.subscribe": () => viewer.notifications,
       "devices.list": () => devices.list(device.id),
       "pairing.start": () => devices.startPairing,
       // Revoking is idempotent by nature: a retry revokes nothing more.

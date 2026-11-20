@@ -76,7 +76,7 @@ const SayInput = toolInput({
   attachments: Schema.optionalKey(
     described(
       Schema.Array(text(1, 1_024)).check(Schema.isMaxLength(10)),
-      "Files to attach: paths in your workspace, usually under files/, or URLs.",
+      "Files to attach: paths in your workspace, usually under files/.",
     ),
   ),
   to: Schema.optionalKey(

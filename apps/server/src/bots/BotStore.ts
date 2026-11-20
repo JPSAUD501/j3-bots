@@ -2,6 +2,7 @@
 import {
   type Avatar,
   type Bot,
+  type BotState,
   BotId,
   type ModelChoice,
   ModelId,
@@ -19,6 +20,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Flag, Time, timeText } from "../persistence/columns.ts";
+import { BotStates } from "../turns/BotStates.ts";
 
 const BotRow = Schema.Struct({
   id: BotId,
@@ -45,7 +47,7 @@ export interface StoredBot {
   readonly engineProjectId: Option.Option<EngineProjectId>;
 }
 
-const toStored = (row: typeof BotRow.Type): StoredBot => ({
+const toStored = (row: typeof BotRow.Type, state: BotState): StoredBot => ({
   bot: {
     id: row.id,
     profile: {
@@ -59,9 +61,7 @@ const toStored = (row: typeof BotRow.Type): StoredBot => ({
     primary: row.is_primary,
     pinned: row.pinned,
     hidden: row.hidden,
-    // What a bot is doing comes from its session's events, which the wake
-    // pipeline applies. Until a turn runs, every bot is idle.
-    state: { _tag: "idle" },
+    state,
     createdAt: row.created_at,
   },
   workspacePath: row.workspace_path,
@@ -122,6 +122,7 @@ export const layer = Layer.effect(
   BotStore,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const states = yield* BotStates;
 
     const findRow = SqlSchema.findOneOption({
       Request: BotId,
@@ -193,8 +194,12 @@ export const layer = Layer.effect(
       return previous.map((row) => row.id);
     }, Effect.orDie);
 
+    const withState = (row: typeof BotRow.Type) =>
+      Effect.map(states.of(row.id), (state) => toStored(row, state));
+
     const find = Effect.fn("BotStore.find")(function* (id: BotId) {
-      return Option.map(yield* findRow(id), toStored);
+      const row = yield* findRow(id);
+      return Option.isNone(row) ? Option.none() : Option.some(yield* withState(row.value));
     }, Effect.orDie);
 
     const setEngineProject = Effect.fn("BotStore.setEngineProject")(function* (
@@ -212,7 +217,7 @@ export const layer = Layer.effect(
       find,
       list: listRows(undefined).pipe(
         Effect.orDie,
-        Effect.map((rows) => rows.map(toStored)),
+        Effect.flatMap((rows) => Effect.forEach(rows, withState)),
       ),
       avatars: avatarRows(undefined).pipe(Effect.orDie),
       insert,

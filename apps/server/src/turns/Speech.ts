@@ -1,0 +1,391 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import { type Attachment, type BotId, Conflict, RoomId } from "@j3-bots/contracts";
+import { SessionId, TurnId, toolInputDigest, ToolInputDigest } from "@j3-bots/engine-t3";
+import type { ToolInput } from "@j3-bots/prompts";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlSchema from "effect/sql/SqlSchema";
+import { Attachments } from "../attachments/Attachments.ts";
+import { BotStore } from "../bots/BotStore.ts";
+import type { BotSession } from "../bots/EngineSessions.ts";
+import { Entries } from "../entries/Entries.ts";
+import { json, timeText } from "../persistence/columns.ts";
+import { transactional } from "../persistence/transaction.ts";
+import { RoomRouting } from "../rooms/RoomRouting.ts";
+import {
+  TurnEnded,
+  type TurnToolCall,
+  TurnToolRefused,
+  TurnToolRetry,
+  TurnTools,
+  TurnToolUnavailable,
+} from "../tools/TurnTools.ts";
+import { Ledger } from "./Ledger.ts";
+import { liveTarget } from "./liveTarget.ts";
+import { mediaTypeOf } from "./mediaTypes.ts";
+import {
+  type Audience,
+  AudienceColumn,
+  audienceColumns,
+  audienceOf,
+  conversation,
+} from "./model.ts";
+import { Observer } from "./Observer.ts";
+
+/** How many times a request is matched again after the first try, and within how long. */
+const MATCH_RETRIES = 5;
+const MATCH_WITHIN = Duration.seconds(2);
+
+/** A request pinned to the engine's record of its call, and so to a turn and an audience. */
+interface Pin {
+  readonly requestId: string;
+  readonly sessionId: string;
+  readonly botId: BotId;
+  readonly turnId: TurnId;
+  readonly callId: string;
+  readonly audience: Audience;
+}
+
+const Candidate = Schema.Struct({
+  engine_call_id: Schema.String,
+  engine_turn_id: TurnId,
+  audience: AudienceColumn,
+  audience_room_id: Schema.NullOr(RoomId),
+});
+
+const CallKey = Schema.Struct({
+  sessionId: Schema.String,
+  tool: Schema.String,
+  digest: ToolInputDigest,
+});
+
+const StoredResult = Schema.Struct({ result_json: Schema.NullOr(json(Schema.Json)) });
+
+const encodeResult = Schema.encodeEffect(json(Schema.Json));
+
+/**
+ * `say` and `ask`: the turn tools that speak (`docs/architecture/server.md`,
+ * Bot tools). Each request is matched to the engine's record of its call in
+ * the session's running admitted turn and pinned to it, in the transaction
+ * that publishes what it says, so a request acts once, for the turn and the
+ * audience that made it. `message_bot` and `set_routine` come with teammates
+ * and routines, in part 2b.
+ */
+export const layer = Layer.effect(
+  TurnTools,
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const transaction = transactional(sql);
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const observer = yield* Observer;
+    const entries = yield* Entries;
+    const ledger = yield* Ledger;
+    const attachments = yield* Attachments;
+    const bots = yield* BotStore;
+    const routing = yield* RoomRouting;
+    const targetOf = liveTarget(sql);
+
+    const engineSessionOf = SqlSchema.findOneOption({
+      Request: Schema.String,
+      Result: Schema.Struct({ engine_session_id: SessionId }),
+      execute: (id) => sql`
+        SELECT engine_session_id FROM sessions WHERE id = ${id} AND engine_session_id IS NOT NULL
+      `,
+    });
+
+    const storedResult = SqlSchema.findOneOption({
+      Request: Schema.String,
+      Result: StoredResult,
+      execute: (requestId) => sql`SELECT result_json FROM tool_calls WHERE id = ${requestId}`,
+    });
+
+    /** The oldest open call in the running admitted turn that matches and no request claimed. */
+    const candidate = SqlSchema.findOneOption({
+      Request: CallKey,
+      Result: Candidate,
+      execute: ({ sessionId, tool, digest }) => sql`
+        SELECT c.engine_call_id, c.engine_turn_id, t.audience, t.audience_room_id
+        FROM engine_tool_calls c
+        JOIN sessions s ON s.id = c.session_id AND s.admitted_turn_id = c.engine_turn_id
+        JOIN turns t ON t.session_id = c.session_id AND t.engine_turn_id = c.engine_turn_id
+        WHERE c.session_id = ${sessionId} AND c.tool = ${tool} AND c.input_digest = ${digest}
+          AND c.open = 1 AND t.finished_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM tool_calls p
+            WHERE p.session_id = c.session_id AND p.engine_call_id = c.engine_call_id
+          )
+        ORDER BY c.seen_at, c.rowid
+        LIMIT 1
+      `,
+    });
+
+    /**
+     * Brings the session's events up to the request, then looks for its call;
+     * the engine records a call apart from the request, so it looks again a
+     * bounded number of times.
+     */
+    const match = Effect.fn("Speech.match")(function* (call: TurnToolCall, caller: BotSession) {
+      const session = yield* engineSessionOf(caller.id).pipe(Effect.orDie);
+      if (Option.isNone(session)) return yield* new TurnEnded();
+      const digest = yield* toolInputDigest(call.arguments);
+      const started = yield* DateTime.now;
+      for (let attempt = 0; attempt <= MATCH_RETRIES; attempt++) {
+        yield* observer.synchronize(caller.id, session.value.engine_session_id).pipe(
+          Effect.catchTags({
+            SessionNotFound: () => new TurnEnded(),
+            // Nothing is pinned: the bridge forwards the request again.
+            EngineUnavailable: () => new TurnToolRetry(),
+            EngineIndeterminate: () => new TurnToolRetry(),
+            EngineIncompatible: () => new TurnToolRetry(),
+          }),
+        );
+        const found = yield* candidate({ sessionId: caller.id, tool: call.tool, digest }).pipe(
+          Effect.orDie,
+        );
+        if (Option.isSome(found)) {
+          return {
+            requestId: call.requestId,
+            sessionId: caller.id,
+            botId: caller.botId,
+            turnId: found.value.engine_turn_id,
+            callId: found.value.engine_call_id,
+            audience: audienceOf(found.value),
+          } satisfies Pin;
+        }
+        const elapsed = DateTime.distance(started, yield* DateTime.now);
+        if (Duration.isGreaterThan(elapsed, MATCH_WITHIN)) break;
+      }
+      return yield* new TurnEnded();
+    });
+
+    /**
+     * Pins the request in the caller's transaction: the call must still be
+     * unclaimed, since another request may have matched it meanwhile.
+     */
+    const pin = Effect.fn("Speech.pin")(function* (tool: "say" | "ask", found: Pin) {
+      const claimed = yield* sql`
+        SELECT 1 FROM tool_calls WHERE session_id = ${found.sessionId}
+          AND engine_call_id = ${found.callId}
+      `.pipe(Effect.orDie);
+      if (claimed.length > 0) return yield* new TurnEnded();
+      const columns = audienceColumns(found.audience);
+      yield* sql`
+        INSERT INTO tool_calls (
+          id, session_id, engine_turn_id, engine_call_id, audience, audience_room_id, tool,
+          created_at
+        ) VALUES (
+          ${found.requestId}, ${found.sessionId}, ${found.turnId}, ${found.callId},
+          ${columns.audience}, ${columns.roomId}, ${tool}, ${timeText(yield* DateTime.now)}
+        )
+      `.pipe(Effect.orDie);
+    });
+
+    /** The dispatches the pinned turn delivers: its owner and the steers riding it. */
+    const turnDispatches = (found: Pin) =>
+      sql<{ readonly id: string }>`
+        SELECT id FROM dispatches
+        WHERE session_id = ${found.sessionId} AND engine_turn_id = ${found.turnId}
+          AND status IN ('accepted', 'delivered')
+      `.pipe(Effect.orDie);
+
+    /** How far from the operator the wake behind the turn came. */
+    const hopsOf = (found: Pin) =>
+      sql<{ readonly hops: number | null }>`
+        SELECT MAX(w.hops) AS hops FROM wakes w JOIN dispatches d ON d.id = w.dispatch_id
+        WHERE d.session_id = ${found.sessionId} AND d.engine_turn_id = ${found.turnId}
+      `.pipe(
+        Effect.orDie,
+        Effect.map(([row]) => row?.hops ?? 0),
+      );
+
+    /** Where the pinned turn's speech goes, unless its room was archived. */
+    const requireTarget = Effect.fn("Speech.requireTarget")(function* (
+      botId: BotId,
+      audience: Audience,
+    ) {
+      const target = yield* targetOf(botId, audience);
+      if (target === null) return yield* new Conflict({ reason: "room-archived" });
+      return target;
+    });
+
+    /**
+     * Copies the files a `say` attaches from the bot's workspace into the
+     * attachment store, so the operator can open them after the bot changes
+     * or removes its copy. Paths outside the workspace are refused.
+     */
+    const workspaceFiles = Effect.fn("Speech.workspaceFiles")(function* (
+      botId: BotId,
+      paths: ReadonlyArray<string>,
+    ) {
+      if (paths.length === 0) return [];
+      const bot = yield* bots.find(botId);
+      if (Option.isNone(bot)) return yield* new TurnEnded();
+      const refuse = (reason: string) => new TurnToolRefused({ reason });
+      const root = yield* fs.realPath(bot.value.workspacePath).pipe(Effect.orDie);
+      const files: Array<Attachment> = [];
+      for (const given of paths) {
+        if (/^[a-z][a-z0-9+.-]*:\/\//i.test(given)) {
+          return yield* refuse(
+            `${given} is a URL. Save the file into your workspace first, then attach its path.`,
+          );
+        }
+        const real = yield* fs
+          .realPath(path.resolve(root, given))
+          .pipe(Effect.mapError(() => refuse(`There is no file at ${given} in your workspace.`)));
+        const relative = path.relative(root, real);
+        if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
+          return yield* refuse(`${given} is outside your workspace. Copy it under files/ first.`);
+        }
+        const bytes = yield* fs
+          .readFile(real)
+          .pipe(Effect.mapError(() => refuse(`${given} could not be read.`)));
+        const name = path.basename(real);
+        const stored = yield* attachments
+          .store({ name, mediaType: mediaTypeOf(name), bytes, bot: botId })
+          .pipe(Effect.mapError(() => refuse(`${given} cannot be attached: it is empty.`)));
+        files.push(stored);
+      }
+      return files;
+    });
+
+    const say = Effect.fn("Speech.say")(function* (found: Pin, input: ToolInput<"say">) {
+      // `to: "dm"` speaks to the operator in private, also from a room turn.
+      const audience = input.to === "dm" ? conversation : found.audience;
+      const target = yield* requireTarget(found.botId, audience);
+      const files = yield* workspaceFiles(found.botId, input.attachments ?? []);
+      return yield* transaction(
+        Effect.gen(function* () {
+          yield* pin("say", found);
+          const entry = yield* entries.append({
+            target,
+            entry: {
+              _tag: "message",
+              author: { _tag: "bot", botId: found.botId },
+              text: input.text,
+              attachments: files,
+              mentions: { _tag: "bots", ids: [] },
+              delivery: { _tag: "delivered" },
+              commandId: null,
+            },
+          });
+          if (files.length > 0) {
+            yield* sql`
+              UPDATE attachments SET entry_id = ${entry.id}
+              WHERE ${sql.in(
+                "id",
+                files.map((file) => file.id),
+              )}
+            `.pipe(Effect.orDie);
+          }
+          if (target._tag === "room" && entry._tag === "message") {
+            yield* routing.botMessage({
+              roomId: target.roomId,
+              botId: found.botId,
+              message: entry,
+              hops: yield* hopsOf(found),
+            });
+          }
+          if (input.done === true) {
+            for (const { id } of yield* turnDispatches(found))
+              yield* ledger.closeDelivery(id, "done");
+          }
+          const result = { status: "recorded" } satisfies Schema.Json;
+          yield* store(found, result);
+          return result;
+        }),
+      );
+    });
+
+    const ask = Effect.fn("Speech.ask")(function* (found: Pin, input: ToolInput<"ask">) {
+      const target = yield* requireTarget(found.botId, found.audience);
+      const options = input.options.map((option, index) => ({
+        id: `option-${index + 1}`,
+        label: option.label,
+        description: option.description ?? null,
+        style: option.style ?? ("default" as const),
+      }));
+      const values = Object.fromEntries(
+        input.options.map((option, index) => [`option-${index + 1}`, option.value ?? null]),
+      );
+      return yield* transaction(
+        Effect.gen(function* () {
+          yield* pin("ask", found);
+          const card = yield* entries.append({
+            target,
+            entry: {
+              _tag: "question",
+              author: { _tag: "bot", botId: found.botId },
+              origin: "ask",
+              questions: [
+                {
+                  id: "question",
+                  prompt: input.prompt,
+                  options,
+                  acceptsText: input.allow_custom ?? false,
+                  multiple: input.multi_select ?? false,
+                },
+              ],
+              status: { _tag: "pending" },
+            },
+          });
+          const [origin] = yield* sql<{ readonly id: string }>`
+            SELECT w.id FROM wakes w JOIN dispatches d ON d.id = w.dispatch_id
+            WHERE d.session_id = ${found.sessionId} AND d.engine_turn_id = ${found.turnId}
+            ORDER BY w.priority, w.rowid LIMIT 1
+          `.pipe(Effect.orDie);
+          const columns = audienceColumns(found.audience);
+          yield* sql`
+            INSERT INTO ask_cards (
+              entry_id, origin_wake_id, audience, audience_room_id, option_values_json
+            ) VALUES (
+              ${card.id}, ${origin?.id ?? null}, ${columns.audience}, ${columns.roomId},
+              ${yield* encodeValues(values).pipe(Effect.orDie)}
+            )
+          `.pipe(Effect.orDie);
+          // The bot ends its turn after asking; the answer wakes it again.
+          for (const { id } of yield* turnDispatches(found)) yield* ledger.closeDelivery(id, "ask");
+          const result = {
+            status: "asked",
+            note: "Your user's answer arrives as your next turn. End this turn now.",
+          } satisfies Schema.Json;
+          yield* store(found, result);
+          return result;
+        }),
+      );
+    });
+
+    const encodeValues = Schema.encodeEffect(
+      json(Schema.Record(Schema.String, Schema.NullOr(Schema.String))),
+    );
+
+    const store = Effect.fn("Speech.store")(function* (found: Pin, result: Schema.Json) {
+      yield* sql`
+        UPDATE tool_calls SET result_json = ${yield* encodeResult(result)}
+        WHERE id = ${found.requestId}
+      `;
+    }, Effect.orDie);
+
+    const call = Effect.fn("TurnTools.call")(function* (call: TurnToolCall) {
+      if (call.tool === "message_bot" || call.tool === "set_routine") {
+        return yield* new TurnToolUnavailable({ tool: call.tool });
+      }
+      // A forward retried under the same id returns what the first one did.
+      const stored = yield* storedResult(call.requestId).pipe(Effect.orDie);
+      if (Option.isSome(stored) && stored.value.result_json !== null) {
+        return stored.value.result_json;
+      }
+      const found = yield* match(call, call.caller);
+      return call.tool === "say" ? yield* say(found, call.input) : yield* ask(found, call.input);
+    });
+
+    return TurnTools.of({ call });
+  }),
+);

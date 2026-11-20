@@ -25,6 +25,7 @@ import { Ids } from "../Ids.ts";
 import { ChangeLog, type ChangeScope, scopeKey } from "../persistence/ChangeLog.ts";
 import { Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
+import { Presence } from "../presence/Presence.ts";
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
@@ -180,6 +181,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const changes = yield* ChangeLog;
+    const presence = yield* Presence;
     const ids = yield* Ids;
     const transaction = transactional(sql);
 
@@ -273,6 +275,7 @@ export const layer = Layer.effect(
           )
         `;
         yield* changes.record(scopeOf(input.target), id);
+        yield* sql.afterCommit(presence.entryAdded(input.target, entry));
         return entry;
       },
       transaction,

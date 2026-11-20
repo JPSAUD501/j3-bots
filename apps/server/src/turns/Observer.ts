@@ -1,0 +1,1076 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import { BotId, EntryId, type Notice, RoomId, WorkStep } from "@j3-bots/contracts";
+import {
+  Engine,
+  type EngineDown,
+  type EngineRequest,
+  EventCursor,
+  type IdempotencyKey,
+  type OpenRequest,
+  type PendingContinuation,
+  RequestId,
+  type RequestResolution,
+  type SessionEvent,
+  SessionId,
+  type SessionNotFound,
+  SyncToken,
+  type ToolCall,
+  type TurnCause,
+  TurnId,
+  TurnOutcome,
+} from "@j3-bots/engine-t3";
+import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlSchema from "effect/sql/SqlSchema";
+import { type EntryDraft, Entries } from "../entries/Entries.ts";
+import { Ids } from "../Ids.ts";
+import { ChangeLog } from "../persistence/ChangeLog.ts";
+import { json, Time, timeText } from "../persistence/columns.ts";
+import { transactional } from "../persistence/transaction.ts";
+import { liveTarget as liveTargetOf } from "./liveTarget.ts";
+import { DISPATCH_COLUMNS, DispatchRow, Ledger, type WakeRow } from "./Ledger.ts";
+import {
+  type Audience,
+  AudienceColumn,
+  audienceColumns,
+  audienceOf,
+  conversation,
+  StoredResponse,
+} from "./model.ts";
+import { SessionGate } from "./SessionGate.ts";
+import { Signals } from "./Signals.ts";
+import { stopTargets } from "./stopTargets.ts";
+import { Wakes } from "./Wakes.ts";
+import { WorkSteps } from "./WorkSteps.ts";
+
+const Watched = Schema.Struct({
+  id: Schema.String,
+  bot_id: BotId,
+  engine_session_id: SessionId,
+  events_cursor: Schema.NullOr(EventCursor),
+});
+type Watched = typeof Watched.Type;
+
+const TurnRow = Schema.Struct({
+  engine_turn_id: TurnId,
+  audience: AudienceColumn,
+  audience_room_id: Schema.NullOr(RoomId),
+  finished_at: Schema.NullOr(Time),
+  outcome_json: Schema.NullOr(json(TurnOutcome)),
+  work_fold_entry_id: Schema.NullOr(EntryId),
+});
+type TurnRow = typeof TurnRow.Type;
+
+const TurnKey = Schema.Struct({ sessionId: Schema.String, turnId: TurnId });
+
+const RequestRow = Schema.Struct({
+  entry_id: EntryId,
+  engine_request_id: RequestId,
+  closed_at: Schema.NullOr(Time),
+  response_json: Schema.NullOr(json(StoredResponse)),
+});
+
+const HoldRow = Schema.Struct({
+  engine_session_id: Schema.NullOr(SessionId),
+  queue_held_cursor: Schema.NullOr(EventCursor),
+  queue_resumed_cursor: Schema.NullOr(EventCursor),
+  stop_unsettled: Schema.BooleanFromBit,
+});
+
+const encodeStep = Schema.encodeEffect(json(WorkStep));
+const encodeOutcome = Schema.encodeEffect(json(TurnOutcome));
+
+/** The longest message an entry holds; host speech past it is cut. */
+const MESSAGE_LIMIT = 100_000;
+
+/** How a turn's end reads in its work fold. */
+const endingOf = (outcome: TurnOutcome) =>
+  outcome._tag === "completed" ? "completed" : outcome._tag === "failed" ? "failed" : "interrupted";
+
+/** A turn's end, as `turn-finished` and a replacement's ended turns tell it. */
+interface TurnEnd {
+  readonly turnId: TurnId;
+  /**
+   * Why it started, which settles the dispatch of a turn that never started
+   * by its key. Unknown only for a turn the server held open that the engine
+   * no longer lists.
+   */
+  readonly cause: TurnCause | null;
+  readonly outcome: TurnOutcome;
+  readonly backgroundWork: boolean;
+  readonly continuation: PendingContinuation | null;
+  readonly at: DateTime.Utc;
+}
+
+/**
+ * Applies each session's engine events (`docs/architecture/server.md`, 4. The
+ * turn is observed, and admitted): the turn lifecycle and its dispatches, steer
+ * settlements, work steps, host speech, the engine's requests as cards, held
+ * queues and Stop confirmation. Every event is applied with its cursor in one
+ * transaction, and applying one twice changes nothing, so a replay or a
+ * replacement after a restart is harmless. All event handling lives here.
+ */
+export class Observer extends Context.Service<
+  Observer,
+  {
+    /**
+     * Follows the session's events from its stored cursor, unless they are
+     * already followed. Returns once the stream is open, so a `synchronize`
+     * after it is answered on that stream.
+     */
+    readonly watch: (sessionId: string) => Effect.Effect<void>;
+    /** Follows every session that is live or still has work to settle. */
+    readonly watchAll: Effect.Effect<void>;
+    /**
+     * Returns once every event the engine had recorded for the session when it
+     * was called has been applied.
+     */
+    readonly synchronize: (
+      sessionId: string,
+      engineSessionId: SessionId,
+    ) => Effect.Effect<void, EngineDown | SessionNotFound>;
+    /** Resumes the session's held queue, once per hold, unless a Stop of it is unsettled. */
+    readonly resumeHeld: (sessionId: string) => Effect.Effect<void>;
+    /** `resumeHeld` for every session whose last hold was not resumed. */
+    readonly resumeAllHeld: Effect.Effect<void>;
+  }
+>()("@j3-bots/server/turns/Observer") {}
+
+export const layer = Layer.effect(
+  Observer,
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const transaction = transactional(sql);
+    const engine = yield* Engine;
+    const entries = yield* Entries;
+    const ledger = yield* Ledger;
+    const wakes = yield* Wakes;
+    const signals = yield* Signals;
+    const gate = yield* SessionGate;
+    const changes = yield* ChangeLog;
+    const ids = yield* Ids;
+    const workSteps = yield* WorkSteps;
+    const scope = yield* Effect.scope;
+    const stops = stopTargets(sql);
+
+    /**
+     * Each followed session, settled once its stream is open: the engine sends
+     * a `synchronized` only on the streams open when it is asked.
+     */
+    const watching = new Map<string, Deferred.Deferred<void>>();
+    const tokens = new Map<SyncToken, Deferred.Deferred<void>>();
+
+    // ---- Reads ----------------------------------------------------------------
+
+    const watchedRow = SqlSchema.findOneOption({
+      Request: Schema.String,
+      Result: Watched,
+      execute: (id) => sql`
+        SELECT id, bot_id, engine_session_id, events_cursor FROM sessions
+        WHERE id = ${id} AND engine_session_id IS NOT NULL
+      `,
+    });
+
+    const sessionsToWatch = SqlSchema.findAll({
+      Request: Schema.Void,
+      Result: Schema.Struct({ id: Schema.String }),
+      execute: () => sql`
+        SELECT s.id FROM sessions s WHERE s.engine_session_id IS NOT NULL AND (
+          s.retired_at IS NULL
+          OR EXISTS (SELECT 1 FROM stop_targets t WHERE t.session_id = s.id AND t.stopped_at IS NULL)
+          OR EXISTS (SELECT 1 FROM turns t WHERE t.session_id = s.id AND t.finished_at IS NULL)
+        )
+      `,
+    });
+
+    const turnRow = SqlSchema.findOneOption({
+      Request: TurnKey,
+      Result: TurnRow,
+      execute: ({ sessionId, turnId }) => sql`
+        SELECT engine_turn_id, audience, audience_room_id, finished_at, outcome_json,
+          work_fold_entry_id
+        FROM turns WHERE session_id = ${sessionId} AND engine_turn_id = ${turnId}
+      `,
+    });
+    const turnOf = (sessionId: string, turnId: TurnId) =>
+      turnRow({ sessionId, turnId }).pipe(Effect.orDie);
+
+    const openTurnRows = SqlSchema.findAll({
+      Request: Schema.String,
+      Result: TurnRow,
+      execute: (sessionId) => sql`
+        SELECT engine_turn_id, audience, audience_room_id, finished_at, outcome_json,
+          work_fold_entry_id
+        FROM turns WHERE session_id = ${sessionId} AND finished_at IS NULL
+      `,
+    });
+
+    /** The dispatch whose turn this is: never a steer riding it. */
+    const ownerRow = SqlSchema.findOneOption({
+      Request: TurnKey,
+      Result: DispatchRow,
+      execute: ({ sessionId, turnId }) => sql`
+        SELECT ${sql.literal(DISPATCH_COLUMNS)} FROM dispatches
+        WHERE session_id = ${sessionId} AND engine_turn_id = ${turnId}
+          AND status IN ('intended', 'accepted', 'delivered', 'failed')
+          AND NOT (delivery = 'steer' AND steer_turn_id = engine_turn_id)
+      `,
+    });
+
+    const awaitingRows = SqlSchema.findAll({
+      Request: Schema.String,
+      Result: DispatchRow,
+      execute: (sessionId) => sql`
+        SELECT ${sql.literal(DISPATCH_COLUMNS)} FROM dispatches
+        WHERE session_id = ${sessionId} AND status = 'delivered'
+          AND continuation_resumes_at IS NOT NULL
+      `,
+    });
+
+    /** The dispatch a key names, if it was sent into this session. */
+    const keyed = Effect.fn("Observer.keyed")(function* (sessionId: string, key: IdempotencyKey) {
+      const found = yield* ledger.find(key);
+      return Option.filter(found, (row) => row.session_id === sessionId);
+    });
+
+    /** The dispatch a turn delivers: by its cause when known, else by the turn the engine named. */
+    const ownerOf = Effect.fn("Observer.ownerOf")(function* (
+      sessionId: string,
+      turnId: TurnId,
+      cause: TurnCause | null,
+    ) {
+      if (cause?._tag === "dispatch") {
+        const byKey = yield* keyed(sessionId, cause.key);
+        if (Option.isSome(byKey)) return byKey;
+      }
+      return yield* ownerRow({ sessionId, turnId }).pipe(Effect.orDie);
+    });
+
+    const requestRow = SqlSchema.findOneOption({
+      Request: Schema.Struct({ sessionId: Schema.String, requestId: RequestId }),
+      Result: RequestRow,
+      execute: ({ sessionId, requestId }) => sql`
+        SELECT entry_id, engine_request_id, closed_at, response_json FROM engine_requests
+        WHERE session_id = ${sessionId} AND engine_request_id = ${requestId}
+      `,
+    });
+
+    const openRequestRows = SqlSchema.findAll({
+      Request: Schema.Struct({ sessionId: Schema.String, turnId: Schema.NullOr(TurnId) }),
+      Result: RequestRow,
+      execute: ({ sessionId, turnId }) => sql`
+        SELECT entry_id, engine_request_id, closed_at, response_json FROM engine_requests
+        WHERE session_id = ${sessionId} AND closed_at IS NULL
+          ${turnId === null ? sql`` : sql`AND engine_turn_id = ${turnId}`}
+      `,
+    });
+
+    const liveTarget = liveTargetOf(sql);
+
+    // ---- Notices and work folds ---------------------------------------------------
+
+    /**
+     * Shows a notice where the dispatch's speech went. `retry` is the dispatch
+     * whose operator wakes `notice.retry` sends again; without one it is not
+     * retryable.
+     */
+    const notify = Effect.fn("Observer.notify")(function* (
+      botId: BotId,
+      audience: Audience,
+      notice: Notice,
+      retry: string | null,
+    ) {
+      const target = yield* liveTarget(botId, audience);
+      if (target === null) return;
+      const entry = yield* entries.append({
+        target,
+        entry: { _tag: "notice", author: { _tag: "system" }, notice, retryable: retry !== null },
+      });
+      if (retry !== null) {
+        yield* sql`INSERT INTO notice_retries (entry_id, dispatch_id) VALUES (${entry.id}, ${retry})`;
+      }
+    }, Effect.orDie);
+
+    /** The dispatch a retry of this one's failure sends again: the operator's own. */
+    const retryOf = (dispatchId: string, carried: ReadonlyArray<WakeRow>): string | null => {
+      if (carried.some((wake) => wake.kind === "user")) return dispatchId;
+      for (const wake of carried) {
+        if (wake.payload_json._tag === "undelivered") return wake.payload_json.dispatchId;
+      }
+      return null;
+    };
+
+    const foldStatus = (turn: TurnRow) =>
+      turn.finished_at === null || turn.outcome_json === null
+        ? ({ _tag: "running" } as const)
+        : ({
+            _tag: "finished",
+            finishedAt: turn.finished_at,
+            ending: endingOf(turn.outcome_json),
+          } as const);
+
+    /** The turn's work fold in the bot's conversation, written with its first step. */
+    const foldOf = Effect.fn("Observer.foldOf")(function* (session: Watched, turn: TurnRow) {
+      if (turn.work_fold_entry_id !== null) return turn.work_fold_entry_id;
+      const entry = yield* entries.append({
+        target: { _tag: "conversation", botId: session.bot_id },
+        entry: {
+          _tag: "work-fold",
+          author: { _tag: "bot", botId: session.bot_id },
+          stepCount: 0,
+          status: foldStatus(turn),
+        },
+      });
+      yield* sql`
+        UPDATE turns SET work_fold_entry_id = ${entry.id}
+        WHERE session_id = ${session.id} AND engine_turn_id = ${turn.engine_turn_id}
+      `.pipe(Effect.orDie);
+      return entry.id;
+    });
+
+    const finishFold = Effect.fn("Observer.finishFold")(function* (
+      entryId: EntryId,
+      outcome: TurnOutcome,
+      at: DateTime.Utc,
+    ) {
+      const found = yield* entries.find(entryId);
+      if (Option.isNone(found) || found.value.entry._tag !== "work-fold") return;
+      yield* entries.update({
+        ...found.value.entry,
+        status: { _tag: "finished", finishedAt: at, ending: endingOf(outcome) },
+      });
+      yield* sql.afterCommit(workSteps.finished(entryId));
+    });
+
+    // ---- The turn lifecycle -------------------------------------------------------
+
+    const startTurn = Effect.fn("Observer.startTurn")(function* (
+      session: Watched,
+      turnId: TurnId,
+      cause: TurnCause,
+      at: DateTime.Utc,
+    ) {
+      if (Option.isSome(yield* turnOf(session.id, turnId))) return;
+      let audience: Audience = conversation;
+      if (cause._tag === "dispatch") {
+        const dispatch = yield* keyed(session.id, cause.key);
+        if (Option.isSome(dispatch)) {
+          audience = audienceOf(dispatch.value);
+          yield* ledger.deliver(dispatch.value.id, turnId);
+        }
+      } else if (cause._tag === "continuation") {
+        // One link of the chain: the dispatch and its audience move to this turn.
+        const previous = yield* turnOf(session.id, cause.turnId);
+        if (Option.isSome(previous)) audience = audienceOf(previous.value);
+        yield* sql`
+          UPDATE dispatches SET engine_turn_id = ${turnId}, continuation_resumes_at = NULL,
+            updated_at = ${timeText(at)}
+          WHERE session_id = ${session.id} AND engine_turn_id = ${cause.turnId}
+            AND status = 'delivered' AND continuation_resumes_at IS NOT NULL
+        `;
+      }
+      const columns = audienceColumns(audience);
+      yield* sql`
+        INSERT INTO turns (
+          session_id, engine_turn_id, audience, audience_room_id, started_at, last_activity_at
+        ) VALUES (
+          ${session.id}, ${turnId}, ${columns.audience}, ${columns.roomId}, ${timeText(at)},
+          ${timeText(at)}
+        )
+      `;
+      yield* sql`
+        UPDATE sessions SET admitted_turn_id = ${turnId}, admitted_audience = ${columns.audience},
+          admitted_room_id = ${columns.roomId}
+        WHERE id = ${session.id}
+      `;
+      // A Stop round already sent missed this turn: it is stopped on sight.
+      if (yield* stops.openRound(session.id)) yield* sql.afterCommit(signals.stops.fire);
+    }, Effect.orDie);
+
+    /** The dispatch that owned a turn is over, with its last outcome. */
+    const settle = Effect.fn("Observer.settle")(function* (
+      session: Watched,
+      dispatch: DispatchRow,
+      outcome: TurnOutcome,
+      backgroundWork: boolean,
+    ) {
+      const closedBy = dispatch.closed_by ?? (backgroundWork ? "handoff" : null);
+      if (dispatch.closed_by === null && closedBy !== null) {
+        yield* sql`UPDATE dispatches SET closed_by = ${closedBy} WHERE id = ${dispatch.id}`;
+      }
+      yield* ledger.finish(dispatch.id, outcome);
+      const audience = audienceOf(dispatch);
+      const carried = yield* ledger.wakesOf(dispatch.id);
+      if (outcome._tag === "failed" || outcome._tag === "interrupted") {
+        // What the operator stopped needs no notice.
+        if (yield* stops.stoppedSince(session.id, dispatch.created_at, audience)) return;
+        const failure = outcome._tag === "failed" ? outcome.failure : "unknown";
+        yield* notify(
+          session.bot_id,
+          audience,
+          { _tag: "turn-failed", failure },
+          retryOf(dispatch.id, carried),
+        );
+        return;
+      }
+      if (closedBy !== null) return;
+      if (carried.some((wake) => wake.kind === "user")) {
+        yield* wakes.record([
+          {
+            botId: session.bot_id,
+            kind: "system",
+            audience,
+            payload: { _tag: "undelivered", dispatchId: dispatch.id },
+            sourceEntryId: null,
+            hops: 0,
+            retryOf: null,
+          },
+        ]);
+        return;
+      }
+      const followed = retryOf(dispatch.id, carried);
+      if (followed !== null) {
+        yield* notify(session.bot_id, audience, { _tag: "undelivered" }, followed);
+      }
+    }, Effect.orDie);
+
+    const finishTurn = Effect.fn("Observer.finishTurn")(function* (session: Watched, end: TurnEnd) {
+      const turn = yield* turnOf(session.id, end.turnId);
+      if (Option.isSome(turn)) {
+        if (turn.value.finished_at !== null) return;
+        yield* sql`
+          UPDATE turns SET finished_at = ${timeText(end.at)},
+            outcome_json = ${yield* encodeOutcome(end.outcome)}
+          WHERE session_id = ${session.id} AND engine_turn_id = ${end.turnId}
+        `;
+        if (turn.value.work_fold_entry_id !== null) {
+          yield* finishFold(turn.value.work_fold_entry_id, end.outcome, end.at);
+        }
+      }
+      yield* sql`
+        UPDATE sessions SET admitted_turn_id = NULL, admitted_audience = NULL,
+          admitted_room_id = NULL
+        WHERE id = ${session.id} AND admitted_turn_id = ${end.turnId}
+      `;
+      yield* sql`
+        UPDATE engine_tool_calls SET open = 0
+        WHERE session_id = ${session.id} AND engine_turn_id = ${end.turnId}
+      `;
+      // Every request still open on the turn expires with it.
+      const open = yield* openRequestRows({ sessionId: session.id, turnId: end.turnId });
+      for (const request of open)
+        yield* closeRequest(session, request.engine_request_id, "expired");
+
+      const owner = yield* ownerOf(session.id, end.turnId, end.cause);
+      if (Option.isNone(owner)) return;
+      const dispatch = owner.value;
+      if (dispatch.status === "finished" || dispatch.status === "dropped") return;
+      if (dispatch.status !== "delivered") {
+        // It ended without starting: a Stop cancelled it while it waited, or it
+        // failed before the provider took it, which the engine refused it with.
+        yield* ledger.accept(dispatch.id, null);
+        yield* sql`
+          UPDATE dispatches SET engine_turn_id = COALESCE(engine_turn_id, ${end.turnId})
+          WHERE id = ${dispatch.id}
+        `;
+        const after =
+          end.outcome._tag === "cancelled"
+            ? yield* stops.wakesAfterStop(session.id, audienceOf(dispatch))
+            : ({ _tag: "failed", reason: "rejected" } as const);
+        yield* ledger.drop(dispatch.id, after);
+        return;
+      }
+      if (end.continuation !== null) {
+        yield* ledger.awaitContinuation(dispatch.id, end.outcome, end.continuation.resumesAt);
+        return;
+      }
+      yield* settle(session, dispatch, end.outcome, end.backgroundWork);
+    }, Effect.orDie);
+
+    const continuationDropped = Effect.fn("Observer.continuationDropped")(function* (
+      session: Watched,
+      turnId: TurnId,
+    ) {
+      for (const dispatch of yield* awaitingRows(session.id)) {
+        if (dispatch.engine_turn_id !== turnId) continue;
+        yield* settle(session, dispatch, dispatch.outcome_json ?? { _tag: "interrupted" }, false);
+      }
+    }, Effect.orDie);
+
+    // ---- Steers -------------------------------------------------------------------
+
+    const undecided = (row: DispatchRow) =>
+      row.status === "intended" || row.status === "accepted" || row.status === "failed";
+
+    const steered = Effect.fn("Observer.steered")(function* (
+      session: Watched,
+      key: IdempotencyKey,
+      turnId: TurnId,
+    ) {
+      const dispatch = yield* keyed(session.id, key);
+      if (Option.isNone(dispatch) || !undecided(dispatch.value)) return;
+      yield* ledger.deliver(dispatch.value.id, turnId);
+      // A steer rides the turn it steered, which has ended: it finishes with it.
+      const turn = yield* turnOf(session.id, turnId);
+      const outcome = Option.flatMap(turn, (row) => Option.fromNullishOr(row.outcome_json));
+      yield* ledger.finish(
+        dispatch.value.id,
+        Option.getOrElse(outcome, () => ({ _tag: "completed" }) as const),
+      );
+    });
+
+    const steerDropped = Effect.fn("Observer.steerDropped")(function* (
+      session: Watched,
+      key: IdempotencyKey,
+    ) {
+      const dispatch = yield* keyed(session.id, key);
+      if (Option.isNone(dispatch) || !undecided(dispatch.value)) return;
+      yield* ledger.accept(dispatch.value.id, null);
+      yield* ledger.drop(
+        dispatch.value.id,
+        yield* stops.wakesAfterStop(session.id, audienceOf(dispatch.value)),
+      );
+    });
+
+    const steerRequeued = Effect.fn("Observer.steerRequeued")(function* (
+      session: Watched,
+      key: IdempotencyKey,
+      followUpTurnId: TurnId,
+    ) {
+      const dispatch = yield* keyed(session.id, key);
+      if (Option.isNone(dispatch) || !undecided(dispatch.value)) return;
+      // It now owns the follow-up turn, and is delivered when that starts.
+      yield* ledger.accept(dispatch.value.id, null);
+      yield* sql`
+        UPDATE dispatches SET engine_turn_id = ${followUpTurnId} WHERE id = ${dispatch.value.id}
+      `.pipe(Effect.orDie);
+    });
+
+    // ---- Steps, speech and tool calls -----------------------------------------------
+
+    const step = Effect.fn("Observer.step")(function* (
+      session: Watched,
+      turnId: TurnId,
+      work: WorkStep,
+      at: DateTime.Utc,
+    ) {
+      const turn = yield* turnOf(session.id, turnId);
+      if (Option.isNone(turn)) return;
+      const foldId = yield* foldOf(session, turn.value);
+      yield* sql`
+        INSERT INTO work_steps (entry_id, step_id, position, step_json)
+        VALUES (
+          ${foldId}, ${work.id},
+          (SELECT COALESCE(MAX(position) + 1, 0) FROM work_steps WHERE entry_id = ${foldId}),
+          ${yield* encodeStep(work)}
+        )
+        ON CONFLICT (entry_id, step_id) DO UPDATE SET step_json = excluded.step_json
+      `;
+      yield* sql.afterCommit(workSteps.changed(foldId, work));
+      const [count] = yield* sql<{ readonly n: number }>`
+        SELECT COUNT(*) AS n FROM work_steps WHERE entry_id = ${foldId}
+      `;
+      const fold = yield* entries.find(foldId);
+      if (
+        Option.isSome(fold) &&
+        fold.value.entry._tag === "work-fold" &&
+        fold.value.entry.stepCount !== (count?.n ?? 0)
+      ) {
+        yield* entries.update({ ...fold.value.entry, stepCount: count?.n ?? 0 });
+      }
+      if (turn.value.finished_at === null) {
+        yield* sql`
+          UPDATE turns SET last_activity_at = ${timeText(at)}
+          WHERE session_id = ${session.id} AND engine_turn_id = ${turnId}
+        `;
+      }
+    }, Effect.orDie);
+
+    /** The host's own speech tool, delivered once per speech like a `say` without `done`. */
+    const hostSpeech = Effect.fn("Observer.hostSpeech")(function* (
+      session: Watched,
+      speech: { readonly speechId: string; readonly turnId: TurnId; readonly text: string },
+    ) {
+      const fresh = yield* sql`
+        INSERT INTO host_speech (session_id, speech_id) VALUES (${session.id}, ${speech.speechId})
+        ON CONFLICT DO NOTHING RETURNING speech_id
+      `;
+      if (fresh.length === 0) return;
+      const turn = yield* turnOf(session.id, speech.turnId);
+      const audience = Option.match(turn, { onNone: () => conversation, onSome: audienceOf });
+      // Speech replayed after its room was archived reaches nobody.
+      const target = yield* liveTarget(session.bot_id, audience);
+      if (target === null) return;
+      const entry = yield* entries.append({
+        target,
+        entry: {
+          _tag: "message",
+          author: { _tag: "bot", botId: session.bot_id },
+          text: speech.text.slice(0, MESSAGE_LIMIT),
+          attachments: [],
+          mentions: { _tag: "bots", ids: [] },
+          delivery: { _tag: "delivered" },
+          commandId: null,
+        },
+      });
+      yield* sql`
+        UPDATE host_speech SET entry_id = ${entry.id}
+        WHERE session_id = ${session.id} AND speech_id = ${speech.speechId}
+      `;
+    }, Effect.orDie);
+
+    /** The engine's record of a `j3` tool call, which a bot tool request is matched against. */
+    const toolCall = Effect.fn("Observer.toolCall")(function* (
+      session: Watched,
+      turnId: TurnId,
+      call: ToolCall,
+      open: boolean,
+      at: DateTime.Utc,
+    ) {
+      yield* sql`
+        INSERT INTO engine_tool_calls (
+          session_id, engine_call_id, engine_turn_id, tool, input_digest, open, seen_at
+        ) VALUES (
+          ${session.id}, ${call.callId}, ${turnId}, ${call.tool}, ${call.inputDigest},
+          ${open ? 1 : 0}, ${timeText(at)}
+        )
+        ON CONFLICT (session_id, engine_call_id) DO UPDATE SET open = min(open, excluded.open)
+      `;
+    }, Effect.orDie);
+
+    // ---- Engine requests ----------------------------------------------------------
+
+    const cardOf = (botId: BotId, request: EngineRequest): EntryDraft => {
+      const author = { _tag: "bot", botId } as const;
+      switch (request._tag) {
+        case "approval":
+          return {
+            _tag: "approval",
+            author,
+            kind: request.kind,
+            action: request.action,
+            detail: request.detail,
+            allowsSession: request.allowsSession,
+            status: { _tag: "pending" },
+          };
+        case "question":
+          return {
+            _tag: "question",
+            author,
+            origin: "engine",
+            questions: request.questions,
+            status: { _tag: "pending" },
+          };
+        case "unsupported-question":
+          // Never part of a question: a card that says why it cannot be shown,
+          // whose only answer is a dismiss, which the bot reads as "no".
+          return {
+            _tag: "question",
+            author,
+            origin: "engine",
+            questions: [
+              {
+                id: "unsupported",
+                prompt:
+                  request.exceeds === "questions"
+                    ? `The bot asked ${request.count} questions at once, and a card holds at most ${request.max}. Dismiss it to answer no; the bot can ask again in a message.`
+                    : `The bot asked a question with ${request.count} options, and a card shows at most ${request.max}. Dismiss it to answer no; the bot can ask again in a message.`,
+                options: [],
+                acceptsText: false,
+                multiple: false,
+              },
+            ],
+            status: { _tag: "pending" },
+          };
+        case "secret":
+          return {
+            _tag: "secret-request",
+            author,
+            label: request.label,
+            reason: request.reason,
+            url: request.url,
+            placeholder: request.placeholder,
+            status: "pending",
+          };
+      }
+    };
+
+    /** The request becomes a card in the bot's conversation, once. */
+    const openRequest = Effect.fn("Observer.openRequest")(function* (
+      session: Watched,
+      open: OpenRequest,
+    ) {
+      const known = yield* requestRow({ sessionId: session.id, requestId: open.requestId });
+      if (Option.isSome(known)) return;
+      const entry = yield* entries.append({
+        target: { _tag: "conversation", botId: session.bot_id },
+        entry: cardOf(session.bot_id, open.request),
+      });
+      yield* sql`
+        INSERT INTO engine_requests (entry_id, session_id, engine_request_id, engine_turn_id)
+        VALUES (${entry.id}, ${session.id}, ${open.requestId}, ${open.turnId})
+      `;
+    }, Effect.orDie);
+
+    /**
+     * The card shows how its request closed: the operator's answer when it was
+     * theirs from J3 Bots, expired otherwise.
+     */
+    const closeRequest = Effect.fn("Observer.closeRequest")(function* (
+      session: Watched,
+      requestId: RequestId,
+      resolution: RequestResolution,
+    ) {
+      const known = yield* requestRow({ sessionId: session.id, requestId });
+      if (Option.isNone(known) || known.value.closed_at !== null) return;
+      const row = known.value;
+      yield* sql`
+        UPDATE engine_requests SET closed_at = ${timeText(yield* DateTime.now)}
+        WHERE entry_id = ${row.entry_id}
+      `;
+      yield* sql`DELETE FROM secret_submissions WHERE entry_id = ${row.entry_id}`;
+      const found = yield* entries.find(row.entry_id);
+      if (Option.isNone(found)) return;
+      const card = found.value.entry;
+      const response = row.response_json;
+      const answered = resolution === "answered";
+      switch (card._tag) {
+        case "approval":
+          yield* entries.update({
+            ...card,
+            status:
+              answered && response?._tag === "approval"
+                ? { _tag: "decided", decision: response.decision }
+                : { _tag: "expired" },
+          });
+          return;
+        case "question":
+          yield* entries.update({
+            ...card,
+            status: !answered
+              ? { _tag: "expired" }
+              : response?._tag === "question"
+                ? { _tag: "answered", answers: response.answers }
+                : response?._tag === "dismiss"
+                  ? { _tag: "dismissed" }
+                  : { _tag: "expired" },
+          });
+          return;
+        case "secret-request":
+          yield* entries.update({
+            ...card,
+            status: resolution === "provided" || resolution === "declined" ? resolution : "expired",
+          });
+          return;
+        default:
+          return;
+      }
+    }, Effect.orDie);
+
+    // ---- Replacement ----------------------------------------------------------------
+
+    const replaced = Effect.fn("Observer.replaced")(function* (
+      session: Watched,
+      event: Extract<SessionEvent, { readonly _tag: "replaced" }>,
+    ) {
+      // Ended turns in the order they ended, so a continuation's link is followed in order.
+      const ended = [...event.endedTurns].sort((a, b) =>
+        DateTime.isLessThan(a.finishedAt, b.finishedAt) ? -1 : 1,
+      );
+      for (const turn of ended) {
+        if (turn.startedAt !== null)
+          yield* startTurn(session, turn.turnId, turn.cause, turn.startedAt);
+        for (const work of turn.steps) yield* step(session, turn.turnId, work, turn.finishedAt);
+        yield* finishTurn(session, {
+          turnId: turn.turnId,
+          cause: turn.cause,
+          outcome: turn.outcome,
+          backgroundWork: turn.backgroundWork,
+          continuation: turn.continuation,
+          at: turn.finishedAt,
+        });
+      }
+      for (const turn of event.openTurns) {
+        if (turn.startedAt !== null) {
+          yield* startTurn(session, turn.turnId, turn.cause, turn.startedAt);
+        } else if (turn.cause._tag === "dispatch") {
+          // Waiting behind another turn: the engine has it.
+          const dispatch = yield* keyed(session.id, turn.cause.key);
+          if (Option.isSome(dispatch) && undecided(dispatch.value)) {
+            yield* ledger.accept(dispatch.value.id, null);
+            yield* sql`
+              UPDATE dispatches SET engine_turn_id = COALESCE(engine_turn_id, ${turn.turnId})
+              WHERE id = ${dispatch.value.id}
+            `;
+          }
+        }
+        for (const work of turn.steps) yield* step(session, turn.turnId, work, event.at);
+        for (const call of turn.toolCalls)
+          yield* toolCall(session, turn.turnId, call, true, event.at);
+        const listed = turn.toolCalls.map((call) => call.callId);
+        yield* sql`
+          UPDATE engine_tool_calls SET open = 0
+          WHERE session_id = ${session.id} AND engine_turn_id = ${turn.turnId}
+            ${listed.length === 0 ? sql`` : sql`AND NOT ${sql.in("engine_call_id", listed)}`}
+        `;
+      }
+      // A turn held open that the engine no longer lists has ended.
+      const live = new Set<string>([
+        ...event.openTurns.map((turn) => turn.turnId),
+        ...event.endedTurns.map((turn) => turn.turnId),
+      ]);
+      for (const turn of yield* openTurnRows(session.id)) {
+        if (live.has(turn.engine_turn_id)) continue;
+        yield* finishTurn(session, {
+          turnId: turn.engine_turn_id,
+          cause: null,
+          outcome: { _tag: "interrupted" },
+          backgroundWork: false,
+          continuation: null,
+          at: event.at,
+        });
+      }
+      // A continuation the engine no longer has pending, and that no turn took, was dropped.
+      const continued = new Set<string>(
+        [...event.openTurns, ...event.endedTurns].flatMap((turn) =>
+          turn.cause._tag === "continuation" ? [turn.cause.turnId] : [],
+        ),
+      );
+      for (const turn of event.endedTurns) {
+        if (turn.continuation === null && !continued.has(turn.turnId)) {
+          yield* continuationDropped(session, turn.turnId);
+        }
+      }
+      for (const settlement of event.steers) {
+        if (settlement.settlement === "read") {
+          yield* steered(session, settlement.key, settlement.turnId);
+        } else {
+          yield* steerDropped(session, settlement.key);
+        }
+      }
+      for (const closed of event.closedRequests) {
+        yield* closeRequest(session, closed.requestId, closed.resolution);
+      }
+      for (const open of event.openRequests) yield* openRequest(session, open);
+      const stillOpen = new Set<string>(event.openRequests.map((open) => open.requestId));
+      for (const request of yield* openRequestRows({ sessionId: session.id, turnId: null })) {
+        if (!stillOpen.has(request.engine_request_id)) {
+          yield* closeRequest(session, request.engine_request_id, "expired");
+        }
+      }
+      for (const speech of event.hostSpeech) yield* hostSpeech(session, speech);
+      if (event.queueHeld) yield* queueHeld(session, event.cursor);
+    }, Effect.orDie);
+
+    // ---- Held queues ------------------------------------------------------------------
+
+    const resumeHeld = (sessionId: string) =>
+      gate
+        .run(sessionId)(
+          Effect.gen(function* () {
+            const [row] = yield* SqlSchema.findAll({
+              Request: Schema.String,
+              Result: HoldRow,
+              execute: (id) => sql`
+              SELECT engine_session_id, queue_held_cursor, queue_resumed_cursor,
+                EXISTS (
+                  SELECT 1 FROM stop_targets t WHERE t.session_id = s.id AND t.stopped_at IS NULL
+                ) AS stop_unsettled
+              FROM sessions s WHERE s.id = ${id}
+            `,
+            })(sessionId).pipe(Effect.orDie);
+            if (
+              row === undefined ||
+              row.engine_session_id === null ||
+              row.queue_held_cursor === null ||
+              row.queue_held_cursor === row.queue_resumed_cursor ||
+              row.stop_unsettled
+            ) {
+              return;
+            }
+            const hold = row.queue_held_cursor;
+            const resumed = yield* engine
+              .resumeQueue({ sessionId: row.engine_session_id, hold })
+              .pipe(
+                Effect.as(true),
+                // A session the engine no longer has holds nothing.
+                Effect.catchTag("SessionNotFound", () => Effect.succeed(true)),
+                // Resumed on the engine's next ready edge.
+                Effect.catchTags({
+                  EngineUnavailable: () => Effect.succeed(false),
+                  EngineIndeterminate: () => Effect.succeed(false),
+                  EngineIncompatible: () => Effect.succeed(false),
+                }),
+              );
+            if (resumed) {
+              yield* sql`UPDATE sessions SET queue_resumed_cursor = ${hold} WHERE id = ${sessionId}`.pipe(
+                Effect.orDie,
+              );
+            }
+          }),
+        )
+        .pipe(Effect.withSpan("Observer.resumeHeld"));
+
+    const resumeLater = (sessionId: string) =>
+      resumeHeld(sessionId).pipe(Effect.forkIn(scope), Effect.asVoid);
+
+    const queueHeld = Effect.fn("Observer.queueHeld")(function* (
+      session: Watched,
+      cursor: EventCursor,
+    ) {
+      yield* sql`UPDATE sessions SET queue_held_cursor = ${cursor} WHERE id = ${session.id}`;
+      yield* sql.afterCommit(resumeLater(session.id));
+    }, Effect.orDie);
+
+    const heldSessions = SqlSchema.findAll({
+      Request: Schema.Void,
+      Result: Schema.Struct({ id: Schema.String }),
+      execute: () => sql`
+        SELECT id FROM sessions
+        WHERE queue_held_cursor IS NOT NULL
+          AND queue_held_cursor IS NOT queue_resumed_cursor
+      `,
+    });
+
+    const resumeAllHeld = Effect.gen(function* () {
+      for (const { id } of yield* heldSessions(undefined).pipe(Effect.orDie)) yield* resumeHeld(id);
+    });
+
+    // ---- Applying events --------------------------------------------------------------
+
+    const applyEvent = Effect.fn("Observer.applyEvent")(function* (
+      session: Watched,
+      event: SessionEvent,
+    ) {
+      switch (event._tag) {
+        case "replaced":
+          return yield* replaced(session, event);
+        case "turn-started":
+          return yield* startTurn(session, event.turnId, event.cause, event.at);
+        case "steered":
+          return yield* steered(session, event.key, event.turnId);
+        case "steer-dropped":
+          return yield* steerDropped(session, event.key);
+        case "steer-requeued":
+          return yield* steerRequeued(session, event.key, event.followUpTurnId);
+        case "step":
+          return yield* step(session, event.turnId, event.step, event.at);
+        case "host-speech":
+          return yield* hostSpeech(session, event);
+        case "tool-call":
+          return yield* toolCall(
+            session,
+            event.turnId,
+            event.call,
+            event.state === "open",
+            event.at,
+          );
+        case "request-opened":
+          return yield* openRequest(session, event.open);
+        case "request-closed":
+          return yield* closeRequest(session, event.requestId, event.resolution);
+        case "turn-finished":
+          return yield* finishTurn(session, {
+            turnId: event.turnId,
+            cause: event.cause,
+            outcome: event.outcome,
+            backgroundWork: event.backgroundWork,
+            continuation: event.continuation,
+            at: event.at,
+          });
+        case "continuation-dropped":
+          return yield* continuationDropped(session, event.turnId);
+        case "queue-held":
+          return yield* queueHeld(session, event.cursor);
+        case "synchronized": {
+          const waiting = tokens.get(event.token);
+          if (waiting !== undefined) yield* sql.afterCommit(Deferred.succeed(waiting, undefined));
+          return;
+        }
+      }
+    });
+
+    /** One event and its cursor, in one transaction. */
+    const apply = (session: Watched, event: SessionEvent) =>
+      transaction(
+        Effect.gen(function* () {
+          yield* applyEvent(session, event);
+          yield* sql`UPDATE sessions SET events_cursor = ${event.cursor} WHERE id = ${session.id}`;
+          if (yield* stops.confirm(session.id)) yield* sql.afterCommit(resumeLater(session.id));
+          yield* changes.touch({ _tag: "bot", botId: session.bot_id });
+          // The session may take its next wake, or a Stop may proceed.
+          yield* sql.afterCommit(Effect.andThen(signals.dispatch.fire, signals.stops.fire));
+        }),
+      ).pipe(Effect.orDie);
+
+    const watch = Effect.fn("Observer.watch")(function* (sessionId: string) {
+      const following = watching.get(sessionId);
+      if (following !== undefined) return yield* Deferred.await(following);
+      const opened = yield* Deferred.make<void>();
+      watching.set(sessionId, opened);
+      yield* Effect.gen(function* () {
+        const row = yield* watchedRow(sessionId).pipe(Effect.orDie);
+        if (Option.isNone(row)) {
+          watching.delete(sessionId);
+          return;
+        }
+        const session = row.value;
+        // Opened here rather than in the fiber that reads it: both engines
+        // count a stream as open from when it starts (**Read**: `TestEngine`
+        // and `T3Engine.events` register it first thing), and starting it
+        // before `watch` returns is what lets a `synchronize` rely on it.
+        const streamScope = yield* Scope.fork(scope);
+        const pull = yield* Stream.toPull(
+          engine.events({ sessionId: session.engine_session_id, after: session.events_cursor }),
+        ).pipe(Scope.provide(streamScope));
+        yield* Stream.fromPull(Effect.succeed(pull)).pipe(
+          Stream.runForEach((event) => apply(session, event)),
+          Effect.catchTags({
+            SessionNotFound: (error) =>
+              Effect.logWarning("The engine no longer has a session", error),
+            EngineIncompatible: (error) =>
+              Effect.logError("The engine is not the pinned version", error),
+          }),
+          Effect.ensuring(
+            Effect.andThen(
+              Effect.sync(() => watching.delete(sessionId)),
+              Scope.close(streamScope, Exit.void),
+            ),
+          ),
+          Effect.forkIn(scope),
+        );
+      }).pipe(Effect.ensuring(Deferred.succeed(opened, undefined)));
+    });
+
+    const watchAll = Effect.gen(function* () {
+      for (const { id } of yield* sessionsToWatch(undefined).pipe(Effect.orDie)) yield* watch(id);
+    }).pipe(Effect.withSpan("Observer.watchAll"));
+
+    const synchronize = Effect.fn("Observer.synchronize")(function* (
+      sessionId: string,
+      engineSessionId: SessionId,
+    ) {
+      yield* watch(sessionId);
+      const token = SyncToken.make(yield* ids.make("sync"));
+      const applied = yield* Deferred.make<void>();
+      tokens.set(token, applied);
+      yield* engine
+        .synchronize({ sessionId: engineSessionId, token })
+        .pipe(
+          Effect.andThen(Deferred.await(applied)),
+          Effect.ensuring(Effect.sync(() => tokens.delete(token))),
+        );
+    });
+
+    return Observer.of({ watch, watchAll, synchronize, resumeHeld, resumeAllHeld });
+  }),
+);

@@ -59,14 +59,16 @@ export class Attachments extends Context.Service<
   Attachments,
   {
     /**
-     * Stores an upload. Fails with `Invalid("attachment")` for an empty file or
-     * unusable metadata, and with `Conflict("private-location")`, storing
-     * nothing, when the attachments folder has left private state.
+     * Stores an operator's upload, or with `bot` a file that bot delivers.
+     * Fails with `Invalid("attachment")` for an empty file or unusable
+     * metadata, and with `Conflict("private-location")`, storing nothing, when
+     * the attachments folder has left private state.
      */
     readonly store: (input: {
       readonly name: string;
       readonly mediaType: string;
       readonly bytes: Uint8Array;
+      readonly bot?: BotId;
     }) => Effect.Effect<Attachment, Invalid | Conflict>;
     readonly open: (id: AttachmentId) => Effect.Effect<Option.Option<StoredFile>>;
     /** Files the bot delivered with a message, newest first, before `before`. */
@@ -126,6 +128,7 @@ export const layer = Layer.effect(
       readonly name: string;
       readonly mediaType: string;
       readonly bytes: Uint8Array;
+      readonly bot?: BotId;
     }) {
       const metadata = normalizeAttachmentMetadata(input);
       if (
@@ -162,8 +165,11 @@ export const layer = Layer.effect(
                 ON CONFLICT (sha256) DO NOTHING
               `;
               yield* sql`
-                INSERT INTO attachments (id, sha256, name, media_type, source, created_at)
-                VALUES (${id}, ${sha}, ${metadata.name}, ${metadata.mediaType}, 'operator', ${at})
+                INSERT INTO attachments (id, sha256, name, media_type, source, bot_id, created_at)
+                VALUES (
+                  ${id}, ${sha}, ${metadata.name}, ${metadata.mediaType},
+                  ${input.bot === undefined ? "operator" : "bot"}, ${input.bot ?? null}, ${at}
+                )
               `;
             }),
           ).pipe(Effect.orDie);
