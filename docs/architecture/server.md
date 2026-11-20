@@ -73,7 +73,7 @@ How the message is delivered depends on the kind:
 
 | Wake | If the bot is idle | If the bot is mid-turn |
 | --- | --- | --- |
-| `user` | Start a turn | Steer the running turn: the operator can redirect work in progress |
+| `user` | Start a turn | If the operator opened the running turn, steer it, so they can redirect work in progress. Otherwise queue at the front, so a private message never lands in a room turn |
 | `room`, `bot`, `system` | Start a turn | Queue behind the running turn |
 | `routine` | Start a turn in a side session | Unaffected: side sessions run alongside |
 
@@ -81,7 +81,9 @@ How the message is delivered depends on the kind:
 
 The adapter streams the session's events and the server derives the bot's state from them: thinking, working, waiting on a request, blocked, finished. The operator's clients see that state live.
 
-What the bot *says* does not come from that stream. It comes from the bot calling J3 Bots' `say` tool, which appends an entry and returns. If a turn started by the operator ends without any `say`, the server delivers the turn's final text as a message, so a bot that forgets the tool still answers.
+What the bot *says* does not come from that stream. It comes from the bot calling J3 Bots' `say` tool, which appends an entry and returns. A `say` with `done: true` closes the delivery: once the call has returned, the server interrupts the run, so the model cannot keep spending allowance after its answer. Delegated tasks are separate engine threads and keep running.
+
+The turn's final reply text is never published: the base prompt tells the bot it reaches nobody, and the bot may have used it for notes. If a turn the operator opened ends with no delivery, no pending question and no background handoff, the server wakes the bot once more with an `undelivered` system wake. If that turn also delivers nothing, the conversation shows a notice with a retry action.
 
 ### 5. The outcome closes the wake
 

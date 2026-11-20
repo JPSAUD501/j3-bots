@@ -10,7 +10,7 @@ A coding harness treats the model's final message as the answer. A teammate does
 
 A bot delivers messages by calling J3 Bots' `say` tool. Only what passes through `say` (and `ask`, for questions) enters a conversation or a room. The model's ordinary reply text is private scratch space.
 
-One fallback: if a turn opened by the operator ends without any `say`, J3 Bots delivers the turn's final text. A bot that forgets the tool still answers.
+The turn's final text is never published, because the bot may have used it for notes. If a turn opened by the operator ends without a delivery, J3 Bots wakes the bot once more to deliver it, and shows a notice if that fails too. A `say` with `done: true` ends the run.
 
 ## Consequences
 

@@ -62,7 +62,7 @@ The operator sends "what changed in the repo since Friday?" to a bot named Scout
 
 1. The client calls `conversation.send` on the J3 Bots server.
 2. The server appends the operator's message to Scout's conversation and creates a **wake** of kind `user`, in one database transaction.
-3. The wake dispatcher wraps the message in a wake envelope and dispatches it to Scout's main session through the engine adapter. If Scout is mid-turn, the dispatch steers the running turn; otherwise it starts one.
+3. The wake dispatcher wraps the message in a wake envelope and dispatches it to Scout's main session through the engine adapter. If Scout is mid-turn on something the operator asked, the dispatch steers that turn; otherwise it starts one or queues first in line.
 4. The engine runs the turn. Its events stream back to the adapter, which translates them into J3 Bots terms: Scout is thinking, Scout is running a command, Scout is waiting on an approval.
 5. Scout calls the `say` tool: "Checking now." The tool call lands on the J3 Bots server, which appends the message to the conversation and pushes it to every connected client.
 6. Scout works, then calls `say` again with the answer and marks the turn finished.

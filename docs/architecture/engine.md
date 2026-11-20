@@ -89,6 +89,7 @@ Provider instances are where J3 Bots attaches its prompt and its tools. For Clau
 - `homePath` points at a J3-owned config directory.
 - `launchArgs` includes `--append-system-prompt-file .j3/system.md`. T3 Code merges this into the system prompt it sends and resolves a relative path inside each thread's project folder, so one instance serves every bot and each gets its own file. **Read**.
 - The J3 Bots tools are registered as an MCP server in that config directory.
+- `launchArgs` also disallows the harness tools that reach a person or vanish with the session: the question tool, plan mode, the cron, wake-up and loop tools, and push notifications. The config directory turns auto-memory off. **Assumed**: that a provider instance can pass `--disallowedTools` this way is to be verified in M0.
 
 For Codex, the base prompt goes into the instance's own `CODEX_HOME` configuration, and per-bot text into the workspace's `AGENTS.md`, because Codex instance settings are shared by all threads. **Read** for the constraint; the exact Codex keys are **Assumed**.
 
