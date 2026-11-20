@@ -113,16 +113,26 @@ it.effect("stages an expired file again before recovering the dispatch that carr
     const bot = yield* createBot("Ana");
     const session = yield* engineSession(bot.id);
 
-    // The engine queues the start behind a turn of its own, and the answer is
-    // lost: the dispatch stays undecided while that turn runs.
-    yield* control.startEngineTurnDuringNextDispatch(session);
+    // The send dies after its claim, applying nothing: the dispatch stays
+    // undecided, and only the recovery can send it.
+    yield* control.breakDispatches(true);
     const sending = yield* control.holdNext("dispatch");
     const message = yield* sendWithFile(bot.id, "Summarize the notes.");
+    // The file's id as the engine staged it, as it stands.
+    const stagedId = Effect.map(
+      sql<{ readonly engine_attachment_id: string | null }>`
+        SELECT a.engine_attachment_id FROM dispatch_attachments a
+        JOIN wakes w ON w.dispatch_id = a.dispatch_id
+        WHERE w.source_entry_id = ${message}
+      `,
+      ([row]) => row?.engine_attachment_id ?? null,
+    );
     yield* sending.entered;
-    yield* control.loseNextReply;
     yield* sending.release;
-    const ownTurn = yield* nextTurn(bot.id);
     yield* gateSettled(bot.id);
+    yield* control.breakDispatches(false);
+    const first = yield* stagedId;
+    assert.isNotNull(first);
 
     // The recovery comes only after the staged file expired. The engine
     // refuses an expired id, so the file must be staged again for the resend
@@ -131,26 +141,18 @@ it.effect("stages an expired file again before recovering the dispatch that carr
     yield* TestClock.adjust(Duration.hours(13));
     yield* control.setReachable(true);
     yield* (yield* Pipeline).recoverDue;
-    const [row] = yield* sql<{ readonly status: string }>`
-      SELECT d.status FROM dispatches d JOIN wakes w ON w.dispatch_id = d.id
-      WHERE w.source_entry_id = ${message}
-    `;
-    assert.strictEqual(row?.status, "accepted");
 
-    yield* control.finishTurn({
-      sessionId: session,
-      turnId: ownTurn,
-      outcome: { _tag: "completed" },
-    });
-    const delivered = yield* nextTurn(bot.id, ownTurn);
+    yield* nextTurn(bot.id);
     yield* deliveryIs(message, "delivered");
-    yield* control.finishTurn({
-      sessionId: session,
-      turnId: delivered,
-      outcome: { _tag: "completed" },
-    });
-    yield* turnEnded(bot.id);
-    assert.strictEqual(yield* timesSent(session, "Summarize the notes."), 1);
+    const sent = (yield* control.dispatches(session)).filter((dispatch) =>
+      dispatch.text.includes("Summarize the notes."),
+    );
+    const fresh = yield* stagedId;
+    assert.notStrictEqual(fresh, first);
+    assert.deepStrictEqual<ReadonlyArray<ReadonlyArray<string | null>>>(
+      sent.map((dispatch) => dispatch.attachments.map((file) => file.stagedId)),
+      [[fresh]],
+    );
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
