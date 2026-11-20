@@ -9,6 +9,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import * as TestClock from "effect/testing/TestClock";
 import * as Domain from "../domain.ts";
+import { ChangeLog } from "../persistence/ChangeLog.ts";
+import { timeText } from "../persistence/columns.ts";
 import * as TestDomain from "../testing/domain.ts";
 import { command, createBot } from "../testing/turns.ts";
 import { Stops } from "../turns/Stops.ts";
@@ -172,6 +174,36 @@ it.effect(
         ["running", "skipped", "failed"],
       );
     }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("tells clients of the later try when a routine's run cannot be recorded", () =>
+  Effect.gen(function* () {
+    const bot = yield* createBot("Ana");
+    const routine = yield* createRoutine(bot.id, {
+      _tag: "schedule",
+      cron: "10 * * * *",
+      timeZone: "UTC",
+    });
+    const sql = yield* SqlClient.SqlClient;
+    // A trigger the scheduler cannot read: recording the run fails.
+    yield* sql`UPDATE routines SET trigger_json = '{"_tag":"unknown"}' WHERE id = ${routine.id}`;
+    const changes = yield* ChangeLog;
+    const before = yield* changes.watermark;
+
+    yield* setTime("1970-01-01T00:10:00.000Z");
+    yield* pass;
+
+    // Tried again 30 seconds later, which clients are told.
+    const resume = yield* changes.since({ _tag: "routines", botId: bot.id }, before);
+    assert.deepStrictEqual(
+      resume._tag === "changes" ? resume.changes.map((change) => change.entityId) : resume._tag,
+      [routine.id],
+    );
+    const [row] = yield* sql<{
+      readonly next_run_at: string;
+    }>`SELECT next_run_at FROM routines WHERE id = ${routine.id}`;
+    assert.strictEqual(row?.next_run_at, timeText(at("1970-01-01T00:10:30.000Z")));
+  }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect("runs a one-time routine once and pauses it", () =>

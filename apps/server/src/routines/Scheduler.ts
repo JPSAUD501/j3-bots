@@ -13,6 +13,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
+import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { json, Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { DEFECT_RETRY, RETRY_TICK } from "../turns/reconciler.ts";
@@ -68,6 +69,7 @@ export const layer = Layer.effect(
     const sql = yield* SqlClient.SqlClient;
     const transaction = transactional(sql);
     const runs = yield* RoutineRuns;
+    const changes = yield* ChangeLog;
     const nudges = yield* Queue.sliding<void>(1);
     const permit = yield* Semaphore.make(1);
 
@@ -87,6 +89,17 @@ export const layer = Layer.effect(
       execute: ({ id, now }) => sql`
         SELECT id, bot_id, trigger_json FROM routines
         WHERE id = ${id} AND enabled = 1 AND next_run_at <= ${now}
+      `,
+    });
+
+    const postponed = SqlSchema.findAll({
+      Request: Schema.Struct({ ...DueRef.fields, at: Schema.String }),
+      Result: Schema.Struct({ id: RoutineId, bot_id: BotId }),
+      execute: (ref) => sql`
+        UPDATE routines SET next_run_at = ${ref.at}
+        WHERE id = ${ref.id} AND enabled = 1
+          AND next_run_at = ${ref.next_run_at} AND trigger_json = ${ref.trigger_json}
+        RETURNING id, bot_id
       `,
     });
 
@@ -141,15 +154,19 @@ export const layer = Layer.effect(
      * A routine whose run could not be recorded is logged and looked at again
      * after a pause, a deadline stored on it, so a defect never repeats at once
      * and never holds up another routine. Only the deadline and trigger the
-     * pass read are postponed: an edit committed since then stands.
+     * pass read are postponed: an edit committed since then stands. The new
+     * deadline is the routine's next run, recorded as a change for clients.
      */
     const postpone = Effect.fn("Scheduler.postpone")(function* (ref: DueRef) {
       const at = DateTime.addDuration(yield* DateTime.now, DEFECT_RETRY);
-      yield* sql`
-        UPDATE routines SET next_run_at = ${timeText(at)}
-        WHERE id = ${ref.id} AND enabled = 1
-          AND next_run_at = ${ref.next_run_at} AND trigger_json = ${ref.trigger_json}
-      `.pipe(Effect.orDie);
+      yield* transaction(
+        Effect.gen(function* () {
+          const moved = yield* postponed({ ...ref, at: timeText(at) });
+          for (const routine of moved) {
+            yield* changes.record({ _tag: "routines", botId: routine.bot_id }, routine.id);
+          }
+        }),
+      ).pipe(Effect.orDie);
     });
 
     const pass = permit.withPermits(1)(
