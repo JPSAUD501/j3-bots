@@ -6,10 +6,10 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 import { ServerConfig } from "../config.ts";
+import * as TestDatabase from "../testing/database.ts";
 import Migration0001 from "./migrations/0001_initial.ts";
 import Migration0002 from "./migrations/0002_operator_name.ts";
 import * as Sqlite from "./Sqlite.ts";
@@ -21,7 +21,7 @@ it.effect("upgrades a database the last release wrote, keeping its rows and thei
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const home = yield* fs.makeTempDirectoryScoped();
-    const databasePath = path.join(home, "j3.sqlite");
+    const config = TestDatabase.configFor(path, home);
 
     // What the last release wrote: a bot with its session, a message in its
     // conversation and the file the message carries.
@@ -61,7 +61,7 @@ it.effect("upgrades a database the last release wrote, keeping its rows and thei
         INSERT INTO attachments (id, sha256, name, media_type, source, entry_id, created_at)
         VALUES ('file-1', 'abc', 'notes.txt', 'text/plain', 'operator', 'entry-1', ${now})
       `;
-    }).pipe(Effect.provide(SqliteClient.layer({ filename: databasePath })));
+    }).pipe(Effect.provide(SqliteClient.layer({ filename: config.databasePath })));
 
     // This release opens it.
     yield* Effect.gen(function* () {
@@ -91,23 +91,6 @@ it.effect("upgrades a database the last release wrote, keeping its rows and thei
       yield* sql`DELETE FROM dispatches WHERE id = 'dispatch-1'`;
       const second = yield* dispatch("dispatch-2");
       assert.deepStrictEqual([...first, ...second], [{ seq: 1 }, { seq: 2 }]);
-    }).pipe(
-      Effect.provide(
-        Sqlite.layer.pipe(
-          Layer.provide(
-            Layer.succeed(ServerConfig, {
-              home,
-              databasePath,
-              host: "127.0.0.1",
-              port: 0,
-              tls: Option.none(),
-              enginePort: 0,
-              engineBinary: Option.none(),
-              toolPort: 0,
-            }),
-          ),
-        ),
-      ),
-    );
+    }).pipe(Effect.provide(Sqlite.layer.pipe(Layer.provide(Layer.succeed(ServerConfig, config)))));
   }).pipe(Effect.provide(NodeServices.layer)),
 );
