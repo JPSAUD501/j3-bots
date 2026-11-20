@@ -54,15 +54,17 @@ it.layer(TestDatabase.layer)("database", (it) => {
     }),
   );
 
-  it.effect("never rewrites what a dispatch sends, where, or the engine's first answer", () =>
-    Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      yield* insertBot("echo");
-      yield* sql`
+  it.effect(
+    "never rewrites what a dispatch sends, where, the engine's first answer, or a ridden turn",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* insertBot("echo");
+        yield* sql`
         INSERT INTO sessions (id, bot_id, purpose, prompt_version, created_at)
         VALUES ('session-1', 'echo', 'main', '0.3', ${now})
       `;
-      yield* sql`
+        yield* sql`
         INSERT INTO dispatches (
           id, bot_id, session_id, audience, delivery, steer_turn_id, envelope, status, created_at,
           updated_at
@@ -72,45 +74,62 @@ it.layer(TestDatabase.layer)("database", (it) => {
         )
       `;
 
-      const rewritten = yield* sql`
+        const rewritten = yield* sql`
         UPDATE dispatches SET envelope = '<j3-wake>other</j3-wake>' WHERE id = 'dispatch-1'
       `.pipe(Effect.flip);
-      assert.include(String(rewritten.reason.cause), "keeps the session, audience and envelope");
+        assert.include(String(rewritten.reason.cause), "keeps the session, audience and envelope");
 
-      // A repeat answered `applied-earlier`: applied, with no disposition to record.
-      yield* sql`
+        // Recovered after its reply was lost, so failed as unresolved; its turn then
+        // shows it delivered after all, with no disposition to record.
+        yield* sql`
         INSERT INTO dispatches (
-          id, bot_id, session_id, audience, delivery, envelope, status, attempts, created_at,
-          updated_at
+          id, bot_id, session_id, audience, delivery, envelope, status, failure_reason,
+          attempts, created_at, updated_at
         ) VALUES (
-          'dispatch-0', 'echo', 'session-1', 'conversation', 'start', '<j3-wake/>', 'intended', 2,
-          ${now}, ${now}
+          'dispatch-0', 'echo', 'session-1', 'conversation', 'start', '<j3-wake/>', 'failed',
+          'unresolved', 4, ${now}, ${now}
         )
       `;
-      yield* sql`UPDATE dispatches SET status = 'accepted' WHERE id = 'dispatch-0'`;
-      yield* sql`
-        UPDATE dispatches SET status = 'delivered', engine_turn_id = 'turn-1'
+        yield* sql`
+        UPDATE dispatches SET status = 'delivered', failure_reason = NULL, engine_turn_id = 'turn-1'
         WHERE id = 'dispatch-0'
       `;
 
-      // The steer rides on turn-1, which is not its own.
-      yield* sql`
+        // The steer rides on turn-1, which is not its own.
+        yield* sql`
         UPDATE dispatches
         SET status = 'accepted', disposition = 'steered', disposition_turn_id = 'turn-1',
           engine_turn_id = 'turn-1'
         WHERE id = 'dispatch-1'
       `;
-      // The steer was requeued: the dispatch moves to the engine's follow-up turn,
-      // and keeps the answer the engine gave first.
-      yield* sql`
+        // The steer was requeued: the dispatch moves to the engine's follow-up turn,
+        // and keeps the answer the engine gave first.
+        yield* sql`
         UPDATE dispatches SET status = 'delivered', engine_turn_id = 'turn-2'
         WHERE id = 'dispatch-1'
       `;
-      const reanswered = yield* sql`
+        const reanswered = yield* sql`
         UPDATE dispatches SET disposition = 'new-turn', disposition_turn_id = 'turn-2'
         WHERE id = 'dispatch-1'
       `.pipe(Effect.flip);
-      assert.include(String(reanswered.reason.cause), "first answer");
-    }),
+        assert.include(String(reanswered.reason.cause), "first answer");
+
+        // A steer the engine settled as taken finished with turn-1, the turn it
+        // rode; it does not follow that turn's continuation.
+        yield* sql`
+        INSERT INTO dispatches (
+          id, bot_id, session_id, audience, delivery, steer_turn_id, envelope, status,
+          disposition, disposition_turn_id, engine_turn_id, created_at, updated_at
+        ) VALUES (
+          'dispatch-2', 'echo', 'session-1', 'conversation', 'steer', 'turn-1', '<j3-wake/>',
+          'finished', 'steered', 'turn-1', 'turn-1', ${now}, ${now}
+        )
+      `;
+        const followed = yield* sql`
+        UPDATE dispatches SET status = 'delivered', engine_turn_id = 'turn-3'
+        WHERE id = 'dispatch-2'
+      `.pipe(Effect.flip);
+        assert.include(String(followed.reason.cause), "finishes with the turn it rode");
+      }),
   );
 });
