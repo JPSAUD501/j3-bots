@@ -47,6 +47,7 @@ import {
   Engine,
   type DispatchInput,
   type EngineOptions,
+  type ConnectionOutcome,
   type ProviderConnection,
   type ProviderInstance,
   type RequestResponse,
@@ -59,7 +60,6 @@ import {
   EngineUnavailable,
   ModelUnavailable,
   ProjectNotFound,
-  ProviderConnectionRefused,
   RequestClosed,
   SessionBusy,
   SessionNotFound,
@@ -92,7 +92,14 @@ import type { FileChangeItem } from "./approvalDetail.ts";
 import { cursorFor, makeBatches, type BatchPlace } from "./Batches.ts";
 import { makePrivateFiles } from "./PrivateFiles.ts";
 import { providerStatuses, providersOfEvent } from "./Providers.ts";
-import { instanceIdFor, provision, storeConnection, type InstanceSpec } from "./Provision.ts";
+import {
+  activeConnection,
+  instanceIdFor,
+  provision,
+  storeConnection,
+  writeBasePrompt,
+  type InstanceSpec,
+} from "./Provision.ts";
 import { baseUrl, stateChanges, supervise, type ProcessState } from "./Supervisor.ts";
 import { upload } from "./upload.ts";
 import {
@@ -315,13 +322,17 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   const provisionEngine = provisioning.withPermits(1)(writeProvisioning);
 
   // A new base prompt reaches Codex through its instances' configuration,
-  // which Codex reads for each thread it starts or resumes.
+  // which Codex reads for each thread it starts or resumes. Only that key is
+  // written.
   yield* options.basePrompt.pipe(
     Stream.runForEach((text) =>
       Effect.gen(function* () {
         if (text === (yield* Ref.get(basePrompt))) return;
         yield* Ref.set(basePrompt, text);
-        yield* provisionEngine.pipe(
+        yield* writeBasePrompt({ files, instances, basePrompt: text }).pipe(
+          provisioning.withPermits(1),
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
           Effect.catch((error) =>
             Effect.logWarning("The new base prompt was not written for Codex", error),
           ),
@@ -331,20 +342,45 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     Effect.forkScoped,
   );
 
-  const connectProviders = Effect.fn("Engine.connectProviders")(
-    function* (connection: ProviderConnection) {
-      yield* storeConnection({ home: options.home, files, instances, connection }).pipe(
-        Effect.provideService(Path.Path, path),
-      );
-      yield* writeProvisioning;
-    },
-    provisioning.withPermits(1),
-    Effect.catch((error) =>
-      Effect.logWarning("The provider connection was not stored", error).pipe(
-        Effect.andThen(Effect.fail(new ProviderConnectionRefused())),
-      ),
-    ),
+  const connectedNow = activeConnection(options.home).pipe(
+    Effect.provideService(FileSystem.FileSystem, fs),
+    Effect.provideService(Path.Path, path),
   );
+
+  /**
+   * Commits the connection, then provisions, which activates it. A commit
+   * that fails leaves the connection before it in force; a provisioning that
+   * fails after the commit leaves the new one to the next start's.
+   */
+  const connectProviders = Effect.fn("Engine.connectProviders")(function* (
+    connection: ProviderConnection,
+  ) {
+    const committed = yield* storeConnection({ home: options.home, files, connection }).pipe(
+      Effect.provideService(Path.Path, path),
+      Effect.provide(SecureRandom.layerWebCrypto),
+      Effect.as(true),
+      Effect.catch((error) =>
+        Effect.logWarning("The provider connection was not stored", error).pipe(Effect.as(false)),
+      ),
+    );
+    if (!committed) {
+      return { _tag: "refused", active: yield* connectedNow } satisfies ConnectionOutcome;
+    }
+    return yield* writeProvisioning.pipe(
+      Effect.as({ _tag: "active", baseUrl: connection.baseUrl } satisfies ConnectionOutcome),
+      Effect.catch((error) =>
+        Effect.logWarning(
+          "The provider connection was recorded, but the engine's settings could not be written",
+          error,
+        ).pipe(
+          Effect.as({
+            _tag: "recorded",
+            baseUrl: connection.baseUrl,
+          } satisfies ConnectionOutcome),
+        ),
+      ),
+    );
+  }, provisioning.withPermits(1));
 
   const platformServices = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(

@@ -174,6 +174,14 @@ export class TestEngineControl extends Context.Service<
      */
     readonly rejectNextDispatch: Effect.Effect<void>;
     /**
+     * The next `count` calls of `openSession` fail with `EngineIndeterminate`,
+     * applying nothing, as when the engine dropped them: a later call under
+     * the same key opens the session.
+     */
+    readonly failNextOpenSessions: (count: number) => Effect.Effect<void>;
+    /** The model a session runs, as it was opened or last configured. */
+    readonly sessionModel: (sessionId: SessionId) => Effect.Effect<ModelChoice>;
+    /**
      * The engine refuses the next `stop` it receives, applying nothing and
      * keeping a rejected receipt, as when a read fails while it plans the
      * stop. It and every later call with its key fail with `StopRejected`
@@ -475,6 +483,7 @@ const make = Effect.gen(function* () {
   let connection = Option.none<string>();
   let loseReply = false;
   let rejectDispatch = false;
+  let failingOpenSessions = 0;
   let rejectStop = false;
   const holds = new Map<
     HeldMethod,
@@ -1058,6 +1067,7 @@ const make = Effect.gen(function* () {
     connectProviders: (input) =>
       Effect.sync(() => {
         connection = Option.some(input.baseUrl);
+        return { _tag: "active", baseUrl: input.baseUrl } as const;
       }),
 
     consoleLink: command(Effect.succeed("http://127.0.0.1/test-engine")),
@@ -1089,6 +1099,10 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const previous = yield* priorUse(key, "openSession");
           if (previous?.command === "openSession") return previous.sessionId;
+          if (failingOpenSessions > 0) {
+            failingOpenSessions--;
+            return yield* new EngineIndeterminate();
+          }
           if (![...projects.values()].includes(projectId)) {
             return yield* new ProjectNotFound({ projectId });
           }
@@ -1484,6 +1498,19 @@ const make = Effect.gen(function* () {
     rejectNextDispatch: Effect.sync(() => {
       rejectDispatch = true;
     }),
+
+    failNextOpenSessions: (count) =>
+      Effect.sync(() => {
+        failingOpenSessions = count;
+      }),
+
+    sessionModel: (sessionId) =>
+      Effect.suspend(() => {
+        const session = sessions.get(sessionId);
+        return session === undefined
+          ? misuse(`no session ${sessionId}`)
+          : Effect.succeed(session.model);
+      }),
 
     rejectNextStop: Effect.sync(() => {
       rejectStop = true;

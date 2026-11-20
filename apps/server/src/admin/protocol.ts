@@ -56,37 +56,50 @@ export const PairingGrant = Schema.Struct({
 });
 export type PairingGrant = typeof PairingGrant.Type;
 
+/** Hosts that never leave the machine: plain HTTP to them sends the key nowhere. */
+const isLoopback = (hostname: string) =>
+  hostname === "localhost" || hostname === "[::1]" || /^127\.\d+\.\d+\.\d+$/.test(hostname);
+
 /**
- * Whether `text` is an endpoint's base URL as the engine is given it: `http`
- * or `https`, with no credentials, query or fragment, and no trailing `/` or
- * `/v1`, which each harness adds itself. Credentials are refused because the
- * base URL is kept in plain text; the key travels on its own.
+ * Why `text` is not an endpoint's base URL as the engine is given it, or
+ * undefined when it is one: `https`, or `http` to a loopback host only, since
+ * the key travels with every request in clear otherwise; no credentials,
+ * query or fragment, since the base URL is kept in plain text and the key
+ * travels on its own; and no trailing `/` or `/v1`, which each harness adds
+ * itself.
  */
-export const isProviderBaseUrl = (text: string): boolean => {
-  if (!URL.canParse(text)) return false;
+export const providerBaseUrlProblem = (text: string): string | undefined => {
+  if (!URL.canParse(text) || text.length > 1000) return "it is not a URL";
   const url = new URL(text);
-  return (
-    (url.protocol === "http:" || url.protocol === "https:") &&
-    url.username === "" &&
-    url.password === "" &&
-    url.search === "" &&
-    url.hash === "" &&
-    !text.endsWith("/") &&
-    !url.pathname.endsWith("/v1") &&
-    text.length <= 1000
-  );
+  if (url.protocol !== "http:" && url.protocol !== "https:")
+    return "it is not an http or https URL";
+  if (url.protocol === "http:" && !isLoopback(url.hostname)) {
+    return "plain http would send the key in clear to another machine; use https, or http only to this machine (localhost, 127.0.0.1 or [::1])";
+  }
+  if (url.username !== "" || url.password !== "") return "it carries a user name or password";
+  if (url.search !== "" || url.hash !== "") return "it has a query or fragment";
+  if (text.endsWith("/") || url.pathname.endsWith("/v1")) return "it ends in / or /v1";
+  return undefined;
 };
 
 export const ProviderConnectionRequest = Schema.Struct({
   baseUrl: Schema.String.check(
-    Schema.makeFilter(isProviderBaseUrl, { expected: "an http or https base URL" }),
+    Schema.makeFilter((text) => providerBaseUrlProblem(text) === undefined, {
+      expected: "an https base URL, or an http one to this machine",
+    }),
   ),
   /** Sent over the private admin socket only, and never logged. */
   key: Schema.NonEmptyString,
 });
 export type ProviderConnectionRequest = typeof ProviderConnectionRequest.Type;
 
-export const ProviderConnectionOutcome = Schema.Struct({
-  outcome: Schema.Literals(["stored", "refused"]),
-});
+/** Which connection is in force after the request (`Engine.connectProviders`). */
+export const ProviderConnectionOutcome = Schema.Union([
+  /** The new one, handed to the engine. */
+  Schema.TaggedStruct("active", { baseUrl: Schema.String }),
+  /** The new one, recorded; the engine gets it when it next starts. */
+  Schema.TaggedStruct("recorded", { baseUrl: Schema.String }),
+  /** Not stored: the one before it, if any, stays in force. */
+  Schema.TaggedStruct("refused", { active: Schema.NullOr(Schema.String) }),
+]);
 export type ProviderConnectionOutcome = typeof ProviderConnectionOutcome.Type;

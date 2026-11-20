@@ -8,10 +8,10 @@ import { instanceIdFor } from "./Provision.ts";
 
 /**
  * What the operator runs on the host to give Claude Code and Codex a way to
- * their models: `j3-bots provider connect`, which takes an endpoint and its
- * key (`Engine.connectProviders`).
+ * their models. It runs as typed: it asks for the endpoint's base URL and its
+ * key, and hands both to the server (`Engine.connectProviders`).
  */
-export const CONNECT_COMMAND = "j3-bots provider connect --base-url <URL>";
+export const CONNECT_COMMAND = "j3-bots provider connect";
 
 /**
  * The providers the engine reports, from a config stream event: the whole

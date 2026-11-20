@@ -7,26 +7,36 @@ import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
 import { Command, Flag, Prompt } from "effect/cli";
 import { AdminClient } from "../admin/AdminClient.ts";
-import { isProviderBaseUrl } from "../admin/protocol.ts";
+import { providerBaseUrlProblem } from "../admin/protocol.ts";
 import * as ServerConfig from "../config.ts";
 import { refuse, userFacing } from "./errors.ts";
 
 const NOT_RUNNING =
   "The server is not running, and it is the running server that hands the connection to the engine. Start it with `systemctl --user start j3-bots` (or `j3-bots serve`), then run this again.";
 
-const REFUSED =
-  "The engine's data refused the connection, so nothing changed. The server's log names the folder: `journalctl --user -u j3-bots`.";
+/** What a refused connection leaves in force. */
+const refused = (active: string | null) =>
+  [
+    "The engine's data refused the connection, so it was not stored. The server's log names the folder: `journalctl --user -u j3-bots`.",
+    active === null
+      ? "No provider connection is in force."
+      : `The connection in force is still the one to ${active}.`,
+  ].join("\n");
 
 /**
  * The base URL as the engine is given it, from what the operator typed: the
  * endpoint's root, without a trailing `/` or `/v1`, which each harness adds
- * itself. None when it is not an `http` or `https` URL without credentials,
- * query or fragment.
+ * itself. Otherwise why it cannot be one (`providerBaseUrlProblem`).
  */
-export const normalizeBaseUrl = (text: string): Option.Option<string> => {
+export const normalizeBaseUrl = (
+  text: string,
+):
+  | { readonly _tag: "url"; readonly url: string }
+  | { readonly _tag: "problem"; readonly problem: string } => {
   const trimmed = text.trim().replace(/\/+$/, "");
   const root = trimmed.endsWith("/v1") ? trimmed.slice(0, -"/v1".length) : trimmed;
-  return isProviderBaseUrl(root) ? Option.some(root) : Option.none();
+  const problem = providerBaseUrlProblem(root);
+  return problem === undefined ? { _tag: "url", url: root } : { _tag: "problem", problem };
 };
 
 /**
@@ -44,24 +54,55 @@ const readKey = Effect.gen(function* () {
   return piped.trim();
 });
 
+const EXAMPLES =
+  "For example: https://proxy.example.com, or http://127.0.0.1:8317 for an endpoint on this machine.";
+
 const baseUrlFlag = Flag.String("base-url").pipe(
   Flag.withDescription(
-    "The endpoint's base URL, such as http://127.0.0.1:8317. It must speak Anthropic's Messages API and OpenAI's Responses API.",
+    "The endpoint's base URL: https, such as https://proxy.example.com, or http to this machine, such as http://127.0.0.1:8317. It must speak Anthropic's Messages API and OpenAI's Responses API. Asked for when left out.",
   ),
+  Flag.optional,
 );
+
+/**
+ * The endpoint's base URL: the flag's, or asked for on a terminal, so the
+ * bare command runs as typed. Without a terminal it can only come from the
+ * flag.
+ */
+const readBaseUrl = Effect.fn("readBaseUrl")(function* (flag: Option.Option<string>) {
+  if (Option.isSome(flag)) {
+    const root = normalizeBaseUrl(flag.value);
+    if (root._tag === "url") return root.url;
+    return yield* refuse(
+      `${flag.value} is not a base URL J3 Bots can use: ${root.problem}. ${EXAMPLES}`,
+    );
+  }
+  if (!(yield* (yield* Stdio.Stdio).stdinIsTerminal)) {
+    return yield* refuse(
+      "Give the endpoint's base URL with --base-url when the key comes from standard input.",
+    );
+  }
+  // The prompt submits what `validate` returns: the normalized base URL.
+  return yield* Prompt.run(
+    Prompt.String({
+      message: "The endpoint's base URL",
+      validate: (text) => {
+        const root = normalizeBaseUrl(text);
+        return root._tag === "url"
+          ? Effect.succeed(root.url)
+          : Effect.fail(`Not a base URL J3 Bots can use: ${root.problem}. ${EXAMPLES}`);
+      },
+    }),
+  ).pipe(Effect.mapError(() => refuse("No base URL was read, so nothing changed.")));
+});
 
 const connect = Command.make("connect", { baseUrl: baseUrlFlag }).pipe(
   Command.withDescription(
-    "Connect Claude Code and Codex to an endpoint that serves their models, such as a proxy in front of your subscriptions. Asks for its key, or reads it from standard input. The key is kept only in the engine's secret store.",
+    "Connect Claude Code and Codex to an endpoint that serves their models, such as a proxy in front of your subscriptions. Asks for its base URL unless given, then for its key, or reads the key from standard input. The key is kept only in the engine's secret store.",
   ),
   Command.withHandler(({ baseUrl }) =>
     Effect.gen(function* () {
-      const root = normalizeBaseUrl(baseUrl);
-      if (Option.isNone(root)) {
-        return yield* refuse(
-          `${baseUrl} is not a base URL J3 Bots can use. Give an http or https URL with no user name, password, query or fragment, such as http://127.0.0.1:8317.`,
-        );
-      }
+      const url = yield* readBaseUrl(baseUrl);
       const socket = yield* userFacing(ServerConfig.resolveAdminSocket);
       const admin = yield* AdminClient;
       if (Option.isNone(yield* userFacing(admin.status(socket)))) return yield* refuse(NOT_RUNNING);
@@ -69,17 +110,27 @@ const connect = Command.make("connect", { baseUrl: baseUrlFlag }).pipe(
         Effect.mapError(() => refuse("No key was read, so nothing changed.")),
       );
       if (key.length === 0) return yield* refuse("The key is empty, so nothing changed.");
-      const answer = yield* userFacing(
-        admin.connectProviders(socket, { baseUrl: root.value, key }),
-      );
+      const answer = yield* userFacing(admin.connectProviders(socket, { baseUrl: url, key }));
       if (Option.isNone(answer)) return yield* refuse(NOT_RUNNING);
-      if (answer.value.outcome === "refused") return yield* refuse(REFUSED);
-      yield* Console.log(
-        [
-          `Claude Code and Codex now reach their models through ${root.value}.`,
-          "The engine picks the change up by itself. `j3-bots doctor` shows when each provider is ready.",
-        ].join("\n"),
-      );
+      const outcome = answer.value;
+      switch (outcome._tag) {
+        case "refused":
+          return yield* refuse(refused(outcome.active));
+        case "recorded":
+          return yield* Console.log(
+            [
+              `The connection to ${outcome.baseUrl} is stored, but the engine's settings could not be written. The server's log says why: \`journalctl --user -u j3-bots\`.`,
+              "The engine takes it when it next starts: `systemctl --user restart j3-bots`.",
+            ].join("\n"),
+          );
+        case "active":
+          return yield* Console.log(
+            [
+              `Claude Code and Codex now reach their models through ${outcome.baseUrl}.`,
+              "The engine picks the change up by itself. `j3-bots doctor` shows when each provider is ready.",
+            ].join("\n"),
+          );
+      }
     }),
   ),
 );

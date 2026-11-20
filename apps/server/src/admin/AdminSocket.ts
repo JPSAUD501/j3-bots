@@ -81,17 +81,10 @@ const routes = Layer.mergeAll(
       );
       if (request._tag === "None") return HttpServerResponse.empty({ status: 400 });
       const engine = yield* Engine;
-      const outcome: ProviderConnectionOutcome = yield* engine
-        .connectProviders({
-          baseUrl: request.value.baseUrl,
-          key: Redacted.make(request.value.key),
-        })
-        .pipe(
-          Effect.as({ outcome: "stored" as const }),
-          Effect.catchTag("ProviderConnectionRefused", () =>
-            Effect.succeed({ outcome: "refused" as const }),
-          ),
-        );
+      const outcome: ProviderConnectionOutcome = yield* engine.connectProviders({
+        baseUrl: request.value.baseUrl,
+        key: Redacted.make(request.value.key),
+      });
       return yield* HttpServerResponse.schemaJson(ProviderConnectionOutcome)(outcome).pipe(
         Effect.orDie,
       );

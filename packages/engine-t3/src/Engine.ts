@@ -19,7 +19,6 @@ import type {
   EngineIncompatible,
   ModelUnavailable,
   ProjectNotFound,
-  ProviderConnectionRefused,
   RequestClosed,
   SessionBusy,
   SessionNotFound,
@@ -206,6 +205,18 @@ export interface ProviderConnection {
   readonly key: Redacted.Redacted<string>;
 }
 
+/** Which provider connection is in force after `connectProviders`. */
+export type ConnectionOutcome =
+  /** The new one, handed to the engine. */
+  | { readonly _tag: "active"; readonly baseUrl: string }
+  /**
+   * The new one, recorded, but the engine's settings could not be written:
+   * the engine gets it when it next starts.
+   */
+  | { readonly _tag: "recorded"; readonly baseUrl: string }
+  /** Not stored: the one before it, if any, stays in force. */
+  | { readonly _tag: "refused"; readonly active: string | null };
+
 /**
  * What the adapter's layer is built from: everything the server knows. The
  * layer owns the engine for its whole lifetime. It installs the pinned release
@@ -292,11 +303,12 @@ export class Engine extends Context.Service<
      * sessions they start from then on. The key goes to the engine's secret
      * store and nowhere else: not to a settings or configuration file, not to
      * a log. The base URL is kept with the engine's data, so the connection
-     * outlives a restart. Setting it again replaces it.
+     * outlives a restart. Setting it again replaces it. The URL and the key
+     * take effect together: a write cut short leaves the connection before
+     * in force, or the new one to be completed at the next start. Answers
+     * which connection is in force.
      */
-    readonly connectProviders: (
-      connection: ProviderConnection,
-    ) => Effect.Effect<void, ProviderConnectionRefused>;
+    readonly connectProviders: (connection: ProviderConnection) => Effect.Effect<ConnectionOutcome>;
 
     /**
      * A link that opens the engine's own web interface, signed in, for setting
