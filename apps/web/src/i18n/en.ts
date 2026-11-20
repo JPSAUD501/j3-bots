@@ -310,7 +310,8 @@ export const en = {
   "composer.notKept":
     "This device couldn’t keep the message, so it wasn’t sent. It’s still in the message box.",
   "composer.changedElsewhere":
-    "This draft changed in another tab, so it wasn’t sent. Check it and send again.",
+    "This draft changed in another tab. This tab now shows it as it is there, and sent nothing.",
+  "composer.restoreMine": "Restore my text",
 
   "file.gone": "{name} is no longer on the server.",
   "file.unreachable": "{name} couldn’t be opened. Check the connection and try again.",

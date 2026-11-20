@@ -1,41 +1,67 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { useEffect, useEffectEvent } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
+import { cn } from "../lib/cn";
 
 /** How long a notice stays: long enough to read twice. */
 const SHOWN_FOR = 6000;
 
+/** A short sentence, and at most one thing the operator can do about it. */
+export interface Notice {
+  readonly id: number;
+  readonly text: string;
+  readonly action: { readonly label: string; readonly run: () => void } | null;
+}
+
 /**
  * A short sentence about something that just went wrong out of view, such as
- * a file that could not be opened. It goes by itself. The region is always
- * there, so each new notice is announced once.
+ * a file that could not be opened. It goes by itself. A notice with an action
+ * stays twice as long, and for as long as the pointer or the focus is on it.
+ * The region is always there, so each new notice is announced once.
  */
-export function Toast({
-  notice,
-  onDone,
-}: {
-  notice: { readonly id: number; readonly text: string } | null;
-  onDone: () => void;
-}) {
-  const id = notice?.id ?? null;
-  // Each notice gets its own time, however often `onDone` is a new function.
-  const done = useEffectEvent(onDone);
-  useEffect(() => {
-    if (id === null) return;
-    const timer = window.setTimeout(done, SHOWN_FOR);
-    return () => window.clearTimeout(timer);
-  }, [id]);
+export function Toast({ notice, onDone }: { notice: Notice | null; onDone: () => void }) {
   return (
     <div
       role="status"
       className="pointer-events-none fixed inset-x-4 bottom-[calc(env(safe-area-inset-bottom)+--spacing(20))] z-50 flex justify-center"
     >
-      {notice && (
-        <p
-          key={notice.id}
-          className="max-w-sm rounded-md bg-foreground px-3 py-2 text-sm text-background shadow-lg"
+      {notice && <Shown key={notice.id} notice={notice} onDone={onDone} />}
+    </div>
+  );
+}
+
+function Shown({ notice, onDone }: { notice: Notice; onDone: () => void }) {
+  const { action } = notice;
+  const [held, setHeld] = useState(false);
+  // The notice keeps its time, however often `onDone` is a new function.
+  const done = useEffectEvent(onDone);
+  useEffect(() => {
+    if (held) return;
+    const timer = window.setTimeout(done, action === null ? SHOWN_FOR : SHOWN_FOR * 2);
+    return () => window.clearTimeout(timer);
+  }, [held, action]);
+  return (
+    <div
+      className={cn(
+        "flex max-w-sm items-center gap-3 rounded-md bg-foreground px-3 py-2 text-sm text-background shadow-lg",
+        action !== null && "pointer-events-auto",
+      )}
+      onPointerEnter={() => setHeld(true)}
+      onPointerLeave={() => setHeld(false)}
+      onFocus={() => setHeld(true)}
+      onBlur={() => setHeld(false)}
+    >
+      <p>{notice.text}</p>
+      {action !== null && (
+        <button
+          type="button"
+          className="shrink-0 rounded-sm font-medium underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-background"
+          onClick={() => {
+            action.run();
+            onDone();
+          }}
         >
-          {notice.text}
-        </p>
+          {action.label}
+        </button>
       )}
     </div>
   );

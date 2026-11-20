@@ -312,7 +312,8 @@ export const ptBR: Catalog = {
   "composer.notKept":
     "Este dispositivo não conseguiu guardar a mensagem, então ela não foi enviada. Ela continua na caixa de mensagem.",
   "composer.changedElsewhere":
-    "Este rascunho mudou em outra aba, então não foi enviado. Confira e envie de novo.",
+    "Este rascunho mudou em outra aba. Esta aba agora mostra o que está lá e não enviou nada.",
+  "composer.restoreMine": "Restaurar meu texto",
 
   "file.gone": "{name} não está mais no servidor.",
   "file.unreachable": "Não deu para abrir {name}. Verifique a conexão e tente de novo.",

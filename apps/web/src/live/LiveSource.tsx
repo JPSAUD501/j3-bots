@@ -41,7 +41,7 @@ import { memoryLabel } from "../components/DetailsPanel";
 import { MemoryViewer, type MemoryReading } from "../components/MemoryViewer";
 import { NewBotDialog } from "../components/NewBotDialog";
 import { guessDeviceName, Incompatible, Pairing, StorageFailed } from "../components/Pairing";
-import { Toast } from "../components/Toast";
+import { type Notice, Toast } from "../components/Toast";
 import type { ConversationView, ShellData, ShellIntents } from "../shell/data";
 import { ShellSourceContext } from "../shell/source";
 import { deliverFile, reserveWindow } from "./openFile";
@@ -198,7 +198,7 @@ function LiveShell({ children }: { children: ReactNode }) {
   const [steps, setSteps] = useState<ReadonlyMap<EntryId, ReadonlyArray<WorkStep>>>(new Map());
   const [newBot, setNewBot] = useState(false);
   const [memoryView, setMemoryView] = useState<MemoryView | null>(null);
-  const [notice, setNotice] = useState<{ readonly id: number; readonly text: string } | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
 
   const view: ConversationView =
     conversation.state === null
@@ -217,7 +217,18 @@ function LiveShell({ children }: { children: ReactNode }) {
     j3.setView(visible ? targetOf(botId, roomId) : null);
   }, [j3, botId, roomId, visible]);
 
-  const say = (text: string) => setNotice((previous) => ({ id: (previous?.id ?? 0) + 1, text }));
+  const say = (text: string, action: Notice["action"] = null) =>
+    setNotice((previous) => ({ id: (previous?.id ?? 0) + 1, text, action }));
+
+  // Another tab sent or changed a draft under this one: this tab shows it as
+  // stored, and the operator decides whether their text goes back in.
+  const changedElsewhere = useEffectEvent((asked: EntryTarget) =>
+    say(t("composer.changedElsewhere"), {
+      label: t("composer.restoreMine"),
+      run: () => j3.restoreDraft(asked),
+    }),
+  );
+  useEffect(() => j3.onDraftChangedElsewhere(changedElsewhere), [j3]);
 
   const data: ShellData = {
     engine: engine._tag === "ready" ? engine.value : null,
@@ -306,7 +317,6 @@ function LiveShell({ children }: { children: ReactNode }) {
     sendDraft: (asked) =>
       void j3.sendDraft(asked).then((result) => {
         if (result === "not-kept") say(t("composer.notKept"));
-        else if (result === "changed-elsewhere") say(t("composer.changedElsewhere"));
       }),
     loadOlder: (asked) => {
       if (viewKey !== null && targetKey(asked) === viewKey) conversation.loadOlder();
