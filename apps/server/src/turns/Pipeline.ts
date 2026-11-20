@@ -72,6 +72,7 @@ import { isIdle, sessionWork } from "./sessionWork.ts";
 import { Observer } from "./Observer.ts";
 import { Readiness } from "./Readiness.ts";
 import { DEFECT_RETRY, type Pass, onePassAtATime, passOutcome, reconcile } from "./reconciler.ts";
+import { takesNewWorkSql } from "./rotationRequests.ts";
 import { Signals } from "./Signals.ts";
 import { Wakes } from "./Wakes.ts";
 
@@ -506,9 +507,10 @@ export const layer = Layer.effect(
 
     /**
      * The bot's main session, if it can be planned into: live, opened in the
-     * engine, not due for rotation, and past the deadline of a busy refusal,
-     * which its next applied event ends sooner. A session due for rotation
-     * takes nothing new: its bot's wakes wait for the session that replaces it.
+     * engine, taking new work (`takesNewWorkSql`), and past the deadline of a
+     * busy refusal, which its next applied event ends sooner. A session due
+     * for any rotation but the run limit's takes nothing new: its bot's wakes
+     * wait for the session that replaces it.
      */
     const mainSession = SqlSchema.findOneOption({
       Request: Schema.Struct({ botId: Schema.String, now: Schema.String }),
@@ -516,7 +518,7 @@ export const layer = Layer.effect(
       execute: ({ botId, now }) => sql`
         SELECT id, bot_id FROM sessions
         WHERE bot_id = ${botId} AND purpose = 'main' AND retired_at IS NULL
-          AND lost_at IS NULL AND engine_session_id IS NOT NULL AND rotation_reason IS NULL
+          AND lost_at IS NULL AND engine_session_id IS NOT NULL AND ${takesNewWorkSql(sql)}
           AND (busy_until IS NULL OR busy_until <= ${now})
       `,
     });
@@ -882,11 +884,20 @@ export const layer = Layer.effect(
     /**
      * Writes the dispatch for a plan, in one transaction: its envelope, its
      * files in order, its wakes linked, and the notes and held messages the
-     * envelope consumed. Nothing changes if the plan no longer holds.
+     * envelope consumed. Nothing changes if the plan no longer holds: its
+     * session was retired, lost or became due for a rotation that takes no new
+     * work since it was chosen (`stale`, planned again), or its wakes are no
+     * longer pending.
      */
     const writeDispatch = Effect.fn("Pipeline.writeDispatch")(function* (plan: Plan) {
       return yield* transaction(
         Effect.gen(function* () {
+          const [live] = yield* sql<{ readonly n: number }>`
+            SELECT COUNT(*) AS n FROM sessions
+            WHERE id = ${plan.sessionId} AND retired_at IS NULL AND lost_at IS NULL
+              AND ${takesNewWorkSql(sql)}
+          `;
+          if ((live?.n ?? 0) === 0) return "stale" as const;
           const still = yield* sql<{ readonly n: number }>`
             SELECT COUNT(*) AS n FROM wakes
             WHERE ${sql.in(
@@ -1019,10 +1030,16 @@ export const layer = Layer.effect(
         for (const { bot_id: botId } of yield* waitingBots) {
           const planned = yield* planOne(
             Effect.gen(function* () {
-              const plan = yield* planFor(botId, now);
-              if (plan === null || plan === "not-ready") return plan;
-              const dispatchId = yield* writeDispatch(plan);
-              return dispatchId === null ? null : { plan, dispatchId };
+              // Planned again, once, when its session changed under the plan.
+              for (let attempt = 0; attempt < 2; attempt++) {
+                const plan = yield* planFor(botId, now);
+                if (plan === null || plan === "not-ready") return plan;
+                const dispatchId = yield* writeDispatch(plan);
+                if (dispatchId !== "stale") {
+                  return dispatchId === null ? null : { plan, dispatchId };
+                }
+              }
+              return null;
             }),
             null,
           );

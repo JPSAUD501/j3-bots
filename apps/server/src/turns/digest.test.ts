@@ -51,7 +51,7 @@ describe("conversationDigest", () => {
           message({ _tag: "system" }, "Ana was moved to another model."),
         ],
         "Sam",
-      ),
+      ).text,
       "Sam: Summarize the report. [files: q3.pdf]\nYou: Done: files/q3.md.",
     );
   });
@@ -66,17 +66,18 @@ describe("conversationDigest", () => {
           message(operator, "Waiting.", { delivery: { _tag: "pending" } }),
         ],
         "Sam",
-      ),
+      ).text,
       "Sam: Delivered.",
     );
   });
 
   it("keeps the newest messages that fit, each one cut short", () => {
     const long = "x".repeat(5_000);
-    const digest = conversationDigest(
+    const { text: digest, full } = conversationDigest(
       Array.from({ length: 10 }, (_, n) => message(operator, `${n} ${long}`)),
       "Sam",
     );
+    assert.isTrue(full);
     const lines = digest.split("\n");
     assert.isBelow(digest.length, 6_100);
     assert.isTrue(lines.every((line) => line.length <= "Sam: ".length + 1_000));
@@ -84,10 +85,25 @@ describe("conversationDigest", () => {
     assert.isFalse(digest.includes("Sam: 0 "));
   });
 
+  it("counts its limit in messages, not in the entries between them", () => {
+    const entries = Array.from({ length: 70 }, (_, n) => [
+      message(operator, `Message ${n}.`),
+      message({ _tag: "system" }, "Ana was moved to another model."),
+      message(operator, "Refused.", { delivery: { _tag: "failed", reason: "rejected" } }),
+    ]).flat();
+    const { text, full } = conversationDigest(entries, "Sam");
+    const lines = text.split("\n");
+    assert.strictEqual(lines.length, 60);
+    assert.strictEqual(lines[0], "Sam: Message 10.");
+    assert.strictEqual(lines.at(-1), "Sam: Message 69.");
+    assert.isTrue(full);
+    assert.isFalse(conversationDigest(entries.slice(-30), "Sam").full);
+  });
+
   it("says so when nothing was said yet", () => {
-    assert.strictEqual(
-      conversationDigest([], "Sam"),
-      "Nothing has been said in the conversation yet.",
-    );
+    assert.deepStrictEqual(conversationDigest([], "Sam"), {
+      text: "Nothing has been said in the conversation yet.",
+      full: false,
+    });
   });
 });

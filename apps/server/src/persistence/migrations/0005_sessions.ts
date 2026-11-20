@@ -6,16 +6,18 @@ import * as SqlClient from "effect/sql/SqlClient";
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
-  // The provider a session runs on. It never changes: a bot that moves to
-  // another provider gets a new main session. Sessions from before take
-  // their bot's provider.
-  yield* sql`ALTER TABLE sessions ADD COLUMN provider_id TEXT`;
+  // The provider a session runs on, chosen with the bot's settings in the
+  // transaction that writes the row. It never changes: a bot that moves to
+  // another provider gets a new main session. SQLite adds a NOT NULL column
+  // only with a default; the update gives the sessions from before their
+  // bot's provider, and every later row names its own.
+  yield* sql`ALTER TABLE sessions ADD COLUMN provider_id TEXT NOT NULL DEFAULT ''`;
   yield* sql`
     UPDATE sessions SET provider_id = (SELECT provider_id FROM bots WHERE bots.id = sessions.bot_id)
   `;
 
-  // Why a live main session is to be replaced. Nothing new is planned into
-  // it from then on, and the rotator replaces it once it is idle.
+  // Why a live main session is to be replaced, and how the rotator replaces
+  // it (`turns/Rotations.ts`).
   yield* sql`
     ALTER TABLE sessions ADD COLUMN rotation_reason TEXT
       CHECK (rotation_reason IN ('runs', 'context-recovered', 'provider-changed', 'fresh-start'))

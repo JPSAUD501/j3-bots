@@ -333,9 +333,12 @@ export const layer = Layer.effect(
       );
     });
 
-    /** A Stop of a session was confirmed: what it held back may go. */
+    /**
+     * A Stop of a session was confirmed: what it held back may go, a rotation
+     * waiting on it included.
+     */
     const settledSession = Effect.all(
-      [signals.dispatch.fire, signals.recovery.fire, signals.resumes.fire],
+      [signals.dispatch.fire, signals.recovery.fire, signals.resumes.fire, signals.rotations.fire],
       { discard: true },
     );
 

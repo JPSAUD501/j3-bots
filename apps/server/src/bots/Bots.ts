@@ -11,6 +11,7 @@ import {
   type ModelChoice,
   NotFound,
   type PermissionMode,
+  ProviderId,
 } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -19,6 +20,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlSchema from "effect/sql/SqlSchema";
 import { Attachments } from "../attachments/Attachments.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
 import { EngineState } from "../engine/EngineState.ts";
@@ -28,6 +30,7 @@ import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import { rotationRequests } from "../turns/rotationRequests.ts";
 import { Signals } from "../turns/Signals.ts";
+import { Stops } from "../turns/Stops.ts";
 import { freeAvatar } from "./avatars.ts";
 import { type BotChanges, BotStore } from "./BotStore.ts";
 import { EngineSessions } from "./EngineSessions.ts";
@@ -56,9 +59,10 @@ export class Bots extends Context.Service<
       readonly draft: BotDraft;
     }) => Effect.Effect<Bot, CommandError>;
     /**
-     * A model of another provider replaces the bot's main session once it is
-     * idle; another model of the same provider, or a permission mode, applies
-     * to the session from its next turn.
+     * A model of another provider stops the bot's work in progress, then
+     * replaces its main session, with a digest of the conversation; another
+     * model of the same provider, or a permission mode, applies to the
+     * session from its next turn.
      */
     readonly update: (input: {
       readonly commandId: CommandId;
@@ -66,8 +70,9 @@ export class Bots extends Context.Service<
       readonly changes: BotChanges;
     }) => Effect.Effect<Bot, CommandError>;
     /**
-     * Replaces the bot's main session once nothing runs there, with a digest
-     * of the conversation. Interrupts nothing: Stop does that.
+     * Stops the bot's work in progress, then replaces its main session with
+     * a fresh one, which gets no digest of the conversation. Its memory files
+     * stay.
      */
     readonly freshStart: (input: {
       readonly commandId: CommandId;
@@ -101,7 +106,20 @@ export const layer = Layer.effect(
     const changes = yield* ChangeLog;
     const layout = yield* Layout;
     const ids = yield* Ids;
-    const { requestBotRotation } = rotationRequests(sql, yield* Signals);
+    const signals = yield* Signals;
+    const stops = yield* Stops;
+    const { requestBotRotation, dropDigests } = rotationRequests(sql, signals);
+
+    /** The provider of the bot's live main session, if it has one. */
+    const liveMainProvider = (botId: BotId) =>
+      SqlSchema.findOneOption({
+        Request: BotIdSchema,
+        Result: Schema.Struct({ provider_id: ProviderId }),
+        execute: (id) => sql`
+          SELECT provider_id FROM sessions
+          WHERE bot_id = ${id} AND purpose = 'main' AND retired_at IS NULL
+        `,
+      })(botId).pipe(Effect.orDie, Effect.map(Option.map((row) => row.provider_id)));
 
     const require = Effect.fn("Bots.require")(function* (botId: BotId) {
       const found = yield* store.find(botId);
@@ -128,8 +146,8 @@ export const layer = Layer.effect(
     });
 
     /**
-     * Opens the bot's engine session now if it can. A failure leaves it for
-     * the reconciliation that runs each time the engine is ready.
+     * Opens the bot's engine session now if it can. A failure leaves it to
+     * the rotator, which opens every live bot's missing main session.
      */
     const provision = (botId: BotId) =>
       sessions.provision(botId).pipe(
@@ -137,7 +155,7 @@ export const layer = Layer.effect(
           Effect.logWarning("A new bot's engine session will be opened later", {
             botId,
             error: error._tag,
-          }),
+          }).pipe(Effect.andThen(signals.rotations.fire)),
         ),
       );
 
@@ -188,20 +206,28 @@ export const layer = Layer.effect(
       readonly changes: BotChanges;
     }) {
       const { changes: change } = input;
-      const before = yield* require(input.botId);
-      const providerChanged =
-        change.model !== undefined && change.model.providerId !== before.bot.model.providerId;
       const bot = yield* receipts.once({
         commandId: input.commandId,
         method: "bot.update",
         payload: input,
         result: Bot,
         apply: Effect.gen(function* () {
+          const before = yield* require(input.botId);
           if (change.model !== undefined) yield* checkModel(change.model);
           const at = yield* DateTime.now;
           if (change.primary === true && !before.bot.primary) yield* makePrimary(at);
           yield* store.update(input.botId, change, at);
-          if (providerChanged) yield* requestBotRotation(input.botId, "provider-changed");
+          // Compared with the provider the bot's live main session runs on, in
+          // this transaction: an earlier change may not have reached it yet.
+          // Moving to another provider is the operator's own action, so it
+          // stops the work in progress before the session is replaced.
+          if (change.model !== undefined) {
+            const live = yield* liveMainProvider(input.botId);
+            if (Option.isSome(live) && live.value !== change.model.providerId) {
+              yield* stops.record(input.botId, { _tag: "bot" });
+              yield* requestBotRotation(input.botId, "provider-changed");
+            }
+          }
           yield* changes.touch({ _tag: "bot", botId: input.botId });
           return (yield* require(input.botId).pipe(Effect.orDie)).bot;
         }),
@@ -209,9 +235,9 @@ export const layer = Layer.effect(
       if (change.profile !== undefined || change.model !== undefined) {
         yield* workspaces.render(bot.id);
       }
-      // A session never changes provider: the one that replaces it opens with
-      // the bot's settings.
-      if (!providerChanged && (change.model !== undefined || change.permissionMode !== undefined)) {
+      // A session on another provider is not configured: the one that
+      // replaces it opens with the bot's settings.
+      if (change.model !== undefined || change.permissionMode !== undefined) {
         yield* sessions
           .configure(bot.id, {
             ...(change.model === undefined ? {} : { model: change.model }),
@@ -274,6 +300,10 @@ export const layer = Layer.effect(
         result: Schema.Void,
         apply: Effect.gen(function* () {
           yield* require(input.botId);
+          // A clean slate: the work in progress stops, no digest waits for
+          // the new session, and none is written for it.
+          yield* stops.record(input.botId, { _tag: "bot" });
+          yield* dropDigests(input.botId);
           yield* requestBotRotation(input.botId, "fresh-start");
         }),
       });

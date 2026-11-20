@@ -109,6 +109,8 @@ const reopenAfter = (failures: number) =>
 interface Following {
   readonly _tag: "open";
   readonly opened: Deferred.Deferred<void>;
+  /** Completed by `close`: the stream ends, and is not opened again. */
+  readonly closed: Deferred.Deferred<void>;
   readonly caughtUp: Deferred.Deferred<void, NotObserved>;
   readonly tokens: Map<SyncToken, Deferred.Deferred<Synchronized, NotObserved>>;
 }
@@ -236,6 +238,12 @@ export class Observer extends Context.Service<
     /** Follows every session that is live or still has work to settle. */
     readonly watchAll: Effect.Effect<void>;
     /**
+     * Stops following a session the engine took out of use: its stream ends,
+     * and nothing opens it again, since a session retired in the engine is no
+     * longer one to watch.
+     */
+    readonly close: (sessionId: SessionRowId) => Effect.Effect<void>;
+    /**
      * Returns once every event the engine had recorded for the session when it
      * was called has been applied. Fails with `NotObserved`, to be retried,
      * when the stream closes first or the deadline passes.
@@ -290,6 +298,7 @@ export const layer = Layer.effect(
       execute: (id) => sql`
         SELECT id, bot_id, engine_session_id, events_cursor FROM sessions
         WHERE id = ${id} AND engine_session_id IS NOT NULL AND lost_at IS NULL
+          AND engine_retired_at IS NULL
       `,
     });
 
@@ -298,7 +307,8 @@ export const layer = Layer.effect(
       Result: Schema.Struct({ id: SessionRowId }),
       execute: () => sql`
         SELECT s.id FROM sessions s
-        WHERE s.engine_session_id IS NOT NULL AND s.lost_at IS NULL AND (
+        WHERE s.engine_session_id IS NOT NULL AND s.lost_at IS NULL
+          AND s.engine_retired_at IS NULL AND (
           s.retired_at IS NULL
           OR EXISTS (SELECT 1 FROM stop_targets t WHERE t.session_id = s.id AND t.stopped_at IS NULL)
           OR EXISTS (SELECT 1 FROM turns t WHERE t.session_id = s.id AND t.finished_at IS NULL)
@@ -1361,6 +1371,7 @@ export const layer = Layer.effect(
       // one, the first `replaced` does once it is applied.
       if (session.events_cursor !== null) yield* Deferred.succeed(follow.caughtUp, undefined);
       yield* Stream.fromPull(Effect.succeed(pull)).pipe(
+        Stream.interruptWhen(Deferred.await(follow.closed)),
         // Read until the session is recorded lost: what is buffered after
         // that is never applied.
         Stream.runForEachWhile((event) => apply(session, follow, event)),
@@ -1381,6 +1392,7 @@ export const layer = Layer.effect(
         const follow: Following = {
           _tag: "open",
           opened: Deferred.makeUnsafe<void>(),
+          closed: Deferred.makeUnsafe<void>(),
           caughtUp: Deferred.makeUnsafe<void, NotObserved>(),
           tokens: new Map(),
         };
@@ -1410,6 +1422,16 @@ export const layer = Layer.effect(
       if (Option.isNone(caughtUp)) return false;
       return Exit.isSuccess(yield* Effect.exit(caughtUp.value));
     });
+
+    const close = (sessionId: SessionRowId) =>
+      Effect.suspend(() => {
+        const current = following.get(sessionId);
+        following.delete(sessionId);
+        failures.delete(sessionId);
+        behind.delete(sessionId);
+        shown.delete(sessionId);
+        return current?._tag === "open" ? Deferred.succeed(current.closed, undefined) : Effect.void;
+      }).pipe(Effect.asVoid, Effect.withSpan("Observer.close"));
 
     const watchAll = Effect.gen(function* () {
       for (const { id } of yield* sessionsToWatch(undefined).pipe(Effect.orDie)) yield* watch(id);
@@ -1447,6 +1469,7 @@ export const layer = Layer.effect(
     return Observer.of({
       watch,
       ready,
+      close,
       watchAll,
       synchronize,
     });

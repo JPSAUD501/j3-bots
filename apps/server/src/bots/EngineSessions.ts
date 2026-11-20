@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BotId, type ModelChoice, type PermissionMode, type ProviderId } from "@j3-bots/contracts";
+import { BotId, type ModelChoice, type PermissionMode, ProviderId } from "@j3-bots/contracts";
 import {
   Engine,
   type EngineDown,
@@ -17,11 +17,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Ids } from "../Ids.ts";
 import { timeText } from "../persistence/columns.ts";
+import { transactional } from "../persistence/transaction.ts";
 import { BotStore } from "./BotStore.ts";
 import { Workspaces } from "./Workspaces.ts";
 
@@ -29,6 +29,7 @@ const SessionRow = Schema.Struct({
   id: Schema.String,
   bot_id: BotId,
   engine_session_id: Schema.NullOr(SessionId),
+  provider_id: ProviderId,
 });
 
 /** A bot session as the server knows it. */
@@ -41,11 +42,15 @@ export interface BotSession {
  * Each bot's place in the engine: its project, and its main session
  * (`docs/architecture/server.md`, Sessions). The session's id is J3 Bots' own,
  * written before the engine is asked for it and used as that request's key, so
- * a retried opening never makes a second engine session.
+ * a retried opening never makes a second engine session. The row is written in
+ * the transaction that reads the bot's settings, and names the provider they
+ * chose: a session never changes provider, and one whose bot moved on is
+ * replaced (`turns/Rotations.ts`), never opened on the provider it no longer
+ * has.
  *
- * Opening is reconciled rather than done once: after a bot is created, and for
- * every bot each time the engine becomes ready, so a bot created while the
- * engine was down gets its session when it comes back.
+ * Opening is reconciled rather than done once: after a bot is created, and by
+ * the rotator for every live bot without an opened main session, so a bot
+ * whose session could not be opened gets it once the engine takes it.
  */
 export class EngineSessions extends Context.Service<
   EngineSessions,
@@ -54,7 +59,11 @@ export class EngineSessions extends Context.Service<
     readonly provision: (
       botId: BotId,
     ) => Effect.Effect<void, EngineDown | ProjectNotFound | ModelUnavailable>;
-    /** Applies a new model or permission mode to the bot's main session. */
+    /**
+     * Applies a new model or permission mode to the bot's main session, when
+     * it runs on the model's provider: a session on another provider is being
+     * replaced, and the one that replaces it opens with the bot's settings.
+     */
     readonly configure: (
       botId: BotId,
       changes: { readonly model?: ModelChoice; readonly permissionMode?: PermissionMode },
@@ -70,19 +79,20 @@ export const layer = Layer.effect(
   EngineSessions,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const transaction = transactional(sql);
     const engine = yield* Engine;
     const bots = yield* BotStore;
     const workspaces = yield* Workspaces;
     const ids = yield* Ids;
-    // One provisioning at a time: a bot's creation and a reconciliation may
-    // both find its session missing.
+    // One provisioning at a time: a bot's creation and the rotator may both
+    // find its session missing.
     const provisioning = yield* Semaphore.make(1);
 
     const mainSession = SqlSchema.findOneOption({
       Request: BotId,
       Result: SessionRow,
       execute: (botId) => sql`
-        SELECT id, bot_id, engine_session_id FROM sessions
+        SELECT id, bot_id, engine_session_id, provider_id FROM sessions
         WHERE bot_id = ${botId} AND purpose = 'main' AND retired_at IS NULL
       `,
     });
@@ -91,51 +101,87 @@ export const layer = Layer.effect(
       Request: SessionId,
       Result: SessionRow,
       execute: (sessionId) => sql`
-        SELECT id, bot_id, engine_session_id FROM sessions
+        SELECT id, bot_id, engine_session_id, provider_id FROM sessions
         WHERE engine_session_id = ${sessionId} AND retired_at IS NULL
       `,
     });
 
-    /** The bot's main session row, written now if it has none, on the bot's provider. */
-    const ensureMainRow = Effect.fn("EngineSessions.ensureMainRow")(function* (
-      botId: BotId,
-      providerId: ProviderId,
-    ) {
-      const existing = yield* mainSession(botId);
-      if (Option.isSome(existing)) return existing.value;
-      const id = yield* ids.make("session");
-      yield* sql`
+    /**
+     * The bot's settings and its main session row, read together: the row is
+     * written now if the bot has none, on the provider those settings chose.
+     */
+    const selection = Effect.fn("EngineSessions.selection")(
+      function* (botId: BotId) {
+        const found = yield* bots.find(botId);
+        if (Option.isNone(found)) return null;
+        const { bot } = found.value;
+        const existing = yield* mainSession(botId);
+        if (Option.isSome(existing)) return { bot, session: existing.value };
+        const id = yield* ids.make("session");
+        yield* sql`
         INSERT INTO sessions (id, bot_id, purpose, prompt_version, provider_id, created_at)
         VALUES (
-          ${id}, ${botId}, 'main', ${PROMPT_VERSION}, ${providerId},
+          ${id}, ${botId}, 'main', ${PROMPT_VERSION}, ${bot.model.providerId},
           ${timeText(yield* DateTime.now)}
         )
       `;
-      return { id, bot_id: botId, engine_session_id: null };
-    }, Effect.orDie);
+        return {
+          bot,
+          session: {
+            id,
+            bot_id: botId,
+            engine_session_id: null,
+            provider_id: bot.model.providerId,
+          },
+        };
+      },
+      transaction,
+      Effect.orDie,
+    );
 
     const provision = Effect.fn("EngineSessions.provision")(function* (botId: BotId) {
       const found = yield* bots.find(botId);
       if (Option.isNone(found)) return;
       const { bot, workspacePath, engineProjectId } = found.value;
       yield* workspaces.provision(botId);
-      const session = yield* ensureMainRow(botId, bot.model.providerId);
       // Asked every time: it answers with the project the workspace already has.
       const projectId = yield* engine.ensureProject({ workspacePath, title: bot.profile.name });
       if (Option.getOrNull(engineProjectId) !== projectId) {
         yield* bots.setEngineProject(botId, projectId);
       }
-      if (session.engine_session_id !== null) return;
+      const selected = yield* selection(botId);
+      if (selected === null || selected.session.engine_session_id !== null) return;
+      const { session } = selected;
+      // The bot moved to another provider since the row was written: the
+      // rotator replaces the row, which never opens.
+      if (session.provider_id !== selected.bot.model.providerId) return;
+      const opened = { model: selected.bot.model, permissionMode: selected.bot.permissionMode };
       const sessionId = yield* engine.openSession({
         key: IdempotencyKey.make(session.id),
         projectId,
         title: "Main",
-        model: bot.model,
-        permissionMode: bot.permissionMode,
+        ...opened,
       });
       yield* sql`UPDATE sessions SET engine_session_id = ${sessionId} WHERE id = ${session.id}`.pipe(
         Effect.orDie,
       );
+      // A change of model or permission mode that committed while the session
+      // opened found it unopened, and left it to this.
+      const now = yield* bots.find(botId);
+      if (Option.isNone(now) || now.value.bot.model.providerId !== session.provider_id) return;
+      const { model, permissionMode } = now.value.bot;
+      const modelChanged = model.modelId !== opened.model.modelId;
+      const modeChanged = permissionMode !== opened.permissionMode;
+      if (modelChanged || modeChanged) {
+        yield* engine
+          .configureSession({
+            sessionId,
+            ...(modelChanged ? { model } : {}),
+            ...(modeChanged ? { permissionMode } : {}),
+          })
+          // Lost meanwhile: the rotator replaces it, with the bot's settings.
+          .pipe(Effect.catchTag("SessionNotFound", () => Effect.void));
+      }
     }, provisioning.withPermits(1));
 
     const configure = Effect.fn("EngineSessions.configure")(function* (
@@ -145,6 +191,9 @@ export const layer = Layer.effect(
       const session = yield* mainSession(botId).pipe(Effect.orDie);
       if (Option.isNone(session) || session.value.engine_session_id === null) {
         // Not opened yet: it opens with the bot's current settings.
+        return;
+      }
+      if (changes.model !== undefined && changes.model.providerId !== session.value.provider_id) {
         return;
       }
       yield* engine.configureSession({ sessionId: session.value.engine_session_id, ...changes });
@@ -164,28 +213,6 @@ export const layer = Layer.effect(
       const row = yield* byEngineSession(sessionId);
       return Option.map(row, (found): BotSession => ({ id: found.id, botId: found.bot_id }));
     }, Effect.orDie);
-
-    const reconcile = Effect.gen(function* () {
-      for (const { bot } of yield* bots.list) {
-        yield* provision(bot.id).pipe(
-          Effect.catch((error) =>
-            Effect.logWarning("A bot's engine session could not be opened", {
-              botId: bot.id,
-              error: error._tag,
-            }),
-          ),
-        );
-      }
-    });
-
-    // Each time the engine becomes ready, every bot gets what it is missing.
-    yield* engine.status.pipe(
-      Stream.map((status) => status.state._tag === "ready"),
-      Stream.changes,
-      Stream.filter((ready) => ready),
-      Stream.runForEach(() => reconcile),
-      Effect.forkScoped,
-    );
 
     return EngineSessions.of({ provision, configure, removeProject, ofEngineSession });
   }),
