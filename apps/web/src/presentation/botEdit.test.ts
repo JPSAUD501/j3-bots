@@ -70,17 +70,43 @@ describe("modelChoices", () => {
     const choices = modelChoices(
       engine([provider("claude", false, ["sonnet"]), provider("codex", true, ["gpt"])]),
       claude,
+      null,
     );
     expect(choices.groups.map((group) => group.providerName)).toEqual(["claude", "codex"]);
-    expect(choices.currentOffered).toBe(true);
+    expect(choices.unoffered).toEqual([]);
     expect(choices.someNotReady).toBe(false);
 
     const elsewhere = modelChoices(
       engine([provider("claude", true, ["opus"]), provider("codex", false, ["gpt"])]),
       claude,
+      null,
     );
     expect(elsewhere.groups.map((group) => group.providerName)).toEqual(["claude"]);
-    expect(elsewhere.currentOffered).toBe(false);
+    expect(elsewhere.unoffered).toEqual([claude]);
     expect(elsewhere.someNotReady).toBe(true);
+  });
+
+  it("keeps a pick the engine stopped offering in the list, and holds the save for another", () => {
+    const gone = modelChoices(
+      engine([provider("claude", true, ["sonnet"]), provider("codex", false, ["gpt"])]),
+      claude,
+      codex,
+    );
+    expect(gone.unoffered).toEqual([codex]);
+    expect(gone.pickUnavailable).toBe(true);
+
+    // Moving back to the bot's own model, or to one still offered, is fine.
+    expect(modelChoices(engine([provider("codex", true, ["gpt"])]), claude, claude)).toMatchObject({
+      unoffered: [claude],
+      pickUnavailable: false,
+    });
+    expect(
+      modelChoices(engine([provider("codex", true, ["gpt"])]), claude, codex).pickUnavailable,
+    ).toBe(false);
+    // Before the engine reports its models, the pick is listed and left to the server.
+    expect(modelChoices(null, claude, codex)).toMatchObject({
+      unoffered: [claude, codex],
+      pickUnavailable: false,
+    });
   });
 });

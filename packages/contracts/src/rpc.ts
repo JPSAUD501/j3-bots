@@ -246,6 +246,8 @@ const ProfileChanges = Schema.Struct({
   avatar: Schema.optionalKey(Avatar),
   job: Schema.optionalKey(Profile.fields.job),
 });
+/** The profile fields `bot.update` changes. Fields left out keep their value. */
+export type ProfileChanges = typeof ProfileChanges.Type;
 
 export const BotRpcs = RpcGroup.make(
   /** Fields left out take the server's defaults: a free avatar, the first ready model. */

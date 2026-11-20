@@ -3,9 +3,9 @@ import { Dialog } from "@base-ui/react/dialog";
 import type { MemoryEdit, Save } from "@j3-bots/client-runtime";
 import type { MemoryDocument } from "@j3-bots/contracts";
 import { XIcon } from "lucide-react";
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useI18n } from "../app/context";
-import { saveProblem } from "../presentation/saves";
+import { shownSaveProblem } from "../presentation/saves";
 import { Button } from "./ui/button";
 
 /** A memory file as the viewer has it: still reading, read, or not readable. */
@@ -26,9 +26,14 @@ export interface MemoryFileProps {
   readonly onSave: (edit: MemoryEdit) => void;
   /** The operator gave up on an edit whose save failed. */
   readonly onDiscard: () => void;
-  /** Reads the file again, after it changed on the server. */
+  /**
+   * Reads the file again, after it changed on the server. The conflict holds,
+   * and the edit stays, until the read succeeds.
+   */
   readonly onLoadNewer: () => void;
   readonly onClose: () => void;
+  /** Told when the view starts and stops holding an edit. */
+  readonly onEditingChange?: (editing: boolean) => void;
   /** The id of the view's heading, which names the dialog. */
   readonly titleId: string;
 }
@@ -51,6 +56,7 @@ export function MemoryFile({
   onDiscard,
   onLoadNewer,
   onClose,
+  onEditingChange,
   titleId,
 }: MemoryFileProps) {
   const { t } = useI18n();
@@ -69,11 +75,12 @@ export function MemoryFile({
     }
   }
   // A new version of the file, saved or read again, ends the edit. The first
-  // read does not: an edit kept from a failed save waits for it.
-  const [lastDocument, setLastDocument] = useState(document);
-  if (lastDocument !== document) {
-    setLastDocument(document);
-    if (lastDocument !== null && document !== null) {
+  // read does not: an edit kept from a failed save waits for it. A read that
+  // fails in between keeps the edit.
+  const [lastRead, setLastRead] = useState(document);
+  if (document !== null && lastRead !== document) {
+    setLastRead(document);
+    if (lastRead !== null) {
       setEditing(null);
       setFailureShown(false);
     }
@@ -81,12 +88,30 @@ export function MemoryFile({
 
   const saving = save?._tag === "saving";
   const text = saving ? save.changes.text : editing?.text;
-  const problem = failureShown && save?._tag === "failed" ? saveProblem(save.failure) : null;
+  const problem = shownSaveProblem(save, !failureShown);
+  const reloadFailed = problem === "stale" && reading._tag === "failed";
   const canSave =
     editing !== null &&
+    problem !== "stale" &&
     !saving &&
     connected &&
     (document === null || editing.text !== document.text);
+
+  // The text takes focus when an edit starts, and Edit file gets it back when the edit ends.
+  const isEditing = text !== undefined;
+  const textArea = useRef<HTMLTextAreaElement>(null);
+  const editButton = useRef<HTMLButtonElement>(null);
+  const wasEditing = useRef(isEditing);
+  useEffect(() => {
+    if (wasEditing.current === isEditing) return;
+    wasEditing.current = isEditing;
+    (isEditing ? textArea : editButton).current?.focus();
+  }, [isEditing]);
+  useEffect(() => {
+    if (!isEditing || onEditingChange === undefined) return;
+    onEditingChange(true);
+    return () => onEditingChange(false);
+  }, [isEditing, onEditingChange]);
 
   return (
     <form
@@ -103,6 +128,7 @@ export function MemoryFile({
         </h2>
         {document !== null && text === undefined && (
           <Button
+            ref={editButton}
             size="sm"
             className="ms-auto"
             onClick={() => setEditing({ text: document.text, revision: document.revision })}
@@ -123,6 +149,7 @@ export function MemoryFile({
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-4">
         {text !== undefined ? (
           <textarea
+            ref={textArea}
             value={text}
             readOnly={saving}
             aria-label={t("memory.text", { file: title })}
@@ -146,7 +173,11 @@ export function MemoryFile({
       {text !== undefined && (
         <footer className="flex shrink-0 flex-col gap-2 border-t border-border px-4 py-3">
           <p role="alert" className="text-xs text-blocked empty:hidden">
-            {problem === null ? null : t(problemText[problem])}
+            {reloadFailed
+              ? t("memory.reloadFailed")
+              : problem === null
+                ? null
+                : t(problemText[problem])}
           </p>
           {!connected && (
             <p className="text-xs text-muted-foreground">{t("settings.save.offline")}</p>
@@ -154,7 +185,7 @@ export function MemoryFile({
           <div className="flex flex-wrap justify-end gap-2">
             {problem === "stale" && (
               <Button className="me-auto" onClick={onLoadNewer}>
-                {t("memory.loadNewer")}
+                {reloadFailed ? t("memory.loadNewer.retry") : t("memory.loadNewer")}
               </Button>
             )}
             <Button
@@ -186,7 +217,7 @@ const problemText = {
   failed: "memory.saveFailed",
 } as const;
 
-interface MemoryViewerProps extends Omit<MemoryFileProps, "title" | "titleId"> {
+interface MemoryViewerProps extends Omit<MemoryFileProps, "title" | "titleId" | "onEditingChange"> {
   /** The file's name as the details list shows it. Null closes the viewer. */
   readonly title: string | null;
 }
@@ -194,9 +225,12 @@ interface MemoryViewerProps extends Omit<MemoryFileProps, "title" | "titleId"> {
 /** `MemoryFile` as a dialog: the whole screen on a phone, a sheet over the app on wider ones. */
 export function MemoryViewer({ title, onClose, ...view }: MemoryViewerProps) {
   const titleId = useId();
+  // A click outside does not throw away an edit; Escape and the close button still close.
+  const [editing, setEditing] = useState(false);
   return (
     <Dialog.Root
       open={title !== null}
+      disablePointerDismissal={editing}
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
@@ -209,7 +243,13 @@ export function MemoryViewer({ title, onClose, ...view }: MemoryViewerProps) {
         >
           {/* Mounted with the popup, so each opening starts from the file as read. */}
           {title !== null && (
-            <MemoryFile title={title} onClose={onClose} titleId={titleId} {...view} />
+            <MemoryFile
+              title={title}
+              onClose={onClose}
+              onEditingChange={setEditing}
+              titleId={titleId}
+              {...view}
+            />
           )}
         </Dialog.Popup>
       </Dialog.Portal>

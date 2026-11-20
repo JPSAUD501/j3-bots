@@ -104,8 +104,14 @@ interface ModelGroup {
 export interface ModelChoices {
   /** By provider, in the engine's order. */
   readonly groups: ReadonlyArray<ModelGroup>;
-  /** The bot's own model is in `groups`. When not, the engine does not offer it now. */
-  readonly currentOffered: boolean;
+  /**
+   * The models the form holds that the engine does not offer now: the bot's
+   * own, then the one the operator picked. The picker still lists them, so it
+   * never shows a model other than the one Save would send.
+   */
+  readonly unoffered: ReadonlyArray<ModelChoice>;
+  /** The operator picked a model the engine has stopped offering. Save waits for another pick. */
+  readonly pickUnavailable: boolean;
   /** A provider is left out because it cannot run a bot now. */
   readonly someNotReady: boolean;
 }
@@ -113,9 +119,14 @@ export interface ModelChoices {
 /**
  * The models a bot can move to: those of every provider that is ready, and
  * those of the provider it runs on now, whatever its state, so the form
- * always shows where the bot is.
+ * always shows where the bot is. `picked` is the operator's unsaved pick.
+ * Until the engine reports its models, no pick counts as unavailable.
  */
-export function modelChoices(engine: EngineStatus | null, current: ModelChoice): ModelChoices {
+export function modelChoices(
+  engine: EngineStatus | null,
+  current: ModelChoice,
+  picked: ModelChoice | null,
+): ModelChoices {
   const providers = engine?.providers ?? [];
   const listed = providers.filter(
     (provider) => provider.status._tag === "ready" || provider.id === current.providerId,
@@ -129,11 +140,16 @@ export function modelChoices(engine: EngineStatus | null, current: ModelChoice):
         name: model.name,
       })),
     }));
+  const offered = (choice: ModelChoice) =>
+    groups.some((group) => group.models.some((model) => sameModel(model.choice, choice)));
+  const otherPick = picked !== null && !sameModel(picked, current) ? picked : null;
+  const unoffered = [current, ...(otherPick === null ? [] : [otherPick])].filter(
+    (choice) => !offered(choice),
+  );
   return {
     groups,
-    currentOffered: groups.some((group) =>
-      group.models.some((model) => sameModel(model.choice, current)),
-    ),
+    unoffered,
+    pickUnavailable: engine !== null && otherPick !== null && !offered(otherPick),
     someNotReady: listed.length < providers.length,
   };
 }

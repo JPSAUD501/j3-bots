@@ -310,10 +310,13 @@ function LiveShell({ children }: { children: ReactNode }) {
     connected: connection._tag === "connected",
   };
 
-  /** Reads a memory file into the viewer, unless the viewer has moved on to another one. */
+  /**
+   * Reads a memory file into the viewer, unless the viewer has moved on to
+   * another one, and says whether the read succeeded.
+   */
   const readMemoryFile = (botId: BotId, path: MemoryPath) =>
     // Two files can share a title, and two bots a path: a late answer for another file is dropped.
-    j3.readMemory({ _tag: "bot", botId }, path).then((result) =>
+    j3.readMemory({ _tag: "bot", botId }, path).then((result) => {
       setMemoryView((current) =>
         current?.botId !== botId || current.path !== path
           ? current
@@ -324,8 +327,9 @@ function LiveShell({ children }: { children: ReactNode }) {
                   ? { _tag: "read", document: result.value }
                   : { _tag: "failed" },
             },
-      ),
-    );
+      );
+      return result._tag === "done";
+    });
 
   const openMemoryFile = (botId: BotId, path: MemoryPath) => {
     const title = memoryLabel(path, t);
@@ -368,6 +372,14 @@ function LiveShell({ children }: { children: ReactNode }) {
     open.current.bot = null;
     setEditingBot(null);
   };
+
+  // A bot that leaves the roster while its editor is open, deleted or hidden,
+  // closes the editor for good. Its save is not dismissed: the operator did not
+  // give up on it, so a failure is announced, and kept to show if they reopen it.
+  if (editingBot !== null && roster !== null && editingBotValue === null) setEditingBot(null);
+  useEffect(() => {
+    if (editingBot === null) open.current.bot = null;
+  }, [editingBot]);
 
   const updateBot = (bot: Bot, changes: BotChanges) =>
     void j3.updateBot(bot.id, changes).then((result) => {
@@ -560,8 +572,11 @@ function LiveShell({ children }: { children: ReactNode }) {
         }}
         onLoadNewer={() => {
           if (memoryView === null) return;
-          j3.dismissMemorySave(memoryScopeOf(memoryView), memoryView.path);
-          void readMemoryFile(memoryView.botId, memoryView.path);
+          const { botId, path } = memoryView;
+          // The conflict holds until the newer version is in hand.
+          void readMemoryFile(botId, path).then((read) => {
+            if (read) j3.dismissMemorySave(memoryScopeOf(memoryView), path);
+          });
         }}
         onClose={closeMemoryFile}
       />

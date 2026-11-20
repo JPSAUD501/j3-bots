@@ -405,12 +405,12 @@ export const ptBR: Catalog = {
   "memory.readFailed": "Não deu para ler este arquivo. Feche e tente de novo.",
 
   "editBot.title": "Editar {name}",
-  "editBot.close": "Fechar sem salvar",
+  "editBot.close": "Fechar",
   "editBot.name": "Nome",
   "editBot.name.required": "Um bot precisa de um nome.",
   "editBot.tooLong": "Use no máximo {max} caracteres.",
-  "editBot.role": "Cargo",
-  "editBot.role.placeholder": "Como Pesquisa",
+  "editBot.titleField": "Cargo",
+  "editBot.titleField.placeholder": "Como Pesquisa",
   "editBot.job": "Função",
   "editBot.job.hint": "Para que {name} serve e quais são os limites dele, em palavras simples.",
   "editBot.model": "Modelo",
@@ -418,6 +418,7 @@ export const ptBR: Catalog = {
   "editBot.model.someNotReady":
     "Provedores que não podem rodar um bot agora não aparecem. As Configurações mostram o motivo.",
   "editBot.model.refused": "O motor não oferece mais este modelo. Escolha outro.",
+  "editBot.model.unavailable": "O motor deixou de oferecer este modelo. Escolha outro para salvar.",
   "editBot.permissionMode": "Modo de permissão",
   "editBot.nextTurn": "{name} usa as novas configurações a partir do próximo turno.",
   "editBot.cancel": "Cancelar",
@@ -435,8 +436,10 @@ export const ptBR: Catalog = {
   "memory.stale":
     "Este arquivo mudou depois que você o abriu, então sua edição não foi salva. Carregar a versão mais nova substitui sua edição: copie antes o que quiser manter.",
   "memory.loadNewer": "Carregar a versão mais nova",
+  "memory.loadNewer.retry": "Tentar de novo",
+  "memory.reloadFailed": "Não deu para ler a versão mais nova, então sua edição continua aqui.",
   "memory.privateLocation":
-    "Nada foi salvo: a pasta desta memória aponta para fora dos dados privados do J3 Bots no servidor. Remover esse link volta a permitir salvar.",
+    "Nada foi salvo: a pasta desta memória aponta para fora dos dados privados do J3 Bots no servidor. Remova esse link para salvar de novo.",
   "memory.gone": "Este arquivo não existe mais, então sua edição não foi salva.",
   "memory.saveFailed": "Sua edição não foi salva. Tente de novo.",
   "memory.failedClosed": "Sua edição em {file} não foi salva. Abra o arquivo para ver o motivo.",

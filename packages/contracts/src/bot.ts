@@ -11,13 +11,16 @@ export const Avatar = Schema.Struct({
 });
 export type Avatar = typeof Avatar.Type;
 
+/** The longest text each profile field takes. */
+export const PROFILE_LIMITS = { name: 40, title: 40, job: 2_000 } as const;
+
 export const Profile = Schema.Struct({
-  name: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(40)),
+  name: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(PROFILE_LIMITS.name)),
   /** Short role, such as "Research". Empty when the operator gave none. */
-  title: Schema.String.check(Schema.isMaxLength(40)),
+  title: Schema.String.check(Schema.isMaxLength(PROFILE_LIMITS.title)),
   avatar: Avatar,
   /** What the bot is for and where its limits are, in plain language. */
-  job: Schema.String.check(Schema.isMaxLength(2_000)),
+  job: Schema.String.check(Schema.isMaxLength(PROFILE_LIMITS.job)),
 });
 export type Profile = typeof Profile.Type;
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { IntentFailure } from "@j3-bots/client-runtime";
+import type { IntentFailure, Save } from "@j3-bots/client-runtime";
 
 /** Why a save failed, as the form says it. */
 export type SaveProblem =
@@ -13,7 +13,7 @@ export type SaveProblem =
   | "gone"
   | "failed";
 
-export function saveProblem(failure: IntentFailure): SaveProblem {
+function saveProblem(failure: IntentFailure): SaveProblem {
   if (failure._tag !== "refused") return "failed";
   const { error } = failure;
   switch (error._tag) {
@@ -28,4 +28,18 @@ export function saveProblem(failure: IntentFailure): SaveProblem {
           ? "private-location"
           : "failed";
   }
+}
+
+/**
+ * The problem a form shows for its latest save. Most show until the operator
+ * edits again. A conflict holds until the newer version is read, since saving
+ * again would send the same stale revision.
+ */
+export function shownSaveProblem(
+  save: Save<unknown> | undefined,
+  editedSince: boolean,
+): SaveProblem | null {
+  if (save?._tag !== "failed") return null;
+  const problem = saveProblem(save.failure);
+  return problem === "stale" || !editedSince ? problem : null;
 }

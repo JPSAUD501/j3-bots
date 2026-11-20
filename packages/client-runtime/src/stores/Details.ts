@@ -11,6 +11,7 @@ import type {
   ModelChoice,
   PermissionMode,
   Profile,
+  ProfileChanges,
   Routine,
   RoutineId,
 } from "@j3-bots/contracts";
@@ -46,11 +47,7 @@ export interface BotDraft {
 
 /** What `updateBot` changes. Fields left out keep their value. */
 export interface BotChanges {
-  readonly profile?: {
-    readonly name?: Profile["name"];
-    readonly title?: Profile["title"];
-    readonly job?: Profile["job"];
-  };
+  readonly profile?: Omit<ProfileChanges, "avatar">;
   readonly model?: ModelChoice;
   readonly permissionMode?: PermissionMode;
 }

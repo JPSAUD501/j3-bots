@@ -3,10 +3,10 @@ import { Dialog } from "@base-ui/react/dialog";
 import { Radio } from "@base-ui/react/radio";
 import { RadioGroup } from "@base-ui/react/radio-group";
 import type { BotChanges, Save } from "@j3-bots/client-runtime";
-import { type Bot, type EngineStatus, PermissionMode } from "@j3-bots/contracts";
+import { type Bot, type EngineStatus, PermissionMode, PROFILE_LIMITS } from "@j3-bots/contracts";
 import * as Schema from "effect/Schema";
 import { XIcon } from "lucide-react";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
 import {
@@ -19,7 +19,7 @@ import {
   sameModel,
   withChanges,
 } from "../presentation/botEdit";
-import { saveProblem } from "../presentation/saves";
+import { shownSaveProblem } from "../presentation/saves";
 import { permissionText } from "./DetailsPanel";
 import { Button } from "./ui/button";
 import { ChoiceIndicator, choiceRow } from "./ui/choice";
@@ -36,15 +36,14 @@ export interface EditBotFormProps {
   readonly connected: boolean;
   readonly onSave: (changes: BotChanges) => void;
   readonly onClose: () => void;
+  /** Told when the form starts and stops holding edits that are not saved. */
+  readonly onUnsavedChange?: (unsaved: boolean) => void;
   /** The id of the form's heading, which names the dialog. */
   readonly titleId: string;
 }
 
 const fieldClass =
   "w-full rounded-md border border-input bg-surface px-3 text-sm placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-accent read-only:text-muted-foreground aria-invalid:border-blocked";
-
-/** The longest text each field takes, as `Profile` checks it. */
-const limit: Record<ProfileField, number> = { name: 40, title: 40, job: 2_000 };
 
 const modes = PermissionMode.literals;
 const isMode = Schema.is(PermissionMode);
@@ -66,10 +65,18 @@ export function EditBotForm({
   connected,
   onSave,
   onClose,
+  onUnsavedChange,
   titleId,
 }: EditBotFormProps) {
   const { t } = useI18n();
-  const ids = { name: useId(), title: useId(), job: useId(), model: useId(), mode: useId() };
+  const ids = {
+    name: useId(),
+    title: useId(),
+    job: useId(),
+    jobHint: useId(),
+    model: useId(),
+    mode: useId(),
+  };
   const errorIds = { name: useId(), title: useId(), job: useId(), model: useId() };
   const [edits, setEdits] = useState<BotEdits>(() =>
     save?._tag === "failed" ? editsAfterFailedBotSave(noBotEdits, save.changes) : noBotEdits,
@@ -98,17 +105,30 @@ export function EditBotForm({
   const mode = edits.permissionMode ?? shown.permissionMode;
   const patch = botPatch(bot, edits);
   const invalid = patch._tag === "invalid" ? patch.fields : new Set<ProfileField>();
-  const problem = failureShown && save?._tag === "failed" ? saveProblem(save.failure) : null;
-  const choices = modelChoices(engine, bot.model);
+  const problem = shownSaveProblem(save, !failureShown);
+  const choices = modelChoices(engine, bot.model, edits.model);
+  const modelMessage =
+    problem === "model"
+      ? t("editBot.model.refused")
+      : choices.pickUnavailable
+        ? t("editBot.model.unavailable")
+        : null;
   const settingsChange = !sameModel(model, bot.model) || mode !== bot.permissionMode;
-  const canSave = patch._tag === "changes" && !saving && connected;
+  const canSave = patch._tag === "changes" && !choices.pickUnavailable && !saving && connected;
+
+  const unsaved = patch._tag !== "unchanged";
+  useEffect(() => {
+    if (!unsaved || onUnsavedChange === undefined) return;
+    onUnsavedChange(true);
+    return () => onUnsavedChange(false);
+  }, [unsaved, onUnsavedChange]);
 
   const fieldError = (field: ProfileField) =>
     invalid.has(field) ? (
       <p id={errorIds[field]} className="text-xs text-blocked">
         {field === "name" && name.trim() === ""
           ? t("editBot.name.required")
-          : t("editBot.tooLong", { max: limit[field] })}
+          : t("editBot.tooLong", { max: PROFILE_LIMITS[field] })}
       </p>
     ) : null;
   const errorProps = (field: ProfileField) =>
@@ -146,7 +166,7 @@ export function EditBotForm({
           <input
             id={ids.name}
             value={name}
-            maxLength={limit.name}
+            maxLength={PROFILE_LIMITS.name}
             readOnly={saving}
             autoComplete="off"
             onChange={(event) => edit({ name: event.currentTarget.value })}
@@ -158,15 +178,15 @@ export function EditBotForm({
 
         <div className="flex flex-col gap-1">
           <label htmlFor={ids.title} className="text-xs">
-            {t("editBot.role")}
+            {t("editBot.titleField")}
           </label>
           <input
             id={ids.title}
             value={title}
-            maxLength={limit.title}
+            maxLength={PROFILE_LIMITS.title}
             readOnly={saving}
             autoComplete="off"
-            placeholder={t("editBot.role.placeholder")}
+            placeholder={t("editBot.titleField.placeholder")}
             onChange={(event) => edit({ title: event.currentTarget.value })}
             className={cn(fieldClass, "h-9 pointer-coarse:h-11")}
             {...errorProps("title")}
@@ -181,15 +201,15 @@ export function EditBotForm({
           <textarea
             id={ids.job}
             value={job}
-            maxLength={limit.job}
+            maxLength={PROFILE_LIMITS.job}
             readOnly={saving}
             rows={4}
             onChange={(event) => edit({ job: event.currentTarget.value })}
-            aria-describedby={invalid.has("job") ? errorIds.job : `${ids.job}-hint`}
+            aria-describedby={invalid.has("job") ? `${ids.jobHint} ${errorIds.job}` : ids.jobHint}
             aria-invalid={invalid.has("job") || undefined}
             className={cn(fieldClass, "field-sizing-content min-h-24 resize-none py-2")}
           />
-          <p id={`${ids.job}-hint`} className="text-2xs text-muted-foreground">
+          <p id={ids.jobHint} className="text-2xs text-muted-foreground">
             {t("editBot.job.hint", { name: bot.profile.name })}
           </p>
           {fieldError("job")}
@@ -203,25 +223,26 @@ export function EditBotForm({
             id={ids.model}
             value={keyOf(model)}
             aria-readonly={saving}
-            aria-invalid={problem === "model" || undefined}
-            aria-describedby={problem === "model" ? errorIds.model : undefined}
+            aria-invalid={modelMessage !== null || undefined}
+            aria-describedby={modelMessage === null ? undefined : errorIds.model}
             onChange={(event) => {
               if (saving) return;
               const key = event.currentTarget.value;
-              const picked = choices.groups
-                .flatMap((group) => group.models)
-                .find((option) => keyOf(option.choice) === key);
-              edit({ model: picked?.choice ?? bot.model });
+              const picked = [
+                ...choices.unoffered,
+                ...choices.groups.flatMap((group) => group.models.map((option) => option.choice)),
+              ].find((choice) => keyOf(choice) === key);
+              edit({ model: picked ?? bot.model });
             }}
             className={cn(fieldClass, "h-9 pointer-coarse:h-11")}
           >
-            {!choices.currentOffered && (
-              <option value={keyOf(bot.model)}>
+            {choices.unoffered.map((choice) => (
+              <option key={keyOf(choice)} value={keyOf(choice)}>
                 {engine === null
-                  ? bot.model.modelId
-                  : t("editBot.model.notOffered", { model: bot.model.modelId })}
+                  ? choice.modelId
+                  : t("editBot.model.notOffered", { model: choice.modelId })}
               </option>
-            )}
+            ))}
             {choices.groups.map((group) => (
               <optgroup key={group.providerName} label={group.providerName}>
                 {group.models.map((option) => (
@@ -232,11 +253,10 @@ export function EditBotForm({
               </optgroup>
             ))}
           </select>
-          {problem === "model" && (
-            <p id={errorIds.model} className="text-xs text-blocked">
-              {t("editBot.model.refused")}
-            </p>
-          )}
+          {/* Always mounted, so a refusal that arrives later is announced. */}
+          <p id={errorIds.model} role="alert" className="text-xs text-blocked empty:hidden">
+            {modelMessage}
+          </p>
           {choices.someNotReady && (
             <p className="text-2xs text-muted-foreground">{t("editBot.model.someNotReady")}</p>
           )}
@@ -308,7 +328,7 @@ export function EditBotForm({
   );
 }
 
-interface EditBotDialogProps extends Omit<EditBotFormProps, "bot" | "titleId"> {
+interface EditBotDialogProps extends Omit<EditBotFormProps, "bot" | "titleId" | "onUnsavedChange"> {
   /** The bot being edited; null closes the dialog. */
   readonly bot: Bot | null;
 }
@@ -316,9 +336,12 @@ interface EditBotDialogProps extends Omit<EditBotFormProps, "bot" | "titleId"> {
 /** `EditBotForm` as a dialog: the whole screen on a phone, a sheet over the app on wider ones. */
 export function EditBotDialog({ bot, onClose, ...form }: EditBotDialogProps) {
   const titleId = useId();
+  // A click outside does not throw away unsaved edits; Escape and the close button still close.
+  const [unsaved, setUnsaved] = useState(false);
   return (
     <Dialog.Root
       open={bot !== null}
+      disablePointerDismissal={unsaved}
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
@@ -330,7 +353,15 @@ export function EditBotDialog({ bot, onClose, ...form }: EditBotDialogProps) {
           className="fixed inset-0 z-40 flex flex-col bg-background pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] text-foreground outline-none transition-opacity duration-(--duration-slow) data-ending-style:opacity-0 data-starting-style:opacity-0 tablet:inset-x-4 tablet:top-12 tablet:bottom-12 tablet:mx-auto tablet:max-w-lg tablet:rounded-lg tablet:border tablet:border-border tablet:shadow-xl"
         >
           {/* Mounted with the popup, so each opening starts from the bot as saved. */}
-          {bot !== null && <EditBotForm bot={bot} onClose={onClose} titleId={titleId} {...form} />}
+          {bot !== null && (
+            <EditBotForm
+              bot={bot}
+              onClose={onClose}
+              onUnsavedChange={setUnsaved}
+              titleId={titleId}
+              {...form}
+            />
+          )}
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>
