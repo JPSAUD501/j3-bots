@@ -55,18 +55,36 @@ const entry = {
   createdAt: Schema.DateTimeUtc,
 };
 
+/**
+ * - `pending`: recorded, and not every recipient has received it yet (one is
+ *   busy, or the message waits on a budget).
+ * - `delivered`: it reached every recipient.
+ * - `cancelled`: the operator stopped a recipient before it received the
+ *   message, so it never will.
+ * - `failed`: J3 Bots gave up delivering it to a recipient, and will not try
+ *   again on its own; `message.retry` sends it again. `rejected`: the engine
+ *   refused it. `unresolved`: whether the engine took it could not be
+ *   learned. `stopped`: a room's Stop cancelled it in the engine on its way to
+ *   a bot in private. A failed message can still turn out `delivered`, when
+ *   the engine had taken it after all.
+ */
+export const MessageDelivery = Schema.Union([
+  Schema.TaggedStruct("pending", {}),
+  Schema.TaggedStruct("delivered", {}),
+  Schema.TaggedStruct("cancelled", {}),
+  Schema.TaggedStruct("failed", {
+    reason: Schema.Literals(["rejected", "unresolved", "stopped"]),
+  }),
+]);
+export type MessageDelivery = typeof MessageDelivery.Type;
+
 export const MessageEntry = Schema.TaggedStruct("message", {
   ...entry,
   text: MessageText,
   attachments: Schema.Array(Attachment),
   mentions: Mentions,
-  /**
-   * `pending`: recorded, and the bot has not received it yet (it is busy, or the
-   * message waits on a budget). `delivered`: it reached the bot. `cancelled`:
-   * the operator stopped the bot before it received the message, so it never
-   * will. Messages written by bots are always `delivered`.
-   */
-  delivery: Schema.Literals(["pending", "delivered", "cancelled"]),
+  /** Whether it reached its recipients. Messages written by bots are always `delivered`. */
+  delivery: MessageDelivery,
   /** The operator's command that created it, so a client can replace its optimistic copy. */
   commandId: Schema.NullOr(CommandId),
 });
@@ -107,7 +125,8 @@ export type QuestionAnswers = typeof QuestionAnswers.Type;
  *
  * - `ask`: the bot called `ask`, which ended its turn. The card stays open until
  *   the operator answers or dismisses it, however long that takes; either one
- *   wakes the bot again with the answer.
+ *   wakes the bot again with the answer. In a room, archiving the room expires
+ *   it.
  * - `engine`: the harness's own question tool held a running turn. Answering it
  *   lets that turn continue. It expires when its turn ends.
  */
@@ -120,7 +139,10 @@ export const QuestionEntry = Schema.TaggedStruct("question", {
     Schema.TaggedStruct("answered", { answers: QuestionAnswers }),
     /** The operator dismissed it, which the bot reads as "no". */
     Schema.TaggedStruct("dismissed", {}),
-    /** Only an `engine` question: its turn ended before an answer. Answering it is refused. */
+    /**
+     * Closed before an answer: an `engine` question when its turn ended, an
+     * `ask` question when its room was archived. Answering it is refused.
+     */
     Schema.TaggedStruct("expired", {}),
   ]),
 });
