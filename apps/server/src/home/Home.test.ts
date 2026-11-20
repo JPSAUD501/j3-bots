@@ -126,7 +126,7 @@ it.layer(NodeServices.layer)("home", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("advises chmod only when a permission keeps this user from writing", () =>
+  it.effect("gives a fix only for a refusal it can name the repair of", () =>
     Effect.gen(function* () {
       // How Node reports each refusal of `access(home, W_OK)`.
       const refusal = (code: string, tag: PlatformError.SystemErrorTag) =>
@@ -147,8 +147,10 @@ it.layer(NodeServices.layer)("home", (it) => {
             }),
           ),
         );
+      // The home is already this user's, with mode 0700: chmod cannot lift this refusal.
       const denied = yield* refusal("EACCES", "PermissionDenied");
-      assert.include(denied.message, "chmod 700");
+      assert.include(denied.message, "EACCES: access '/srv/j3'");
+      assert.isUndefined(denied.fix);
       const readOnly = yield* refusal("EROFS", "Unknown");
       assert.include(readOnly.message, "read-only");
       assert.include(readOnly.message, "journalctl");

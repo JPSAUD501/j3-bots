@@ -82,15 +82,13 @@ export const checkPrivate = Effect.fn("Home.checkPrivate")(function* (home: stri
 /** The home exists, but this user cannot create files in it. */
 class HomeNotWritable extends Schema.TaggedError<HomeNotWritable>()("HomeNotWritable", {
   home: Schema.String,
-  reason: Schema.Literals(["denied", "read-only", "other"]),
+  reason: Schema.Literals(["read-only", "other"]),
   /** What the system reported, for a reason this module does not name. */
   detail: Schema.String,
 }) {
   /** The problem, without the fix. */
   get summary(): string {
     switch (this.reason) {
-      case "denied":
-        return `This user cannot write to ${this.home}, where the server keeps its database and admin socket.`;
       case "read-only":
         return `${this.home} is on a file system mounted read-only, so the server cannot keep its database there.`;
       case "other":
@@ -105,8 +103,6 @@ class HomeNotWritable extends Schema.TaggedError<HomeNotWritable>()("HomeNotWrit
   /** What repairs it, for the operator to do, when this module knows. */
   get fix(): string | undefined {
     switch (this.reason) {
-      case "denied":
-        return `Run \`chmod 700 ${shellWord(this.home)}\`.`;
       case "read-only":
         // A disk that reports errors is remounted read-only, as SD cards often are.
         return "Check the disk for errors, and the system journal (`journalctl -k`) for why it was mounted read-only.";
@@ -116,9 +112,13 @@ class HomeNotWritable extends Schema.TaggedError<HomeNotWritable>()("HomeNotWrit
   }
 }
 
-/** Why the system refused to let this user write to the home. */
+/**
+ * Why the system refused to let this user write to the home. `checkPrivate`
+ * has already found it this user's own, with mode 0700, so a permission
+ * refusal here comes from what chmod cannot change, such as an immutable flag,
+ * a security module or a network file system: the system's message says which.
+ */
 const writeRefusal = (error: PlatformError.PlatformError): HomeNotWritable["reason"] => {
-  if (error.reason._tag === "PermissionDenied") return "denied";
   const { cause } = error;
   return Predicate.hasProperty(cause, "code") && cause.code === "EROFS" ? "read-only" : "other";
 };

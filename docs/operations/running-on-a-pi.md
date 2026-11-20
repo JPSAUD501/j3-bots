@@ -197,14 +197,14 @@ This stops the service, disables it and deletes its unit. The data directory sta
 
 ## What `doctor` checks
 
-Each line is ✓ (fine), `!` (a warning: the server runs, but something is missing), ✗ (a problem to fix) or `-` (not checked). A line that is not ✓ carries a fix. `doctor` exits with status 1 when it reports any problem.
+Each line is ✓ (fine), `!` (a warning: the server runs, but something is missing), ✗ (a problem to fix) or `-` (not checked). A warning or a problem carries its fix when `doctor` knows one. `doctor` exits with status 1 when it reports any problem.
 
 | Check | What it looks at |
 | --- | --- |
 | Node | The Node running it has the major version J3 Bots is built on. |
 | Configuration | `config.json` and, while the service is not installed, the `J3_*` variables decode and pass the checks the server makes at start. Some examples: a public address without TLS, two settings on one port, a TLS certificate and key that do not load as a pair, a web client folder that overlaps the data directory, and a data directory inside a Git checkout. With the service installed, every check describes the service: its data directory, its `config.json` and its `PATH`. |
 | Shell settings | With the service installed, a warning for each `J3_*` variable in your shell, which the service does not get, and a problem for one whose value the server would refuse. |
-| Data directory | It is a folder this user owns and can write to, and no group or other user can open it. Otherwise the server does not start, and `doctor` prints the `chmod` or `chown` command that fixes it. |
+| Data directory | It is a folder this user owns and can write to, and no group or other user can open it. Otherwise the server does not start, and `doctor` reports the cause, with the fix when it has one, such as the `chmod` or `chown` command. |
 | Disk space | Free space where the data directory is: less than 1 GB is a problem, less than 3 GB a warning. |
 | Server | Whether a server answers on the admin socket, its version and the address it listens on. Something that is not a socket where the admin socket goes is a problem, since no server can start, with the `mv` command that clears it. |
 | Ports | With the server running, the ports it listens on, and a problem if the engine's port was taken. With no server running, that the server's port, the bot tool port and the engine's port are free on their addresses. |
