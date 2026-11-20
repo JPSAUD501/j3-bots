@@ -15,11 +15,7 @@ const SEEN_ID = "data-seen-id";
  */
 const SEEN_SHARE = 0.5;
 
-/**
- * The timeline of `height` narrowed to its middle line. In pixels: a
- * percentage in `rootMargin` resolves against the root's width, even above
- * and below (Intersection Observer, "root intersection rectangle").
- */
+/** The timeline of `height` narrowed to its middle line, in pixels from its measured height. */
 const middleLine = (height: number) => `${-height / 2}px 0px ${-height / 2}px 0px`;
 
 /** A modal dialog hides what it covers from assistive technology; the details pane makes it inert. */
@@ -74,7 +70,8 @@ export function useNewestSeen(root: HTMLElement | null, onSeen: (id: string) => 
       );
     let height = root.clientHeight;
     let middle = followMiddle(height);
-    // Observing an entry twice is a no-op, so every change observes whatever is new.
+    // Observing an entry twice is a no-op, so every change observes whatever is new,
+    // including a message whose entry id arrives on the element that showed it.
     const observeEntries = () => {
       for (const entry of root.querySelectorAll(`[${SEEN_ID}]`)) {
         half.observe(entry);
@@ -83,7 +80,12 @@ export function useNewestSeen(root: HTMLElement | null, onSeen: (id: string) => 
     };
     observeEntries();
     const arrivals = new MutationObserver(observeEntries);
-    arrivals.observe(root, { childList: true, subtree: true });
+    arrivals.observe(root, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: [SEEN_ID],
+    });
     // A margin is fixed when its observer is made, so a new height takes a new one.
     const resizes = new ResizeObserver(() => {
       if (root.clientHeight === height) return;

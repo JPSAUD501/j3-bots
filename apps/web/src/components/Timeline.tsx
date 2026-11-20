@@ -68,17 +68,21 @@ export function Timeline({ entries, inRoom, workSteps, submitting, intents }: Ti
         if (item.kind === "divider") return <TimeDivider key={item.key} at={item.at} />;
         if (item.kind === "message") {
           const { message } = item;
+          // One element, under one key, from Send to the server's entry, so
+          // nothing in the bubble loses focus when the entry arrives; the entry
+          // id it gains then makes it count toward the read mark.
           if (message._tag === "outgoing") {
             return (
-              <MessageBubble
-                key={item.key}
-                message={message}
-                position={item.position}
-                mentionable={mentionable}
-                onOpenAttachment={intents.openAttachment}
-                onRetry={() => intents.resendMessage(message.commandId)}
-                onDiscard={() => intents.discardMessage(message.commandId)}
-              />
+              <div key={item.key}>
+                <MessageBubble
+                  message={message}
+                  position={item.position}
+                  mentionable={mentionable}
+                  onOpenAttachment={intents.openAttachment}
+                  onRetry={() => intents.resendMessage(message.commandId)}
+                  onDiscard={() => intents.discardMessage(message.commandId)}
+                />
+              </div>
             );
           }
           const { author } = message;
