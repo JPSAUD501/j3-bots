@@ -56,7 +56,7 @@ import {
   SessionRowId,
   TurnsInvariant,
 } from "./model.ts";
-import { inboxPath, Sender, type SendResult } from "./Sender.ts";
+import { inboxPath, Sender, type SendOwner, type SendResult } from "./Sender.ts";
 import { isIdle, sessionWork } from "./sessionWork.ts";
 import { Observer } from "./Observer.ts";
 import { Readiness } from "./Readiness.ts";
@@ -454,23 +454,37 @@ export const layer = Layer.effect(
      * Sessions with work the engine may have, across every bot: what the
      * concurrency budget counts. That is one fact, read again before each
      * first send: a turn the events show, or a dispatch sent at least once and
-     * not settled. A dispatch never sent holds no slot, also while its files
-     * wait to be staged again; it takes one when it is sent.
+     * not settled (a delivered one whose continuation is pending included). A
+     * dispatch never sent holds no slot, also while its files wait to be
+     * staged again; it takes one when it is sent.
      */
-    const busySessions = sql<{ readonly n: number }>`
-      SELECT COUNT(*) AS n FROM sessions s
-      WHERE s.retired_at IS NULL AND s.lost_at IS NULL AND (
-        s.admitted_turn_id IS NOT NULL
-        OR EXISTS (SELECT 1 FROM turns t WHERE t.session_id = s.id AND t.finished_at IS NULL)
-        OR EXISTS (
-          SELECT 1 FROM dispatches d WHERE d.session_id = s.id
-            AND (d.status IN ('accepted', 'delivered') OR (d.status = 'intended' AND d.attempts > 0))
+    const busySessions = SqlSchema.findAll({
+      Request: Schema.Void,
+      Result: Schema.Struct({ id: SessionRowId }),
+      execute: () => sql`
+        SELECT s.id FROM sessions s
+        WHERE s.retired_at IS NULL AND s.lost_at IS NULL AND (
+          s.admitted_turn_id IS NOT NULL
+          OR EXISTS (SELECT 1 FROM turns t WHERE t.session_id = s.id AND t.finished_at IS NULL)
+          OR EXISTS (
+            SELECT 1 FROM dispatches d WHERE d.session_id = s.id
+              AND (d.status IN ('accepted', 'delivered') OR (d.status = 'intended' AND d.attempts > 0))
+          )
         )
-      )
-    `.pipe(
-      Effect.orDie,
-      Effect.map((rows) => rows[0]?.n ?? 0),
-    );
+      `,
+    })(undefined).pipe(Effect.orDie);
+
+    /**
+     * Whether a start may be sent into the session now, by the one rule every
+     * start follows, fresh or sent again after its files failed to stage: a
+     * slot is free, or the session already holds one, as when its turn's
+     * continuation is pending.
+     */
+    const admitsStart = Effect.fn("Pipeline.admitsStart")(function* (sessionId: SessionRowId) {
+      const { budgets } = yield* settings.get;
+      const busy = yield* busySessions;
+      return busy.length < budgets.concurrentTurns || busy.some((row) => row.id === sessionId);
+    });
 
     /**
      * Written and never sent, not fenced, and in a session no Stop holds (as
@@ -483,11 +497,12 @@ export const layer = Layer.effect(
       Request: Schema.Void,
       Result: Schema.Struct({
         id: DispatchRowId,
+        session_id: SessionRowId,
         delivery: Schema.Literals(["start", "steer"]),
         next_attempt_at: Schema.NullOr(Time),
       }),
       execute: () => sql`
-        SELECT id, delivery, next_attempt_at FROM dispatches d
+        SELECT id, session_id, delivery, next_attempt_at FROM dispatches d
         WHERE status = 'intended' AND attempts = 0 AND fenced_by_stop_id IS NULL
           AND NOT EXISTS (
             SELECT 1 FROM stop_targets t WHERE t.session_id = d.session_id AND t.stopped_at IS NULL
@@ -549,11 +564,7 @@ export const layer = Layer.effect(
      * for now, or a session whose events are not known yet, which is looked
      * at again on a later pass.
      */
-    const planFor = Effect.fn("Pipeline.planFor")(function* (
-      botId: BotId,
-      slots: number,
-      now: DateTime.Utc,
-    ) {
+    const planFor = Effect.fn("Pipeline.planFor")(function* (botId: BotId, now: DateTime.Utc) {
       const session = yield* mainSession({ botId, now: timeText(now) }).pipe(Effect.orDie);
       if (Option.isNone(session)) return null;
       const pending = yield* pendingOf(botId).pipe(Effect.orDie);
@@ -573,7 +584,7 @@ export const layer = Layer.effect(
       if (isIdle(work)) {
         // A pending continuation holds back every wake but the operator's.
         if (work.continuations > 0 && head.kind !== "user") return null;
-        if (work.continuations === 0 && slots <= 0) return null;
+        if (!(yield* admitsStart(session.value.id))) return null;
         delivery = { _tag: "start" };
       } else if (
         // An answer waits for the turn that asked to finish: it starts the next.
@@ -828,12 +839,17 @@ export const layer = Layer.effect(
       );
 
     /**
-     * One send of a pass. The sender counts its own defects against the
-     * dispatch; one it could not count is logged here, and the pass goes on
-     * with the others and looks again later.
+     * One send of a pass, for the worker that owns it. The sender counts its
+     * own defects against the dispatch, or defers it; one it could not even
+     * defer is logged here, and the pass goes on with the others and looks
+     * again later.
      */
-    const sendOne = (dispatchId: DispatchRowId, outcome: ReturnType<typeof passOutcome>) =>
-      sender.send(dispatchId).pipe(
+    const sendOne = (
+      dispatchId: DispatchRowId,
+      owner: SendOwner,
+      outcome: ReturnType<typeof passOutcome>,
+    ) =>
+      sender.send(dispatchId, owner).pipe(
         Effect.catchCauseIf(
           (cause) => !Cause.hasInterruptsOnly(cause),
           (cause) =>
@@ -857,22 +873,22 @@ export const layer = Layer.effect(
       Effect.gen(function* () {
         const outcome = passOutcome();
         const now = yield* DateTime.now;
-        const { budgets } = yield* settings.get;
-        const freeSlots = Effect.map(busySessions, (busy) => budgets.concurrentTurns - busy);
         // A dispatch written before a crash, while the engine was down, or
-        // whose files failed to stage goes first: a start takes a slot when
-        // it is sent, like a new one.
-        for (const { id, delivery, next_attempt_at } of yield* unsent) {
-          if (next_attempt_at !== null && DateTime.isGreaterThan(next_attempt_at, now)) continue;
-          if (delivery === "start" && (yield* freeSlots) <= 0) continue;
-          const result = yield* sendOne(id, outcome);
+        // whose files failed to stage goes first: a start is admitted when it
+        // is sent, like a new one.
+        for (const row of yield* unsent) {
+          if (row.next_attempt_at !== null && DateTime.isGreaterThan(row.next_attempt_at, now)) {
+            continue;
+          }
+          if (row.delivery === "start" && !(yield* admitsStart(row.session_id))) continue;
+          const result = yield* sendOne(row.id, "dispatcher", outcome);
           if (result === "engine-unavailable") return { _tag: "unavailable" } as const;
           if (result === "skipped") outcome.defer();
         }
         for (const { bot_id: botId } of yield* waitingBots) {
           const planned = yield* planOne(
             Effect.gen(function* () {
-              const plan = yield* planFor(botId, yield* freeSlots, now);
+              const plan = yield* planFor(botId, now);
               if (plan === null || plan === "not-ready") return plan;
               const dispatchId = yield* writeDispatch(plan);
               return dispatchId === null ? null : { plan, dispatchId };
@@ -881,7 +897,7 @@ export const layer = Layer.effect(
           );
           if (planned === "not-ready") outcome.defer();
           if (planned === null || planned === "not-ready") continue;
-          const result = yield* sendOne(planned.dispatchId, outcome);
+          const result = yield* sendOne(planned.dispatchId, "dispatcher", outcome);
           if (result === "engine-unavailable") return { _tag: "unavailable" } as const;
           if (result === "skipped") outcome.defer();
         }
@@ -930,7 +946,7 @@ export const layer = Layer.effect(
           if (row.next_attempt_at !== null && DateTime.isGreaterThan(row.next_attempt_at, now)) {
             continue;
           }
-          const result = yield* sendOne(row.id, outcome);
+          const result = yield* sendOne(row.id, "recovery", outcome);
           if (result === "engine-unavailable") return { _tag: "unavailable" } as const;
           if (result === "skipped") outcome.defer();
         }

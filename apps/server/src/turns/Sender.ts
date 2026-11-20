@@ -66,6 +66,12 @@ export type SendResult =
   /** Nothing was sent: the engine cannot take commands. Try again once it is ready. */
   | "engine-unavailable";
 
+/**
+ * The worker a send is made for: the dispatcher makes every first send, under
+ * the turn budget, and the recovery every send of a key already sent.
+ */
+export type SendOwner = "dispatcher" | "recovery";
+
 const FileRow = Schema.Struct({
   position: Schema.Int,
   attachment_id: AttachmentId,
@@ -116,11 +122,12 @@ export class Sender extends Context.Service<
   Sender,
   {
     /**
-     * Sends a dispatch if it is due: a first send unless a Stop fenced it or
-     * a Stop of its session is unsettled, a recovery of a key already sent in
-     * any case.
+     * Sends a dispatch if it is due and still `owner`'s: a first send unless
+     * a Stop fenced it or a Stop of its session is unsettled, a recovery of a
+     * key already sent in any case. A defect is counted against the dispatch,
+     * or at least defers it, so a broken dispatch never holds up the others.
      */
-    readonly send: (dispatchId: DispatchRowId) => Effect.Effect<SendResult>;
+    readonly send: (dispatchId: DispatchRowId, owner: SendOwner) => Effect.Effect<SendResult>;
   }
 >()("@j3-bots/server/turns/Sender") {}
 
@@ -443,14 +450,15 @@ export const layer = Layer.effect(
     });
 
     /**
-     * The last resort when counting a defect failed too: one write that only
-     * moves the dispatch's deadline, so it is looked at again later and never
-     * at once.
+     * The last resort when a defect could not be counted: one write that only
+     * moves the deadline of a dispatch still undecided, and reads nothing of
+     * it, so it is looked at again later and never at once.
      */
     const postpone = Effect.fn("Sender.postpone")(function* (dispatchId: DispatchRowId) {
       const next = DateTime.addDuration(yield* DateTime.now, DEFECT_RETRY);
       yield* sql`
-        UPDATE dispatches SET next_attempt_at = ${timeText(next)} WHERE id = ${dispatchId}
+        UPDATE dispatches SET next_attempt_at = ${timeText(next)}
+        WHERE id = ${dispatchId} AND status = 'intended'
       `.pipe(Effect.orDie);
       return "scheduled" satisfies SendResult as SendResult;
     });
@@ -488,17 +496,23 @@ export const layer = Layer.effect(
      * passed, the session's readiness, the staging and the claim. What to call
      * the engine with once the attempt is claimed, or what the send did.
      */
-    const prepare = Effect.fn("Sender.prepare")(function* (dispatchId: DispatchRowId) {
+    const prepare = Effect.fn("Sender.prepare")(function* (
+      dispatchId: DispatchRowId,
+      owner: SendOwner,
+    ) {
       const found = yield* ledger.find(dispatchId);
       if (Option.isNone(found) || found.value.status !== "intended") return "none" as const;
       const row = found.value;
       const now = yield* DateTime.now;
-      // Read again in the gate: another pass may have sent it meanwhile.
+      // Read again in the gate: another pass may have sent it meanwhile, or
+      // given back the attempt it claimed, which makes the dispatch the
+      // dispatcher's again.
+      const firstSend = row.attempts === 0;
+      if (firstSend !== (owner === "dispatcher")) return "none" as const;
       if (row.next_attempt_at !== null && DateTime.isGreaterThan(row.next_attempt_at, now)) {
         return "none" as const;
       }
       const session = yield* sessionState(row.session_id).pipe(Effect.orDie);
-      const firstSend = row.attempts === 0;
       // A fenced dispatch never sent was released with its fence; a Stop of
       // the session holds every other first send. A key already sent is the
       // recovery's in any case.
@@ -587,8 +601,11 @@ export const layer = Layer.effect(
      * counts as a staging failure; after it the key may be in the engine, so
      * it counts as an undecided answer.
      */
-    const sendInGate = Effect.fn("Sender.sendInGate")(function* (dispatchId: DispatchRowId) {
-      const prepared = yield* prepare(dispatchId).pipe(
+    const sendInGate = Effect.fn("Sender.sendInGate")(function* (
+      dispatchId: DispatchRowId,
+      owner: SendOwner,
+    ) {
+      const prepared = yield* prepare(dispatchId, owner).pipe(
         countDefect(
           "A dispatch could not be prepared; it is tried again later",
           dispatchId,
@@ -605,10 +622,42 @@ export const layer = Layer.effect(
       );
     });
 
-    const send = Effect.fn("Sender.send")(function* (dispatchId: DispatchRowId) {
-      const found = yield* ledger.find(dispatchId);
-      if (Option.isNone(found) || found.value.status !== "intended") return "none" as const;
-      const result = yield* gate.run(found.value.session_id)(sendInGate(dispatchId));
+    const sessionOf = SqlSchema.findOneOption({
+      Request: Schema.String,
+      Result: Schema.Struct({ session_id: Schema.String }),
+      execute: (id) => sql`
+        SELECT session_id FROM dispatches WHERE id = ${id} AND status = 'intended'
+      `,
+    });
+
+    const attemptsOf = SqlSchema.findOneOption({
+      Request: Schema.String,
+      Result: Schema.Struct({ attempts: Schema.Int }),
+      execute: (id) => sql`SELECT attempts FROM dispatches WHERE id = ${id}`,
+    });
+
+    /**
+     * The whole send. A defect outside what the gate counts, such as a row
+     * that cannot be read, defers the dispatch durably like any other.
+     */
+    const sendOnce = (dispatchId: DispatchRowId, owner: SendOwner) =>
+      Effect.gen(function* () {
+        const found = yield* sessionOf(dispatchId).pipe(Effect.orDie);
+        if (Option.isNone(found)) return "none" satisfies SendResult as SendResult;
+        return yield* gate.run(found.value.session_id)(sendInGate(dispatchId, owner));
+      }).pipe(
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.andThen(
+              Effect.logError("A dispatch could not be sent; it is tried again later", cause),
+              postpone(dispatchId),
+            ),
+        ),
+      );
+
+    const send = Effect.fn("Sender.send")(function* (dispatchId: DispatchRowId, owner: SendOwner) {
+      const result = yield* sendOnce(dispatchId, owner);
       // Only a change wakes anyone: the session may take its next wake, a
       // Stop may proceed, or the dispatch's owner has a new deadline: the
       // dispatcher for one never sent, the recovery for a claimed one.
@@ -616,7 +665,7 @@ export const layer = Layer.effect(
         yield* signals.dispatch.fire;
         yield* signals.stops.fire;
       } else if (result === "scheduled") {
-        const after = yield* ledger.find(dispatchId);
+        const after = yield* attemptsOf(dispatchId).pipe(Effect.orDie);
         const claimed = Option.isSome(after) && after.value.attempts > 0;
         yield* (claimed ? signals.recovery : signals.dispatch).fire;
       }

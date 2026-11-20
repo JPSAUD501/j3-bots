@@ -2,6 +2,8 @@
 import { assert, it } from "@effect/vitest";
 import type { BotId, EntryTarget } from "@j3-bots/contracts";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -501,6 +503,43 @@ it.effect("waits for a turn slot before sending a message whose file failed to s
     yield* deliveryIs(message, "delivered");
     assert.strictEqual(yield* timesSent(anaSession, "Read the notes."), 1);
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "sends a message whose file failed to stage with the slot its session's continuation holds",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      yield* concurrentTurns(1);
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      yield* sendToBot(bot.id, "Translate the docs.");
+      const first = yield* nextTurn(bot.id);
+      const resumesAt = DateTime.addDuration(yield* DateTime.now, Duration.hours(1));
+      yield* control.finishTurn({
+        sessionId: session,
+        turnId: first,
+        outcome: { _tag: "failed", failure: "usage-limit", retryAt: resumesAt },
+        continuation: { resumesAt },
+      });
+      yield* turnEnded(bot.id);
+
+      // The operator's message may start a turn on the slot the pending
+      // continuation holds, and its file's staging reply is lost.
+      const staging = yield* control.holdNext("stageAttachment");
+      const message = yield* sendWithFile(bot.id, "Read the notes.");
+      yield* staging.entered;
+      yield* control.loseNextReply;
+      yield* staging.release;
+      yield* gateSettled(bot.id);
+
+      // Staged again once the backoff passes, it is sent on that same slot.
+      yield* TestClock.adjust(recoveryBackoff(1));
+      yield* flushed(bot.id);
+      yield* nextTurn(bot.id, first);
+      yield* deliveryIs(message, "delivered");
+      assert.strictEqual(yield* timesSent(session, "Read the notes."), 1);
+    }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect("sends an answer again from its notice when its turn failed to start", () =>

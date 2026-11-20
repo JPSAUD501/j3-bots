@@ -12,6 +12,7 @@ import * as TestDomain from "../testing/domain.ts";
 import {
   awaitEntry,
   command,
+  concurrentTurns,
   conversation,
   createBot,
   deliveryIs,
@@ -334,5 +335,75 @@ it.effect("goes on with another bot's recovery when settling one dispatch hits a
     yield* TestClock.adjust(recoveryBackoff(1));
     yield* resend.entered;
     yield* resend.release;
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("leaves a first send whose attempt was given back to the dispatcher and its budget", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    yield* concurrentTurns(3);
+    const cid = yield* createBot("Cid");
+    yield* engineSession(cid.id);
+    const dan = yield* createBot("Dan");
+    yield* engineSession(dan.id);
+    const ana = yield* createBot("Ana");
+    const anaSession = yield* engineSession(ana.id);
+    const bia = yield* createBot("Bia");
+    const biaSession = yield* engineSession(bia.id);
+    yield* flushed(bia.id);
+
+    // Cid's and Dan's sends stay undecided and hold two slots; Dan's resend
+    // falls due a second after Cid's.
+    yield* control.deferNextDispatch;
+    yield* sendToBot(cid.id, "Rotate the logs.");
+    yield* flushed(cid.id);
+    yield* TestClock.adjust("1 second");
+    yield* control.deferNextDispatch;
+    yield* sendToBot(dan.id, "Prune the images.");
+    yield* flushed(dan.id);
+
+    // A recovery pass resends Cid's, and waits at the engine's door: no
+    // other pass runs meanwhile. Ana's first send takes the last slot and
+    // waits there too, while Bia's own turn starts.
+    const cidResend = yield* control.holdNext("redispatch");
+    yield* TestClock.adjust("1 second");
+    yield* cidResend.entered;
+    const sending = yield* control.holdNext("dispatch");
+    const message = yield* sendToBot(ana.id, "Merge the branch.");
+    yield* sending.entered;
+    const biaTurn = yield* control.startEngineTurn(biaSession);
+    yield* nextTurn(bia.id);
+
+    // The next pass picks up every claimed send, Ana's included, and waits
+    // on Dan's resend.
+    const danResend = yield* control.holdNext("redispatch");
+    yield* TestClock.adjust("1 second");
+    yield* cidResend.release;
+    yield* danResend.entered;
+
+    // The engine cannot be reached: Ana's attempt is given back, and with
+    // Cid's, Dan's and Bia's work no slot is free for it.
+    yield* control.setReachable(false);
+    yield* sending.release;
+    yield* gateSettled(ana.id);
+    yield* control.setReachable(true);
+
+    // The pass goes on to Ana's dispatch, which is no longer the recovery's.
+    yield* danResend.release;
+    yield* (yield* Pipeline).recoverDue;
+    yield* flushed(ana.id);
+    assert.strictEqual(yield* timesSent(anaSession, "Merge the branch."), 0);
+
+    // The dispatcher sends it once a slot frees.
+    yield* control.finishTurn({
+      sessionId: biaSession,
+      turnId: biaTurn,
+      outcome: { _tag: "completed" },
+    });
+    yield* turnEnded(bia.id);
+    yield* flushed(ana.id);
+    yield* nextTurn(ana.id);
+    yield* deliveryIs(message, "delivered");
+    assert.strictEqual(yield* timesSent(anaSession, "Merge the branch."), 1);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
