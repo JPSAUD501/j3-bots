@@ -339,6 +339,12 @@ export const layer = Layer.effect(
         }),
       );
 
+    /**
+     * Copies an operator's file into the bot's `files/inbox/`, unless it is
+     * there. `files/` is the bot's, links included, so the copy goes through
+     * the home's containment check like every private write: it never follows
+     * a link out of private state.
+     */
     const copyToWorkspace = Effect.fn("Sender.copyToWorkspace")(function* (
       botId: BotId,
       attachment: { readonly id: AttachmentId; readonly name: string },
@@ -346,8 +352,7 @@ export const layer = Layer.effect(
     ) {
       const target = path.join(layout.workspace(botId), inboxPath(attachment));
       if (yield* fs.exists(target)) return;
-      yield* fs.makeDirectory(path.dirname(target), { recursive: true });
-      yield* fs.copyFile(source, target);
+      yield* layout.writeFile(target, yield* fs.readFile(source));
     });
 
     /**
