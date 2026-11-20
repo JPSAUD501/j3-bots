@@ -19,7 +19,7 @@ import { HOME_ENTRIES } from "./entries.ts";
 // time may use it.
 
 /** A path as one shell word. */
-export const shellWord = (value: string) =>
+const shellWord = (value: string) =>
   /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", `'"'"'`)}'`;
 
 /** The home is not a folder only this user can open. */
@@ -72,19 +72,48 @@ export const checkPrivate = Effect.fn("Home.checkPrivate")(function* (home: stri
   }
 });
 
+/** The home exists, but this user cannot create files in it. */
+class HomeNotWritable extends Schema.TaggedError<HomeNotWritable>()("HomeNotWritable", {
+  home: Schema.String,
+}) {
+  override get message(): string {
+    return `This user cannot write to ${this.home}, where the server keeps its database and admin socket. ${this.fix}`;
+  }
+
+  /** The command that repairs it, for the operator to run. */
+  get fix(): string {
+    return `Run \`chmod 700 ${shellWord(this.home)}\`.`;
+  }
+}
+
+/**
+ * Whether this user can create files in `home`. A home that does not exist
+ * yet passes, as in `checkPrivate`.
+ */
+export const checkWritable = Effect.fn("Home.checkWritable")(function* (home: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const writable = yield* fs.access(home, { writable: true }).pipe(
+    Effect.as(true),
+    Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(true)),
+    Effect.orElseSucceed(() => false),
+  );
+  if (!writable) return yield* new HomeNotWritable({ home });
+});
+
 /**
  * The configuration for a server about to start, with its home ready. Nothing
- * is written until both pass their checks: the configuration, as `load`
- * checks it (where the home is included), and the home's privacy. Then the
- * home is created, readable by the operator only, and on first run, with no
- * `config.json` yet, one is published whole with every setting at its
- * default. An existing file is never rewritten, and a start that finds one
- * writes nothing there.
+ * is written until all pass their checks: the configuration, as `load`
+ * checks it (where the home is included), and the home's privacy and
+ * writability. Then the home is created, readable by the operator only, and
+ * on first run, with no `config.json` yet, one is published whole with every
+ * setting at its default. An existing file is never rewritten, and a start
+ * that finds one writes nothing there.
  */
 export const initialize = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const config = yield* load;
   yield* checkPrivate(config.home);
+  yield* checkWritable(config.home);
   yield* fs.makeDirectory(config.home, { recursive: true, mode: 0o700 });
   if (!(yield* fs.exists(config.configFile))) {
     // Two first starts may both get here: the publication keeps the first file.

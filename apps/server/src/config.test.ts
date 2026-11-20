@@ -8,6 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import { DEFAULTS, load } from "./config.ts";
 import { initialize } from "./home/Home.ts";
 import { type InterfaceAddress, Network } from "./system/Network.ts";
@@ -44,6 +45,23 @@ const writeConfigFile = Effect.fn("writeConfigFile")(function* (home: string, te
   const path = yield* Path.Path;
   yield* fs.writeFileString(path.join(home, "config.json"), text);
 });
+
+/** A disk with no space left: the home can still be opened for writing, but no write lands. */
+const fullDisk = Layer.effect(
+  FileSystem.FileSystem,
+  Effect.map(FileSystem.FileSystem, (fs) => {
+    const full = (method: string) => () =>
+      Effect.fail(
+        PlatformError.systemError({
+          _tag: "Unknown",
+          module: "FileSystem",
+          method,
+          description: "No space left on device",
+        }),
+      );
+    return FileSystem.FileSystem.of({ ...fs, writeFile: full("writeFile"), link: full("link") });
+  }),
+);
 
 const failure = (exit: Exit.Exit<unknown, unknown>) =>
   Exit.isFailure(exit) ? Option.getOrUndefined(Exit.findErrorOption(exit)) : undefined;
@@ -95,12 +113,8 @@ it.layer(NodeServices.layer)("server configuration", (it) => {
       assert.strictEqual((yield* fs.stat(home)).mode & 0o777, 0o700);
 
       yield* writeConfigFile(home, JSON.stringify({ port: 4000 }));
-      // A home nothing more can be written to, as on a full disk: a start that
-      // finds the file has nothing to write.
-      yield* fs.chmod(home, 0o500);
-      const full = yield* withEnvironment(initialize, env).pipe(
-        Effect.ensuring(fs.chmod(home, 0o700).pipe(Effect.ignore)),
-      );
+      // On a full disk, a start that finds the file has nothing to write.
+      const full = yield* withEnvironment(initialize, env).pipe(Effect.provide(fullDisk));
       assert.strictEqual(full.port, 4000);
       assert.strictEqual((yield* withEnvironment(load, env)).port, 4000);
     }).pipe(Effect.scoped),
@@ -127,6 +141,16 @@ it.layer(NodeServices.layer)("server configuration", (it) => {
       const shared = yield* withEnvironment(initialize, { J3_HOME: open }).pipe(Effect.exit);
       assert.deepInclude(failure(shared), { reason: "open-to-others" });
       assert.isFalse(yield* fs.exists(path.join(open, "config.json")));
+
+      // A home this user cannot write to, though it holds a readable file.
+      const locked = yield* freshHome;
+      yield* writeConfigFile(locked, "{}");
+      yield* fs.chmod(locked, 0o500);
+      const readOnly = yield* withEnvironment(initialize, { J3_HOME: locked }).pipe(
+        Effect.exit,
+        Effect.ensuring(fs.chmod(locked, 0o700).pipe(Effect.orDie)),
+      );
+      assert.deepInclude(failure(readOnly), { _tag: "HomeNotWritable", home: locked });
     }).pipe(Effect.scoped),
   );
 

@@ -94,12 +94,13 @@ const homeCheck = Effect.fn("doctor.home")(function* (home: string) {
     const { reason, fix } = privacy.failure;
     return check("Data directory", "problem", HOME_SUMMARIES[reason](home), fix);
   }
-  if (!(yield* fs.access(home, { writable: true }).pipe(Effect.isSuccess))) {
+  const writability = yield* Home.checkWritable(home).pipe(Effect.result);
+  if (writability._tag === "Failure") {
     return check(
       "Data directory",
       "problem",
-      `${home} is not writable by this user.`,
-      `Run \`chmod 700 ${Home.shellWord(home)}\`.`,
+      `This user cannot write to ${home}. The server refuses to start until it can.`,
+      writability.failure.fix,
     );
   }
   return check("Data directory", "ok", `${home}, open to this user only.`);

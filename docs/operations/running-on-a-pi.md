@@ -50,7 +50,7 @@ j3-bots service install
 
 `service install` does the following, in this order, and stops at the first step that fails. A failure in any step before it writes the unit leaves an installed unit as it was:
 
-- checks the configuration as the service will run it, and the data directory, `~/.j3-bots`, which must be open to this user only. A refused configuration leaves the data directory as it was, or uncreated;
+- checks the configuration as the service will run it, and the data directory, `~/.j3-bots`, which must be open to this user only and writable by it. A refused configuration leaves the data directory as it was, or uncreated;
 - creates the data directory, readable by this user only, if it does not exist yet;
 - writes `~/.j3-bots/config.json` with the defaults, if there is none yet. An existing file is never rewritten;
 - checks that nothing but a socket is at `~/.j3-bots/admin.sock`, where the admin socket goes, and that `host` is still an address of this machine, by listening on it for a moment on a port the system picks;
