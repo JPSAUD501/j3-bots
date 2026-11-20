@@ -76,11 +76,12 @@ export interface Resume {
 
 /**
  * The batches the streams of every session emitted, `limit` per session, the
- * newest last, and what each turn's end told of its hand-off, for as long as
- * the session lives. The hand-offs are one entry per ended turn, which the
- * engine's own record of the session holds too: the server rotates a session
- * after a threshold of runs (`docs/architecture/server.md`, Rotation), which
- * bounds both.
+ * newest last, and what each turn's end told of its hand-off. The hand-offs
+ * are one entry per ended turn, which the engine's own record of the session
+ * holds too, kept until the session is forgotten (`forget`, when the engine no
+ * longer has it) or the process exits. Nothing bounds them sooner yet: once
+ * the server rotates a session after a threshold of runs
+ * (`docs/architecture/server.md`, Rotation), that threshold bounds them.
  */
 export const makeBatches = (limit: number) => {
   const sessions = new Map<SessionId, Map<string, Batch>>();

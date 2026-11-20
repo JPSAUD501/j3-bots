@@ -433,7 +433,9 @@ const hasBackgroundWork = (mirror: Mirror, run: Run) =>
   );
 
 const ACTIVE_RUN: ReadonlySet<Run["status"]> = new Set(["preparing", "starting", "running"]);
-const SETTLED_FOR_BACKGROUND: ReadonlySet<Run["status"]> = new Set([
+// Over the shell's statuses, a run's and `idle`, which is not among them: a
+// shell left idle has not settled.
+const SETTLED_FOR_BACKGROUND: ReadonlySet<OrchestrationV2ThreadShell["status"]> = new Set([
   "cancelled",
   "completed",
   "failed",
@@ -605,7 +607,6 @@ export const workInShell = (
   if (
     shell === undefined ||
     shell.activeRunId !== null ||
-    shell.status === "idle" ||
     !SETTLED_FOR_BACKGROUND.has(shell.status)
   ) {
     return "pending";
