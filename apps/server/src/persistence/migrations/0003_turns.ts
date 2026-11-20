@@ -214,7 +214,7 @@ export default Effect.gen(function* () {
   yield* sql`ALTER TABLE stop_targets ADD COLUMN retry_at TEXT`;
 
   // When the engine answered that it has no such session. Nothing is planned
-  // into it or watched there again; part 2b gives the bot a new one.
+  // into it or watched there again; the rotator gives the bot a new one.
   yield* sql`ALTER TABLE sessions ADD COLUMN lost_at TEXT`;
   // A first send was refused as busy: the adapter saw a turn the server has
   // not applied yet. Nothing is planned into the session before `busy_until`,

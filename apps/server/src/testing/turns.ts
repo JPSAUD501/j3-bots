@@ -106,14 +106,27 @@ export const engineSession = (botId: BotId) =>
     ),
   );
 
+/** Waits for the bot's main session to be one other than `previous`, opened in the engine. */
+export const sessionAfter = (botId: BotId, previous: SessionId) =>
+  eventually(
+    sessionRow(botId).pipe(
+      Effect.map((row) =>
+        Option.flatMap(row, (found) => Option.fromNullishOr(found.engine_session_id)).pipe(
+          Option.filter((id) => id !== previous),
+        ),
+      ),
+    ),
+  );
+
 /**
  * Waits for whatever holds the bot's session gate (a send, a Stop round, a
  * resume) to finish what it started.
  */
 export const gateSettled = (botId: BotId) =>
   Effect.gen(function* () {
-    const row = Option.getOrThrow(yield* sessionRow(botId));
-    yield* (yield* SessionGate).run(row.id)(Effect.void);
+    // A bot between a retired main session and the next has no gate to wait for.
+    const row = yield* sessionRow(botId);
+    if (Option.isSome(row)) yield* (yield* SessionGate).run(row.value.id)(Effect.void);
   });
 
 /**
@@ -259,7 +272,7 @@ export const roomOf = (botId: BotId) =>
 
 /**
  * The operator writes in a room and the bot is woken for it, as room routing
- * will once it addresses members (part 2b).
+ * will once it addresses members (M3).
  */
 export const sendInRoom = (botId: BotId, roomId: RoomId, text: string) =>
   Effect.gen(function* () {

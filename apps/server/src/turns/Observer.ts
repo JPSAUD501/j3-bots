@@ -57,6 +57,7 @@ import {
 } from "./model.ts";
 import { type NoticeRetry, notices } from "./notices.ts";
 import { endingOf, sessionLoss, sessionRecords } from "./sessionRecords.ts";
+import { rotationRequests } from "./rotationRequests.ts";
 import { Signals } from "./Signals.ts";
 import { stopTargets } from "./stopTargets.ts";
 import { Wakes } from "./Wakes.ts";
@@ -200,6 +201,11 @@ interface TurnEnd {
    * lists the continuation as pending, but the chain went on.
    */
   readonly continued: boolean;
+  /**
+   * The engine could not resume the provider's conversation and ran the turn
+   * in a fresh one: the session is due for rotation.
+   */
+  readonly contextRecovered: boolean;
   readonly at: DateTime.Utc;
 }
 
@@ -258,6 +264,7 @@ export const layer = Layer.effect(
     const stops = stopTargets(sql);
     const { notify } = notices(sql, entries);
     const { sessionLost } = sessionLoss(sql, entries, ledger, workSteps, signals);
+    const { requestRotation } = rotationRequests(sql, signals);
     const { finishFold, closeCard } = sessionRecords(sql, entries, workSteps);
 
     /**
@@ -619,6 +626,14 @@ export const layer = Layer.effect(
           yield* finishFold(turn.value.work_fold_entry_id, end.outcome, end.at);
         }
       }
+      // The provider's conversation could not be resumed: the bot's main
+      // session is replaced once it is idle, with a digest of its own. Any
+      // turn's end may also have made a session due for rotation idle, or
+      // brought it to its run limit.
+      if (end.contextRecovered) {
+        yield* requestRotation(session.id, "context-recovered");
+      }
+      yield* sql.afterCommit(signals.rotations.fire);
       yield* sql`
         UPDATE sessions SET admitted_turn_id = NULL, admitted_audience = NULL,
           admitted_room_id = NULL
@@ -987,6 +1002,7 @@ export const layer = Layer.effect(
           backgroundWork: turn.backgroundWork,
           continuation: turn.continuation,
           continued: continued.has(turn.turnId),
+          contextRecovered: turn.contextRecovered,
           at: turn.finishedAt,
         });
       }
@@ -1020,6 +1036,7 @@ export const layer = Layer.effect(
           backgroundWork: false,
           continuation: null,
           continued: false,
+          contextRecovered: false,
           at: event.at,
         });
       }
@@ -1117,6 +1134,7 @@ export const layer = Layer.effect(
             backgroundWork: event.backgroundWork,
             continuation: event.continuation,
             continued: false,
+            contextRecovered: event.contextRecovered,
             at: event.at,
           });
         case "continuation-dropped":
@@ -1182,6 +1200,8 @@ export const layer = Layer.effect(
       const work = changesWork(event);
       if (work || applied.busyEnded || !wasReady) yield* signals.dispatch.fire;
       if (work) yield* signals.stops.fire;
+      // A session due for rotation is replaced only once its events are known.
+      if (!wasReady) yield* signals.rotations.fire;
       return true;
     });
 

@@ -18,7 +18,7 @@ import * as TestDatabase from "./database.ts";
 const MODEL = { providerId: ProviderId.make("claude"), modelId: ModelId.make("opus") };
 
 /** A model of a second provider, which a bot can move to. */
-const OTHER_PROVIDER_MODEL = {
+export const OTHER_PROVIDER_MODEL = {
   providerId: ProviderId.make("codex"),
   modelId: ModelId.make("gpt"),
 };

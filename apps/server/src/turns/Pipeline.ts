@@ -151,6 +151,18 @@ const userWake = (
   return { ...wake, answer: null, messages: [first, ...rest] } satisfies Wake;
 };
 
+/** A catch-up note as an envelope shows it. */
+const catchUpItem = (note: CatchUpNote): CatchUpItem => {
+  switch (note._tag) {
+    case "routine-delivered":
+      return { type: "routine-delivered", routine: note.routine, at: note.at, text: note.text };
+    case "profile-changed":
+      return { type: "profile-changed", changes: note.changes };
+    case "session-rotated":
+      return { type: "session-rotated", digest: note.digest };
+  }
+};
+
 /** One planned dispatch: the wakes it carries, into which session, and how. */
 interface Plan {
   readonly sessionId: SessionRowId;
@@ -494,8 +506,9 @@ export const layer = Layer.effect(
 
     /**
      * The bot's main session, if it can be planned into: live, opened in the
-     * engine, and past the deadline of a busy refusal, which its next applied
-     * event ends sooner.
+     * engine, not due for rotation, and past the deadline of a busy refusal,
+     * which its next applied event ends sooner. A session due for rotation
+     * takes nothing new: its bot's wakes wait for the session that replaces it.
      */
     const mainSession = SqlSchema.findOneOption({
       Request: Schema.Struct({ botId: Schema.String, now: Schema.String }),
@@ -503,7 +516,7 @@ export const layer = Layer.effect(
       execute: ({ botId, now }) => sql`
         SELECT id, bot_id FROM sessions
         WHERE bot_id = ${botId} AND purpose = 'main' AND retired_at IS NULL
-          AND lost_at IS NULL AND engine_session_id IS NOT NULL
+          AND lost_at IS NULL AND engine_session_id IS NOT NULL AND rotation_reason IS NULL
           AND (busy_until IS NULL OR busy_until <= ${now})
       `,
     });
@@ -738,17 +751,7 @@ export const layer = Layer.effect(
       for (const note of yield* notesOf(botId)) {
         const value = note.note_json;
         unseen.push({
-          item:
-            value === null
-              ? null
-              : value._tag === "routine-delivered"
-                ? {
-                    type: "routine-delivered",
-                    routine: value.routine,
-                    at: value.at,
-                    text: value.text,
-                  }
-                : { type: "profile-changed", changes: value.changes },
+          item: value === null ? null : catchUpItem(value),
           source: { _tag: "note", id: note.id },
         });
       }
@@ -808,7 +811,7 @@ export const layer = Layer.effect(
         return yield* Effect.die(new TurnsInvariant({ invariant: "A plan carries a wake" }));
       }
       if (head.kind !== "system" && head.kind !== "user") {
-        // Room, teammate and routine envelopes come with their wakes in part 2b.
+        // Routine envelopes come with their wakes in M2, room and teammate ones in M3.
         return yield* Effect.die(
           new TurnsInvariant({ invariant: `No envelope for ${head.kind} wakes yet` }),
         );

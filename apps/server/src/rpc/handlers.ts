@@ -18,14 +18,12 @@ import { Presence } from "../presence/Presence.ts";
 import { Cards } from "../turns/Cards.ts";
 import { Pipeline } from "../turns/Pipeline.ts";
 import { Stops } from "../turns/Stops.ts";
+import { Usage } from "../turns/Usage.ts";
 import { WorkSteps } from "../turns/WorkSteps.ts";
 
 /**
- * The RPCs this server answers: `J3Rpcs` without a fresh start and turn
- * usage, which come with session rotation and usage in part 2b of the server
- * domain. Until then a client's call to one fails as any unknown RPC does.
- */
-export const ServedRpcs = J3Rpcs.omit("bot.freshStart", "usage.turns");
+/** The RPCs this server answers: every one of `J3Rpcs`. */
+export const ServedRpcs = J3Rpcs;
 
 const operator = { _tag: "operator" } as const;
 
@@ -49,6 +47,7 @@ export const handlers = ServedRpcs.toLayer(
     const cards = yield* Cards;
     const stops = yield* Stops;
     const workSteps = yield* WorkSteps;
+    const usage = yield* Usage;
     const viewer = yield* (yield* Presence).connect;
 
     const botFiles = Effect.fn("rpc.botFiles")(function* (input: {
@@ -78,6 +77,7 @@ export const handlers = ServedRpcs.toLayer(
       "bot.update": ({ commandId, botId, ...changes }) =>
         bots.update({ commandId, botId, changes }),
       "bot.delete": (input) => bots.remove(input),
+      "bot.freshStart": (input) => bots.freshStart(input),
       "bot.files": botFiles,
       "room.create": (input) => rooms.create(input),
       "room.update": ({ commandId, roomId, ...changes }) =>
@@ -96,6 +96,7 @@ export const handlers = ServedRpcs.toLayer(
       "memory.read": ({ scope, path }) => memory.read(scope, path),
       "memory.write": (input) => memory.write(input),
       "engine.subscribe": () => engine.status,
+      "usage.turns": (input) => usage.turns(input),
       "settings.get": () => settings.get,
       "settings.update": ({ commandId, ...changes }) => settings.update({ commandId, changes }),
       "client.view": ({ target }) => viewer.view(target),

@@ -311,6 +311,19 @@ export class TestEngineControl extends Context.Service<
       readonly sessionId: SessionId;
       readonly turnId: TurnId;
     }) => Effect.Effect<void>;
+    /**
+     * The background work every turn of the session left running ends, and
+     * wakes nothing: a wake it brings is `startEngineTurn`.
+     */
+    readonly endBackgroundWork: (sessionId: SessionId) => Effect.Effect<void>;
+    /**
+     * The provider could not resume the session's conversation, so the engine
+     * runs the turn in a fresh one from its own summary: its end says so.
+     */
+    readonly recoverContext: (input: {
+      readonly sessionId: SessionId;
+      readonly turnId: TurnId;
+    }) => Effect.Effect<void>;
     /** Whether background work some turn of the session started still runs. */
     readonly backgroundWorkRunning: (sessionId: SessionId) => Effect.Effect<boolean>;
     /**
@@ -387,6 +400,8 @@ interface TurnRecord {
   }>;
   /** It left background work running, which a Stop ends. */
   background: boolean;
+  /** The engine ran it in a fresh provider conversation, from its summary of the old one. */
+  contextRecovered: boolean;
   ended: {
     readonly outcome: TurnOutcome;
     readonly at: DateTime.Utc;
@@ -625,6 +640,7 @@ const make = Effect.gen(function* () {
       hostSpeech: [],
       closedRequests: [],
       background: false,
+      contextRecovered: false,
       ended: null,
     };
     session.turns.set(turn.turnId, turn);
@@ -789,6 +805,7 @@ const make = Effect.gen(function* () {
       outcome,
       backgroundWork: turn.background,
       continuation,
+      contextRecovered: turn.contextRecovered,
     }));
     for (const settlement of settlements) emit(session, at, settlement);
     if (session.running === turn.turnId) {
@@ -934,6 +951,7 @@ const make = Effect.gen(function* () {
           backgroundWork: turn.background,
           continuation: turn.ended.continuation,
           steps,
+          contextRecovered: turn.contextRecovered,
         });
         listed.push(turn);
       }
@@ -1668,6 +1686,19 @@ const make = Effect.gen(function* () {
         const session = yield* existingSession(sessionId);
         const turn = yield* runningTurn(session, turnId);
         turn.background = true;
+      }),
+
+    recoverContext: ({ sessionId, turnId }) =>
+      Effect.gen(function* () {
+        const session = yield* existingSession(sessionId);
+        const turn = yield* runningTurn(session, turnId);
+        turn.contextRecovered = true;
+      }),
+
+    endBackgroundWork: (sessionId) =>
+      Effect.gen(function* () {
+        const session = yield* existingSession(sessionId);
+        for (const turn of session.turns.values()) turn.background = false;
       }),
 
     backgroundWorkRunning: (sessionId) => Effect.map(existingSession(sessionId), backgroundRuns),

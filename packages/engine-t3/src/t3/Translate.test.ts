@@ -643,3 +643,42 @@ describe("a `j3` call recorded before its arguments", () => {
     }),
   );
 });
+
+describe("a turn the engine ran on recovered context", () => {
+  // The engine records a `handoff` item in the run when the provider could not
+  // resume its own conversation (**Read** at `db51b67`,
+  // `ProviderTurnStartService.ts`, "Recovered context").
+  const handoff = item({
+    id: "item-handoff",
+    type: "handoff",
+    status: "completed",
+    contextHandoffId: "handoff-1",
+    fromProviderThreadIds: ["provider-thread-1"],
+    toProviderThreadId: "provider-thread-2",
+    fromProviderInstanceIds: ["codex"],
+    toProviderInstanceId: "codex",
+    strategy: "full_thread_summary",
+  });
+  const recovered = (events: ReturnType<typeof diff>) =>
+    events.flatMap((event) => (event._tag === "turn-finished" ? [event.contextRecovered] : []));
+
+  it("tells so when the turn ends, live and on resume", () => {
+    const mirror = emptyMirror();
+    const { view } = replacement(mirror, false, at);
+    applyEvent(mirror, run("running", 1));
+    applyEvent(mirror, handoff);
+    applyEvent(mirror, run("completed", 1));
+    assert.deepStrictEqual(recovered(diff(mirror, view, at)), [true]);
+
+    const { event: resumed } = replacement(mirror, true, at);
+    assert.isTrue(resumed.endedTurns[0]?.contextRecovered);
+  });
+
+  it("does not for a turn that kept its conversation", () => {
+    const mirror = emptyMirror();
+    const { view } = replacement(mirror, false, at);
+    applyEvent(mirror, run("running", 1));
+    applyEvent(mirror, run("completed", 1));
+    assert.deepStrictEqual(recovered(diff(mirror, view, at)), [false]);
+  });
+});

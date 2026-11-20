@@ -66,10 +66,11 @@ it.effect("upgrades a database the last release wrote, keeping its rows and thei
     // This release opens it.
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      const sessions = yield* sql<{ readonly bot_id: string }>`
-        SELECT bot_id FROM sessions WHERE id = 'session-1'
+      const sessions = yield* sql<{ readonly bot_id: string; readonly provider_id: string }>`
+        SELECT bot_id, provider_id FROM sessions WHERE id = 'session-1'
       `;
-      assert.deepStrictEqual(sessions, [{ bot_id: "scout" }]);
+      // A session from before runs on its bot's provider.
+      assert.deepStrictEqual(sessions, [{ bot_id: "scout", provider_id: "claude" }]);
       const files = yield* sql<{ readonly entry_id: string | null }>`
         SELECT entry_id FROM attachments WHERE id = 'file-1'
       `;

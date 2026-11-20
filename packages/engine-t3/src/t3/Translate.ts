@@ -400,6 +400,17 @@ const outcomeOf = (mirror: Mirror, run: Run): TurnOutcome => {
 const LIVE_ITEM: ReadonlySet<Item["status"]> = new Set(["idle", "pending", "running", "waiting"]);
 
 /**
+ * Whether the engine ran the turn in a fresh provider conversation seeded with
+ * its own summary of the old one: the run carries a `handoff` item. At
+ * `db51b67` the engine records one when the provider fails to resume its
+ * native session (`ProviderTurnStartService.ts`, "Recovered context"), and when
+ * a thread moves to another provider or imports another thread's context
+ * (`Orchestrator.ts`), which J3 Bots never asks for. **Read**.
+ */
+const hasRecoveredContext = (mirror: Mirror, run: Run) =>
+  itemsOf(mirror, run).some((item) => item.type === "handoff");
+
+/**
  * A task the provider reports that holds the agent's completion: the agent
  * resumes when it ends. The engine's rule (**Read** at `db51b67`,
  * `orchestrationV2PendingBackgroundWork.ts`, `backgroundWorkHoldsCompletion`,
@@ -1539,6 +1550,7 @@ export const diff = (mirror: Mirror, view: View, now: DateTime.Utc): ReadonlyArr
           outcome: outcomeOf(mirror, run),
           backgroundWork: hasBackgroundWork(mirror, run),
           continuation,
+          contextRecovered: hasRecoveredContext(mirror, run),
         });
       }
     }
@@ -1617,6 +1629,7 @@ export const replacement = (
         backgroundWork: toldHandoffs.get(turnId) ?? hasBackgroundWork(mirror, run),
         continuation: continuationOf(mirror, run, now),
         steps: stepsOf(mirror, run),
+        contextRecovered: hasRecoveredContext(mirror, run),
       });
       // A requeued steer shows as its follow-up turn, whose cause is the dispatch.
       for (const steer of steers) {

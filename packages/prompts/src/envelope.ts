@@ -96,7 +96,12 @@ export type CatchUpItem =
   | {
       readonly type: "profile-changed";
       readonly changes: readonly [ProfileChange, ...Array<ProfileChange>];
-    };
+    }
+  /**
+   * The bot's working session was replaced since its last turn; `digest`
+   * summarizes the recent conversation for the new one.
+   */
+  | { readonly type: "session-rotated"; readonly digest: string };
 
 interface WakeBase {
   /** When the wake is dispatched. */
@@ -195,8 +200,6 @@ export type SystemEvent =
       readonly changes: readonly [ProfileChange, ...Array<ProfileChange>];
     }
   | { readonly name: "budget-stopped"; readonly limit: "hops" | "fan-out" }
-  /** `digest` summarizes the recent conversation for the new session. */
-  | { readonly name: "session-rotated"; readonly digest: string }
   | { readonly name: "undelivered" };
 
 export interface SystemWake extends WakeBase {
@@ -232,8 +235,6 @@ const eventLine = (event: SystemEvent): string => {
       return event.limit === "hops"
         ? "A chain of messages between bots reached its limit since your user last spoke, so it stopped."
         : "A message tried to wake more teammates than allowed, so it was not delivered.";
-    case "session-rotated":
-      return "Your working session was replaced. A digest of the recent conversation follows.";
     case "undelivered":
       return "Your last turn for your user ended without delivering an answer.";
   }
@@ -372,6 +373,10 @@ const writeSinceLastTurn = (w: EnvelopeWriter, items: ReadonlyArray<CatchUpItem>
         w.line(PROFILE_CHANGED_LINE);
         writeProfileChanges(w, item.changes);
         break;
+      case "session-rotated":
+        w.line("Your working session was replaced. A digest of the recent conversation follows.");
+        w.data([["source", "digest"]], item.digest);
+        break;
     }
   }
   w.close("since-last-turn");
@@ -501,7 +506,6 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
       const { event } = wake;
       w.line(eventLine(event));
       if (event.name === "profile-changed") writeProfileChanges(w, event.changes);
-      if (event.name === "session-rotated") w.data([["source", "digest"]], event.digest);
       return;
     }
   }

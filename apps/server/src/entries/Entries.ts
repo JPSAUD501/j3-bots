@@ -161,6 +161,8 @@ export class Entries extends Context.Service<
       { readonly entries: ReadonlyArray<Entry>; readonly hasOlder: boolean },
       NotFound
     >;
+    /** The latest `limit` entries of a target, oldest first. */
+    readonly latest: (target: EntryTarget, limit: number) => Effect.Effect<ReadonlyArray<Entry>>;
     /** Moves the operator's read mark forward to `through`. */
     readonly markRead: (target: EntryTarget, through: EntryOrder) => Effect.Effect<void, NotFound>;
     readonly summary: (target: EntryTarget) => Effect.Effect<TargetSummary>;
@@ -438,6 +440,18 @@ export const layer = Layer.effect(
         }),
       );
 
-    return Entries.of({ append, update, find: findRow, history, markRead, summary, subscribe });
+    const latest = (target: EntryTarget, limit: number) =>
+      Effect.map(newest(target, null, limit), (page) => page.entries);
+
+    return Entries.of({
+      append,
+      update,
+      find: findRow,
+      history,
+      latest,
+      markRead,
+      summary,
+      subscribe,
+    });
   }),
 );

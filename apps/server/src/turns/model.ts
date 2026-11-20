@@ -96,8 +96,8 @@ export const PRIORITY: { readonly [K in WakeKind]: number } = {
 };
 
 /**
- * What a wake carries, read when its envelope is rendered. The kinds part 2b
- * adds (room and teammate wakes) add their own variants here.
+ * What a wake carries, read when its envelope is rendered. The kinds a later
+ * milestone adds (room and teammate wakes in M3) add their own variants here.
  */
 export const WakePayload = Schema.Union([
   /** An operator message, read from its entry. */
@@ -113,8 +113,8 @@ export type WakePayload = typeof WakePayload.Type;
 
 /**
  * What a bot's main session has not seen, reported at the top of its next
- * envelope there. Part 2b writes them: routine runs in side sessions and
- * profile edits.
+ * envelope there: a digest of the recent conversation when the session was
+ * replaced, and, from M2, routine runs in side sessions and profile edits.
  */
 export const CatchUpNote = Schema.Union([
   Schema.TaggedStruct("routine-delivered", {
@@ -127,6 +127,8 @@ export const CatchUpNote = Schema.Union([
       Schema.Struct({ field: Schema.Literals(["name", "title", "job"]), value: Schema.String }),
     ),
   }),
+  /** The bot's main session was replaced; `digest` is what the new one is told of the conversation. */
+  Schema.TaggedStruct("session-rotated", { digest: Schema.String }),
 ]);
 export type CatchUpNote = typeof CatchUpNote.Type;
 

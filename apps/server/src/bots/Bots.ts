@@ -26,6 +26,8 @@ import { Ids } from "../Ids.ts";
 import { Layout } from "../Layout.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { Rooms } from "../rooms/Rooms.ts";
+import { rotationRequests } from "../turns/rotationRequests.ts";
+import { Signals } from "../turns/Signals.ts";
 import { freeAvatar } from "./avatars.ts";
 import { type BotChanges, BotStore } from "./BotStore.ts";
 import { EngineSessions } from "./EngineSessions.ts";
@@ -53,11 +55,24 @@ export class Bots extends Context.Service<
       readonly commandId: CommandId;
       readonly draft: BotDraft;
     }) => Effect.Effect<Bot, CommandError>;
+    /**
+     * A model of another provider replaces the bot's main session once it is
+     * idle; another model of the same provider, or a permission mode, applies
+     * to the session from its next turn.
+     */
     readonly update: (input: {
       readonly commandId: CommandId;
       readonly botId: BotId;
       readonly changes: BotChanges;
     }) => Effect.Effect<Bot, CommandError>;
+    /**
+     * Replaces the bot's main session once nothing runs there, with a digest
+     * of the conversation. Interrupts nothing: Stop does that.
+     */
+    readonly freshStart: (input: {
+      readonly commandId: CommandId;
+      readonly botId: BotId;
+    }) => Effect.Effect<void, CommandError>;
     /**
      * Retires the bot's engine project first, so nothing runs for a bot that no
      * longer exists, then removes the bot as `docs/architecture/server.md`
@@ -86,6 +101,7 @@ export const layer = Layer.effect(
     const changes = yield* ChangeLog;
     const layout = yield* Layout;
     const ids = yield* Ids;
+    const { requestBotRotation } = rotationRequests(sql, yield* Signals);
 
     const require = Effect.fn("Bots.require")(function* (botId: BotId) {
       const found = yield* store.find(botId);
@@ -173,6 +189,8 @@ export const layer = Layer.effect(
     }) {
       const { changes: change } = input;
       const before = yield* require(input.botId);
+      const providerChanged =
+        change.model !== undefined && change.model.providerId !== before.bot.model.providerId;
       const bot = yield* receipts.once({
         commandId: input.commandId,
         method: "bot.update",
@@ -183,6 +201,7 @@ export const layer = Layer.effect(
           const at = yield* DateTime.now;
           if (change.primary === true && !before.bot.primary) yield* makePrimary(at);
           yield* store.update(input.botId, change, at);
+          if (providerChanged) yield* requestBotRotation(input.botId, "provider-changed");
           yield* changes.touch({ _tag: "bot", botId: input.botId });
           return (yield* require(input.botId).pipe(Effect.orDie)).bot;
         }),
@@ -190,10 +209,9 @@ export const layer = Layer.effect(
       if (change.profile !== undefined || change.model !== undefined) {
         yield* workspaces.render(bot.id);
       }
-      if (change.model !== undefined || change.permissionMode !== undefined) {
-        // Rotating the session when the provider changes is the wake
-        // pipeline's (`docs/architecture/server.md`, Sessions); until then the
-        // main session takes the new settings from its next turn.
+      // A session never changes provider: the one that replaces it opens with
+      // the bot's settings.
+      if (!providerChanged && (change.model !== undefined || change.permissionMode !== undefined)) {
         yield* sessions
           .configure(bot.id, {
             ...(change.model === undefined ? {} : { model: change.model }),
@@ -245,6 +263,22 @@ export const layer = Layer.effect(
       });
     });
 
-    return Bots.of({ create, update, remove });
+    const freshStart = Effect.fn("Bots.freshStart")(function* (input: {
+      readonly commandId: CommandId;
+      readonly botId: BotId;
+    }) {
+      yield* receipts.once({
+        commandId: input.commandId,
+        method: "bot.freshStart",
+        payload: input,
+        result: Schema.Void,
+        apply: Effect.gen(function* () {
+          yield* require(input.botId);
+          yield* requestBotRotation(input.botId, "fresh-start");
+        }),
+      });
+    });
+
+    return Bots.of({ create, update, freshStart, remove });
   }),
 );

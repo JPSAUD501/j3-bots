@@ -119,8 +119,8 @@ export const sessionRecords = (
  * work fold end interrupted, and its open requests close. A dispatch not yet
  * answered is the sender's, which settles it in the session's gate: it is due
  * at once, whatever its backoff, and the workers are nudged once the loss
- * commits. A main session's loss shows in the bot's conversation; part 2b
- * gives the bot a new one. Runs in the caller's transaction.
+ * commits. A main session's loss shows in the bot's conversation, and the
+ * rotator gives the bot a new one. Runs in the caller's transaction.
  */
 export const sessionLoss = (
   sql: SqlClient.SqlClient,
@@ -214,11 +214,13 @@ export const sessionLoss = (
     if (lost.purpose === "main") {
       yield* notify(lost.bot_id, conversation, { _tag: "session-lost" }, null);
     }
-    // What waited on the session may settle, and its bot may take work elsewhere.
+    // What waited on the session may settle, its bot may take work
+    // elsewhere, and a main session is replaced.
     yield* sql.afterCommit(
-      Effect.all([signals.dispatch.fire, signals.recovery.fire, signals.stops.fire], {
-        discard: true,
-      }),
+      Effect.all(
+        [signals.dispatch.fire, signals.recovery.fire, signals.stops.fire, signals.rotations.fire],
+        { discard: true },
+      ),
     );
     return true;
   }, Effect.orDie);

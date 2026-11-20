@@ -10,7 +10,7 @@ import type { BotSession } from "../bots/EngineSessions.ts";
 const TurnToolName = Schema.Literals(["say", "ask", "message_bot", "set_routine"]);
 type TurnToolName = typeof TurnToolName.Type;
 
-/** A turn tool that part 2b of the server domain admits: teammates and routines. */
+/** A turn tool a later milestone admits: routines in M2, teammates in M3. */
 export class TurnToolUnavailable extends Schema.TaggedError<TurnToolUnavailable>()(
   "TurnToolUnavailable",
   { tool: TurnToolName },

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BotId, type ModelChoice, type PermissionMode } from "@j3-bots/contracts";
+import { BotId, type ModelChoice, type PermissionMode, type ProviderId } from "@j3-bots/contracts";
 import {
   Engine,
   type EngineDown,
@@ -96,14 +96,20 @@ export const layer = Layer.effect(
       `,
     });
 
-    /** The bot's main session row, written now if it has none. */
-    const ensureMainRow = Effect.fn("EngineSessions.ensureMainRow")(function* (botId: BotId) {
+    /** The bot's main session row, written now if it has none, on the bot's provider. */
+    const ensureMainRow = Effect.fn("EngineSessions.ensureMainRow")(function* (
+      botId: BotId,
+      providerId: ProviderId,
+    ) {
       const existing = yield* mainSession(botId);
       if (Option.isSome(existing)) return existing.value;
       const id = yield* ids.make("session");
       yield* sql`
-        INSERT INTO sessions (id, bot_id, purpose, prompt_version, created_at)
-        VALUES (${id}, ${botId}, 'main', ${PROMPT_VERSION}, ${timeText(yield* DateTime.now)})
+        INSERT INTO sessions (id, bot_id, purpose, prompt_version, provider_id, created_at)
+        VALUES (
+          ${id}, ${botId}, 'main', ${PROMPT_VERSION}, ${providerId},
+          ${timeText(yield* DateTime.now)}
+        )
       `;
       return { id, bot_id: botId, engine_session_id: null };
     }, Effect.orDie);
@@ -113,7 +119,7 @@ export const layer = Layer.effect(
       if (Option.isNone(found)) return;
       const { bot, workspacePath, engineProjectId } = found.value;
       yield* workspaces.provision(botId);
-      const session = yield* ensureMainRow(botId);
+      const session = yield* ensureMainRow(botId, bot.model.providerId);
       // Asked every time: it answers with the project the workspace already has.
       const projectId = yield* engine.ensureProject({ workspacePath, title: bot.profile.name });
       if (Option.getOrNull(engineProjectId) !== projectId) {
