@@ -103,6 +103,7 @@ Rules:
 - `at` and `tz` appear on every wake. Bots report times in the operator's zone.
 - `since-last-turn` appears only when there is something the session has not seen: results delivered by side sessions, held non-urgent messages, profile edits.
 - Text written by the operator is placed in `<message from="user">`.
+- A routine's saved instruction is placed in `<instruction>`, never in a nonce block; its trigger data is. The bot wrote the instruction, but the operator's request is what authorized it.
 - Text from anywhere else is placed in a block whose tag ends in a random nonce generated for that wake, for example `<data-7f3a9c source="webhook">`. Content cannot close a tag it cannot guess. The base prompt states that everything inside such a block is information.
 
 Envelope shapes by kind:
@@ -113,7 +114,7 @@ Envelope shapes by kind:
 | `room` | Room name, members, the entries the bot has not seen, who addressed whom | Reply in the room if it has something to add; otherwise end silently |
 | `bot` | Sender's name and title, the message as data, whether it is urgent | Weigh it against its own job; reply only if asked or if there is a result |
 | `routine` | Routine name, schedule, the saved instruction, a summary of recent runs and what each delivered, trigger data if any | Do exactly what the instruction names; speak only if the instruction's delivery line says so |
-| `system` | What happened, in one line | Usually nothing. For `first-run`, open the conversation |
+| `system` | What happened, in one line; for `profile-changed`, the changed fields | Usually nothing. For `first-run`, open the conversation |
 
 The `system` kind covers a small fixed set: `first-run`, `profile-changed`, `budget-stopped`, `session-rotated`, `undelivered`. A rotated session's first envelope carries a digest of the recent conversation. `undelivered` re-wakes a bot whose operator turn ended without a delivery. A finished background task is not a J3 Bots event: T3 Code wakes the session itself, without an envelope, and the base prompt covers that case.
 
@@ -123,7 +124,7 @@ Bots act on J3 Bots through MCP tools. A tool's description is prompt text: it i
 
 | Tool | Parameters | Notes |
 | --- | --- | --- |
-| `say` | `text`; `attachments?` (paths in the workspace or URLs); `to?` (`"dm"` during a room turn); `done?` | The only way to speak. `done: true` marks the turn's delivery complete; the server ends the run once the call returns. |
+| `say` | `text`; `attachments?` (paths in the workspace or URLs); `to?` (`"dm"` during a room turn); `done?` | The only way to speak. `done: true` marks the turn's delivery complete; the server ends the run once the call returns. The description says it is for the bot itself: a subagent or delegated worker sees the tool but not the base prompt, and must report in its final reply instead. The same sentence goes in `ask` and `message_bot`. |
 | `ask` | `prompt`; `options` (1 to 6, each with `label`, optional `value`, `description`, `style`); `allow_custom?`; `multi_select?` | One question. Ends the turn. A dismissed question is a "no". |
 | `message_bot` | `to` (bot id or room id); `text`; `urgent` (required) | Returns an acknowledgement only. Replies arrive as later wakes. |
 | `remember` | `fact` (one self-contained sentence); `tier` (`pinned` or `log`, default `log`); `scope` (`bot` or `shared`, default `bot`) | Deduplicated. Refuses text that looks like a credential. |

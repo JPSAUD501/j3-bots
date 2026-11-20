@@ -83,7 +83,7 @@ The adapter streams the session's events and the server derives the bot's state 
 
 What the bot *says* does not come from that stream. It comes from the bot calling J3 Bots' `say` tool, which appends an entry and returns. A `say` with `done: true` closes the delivery: once the call has returned, the server interrupts the run, so the model cannot keep spending allowance after its answer. Delegated tasks are separate engine threads and keep running.
 
-The turn's final reply text is never published: the base prompt tells the bot it reaches nobody, and the bot may have used it for notes. If a `user` wake's turn ends with no delivery, no pending question and no background handoff, the server wakes the bot once more with an `undelivered` system wake. If that turn also delivers nothing, the conversation shows a notice with a retry action.
+The turn's final reply text is never published: the base prompt tells the bot it reaches nobody, and the bot may have used it for notes. If a `user` wake's turn ends without a `say` carrying `done: true`, a pending question or a background handoff, the server wakes the bot once more with an `undelivered` system wake. If that turn also delivers nothing, the conversation shows a notice with a retry action.
 
 ### 5. The outcome closes the wake
 
