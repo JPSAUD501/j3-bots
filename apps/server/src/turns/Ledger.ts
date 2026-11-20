@@ -414,7 +414,8 @@ export const layer = Layer.effect(
 
     /**
      * The catch-up notes and held messages its envelope carried go to the next
-     * one. A digest is for the session its dispatch was written into: once
+     * one: the engine certainly never applied it. A digest is for the session
+     * its dispatch was written into: once
      * that session is lost or retired, the rotation that replaces it writes
      * the digest for the next one (or, for a fresh start, none), so the one
      * carried here is dropped, and a bot never has two waiting.
@@ -584,6 +585,9 @@ export const layer = Layer.effect(
         RETURNING id
       `;
       if (failed.length === 0) return false;
+      // A rejected dispatch was never applied, so what it carried was never
+      // seen; an unresolved one may have been.
+      if (reason === "rejected") yield* returnConsumed(dispatchId);
       yield* setWakes(dispatchId, wakes);
       return true;
     }, Effect.orDie);

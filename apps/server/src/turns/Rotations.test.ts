@@ -5,6 +5,7 @@ import type { SessionId, TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import { Bots } from "../bots/Bots.ts";
@@ -29,6 +30,7 @@ import {
   until,
 } from "../testing/turns.ts";
 import { MAX_INDETERMINATE_ANSWERS, type SessionRowId } from "./model.ts";
+import { Pipeline } from "./Pipeline.ts";
 import { Rotations, ROTATE_AFTER_RUNS } from "./Rotations.ts";
 import { Stops } from "./Stops.ts";
 import { Usage } from "./Usage.ts";
@@ -195,6 +197,29 @@ it.effect("replaces a lost session with one whose first envelope carries the dig
     assert.match(text, /from="you">\nDrafted it in files\/launch\.md\./);
     // The message itself arrives once, as the message, not in the digest too.
     assert.strictEqual(text.split("And the budget?").length - 1, 1);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("keeps the digest for the next envelope when the engine rejects the first one", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* exchange(bot.id, session, "Plan the launch.", "Drafted it in files/launch.md.");
+    yield* control.loseSession(session);
+    const replacement = yield* sessionAfter(bot.id, session);
+
+    yield* control.rejectNextDispatch;
+    const message = yield* sendToBot(bot.id, "And the budget?");
+    yield* failedAs(message, "rejected");
+    yield* (yield* Pipeline).retryMessage({ commandId: command(), entryId: message });
+    yield* nextTurn(bot.id);
+    yield* deliveryIs(message, "delivered");
+    const sent = yield* control.dispatches(replacement);
+    const text = sent.at(-1)?.text ?? "";
+    assert.include(text, "And the budget?");
+    assert.include(text, "Your working session was replaced.");
+    assert.include(text, "Plan the launch.");
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
@@ -382,6 +407,38 @@ it.effect("never opens a session on the provider its bot moved away from", () =>
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect(
+  "keeps a session whose bot moves to another provider and back before it is replaced",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const bots = yield* Bots;
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      const main = yield* mainSessionId(bot.id);
+      yield* sendToBot(bot.id, "Back up the database.");
+      yield* nextTurn(bot.id);
+
+      // The move's Stop is still ending the turn when the operator moves the bot back.
+      const stopping = yield* control.delayNextStopEffects;
+      yield* bots.update({
+        commandId: command(),
+        botId: bot.id,
+        changes: { model: TestDomain.OTHER_PROVIDER_MODEL },
+      });
+      yield* bots.update({ commandId: command(), botId: bot.id, changes: { model: bot.model } });
+      yield* stopping.release;
+      yield* turnEnded(bot.id);
+      yield* (yield* Rotations).rotateDue;
+
+      assert.strictEqual(yield* mainSessionId(bot.id), main);
+      const message = yield* sendToBot(bot.id, "Then the logs.");
+      yield* nextTurn(bot.id);
+      yield* deliveryIs(message, "delivered");
+      assert.strictEqual(yield* timesSent(session, "Then the logs."), 1);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("replaces a session whose provider conversation the engine could not resume", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;
@@ -446,6 +503,40 @@ it.effect("replaces a session that reached its run limit", () =>
     yield* reachRunLimit(yield* mainSessionId(bot.id));
     yield* (yield* Rotations).rotateDue;
     yield* sessionAfter(bot.id, session);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("ends a turn still open in a replaced session once the engine archives it", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const sql = yield* SqlClient.SqlClient;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    const old = yield* mainSessionId(bot.id);
+    yield* reachRunLimit(old);
+
+    // The session is retired, and its replacement opening, when the engine
+    // starts a turn there, as finished background work can: nothing will
+    // report its end once the server stops following the session.
+    const opening = yield* control.holdNext("configureSession");
+    const pass = yield* (yield* Rotations).rotateDue.pipe(
+      Effect.forkChild({ startImmediately: true }),
+    );
+    yield* opening.entered;
+    const at = DateTime.formatIso(yield* DateTime.now);
+    yield* sql`
+      INSERT INTO turns (session_id, engine_turn_id, audience, started_at, last_activity_at)
+      VALUES (${old}, 'late', 'conversation', ${at}, ${at})
+    `;
+    yield* opening.release;
+    yield* Fiber.join(pass);
+
+    assert.isTrue(yield* retiredInEngine(session));
+    const [late] = yield* sql<{ readonly ending: string | null }>`
+      SELECT json_extract(outcome_json, '$._tag') AS ending FROM turns
+      WHERE session_id = ${old} AND engine_turn_id = 'late' AND finished_at IS NOT NULL
+    `;
+    assert.strictEqual(late?.ending, "interrupted");
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

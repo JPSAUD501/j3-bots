@@ -108,7 +108,10 @@ export const layer = Layer.effect(
     const ids = yield* Ids;
     const signals = yield* Signals;
     const stops = yield* Stops;
-    const { requestBotRotation, forgetConversation } = rotationRequests(sql, signals);
+    const { requestBotRotation, providerRestored, forgetConversation } = rotationRequests(
+      sql,
+      signals,
+    );
 
     /** The provider of the bot's live main session, if it has one. */
     const liveMainProvider = (botId: BotId) =>
@@ -220,12 +223,15 @@ export const layer = Layer.effect(
           // Compared with the provider the bot's live main session runs on, in
           // this transaction: an earlier change may not have reached it yet.
           // Moving to another provider is the operator's own action, so it
-          // stops the work in progress before the session is replaced.
+          // stops the work in progress before the session is replaced. Moving
+          // back before that keeps the session.
           if (change.model !== undefined) {
             const live = yield* liveMainProvider(input.botId);
             if (Option.isSome(live) && live.value !== change.model.providerId) {
               yield* stops.record(input.botId, { _tag: "bot" });
               yield* requestBotRotation(input.botId, "provider-changed");
+            } else if (Option.isSome(live)) {
+              yield* providerRestored(input.botId);
             }
           }
           yield* changes.touch({ _tag: "bot", botId: input.botId });

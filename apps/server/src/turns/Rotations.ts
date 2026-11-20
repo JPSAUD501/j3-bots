@@ -121,7 +121,13 @@ export const layer = Layer.effect(
     const ids = yield* Ids;
     const workOf = sessionWork(sql);
     const { requestRotation, dropDigests } = rotationRequests(sql, signals);
-    const { sessionLost } = sessionLoss(sql, entries, yield* Ledger, yield* WorkSteps, signals);
+    const { sessionLost, sessionArchived } = sessionLoss(
+      sql,
+      entries,
+      yield* Ledger,
+      yield* WorkSteps,
+      signals,
+    );
     /** Bots whose main session failed to open: how often in a row, and when it is tried again. */
     const openFailures = new Map<BotId, { readonly failures: number; readonly at: DateTime.Utc }>();
 
@@ -427,10 +433,8 @@ export const layer = Layer.effect(
             outcome.defer();
             continue;
           }
-          yield* sql`
-            UPDATE sessions SET engine_retired_at = ${timeText(yield* DateTime.now)}
-            WHERE id = ${session.id}
-          `.pipe(Effect.orDie);
+          // Its events are followed no more: what is still open there is settled now.
+          yield* transaction(sessionArchived(session.id));
           yield* observer.close(session.id);
         }
         return outcome.done();

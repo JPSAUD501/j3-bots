@@ -85,6 +85,23 @@ export const rotationRequests = (sql: SqlClient.SqlClient, signals: Signals["Ser
   }, Effect.orDie);
 
   /**
+   * The operator moved the bot back to the provider its live main session
+   * runs on before the session was replaced: it is no longer due for that,
+   * and takes the wakes held for its replacement. A weaker reason the move
+   * overrode is not restored; the run limit is asked for again by the
+   * rotator's next pass.
+   */
+  const providerRestored = Effect.fn("rotationRequests.providerRestored")(function* (botId: BotId) {
+    const restored = yield* sql`
+      UPDATE sessions SET rotation_reason = NULL
+      WHERE bot_id = ${botId} AND purpose = 'main' AND retired_at IS NULL
+        AND rotation_reason = 'provider-changed'
+      RETURNING id
+    `;
+    if (restored.length > 0) yield* sql.afterCommit(signals.dispatch.fire);
+  }, Effect.orDie);
+
+  /**
    * Drops the digests no envelope carried yet: a later rotation writes its
    * own, which supersedes them, and a fresh start carries none.
    */
@@ -113,5 +130,11 @@ export const rotationRequests = (sql: SqlClient.SqlClient, signals: Signals["Ser
     `;
   }, Effect.orDie);
 
-  return { requestRotation, requestBotRotation, dropDigests, forgetConversation };
+  return {
+    requestRotation,
+    requestBotRotation,
+    providerRestored,
+    dropDigests,
+    forgetConversation,
+  };
 };

@@ -141,9 +141,9 @@ export const layer = Layer.effect(
       // a turn running, or a dispatch the engine has or may yet take. A bot
       // Stop reaches every live session too, for background work the server
       // does not see. A session the engine retired has nothing left in it to
-      // stop: its retirement ended what ran there. A room's Stop reaches no background work its turns
-      // left: room turns, and the Stop of their work, arrive with M3
-      // (`docs/architecture/server.md`, Rooms).
+      // stop: its retirement ended what ran there. A room's Stop reaches no
+      // background work its turns left: room turns, and the Stop of their
+      // work, arrive with M3 (`docs/architecture/server.md`, Rooms).
       const sessions = yield* sql<{ readonly id: string }>`
         SELECT s.id FROM sessions s
         WHERE s.bot_id = ${botId} AND s.lost_at IS NULL AND s.engine_retired_at IS NULL AND (
