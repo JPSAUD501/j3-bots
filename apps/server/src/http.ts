@@ -28,6 +28,7 @@ import { DeviceAuth } from "./auth/DeviceAuth.ts";
 import { Devices } from "./devices/Devices.ts";
 import * as Rpc from "./rpc/handlers.ts";
 import * as RpcSocket from "./RpcSocket.ts";
+import * as WebClient from "./web/WebClient.ts";
 
 /** 200 once the server is serving, which is after the database is migrated. */
 const health = HttpRouter.add("GET", "/health", HttpServerResponse.jsonUnsafe({ status: "ok" }));
@@ -173,7 +174,10 @@ const download = HttpRouter.add(
 /** The routes outside the RPC socket. */
 export const routes = Layer.mergeAll(health, serverInfo, socketTicket, pair, upload, download);
 
-/** Every route and the RPC socket, served on whichever `HttpServer` is provided. */
+/**
+ * Every route, the RPC socket and the web client, served on whichever
+ * `HttpServer` is provided.
+ */
 export const layer = HttpRouter.serve(
-  Layer.mergeAll(routes, RpcSocket.layer(Rpc.ServedRpcs, Rpc.handlers)),
+  Layer.mergeAll(routes, RpcSocket.layer(Rpc.ServedRpcs, Rpc.handlers), WebClient.layer),
 );

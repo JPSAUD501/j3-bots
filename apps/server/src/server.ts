@@ -11,12 +11,14 @@ import * as Layer from "effect/Layer";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
+import * as AdminSocket from "./admin/AdminSocket.ts";
 import * as ServerConfig from "./config.ts";
 import * as Domain from "./domain.ts";
 import * as Http from "./http.ts";
+import * as Installation from "./installation.ts";
 import { SYSTEM_PROMPT_FILE } from "./Layout.ts";
 import * as Sqlite from "./persistence/Sqlite.ts";
+import * as Network from "./system/Network.ts";
 import * as ToolEndpoint from "./tools/ToolEndpoint.ts";
 
 const listen = Layer.unwrap(
@@ -54,11 +56,12 @@ const logShutdown = Layer.effectDiscard(Effect.addFinalizer(() => Effect.logInfo
  */
 const engine = Layer.unwrap(
   Effect.gen(function* () {
+    // One server per home: a second one stops here, before it starts an engine.
+    yield* AdminSocket.claim;
     const config = yield* ServerConfig.ServerConfig;
-    const path = yield* Path.Path;
-    const bridge = yield* path.fromFileUrl(new URL("./bridge/main.ts", import.meta.url));
+    const bridge = yield* Installation.bridgeEntryPoint;
     return EngineLive.layer({
-      home: path.join(config.home, "engine"),
+      home: config.engineHome,
       port: config.enginePort,
       binaryOverride: config.engineBinary,
       providers: [],
@@ -73,15 +76,21 @@ const engine = Layer.unwrap(
 
 /**
  * The whole server. Built in dependency order: configuration, the migrated
- * database, the engine and the domain, then the HTTP server and the tool
- * endpoint. Interrupting it (SIGINT, SIGTERM) releases everything in reverse.
+ * database, the engine and the domain, then the HTTP server, the tool
+ * endpoint and the admin socket. Interrupting it (SIGINT, SIGTERM) releases
+ * everything in reverse.
  */
-export const layer = Layer.mergeAll(Http.layer, ToolEndpoint.layer, logShutdown).pipe(
+export const layer = Layer.mergeAll(
+  Http.layer,
+  ToolEndpoint.layer,
+  AdminSocket.layer,
+  logShutdown,
+).pipe(
   Layer.provide(listen),
   Layer.provide(Domain.layer),
   Layer.provide(engine),
   Layer.provide(Sqlite.layer),
   Layer.provide(ServerConfig.layer),
-  Layer.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
+  Layer.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer, Network.layer)),
   Layer.provide(Logger.layer([Logger.consoleJson])),
 );
