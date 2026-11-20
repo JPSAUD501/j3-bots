@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { RoutineRun } from "@j3-bots/contracts";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -16,25 +17,27 @@ import { RoutineRuns } from "./RoutineRuns.ts";
 export const WEBHOOK_PATH = "/hooks";
 
 /**
- * A request path as the request log may show it: under `WEBHOOK_PATH`,
- * everything after the routine's id is left out, since it holds the secret.
- * Every path the router could take for a webhook's is covered, whatever it
- * answers: one with a wrong secret, with more segments, or written with
- * percent-escapes, doubled slashes or other letter case.
+ * What the request log shows of a path that may hold a webhook's secret, or
+ * `None` for one that holds none. Under `WEBHOOK_PATH` everything after it is
+ * left out: the routine's id and the secret, but also a secret in any other
+ * place, such as the `/hooks/<secret>` addresses given before the routine's
+ * id was part of them. Every path the router could take for a webhook's is
+ * covered, whatever it answers: one written with percent-escapes, doubled
+ * slashes or other letter case too.
  */
-export const redactPath = (path: string): string => {
+export const redactPath = (path: string): Option.Option<string> => {
   const prefix = `${WEBHOOK_PATH}/`;
-  const read = (text: string) => text.replace(/\/{2,}/g, "/");
   const decoded = Result.getOrElse(
     Result.try(() => decodeURIComponent(path)),
     () => path,
   );
-  const under = [read(path), read(decoded)].find((candidate) =>
-    candidate.toLowerCase().startsWith(prefix),
+  const under = [path, decoded].some((candidate) =>
+    candidate
+      .replace(/\/{2,}/g, "/")
+      .toLowerCase()
+      .startsWith(prefix),
   );
-  if (under === undefined) return path;
-  const [routineId = "", ...rest] = under.slice(prefix.length).split("/");
-  return rest.length === 0 ? `${WEBHOOK_PATH}/${routineId}` : `${WEBHOOK_PATH}/${routineId}/…`;
+  return under ? Option.some(`${prefix}…`) : Option.none();
 };
 
 /**
@@ -113,6 +116,12 @@ export const route = HttpRouter.add(
           ),
       }),
       Effect.orDie,
+      // The request log leaves out what went wrong with a request under
+      // `WEBHOOK_PATH`, since it can carry the request. Nothing here does: the
+      // secret is compared in memory, never bound into a query.
+      Effect.catchDefect((defect) =>
+        Effect.logError("A webhook call failed", Cause.die(defect)).pipe(Effect.as(empty(500))),
+      ),
     );
   }),
 );

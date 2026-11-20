@@ -171,13 +171,13 @@ export const listen = (
 const pathOf = (url: string) => url.replace(/[?#].*$/s, "");
 
 /**
- * `HttpMiddleware.logger`, unless `redactPath` changes the request's path:
- * then that path holds a credential, and so may what went wrong (a
- * `RouteNotFound` carries the request), so the request is logged in one line
- * of its method, the path `redactPath` makes and the status, and nothing else.
+ * `HttpMiddleware.logger`, unless `redactPath` gives what to show of the
+ * request's path: then that path holds a credential, and so may what went
+ * wrong (a `RouteNotFound` carries the request), so the request is logged in
+ * one line of its method, the path as shown and the status, and nothing else.
  */
 const requestLog =
-  (redactPath: (path: string) => string) =>
+  (redactPath: (path: string) => Option.Option<string>) =>
   <E, R>(
     app: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
   ): Effect.Effect<
@@ -187,9 +187,8 @@ const requestLog =
   > =>
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
-      const path = pathOf(request.url);
-      const shown = redactPath(path);
-      if (shown === path) return yield* HttpMiddleware.logger(app);
+      const shown = redactPath(pathOf(request.url));
+      if (Option.isNone(shown)) return yield* HttpMiddleware.logger(app);
       const exit = yield* Effect.exit(app);
       const response = Exit.isSuccess(exit)
         ? exit.value
@@ -197,7 +196,7 @@ const requestLog =
       yield* Effect.log("Sent HTTP response").pipe(
         Effect.annotateLogs({
           "http.method": request.method,
-          "http.url": shown,
+          "http.url": shown.value,
           "http.status": response.status,
         }),
       );
@@ -216,26 +215,23 @@ const requestLog =
  * socket's mode, goes on the layer this returns, never on `server`.
  * `logAddress` logs where it listens once it serves.
  *
- * Each request is logged with its path as `redactPath` makes it. A request
- * whose path that changes holds a credential there: it is logged with the
- * path changed, and no trace span is made of it, since a span records the
- * whole URL.
+ * A request whose path holds a credential, for which `redactPath` gives what
+ * to show instead, is logged with that, and no trace span is made of it,
+ * since a span records the whole URL.
  */
 export const serve = <A, E, R, S, SE, SR>(
   app: Layer.Layer<A, E, R>,
   server: Layer.Layer<S, SE, SR>,
   {
     logAddress,
-    redactPath = (path) => path,
+    redactPath = () => Option.none(),
   }: {
     readonly logAddress: boolean;
-    readonly redactPath?: (path: string) => string;
+    readonly redactPath?: (path: string) => Option.Option<string>;
   },
 ) => {
-  const holdsCredential = (request: HttpServerRequest.HttpServerRequest) => {
-    const path = pathOf(request.url);
-    return redactPath(path) !== path;
-  };
+  const holdsCredential = (request: HttpServerRequest.HttpServerRequest) =>
+    Option.isSome(redactPath(pathOf(request.url)));
   const served = Layer.unwrap(
     Effect.map(HttpRouter.toHttpEffect(app), (handler) =>
       HttpServer.serve(handler, requestLog(redactPath)).pipe(
