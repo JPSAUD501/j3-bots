@@ -5,6 +5,7 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_INLINE_IMAGE_SIZE,
   MAX_INLINE_IMAGES_SIZE,
+  MAX_MESSAGE_LENGTH,
 } from "@j3-bots/contracts";
 import { ArrowUpIcon, FileIcon, MicIcon, PlusIcon, XIcon } from "lucide-react";
 import { useRef, type Ref } from "react";
@@ -59,8 +60,9 @@ const nameOf = (file: DraftFile) => (file._tag === "ready" ? file.attachment.nam
  * The pill at the bottom of a conversation. Enter sends, Shift+Enter starts a
  * new line. Files picked, pasted or dropped upload at once and show above the
  * pill; the message goes once they all have. With nothing to send, the
- * trailing button dictates where dictation exists. The field draws no ring of
- * its own: the pill takes the focus outline.
+ * trailing button dictates where dictation exists. A text longer than a
+ * message can hold is kept, and says so instead of sending. The field draws
+ * no ring of its own: the pill takes the focus outline.
  */
 export function Composer({
   recipient,
@@ -74,13 +76,14 @@ export function Composer({
   inputRef,
 }: ComposerProps) {
   const i18n = useI18n();
-  const { t } = i18n;
+  const { t, locale } = i18n;
   const pickerRef = useRef<HTMLInputElement>(null);
   const label = t("composer.label", { name: recipient });
   const empty = value.trim() === "" && !files.some((file) => file._tag === "ready");
   const uploading = files.some((file) => file._tag === "uploading");
   const blocked = files.some((file) => file._tag === "failed");
-  const ready = !empty && !uploading && !blocked;
+  const tooLong = value.trim().length > MAX_MESSAGE_LENGTH;
+  const ready = !empty && !uploading && !blocked && !tooLong;
   const send = () => {
     if (ready) onSend();
   };
@@ -194,6 +197,13 @@ export function Composer({
           </Button>
         )}
       </div>
+      <p role="alert" className="px-3 text-xs text-blocked empty:hidden">
+        {tooLong
+          ? t("composer.tooLong", {
+              count: new Intl.NumberFormat(locale).format(MAX_MESSAGE_LENGTH),
+            })
+          : null}
+      </p>
     </form>
   );
 }

@@ -307,6 +307,8 @@ export const ptBR: Catalog = {
   "composer.file.nameTooLong": "O nome do arquivo é longo demais",
   "composer.file.refused": "O servidor recusou este arquivo",
   "composer.file.notPaired": "Este dispositivo saiu da conta",
+  "composer.tooLong":
+    "Longa demais para enviar. Uma mensagem pode ter no máximo {count} caracteres.",
   "composer.notKept":
     "Este dispositivo não conseguiu guardar a mensagem, então ela não foi enviada. Ela continua na caixa de mensagem.",
 
