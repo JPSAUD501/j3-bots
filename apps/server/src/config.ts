@@ -25,6 +25,11 @@ export interface ServerConfigShape {
   readonly enginePort: number;
   /** An engine executable to use instead of the pinned one J3 Bots installs. */
   readonly engineBinary: Option.Option<string>;
+  /**
+   * The loopback port of the bot tool endpoint, which the `j3` bridge forwards
+   * tool calls to. Always bound to loopback, whatever `host` is.
+   */
+  readonly toolPort: number;
 }
 
 export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShape>()(
@@ -50,6 +55,7 @@ class ConfigRefused extends Schema.TaggedError<ConfigRefused>()("ConfigRefused",
 
 const DEFAULT_PORT = 3737;
 const DEFAULT_ENGINE_PORT = 3738;
+const DEFAULT_TOOL_PORT = 3739;
 
 // A default applies only when a setting is absent. A setting that is present
 // and invalid fails the start, so a typo never silently becomes the default.
@@ -61,6 +67,7 @@ const environment = Config.all({
   tlsKey: Config.option(Config.NonEmptyString("J3_TLS_KEY")),
   enginePort: Config.Port("J3_ENGINE_PORT").pipe(Config.withDefault(DEFAULT_ENGINE_PORT)),
   engineBinary: Config.option(Config.NonEmptyString("J3_ENGINE_BINARY")),
+  toolPort: Config.Port("J3_TOOL_PORT").pipe(Config.withDefault(DEFAULT_TOOL_PORT)),
 });
 
 const ipv4 = (host: string) => {
@@ -109,7 +116,7 @@ const enclosingCheckout = Effect.fn("enclosingCheckout")(function* (start: strin
 
 /**
  * Reads `J3_HOME`, `J3_HOST`, `J3_PORT`, `J3_TLS_CERT`, `J3_TLS_KEY`,
- * `J3_ENGINE_PORT` and `J3_ENGINE_BINARY`.
+ * `J3_ENGINE_PORT`, `J3_ENGINE_BINARY` and `J3_TOOL_PORT`.
  */
 export const layer = Layer.effect(
   ServerConfig,
@@ -146,6 +153,7 @@ export const layer = Layer.effect(
       tls,
       enginePort: env.enginePort,
       engineBinary: Option.map(env.engineBinary, (binary) => path.resolve(binary)),
+      toolPort: env.toolPort,
     };
   }),
 );
