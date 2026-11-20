@@ -46,7 +46,7 @@ On a laptop, a turn under the engine costs about 59,000 input tokens per model c
 
 ## 8. When should a main session rotate, and what does the digest contain?
 
-The server rotates a main session after 200 turns and carries a digest of the last delivered messages, up to 60 of them and 6,000 characters ([Server: sessions](architecture/server.md#sessions)). Both numbers are guesses. Rotation trades continuity for cost: tokens or age may be better triggers than turns, and the digest may need the bot's own summary rather than the raw messages. A fresh start also carries the digest, so the bot still knows what was just said, while the client tells the operator it "clears what the bot is holding in mind"; one of the two should change.
+The server rotates a main session after 200 turns and carries a digest of the last delivered messages, up to 60 of them and 6,000 characters ([Server: sessions](architecture/server.md#sessions)). Both numbers are guesses. Rotation trades continuity for cost: tokens or age may be better triggers than turns, and the digest may need the bot's own summary rather than the raw messages. A fresh start carries no digest, as the client promises: the new session starts from the bot's memory files alone.
 
 **Settled by** real conversations: how a session's cost grows with its turns on each provider, and whether bots pick up well after a rotation.
 

@@ -100,8 +100,9 @@ This is a deployment recommendation, not something J3 Bots enforces. See [open q
 - When a bot needs a credential, it uses the engine's secret request, which shows the operator a masked input and gives the value to the command that needs it without placing it in the model's context.
 - J3 Bots carries the value from the client to the engine and keeps nothing of it: not in the card, the change log, a command receipt or a log line. The card records only that a value was provided. In code the value travels as a redacted type, so printing it shows nothing.
 - Memory files are not a place for secrets. The `remember` tool refuses text that looks like a credential.
-- **The provider connection's key** is typed on the host into `j3-bots provider connect`, without echo, or piped on standard input, never on the command line. The command hands it to the running server over the admin socket, and the server to the engine's secret store, one file per instance (mode 0600, inside the private home); the server keeps no copy and logs nothing of it. Bots never see it: the engine gives it only to the harness process, in its environment.
-- **The operator's own provider setup stays out.** The harnesses run with homes of their own, and the engine starts without the server's harness variables (`ANTHROPIC_*`, `CLAUDE*`, `OPENAI_*`, `CODEX_*`) or T3 Code's (`T3CODE_*`, `T3_*`), so a server started from the operator's shell does not hand bots the operator's sign-ins or keys ([Engine: isolation](engine.md#isolation)).
+- **The provider connection's key** is typed on the host into `j3-bots provider connect`, without echo, or piped on standard input, never on the command line. The command hands it to the running server over the admin socket, and the server to the engine's secret store: staged under a new generation, then one file per instance (mode 0600, inside the private home), so a change cut short never pairs one connection's base URL with another's key ([Engine: reaching the models](engine.md#reaching-the-models)). The server keeps no copy and logs nothing of it. It travels only to the endpoint, so the base URL must be `https`, or `http` to this machine only; the command refuses plain `http` to another host. The engine gives the key to the harness process, in its environment, not to the model.
+- **The operator's own provider setup stays out.** The harnesses run with homes of their own, and the engine starts with an allowlist of the server's environment (the system's basics, locale, proxy and certificate variables), so a server started from the operator's shell does not hand bots the operator's harness configuration, sign-ins or keys ([Engine: isolation](engine.md#isolation)).
+- **The trust boundary is the operator's user.** A bot's harness runs as the user the server runs as, and the commands it runs inherit the harness environment. So the connection's key, the engine's secret store and every file that user can read, the operator's own sign-ins included, are within reach of a bot that runs a command to look; the allowlist keeps configuration from leaking in by accident, and is not a wall. That a harness's commands see the key in their environment is **Assumed**; no run has checked it.
 
 ## What is logged
 
@@ -111,7 +112,7 @@ This is a deployment recommendation, not something J3 Bots enforces. See [open q
 
 ## Known gaps
 
-- No isolation between bots at the filesystem level.
+- No isolation between bots at the filesystem level, and none between a bot and the operator's user.
 - No protection against a compromised paired device beyond revocation.
 - Push notifications pass through Apple's and Google's services, and through whichever push relay is chosen; previews are opt-in for that reason.
 - The automatic reviewer in Auto mode is the provider's, and its judgment is not J3 Bots' to guarantee.
