@@ -1,20 +1,29 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, describe, it } from "@effect/vitest";
 import {
+  OrchestrationV2DomainEvent,
   OrchestrationV2Run,
   OrchestrationV2RuntimeRequest,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
+import type { SessionEvent } from "../events.ts";
+import { SessionId } from "../ids.ts";
 import { approvalOf, type FetchedChanges, type FileChangeItem } from "./approvalDetail.ts";
+import { type BatchPlace, cursorFor, makeBatches } from "./Batches.ts";
 import {
+  applyEvent,
   changesToFetch,
+  copyMirror,
+  copyView,
   diff,
   emptyMirror,
   keepFetched,
   replacement,
   type EventBody,
+  type Mirror,
+  type View,
 } from "./Translate.ts";
 
 // Items shaped as the engine records them at the pin: the approval carries the
@@ -469,7 +478,7 @@ describe("an approval's card while it waits", () => {
       changes: [{ operation: "add", path: "notes.md" }],
       diffStr: "- Keep this list item",
     });
-    return { mirror, view, asks, held, whole };
+    return { mirror, view, told: event, asks, held, whole };
   };
 
   const updates = (events: ReadonlyArray<EventBody>) =>
@@ -504,15 +513,116 @@ describe("an approval's card while it waits", () => {
     assert.deepStrictEqual(diff(mirror, view, at), []);
   });
 
-  it("never changes once the approval has closed", () => {
+  /** A stream's batches as it emits them, all at one engine sequence. */
+  const emitted = () => {
+    const batches = makeBatches(32);
+    const sessionId = SessionId.make("thread-1");
+    let part = 0;
+    const emit = (mirror: Mirror, view: View, bodies: ReadonlyArray<EventBody>) => {
+      const place: BatchPlace = { sequence: 7, part: part++ };
+      const events = bodies.map((body, index): SessionEvent => ({
+        ...body,
+        cursor: cursorFor(place, index, bodies.length, "s1"),
+        at,
+      }));
+      batches.keep(sessionId, "s1", place, {
+        mirror: copyMirror(mirror),
+        view: copyView(view),
+        events,
+      });
+      return events;
+    };
+    return { emit, resume: (after: SessionEvent) => batches.resume(sessionId, after.cursor) };
+  };
+
+  it("fetches again on a resume from the batch that told the approval as a summary", () => {
+    const { mirror, view, told, held, whole } = setUp();
+    const stream = emitted();
+    const [summary] = stream.emit(mirror, view, [told]);
+    // The stream ended before its fetch landed; the engine has nothing new to send for the turn.
+    if (summary === undefined) throw new Error("nothing emitted");
+    const resumed = stream.resume(summary);
+    if (resumed === undefined) throw new Error("not resumed");
+    assert.deepStrictEqual(resumed.replay, []);
+    assert.strictEqual(resumed.sequence, 7);
+    assert.deepStrictEqual(changesToFetch(resumed.mirror), [held]);
+    assert.isTrue(keepFetched(resumed.mirror, whole));
+    assert.deepStrictEqual(
+      updates(diff(resumed.mirror, resumed.view, at)).map(
+        (request) => request._tag === "approval" && request.exact,
+      ),
+      [true],
+    );
+  });
+
+  it("replays, on a resume, what a fetch told after the cursor at the same sequence", () => {
+    const { mirror, view, told, asks, whole } = setUp();
+    const stream = emitted();
+    const [summary] = stream.emit(mirror, view, [told]);
+    keepFetched(mirror, whole);
+    const [upgrade, ...more] = stream.emit(mirror, view, diff(mirror, view, at));
+    assert.strictEqual(more.length, 0);
+    if (summary === undefined || upgrade === undefined) throw new Error("nothing emitted");
+    const resumed = stream.resume(summary);
+    if (resumed === undefined) throw new Error("not resumed");
+    assert.deepStrictEqual(resumed.replay, [upgrade]);
+    assert.strictEqual(resumed.lastCursor, upgrade.cursor);
+    // The resumed stream goes on from the exact card: nothing to fetch, and a closure is all it tells.
+    assert.deepStrictEqual(changesToFetch(resumed.mirror), []);
+    resumed.mirror.requests.set(asks.id, { ...asks, status: "resolved", resolvedAt: at });
+    assert.deepStrictEqual(
+      diff(resumed.mirror, resumed.view, at).map((event) => event._tag),
+      ["request-closed"],
+    );
+  });
+
+  it("keeps only the fetch for the version held, whatever order fetches land in", () => {
+    const { mirror, view, held, whole } = setUp();
+    const later = DateTime.makeUnsafe("2026-11-20T12:00:05Z");
+    const heldLater = { ...held, updatedAt: later };
+    const wholeLater = fileChange("patch-11", {
+      changes: [{ operation: "add", path: "notes.md" }],
+      diffStr: "- Keep this list item\n- And this one",
+      updatedAt: later,
+    });
+    // The item moved on while its first version was being fetched, and was asked for again.
+    mirror.items.set(heldLater.id, heldLater);
+    assert.deepStrictEqual(changesToFetch(mirror), [heldLater]);
+    // The second fetch lands first; the first, for a version no longer held, changes nothing.
+    assert.isTrue(keepFetched(mirror, wholeLater));
+    assert.isFalse(keepFetched(mirror, whole));
+    assert.deepStrictEqual(changesToFetch(mirror), []);
+    assert.deepStrictEqual(
+      updates(diff(mirror, view, at)).map(
+        (request) => request._tag === "approval" && request.detail?.text,
+      ),
+      ["- Keep this list item\n- And this one"],
+    );
+  });
+
+  it("never changes once the approval has closed, and lets go of what was fetched for it", () => {
     const { mirror, view, asks, whole } = setUp();
-    mirror.requests.set(asks.id, { ...asks, status: "resolved", resolvedAt: at });
+    assert.isTrue(keepFetched(mirror, whole));
+    assert.strictEqual(updates(diff(mirror, view, at)).length, 1);
+    const closed = { ...asks, status: "resolved" as const, resolvedAt: at };
+    applyEvent(
+      mirror,
+      Schema.decodeSync(OrchestrationV2DomainEvent)({
+        id: "event-1",
+        threadId: "thread-1",
+        occurredAt: at,
+        type: "runtime-request.updated",
+        payload: closed,
+      }),
+    );
+    assert.strictEqual(mirror.fetched.size, 0);
     assert.deepStrictEqual(
       diff(mirror, view, at).map((event) => event._tag),
       ["request-closed"],
     );
     assert.deepStrictEqual(changesToFetch(mirror), []);
-    keepFetched(mirror, whole);
+    // A fetch that lands after the approval closed is not kept.
+    assert.isFalse(keepFetched(mirror, whole));
     assert.deepStrictEqual(diff(mirror, view, at), []);
   });
 });

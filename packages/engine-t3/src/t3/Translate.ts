@@ -39,7 +39,12 @@ import {
   TurnId,
 } from "../ids.ts";
 import { toolInputDigest } from "../toolCaller.ts";
-import { approvalOf, fileChangeToFetch, type FileChangeItem } from "./approvalDetail.ts";
+import {
+  approvalOf,
+  fileChangeWithoutDiff,
+  type FileChangeItem,
+  sameVersion,
+} from "./approvalDetail.ts";
 import { dispatchOfMessage, localIdFor, messageIdFor } from "./Keys.ts";
 import { TOOL_SERVER } from "./Provision.ts";
 
@@ -68,9 +73,11 @@ export interface Mirror {
    */
   readonly toolDigests: Map<string, { readonly input: unknown; readonly digest: ToolInputDigest }>;
   /**
-   * File changes held by approvals, fetched whole because the stream sends
-   * them without their diff, by item id. Each counts only while the item is
-   * at the version it was fetched for. See `approvalDetail.ts`.
+   * File changes held by open approvals, fetched whole because the stream
+   * sends them without their diff, by item id. Each is the version an open
+   * approval holds: an entry goes when its approval closes or its item moves
+   * on, so a fetched diff, up to the engine's limit, is kept only while a card
+   * can show it. See `approvalDetail.ts`.
    */
   readonly fetched: Map<string, FileChangeItem>;
 }
@@ -96,19 +103,23 @@ export const copyMirror = (mirror: Mirror): Mirror => ({
 
 /**
  * The mirror of a snapshot. File changes fetched before it still count for
- * the items the snapshot has at the same version.
+ * the open approvals the snapshot has holding them at the same version.
  */
 export const mirrorOf = (
   projection: OrchestrationV2ThreadProjection,
   fetched: ReadonlyMap<string, FileChangeItem> = new Map(),
-): Mirror => ({
-  thread: projection.thread,
-  runs: new Map(projection.runs.map((run) => [run.id, run])),
-  items: new Map(projection.turnItems.map((item) => [item.id, item])),
-  requests: new Map(projection.runtimeRequests.map((request) => [request.id, request])),
-  toolDigests: new Map(),
-  fetched: new Map(fetched),
-});
+): Mirror => {
+  const mirror: Mirror = {
+    thread: projection.thread,
+    runs: new Map(projection.runs.map((run) => [run.id, run])),
+    items: new Map(projection.turnItems.map((item) => [item.id, item])),
+    requests: new Map(projection.runtimeRequests.map((request) => [request.id, request])),
+    toolDigests: new Map(),
+    fetched: new Map(fetched),
+  };
+  dropUnheld(mirror);
+  return mirror;
+};
 
 const isThread = Schema.is(OrchestrationV2AppThread);
 
@@ -121,9 +132,11 @@ export const applyEvent = (mirror: Mirror, event: OrchestrationV2DomainEvent): b
       return true;
     case "turn-item.updated":
       mirror.items.set(event.payload.id, event.payload);
+      dropUnheld(mirror);
       return true;
     case "runtime-request.updated":
       mirror.requests.set(event.payload.id, event.payload);
+      dropUnheld(mirror);
       return true;
     default:
       // Every thread event carries the whole thread record.
@@ -738,21 +751,54 @@ const requestsOf = (mirror: Mirror, run: Run) =>
   });
 
 /**
+ * The file changes approvals still open hold back without their diff, by item
+ * id, each at the version its approval holds.
+ */
+const heldWithoutDiff = (mirror: Mirror): ReadonlyMap<string, FileChangeItem> => {
+  const held = new Map<string, FileChangeItem>();
+  for (const item of mirror.items.values()) {
+    if (item.type !== "approval_request" || !LIVE_ITEM.has(item.status)) continue;
+    const request = mirror.requests.get(item.requestId);
+    if (request?.status !== "pending") continue;
+    const change = fileChangeWithoutDiff(item, request, mirror.items.values());
+    if (change !== undefined) held.set(change.id, change);
+  }
+  return held;
+};
+
+/** Drops each fetched file change no open approval holds at the version fetched. */
+function dropUnheld(mirror: Mirror): void {
+  if (mirror.fetched.size === 0) return;
+  const held = heldWithoutDiff(mirror);
+  for (const [id, whole] of mirror.fetched) {
+    const change = held.get(id);
+    if (change === undefined || !sameVersion(change, whole)) mirror.fetched.delete(id);
+  }
+}
+
+/**
  * The file changes to fetch whole for approvals still open, each held back by
- * an approval and sent on the stream without its diff.
+ * an approval and sent on the stream without its diff, and not yet fetched at
+ * the version held.
  */
 export const changesToFetch = (mirror: Mirror): ReadonlyArray<FileChangeItem> =>
-  [...mirror.items.values()].flatMap((item) => {
-    if (item.type !== "approval_request" || !LIVE_ITEM.has(item.status)) return [];
-    const request = mirror.requests.get(item.requestId);
-    if (request?.status !== "pending") return [];
-    const change = fileChangeToFetch(item, request, mirror.items.values(), mirror.fetched);
-    return change === undefined ? [] : [change];
+  [...heldWithoutDiff(mirror).values()].filter((change) => {
+    const whole = mirror.fetched.get(change.id);
+    return whole === undefined || !sameVersion(change, whole);
   });
 
-/** Keeps a file change fetched whole for an approval's card. */
-export const keepFetched = (mirror: Mirror, item: FileChangeItem): void => {
+/**
+ * Keeps a file change fetched whole for an approval's card, when an open
+ * approval still holds it at the version fetched. Fetches can land out of
+ * order and after their approval closed; one for any other version than the
+ * held one, older or newer, is not kept, and the held version is fetched on
+ * its own. Returns whether it was kept.
+ */
+export const keepFetched = (mirror: Mirror, item: FileChangeItem): boolean => {
+  const change = heldWithoutDiff(mirror).get(item.id);
+  if (change === undefined || !sameVersion(change, item)) return false;
   mirror.fetched.set(item.id, item);
+  return true;
 };
 
 /** The engine's own request behind a J3 Bots request id, for answering it. */

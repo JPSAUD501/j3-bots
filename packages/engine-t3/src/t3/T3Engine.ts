@@ -83,6 +83,7 @@ import { EngineInstallFailed, ensureInstalled } from "./Install.ts";
 import { commandIdFor, messageIdFor, projectIdFor, threadIdFor } from "./Keys.ts";
 import { ORCHESTRATION_PROTOCOL, pin } from "./Pin.ts";
 import type { FileChangeItem } from "./approvalDetail.ts";
+import { cursorFor, makeBatches, type BatchPlace } from "./Batches.ts";
 import { instanceIdFor, provision, type InstanceSpec } from "./Provision.ts";
 import { baseUrl, stateChanges, supervise, type ProcessState } from "./Supervisor.ts";
 import {
@@ -173,56 +174,6 @@ const decodeUploadInput = Schema.decodeUnknownEffect(AttachmentCreateUploadUrlIn
 
 const PairingResult = Schema.Struct({ pairUrl: Schema.String });
 const decodePairing = Schema.decodeUnknownEffect(Schema.fromJsonString(PairingResult));
-
-/**
- * `<sequence>.<index>.<count>.<stream>`: the engine sequence a batch of events
- * brings the session to, which is the engine's own position, the event's place
- * in that batch, and the stream that emitted it. A batch is what one engine
- * stream item, or a snapshot, turns into. The stream names where the batch is
- * kept: a resume replays from a kept batch, which only the process that
- * emitted it holds, and is a replacement otherwise.
- */
-const CURSOR = /^(\d+)\.(\d+)\.(\d+)\.(\d+)\.([0-9a-z]+)$/;
-
-/**
- * A batch's place: the engine sequence it was emitted at, and its part, which
- * counts the batches the stream emitted at that sequence before it. Only a
- * fetched file change emits a batch between two engine events.
- */
-interface BatchPlace {
-  readonly sequence: number;
-  readonly part: number;
-}
-
-const batchKey = (stream: string, place: BatchPlace) => `${stream}.${place.sequence}.${place.part}`;
-
-const cursorFor = (place: BatchPlace, index: number, count: number, stream: string) =>
-  EventCursor.make(`${place.sequence}.${place.part}.${index}.${count}.${stream}`);
-
-const parseCursor = (cursor: EventCursor) => {
-  const match = CURSOR.exec(cursor);
-  if (match === null) return Option.none();
-  const [, sequence, part, index, count, stream] = match;
-  return sequence === undefined ||
-    part === undefined ||
-    index === undefined ||
-    count === undefined ||
-    stream === undefined
-    ? Option.none()
-    : Option.some({
-        place: { sequence: Number(sequence), part: Number(part) },
-        index: Number(index),
-        count: Number(count),
-        stream,
-      });
-};
-
-/** One batch as it was emitted: the engine's state after it, what the stream had told, and its events. */
-interface Batch {
-  readonly mirror: Mirror;
-  readonly view: View;
-  readonly events: ReadonlyArray<SessionEvent>;
-}
 
 const instanceSpecOf = (provider: ProviderInstance): InstanceSpec => {
   const common = {
@@ -373,38 +324,8 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
 
   const rpc = yield* makeEngineRpc({ port: options.port, token: currentToken });
 
-  /**
-   * The batches emitted per session, by `<stream>.<sequence>.<part>`, the newest
-   * last. A cursor resumes by replay only from a batch kept here: the engine
-   * replays entities as they are after a sequence, not what changed, so the
-   * events after a cursor follow only from what the stream had told at it
-   * (**Read** at `db51b67`, `ws.ts`, `subscribeThread`: replay coalesces the
-   * events after `afterSequence`).
-   */
-  const batches = new Map<string, Map<string, Batch>>();
-  const keepBatch = (sessionId: SessionId, key: string, batch: Batch) => {
-    const kept = batches.get(sessionId) ?? new Map<string, Batch>();
-    kept.set(key, batch);
-    for (const oldest of kept.keys()) {
-      if (kept.size <= BATCHES_KEPT) break;
-      kept.delete(oldest);
-    }
-    batches.set(sessionId, kept);
-  };
-  const keptBatch = (sessionId: SessionId, after: EventCursor | null) => {
-    if (after === null) return undefined;
-    return Option.match(parseCursor(after), {
-      onNone: () => undefined,
-      onSome: (cursor) => {
-        const batch = batches.get(sessionId)?.get(batchKey(cursor.stream, cursor.place));
-        return batch !== undefined &&
-          batch.events.length === cursor.count &&
-          cursor.index < cursor.count
-          ? { batch, sequence: cursor.place.sequence, index: cursor.index }
-          : undefined;
-      },
-    });
-  };
+  /** The batches every session's streams emitted, for resuming one by replay. */
+  const batches = makeBatches(BATCHES_KEPT);
 
   // ---------------------------------------------------------------------------
   // Sending
@@ -774,7 +695,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     // Already gone counts as retired.
     yield* retire.pipe(Effect.catchTag("SessionNotFound", () => Effect.void));
     // A retired session's streams end, and nothing resumes them.
-    batches.delete(sessionId);
+    batches.forget(sessionId);
   });
 
   // ---------------------------------------------------------------------------
@@ -1105,14 +1026,13 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
           ),
         );
 
-        const resumed = keptBatch(input.sessionId, input.after);
-        let mirror = resumed === undefined ? emptyMirror() : copyMirror(resumed.batch.mirror);
+        const resumed = batches.resume(input.sessionId, input.after);
+        let mirror = resumed?.mirror ?? emptyMirror();
         /** What this stream has told; undefined until its first state went out. */
-        let view: View | undefined =
-          resumed === undefined ? undefined : copyView(resumed.batch.view);
+        let view: View | undefined = resumed?.view;
         /** The engine sequence the mirror is at. */
-        let sequence = resumed === undefined ? -1 : resumed.sequence;
-        let lastCursor: EventCursor | null = resumed === undefined ? null : input.after;
+        let sequence = resumed?.sequence ?? -1;
+        let lastCursor: EventCursor | null = resumed?.lastCursor ?? null;
         /** Where the last batch this stream emitted stands. */
         let lastPlace: BatchPlace | undefined;
 
@@ -1130,7 +1050,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
             cursor: cursorFor(place, index, bodies.length, stream),
             at,
           }));
-          keepBatch(input.sessionId, batchKey(stream, place), {
+          batches.keep(input.sessionId, stream, place, {
             mirror: copyMirror(mirror),
             view: copyView(view),
             events: emitted,
@@ -1239,12 +1159,12 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
           }
         });
 
-        // A resume from a kept batch tells the rest of that batch first.
+        // A resume from a kept batch tells first what the stream emitted after the cursor at its
+        // engine sequence. An approval still open may have been told only as a summary: its
+        // change is fetched now, since the engine has nothing new to send for it.
         if (resumed !== undefined) {
-          for (const event of resumed.batch.events.slice(resumed.index + 1)) {
-            lastCursor = event.cursor;
-            yield* Queue.offer(output, event);
-          }
+          for (const event of resumed.replay) yield* Queue.offer(output, event);
+          yield* fetchChanges();
         }
         yield* Effect.forkScoped(pump);
 
@@ -1287,7 +1207,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
           const next = yield* Queue.take(inputs);
           switch (next._tag) {
             case "missing":
-              batches.delete(input.sessionId);
+              batches.forget(input.sessionId);
               return yield* Queue.fail(output, new SessionNotFound({ sessionId: input.sessionId }));
             case "lost": {
               const current = yield* SubscriptionRef.get(state);
@@ -1308,9 +1228,8 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
               break;
             case "fetched":
               // The approval may have closed, or its item moved on, since it was asked for: the
-              // card changes only while the approval is open and the item at that version.
-              keepFetched(mirror, next.item);
-              if (view !== undefined) {
+              // card changes only while the approval is open and holds the item at that version.
+              if (keepFetched(mirror, next.item) && view !== undefined) {
                 yield* emit(
                   diff(mirror, view, DateTime.makeUnsafe(yield* Clock.currentTimeMillis)),
                 );

@@ -167,7 +167,7 @@ const gatedItem = (
 export type FetchedChanges = ReadonlyMap<string, FileChangeItem>;
 
 /** Whether `fetched` is `held` as the engine recorded it at the same update. */
-const sameVersion = (held: FileChangeItem, fetched: FileChangeItem) =>
+export const sameVersion = (held: FileChangeItem, fetched: FileChangeItem) =>
   fetched.id === held.id &&
   DateTime.toEpochMillis(fetched.updatedAt) === DateTime.toEpochMillis(held.updatedAt);
 
@@ -180,22 +180,19 @@ const wholeItem = (gated: GatedItem, fetched: FetchedChanges): GatedItem => {
 
 /**
  * The file change `approval` holds back, when it came without its diff and the
- * card could show it whole with one: the item to fetch for the approval's card.
- * A fetched item answers it once `fetched` holds it for the same version.
+ * card could show it whole with one: the item to fetch for the approval's card,
+ * at the version the approval holds.
  */
-export function fileChangeToFetch(
+export function fileChangeWithoutDiff(
   approval: ApprovalItem,
   request: RuntimeRequest | undefined,
   items: Iterable<Item>,
-  fetched: FetchedChanges,
 ): FileChangeItem | undefined {
   if (KINDS[approval.requestKind] !== "file-change") return undefined;
   const gated = gatedItem(approval, request, items);
   if (gated?.type !== "file_change" || gated.diffStr !== undefined) return undefined;
   // A diff covers one file, so a change of several is never exact.
-  if ((gated.changes?.length ?? 0) > 1) return undefined;
-  const whole = fetched.get(gated.id);
-  return whole !== undefined && sameVersion(gated, whole) ? undefined : gated;
+  return (gated.changes?.length ?? 0) > 1 ? undefined : gated;
 }
 
 interface Shown {
