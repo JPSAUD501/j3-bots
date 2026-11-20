@@ -4,7 +4,6 @@ import {
   type EntryTarget,
   MAX_MESSAGE_LENGTH,
   type Mentions,
-  MessageText,
 } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -69,11 +68,16 @@ export type DraftSendResult =
 /**
  * A draft as the device keeps it: the text and the files already on the
  * server. Each write gives it a new `revision`, so a window can tell whether
- * the draft is still the one it read.
+ * the draft is still the one it read. The text is kept whatever its length:
+ * the limit of a message applies when it is sent.
  */
 const StoredDraft = Schema.fromJsonString(
   Schema.toCodecJson(
-    Schema.Struct({ revision: Schema.String, text: MessageText, files: Schema.Array(Attachment) }),
+    Schema.Struct({
+      revision: Schema.String,
+      text: Schema.String,
+      files: Schema.Array(Attachment),
+    }),
   ),
 );
 const encodeStored = Schema.encodeEffect(StoredDraft);

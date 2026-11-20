@@ -8,6 +8,7 @@ import {
   type EntryTarget,
   HTTP_PATHS,
   J3Rpcs,
+  MAX_MESSAGE_LENGTH,
   NotFound,
 } from "@j3-bots/contracts";
 import * as Server from "@j3-bots/server/testing";
@@ -811,6 +812,28 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         Effect.provide(client(first.credential, device)),
       );
     }),
+  );
+
+  it.effect(
+    "keeps a draft longer than a message can hold through a reload, and does not send it",
+    () =>
+      Effect.gen(function* () {
+        const device = TestPlatform.makeDevice();
+        const long = "x".repeat(MAX_MESSAGE_LENGTH + 1);
+        const first = yield* Effect.gen(function* () {
+          yield* pairAndConnect;
+          const target: EntryTarget = { _tag: "conversation", botId: yield* createBot("Verbose") };
+          yield* (yield* Drafts).setText(target, long);
+          yield* whenStored(device.storage, "drafts", targetKey(target), present);
+          return { target, credential: yield* savedCredential };
+        }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
+
+        yield* Effect.gen(function* () {
+          const drafts = yield* Drafts;
+          assert.strictEqual(drafts.state.get().get(targetKey(first.target))?.text, long);
+          assert.strictEqual(yield* drafts.send(first.target), "too-long");
+        }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+      }),
   );
 
   it.effect("sends one conversation's messages from two tabs one at a time, in order", () =>
