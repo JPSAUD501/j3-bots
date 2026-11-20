@@ -22,9 +22,9 @@ import {
   nothingToStop,
   replacement,
   startingTurns,
-  toolPersistenceOf,
   toolsToResolve,
 } from "./Translate.ts";
+import { persistenceInItem } from "./toolPersistence.ts";
 
 const answers = Schema.decodeUnknownSync(QuestionAnswers);
 
@@ -313,28 +313,22 @@ describe("backgroundWorkPending", () => {
 
     mirror.toolPersistence.set(
       "item-tool",
-      toolPersistenceOf({ persistent: true, script: "x".repeat(20_000) }),
+      Option.getOrThrow(persistenceInItem({ persistent: true, script: "x".repeat(20_000) })),
     );
     assert.deepStrictEqual(toolsToResolve(mirror), []);
     assert.isFalse(backgroundWorkPending(mirror));
 
-    mirror.toolPersistence.set("item-tool", toolPersistenceOf({ script: "x".repeat(20_000) }));
-    assert.isTrue(backgroundWorkPending(mirror));
-
-    // The engine's read cut an object short too: whether it was persistent is
-    // undecidable, and it counts as pending, which the Stop keeps acting on.
-    const cutObject = toolPersistenceOf('{"script":"xxxx\n… output truncated for transport');
-    assert.strictEqual(cutObject, "undecidable");
-    mirror.toolPersistence.set("item-tool", cutObject);
-    assert.isTrue(backgroundWorkPending(mirror));
-  });
-
-  it("reads a cut input that opens no object as transient", () => {
-    assert.strictEqual(
-      toolPersistenceOf("run the dev server …\n… output truncated for transport"),
-      "transient",
+    mirror.toolPersistence.set(
+      "item-tool",
+      Option.getOrThrow(persistenceInItem({ script: "x".repeat(20_000) })),
     );
-    assert.strictEqual(toolPersistenceOf("[1,2,3\n… output truncated for transport"), "transient");
+    assert.isTrue(backgroundWorkPending(mirror));
+
+    // No read returned enough of the input to tell: the engine's own stop
+    // still interrupts the tool unless it is persistent, and a Stop does not
+    // wait on it for good.
+    mirror.toolPersistence.set("item-tool", "undecidable");
+    assert.isFalse(backgroundWorkPending(mirror));
   });
 });
 

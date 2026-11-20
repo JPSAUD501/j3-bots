@@ -3,6 +3,7 @@ import type { EngineStatus, ModelChoice, PermissionMode } from "@j3-bots/contrac
 import {
   AttachmentCreateUploadUrlInput,
   CommandId,
+  EnvironmentRequestInvalidReason,
   MessageId,
   type OrchestrationV2DispatchCommandError,
   type ProjectMutationError,
@@ -114,13 +115,12 @@ import {
   queuedRuns,
   replacement,
   startingTurns,
-  toolPersistenceOf,
   toolsToResolve,
   type EventBody,
   type Mirror,
-  type ToolPersistence,
   type View,
 } from "./Translate.ts";
+import { resolvePersistence, type ToolPersistence, type WholeInput } from "./toolPersistence.ts";
 
 // The `Engine` service over a real T3 Code server. See `Engine.ts` for the
 // contract; this file only says how each method meets it.
@@ -131,6 +131,11 @@ const COMMAND_TIMEOUT = Duration.seconds(30);
 const SYNC_TIMEOUT = Duration.seconds(30);
 /** How long fetching an approval's file change may take; past it the card stays a summary. */
 const FETCH_TIMEOUT = Duration.seconds(10);
+/**
+ * How long reading a session's transcript may take. The engine exports the
+ * whole thread, up to 50 MiB, two exports at a time.
+ */
+const TRANSCRIPT_TIMEOUT = Duration.seconds(30);
 /** Batches kept per session, for resuming an `events` stream by replay. */
 const BATCHES_KEPT = 32;
 /** How long a staged file stays usable: half the engine's 24-hour sweep. */
@@ -155,6 +160,25 @@ const APPROVAL_DECISIONS = {
 } as const;
 
 const decodeProjects = HttpClientResponse.schemaBodyJson(ProjectSnapshot);
+
+/** Of a transcript, only each item's id, type and input, which `wholeToolInput` reads. */
+const decodeTranscriptItems = HttpClientResponse.schemaBodyJson(
+  Schema.Struct({
+    items: Schema.Array(
+      Schema.Struct({
+        item: Schema.Struct({
+          id: Schema.String,
+          type: Schema.String,
+          input: Schema.optional(Schema.Unknown),
+        }),
+      }),
+    ),
+  }),
+);
+
+const decodeRefusal = HttpClientResponse.schemaBodyJson(
+  Schema.Struct({ reason: EnvironmentRequestInvalidReason }),
+);
 
 const isEngineDown = Schema.is(Schema.Union([EngineUnavailable, EngineIncompatible]));
 
@@ -448,24 +472,64 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     );
 
   /**
-   * The persistence of a dynamic tool whose input the stream summarized, from
-   * the item read whole. None when the read failed or took longer than
-   * `FETCH_TIMEOUT`: nothing is known, and the item is read again later.
+   * A dynamic tool's input as the session's transcript holds it: whole, from
+   * the stored item, unlike `getTurnItem`'s (**Read** at `db51b67`,
+   * `ThreadManagementService.ts`, `getThreadTranscript`, L713-748, served at
+   * `GET /api/orchestration/threads/:threadId/transcript`, `http.ts`,
+   * L213-234). The engine exports every visible item of the thread, and
+   * refuses a thread past 50 MiB (`PROVIDER_SEND_TURN_MAX_FILE_BYTES`) with
+   * `thread_transcript_too_large`: then, or when the transcript does not list
+   * the tool, its input is unavailable.
+   */
+  const wholeToolInput = Effect.fn("Engine.wholeToolInput")(function* (
+    sessionId: SessionId,
+    itemId: string,
+  ) {
+    const token = yield* currentToken;
+    const response = yield* http.execute(
+      HttpClientRequest.get(
+        `${baseUrl(options.port)}/api/orchestration/threads/${encodeURIComponent(sessionId)}/transcript`,
+      ).pipe(
+        HttpClientRequest.bearerToken(Redacted.value(token)),
+        HttpClientRequest.setHeader(ORCHESTRATION_PROTOCOL_HEADER, String(ORCHESTRATION_PROTOCOL)),
+      ),
+    );
+    if (response.status === 400) {
+      const refusal = yield* decodeRefusal(response);
+      if (refusal.reason === "thread_transcript_too_large") {
+        return { _tag: "unavailable" } satisfies WholeInput as WholeInput;
+      }
+    }
+    const transcript = yield* HttpClientResponse.filterStatusOk(response).pipe(
+      Effect.flatMap(decodeTranscriptItems),
+    );
+    const found = transcript.items.find((row) => row.item.id === itemId);
+    return found?.item.type === "dynamic_tool"
+      ? ({ _tag: "found", input: found.item.input } satisfies WholeInput as WholeInput)
+      : ({ _tag: "unavailable" } satisfies WholeInput as WholeInput);
+  }, Effect.timeout(TRANSCRIPT_TIMEOUT));
+
+  /**
+   * The persistence of a dynamic tool whose input the stream summarized
+   * (`resolvePersistence`): from the item, cut at 256 KiB, then, only when
+   * the cut hides the mark, from the transcript. None when a read failed or
+   * took too long: nothing is known, and the item is read again later.
    */
   const toolPersistence = (sessionId: SessionId, itemId: string) =>
-    rpc["orchestration.getTurnItem"]({
-      threadId: ThreadId.make(sessionId),
-      itemId: TurnItemId.make(itemId),
-    }).pipe(
-      Effect.timeoutOption(FETCH_TIMEOUT),
-      Effect.map((fetched) => {
-        const item = Option.getOrUndefined(fetched)?.item;
-        return item?.type === "dynamic_tool"
-          ? Option.some(toolPersistenceOf(item.input))
-          : Option.none<ToolPersistence>();
-      }),
-      Effect.orElseSucceed(() => Option.none<ToolPersistence>()),
-    );
+    resolvePersistence({
+      item: rpc["orchestration.getTurnItem"]({
+        threadId: ThreadId.make(sessionId),
+        itemId: TurnItemId.make(itemId),
+      }).pipe(
+        Effect.timeout(FETCH_TIMEOUT),
+        Effect.flatMap(({ item }) =>
+          item?.type === "dynamic_tool"
+            ? Effect.succeed(item.input)
+            : Effect.fail(new EngineUnavailable()),
+        ),
+      ),
+      whole: wholeToolInput(sessionId, itemId),
+    }).pipe(Effect.option);
 
   /**
    * Settles in `mirror` the persistence of each tool whose input the stream
