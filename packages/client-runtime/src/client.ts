@@ -140,6 +140,8 @@ export interface J3Client {
   readonly roster: Readable<Synced<ReadonlyArray<RosterItem>>>;
   readonly engine: Readable<Synced<EngineStatusValue>>;
   readonly settings: Readable<Synced<SettingsValue>>;
+  /** The latest save of the settings, under way or how it ended. */
+  readonly settingsSave: Readable<Settings.SettingsSave>;
   readonly devices: Readable<Synced<ReadonlyArray<Device>>>;
   /** Actions in flight or just accepted, by `cardAction`, `retryAction` or `stopAction` key. */
   readonly actions: Readable<ReadonlyMap<string, Actions.ActionState>>;
@@ -308,6 +310,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     roster: services.roster.state,
     engine: services.engine.state,
     settings: services.settings.state,
+    settingsSave: services.settings.save,
     devices: services.devices.state,
     actions: services.actions.state,
 

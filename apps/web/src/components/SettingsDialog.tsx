@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Dialog } from "@base-ui/react/dialog";
+import type { SettingsSave } from "@j3-bots/client-runtime";
 import {
   type Device,
   type DeviceId,
@@ -35,7 +36,10 @@ type SettingsIntents = Pick<
 >;
 
 interface SettingsButtonProps {
-  readonly data: Pick<ShellData, "engine" | "engineStale" | "settings" | "devices" | "connected">;
+  readonly data: Pick<
+    ShellData,
+    "engine" | "engineStale" | "settings" | "settingsSave" | "devices" | "connected"
+  >;
   readonly intents: SettingsIntents;
 }
 
@@ -83,6 +87,7 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
               <EngineSection engine={data.engine} stale={data.engineStale} />
               <YouSection
                 settings={data.settings}
+                save={data.settingsSave}
                 connected={data.connected}
                 onSave={intents.updateSettings}
               />
@@ -171,10 +176,12 @@ const timeZones = (current: string): ReadonlyArray<string> => {
 /** What bots call the operator, and the time zone routines and times follow. */
 function YouSection({
   settings,
+  save,
   connected,
   onSave,
 }: {
   settings: Settings | null;
+  save: SettingsSave;
   connected: boolean;
   onSave: SettingsIntents["updateSettings"];
 }) {
@@ -184,29 +191,35 @@ function YouSection({
       {settings === null ? (
         <Loading />
       ) : (
-        // Keyed, so the form starts again from the saved values when they change.
-        <YouForm
-          key={`${settings.operatorName ?? ""}|${settings.timeZone}`}
-          settings={settings}
-          connected={connected}
-          onSave={onSave}
-        />
+        <YouForm settings={settings} save={save} connected={connected} onSave={onSave} />
       )}
     </Section>
   );
 }
 
+/** What the operator changed and has not saved: null for a field they left alone. */
+interface Edits {
+  readonly name: string | null;
+  readonly zone: string | null;
+}
+
+const noEdits: Edits = { name: null, zone: null };
+
 /**
  * Saving needs the server: offline, Save says why it is unavailable. While a
- * save is under way the form takes no edit, so what it sends is what it shows
- * until the server answers.
+ * save is under way, even one started before Settings last closed, the form
+ * shows what it sends and takes no edit. A field the operator left alone
+ * shows the saved value as it arrives; one they changed keeps their edit
+ * until it is saved.
  */
 function YouForm({
   settings,
+  save,
   connected,
   onSave,
 }: {
   settings: Settings;
+  save: SettingsSave;
   connected: boolean;
   onSave: SettingsIntents["updateSettings"];
 }) {
@@ -214,14 +227,24 @@ function YouForm({
   const nameId = useId();
   const zoneId = useId();
   const offlineId = useId();
-  const [name, setName] = useState(settings.operatorName ?? "");
-  const [zone, setZone] = useState<string>(settings.timeZone);
-  const [state, setState] = useState<"editing" | "saving" | "saved" | "failed">("editing");
-  const saving = state === "saving";
+  const [edits, setEdits] = useState(noEdits);
+  // How a save ended shows only for one this form saw under way, until the next edit.
+  const [watching, setWatching] = useState(save._tag === "saving");
+  // A save that ends saved leaves nothing unsaved.
+  const [lastSave, setLastSave] = useState(save);
+  if (lastSave !== save) {
+    setLastSave(save);
+    if (save._tag === "saved") setEdits(noEdits);
+  }
+  const saving = save._tag === "saving";
+  const shown = saving ? { ...settings, ...save.changes } : settings;
+  const name = edits.name ?? shown.operatorName ?? "";
+  const zone = edits.zone ?? shown.timeZone;
   const trimmed = name.trim();
   const operatorName = trimmed === "" ? Option.some(null) : decodeName(trimmed);
   const timeZone = decodeTimeZone(zone);
   const changed = trimmed !== (settings.operatorName ?? "") || zone !== settings.timeZone;
+  const status = watching && !saving ? save._tag : null;
   return (
     <form
       className="flex flex-col gap-3"
@@ -229,10 +252,8 @@ function YouForm({
         event.preventDefault();
         if (!changed || saving || !connected) return;
         if (Option.isNone(operatorName) || Option.isNone(timeZone)) return;
-        setState("saving");
-        onSave({ operatorName: operatorName.value, timeZone: timeZone.value }).then((saved) =>
-          setState(saved ? "saved" : "failed"),
-        );
+        setWatching(true);
+        onSave({ operatorName: operatorName.value, timeZone: timeZone.value });
       }}
     >
       <div className="flex flex-col gap-1">
@@ -247,8 +268,9 @@ function YouForm({
           placeholder={t("settings.name.placeholder")}
           readOnly={saving}
           onChange={(event) => {
-            setName(event.currentTarget.value);
-            setState("editing");
+            const value = event.currentTarget.value;
+            setEdits((current) => ({ ...current, name: value }));
+            setWatching(false);
           }}
           className={fieldClass}
         />
@@ -263,12 +285,13 @@ function YouForm({
           aria-readonly={saving}
           onChange={(event) => {
             if (saving) return;
-            setZone(event.currentTarget.value);
-            setState("editing");
+            const value = event.currentTarget.value;
+            setEdits((current) => ({ ...current, zone: value }));
+            setWatching(false);
           }}
           className={fieldClass}
         >
-          {timeZones(settings.timeZone).map((value) => (
+          {timeZones(zone).map((value) => (
             <option key={value} value={value}>
               {value.replaceAll("_", " ")}
             </option>
@@ -286,8 +309,8 @@ function YouForm({
           {t("settings.save")}
         </Button>
         <p role="status" className="text-xs text-muted-foreground">
-          {state === "saved" && t("settings.saved")}
-          {state === "failed" && <span className="text-blocked">{t("settings.saveFailed")}</span>}
+          {status === "saved" && t("settings.saved")}
+          {status === "failed" && <span className="text-blocked">{t("settings.saveFailed")}</span>}
         </p>
       </div>
       {!connected && (

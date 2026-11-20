@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { ConversationItem, Draft } from "@j3-bots/client-runtime";
+import type { ConversationItem, Draft, SettingsSave } from "@j3-bots/client-runtime";
 import type {
   BotFile,
   BotId,
@@ -55,6 +55,8 @@ export interface ShellData {
   readonly memory: (botId: BotId) => ReadonlyArray<MemoryFile> | null;
   /** The server's settings; null until they load. */
   readonly settings: Settings | null;
+  /** The latest save of the settings, under way or how it ended. */
+  readonly settingsSave: SettingsSave;
   /** Every paired device; null until they load. */
   readonly devices: ReadonlyArray<Device> | null;
   /** A connection to the server is open now. Pairing another device needs one. */
@@ -91,10 +93,8 @@ export interface ShellIntents extends TimelineIntents {
   readonly freshStart: (botId: BotId) => void;
   readonly deleteBot: (botId: BotId) => void;
 
-  /** Resolves `false` when the server refused the change. */
-  readonly updateSettings: (
-    changes: Partial<Pick<Settings, "operatorName" | "timeZone">>,
-  ) => Promise<boolean>;
+  /** Saves the change; `settingsSave` follows it. */
+  readonly updateSettings: (changes: Partial<Pick<Settings, "operatorName" | "timeZone">>) => void;
   readonly startPairing: () => Promise<PairingStart>;
   /**
    * Resolves `false` unless the server confirmed it within ten seconds; the

@@ -186,6 +186,7 @@ function LiveShell({ children }: { children: ReactNode }) {
   const roster = useRoster();
   const engine = useEngineStatus();
   const settings = useSettings();
+  const settingsSave = useReadable(j3.settingsSave);
   const devices = useDevices();
   const actions = useActions();
   const drafts = useReadable(j3.drafts);
@@ -247,6 +248,7 @@ function LiveShell({ children }: { children: ReactNode }) {
     files: (botId) => (botId === detailsBotId ? loadedList(files) : null),
     memory: (botId) => (botId === detailsBotId ? loadedList(memory) : null),
     settings: settings._tag === "ready" ? settings.value : null,
+    settingsSave,
     devices: devices._tag === "ready" ? devices.value : null,
     connected: connection._tag === "connected",
   };
@@ -342,8 +344,7 @@ function LiveShell({ children }: { children: ReactNode }) {
         if (result._tag === "done") void navigate({ to: "/" });
         else say(t("details.deleteFailed"));
       }),
-    updateSettings: (changes) =>
-      j3.updateSettings(changes).then((result) => result._tag === "done"),
+    updateSettings: (changes) => void j3.updateSettings(changes),
     startPairing: () =>
       j3
         .startPairing()

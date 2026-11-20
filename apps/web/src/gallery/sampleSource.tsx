@@ -4,7 +4,7 @@
  * are decided, bots answer after a moment. A stand-in for the client runtime
  * in development only; nothing here reaches a server.
  */
-import type { Draft, DraftFile } from "@j3-bots/client-runtime";
+import type { Draft, DraftFile, SettingsSave } from "@j3-bots/client-runtime";
 import {
   AttachmentId,
   BotId,
@@ -32,6 +32,7 @@ interface State extends Omit<SampleTeam, "bots" | "room" | "attachments"> {
   readonly inFlight: ReadonlySet<EntryId>;
   /** Each conversation's unsent text and files, by `keyOf`. */
   readonly drafts: Readonly<Record<string, Draft>>;
+  readonly settingsSave: SettingsSave;
 }
 
 const blankDraft: Draft = { text: "", files: [], sending: false };
@@ -351,10 +352,12 @@ function sampleIntents({ get, update }: Store): ShellIntents {
         ...s,
         roster: s.roster.filter((item) => !(item._tag === "bot" && item.bot.id === botId)),
       })),
-    updateSettings: (changes) => {
-      update((s) => ({ ...s, settings: { ...s.settings, ...changes } }));
-      return Promise.resolve(true);
-    },
+    updateSettings: (changes) =>
+      update((s) => ({
+        ...s,
+        settings: { ...s.settings, ...changes },
+        settingsSave: { _tag: "saved" },
+      })),
     startPairing: () =>
       Promise.resolve({
         _tag: "started",
@@ -404,6 +407,7 @@ function toData(state: State): ShellData {
     files: (botId) => state.files[botId] ?? [],
     memory: (botId) => state.memory[botId] ?? [],
     settings: state.settings,
+    settingsSave: state.settingsSave,
     devices: state.devices,
     connected: true,
   };
@@ -415,7 +419,12 @@ function toData(state: State): ShellData {
  */
 export function useSampleSource({ firstRun = false }: { firstRun?: boolean } = {}): ShellSource {
   const [store] = useState(() => {
-    const team: State = { ...sampleTeam(SAMPLE_NOW), inFlight: new Set(), drafts: {} };
+    const team: State = {
+      ...sampleTeam(SAMPLE_NOW),
+      inFlight: new Set(),
+      drafts: {},
+      settingsSave: { _tag: "idle" },
+    };
     return createStore(firstRun ? withoutBots(team) : team);
   });
   const state = useSyncExternalStore(store.subscribe, store.get);

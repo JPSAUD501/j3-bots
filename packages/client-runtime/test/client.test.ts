@@ -44,6 +44,7 @@ import {
 import { Devices } from "../src/stores/Devices.ts";
 import { Drafts } from "../src/stores/Drafts.ts";
 import { Roster } from "../src/stores/Roster.ts";
+import { Settings } from "../src/stores/Settings.ts";
 import { SignOut } from "../src/intents/SignOut.ts";
 import * as TestPlatform from "./platform.ts";
 
@@ -595,6 +596,32 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       yield* network.set("online");
       yield* waitFor(connection.state, (state) => state._tag === "connected");
     }).pipe(Effect.provide(client())),
+  );
+
+  it.effect("keeps a settings save under way through a disconnection until it is saved", () =>
+    Effect.gen(function* () {
+      yield* pairAndConnect;
+      const settings = yield* Settings;
+      const network = yield* TestPlatform.TestNetwork;
+      const connection = yield* Connection;
+      yield* waitFor(settings.state, (state) => state._tag === "ready");
+
+      yield* network.set("offline");
+      yield* waitFor(connection.state, (state) => state._tag === "offline");
+      const saving = yield* settings
+        .update({ operatorName: "Ana" })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      assert.deepStrictEqual(settings.save.get(), {
+        _tag: "saving",
+        changes: { operatorName: "Ana" },
+      });
+
+      yield* network.set("online");
+      assert.strictEqual((yield* Fiber.join(saving))._tag, "done");
+      assert.deepStrictEqual(settings.save.get(), { _tag: "saved" });
+      const saved = settings.state.get();
+      assert.strictEqual(saved._tag === "ready" && saved.value.operatorName, "Ana");
+    }).pipe(Effect.scoped, Effect.provide(client())),
   );
 
   it.effect("resyncs a conversation after a reconnect, never blank and never doubled", () =>

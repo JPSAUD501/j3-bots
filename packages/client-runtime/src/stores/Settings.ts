@@ -13,6 +13,13 @@ export type SettingsChanges = Partial<
   Pick<SettingsValue, "operatorName" | "timeZone" | "budgets" | "notifications">
 >;
 
+/** A save of the settings: under way, with what it sends, or how the last one ended. */
+export type SettingsSave =
+  | { readonly _tag: "idle" }
+  | { readonly _tag: "saving"; readonly changes: SettingsChanges }
+  | { readonly _tag: "saved" }
+  | { readonly _tag: "failed" };
+
 /**
  * The operator's preferences. The contract has no subscription for them, so
  * they are read when each socket opens and replaced by what an update returns.
@@ -22,6 +29,11 @@ export class Settings extends Context.Service<
   Settings,
   {
     readonly state: Readable<Synced<SettingsValue>>;
+    /**
+     * The latest save, which outlives any screen that shows it: one that waits
+     * through a disconnection is still under way when Settings opens again.
+     */
+    readonly save: Readable<SettingsSave>;
     readonly update: (changes: SettingsChanges) => Effect.Effect<IntentResult<SettingsValue>>;
   }
 >()("@j3-bots/client-runtime/stores/Settings") {}
@@ -32,6 +44,7 @@ export const layer = Layer.effect(
     const connection = yield* Connection;
     const actions = yield* Actions;
     const state = new Cell<Synced<SettingsValue>>(loading);
+    const save = new Cell<SettingsSave>({ _tag: "idle" });
 
     yield* connection
       .eachSession((client) =>
@@ -45,14 +58,18 @@ export const layer = Layer.effect(
 
     const update = Effect.fn("Settings.update")(function* (changes: SettingsChanges) {
       const commandId = yield* actions.commandId;
+      const saving: SettingsSave = { _tag: "saving", changes };
+      save.set(saving);
       const exit = yield* connection
         .call((client) => client["settings.update"]({ commandId, ...changes }))
         .pipe(Effect.exit);
       const result = intentResult(exit);
       if (result._tag === "done") state.set(ready(result.value));
+      // A later save speaks for itself.
+      if (save.get() === saving) save.set({ _tag: result._tag === "done" ? "saved" : "failed" });
       return result;
     });
 
-    return Settings.of({ state, update });
+    return Settings.of({ state, save, update });
   }),
 );
