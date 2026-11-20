@@ -155,6 +155,10 @@ export const layer = Layer.effect(
         const folder = path.join(workspace.value, name);
         if (Option.isNone(yield* fs.lstat(folder).pipe(Effect.option))) yield* makeFolder(folder);
       }
+      // Where the workspace really is, kept from the first provisioning, which
+      // comes before the bot's first turn: the bot can later replace its
+      // folder with a link, and what it attaches is read against this.
+      yield* bots.setWorkspaceRoot(botId, yield* fs.realPath(workspace.value).pipe(Effect.orDie));
       yield* render(botId);
     });
 

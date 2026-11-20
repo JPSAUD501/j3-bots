@@ -41,8 +41,15 @@ export const routes = HttpRouter.add(
     const request = yield* decodeToolCall(body.success).pipe(Effect.option);
     if (request._tag === "None") return HttpServerResponse.empty({ status: 400 });
     const tools = yield* BotTools;
-    const response = yield* tools.call(request.value);
-    return yield* HttpServerResponse.schemaJson(ToolCallResponse)(response).pipe(Effect.orDie);
+    return yield* tools.call(request.value).pipe(
+      Effect.flatMap((response) =>
+        HttpServerResponse.schemaJson(ToolCallResponse)(response).pipe(Effect.orDie),
+      ),
+      // Not matched yet, and nothing recorded: the bridge forwards it again.
+      Effect.catchTag("TurnToolRetry", () =>
+        Effect.succeed(HttpServerResponse.empty({ status: 503 })),
+      ),
+    );
   }),
 );
 

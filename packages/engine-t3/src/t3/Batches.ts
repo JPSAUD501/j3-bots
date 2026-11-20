@@ -74,19 +74,60 @@ export interface Resume {
   readonly lastCursor: EventCursor;
 }
 
-/** The batches the streams of every session emitted, `limit` per session, the newest last. */
+/**
+ * The batches the streams of every session emitted, `limit` per session, the
+ * newest last, and what each turn's end told of its hand-off. The hand-offs
+ * are one entry per ended turn, which the engine's own record of the session
+ * holds too, kept until the session is forgotten (`forget`, when the engine no
+ * longer has it) or the process exits. Nothing bounds them sooner yet: once
+ * the server rotates a session after a threshold of runs
+ * (`docs/architecture/server.md`, Rotation), that threshold bounds them.
+ */
 export const makeBatches = (limit: number) => {
   const sessions = new Map<SessionId, Map<string, Batch>>();
+  const handoffs = new Map<SessionId, Map<string, boolean>>();
 
+  /** A stream of the session opens: what it emits is kept from now on. */
+  const open = (sessionId: SessionId) => {
+    if (!sessions.has(sessionId)) sessions.set(sessionId, new Map());
+    if (!handoffs.has(sessionId)) handoffs.set(sessionId, new Map());
+  };
+
+  /**
+   * Keeps what a stream emitted. A session forgotten since the stream opened
+   * keeps nothing: it is not made again.
+   */
   const keep = (sessionId: SessionId, stream: string, place: BatchPlace, batch: Batch) => {
-    const kept = sessions.get(sessionId) ?? new Map<string, Batch>();
+    const kept = sessions.get(sessionId);
+    const told = handoffs.get(sessionId);
+    if (kept === undefined || told === undefined) return;
     kept.set(batchKey(stream, place), batch);
     for (const oldest of kept.keys()) {
       if (kept.size <= limit) break;
       kept.delete(oldest);
     }
-    sessions.set(sessionId, kept);
+    for (const event of batch.events) {
+      // A turn's end, as it was live, is the evidence.
+      if (event._tag === "turn-finished") told.set(event.turnId, event.backgroundWork);
+      // An end a replacement tells first, a stream having missed it, is
+      // repeated as told then, never over what a live end told.
+      if (event._tag === "replaced") {
+        for (const turn of event.endedTurns) {
+          if (!told.has(turn.turnId)) told.set(turn.turnId, turn.backgroundWork);
+        }
+      }
+    }
   };
+
+  /**
+   * Whether each turn handed off, as its `turn-finished` told it, by turn id.
+   * A hand-off is what the turn's end showed: work it started was still
+   * running then. A replacement repeats it, also once the batches that told it
+   * are gone, rather than recompute it from a roster the work has left since,
+   * after it woke the session.
+   */
+  const toldHandoffs = (sessionId: SessionId): ReadonlyMap<string, boolean> =>
+    handoffs.get(sessionId) ?? new Map();
 
   /**
    * Where a stream resumed from `after` starts, when the batch `after` is in
@@ -125,10 +166,11 @@ export const makeBatches = (limit: number) => {
     };
   };
 
-  /** Forgets a session's batches: nothing resumes its streams by replay any more. */
+  /** Forgets a session's batches: nothing resumes its streams any more. */
   const forget = (sessionId: SessionId) => {
     sessions.delete(sessionId);
+    handoffs.delete(sessionId);
   };
 
-  return { keep, resume, forget };
+  return { open, keep, resume, toldHandoffs, forget };
 };

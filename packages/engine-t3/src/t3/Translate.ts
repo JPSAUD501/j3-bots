@@ -2,21 +2,27 @@
 import type { FailureClass, Question, QuestionAnswers, WorkStep } from "@j3-bots/contracts";
 import { MAX_CARD_QUESTIONS, MAX_QUESTION_OPTIONS, WorkStepId } from "@j3-bots/contracts";
 import {
+  isOrchestrationV2WorkActive,
   OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProviderFailureClass,
+  type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import type { DispatchDisposition } from "../Engine.ts";
 import type {
+  BackgroundWork,
   EndedTurn,
   EngineRequest,
   HostSpeech,
@@ -47,6 +53,7 @@ import {
 } from "./approvalDetail.ts";
 import { dispatchOfMessage, localIdFor, messageIdFor } from "./Keys.ts";
 import { TOOL_SERVER } from "./Provision.ts";
+import { hasPersistentFlag, type ToolPersistence } from "./toolPersistence.ts";
 
 // The engine's thread, mirrored entity by entity, and the J3 Bots events it
 // means. Engine events carry whole entities and a snapshot carries all of
@@ -59,6 +66,7 @@ type Run = OrchestrationV2Run;
 type Item = OrchestrationV2TurnItem;
 type RuntimeRequest = OrchestrationV2RuntimeRequest;
 type Thread = OrchestrationV2AppThread;
+type ProviderThread = OrchestrationV2ProviderThread;
 
 /** The engine's state of one thread, as far as J3 Bots reads it. */
 export interface Mirror {
@@ -67,6 +75,11 @@ export interface Mirror {
   readonly runs: Map<string, Run>;
   readonly items: Map<string, Item>;
   readonly requests: Map<string, RuntimeRequest>;
+  /**
+   * Read only for the background work they report (`backgroundWorkOf`,
+   * `hasBackgroundWork`), each task attributed to its run (`attributeTasks`).
+   */
+  readonly providerThreads: Map<string, ProviderThread>;
   /**
    * `toolInputDigest` of each `j3` tool call's input, by item id, with the
    * input it was taken of. Kept by `digestToolCalls`, which `diff` relies on.
@@ -80,6 +93,12 @@ export interface Mirror {
    * can show it. See `approvalDetail.ts`.
    */
   readonly fetched: Map<string, FileChangeItem>;
+  /**
+   * Whether each live dynamic tool whose input the stream summarized runs on
+   * purpose, as the adapter's reads of it settled it, by item id. See
+   * `toolWork`.
+   */
+  readonly toolPersistence: Map<string, ToolPersistence>;
 }
 
 export const emptyMirror = (): Mirror => ({
@@ -87,8 +106,10 @@ export const emptyMirror = (): Mirror => ({
   runs: new Map(),
   items: new Map(),
   requests: new Map(),
+  providerThreads: new Map(),
   toolDigests: new Map(),
   fetched: new Map(),
+  toolPersistence: new Map(),
 });
 
 /** A copy of the mirror as it stands, for resuming from it later. Entities are never mutated, only replaced. */
@@ -97,25 +118,31 @@ export const copyMirror = (mirror: Mirror): Mirror => ({
   runs: new Map(mirror.runs),
   items: new Map(mirror.items),
   requests: new Map(mirror.requests),
+  providerThreads: new Map(mirror.providerThreads),
   toolDigests: new Map(mirror.toolDigests),
   fetched: new Map(mirror.fetched),
+  toolPersistence: new Map(mirror.toolPersistence),
 });
 
 /**
  * The mirror of a snapshot. File changes fetched before it still count for
- * the open approvals the snapshot has holding them at the same version.
+ * the open approvals the snapshot has holding them at the same version, and
+ * a tool's persistence for as long as the snapshot has its item.
  */
 export const mirrorOf = (
   projection: OrchestrationV2ThreadProjection,
-  fetched: ReadonlyMap<string, FileChangeItem> = new Map(),
+  before: Pick<Mirror, "fetched" | "toolPersistence"> = emptyMirror(),
 ): Mirror => {
+  const items: Map<string, Item> = new Map(projection.turnItems.map((item) => [item.id, item]));
   const mirror: Mirror = {
     thread: projection.thread,
     runs: new Map(projection.runs.map((run) => [run.id, run])),
-    items: new Map(projection.turnItems.map((item) => [item.id, item])),
+    items,
     requests: new Map(projection.runtimeRequests.map((request) => [request.id, request])),
+    providerThreads: new Map(projection.providerThreads.map((thread) => [thread.id, thread])),
     toolDigests: new Map(),
-    fetched: new Map(fetched),
+    fetched: new Map(before.fetched),
+    toolPersistence: new Map([...before.toolPersistence].filter(([id]) => items.has(id))),
   };
   dropUnheld(mirror);
   return mirror;
@@ -123,7 +150,7 @@ export const mirrorOf = (
 
 const isThread = Schema.is(OrchestrationV2AppThread);
 
-/** Applies one engine event. Returns whether it touched anything J3 Bots reads. */
+/** Applies one engine event. Returns whether it touched what the session's events are made of. */
 export const applyEvent = (mirror: Mirror, event: OrchestrationV2DomainEvent): boolean => {
   switch (event.type) {
     case "run.created":
@@ -138,6 +165,16 @@ export const applyEvent = (mirror: Mirror, event: OrchestrationV2DomainEvent): b
       mirror.requests.set(event.payload.id, event.payload);
       dropUnheld(mirror);
       return true;
+    case "provider-thread.updated":
+      // No session event is made of it. A provider-thread task ending changes
+      // only `backgroundWorkOf`, which the Stop runner reads afresh on
+      // its periodic synchronize while a Stop waits on that work. A task
+      // starting is read at its run's end (`hasBackgroundWork`).
+      mirror.providerThreads.set(
+        event.payload.id,
+        attributeTasks(event.payload, mirror.providerThreads.get(event.payload.id), event.runId),
+      );
+      return false;
     default:
       // Every thread event carries the whole thread record.
       if (event.type.startsWith("thread.") && isThread(event.payload)) {
@@ -148,9 +185,47 @@ export const applyEvent = (mirror: Mirror, event: OrchestrationV2DomainEvent): b
   }
 };
 
+/**
+ * The provider thread with each of its tasks attributed to the run it first
+ * appeared under, as the engine's projection stamps it: an adapter resends its
+ * whole roster without runs, so a task keeps the run it had, and a new one
+ * takes the run of the event that reported it (**Read** at `db51b67`,
+ * `ProjectionStore.ts`, `attributePendingBackgroundTasks`, L936-954, applied
+ * at L1153-1159). The stream carries the event as the adapter reported it; a
+ * snapshot carries the stamped thread.
+ */
+const attributeTasks = (
+  next: ProviderThread,
+  previous: ProviderThread | undefined,
+  runId: Run["id"] | undefined,
+): ProviderThread => {
+  const tasks = next.pendingBackgroundTasks ?? [];
+  if (tasks.every((task) => task.runId !== undefined)) return next;
+  const known = new Map(
+    (previous?.pendingBackgroundTasks ?? []).map((task) => [task.taskId, task.runId]),
+  );
+  return {
+    ...next,
+    pendingBackgroundTasks: tasks.map((task) => {
+      const owner = task.runId ?? (known.has(task.taskId) ? known.get(task.taskId) : runId);
+      return owner === undefined ? task : { ...task, runId: owner };
+    }),
+  };
+};
+
 /** Whether the session was retired: the engine archived its thread. */
 export const isRetired = (mirror: Mirror) =>
   mirror.thread !== undefined && mirror.thread.archivedAt !== null;
+
+/**
+ * Whether the engine deleted the session's thread: the engine's word that the
+ * session is gone, as `isMissingThread` is for a thread it has no record of.
+ * A deletion keeps the thread's projection and only stamps `deletedAt` on it,
+ * in the `thread.deleted` event too, so a read still succeeds (**Read** at
+ * `db51b67`, `ThreadDeletion.ts`, L56-66).
+ */
+export const isDeleted = (mirror: Mirror) =>
+  mirror.thread !== undefined && mirror.thread.deletedAt !== null;
 
 // ---------------------------------------------------------------------------
 // Runs as turns
@@ -207,6 +282,27 @@ const openingMessageOf = (mirror: Mirror, run: Run): string | undefined => {
   const opening = messages.find((item) => !STEER_INTENTS.has(item.inputIntent));
   if (opening !== undefined) return opening.messageId;
   return messages.length === 0 ? run.userMessageId : undefined;
+};
+
+/**
+ * Whether the engine queued the run behind another turn rather than starting
+ * it at once. It creates such a run `queued`, with no item for its message,
+ * where a start it begins at once is `starting` from the outset; it records
+ * the message, marked `queued_turn`, only as the run leaves the queue (**Read**
+ * at `db51b67`, `Orchestrator.ts`: the queued run at L8012-8060, the start at
+ * L8451-8461, the promotion at L3035-3097). A follow-up the engine queues for
+ * an unread steer reuses the steer's item, marked `queued_turn` at once
+ * (L8192-8215). A run cancelled while it waited keeps neither mark: the engine
+ * clears its queue position (L1216-1231), and its message was never recorded,
+ * which a start the engine begins at once always is, in the same command
+ * (L8555-8690).
+ */
+const wasQueued = (mirror: Mirror, run: Run) => {
+  if (run.status === "queued") return true;
+  const messages = userMessagesOf(mirror, run);
+  if (run.status === "cancelled" && !hasStarted(run) && messages.length === 0) return true;
+  const opening = openingMessageOf(mirror, run);
+  return messages.some((item) => item.messageId === opening && item.inputIntent === "queued_turn");
 };
 
 /**
@@ -303,14 +399,221 @@ const outcomeOf = (mirror: Mirror, run: Run): TurnOutcome => {
 
 const LIVE_ITEM: ReadonlySet<Item["status"]> = new Set(["idle", "pending", "running", "waiting"]);
 
-/** Whether work the turn started can still wake the session after it ends. */
+/**
+ * A task the provider reports that holds the agent's completion: the agent
+ * resumes when it ends. The engine's rule (**Read** at `db51b67`,
+ * `orchestrationV2PendingBackgroundWork.ts`, `backgroundWorkHoldsCompletion`,
+ * L102-121): one the agent marked awaited (`contracts/orchestrationV2.ts`,
+ * L1107-1111), or a subagent or background task. A command or a monitor
+ * holds only when awaited: it is as often a dev server or its watchdog as a
+ * wait. Claude Code wakes the session when a background shell or a monitor
+ * ends, awaited or not (**Read**, `ClaudeAdapterV2.ts`, L6207-6208; the
+ * `claude_background_task_wake` and `claude_background_monitor_wake`
+ * fixtures), so one not awaited may still bring a background turn.
+ */
+const holdsCompletion = (task: OrchestrationV2PendingBackgroundTask) =>
+  task.awaited === true || task.kind === "subagent" || task.kind === "background_task";
+
+/**
+ * Whether work the turn started can still wake the session after it ends: a
+ * live subagent, a command whose completion wakes it, or a task the provider
+ * reports under the turn's run that holds the agent's completion.
+ */
 const hasBackgroundWork = (mirror: Mirror, run: Run) =>
   itemsOf(mirror, run).some(
     (item) =>
       LIVE_ITEM.has(item.status) &&
       ((item.type === "command_execution" && item.completionWake === "always") ||
         item.type === "subagent"),
+  ) ||
+  [...mirror.providerThreads.values()].some((thread) =>
+    (thread.pendingBackgroundTasks ?? []).some(
+      (task) => task.runId === run.id && holdsCompletion(task),
+    ),
   );
+
+const ACTIVE_RUN: ReadonlySet<Run["status"]> = new Set(["preparing", "starting", "running"]);
+// Over the shell's statuses, a run's and `idle`, which is not among them: a
+// shell left idle has not settled.
+const SETTLED_FOR_BACKGROUND: ReadonlySet<OrchestrationV2ThreadShell["status"]> = new Set([
+  "cancelled",
+  "completed",
+  "failed",
+  "interrupted",
+  "waiting",
+]);
+const BACKGROUND_ITEM: ReadonlySet<Item["type"]> = new Set([
+  "command_execution",
+  "dynamic_tool",
+  "subagent",
+]);
+
+/**
+ * The stream's stand-in for a dynamic tool input above 16 KiB, which drops
+ * the input's `persistent` flag. **Read** at `db51b67`, `WireProjection.ts`,
+ * `summarizeDynamicValue` (L29, L69-107) as `projectTurnItemForWire` applies
+ * it to a dynamic tool (L190-197).
+ */
+const isSummarizedInput = (input: unknown) =>
+  Predicate.hasProperty(input, "summary") &&
+  Predicate.hasProperty(input, "truncated") &&
+  input.truncated === true;
+
+/**
+ * How a live dynamic tool counts in the engine's rule. One the agent keeps
+ * running on purpose never counts (**Read** at `db51b67`,
+ * `orchestrationV2PendingBackgroundWork.ts`, `pendingBackgroundTurnItems`,
+ * L242-258). For an input the stream summarized, the adapter's read of the
+ * item tells (`toolPersistence.ts`): until a read settles it, the tool is
+ * pending, so a Stop waits on it and keeps sending fresh rounds while it does.
+ * One no read of the item can decide is `undecided`: the engine's own
+ * projection of its pending work, which reads the stored input, decides it
+ * (`workInShell`).
+ */
+const toolWork = (mirror: Mirror, item: DynamicTool): "pending" | "undecided" | "none" => {
+  if (!isSummarizedInput(item.input)) return hasPersistentFlag(item.input) ? "none" : "pending";
+  switch (mirror.toolPersistence.get(item.id)) {
+    case "persistent":
+      return "none";
+    case "undecidable":
+      return "undecided";
+    case "transient":
+    case undefined:
+      return "pending";
+  }
+};
+
+/** Live dynamic tools whose input the stream summarized: those whose persistence a read tells. */
+const summarizedTools = (mirror: Mirror): ReadonlyArray<string> =>
+  [...mirror.items.values()].flatMap((item) =>
+    item.type === "dynamic_tool" &&
+    isOrchestrationV2WorkActive(item.status) &&
+    isSummarizedInput(item.input)
+      ? [item.id]
+      : [],
+  );
+
+/**
+ * Whether the mirror shows the item ended, or no longer a dynamic tool: what
+ * was learned of its persistence is no longer needed. False for an item the
+ * mirror does not have, which it may not have seen yet.
+ */
+export const isEndedTool = (mirror: Mirror, itemId: string): boolean => {
+  const item = mirror.items.get(itemId);
+  return (
+    item !== undefined &&
+    (item.type !== "dynamic_tool" || !isOrchestrationV2WorkActive(item.status))
+  );
+};
+
+/**
+ * Live dynamic tools whose input the stream summarized and whose persistence
+ * no read of the item settled yet: a read that failed leaves one here, to be
+ * read again once its backoff passed.
+ */
+export const toolsToResolve = (mirror: Mirror): ReadonlyArray<string> =>
+  summarizedTools(mirror).filter((itemId) => !mirror.toolPersistence.has(itemId));
+
+/** The session's latest run, as the engine's stop picks it: the last one that is not queued. */
+const latestRun = (mirror: Mirror) =>
+  runsInOrder(mirror)
+    .filter((run) => run.status !== "queued")
+    .at(-1);
+
+/**
+ * The session's background work as the mirror shows it, by the rule the
+ * engine's stop counts it with: work it counts as pending, none, or nothing
+ * pending but live dynamic tools whose persistence no read of the item could
+ * decide (`toolWork`), by the engine's task id of each, which the engine's
+ * own projection decides (`workInShell`).
+ */
+export type MirroredWork =
+  | { readonly _tag: "pending" }
+  | { readonly _tag: "none" }
+  | { readonly _tag: "undecided"; readonly taskIds: ReadonlyArray<string> };
+
+/**
+ * The engine's id of the pending task a live item is listed as (**Read** at
+ * `db51b67`, `orchestrationV2PendingBackgroundWork.ts`,
+ * `nativeTaskIdFromTurnItem`, L234-240): the provider's id of the item, or the
+ * item's own.
+ */
+const taskIdOf = (item: Item) => item.nativeItemRef?.nativeId ?? item.id;
+
+/**
+ * The session's background work as the engine's stop counts it: what
+ * `thread.stop` interrupts in a session whose latest run has ended, an
+ * interrupt that lands only after the stop answered. The engine's own rule
+ * (**Read** at `db51b67`, `orchestrationV2PendingBackgroundWork.ts`,
+ * `derivePendingBackgroundWork`, L261-330, and `pendingBackgroundTurnItems`,
+ * L243-258), as `Orchestrator.ts`, `dispatchThreadStop` (L14141-14178),
+ * applies it: with no run active and the latest run settled, a task the
+ * active provider thread reports, or a live command, dynamic tool or subagent
+ * item outside a rolled-back run. The rule is the session's: it does not ask
+ * which run started the work.
+ */
+export const backgroundWorkOf = (mirror: Mirror): MirroredWork => {
+  const none = { _tag: "none" } as const;
+  const pending = { _tag: "pending" } as const;
+  if ([...mirror.runs.values()].some((run) => ACTIVE_RUN.has(run.status))) return none;
+  const latest = latestRun(mirror);
+  if (latest === undefined || !SETTLED_FOR_BACKGROUND.has(latest.status)) return none;
+  const active = mirror.thread?.activeProviderThreadId ?? null;
+  const tasks = [...mirror.providerThreads.values()].some(
+    (thread) =>
+      (active === null || thread.id === active) && (thread.pendingBackgroundTasks?.length ?? 0) > 0,
+  );
+  if (tasks) return pending;
+  const rolledBack = new Set(
+    [...mirror.runs.values()].flatMap((run) => (run.status === "rolled_back" ? [run.id] : [])),
+  );
+  const undecided: Array<string> = [];
+  for (const item of mirror.items.values()) {
+    if (
+      !BACKGROUND_ITEM.has(item.type) ||
+      !isOrchestrationV2WorkActive(item.status) ||
+      (item.runId !== null && rolledBack.has(item.runId))
+    ) {
+      continue;
+    }
+    const work = item.type === "dynamic_tool" ? toolWork(mirror, item) : "pending";
+    if (work === "pending") return pending;
+    if (work === "undecided") undecided.push(taskIdOf(item));
+  }
+  return undecided.length === 0 ? none : { _tag: "undecided", taskIds: undecided };
+};
+
+/**
+ * Whether tools the mirror could not decide (`MirroredWork`) are pending, by
+ * the engine's own projection of the thread's pending work: the shell row
+ * `getThreadFamily` returns, whose `pendingBackgroundTasks` the engine derives
+ * by the same rule over the stored items, inputs whole (**Read** at
+ * `db51b67`, `ProjectionStore.ts:9050-9064`, from
+ * `selectShellPendingTurnItemRows` at `:8609-8623`;
+ * `orchestrationV2PendingBackgroundWork.ts:243-258`). A tool it lists is
+ * pending; one it does not list ended, or runs on purpose. The shell lists
+ * nothing while its own run gate holds (`derivePendingBackgroundWork`,
+ * L270-285): a run active, or a latest run, which it picks by its own rule
+ * (`ProjectionStore.ts:8237-8264`), that has not settled. It cannot say then,
+ * and neither can a shell that is missing: the tools count as pending, and a
+ * Stop waits on them, sending fresh rounds, until a later read can say.
+ */
+export const workInShell = (
+  shell:
+    | Pick<OrchestrationV2ThreadShell, "activeRunId" | "status" | "pendingBackgroundTasks">
+    | undefined,
+  taskIds: ReadonlyArray<string>,
+): BackgroundWork => {
+  if (
+    shell === undefined ||
+    shell.activeRunId !== null ||
+    !SETTLED_FOR_BACKGROUND.has(shell.status)
+  ) {
+    return "pending";
+  }
+  const listed = new Set((shell.pendingBackgroundTasks ?? []).map((task) => task.taskId));
+  return taskIds.some((taskId) => listed.has(taskId)) ? "pending" : "none";
+};
 
 /** A run that executed, as the engine counts it: neither queued nor cancelled before it started. */
 const wasExecuted = (run: Run) =>
@@ -962,10 +1265,10 @@ export const dispositionOf = (
     const opening = openingMessageOf(mirror, run);
     if (opening === steer) return Option.some({ _tag: "new-turn", turnId: turnIdOf(run) });
     if (opening !== start) continue;
-    const queued = userMessagesOf(mirror, run).some(
-      (item) => item.messageId === start && item.inputIntent === "queued_turn",
-    );
-    return Option.some({ _tag: queued ? "queued" : "started", turnId: turnIdOf(run) });
+    return Option.some({
+      _tag: wasQueued(mirror, run) ? "queued" : "started",
+      turnId: turnIdOf(run),
+    });
   }
   return Option.none();
 };
@@ -974,6 +1277,8 @@ export const dispositionOf = (
 // Diffing a mirror against what the subscriber knows
 
 interface TurnView {
+  /** Whether the subscriber was told the engine queued it, before it started. */
+  queued: boolean;
   started: boolean;
   finished: boolean;
   /** Whether the subscriber was told of a continuation that has not run or been dropped. */
@@ -1013,7 +1318,11 @@ export interface View {
   readonly steps: Map<string, string>;
   readonly speech: Set<string>;
   readonly requests: Map<string, RequestView>;
-  readonly toolCalls: Map<string, "open" | "closed">;
+  /** Each `j3` call told, open with the digest it was last told with, or closed. */
+  readonly toolCalls: Map<
+    string,
+    { readonly _tag: "open"; readonly inputDigest: ToolInputDigest } | { readonly _tag: "closed" }
+  >;
   /** Steers whose settlement was reported, by message id. */
   readonly steers: Set<string>;
   hold: HoldView;
@@ -1130,10 +1439,20 @@ export const diff = (mirror: Mirror, view: View, now: DateTime.Utc): ReadonlyArr
 
   for (const run of runs) {
     const turnId = turnIdOf(run);
-    const turn = view.turns.get(run.id) ?? { started: false, finished: false, continuation: false };
+    const turn = view.turns.get(run.id) ?? {
+      queued: false,
+      started: false,
+      finished: false,
+      continuation: false,
+    };
     view.turns.set(run.id, turn);
     if (isSteerCarrier(mirror, run)) continue;
     if (!turn.finished) {
+      const waiting = !turn.started && !hasStarted(run) && !isEnded(run);
+      if (waiting && !turn.queued && wasQueued(mirror, run)) {
+        turn.queued = true;
+        events.push({ _tag: "turn-queued", turnId, cause: causeOf(mirror, run) });
+      }
       if (!turn.started && hasStarted(run)) {
         turn.started = true;
         events.push({ _tag: "turn-started", turnId, cause: causeOf(mirror, run) });
@@ -1174,13 +1493,26 @@ export const diff = (mirror: Mirror, view: View, now: DateTime.Utc): ReadonlyArr
         const call = toolCallOf(mirror, item);
         if (call !== undefined) {
           const seen = view.toolCalls.get(call.callId);
-          if (seen === undefined) {
-            view.toolCalls.set(call.callId, "open");
+          // A call the engine records again with other input while it is open
+          // is told again: an ACP agent can report a call before its
+          // arguments, and the call runs, and reaches the bridge, with them.
+          if (
+            seen === undefined ||
+            (seen._tag === "open" &&
+              seen.inputDigest !== call.inputDigest &&
+              LIVE_ITEM.has(item.status) &&
+              !ended)
+          ) {
+            view.toolCalls.set(call.callId, { _tag: "open", inputDigest: call.inputDigest });
             events.push({ _tag: "tool-call", turnId, call, state: "open" });
           }
           // The turn's end closes its calls without a `closed` for each.
-          if (view.toolCalls.get(call.callId) === "open" && !LIVE_ITEM.has(item.status) && !ended) {
-            view.toolCalls.set(call.callId, "closed");
+          if (
+            view.toolCalls.get(call.callId)?._tag === "open" &&
+            !LIVE_ITEM.has(item.status) &&
+            !ended
+          ) {
+            view.toolCalls.set(call.callId, { _tag: "closed" });
             events.push({ _tag: "tool-call", turnId, call, state: "closed" });
           }
         }
@@ -1196,7 +1528,7 @@ export const diff = (mirror: Mirror, view: View, now: DateTime.Utc): ReadonlyArr
         turn.finished = true;
         for (const item of itemsOf(mirror, run)) {
           const call = toolCallOf(mirror, item);
-          if (call !== undefined) view.toolCalls.set(call.callId, "closed");
+          if (call !== undefined) view.toolCalls.set(call.callId, { _tag: "closed" });
         }
         const continuation = continuationOf(mirror, run, now);
         turn.continuation = continuation !== null;
@@ -1243,6 +1575,8 @@ export const replacement = (
   mirror: Mirror,
   history: boolean,
   now: DateTime.Utc,
+  /** Whether each turn handed off, as a stream told it at the turn's end (`Batches`). */
+  toldHandoffs: ReadonlyMap<string, boolean> = new Map(),
 ): { readonly event: EventBody & { _tag: "replaced" }; readonly view: View } => {
   const openTurns: Array<OpenTurn> = [];
   const openRequests: Array<OpenRequest> = [];
@@ -1278,7 +1612,9 @@ export const replacement = (
         startedAt: hasStarted(run) ? (run.startedAt ?? run.requestedAt) : null,
         finishedAt: run.completedAt ?? run.startedAt ?? run.requestedAt,
         outcome: outcomeOf(mirror, run),
-        backgroundWork: hasBackgroundWork(mirror, run),
+        // As told at its end: the work may have woken the session and left
+        // the roster since. Recomputed only for an end no stream told.
+        backgroundWork: toldHandoffs.get(turnId) ?? hasBackgroundWork(mirror, run),
         continuation: continuationOf(mirror, run, now),
         steps: stepsOf(mirror, run),
       });
@@ -1330,6 +1666,42 @@ export const activeTurn = (mirror: Mirror): Option.Option<TurnId> =>
 /** Runs waiting in the engine's queue, steers kept aside included. */
 export const queuedRuns = (mirror: Mirror) =>
   runsInOrder(mirror).filter((run) => run.status === "queued" || run.status === "preparing");
+
+/**
+ * The session's runs the engine can still run: those waiting in its queue,
+ * steers kept aside included, and those preparing, starting or running. These
+ * are the runs a Stop ends: the engine's stop interrupts the latest one
+ * preparing, starting or running and holds the queue (**Read** at `db51b67`,
+ * `Orchestrator.ts`, `dispatchThreadStop`, L14165-14169, and
+ * `holdStoppedThread`, L13115-13161), and the adapter cancels each waiting
+ * one. A run the engine starts, or queues, on its own (a provider
+ * notification, a background task's completion, a scheduled task) is among
+ * them as soon as the engine created it, before any event tells of it as a
+ * turn, and also when no event will.
+ */
+export const runnableTurns = (mirror: Mirror): ReadonlyArray<TurnId> =>
+  runsInOrder(mirror)
+    .filter((run) => run.status === "queued" || ACTIVE_RUN.has(run.status))
+    .map(turnIdOf);
+
+/**
+ * Whether nothing a Stop targets can still run in the session: no run that
+ * has not ended, other than those waiting in the queue, which a Stop cancels
+ * one by one; no background work the engine counts as pending, and none
+ * it may count, a tool whose persistence no read of the item could decide;
+ * no continuation the engine will start on its own. A refusal of a Stop's
+ * command is moot only then.
+ */
+export const nothingToStop = (mirror: Mirror, now: DateTime.Utc): boolean => {
+  const waiting = new Set(queuedRuns(mirror).map((run) => run.id));
+  return (
+    !runsInOrder(mirror).some(
+      (run) =>
+        (!isEnded(run) && !waiting.has(run.id)) ||
+        (isEnded(run) && continuationOf(mirror, run, now) !== null),
+    ) && backgroundWorkOf(mirror)._tag === "none"
+  );
+};
 
 /**
  * Whether the engine holds the session's queue: its waiting runs do not start

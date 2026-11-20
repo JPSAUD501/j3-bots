@@ -306,6 +306,21 @@ export const Notice = Schema.Union([
   Schema.TaggedStruct("undelivered", {}),
   /** In a room: this bot is waiting on the operator in its own conversation. */
   Schema.TaggedStruct("waiting-in-conversation", { botId: BotId }),
+  /**
+   * The engine no longer has the bot's working session. Messages wait until
+   * the bot is given a new one.
+   */
+  Schema.TaggedStruct("session-lost", {}),
+  /**
+   * J3 Bots could not apply what the engine reported for the bot, and keeps
+   * trying. What the bot shows may be behind until it succeeds.
+   */
+  Schema.TaggedStruct("observation-failed", {}),
+  /**
+   * Something the bot was to be told before its next turn (a teammate's held
+   * message, what a routine said) was too long to pass on, and was left out.
+   */
+  Schema.TaggedStruct("too-long", {}),
 ]);
 export type Notice = typeof Notice.Type;
 

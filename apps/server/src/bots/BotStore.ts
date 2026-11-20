@@ -2,6 +2,7 @@
 import {
   type Avatar,
   type Bot,
+  type BotState,
   BotId,
   type ModelChoice,
   ModelId,
@@ -19,6 +20,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Flag, Time, timeText } from "../persistence/columns.ts";
+import { BotStates } from "../turns/BotStates.ts";
 
 const BotRow = Schema.Struct({
   id: BotId,
@@ -34,6 +36,7 @@ const BotRow = Schema.Struct({
   pinned: Flag,
   hidden: Flag,
   workspace_path: Schema.String,
+  workspace_root: Schema.NullOr(Schema.String),
   engine_project_id: Schema.NullOr(EngineProjectId),
   created_at: Time,
 });
@@ -42,10 +45,16 @@ const BotRow = Schema.Struct({
 export interface StoredBot {
   readonly bot: Bot;
   readonly workspacePath: string;
+  /**
+   * The workspace's real path when it was first provisioned, before the bot
+   * ran: what a file the bot names is read against. Never resolved again from
+   * `workspacePath`, which the bot can replace with a link.
+   */
+  readonly workspaceRoot: Option.Option<string>;
   readonly engineProjectId: Option.Option<EngineProjectId>;
 }
 
-const toStored = (row: typeof BotRow.Type): StoredBot => ({
+const toStored = (row: typeof BotRow.Type, state: BotState): StoredBot => ({
   bot: {
     id: row.id,
     profile: {
@@ -59,12 +68,11 @@ const toStored = (row: typeof BotRow.Type): StoredBot => ({
     primary: row.is_primary,
     pinned: row.pinned,
     hidden: row.hidden,
-    // What a bot is doing comes from its session's events, which the wake
-    // pipeline applies. Until a turn runs, every bot is idle.
-    state: { _tag: "idle" },
+    state,
     createdAt: row.created_at,
   },
   workspacePath: row.workspace_path,
+  workspaceRoot: Option.fromNullishOr(row.workspace_root),
   engineProjectId: Option.fromNullishOr(row.engine_project_id),
 });
 
@@ -91,7 +99,8 @@ export interface BotChanges {
 
 const SELECT = `
   SELECT id, name, title, avatar_shape, avatar_color, job, provider_id, model_id,
-    permission_mode, is_primary, pinned, hidden, workspace_path, engine_project_id, created_at
+    permission_mode, is_primary, pinned, hidden, workspace_path, workspace_root, engine_project_id,
+    created_at
   FROM bots
 `;
 
@@ -113,7 +122,12 @@ export class BotStore extends Context.Service<
     /** Makes no bot primary; the caller then makes one primary, in the same transaction. */
     readonly clearPrimary: (at: DateTime.Utc) => Effect.Effect<ReadonlyArray<BotId>>;
     readonly setEngineProject: (id: BotId, projectId: EngineProjectId) => Effect.Effect<void>;
-    /** Deletes the row, and with it everything the database cascades from it. */
+    /** Records the workspace's real path, once: a later call leaves the first one. */
+    readonly setWorkspaceRoot: (id: BotId, root: string) => Effect.Effect<void>;
+    /**
+     * Deletes the row, and with it everything the database cascades from it:
+     * its wakes explicitly, before its dispatches. Call it in a transaction.
+     */
     readonly remove: (id: BotId) => Effect.Effect<void>;
   }
 >()("@j3-bots/server/bots/BotStore") {}
@@ -122,6 +136,7 @@ export const layer = Layer.effect(
   BotStore,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const states = yield* BotStates;
 
     const findRow = SqlSchema.findOneOption({
       Request: BotId,
@@ -193,8 +208,12 @@ export const layer = Layer.effect(
       return previous.map((row) => row.id);
     }, Effect.orDie);
 
+    const withState = (row: typeof BotRow.Type) =>
+      Effect.map(states.of(row.id), (state) => toStored(row, state));
+
     const find = Effect.fn("BotStore.find")(function* (id: BotId) {
-      return Option.map(yield* findRow(id), toStored);
+      const row = yield* findRow(id);
+      return Option.isNone(row) ? Option.none() : Option.some(yield* withState(row.value));
     }, Effect.orDie);
 
     const setEngineProject = Effect.fn("BotStore.setEngineProject")(function* (
@@ -204,7 +223,17 @@ export const layer = Layer.effect(
       yield* sql`UPDATE bots SET engine_project_id = ${projectId} WHERE id = ${id}`;
     }, Effect.orDie);
 
+    const setWorkspaceRoot = Effect.fn("BotStore.setWorkspaceRoot")(function* (
+      id: BotId,
+      root: string,
+    ) {
+      yield* sql`UPDATE bots SET workspace_root = ${root} WHERE id = ${id} AND workspace_root IS NULL`;
+    }, Effect.orDie);
+
+    // The wakes go first: a wake that reached a dispatch must keep it, so the
+    // cascade to the bot's dispatches would be refused while one remains.
     const remove = Effect.fn("BotStore.remove")(function* (id: BotId) {
+      yield* sql`DELETE FROM wakes WHERE bot_id = ${id}`;
       yield* sql`DELETE FROM bots WHERE id = ${id}`;
     }, Effect.orDie);
 
@@ -212,13 +241,14 @@ export const layer = Layer.effect(
       find,
       list: listRows(undefined).pipe(
         Effect.orDie,
-        Effect.map((rows) => rows.map(toStored)),
+        Effect.flatMap((rows) => Effect.forEach(rows, withState)),
       ),
       avatars: avatarRows(undefined).pipe(Effect.orDie),
       insert,
       update,
       clearPrimary,
       setEngineProject,
+      setWorkspaceRoot,
       remove,
     });
   }),

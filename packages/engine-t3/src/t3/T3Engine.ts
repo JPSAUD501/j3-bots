@@ -60,8 +60,9 @@ import {
   RequestClosed,
   SessionBusy,
   SessionNotFound,
+  StopRejected,
 } from "../errors.ts";
-import type { SessionEvent } from "../events.ts";
+import type { BackgroundWork, SessionEvent } from "../events.ts";
 import {
   EngineAttachmentId,
   EngineProjectId,
@@ -82,15 +83,18 @@ import {
 } from "./Credential.ts";
 import { EngineInstallFailed, ensureInstalled } from "./Install.ts";
 import { commandIdFor, messageIdFor, projectIdFor, threadIdFor } from "./Keys.ts";
+import { isMissingThread } from "./missingThread.ts";
 import { ORCHESTRATION_PROTOCOL, pin } from "./Pin.ts";
 import type { FileChangeItem } from "./approvalDetail.ts";
 import { cursorFor, makeBatches, type BatchPlace } from "./Batches.ts";
 import { makePrivateFiles } from "./PrivateFiles.ts";
 import { instanceIdFor, provision, type InstanceSpec } from "./Provision.ts";
 import { baseUrl, stateChanges, supervise, type ProcessState } from "./Supervisor.ts";
+import { upload } from "./upload.ts";
 import {
   activeTurn,
   applyEvent,
+  backgroundWorkOf,
   changesToFetch,
   copyMirror,
   copyView,
@@ -100,17 +104,29 @@ import {
   emptyMirror,
   engineAnswersOf,
   findRequest,
+  isDeleted,
   isEnded,
+  isEndedTool,
   isRetired,
   keepFetched,
   knowsDispatch,
   mirrorOf,
+  nothingToStop,
   queuedRuns,
   replacement,
+  runnableTurns,
+  toolsToResolve,
+  workInShell,
   type EventBody,
   type Mirror,
   type View,
 } from "./Translate.ts";
+import {
+  type ItemRead,
+  makeToolReads,
+  persistenceOfRead,
+  type ToolPersistence,
+} from "./toolPersistence.ts";
 
 // The `Engine` service over a real T3 Code server. See `Engine.ts` for the
 // contract; this file only says how each method meets it.
@@ -121,6 +137,13 @@ const COMMAND_TIMEOUT = Duration.seconds(30);
 const SYNC_TIMEOUT = Duration.seconds(30);
 /** How long fetching an approval's file change may take; past it the card stays a summary. */
 const FETCH_TIMEOUT = Duration.seconds(10);
+/**
+ * How long a `synchronized` waits on the engine's shell for undecidable tools
+ * before it reports them pending. Well inside the server's ten-second deadline
+ * for a whole `synchronize`, which also covers the wait for the marker, so the
+ * `pending` it falls back to still reaches the server and is applied in time.
+ */
+const SHELL_READ_TIMEOUT = Duration.seconds(3);
 /** Batches kept per session, for resuming an `events` stream by replay. */
 const BATCHES_KEPT = 32;
 /** How long a staged file stays usable: half the engine's 24-hour sweep. */
@@ -198,13 +221,31 @@ type LoopInput =
   | { readonly _tag: "item"; readonly item: OrchestrationV2ThreadStreamItem }
   /** A file change an open approval holds, fetched whole. */
   | { readonly _tag: "fetched"; readonly item: FileChangeItem }
+  /**
+   * The persistence of a dynamic tool whose input the stream summarized, from
+   * its item fetched again, by the read `ask` names.
+   */
+  | {
+      readonly _tag: "tool";
+      readonly itemId: string;
+      readonly ask: number;
+      readonly persistence: ToolPersistence;
+    }
+  /** The stream ended or a read failed: it is opened again once the engine is ready. */
   | { readonly _tag: "lost" }
+  /** The engine has no record of the session's thread. */
   | { readonly _tag: "missing" }
   | {
       readonly _tag: "sync";
       readonly token: SyncToken;
       /** Settled once the marker went out, or the catch-up failed. */
       readonly done: Deferred.Deferred<void, EngineUnavailable | SessionNotFound>;
+      /**
+       * Completed when the caller gave up on it: a catch-up still queued is
+       * skipped, and one running is cancelled, so abandoned ones never pile
+       * up in the session's loop.
+       */
+      readonly abandoned: Deferred.Deferred<void>;
     };
 
 /** One open `events` stream, as `synchronize` reaches it. */
@@ -338,8 +379,9 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
 
   const rpc = yield* makeEngineRpc({ port: options.port, token: currentToken });
 
-  /** The batches every session's streams emitted, for resuming one by replay. */
+  /** What every session's streams emitted, for resuming one by replay or by replacement. */
   const batches = makeBatches(BATCHES_KEPT);
+  const toolReads = makeToolReads();
 
   // ---------------------------------------------------------------------------
   // Sending
@@ -405,12 +447,90 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
           Effect.catchTags({
             RpcClientError: () => Effect.fail(new EngineUnavailable()),
             EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
-            OrchestrationV2GetThreadProjectionError: () =>
-              Effect.fail(new SessionNotFound({ sessionId })),
+            // Only a thread the engine has no record of is lost; a read that failed may succeed again.
+            OrchestrationV2GetThreadProjectionError: (error) =>
+              Effect.fail(
+                isMissingThread(error)
+                  ? new SessionNotFound({ sessionId })
+                  : new EngineUnavailable(),
+              ),
           }),
         ),
       ),
       Effect.map((projection) => mirrorOf(projection)),
+      // A thread the engine deleted keeps its projection: the session is gone all the same.
+      Effect.filterOrFail(
+        (mirror) => !isDeleted(mirror),
+        () => new SessionNotFound({ sessionId }),
+      ),
+    );
+
+  /**
+   * The persistence of a dynamic tool whose input the stream summarized, from
+   * the item, which the engine cuts at 256 KiB (`persistenceOfRead`). Through
+   * `toolReads`, shared by every reader of the session: none while a read
+   * runs, or while a failed read's backoff runs, and undecidable once too many
+   * failed in a row.
+   */
+  const toolPersistence = (sessionId: SessionId, itemId: string) =>
+    toolReads.resolve(
+      sessionId,
+      itemId,
+      rpc["orchestration.getTurnItem"]({
+        threadId: ThreadId.make(sessionId),
+        itemId: TurnItemId.make(itemId),
+      }).pipe(
+        Effect.timeout(FETCH_TIMEOUT),
+        Effect.map(({ item }): ItemRead =>
+          item?.type === "dynamic_tool"
+            ? { _tag: "tool", input: item.input }
+            : { _tag: "not-a-tool" },
+        ),
+        Effect.map(persistenceOfRead),
+      ),
+    );
+
+  /**
+   * The session's background work for a `synchronized` event: the mirror's,
+   * and for tools no read of the item could decide, the engine's own
+   * projection of the thread's pending work (`workInShell`), read with
+   * `getThreadFamily`, bounded at `SHELL_READ_TIMEOUT`. A read that fails or
+   * runs out cannot say, so they count as pending: a Stop waits and
+   * synchronizes again.
+   */
+  const reportedWork = (sessionId: SessionId, mirror: Mirror) => {
+    const work = backgroundWorkOf(mirror);
+    if (work._tag !== "undecided") return Effect.succeed<BackgroundWork>(work._tag);
+    const threadId = ThreadId.make(sessionId);
+    return rpc["orchestration.getThreadFamily"]({ threadId }).pipe(
+      Effect.timeout(SHELL_READ_TIMEOUT),
+      Effect.map(({ threads }) =>
+        workInShell(
+          threads.find((thread) => thread.id === threadId),
+          work.taskIds,
+        ),
+      ),
+      Effect.orElseSucceed((): BackgroundWork => "pending"),
+    );
+  };
+
+  /**
+   * Settles in `mirror` the persistence of each tool whose input the stream
+   * summarized, as far as it can be read now. Only a stream prunes what was
+   * learned (`toolReads.prune`): it has every event in order, where this
+   * mirror is a read of its own.
+   */
+  const resolveTools = (sessionId: SessionId, mirror: Mirror) =>
+    Effect.forEach(
+      toolsToResolve(mirror),
+      (itemId) =>
+        Effect.map(
+          toolPersistence(sessionId, itemId),
+          Option.map((persistence) => {
+            mirror.toolPersistence.set(itemId, persistence);
+          }),
+        ),
+      { discard: true },
     );
 
   /** The state of a session that is still in use: a retired one is `SessionNotFound`. */
@@ -421,6 +541,46 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
         () => new SessionNotFound({ sessionId }),
       ),
     );
+
+  /** The class name an error reply keeps of the engine's error, if it kept one. */
+  const causeName = (error: OrchestrationV2DispatchCommandError) =>
+    Option.map(decodeErrorName(error.cause), ({ name }) => name);
+
+  /**
+   * Sends a keyed command, and once more on an error reply that proves
+   * nothing, so every answer comes from the key's receipt: the engine can
+   * answer with an error after it applied a command, and answers its first
+   * submission of a command it refused while planning with the same kind of
+   * error as any other. A resend answers `{sequence}` if the key was applied,
+   * and `OrchestratorCommandPreviouslyRejectedError` if it was refused.
+   * **Read** at `db51b67`, `dispatchWithReceiptEffect`, `replayCommandReceipt`.
+   * A reply lost on the way is `EngineIndeterminate`, resolved by sending the
+   * same key again.
+   */
+  const sendByReceipt = Effect.fnUntraced(function* (input: OrchestrationV2Command) {
+    const send = command(input).pipe(
+      Effect.as(Option.none<string>()),
+      Effect.catchTags({
+        EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
+        OrchestrationV2DispatchCommandError: (error) =>
+          Effect.succeedSome(Option.getOrElse(causeName(error), () => "")),
+      }),
+    );
+    for (let attempt = 0; attempt < 2; attempt++) {
+      // Once the first send went out, no failure but a named refusal proves
+      // that nothing was applied: the engine may have taken the first one.
+      const refusal = yield* attempt === 0 ? send : afterSending(send);
+      if (Option.isNone(refusal)) return "applied" as const;
+      if (REJECTIONS.has(refusal.value)) return "rejected" as const;
+      if (refusal.value === CLAIM_ERROR) {
+        return yield* Effect.die(
+          new Error(`A staged file the engine cannot claim: ${input.commandId}`),
+        );
+      }
+    }
+    // Twice an error that proves nothing either way.
+    return yield* new EngineIndeterminate();
+  });
 
   /** An engine refusal the interface has no error for: a bug or a broken setup, not a state. */
   const refused = (error: { readonly message: string }) =>
@@ -598,24 +758,24 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   // Stop
 
   /**
-   * Sends one command of a Stop. The engine refuses a step that has become moot
-   * (the run it cancels already ended), which counts as done.
+   * Sends one command of a round of a Stop, resolved by its receipt as a
+   * dispatch is (`sendByReceipt`). A refusal of a step that has become moot
+   * (the run it cancels already ended, nothing the engine's stop targets can
+   * still run, nor may) counts as done; any other is `StopRejected`, keyed by
+   * the round, whose key it spends. A refused stop interrupted nothing, so a
+   * live tool whose persistence no read of the item could decide keeps it
+   * from being moot (`nothingToStop`), and the server sends a fresh round.
    */
-  const sendStopStep = (
-    sessionId: SessionId,
+  const sendStopStep = Effect.fnUntraced(function* (
+    round: { readonly key: IdempotencyKey; readonly sessionId: SessionId },
     input: OrchestrationV2Command,
-    isMoot: (mirror: Mirror) => boolean,
-  ) =>
-    command(input).pipe(
-      Effect.catchTags({
-        EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
-        OrchestrationV2DispatchCommandError: (error) =>
-          afterSending(projection(sessionId)).pipe(
-            Effect.flatMap((mirror) => (isMoot(mirror) ? Effect.void : refused(error))),
-          ),
-      }),
-      Effect.asVoid,
-    );
+    isMoot: (mirror: Mirror, now: DateTime.Utc) => boolean,
+  ) {
+    if ((yield* sendByReceipt(input)) === "applied") return;
+    const mirror = yield* afterSending(projection(round.sessionId));
+    yield* resolveTools(round.sessionId, mirror);
+    if (!isMoot(mirror, yield* DateTime.now)) return yield* new StopRejected({ key: round.key });
+  });
 
   /**
    * The engine's stop, then a cancel per waiting run. Each command is answered
@@ -638,14 +798,14 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     const threadId = ThreadId.make(input.sessionId);
     // The engine's stop ends the running turn and only holds the queue.
     yield* sendStopStep(
-      input.sessionId,
+      input,
       {
         type: "thread.stop",
         commandId: commandId("stop", input.key),
         threadId,
         stopDelegatedTasks: true,
       },
-      (mirror) => Option.isNone(activeTurn(mirror)),
+      nothingToStop,
     );
     // J3 Bots' Stop also ends every turn that waits.
     yield* afterSending(
@@ -653,7 +813,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
         const held = yield* projection(input.sessionId);
         for (const run of queuedRuns(held)) {
           yield* sendStopStep(
-            input.sessionId,
+            input,
             {
               type: "queued-run.cancel",
               commandId: commandId(`cancel-${run.id}`, input.key),
@@ -695,7 +855,10 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   });
 
   const retireSession = Effect.fn("Engine.retireSession")(function* (sessionId: SessionId) {
-    const retire = stop({ key: IdempotencyKey.make(`retire:${sessionId}`), sessionId }).pipe(
+    // A fresh key on every call: a Stop the engine refused spends its key.
+    const key = IdempotencyKey.make(`retire:${sessionId}:${yield* uniqueKey}`);
+    const retire = stop({ key, sessionId }).pipe(
+      Effect.catchTag("StopRejected", () => Effect.fail(new EngineIndeterminate())),
       Effect.andThen(
         afterSending(
           sendSessionCommand(sessionId, {
@@ -710,24 +873,12 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     yield* retire.pipe(Effect.catchTag("SessionNotFound", () => Effect.void));
     // A retired session's streams end, and nothing resumes them.
     batches.forget(sessionId);
+    yield* toolReads.forget(sessionId);
   });
 
   // ---------------------------------------------------------------------------
   // Dispatch
 
-  /** The class name an error reply keeps of the engine's error, if it kept one. */
-  const causeName = (error: OrchestrationV2DispatchCommandError) =>
-    Option.map(decodeErrorName(error.cause), ({ name }) => name);
-
-  /**
-   * Sends a dispatch, and once more on an error reply that proves nothing, so
-   * every answer comes from the key's receipt: the engine can answer with an
-   * error after it applied a command, and answers its first submission of a
-   * command it refused while planning with the same kind of error as any
-   * other. A resend answers `{sequence}` if the key was applied, and
-   * `OrchestratorCommandPreviouslyRejectedError` if it was refused. **Read**
-   * at `db51b67`, `dispatchWithReceiptEffect`, `replayCommandReceipt`.
-   */
   const sendDispatch = Effect.fnUntraced(function* (input: DispatchInput) {
     const kind = input.delivery._tag;
     const attachments: Array<ChatAttachment> = input.attachments.map((attachment) => ({
@@ -737,7 +888,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       mimeType: attachment.mediaType,
       sizeBytes: attachment.size,
     }));
-    const send = command({
+    const sent = yield* sendByReceipt({
       type: "message.dispatch",
       commandId: commandId("dispatch", input.key),
       threadId: ThreadId.make(input.sessionId),
@@ -758,26 +909,8 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
               targetRunId: RunId.make(input.delivery.turnId),
             },
           }),
-    }).pipe(
-      Effect.as(Option.none<string>()),
-      Effect.catchTags({
-        EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
-        OrchestrationV2DispatchCommandError: (error) =>
-          Effect.succeedSome(Option.getOrElse(causeName(error), () => "")),
-      }),
-    );
-    for (let attempt = 0; attempt < 2; attempt++) {
-      // Once the first send went out, no failure but a named refusal proves
-      // that nothing was applied: the engine may have taken the first one.
-      const refusal = yield* attempt === 0 ? send : afterSending(send);
-      if (Option.isNone(refusal)) return;
-      if (REJECTIONS.has(refusal.value)) return yield* new DispatchRejected({ key: input.key });
-      if (refusal.value === CLAIM_ERROR) {
-        return yield* Effect.die(new Error(`A staged file the engine cannot claim: ${input.key}`));
-      }
-    }
-    // Twice an error that proves nothing either way.
-    return yield* new EngineIndeterminate();
+    });
+    if (sent === "rejected") return yield* new DispatchRejected({ key: input.key });
   });
 
   const dispatch = Effect.fn("Engine.dispatch")(function* (input: DispatchInput) {
@@ -833,7 +966,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       mimeType: metadata.mediaType,
       sizeBytes: input.size,
     }).pipe(Effect.orDie);
-    const upload = yield* rpc["attachments.createUploadUrl"](request).pipe(
+    const signed = yield* rpc["attachments.createUploadUrl"](request).pipe(
       Effect.timeoutOrElse({
         duration: COMMAND_TIMEOUT,
         orElse: () => Effect.fail(new EngineIndeterminate()),
@@ -846,20 +979,17 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     );
     const bytes = yield* fs.readFile(input.path).pipe(Effect.orDie);
     const token = yield* currentToken;
-    yield* http
-      .execute(
-        HttpClientRequest.post(`${baseUrl(options.port)}${upload.relativeUrl}`).pipe(
-          HttpClientRequest.bearerToken(Redacted.value(token)),
-          HttpClientRequest.bodyUint8Array(bytes, metadata.mediaType),
-        ),
-      )
-      .pipe(
-        Effect.flatMap(HttpClientResponse.filterStatusOk),
-        Effect.mapError(() => new EngineIndeterminate()),
-      );
+    yield* upload(
+      http,
+      HttpClientRequest.post(`${baseUrl(options.port)}${signed.relativeUrl}`).pipe(
+        HttpClientRequest.bearerToken(Redacted.value(token)),
+        HttpClientRequest.bodyUint8Array(bytes, metadata.mediaType),
+      ),
+      { size: bytes.byteLength, commandTimeout: COMMAND_TIMEOUT },
+    );
     const now = yield* DateTime.now;
     return {
-      id: EngineAttachmentId.make(upload.attachmentId),
+      id: EngineAttachmentId.make(signed.attachmentId),
       usableUntil: DateTime.addDuration(now, STAGED_LIFETIME),
     };
   });
@@ -1040,6 +1170,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
           ),
         );
 
+        batches.open(input.sessionId);
         const resumed = batches.resume(input.sessionId, input.after);
         let mirror = resumed?.mirror ?? emptyMirror();
         /** What this stream has told; undefined until its first state went out. */
@@ -1083,7 +1214,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
          */
         const replace = Effect.fnUntraced(function* (history: boolean) {
           const now = DateTime.makeUnsafe(yield* Clock.currentTimeMillis);
-          const replaced = replacement(mirror, history, now);
+          const replaced = replacement(mirror, history, now, batches.toldHandoffs(input.sessionId));
           view = replaced.view;
           yield* emit([replaced.event]);
         });
@@ -1093,7 +1224,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
           switch (item.kind) {
             case "snapshot": {
               if (item.snapshotSequence <= sequence && view !== undefined) return;
-              mirror = mirrorOf(item.projection, mirror.fetched);
+              mirror = mirrorOf(item.projection, mirror);
               sequence = item.snapshotSequence;
               yield* digestToolCalls(mirror);
               yield* replace(view !== undefined || input.after !== null);
@@ -1114,14 +1245,56 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
 
         /** Held file changes asked for, by item id and version: each version is asked for once. */
         const asked = new Set<string>();
+        /**
+         * The read of each live tool's persistence this stream asked for, by
+         * item id, while the item stays live: a tool is asked for once at a
+         * time, and only the latest read's answer counts.
+         */
+        const toolAsks = new Map<string, number>();
+        let lastAsk = 0;
 
         /**
          * Fetches, off the loop, each file change an open approval holds back
          * without its diff, once per version of the item. Only a fetched item
          * comes back to the loop: a fetch that fails or takes longer than
          * `FETCH_TIMEOUT` leaves the card a summary, and is not tried again.
+         * Each live dynamic tool whose input the stream summarized is read
+         * too, for its persistence: one whose read failed is asked for again
+         * on a pass here, which every event and every catch-up runs, once its
+         * backoff passed, and until one succeeds or the reads give up the
+         * tool counts as pending. The stream, which has every event in order,
+         * is what prunes the session's reads, by what its mirror shows ended.
+         * A tool that ended, or left the mirror, loses what this stream
+         * learned of it and its read: should it be reopened, it is read again,
+         * and the answer of a read asked for before counts for nothing.
          */
         const fetchChanges = Effect.fnUntraced(function* () {
+          yield* toolReads.prune(input.sessionId, sequence, (itemId) =>
+            isEndedTool(mirror, itemId),
+          );
+          const gone = (itemId: string) => !mirror.items.has(itemId) || isEndedTool(mirror, itemId);
+          for (const itemId of toolAsks.keys()) if (gone(itemId)) toolAsks.delete(itemId);
+          for (const itemId of mirror.toolPersistence.keys()) {
+            if (gone(itemId)) mirror.toolPersistence.delete(itemId);
+          }
+          for (const itemId of toolsToResolve(mirror)) {
+            if (toolAsks.has(itemId)) continue;
+            const ask = ++lastAsk;
+            toolAsks.set(itemId, ask);
+            yield* toolPersistence(input.sessionId, itemId).pipe(
+              Effect.flatMap(
+                Option.match({
+                  onNone: () =>
+                    Effect.sync(() => {
+                      if (toolAsks.get(itemId) === ask) toolAsks.delete(itemId);
+                    }),
+                  onSome: (persistence) =>
+                    Queue.offer(inputs, { _tag: "tool", itemId, ask, persistence }),
+                }),
+              ),
+              Effect.forkScoped,
+            );
+          }
           for (const change of changesToFetch(mirror)) {
             const key = `${change.id}@${DateTime.toEpochMillis(change.updatedAt)}`;
             if (asked.has(key)) continue;
@@ -1154,8 +1327,8 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
               Stream.runForEach((item) => Queue.offer(inputs, { _tag: "item", item })),
               Effect.as<LoopInput>({ _tag: "lost" }),
               Effect.catchTags({
-                OrchestrationV2GetThreadProjectionError: () =>
-                  Effect.succeed<LoopInput>({ _tag: "missing" }),
+                OrchestrationV2GetThreadProjectionError: (error) =>
+                  Effect.succeed<LoopInput>({ _tag: isMissingThread(error) ? "missing" : "lost" }),
               }),
               Effect.orElseSucceed((): LoopInput => ({ _tag: "lost" })),
             );
@@ -1196,33 +1369,48 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
                 ? Effect.sync(() => {
                     marked = true;
                   })
-                : handle(item),
+                : // Whole or not at all: a cancelled catch-up never leaves
+                  // the mirror ahead of what this stream emitted.
+                  Effect.uninterruptible(handle(item)),
             ),
             Effect.timeoutOption(SYNC_TIMEOUT),
             Effect.map((caught) => (Option.isSome(caught) && marked ? "marked" : "late")),
-            Effect.catchTag("OrchestrationV2GetThreadProjectionError", () =>
-              Effect.succeed("missing" as const),
+            Effect.catchTag("OrchestrationV2GetThreadProjectionError", (error) =>
+              Effect.succeed(isMissingThread(error) ? ("missing" as const) : ("lost" as const)),
             ),
             Effect.orElseSucceed(() => "lost" as const),
           );
-          if (outcome === "missing") {
+          if (outcome === "missing" || isDeleted(mirror)) {
             return yield* new SessionNotFound({ sessionId: input.sessionId });
           }
           if (outcome !== "marked" || lastCursor === null) return yield* new EngineUnavailable();
           yield* Queue.offer(output, {
             _tag: "synchronized",
             token,
+            backgroundWork: yield* reportedWork(input.sessionId, mirror),
+            runnableTurns: runnableTurns(mirror),
             cursor: lastCursor,
             at: DateTime.makeUnsafe(yield* Clock.currentTimeMillis),
           });
+        });
+
+        /** The engine has no record of the session's thread, or deleted it. */
+        const gone = Effect.suspend(() => {
+          batches.forget(input.sessionId);
+          return toolReads
+            .forget(input.sessionId)
+            .pipe(
+              Effect.andThen(
+                Queue.fail(output, new SessionNotFound({ sessionId: input.sessionId })),
+              ),
+            );
         });
 
         while (true) {
           const next = yield* Queue.take(inputs);
           switch (next._tag) {
             case "missing":
-              batches.forget(input.sessionId);
-              return yield* Queue.fail(output, new SessionNotFound({ sessionId: input.sessionId }));
+              return yield* gone;
             case "lost": {
               const current = yield* SubscriptionRef.get(state);
               if (current._tag === "incompatible") {
@@ -1238,7 +1426,15 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
             }
             case "item":
               yield* handle(next.item);
+              if (isDeleted(mirror)) return yield* gone;
               yield* fetchChanges();
+              break;
+            case "tool":
+              // Asked for before the tool ended, or before a later read: it
+              // says nothing of the tool as it is now.
+              if (toolAsks.get(next.itemId) !== next.ask) break;
+              // No session event is made of it: only `backgroundWorkOf` reads it.
+              mirror.toolPersistence.set(next.itemId, next.persistence);
               break;
             case "fetched":
               // The approval may have closed, or its item moved on, since it was asked for: the
@@ -1250,12 +1446,15 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
               }
               break;
             case "sync":
+              if (yield* Deferred.isDone(next.abandoned)) break;
               yield* catchUp(next.token).pipe(
                 Effect.matchEffect({
                   onFailure: (error) => Deferred.fail(next.done, error),
                   onSuccess: () => Deferred.succeed(next.done, undefined),
                 }),
+                Effect.raceFirst(Deferred.await(next.abandoned)),
               );
+              if (isDeleted(mirror)) return yield* gone;
               yield* fetchChanges();
               break;
           }
@@ -1273,9 +1472,13 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       (target) =>
         Effect.gen(function* () {
           const done = yield* Deferred.make<void, EngineUnavailable | SessionNotFound>();
-          yield* Queue.offer(target.inputs, { _tag: "sync", token: input.token, done });
+          const abandoned = yield* Deferred.make<void>();
+          yield* Queue.offer(target.inputs, { _tag: "sync", token: input.token, done, abandoned });
           // A stream that closes owes no marker any more.
-          yield* Effect.raceFirst(Deferred.await(done), Deferred.await(target.closed));
+          yield* Effect.raceFirst(Deferred.await(done), Deferred.await(target.closed)).pipe(
+            // Given up on, by the caller or the timeout: the loop drops it.
+            Effect.onInterrupt(() => Deferred.succeed(abandoned, undefined)),
+          );
         }),
       { concurrency: "unbounded", discard: true },
     ).pipe(

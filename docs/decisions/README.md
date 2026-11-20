@@ -15,5 +15,6 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0007](0007-client-and-server-stack.md) | Client and server stack | Accepted |
 | [0008](0008-license.md) | License: AGPL-3.0-or-later | Accepted |
 | [0009](0009-a-wake-is-sent-at-most-once.md) | A wake is sent at most once, and uncertainty fails visibly | Proposed |
+| [0010](0010-workers-reconcile-durable-state.md) | The turn machinery's workers reconcile durable state | Proposed |
 
 When a decision is replaced, its record is rewritten to say what now holds and why the earlier choice was dropped.

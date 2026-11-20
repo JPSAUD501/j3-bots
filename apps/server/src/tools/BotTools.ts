@@ -13,7 +13,7 @@ import { Memory } from "../memory/Memory.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import { Routines } from "../routines/Routines.ts";
 import type { ToolCallRequest, ToolCallResponse } from "./protocol.ts";
-import { type TurnToolCall, TurnTools } from "./TurnTools.ts";
+import { type TurnToolCall, type TurnToolRetry, TurnTools } from "./TurnTools.ts";
 
 /** Why a call did nothing, in words the bot reads. */
 class Refused extends Schema.TaggedError<Refused>()("Refused", { reason: Schema.String }) {}
@@ -24,11 +24,13 @@ const encodeJson = <S extends Schema.Top>(schema: S) =>
 /**
  * The `j3` tools' server side. A call is accepted only from a live session of
  * a bot, with arguments that decode under the tool's own schema. The tools
- * that act for a turn go to `TurnTools`; the rest are answered here.
+ * that act for a turn go to `TurnTools`; the rest are answered here. A call
+ * that could not be matched to its turn yet fails with `TurnToolRetry`, for
+ * the bridge to forward again.
  */
 export class BotTools extends Context.Service<
   BotTools,
-  { readonly call: (request: ToolCallRequest) => Effect.Effect<ToolCallResponse> }
+  { readonly call: (request: ToolCallRequest) => Effect.Effect<ToolCallResponse, TurnToolRetry> }
 >()("@j3-bots/server/tools/BotTools") {}
 
 export const layer = Layer.effect(
@@ -59,17 +61,17 @@ export const layer = Layer.effect(
     interface Call {
       readonly requestId: string;
       readonly caller: BotSession;
-      readonly arguments: unknown;
+      readonly arguments: Schema.Json;
     }
 
     /** A handler that decodes its arguments with the tool's schema, then runs. */
     const handler =
-      <S extends Schema.Decoder<unknown>, R>(
+      <S extends Schema.Decoder<unknown>, E, R>(
         schema: S,
-        run: (input: S["Type"], call: Call) => Effect.Effect<Schema.Json, Refused, R>,
+        run: (input: S["Type"], call: Call) => Effect.Effect<Schema.Json, E, R>,
       ) =>
       (call: Call) =>
-        Schema.decodeUnknownEffect(schema)(call.arguments, DECODE_OPTIONS).pipe(
+        Schema.decodeEffect(schema)(call.arguments, DECODE_OPTIONS).pipe(
           Effect.mapError((error) => new Refused({ reason: error.message })),
           Effect.flatMap((input) => run(input, call)),
         );
@@ -77,24 +79,24 @@ export const layer = Layer.effect(
     /** Hands a turn tool's call to the turn it belongs to. */
     const admit = (call: TurnToolCall) =>
       turnTools.call(call).pipe(
-        refuseFailure,
-        Effect.flatMap(() => Effect.die("A turn tool answered before turns admit tool calls")),
+        Effect.catchTags({
+          TurnToolUnavailable: (error) => new Refused({ reason: error.message }),
+          TurnEnded: (error) => new Refused({ reason: error.message }),
+          TurnToolRefused: (error) => new Refused({ reason: error.message }),
+          Conflict: (error) => new Refused({ reason: error.message }),
+        }),
       );
 
     const handlers: {
-      readonly [N in ToolName]: (call: Call) => Effect.Effect<Schema.Json, Refused>;
+      readonly [N in ToolName]: (call: Call) => Effect.Effect<Schema.Json, Refused | TurnToolRetry>;
     } = {
-      say: handler(tools.say.input, (input, { requestId, caller }) =>
-        admit({ tool: "say", input, requestId, caller }),
+      say: handler(tools.say.input, (input, call) => admit({ tool: "say", input, ...call })),
+      ask: handler(tools.ask.input, (input, call) => admit({ tool: "ask", input, ...call })),
+      message_bot: handler(tools.message_bot.input, (input, call) =>
+        admit({ tool: "message_bot", input, ...call }),
       ),
-      ask: handler(tools.ask.input, (input, { requestId, caller }) =>
-        admit({ tool: "ask", input, requestId, caller }),
-      ),
-      message_bot: handler(tools.message_bot.input, (input, { requestId, caller }) =>
-        admit({ tool: "message_bot", input, requestId, caller }),
-      ),
-      set_routine: handler(tools.set_routine.input, (input, { requestId, caller }) =>
-        admit({ tool: "set_routine", input, requestId, caller }),
+      set_routine: handler(tools.set_routine.input, (input, call) =>
+        admit({ tool: "set_routine", input, ...call }),
       ),
       remember: handler(tools.remember.input, (input, { caller }) =>
         memory

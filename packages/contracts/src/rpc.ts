@@ -164,7 +164,10 @@ export const EntryRpcs = RpcGroup.make(
    * mentions nobody. Fails with `Invalid("attachment")`, writing nothing, when
    * the files break a limit of the engine that runs the bot: an empty file, an
    * inline image (GIF, JPEG, PNG or WebP) over 10 MiB, or inline images over
-   * 80 MiB together. Fails with `Conflict("room-archived")` in an archived room.
+   * 80 MiB together. Fails with `Invalid("message-length")`, writing nothing,
+   * when the message as the bot would read it is too long for that engine to
+   * take in one message. Fails with `Conflict("room-archived")` in an archived
+   * room.
    */
   Rpc.make("message.send", {
     payload: {
@@ -182,7 +185,10 @@ export const EntryRpcs = RpcGroup.make(
   /**
    * Resolves a question or approval card everywhere. Answering or dismissing an
    * `ask` question wakes the bot with the answer; answering an `engine` question
-   * or an approval lets the turn that raised it continue.
+   * or an approval lets the turn that raised it continue. Fails with
+   * `Invalid("answer-length")`, leaving the card open, when the answer to an
+   * `ask` question as the bot would read it is too long for the engine that
+   * runs the bot to take in one message.
    */
   Rpc.make("card.answer", {
     payload: {

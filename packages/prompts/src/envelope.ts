@@ -536,6 +536,14 @@ const write = (
  */
 export const renderWakeWithNonce = (wake: Wake, nonce: string): string => write(wake, nonce).text;
 
+/**
+ * The envelope {@link renderWake} renders for a wake, with a fixed nonce of the
+ * same length, so exactly as long: for measuring an envelope before it is
+ * written.
+ */
+export const renderWakeForSize = (wake: Wake): string =>
+  write(wake, "0".repeat(NONCE_BYTES * 2)).text;
+
 const hex = (bytes: Uint8Array): string =>
   Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 

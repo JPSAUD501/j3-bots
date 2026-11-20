@@ -40,6 +40,10 @@ Done when three routines have run unattended for two weeks, with silent runs sta
 
 - Teammate messages, the primary bot, `create_bot`.
 - Rooms with a host, mentions and budgets.
+- A room's Stop also ends background work its turns started, tracked by the run that started it, never by a flag kept for the whole session ([Server: Rooms](architecture/server.md#rooms)). Council review found a session-wide flag reaching private work and outliving the room's.
+- Retrying a room message or answering a room card revalidates the room's status: a failed wake survives archival ([Server: Rooms](architecture/server.md#rooms)).
+- A path that returns a room's wake to `pending` asks `covers` first, and no new wake carries a deleted room's id.
+- A background turn that follows a room's turn speaks to that turn's audience.
 - Budget enforcement and its notices.
 
 Done when a three-bot room completes a multi-step task without a loop and without waking a bot that had nothing to do.

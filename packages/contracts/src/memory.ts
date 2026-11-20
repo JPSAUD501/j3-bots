@@ -13,12 +13,14 @@ export type MemoryScope = typeof MemoryScope.Type;
  * A Markdown file relative to the scope's memory folder, such as `profile.md` or
  * `log/2026-11.md`. Every segment starts with a letter, digit or underscore, so
  * `.` and `..` cannot appear and no path can leave the folder or name a hidden
- * file. The server still checks that the resolved path is inside the folder.
+ * file. Every segment is ASCII and at most 255 characters, so any file system
+ * takes it as a name. The server still checks that the resolved path is inside
+ * the folder.
  */
 export const MemoryPath = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(256),
-  Schema.isPattern(/^\w[\w.-]*(?:\/\w[\w.-]*)*\.md$/),
+  Schema.isPattern(/^(?:\w[\w.-]{0,254}\/)*\w[\w.-]{0,251}\.md$/),
 ).pipe(Schema.brand("MemoryPath"));
 export type MemoryPath = typeof MemoryPath.Type;
 

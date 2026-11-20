@@ -29,6 +29,7 @@ export const ptBR: Catalog = {
   "failure.permissionError": "O provedor precisa de um novo login",
   "failure.engineUnavailable": "Não foi possível alcançar o motor",
   "failure.sessionLost": "Perdeu o contexto de trabalho",
+  "failure.stopped": "Não entregue: o trabalho foi interrompido",
   "failure.unknown": "Parou por um erro inesperado",
 
   "summary.fromYou": "Você: {text}",
@@ -65,7 +66,7 @@ export const ptBR: Catalog = {
   "message.cancelled": "Não enviada: você parou o bot antes",
   "message.failed.rejected": "Não entregue: o motor recusou",
   "message.failed.unresolved": "Pode ter sido entregue. Enviar de novo pode repetir o trabalho.",
-  "message.failed.stopped": "Não entregue: você parou a sala",
+  "message.failed.stopped": "Não entregue: o trabalho foi interrompido",
   "message.retry": "Enviar de novo",
 
   "file.open": "Abrir {name}",
@@ -142,6 +143,11 @@ export const ptBR: Catalog = {
   "notice.chainFanOut": "Nem todos os bots foram chamados: uma mensagem só pode acordar alguns.",
   "notice.undelivered": "Uma resposta não chegou",
   "notice.waitingInConversation": "{name} está esperando por você na própria conversa.",
+  "notice.sessionLost":
+    "Perdeu o contexto de trabalho. Novas mensagens esperam até ele ter um novo.",
+  "notice.observationFailed":
+    "Não deu para acompanhar o trabalho deste bot. O que aparece aqui pode estar atrasado.",
+  "notice.tooLong": "Algo destinado a este bot era longo demais para repassar e ficou de fora.",
   "notice.retry": "Tentar de novo",
   "notice.openConversation": "Abrir",
 

@@ -76,6 +76,8 @@ function failureText(
       return t("failure.engineUnavailable");
     case "session-lost":
       return t("failure.sessionLost");
+    case "stopped":
+      return t("failure.stopped");
     case "unknown":
       return t("failure.unknown");
   }
@@ -153,6 +155,12 @@ export function noticeText(
       return t("notice.waitingInConversation", {
         name: ctx.botName(notice.botId) ?? t("bot.unknown"),
       });
+    case "session-lost":
+      return t("notice.sessionLost");
+    case "observation-failed":
+      return t("notice.observationFailed");
+    case "too-long":
+      return t("notice.tooLong");
   }
 }
 

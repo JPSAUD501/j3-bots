@@ -22,6 +22,7 @@ import type {
   RequestClosed,
   SessionBusy,
   SessionNotFound,
+  StopRejected,
 } from "./errors.ts";
 import type { SessionEvent } from "./events.ts";
 import type {
@@ -106,7 +107,8 @@ export interface DispatchInput {
   readonly sessionId: SessionId;
   /**
    * Exactly what the model receives, as if the user typed it: the wake
-   * envelope is the caller's, stored before the first send.
+   * envelope is the caller's, stored before the first send. Checked first
+   * with `engineInputLength` against `ENGINE_INPUT_LIMIT`.
    */
   readonly text: string;
   /**
@@ -379,23 +381,37 @@ export class Engine extends Context.Service<
      * `db51b67`, `Orchestrator.ts`, `dispatchThreadStop`: the interrupt is an
      * effect run after the commit). The events say when they did: the running
      * turn's `turn-finished`, a `turn-finished` with `cancelled` for each
-     * waiting turn, `steer-dropped` for each untaken steer and
-     * `continuation-dropped` for a disarmed continuation.
+     * waiting turn, `steer-dropped` for each untaken steer,
+     * `continuation-dropped` for a disarmed continuation, and a
+     * `synchronized` with no `pending` background work and no
+     * `runnableTurns` for the background work of a turn that had already
+     * ended and for a turn the engine started or queued on its own. An
+     * acknowledged stop's interrupt can still fail and leave such work
+     * running (**Read**, `Orchestrator.ts`, L14183-14212): the marker reports
+     * it `pending` as long as the engine's own state holds it.
      *
      * A message the engine counts as a user's releases the hold Stop put on
      * the queue, so a dispatch sent between the stop and the cancels starts a
      * turn the cancels miss (**Read**, `sentByUserFromClient`). The caller
-     * sends a session nothing while a Stop of it is unsettled. A command the
-     * engine refuses as moot (the turn already ended) counts as done.
+     * sends a session nothing while a Stop of it is unsettled.
      *
-     * `key` is derived from the Stop command and the session, and stored with
-     * the Stop's targets before this call. Wakes J3 Bots holds for the bot are
-     * the server's to cancel.
+     * Every command is resolved by its key, as a dispatch is: an error reply
+     * is answered by a resend of the same command, whose receipt says whether
+     * the engine applied it. A refusal is moot, and counts as done, when
+     * nothing it targets can still run, nor may: a live tool whose
+     * persistence the adapter could not read keeps it from being moot.
+     * Otherwise it is `StopRejected`, and
+     * the key is spent. `EngineIndeterminate` is resolved by calling again
+     * with the same key.
+     *
+     * `key` is derived from the Stop command, the session and the round, and
+     * stored with the Stop's targets before this call. Wakes J3 Bots holds
+     * for the bot are the server's to cancel.
      */
     readonly stop: (input: {
       readonly key: IdempotencyKey;
       readonly sessionId: SessionId;
-    }) => Effect.Effect<void, EngineDown | SessionNotFound>;
+    }) => Effect.Effect<void, EngineDown | SessionNotFound | StopRejected>;
 
     /**
      * Releases the session's held queue, in answer to the `queue-held` event
@@ -455,7 +471,13 @@ export class Engine extends Context.Service<
      * reconnects and resumes the same way, so within one stream no event is
      * delivered twice and none is skipped without a `replaced` covering it. It
      * fails only when the session no longer exists or the engine turns out not
-     * to be the pinned version.
+     * to be the pinned version. A stream counts as open from when it is
+     * subscribed (when it starts running), before it emits anything: a
+     * `synchronize` called after that reaches it. **Verified** on release
+     * `4969` by the conformance scenario "counts a stream as open from its
+     * subscription, before it emits anything", which subscribes and reads
+     * nothing, calls `synchronize`, and then reads until the `synchronized`
+     * event with its token arrives.
      */
     readonly events: (input: {
       readonly sessionId: SessionId;
@@ -467,9 +489,14 @@ export class Engine extends Context.Service<
      * stream of the session, after every event the engine had recorded for the
      * session when this was called. Once the server has applied that event, it
      * knows the session's state as of this call: the bot tool bridge uses it to
-     * find the `tool-call` a tool request came from. Choose the token, and start
-     * waiting for it, before calling.
+     * find the `tool-call` a tool request came from. The event also says
+     * what background work the session still has (`BackgroundWork`), which
+     * a Stop's interrupt ends only after it answered. Choose
+     * the token, and start waiting for it, before calling.
      *
+     * A stream counts as open from when it is subscribed, so one subscribed
+     * before this call emits the event even if it has emitted nothing yet
+     * (**Verified**, as on `events`).
      * Each stream emits the event only once the engine's completion marker
      * reached it, and the call returns once every open stream has emitted it
      * or closed. A catch-up that fails or times out fails the call with

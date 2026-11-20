@@ -63,10 +63,12 @@ export class ProjectNotFound extends Schema.TaggedError<ProjectNotFound>()("Proj
 }
 
 /**
- * The session does not exist, or it was retired. From `dispatch`, the adapter
- * found this before sending anything: the key was never sent, and the caller
- * may use the wakes again. `redispatch` never fails this way, since it skips
- * every local check.
+ * The session does not exist, or it was retired. Only the engine's word that
+ * it has no record of the session's thread makes it missing: a read the
+ * engine failed is `EngineUnavailable`, never a loss. From `dispatch`, the
+ * adapter found this before sending anything: the key was never sent, and
+ * the caller may use the wakes again. `redispatch` never fails this way,
+ * since it skips every local check.
  */
 export class SessionNotFound extends Schema.TaggedError<SessionNotFound>()("SessionNotFound", {
   sessionId: SessionId,
@@ -128,6 +130,28 @@ export class DispatchRejected extends Schema.TaggedError<DispatchRejected>()("Di
 }) {
   override get message(): string {
     return `The engine refused the dispatch ${this.key}; nothing was applied.`;
+  }
+}
+
+/**
+ * The engine refused a round of a Stop, and something the Stop targets can
+ * still run: a turn that has not ended and is not waiting in the queue,
+ * background work the engine counts as pending, or a continuation it will
+ * start on its own. The adapter reports it only once a resend of the key
+ * found its rejected receipt (`OrchestratorCommandPreviouslyRejectedError`),
+ * as for `DispatchRejected`; the engine keeps that receipt for good, so the
+ * key is spent. A refusal while nothing targeted can run is moot and counts
+ * as done. **Read** at `db51b67`, `Orchestrator.ts`: a refusal while planning
+ * commits a rejected receipt (L16018-16034), and a resend replays it
+ * (`replayCommandReceipt`, L15867-15877).
+ *
+ * The caller stops the session again with a fresh key.
+ */
+export class StopRejected extends Schema.TaggedError<StopRejected>()("StopRejected", {
+  key: IdempotencyKey,
+}) {
+  override get message(): string {
+    return `The engine refused the Stop ${this.key} while its work can still run.`;
   }
 }
 

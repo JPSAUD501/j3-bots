@@ -1,0 +1,717 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import { AttachmentId, type BotId } from "@j3-bots/contracts";
+import {
+  type DispatchAttachment,
+  type DispatchDisposition,
+  type DispatchInput,
+  Engine,
+  EngineAttachmentId,
+  SessionId,
+  TurnId,
+} from "@j3-bots/engine-t3";
+import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlSchema from "effect/sql/SqlSchema";
+import { Attachments } from "../attachments/Attachments.ts";
+import { Entries } from "../entries/Entries.ts";
+import { Layout } from "../Layout.ts";
+import { Time, timeText } from "../persistence/columns.ts";
+import { transactional } from "../persistence/transaction.ts";
+import { SettingsStore } from "../settings/SettingsStore.ts";
+import { admission } from "./admission.ts";
+import { type DispatchRow, keyOf, Ledger } from "./Ledger.ts";
+import {
+  busyBackoff,
+  type DispatchRowId,
+  MAX_INDETERMINATE_ANSWERS,
+  MAX_STAGING_FAILURES,
+  RECOVERY_WINDOW,
+  recoveryBackoff,
+  type WakeFailure,
+} from "./model.ts";
+import { inboxPath } from "./inbox.ts";
+import { Observer } from "./Observer.ts";
+import { DEFECT_RETRY } from "./reconciler.ts";
+import { SessionGate } from "./SessionGate.ts";
+import { sessionLoss } from "./sessionRecords.ts";
+import { Signals } from "./Signals.ts";
+import { stopTargets } from "./stopTargets.ts";
+import { WorkSteps } from "./WorkSteps.ts";
+
+/** What a send did. */
+export type SendResult =
+  /** The dispatch moved on: it has an answer, or it was released or failed. */
+  | "settled"
+  /**
+   * No answer yet: it is tried again at `next_attempt_at`, by the dispatcher
+   * when it was never sent, by the recovery when it was.
+   */
+  | "scheduled"
+  /**
+   * Nothing to do now: it is settled, not due before its deadline, held by a
+   * Stop whose confirmation nudges the workers, or another send took it.
+   */
+  | "none"
+  /** Its session cannot take it yet: a later pass tries again. */
+  | "skipped"
+  /** Nothing was sent: the engine cannot take commands. Try again once it is ready. */
+  | "engine-unavailable";
+
+/**
+ * The worker a send is made for: the dispatcher makes every first send, under
+ * the turn budget, and the recovery every send of a key already sent.
+ */
+export type SendOwner = "dispatcher" | "recovery";
+
+const FileRow = Schema.Struct({
+  position: Schema.Int,
+  attachment_id: AttachmentId,
+  engine_attachment_id: Schema.NullOr(EngineAttachmentId),
+  usable_until: Schema.NullOr(Time),
+});
+
+const SessionState = Schema.Struct({
+  engine_session_id: Schema.NullOr(SessionId),
+  admitted_turn_id: Schema.NullOr(TurnId),
+  lost: Schema.BooleanFromBit,
+  gone: Schema.BooleanFromBit,
+  stop_unsettled: Schema.BooleanFromBit,
+});
+
+/** How staging a dispatch's files went. */
+type Staging =
+  | { readonly _tag: "staged"; readonly files: ReadonlyArray<DispatchAttachment> }
+  /** The engine cannot take commands: nothing was staged, and nothing counts. */
+  | { readonly _tag: "unavailable" }
+  /** It failed, and may not next time. */
+  | { readonly _tag: "failed" };
+
+/**
+ * Sends one dispatch to the engine, through its session's gate
+ * (`docs/architecture/server.md`, 3. A dispatch is written before the engine
+ * is called). A dispatch with no recorded attempt was never sent, so its send
+ * is the first (`dispatch`, with the adapter's local checks); any other is a
+ * recovery (`redispatch`, the same key and input with none).
+ *
+ * The attempt is claimed durably, after staging and right before the call, by
+ * one conditional update: still undecided and unchanged since it was read,
+ * and either a recovery of a key already sent, fenced or not, or a first send
+ * of an unfenced dispatch into a live session no Stop holds. That claim is
+ * what makes a send a send: a Stop recorded before it fences the dispatch,
+ * which is then never sent; one recorded after it finds the attempt, and the
+ * recovery learns its answer. Every answer is recorded against the dispatch
+ * as it stands then, so a fence that landed during the call decides where its
+ * wakes go.
+ *
+ * A dispatch whose session is gone, or whose recovery passed its bound, is
+ * settled before anything waits on the session's events; one whose session's
+ * events are not known yet is skipped. Neither holds up another session's
+ * sends. A defect counts against the dispatch's bounds like the failure it
+ * stands for, so a send that keeps failing ends visibly.
+ */
+export class Sender extends Context.Service<
+  Sender,
+  {
+    /**
+     * Sends a dispatch if it is due and still `owner`'s: a first send unless
+     * a Stop fenced it or a Stop of its session is unsettled, a recovery of a
+     * key already sent in any case. A defect is counted against the dispatch,
+     * or at least defers it, so a broken dispatch never holds up the others.
+     */
+    readonly send: (dispatchId: DispatchRowId, owner: SendOwner) => Effect.Effect<SendResult>;
+    /**
+     * The last resort for a dispatch that cannot be read: its deadline moves
+     * later, and nothing else of it is read or written.
+     */
+    readonly postpone: (dispatchId: DispatchRowId) => Effect.Effect<void>;
+  }
+>()("@j3-bots/server/turns/Sender") {}
+
+export const layer = Layer.effect(
+  Sender,
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const transaction = transactional(sql);
+    const engine = yield* Engine;
+    const ledger = yield* Ledger;
+    const gate = yield* SessionGate;
+    const signals = yield* Signals;
+    const observer = yield* Observer;
+    const attachments = yield* Attachments;
+    const layout = yield* Layout;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const targets = stopTargets(sql);
+    const { admitsStart } = admission(sql, yield* SettingsStore);
+    const { sessionLost } = sessionLoss(sql, yield* Entries, ledger, yield* WorkSteps, signals);
+
+    const files = SqlSchema.findAll({
+      Request: Schema.String,
+      Result: FileRow,
+      execute: (id) => sql`
+        SELECT position, attachment_id, engine_attachment_id, usable_until
+        FROM dispatch_attachments WHERE dispatch_id = ${id} ORDER BY position
+      `,
+    });
+
+    const sessionState = SqlSchema.findOne({
+      Request: Schema.String,
+      Result: SessionState,
+      execute: (sessionId) => sql`
+        SELECT s.engine_session_id, s.admitted_turn_id, s.lost_at IS NOT NULL AS lost,
+          (s.retired_at IS NOT NULL OR s.lost_at IS NOT NULL) AS gone,
+          EXISTS (
+            SELECT 1 FROM stop_targets t WHERE t.session_id = s.id AND t.stopped_at IS NULL
+          ) AS stop_unsettled
+        FROM sessions s WHERE s.id = ${sessionId}
+      `,
+    });
+
+    /** The engine certainly applied nothing: the wakes wait again, unless the operator stopped them. */
+    const unsentWakes = (row: DispatchRow) => targets.wakesAfter(row, { _tag: "unsent" });
+
+    /**
+     * It may have been sent, and will not be delivered: the wakes fail with
+     * the real reason, visibly and retryable, unless the operator stopped
+     * them. They never wait again.
+     */
+    const sentWakes = (row: DispatchRow, reason: WakeFailure) =>
+      targets.wakesAfter(row, { _tag: "failed", reason });
+
+    const releaseUnsent = (dispatchId: DispatchRowId) =>
+      transaction(
+        Effect.gen(function* () {
+          const row = yield* ledger.find(dispatchId);
+          if (Option.isNone(row)) return;
+          yield* ledger.release(dispatchId, yield* unsentWakes(row.value));
+        }),
+      );
+
+    /**
+     * The adapter saw a turn the server has not applied yet: nothing is
+     * planned into the session before a short deadline, which its next
+     * applied event clears. A deadline rather than a mark, so a turn whose
+     * last event committed before this never strands the session.
+     */
+    const refusedBusy = (dispatchId: DispatchRowId, sessionId: string) =>
+      transaction(
+        Effect.gen(function* () {
+          const now = yield* DateTime.now;
+          const [row] = yield* sql<{ readonly busy_refusals: number }>`
+            SELECT busy_refusals FROM sessions WHERE id = ${sessionId}
+          `.pipe(Effect.orDie);
+          const refusals = (row?.busy_refusals ?? 0) + 1;
+          const until = DateTime.addDuration(now, busyBackoff(refusals));
+          yield* sql`
+            UPDATE sessions SET busy_refusals = ${refusals}, busy_until = ${timeText(until)}
+            WHERE id = ${sessionId}
+          `.pipe(Effect.orDie);
+          yield* releaseUnsent(dispatchId);
+        }),
+      );
+
+    /**
+     * The engine took the key. If its session was lost while the call was on
+     * its way, nothing will ever report the turn: it fails as `unresolved`.
+     */
+    const accepted = (row: DispatchRow, disposition: DispatchDisposition | null) =>
+      transaction(
+        Effect.gen(function* () {
+          yield* ledger.accept(row.id, disposition);
+          const session = yield* sessionState(row.session_id).pipe(Effect.orDie);
+          if (session.lost) {
+            yield* ledger.abandon(row.id, yield* sentWakes(row, "unresolved"));
+          }
+          return "settled" as const;
+        }),
+      );
+
+    const failSent = (dispatchId: DispatchRowId, reason: "rejected" | "unresolved") =>
+      transaction(
+        Effect.gen(function* () {
+          const row = yield* ledger.find(dispatchId);
+          if (Option.isNone(row)) return;
+          yield* ledger.fail(dispatchId, reason, yield* sentWakes(row.value, reason));
+        }),
+      );
+
+    /** The claimed attempt was never sent: it is given back, and a fenced dispatch is released. */
+    const notSent = (dispatchId: DispatchRowId) =>
+      transaction(
+        Effect.gen(function* () {
+          yield* sql`
+            UPDATE dispatches SET attempts = attempts - 1
+            WHERE id = ${dispatchId} AND status = 'intended' AND attempts > 0
+          `.pipe(Effect.orDie);
+          const row = yield* ledger.find(dispatchId);
+          if (
+            Option.isSome(row) &&
+            row.value.attempts === 0 &&
+            row.value.fenced_by_stop_id !== null
+          ) {
+            yield* ledger.release(dispatchId, yield* unsentWakes(row.value));
+          }
+          return "engine-unavailable" as const;
+        }),
+      );
+
+    /**
+     * The answer was lost, or the send failed unexpectedly once the attempt
+     * was claimed: counted, and the dispatch fails once the bound is reached,
+     * or at once when its session is gone, since no answer can come.
+     */
+    const undecided = (dispatchId: DispatchRowId) =>
+      transaction(
+        Effect.gen(function* () {
+          const row = yield* ledger.find(dispatchId);
+          if (Option.isNone(row) || row.value.status !== "intended") return "settled" as const;
+          const session = yield* sessionState(row.value.session_id).pipe(Effect.orDie);
+          const answers = row.value.indeterminate_answers + 1;
+          if (session.gone || answers >= MAX_INDETERMINATE_ANSWERS) {
+            yield* ledger.fail(dispatchId, "unresolved", yield* sentWakes(row.value, "unresolved"));
+            return "settled" as const;
+          }
+          const next = DateTime.addDuration(yield* DateTime.now, recoveryBackoff(answers));
+          yield* sql`
+            UPDATE dispatches SET indeterminate_answers = ${answers},
+              next_attempt_at = ${timeText(next)}
+            WHERE id = ${dispatchId}
+          `.pipe(Effect.orDie);
+          return "scheduled" as const;
+        }),
+      );
+
+    /**
+     * Staging failed, or the send failed unexpectedly before its attempt was
+     * claimed: tried again with backoff, and after the bound the dispatch
+     * fails. Nothing was sent by this send, so a first send fails as
+     * `rejected`; a recovery, whose key went out before, as `unresolved`.
+     * A session that is gone settles it at once.
+     */
+    const stagingFailed = (dispatchId: DispatchRowId) =>
+      transaction(
+        Effect.gen(function* () {
+          const row = yield* ledger.find(dispatchId);
+          if (Option.isNone(row) || row.value.status !== "intended") return "settled" as const;
+          const session = yield* sessionState(row.value.session_id).pipe(Effect.orDie);
+          if (session.gone) {
+            if (row.value.attempts === 0) {
+              yield* ledger.release(dispatchId, yield* unsentWakes(row.value));
+            } else {
+              yield* ledger.fail(
+                dispatchId,
+                "unresolved",
+                yield* sentWakes(row.value, "unresolved"),
+              );
+            }
+            return "settled" as const;
+          }
+          const failures = row.value.staging_failures + 1;
+          if (failures >= MAX_STAGING_FAILURES) {
+            if (row.value.attempts === 0) {
+              yield* ledger.fail(dispatchId, "rejected", yield* sentWakes(row.value, "rejected"));
+            } else {
+              yield* ledger.fail(
+                dispatchId,
+                "unresolved",
+                yield* sentWakes(row.value, "unresolved"),
+              );
+            }
+            return "settled" as const;
+          }
+          const next = DateTime.addDuration(yield* DateTime.now, recoveryBackoff(failures));
+          yield* sql`
+            UPDATE dispatches SET staging_failures = ${failures}, next_attempt_at = ${timeText(next)}
+            WHERE id = ${dispatchId}
+          `.pipe(Effect.orDie);
+          return "scheduled" as const;
+        }),
+      );
+
+    /**
+     * Copies an operator's file into the bot's `files/inbox/`, replacing
+     * whatever is at its place. `files/` is the bot's, links included, so the
+     * copy goes through the home's containment check like every private
+     * write: it never follows a link out of private state.
+     */
+    const copyToWorkspace = Effect.fn("Sender.copyToWorkspace")(function* (
+      botId: BotId,
+      attachment: { readonly id: AttachmentId; readonly name: string },
+      source: string,
+    ) {
+      const target = path.join(layout.workspace(botId), inboxPath(attachment));
+      yield* layout.writeFile(target, yield* fs.readFile(source));
+    });
+
+    /**
+     * Each file staged and still usable, staging again those whose staged copy
+     * expired. Before the first send, each is copied into the bot's workspace
+     * where its envelope names it. A resend carries the same envelope, which
+     * the engine applies at most once, so it copies nothing: what the bot made
+     * of its inbox since is its own.
+     */
+    const stage = Effect.fn("Sender.stage")(function* (row: DispatchRow) {
+      const now = yield* DateTime.now;
+      const staged: Array<DispatchAttachment> = [];
+      for (const file of yield* files(row.id).pipe(Effect.orDie)) {
+        const stored = yield* attachments.open(file.attachment_id);
+        // A file the store no longer has cannot be sent, now or later.
+        if (Option.isNone(stored)) return { _tag: "failed" } satisfies Staging;
+        const { attachment } = stored.value;
+        if (row.attempts === 0) {
+          const copied = yield* copyToWorkspace(row.bot_id, attachment, stored.value.path).pipe(
+            Effect.as(true),
+            Effect.catch((error) =>
+              Effect.logWarning("Copying a dispatched file into the workspace failed", error).pipe(
+                Effect.as(false),
+              ),
+            ),
+          );
+          if (!copied) return { _tag: "failed" } satisfies Staging;
+        }
+        let stagedId = file.engine_attachment_id;
+        if (
+          stagedId === null ||
+          file.usable_until === null ||
+          DateTime.isLessThan(file.usable_until, now)
+        ) {
+          const fresh = yield* engine
+            .stageAttachment({
+              name: attachment.name,
+              mediaType: attachment.mediaType,
+              size: attachment.size,
+              path: stored.value.path,
+            })
+            .pipe(
+              Effect.map((value) => ({ _tag: "ok", value }) as const),
+              Effect.catchTags({
+                EngineUnavailable: () => Effect.succeed({ _tag: "unavailable" } as const),
+                EngineIncompatible: () => Effect.succeed({ _tag: "unavailable" } as const),
+                EngineIndeterminate: () => Effect.succeed({ _tag: "failed" } as const),
+              }),
+            );
+          if (fresh._tag !== "ok") return fresh satisfies Staging;
+          yield* sql`
+            UPDATE dispatch_attachments
+            SET engine_attachment_id = ${fresh.value.id},
+              usable_until = ${timeText(fresh.value.usableUntil)}
+            WHERE dispatch_id = ${row.id} AND position = ${file.position}
+          `.pipe(Effect.orDie);
+          stagedId = fresh.value.id;
+        }
+        staged.push({
+          stagedId,
+          name: attachment.name,
+          mediaType: attachment.mediaType,
+          size: attachment.size,
+        });
+      }
+      return { _tag: "staged", files: staged } satisfies Staging;
+    });
+
+    const inputOf = (
+      row: DispatchRow,
+      sessionId: SessionId,
+      staged: ReadonlyArray<DispatchAttachment>,
+    ) =>
+      ({
+        key: keyOf(row.id),
+        sessionId,
+        text: row.envelope,
+        attachments: staged,
+        delivery:
+          row.delivery === "steer" && row.steer_turn_id !== null
+            ? { _tag: "steer", turnId: row.steer_turn_id }
+            : { _tag: "start", freshContext: row.fresh_context },
+      }) satisfies DispatchInput;
+
+    /**
+     * The send's claim: the attempt is counted only if the dispatch is still
+     * what was read, and still this send's to make. A recovery owns every key
+     * already sent, fenced or not; a first send needs an unfenced dispatch in
+     * a live session no Stop holds, and a first start a turn slot, by the
+     * budget as it stands now: it may have changed while the files staged.
+     * One the budget refuses stays unsent, for the dispatcher's next pass.
+     * A first steer needs the turn it was planned for to be still the
+     * admitted one: if that turn ended while the files staged, the engine
+     * would start a turn with it, outside the budget, so it is released and
+     * its wakes go through a start's admission.
+     */
+    const claim = (row: DispatchRow) =>
+      transaction(
+        Effect.gen(function* () {
+          if (row.attempts === 0 && row.delivery === "start") {
+            if (!(yield* admitsStart(row.session_id))) return "refused" as const;
+          }
+          if (row.attempts === 0 && row.delivery === "steer") {
+            const session = yield* sessionState(row.session_id).pipe(Effect.orDie);
+            if (session.admitted_turn_id !== row.steer_turn_id) {
+              const current = yield* ledger.find(row.id);
+              if (Option.isNone(current) || current.value.attempts > 0) return "refused" as const;
+              const released = yield* ledger.release(row.id, yield* unsentWakes(current.value));
+              return released ? ("released" as const) : ("refused" as const);
+            }
+          }
+          const at = timeText(yield* DateTime.now);
+          const claimed = yield* sql<{ readonly attempts: number }>`
+            UPDATE dispatches SET attempts = attempts + 1, updated_at = ${at}
+            WHERE id = ${row.id} AND status = 'intended' AND attempts = ${row.attempts}
+              AND (
+                attempts > 0
+                OR (
+                  fenced_by_stop_id IS NULL
+                  AND NOT EXISTS (
+                    SELECT 1 FROM stop_targets t
+                    WHERE t.session_id = dispatches.session_id AND t.stopped_at IS NULL
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM sessions s WHERE s.id = dispatches.session_id
+                      AND (s.retired_at IS NOT NULL OR s.lost_at IS NOT NULL)
+                  )
+                )
+              )
+            RETURNING attempts
+          `;
+          return claimed.length > 0 ? ("claimed" as const) : ("refused" as const);
+        }),
+      ).pipe(Effect.withSpan("Sender.claim"));
+
+    /**
+     * The last resort when a defect could not be counted: one write that only
+     * moves the deadline of a dispatch still undecided, and reads nothing of
+     * it, so it is looked at again later and never at once.
+     */
+    const postpone = Effect.fn("Sender.postpone")(function* (dispatchId: DispatchRowId) {
+      const next = DateTime.addDuration(yield* DateTime.now, DEFECT_RETRY);
+      yield* sql`
+        UPDATE dispatches SET next_attempt_at = ${timeText(next)}
+        WHERE id = ${dispatchId} AND status = 'intended'
+      `.pipe(Effect.orDie);
+    });
+
+    /** A send that could only postpone its dispatch: its owner looks again at the new deadline. */
+    const postponed = (dispatchId: DispatchRowId) =>
+      postpone(dispatchId).pipe(Effect.as<SendResult>("scheduled"));
+
+    /**
+     * A defect is logged, and the dispatch goes through `then`, which counts
+     * it. When `then` fails as well, the dispatch is only postponed.
+     */
+    const countDefect =
+      (what: string, dispatchId: DispatchRowId, then: Effect.Effect<SendResult>) =>
+      <A>(effect: Effect.Effect<A>): Effect.Effect<A | SendResult> =>
+        effect.pipe(
+          Effect.catchCauseIf(
+            (cause) => !Cause.hasInterruptsOnly(cause),
+            (cause) =>
+              Effect.andThen(
+                Effect.logError(what, cause),
+                then.pipe(
+                  Effect.catchCauseIf(
+                    (again) => !Cause.hasInterruptsOnly(again),
+                    (again) =>
+                      Effect.andThen(
+                        Effect.logError("A dispatch's defect could not be counted", again),
+                        postponed(dispatchId),
+                      ),
+                  ),
+                ),
+              ),
+          ),
+        );
+
+    /**
+     * Everything before the call, read inside the gate: whether the dispatch
+     * is still due, the settling of one whose session is gone or whose bound
+     * passed, the session's readiness, the staging and the claim. What to call
+     * the engine with once the attempt is claimed, or what the send did.
+     */
+    const prepare = Effect.fn("Sender.prepare")(function* (
+      dispatchId: DispatchRowId,
+      owner: SendOwner,
+    ) {
+      const found = yield* ledger.find(dispatchId);
+      if (Option.isNone(found) || found.value.status !== "intended") return "none" as const;
+      const row = found.value;
+      const now = yield* DateTime.now;
+      // Read again in the gate: another pass may have sent it meanwhile, or
+      // given back the attempt it claimed, which makes the dispatch the
+      // dispatcher's again.
+      const firstSend = row.attempts === 0;
+      if (firstSend !== (owner === "dispatcher")) return "none" as const;
+      if (row.next_attempt_at !== null && DateTime.isGreaterThan(row.next_attempt_at, now)) {
+        return "none" as const;
+      }
+      const session = yield* sessionState(row.session_id).pipe(Effect.orDie);
+      // A fenced dispatch never sent was released with its fence; a Stop of
+      // the session holds every other first send. A key already sent is the
+      // recovery's in any case.
+      if (firstSend && (row.fenced_by_stop_id !== null || session.stop_unsettled)) {
+        return "none" as const;
+      }
+
+      // Ends with no answer: its session is gone, or the day's bound passed.
+      // Settled before anything waits on the session's events.
+      const expired = DateTime.isLessThan(
+        DateTime.addDuration(row.created_at, RECOVERY_WINDOW),
+        now,
+      );
+      if (session.gone || session.engine_session_id === null || (!firstSend && expired)) {
+        if (firstSend) yield* releaseUnsent(row.id);
+        else yield* failSent(row.id, "unresolved");
+        return "settled" as const;
+      }
+      const sessionId = session.engine_session_id;
+
+      // Nothing new is sent into a session before its events are followed
+      // and known from a committed cursor or snapshot; the event that makes
+      // it ready nudges the workers. A resend needs no observation: its key
+      // makes the engine apply it once, whatever the server knows yet.
+      if (firstSend) {
+        yield* observer.watch(row.session_id);
+        if (!(yield* observer.ready(row.session_id))) return "skipped" as const;
+      }
+
+      // A steer goes only into the turn it was planned for: once that turn is
+      // no longer the admitted one, its wakes wait for the next dispatch.
+      if (firstSend && row.delivery === "steer" && session.admitted_turn_id !== row.steer_turn_id) {
+        yield* releaseUnsent(row.id);
+        return "settled" as const;
+      }
+
+      const staging = yield* stage(row);
+      if (staging._tag === "unavailable") return "engine-unavailable" as const;
+      if (staging._tag === "failed") return yield* stagingFailed(row.id);
+      const input = inputOf(row, sessionId, staging.files);
+
+      const claimed = yield* claim(row);
+      if (claimed === "released") return "settled" as const;
+      if (claimed === "refused") return "none" as const;
+      return { row, input, firstSend };
+    });
+
+    /** The call, once the attempt is claimed, and its answer recorded. */
+    const call = Effect.fn("Sender.call")(function* (
+      row: DispatchRow,
+      input: DispatchInput,
+      firstSend: boolean,
+    ) {
+      if (firstSend) {
+        return yield* engine.dispatch(input).pipe(
+          Effect.flatMap((disposition) => accepted(row, disposition)),
+          Effect.catchTags({
+            // Refused before anything was sent.
+            SessionBusy: () =>
+              refusedBusy(row.id, row.session_id).pipe(Effect.as("settled" as const)),
+            SessionNotFound: () =>
+              transaction(Effect.andThen(sessionLost(row.session_id), releaseUnsent(row.id))).pipe(
+                Effect.as("settled" as const),
+              ),
+            DispatchRejected: () =>
+              failSent(row.id, "rejected").pipe(Effect.as("settled" as const)),
+            EngineUnavailable: () => notSent(row.id),
+            EngineIncompatible: () => notSent(row.id),
+            EngineIndeterminate: () => undecided(row.id),
+          }),
+        );
+      }
+      return yield* engine.redispatch(input).pipe(
+        Effect.flatMap(() => accepted(row, null)),
+        Effect.catchTags({
+          DispatchRejected: () => failSent(row.id, "rejected").pipe(Effect.as("settled" as const)),
+          // While the engine is unreachable the recovery waits, and counts nothing.
+          EngineUnavailable: () => notSent(row.id),
+          EngineIncompatible: () => notSent(row.id),
+          EngineIndeterminate: () => undecided(row.id),
+        }),
+      );
+    });
+
+    /**
+     * One send, inside the gate. A defect counts against the dispatch's
+     * bounds, never retried at once: before the claim nothing was sent, so it
+     * counts as a staging failure; after it the key may be in the engine, so
+     * it counts as an undecided answer.
+     */
+    const sendInGate = Effect.fn("Sender.sendInGate")(function* (
+      dispatchId: DispatchRowId,
+      owner: SendOwner,
+    ) {
+      const prepared = yield* prepare(dispatchId, owner).pipe(
+        countDefect(
+          "A dispatch could not be prepared; it is tried again later",
+          dispatchId,
+          stagingFailed(dispatchId),
+        ),
+      );
+      if (typeof prepared === "string") return prepared;
+      return yield* call(prepared.row, prepared.input, prepared.firstSend).pipe(
+        countDefect(
+          "A dispatch's send failed; it is recovered later",
+          dispatchId,
+          undecided(dispatchId),
+        ),
+      );
+    });
+
+    const sessionOf = SqlSchema.findOneOption({
+      Request: Schema.String,
+      Result: Schema.Struct({ session_id: Schema.String }),
+      execute: (id) => sql`
+        SELECT session_id FROM dispatches WHERE id = ${id} AND status = 'intended'
+      `,
+    });
+
+    const attemptsOf = SqlSchema.findOneOption({
+      Request: Schema.String,
+      Result: Schema.Struct({ attempts: Schema.Int }),
+      execute: (id) => sql`SELECT attempts FROM dispatches WHERE id = ${id}`,
+    });
+
+    /**
+     * The whole send. A defect outside what the gate counts, such as a row
+     * that cannot be read, defers the dispatch durably like any other.
+     */
+    const sendOnce = (dispatchId: DispatchRowId, owner: SendOwner) =>
+      Effect.gen(function* () {
+        const found = yield* sessionOf(dispatchId).pipe(Effect.orDie);
+        if (Option.isNone(found)) return "none";
+        return yield* gate.run(found.value.session_id)(sendInGate(dispatchId, owner));
+      }).pipe(
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.andThen(
+              Effect.logError("A dispatch could not be sent; it is tried again later", cause),
+              postponed(dispatchId),
+            ),
+        ),
+      );
+
+    const send = Effect.fn("Sender.send")(function* (dispatchId: DispatchRowId, owner: SendOwner) {
+      const result = yield* sendOnce(dispatchId, owner);
+      // Only a change wakes anyone: the session may take its next wake, a
+      // Stop may proceed, or the dispatch's owner has a new deadline: the
+      // dispatcher for one never sent, the recovery for a claimed one.
+      if (result === "settled") {
+        yield* signals.dispatch.fire;
+        yield* signals.stops.fire;
+      } else if (result === "scheduled") {
+        const after = yield* attemptsOf(dispatchId).pipe(Effect.orDie);
+        const claimed = Option.isSome(after) && after.value.attempts > 0;
+        yield* (claimed ? signals.recovery : signals.dispatch).fire;
+      }
+      return result;
+    });
+
+    return Sender.of({ send, postpone });
+  }),
+);

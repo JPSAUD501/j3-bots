@@ -150,16 +150,22 @@ describe("TestEngine", () => {
       const queued = yield* engine.dispatch({ ...start("dispatch-1"), sessionId });
 
       assert.strictEqual(queued._tag, "queued");
-      const [background] = yield* take(sessionId, cursorOf(first), 1);
+      const [background, waiting] = yield* take(sessionId, cursorOf(first), 2);
       assert.isDefined(background);
+      assert.isDefined(waiting);
       assert.isTrue(background._tag === "turn-started" && background.cause._tag === "background");
       if (background._tag !== "turn-started") return;
+      // The events say the engine has it, before it starts.
+      assert.deepStrictEqual(waiting._tag === "turn-queued" && waiting.cause, {
+        _tag: "dispatch",
+        key: key("dispatch-1"),
+      });
       yield* control.finishTurn({
         sessionId,
         turnId: background.turnId,
         outcome: { _tag: "completed" },
       });
-      const delivered = yield* take(sessionId, background.cursor, 2);
+      const delivered = yield* take(sessionId, waiting.cursor, 2);
       assert.deepStrictEqual(
         [...delivered].map((event) => event._tag === "turn-started" && event.cause),
         [false, { _tag: "dispatch", key: key("dispatch-1") }],
@@ -266,7 +272,7 @@ describe("TestEngine", () => {
 
       yield* engine.stop({ key: key("stop-1"), sessionId });
 
-      const events = [...(yield* take(sessionId, cursorOf(first), 5))];
+      const events = [...(yield* take(sessionId, cursorOf(first), 6))];
       assert.deepStrictEqual(
         events.map((event) =>
           event._tag === "turn-finished"
@@ -277,6 +283,7 @@ describe("TestEngine", () => {
         ),
         [
           "turn-started",
+          "turn-queued",
           "queue-held",
           [waiting, "cancelled"],
           [turnId, "interrupted"],
@@ -326,7 +333,7 @@ describe("TestEngine", () => {
       yield* engine.stop({ key: key("stop-1"), sessionId });
 
       assert.strictEqual(lost._tag, "EngineIndeterminate");
-      const events = [...(yield* take(sessionId, cursorOf(first), 4))];
+      const events = [...(yield* take(sessionId, cursorOf(first), 5))];
       assert.deepStrictEqual(
         events.flatMap((event) =>
           event._tag === "turn-finished" ? [[event.cause, event.outcome._tag]] : [],

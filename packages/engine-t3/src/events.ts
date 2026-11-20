@@ -136,7 +136,7 @@ export const ToolCall = Schema.Struct({
   callId: ToolCallId,
   /** The bare tool name (`say`), whatever name the harness gives it. */
   tool: Schema.String,
-  /** `toolInputDigest` of the input the engine recorded. */
+  /** `toolInputDigest` of the input the engine recorded last. */
   inputDigest: ToolInputDigest,
 });
 export type ToolCall = typeof ToolCall.Type;
@@ -161,6 +161,15 @@ export type ToolCall = typeof ToolCall.Type;
  */
 export const PendingContinuation = Schema.Struct({ resumesAt: Schema.DateTimeUtc });
 export type PendingContinuation = typeof PendingContinuation.Type;
+
+/**
+ * A session's background work as the engine's stop counts it, with no turn
+ * running. `pending`: work the engine counts as pending, or may: work the
+ * adapter could not judge, which counts as pending until it can. `none`:
+ * nothing.
+ */
+export const BackgroundWork = Schema.Literals(["pending", "none"]);
+export type BackgroundWork = typeof BackgroundWork.Type;
 
 /** A turn that has not ended. */
 export const OpenTurn = Schema.Struct({
@@ -189,7 +198,7 @@ export const EndedTurn = Schema.Struct({
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   finishedAt: Schema.DateTimeUtc,
   outcome: TurnOutcome,
-  /** As on `turn-finished`. */
+  /** As on `turn-finished`, as it stands now. */
   backgroundWork: Schema.Boolean,
   /** As on `turn-finished`, as it stands now: null once it ran or was dropped. */
   continuation: Schema.NullOr(PendingContinuation),
@@ -276,6 +285,14 @@ export const SessionEvent = Schema.Union([
    */
   Schema.TaggedStruct("turn-started", { ...at, turnId: TurnId, cause: TurnCause }),
   /**
+   * The engine queued a start behind another turn: it has the turn, which has
+   * not started. Sent once, before the turn's `turn-started` or
+   * `turn-finished`, for a turn whose opening message the engine marked as
+   * queued, as a `queued` disposition does. A dispatch it delivers is accepted
+   * here, also when the reply that would have said so was lost.
+   */
+  Schema.TaggedStruct("turn-queued", { ...at, turnId: TurnId, cause: TurnCause }),
+  /**
    * How a `steered` dispatch settled is known only once the turn it steered has
    * ended, so each of these three follows that turn's `turn-finished`, one per
    * steer, and nothing about the steer comes before. Until then the dispatch
@@ -335,8 +352,12 @@ export const SessionEvent = Schema.Union([
   /**
    * The bot called a `j3` tool (`open`), or the call returned (`closed`). The
    * engine records a call apart from the request the `j3` bridge receives for
-   * it, so this can arrive after that request. A turn's end closes every call
-   * of the turn still open, without a `closed` for each.
+   * it, so this can arrive after that request. An `open` call can be told
+   * again, with the digest of other input: the engine may record a call
+   * before its arguments and record it again with them once it runs, as an
+   * ACP agent reports it (**Read** at `db51b67`,
+   * `provider-acp/src/server/adapter.ts`, L4657-4658, L4711). A turn's end
+   * closes every call of the turn still open, without a `closed` for each.
    */
   Schema.TaggedStruct("tool-call", {
     ...at,
@@ -379,9 +400,14 @@ export const SessionEvent = Schema.Union([
     cause: TurnCause,
     outcome: TurnOutcome,
     /**
-     * Background work the bot started in this turn (delegated tasks, background
-     * commands) is still running and may wake the session later with a
-     * `background` turn.
+     * The turn handed off to background work it started, which is still
+     * running and wakes the session when it ends, with a `background` turn: a
+     * delegated task, a command whose completion wakes the session, or a task
+     * the provider reports that holds the agent's completion by the engine's
+     * rule (one the agent marked awaited, a subagent, a background task). A
+     * background shell or a monitor on Claude Code may wake the session too,
+     * but holds it only when the agent marked it awaited: it is as often a dev
+     * server left running as a wait.
      */
     backgroundWork: Schema.Boolean,
     /**
@@ -418,6 +444,24 @@ export const SessionEvent = Schema.Union([
    * stream, before this one. It changes no state; its cursor is that of the
    * last event delivered, so storing it is harmless.
    */
-  Schema.TaggedStruct("synchronized", { ...at, token: SyncToken }),
+  Schema.TaggedStruct("synchronized", {
+    ...at,
+    token: SyncToken,
+    /**
+     * The session's background work, with no turn running: what `stop`
+     * interrupts in an idle session, and which ends only after the stop
+     * answered.
+     */
+    backgroundWork: BackgroundWork,
+    /**
+     * The session's turns the engine can still run: waiting in its queue, or
+     * preparing, starting or running. These are what a Stop ends, and a Stop
+     * sent before one was created did not reach it. They include turns the
+     * engine started or queued on its own that no event has told of yet, and
+     * waiting ones no event tells of at all, as a scheduled message the
+     * engine queues behind a hold.
+     */
+    runnableTurns: Schema.Array(TurnId),
+  }),
 ]);
 export type SessionEvent = typeof SessionEvent.Type;

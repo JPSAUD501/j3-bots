@@ -25,6 +25,7 @@ import { ensureCredential } from "../src/t3/Credential.ts";
 import { ensureInstalled } from "../src/t3/Install.ts";
 import { makePrivateFiles } from "../src/t3/PrivateFiles.ts";
 import { layer as engineLayer } from "../src/t3/T3Engine.ts";
+import { workInShell } from "../src/t3/Translate.ts";
 import { type Act, Bench } from "./Bench.ts";
 import { scenarios, turnOf } from "./scenarios.ts";
 
@@ -95,24 +96,29 @@ const engineReady = Engine.use((engine) =>
   ),
 );
 
+/** A second connection to the engine, as another of its clients. */
+const foreignRpc = Effect.gen(function* () {
+  const { home } = yield* paths;
+  const files = yield* makePrivateFiles(() => Effect.succeed(true)).pipe(
+    Effect.provide(SecureRandom.layerWebCrypto),
+  );
+  const executable = yield* ensureInstalled({
+    home,
+    platform: NodeProcess.platform,
+    arch: NodeProcess.arch,
+    files,
+  });
+  const { token } = yield* ensureCredential({ executable, home, files });
+  return yield* makeEngineRpc({ port: PORT, token: Effect.succeed(token) });
+});
+
 const bench = Layer.effect(
   Bench,
   Effect.gen(function* () {
     yield* engineReady;
-    const { home, workspace } = yield* paths;
+    const { workspace } = yield* paths;
     const run = yield* Clock.currentTimeMillis;
-    // A second connection to the engine, as another of its clients.
-    const files = yield* makePrivateFiles(() => Effect.succeed(true)).pipe(
-      Effect.provide(SecureRandom.layerWebCrypto),
-    );
-    const executable = yield* ensureInstalled({
-      home,
-      platform: NodeProcess.platform,
-      arch: NodeProcess.arch,
-      files,
-    });
-    const { token } = yield* ensureCredential({ executable, home, files });
-    const rpc = yield* makeEngineRpc({ port: PORT, token: Effect.succeed(token) });
+    const rpc = yield* foreignRpc;
     let foreign = 0;
 
     return Bench.of({
@@ -207,6 +213,36 @@ const openWatched = Effect.fnUntraced(function* (name: string) {
 });
 
 describe("Engine conformance, real engine only", () => {
+  it.live(
+    "reads a settled thread's pending background work from its shell",
+    () =>
+      Effect.gen(function* () {
+        const engine = yield* Engine;
+        const bench = yield* Bench;
+        const { sessionId, queue } = yield* openWatched("shell");
+        const reply = yield* engine.dispatch({
+          key: bench.key("shell-reply"),
+          sessionId,
+          text: directive({ _tag: "reply" }),
+          attachments: [],
+          delivery: { _tag: "start", freshContext: false },
+        });
+        yield* until(queue, "turn-finished", (event) => event.turnId === turnOf(reply));
+
+        // What the adapter asks for undecidable tools (`reportedWork`).
+        const rpc = yield* foreignRpc;
+        const threadId = ThreadId.make(sessionId);
+        const { threads } = yield* rpc["orchestration.getThreadFamily"]({ threadId });
+        const shell = threads.find((thread) => thread.id === threadId);
+
+        assert.isDefined(shell);
+        assert.strictEqual(workInShell(shell, ["no-such-task"]), "none");
+      }).pipe(
+        Effect.provide(bench.pipe(Layer.provideMerge(realEngine), Layer.provideMerge(platform))),
+      ),
+    { timeout: 120_000 },
+  );
+
   it.live(
     "survives an engine restart: the cut turn stays interrupted, the held queue resumes once",
     () =>

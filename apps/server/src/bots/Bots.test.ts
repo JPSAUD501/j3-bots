@@ -7,6 +7,7 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import { ServerConfig } from "../config.ts";
 import { Entries } from "../entries/Entries.ts";
@@ -135,6 +136,50 @@ it.effect("never removes through a workspace that leads into the web client", ()
 
     assert.includeMembers(before, [".j3", "AGENTS.md", "memory"]);
     assert.deepStrictEqual(yield* fs.readDirectory(published), before);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("deletes a bot whose wakes reached the engine, finished or failed", () =>
+  Effect.gen(function* () {
+    const bots = yield* Bots;
+    const store = yield* BotStore;
+    const sql = yield* SqlClient.SqlClient;
+    const bot = yield* createBot("Ana");
+    const at = "2026-11-20T09:00:00.000Z";
+    yield* sql`
+      INSERT INTO sessions (id, bot_id, purpose, prompt_version, created_at)
+      VALUES ('history', ${bot.id}, 'side', 'v1', ${at})
+    `;
+    const history = [
+      { status: "delivered", failure: null, turn: "turn-1", wake: "dispatched" },
+      { status: "finished", failure: null, turn: "turn-2", wake: "finished" },
+      { status: "failed", failure: "unresolved", turn: null, wake: "failed" },
+    ] as const;
+    for (const [index, step] of history.entries()) {
+      const dispatchId = `dispatch-${index}`;
+      yield* sql`
+        INSERT INTO dispatches (
+          id, bot_id, session_id, audience, delivery, envelope, status, failure_reason,
+          engine_turn_id, attempts, created_at, updated_at
+        ) VALUES (
+          ${dispatchId}, ${bot.id}, 'history', 'conversation', 'start', '{}', ${step.status},
+          ${step.failure}, ${step.turn}, 1, ${at}, ${at}
+        )
+      `;
+      yield* sql`
+        INSERT INTO wakes (
+          id, bot_id, kind, priority, audience, payload_json, status, failure_reason,
+          dispatch_id, created_at, updated_at
+        ) VALUES (
+          ${`wake-${index}`}, ${bot.id}, 'user', 0, 'conversation', '{}', ${step.wake},
+          ${step.failure}, ${dispatchId}, ${at}, ${at}
+        )
+      `;
+    }
+
+    yield* bots.remove({ commandId: command(), botId: bot.id, deleteFiles: false });
+
+    assert.isTrue(Option.isNone(yield* store.find(bot.id)));
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

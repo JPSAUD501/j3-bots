@@ -10,6 +10,7 @@ import type {
 import type * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -17,6 +18,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { attachmentLimitViolation } from "../attachments.ts";
+import { ENGINE_INPUT_LIMIT, engineInputLength } from "../input.ts";
 import {
   Engine,
   type DispatchAttachment,
@@ -34,8 +36,10 @@ import {
   RequestClosed,
   SessionBusy,
   SessionNotFound,
+  StopRejected,
 } from "../errors.ts";
 import type {
+  BackgroundWork,
   EndedTurn,
   EngineRequest,
   HostSpeech,
@@ -76,10 +80,28 @@ import { toolInputDigest } from "../toolCaller.ts";
 // after the bridge sees them; usage-limit continuations; requests that expire
 // with their turn, and whose card can change while they are open; host
 // speech; replies lost after a command was applied; staged files that expire;
-// synchronization markers; and resume by cursor with
-// replay or a replacement that repeats turns already seen end, as the real
-// engine may. The adapter's conformance suite runs the same scenarios against
-// the real engine, which keeps this double honest.
+// calls held in flight, a Stop whose effects lag its acknowledgment, a Stop
+// refused while its work can still run, a turn whose provider is slow to
+// start it, and a dispatch that waits in the startup queue and lands late;
+// synchronization markers; and resume by cursor with replay or a replacement
+// that repeats turns already seen end, as the real engine may. The adapter's
+// conformance suite runs the same scenarios against the real engine, which
+// keeps this double honest.
+
+/** The engine methods a test can hold in flight with `holdNext`. */
+export type HeldMethod =
+  | "dispatch"
+  | "redispatch"
+  | "stageAttachment"
+  | "respondSecret"
+  | "resumeQueue"
+  | "stop";
+
+/** A call held at the engine's door. */
+export interface Held {
+  readonly entered: Effect.Effect<void>;
+  readonly release: Effect.Effect<void>;
+}
 
 /** A dispatch the engine applied, as the test inspects it. */
 export interface ReceivedDispatch {
@@ -103,17 +125,91 @@ export class TestEngineControl extends Context.Service<
      */
     readonly loseNextReply: Effect.Effect<void>;
     /**
+     * The next call of `method` waits at the engine's door, before anything of
+     * it is applied, until `release`. `entered` succeeds once it waits there,
+     * so a test can act while the call is in flight.
+     */
+    readonly holdNext: (method: HeldMethod) => Effect.Effect<Held>;
+    /**
+     * The next call of `method` is applied, or refused, as usual, and its
+     * answer waits until `release`. `entered` succeeds once it was decided,
+     * so a test can act between the engine's decision and the caller's
+     * hearing of it.
+     */
+    readonly holdNextAnswer: (method: HeldMethod) => Effect.Effect<Held>;
+    /**
+     * Every stream of the session opened from now on stalls before its first
+     * event, as when the engine is slow to answer a subscription, until
+     * `release`.
+     */
+    readonly withholdEvents: (
+      sessionId: SessionId,
+    ) => Effect.Effect<{ readonly release: Effect.Effect<void> }>;
+    /**
+     * While set, every `dispatch` and `redispatch` dies before anything of it
+     * is applied, as a bug in the adapter would.
+     */
+    readonly breakDispatches: (broken: boolean) => Effect.Effect<void>;
+    /**
+     * The next `stop` is acknowledged at once, and its effects (the interrupt,
+     * the cancels, the disarmed continuation) wait until `release`, as when
+     * the provider's interrupt is slow. The cancels name the turns waiting
+     * when it was sent: one queued meanwhile stays, held.
+     */
+    readonly delayNextStopEffects: Effect.Effect<{ readonly release: Effect.Effect<void> }>;
+    /**
+     * The next dispatch the engine receives, first send or resend, waits in
+     * the engine's startup queue: it and every resend of its key fail with
+     * `EngineIndeterminate`, applying nothing, until `land` applies it as it
+     * was first sent. A resend after that is answered as the key's receipt.
+     */
+    readonly deferNextDispatch: Effect.Effect<{ readonly land: Effect.Effect<void> }>;
+    /**
      * The engine refuses the next dispatch it receives, applying nothing and
      * keeping a rejected receipt: it fails with `DispatchRejected`, as does a
      * `redispatch` of the key, after a lost reply too.
      */
     readonly rejectNextDispatch: Effect.Effect<void>;
     /**
+     * The engine refuses the next `stop` it receives, applying nothing and
+     * keeping a rejected receipt, as when a read fails while it plans the
+     * stop. It and every later call with its key fail with `StopRejected`
+     * while anything a Stop targets can still run in the session (a running
+     * or starting turn, background work, a pending continuation), and
+     * succeed as moot once nothing can.
+     */
+    readonly rejectNextStop: Effect.Effect<void>;
+    /**
      * Background work wakes the session while the next `start` dispatch is on
      * its way: the adapter's busy check passes, and the engine then queues the
      * start behind that turn.
      */
     readonly startEngineTurnDuringNextDispatch: (sessionId: SessionId) => Effect.Effect<void>;
+    /**
+     * The next `synchronize` is answered, and its marker never reaches the
+     * session's streams, as when the stream stalls. `requested` succeeds once
+     * that `synchronize` arrived.
+     */
+    readonly dropNextMarker: Effect.Effect<{ readonly requested: Effect.Effect<void> }>;
+    /**
+     * The next `stop` takes effect before it answers, and then background
+     * work starts a turn in the session, which the stop missed: as when a run
+     * begins between a Stop's commands. `started` gives that turn once the
+     * engine created it; the stop answers only after `reply`.
+     */
+    readonly startEngineTurnDuringNextStop: (sessionId: SessionId) => Effect.Effect<{
+      readonly started: Effect.Effect<TurnId>;
+      readonly reply: Effect.Effect<void>;
+    }>;
+    /**
+     * The next turn the session starts stays starting, its provider turn not
+     * started, until `release`: no `turn-started` tells of it, and the
+     * session's `synchronized` lists it in `runnableTurns`. A turn that ended
+     * meanwhile stays ended.
+     */
+    readonly holdNextStartup: (
+      sessionId: SessionId,
+    ) => Effect.Effect<{ readonly release: Effect.Effect<void> }>;
     /**
      * The engine holds the session's queue of waiting turns, which must not be
      * empty: as after an engine restart, or, with `heldAgainOnResume`, a model
@@ -164,6 +260,16 @@ export class TestEngineControl extends Context.Service<
       readonly input: unknown;
       readonly recorded: "now" | "after-next-synchronize";
     }) => Effect.Effect<ToolCallId>;
+    /**
+     * The engine records an open `j3` tool call again with other input, as it
+     * does for an ACP agent that reported the call before its arguments.
+     */
+    readonly recordToolInput: (input: {
+      readonly sessionId: SessionId;
+      readonly turnId: TurnId;
+      readonly callId: ToolCallId;
+      readonly input: unknown;
+    }) => Effect.Effect<void>;
     /** A `j3` tool call returns. */
     readonly closeToolCall: (input: {
       readonly sessionId: SessionId;
@@ -192,7 +298,12 @@ export class TestEngineControl extends Context.Service<
       readonly turnId: TurnId;
       readonly text: string;
     }) => Effect.Effect<HostSpeechId>;
-    /** The turn leaves background work running when it ends. */
+    /**
+     * The turn leaves background work running when it ends, which wakes the
+     * session when it ends, as a delegated task or a command whose completion
+     * wakes it: its turn reports it as `backgroundWork`. The wake it brings is
+     * `startEngineTurn`.
+     */
     readonly startBackgroundWork: (input: {
       readonly sessionId: SessionId;
       readonly turnId: TurnId;
@@ -227,6 +338,11 @@ export class TestEngineControl extends Context.Service<
     readonly startEngineTurn: (sessionId: SessionId) => Effect.Effect<TurnId>;
     /** Forgets the session's event history, so a resume from any cursor gets a `replaced`. */
     readonly pruneHistory: (sessionId: SessionId) => Effect.Effect<void>;
+    /**
+     * The engine loses the session, as when its data is deleted: its streams
+     * end with `SessionNotFound`, and so does every command for it.
+     */
+    readonly loseSession: (sessionId: SessionId) => Effect.Effect<void>;
     readonly dispatches: (sessionId: SessionId) => Effect.Effect<ReadonlyArray<ReceivedDispatch>>;
     readonly responses: (
       sessionId: SessionId,
@@ -249,7 +365,7 @@ interface SteerRecord {
 }
 
 interface ToolCallRecord {
-  readonly call: ToolCall;
+  call: ToolCall;
   state: "unrecorded" | "open" | "closed";
 }
 
@@ -266,7 +382,8 @@ interface TurnRecord {
     readonly turnId: TurnId;
     readonly resolution: RequestResolution;
   }>;
-  backgroundWork: boolean;
+  /** It left background work running, which a Stop ends. */
+  background: boolean;
   ended: {
     readonly outcome: TurnOutcome;
     readonly at: DateTime.Utc;
@@ -308,6 +425,10 @@ interface SessionRecord {
   raceNextStart: boolean;
   /** Set by `failNextStart`. */
   failNextStart: FailureClass | null;
+  /** Set by `holdNextStartup`, until the next turn starts. */
+  holdStartup: boolean;
+  /** The turn `holdNextStartup` keeps starting, until released. */
+  heldStartup: TurnId | null;
 }
 
 type AppliedKey =
@@ -317,7 +438,8 @@ type AppliedKey =
       readonly sessionId: SessionId;
       readonly outcome: "applied" | "rejected";
     }
-  | { readonly command: "stop" | "respond" };
+  | { readonly command: "stop"; readonly outcome: "applied" | "rejected" }
+  | { readonly command: "respond" };
 
 const initialStatus: EngineStatus = {
   state: { _tag: "ready" },
@@ -333,6 +455,30 @@ const make = Effect.gen(function* () {
   let reachable = true;
   let loseReply = false;
   let rejectDispatch = false;
+  let rejectStop = false;
+  const holds = new Map<
+    HeldMethod,
+    { readonly entered: Deferred.Deferred<void>; readonly release: Deferred.Deferred<void> }
+  >();
+  let stopEffects: Deferred.Deferred<void> | null = null;
+  let droppedMarker: Deferred.Deferred<void> | null = null;
+  let turnDuringStop: {
+    readonly sessionId: SessionId;
+    readonly started: Deferred.Deferred<TurnId>;
+    readonly reply: Deferred.Deferred<void>;
+  } | null = null;
+  let deferNext: Deferred.Deferred<void> | null = null;
+  /** Answers held after their command was decided, by method. */
+  const answerHolds = new Map<
+    HeldMethod,
+    { readonly entered: Deferred.Deferred<void>; readonly release: Deferred.Deferred<void> }
+  >();
+  /** Sessions whose new streams stall until released. */
+  const withheld = new Map<SessionId, Deferred.Deferred<void>>();
+  /** While set, every dispatch and redispatch dies before it is applied. */
+  let brokenDispatches = false;
+  /** Dispatches waiting in the startup queue, by key, until they land. */
+  const deferred = new Map<IdempotencyKey, Deferred.Deferred<void>>();
   // One counter for every session, as the real engine numbers its events.
   let sequence = 0;
   let nextId = 0;
@@ -358,6 +504,65 @@ const make = Effect.gen(function* () {
       if (!loseReply) return effect;
       loseReply = false;
       return effect.pipe(Effect.ignore, Effect.andThen(Effect.fail(new EngineIndeterminate())));
+    });
+
+  /**
+   * Waits at the door when the test holds the next call of `method`, and
+   * holds its answer once decided when the test holds that.
+   */
+  const door = <A, E, R>(method: HeldMethod, effect: Effect.Effect<A, E, R>) =>
+    Effect.suspend(() => {
+      const answered = Effect.suspend(() => {
+        const hold = answerHolds.get(method);
+        if (hold === undefined) return effect;
+        answerHolds.delete(method);
+        return Effect.exit(effect).pipe(
+          Effect.tap(() => Deferred.succeed(hold.entered, undefined)),
+          Effect.tap(() => Deferred.await(hold.release)),
+          Effect.flatten,
+        );
+      });
+      const hold = holds.get(method);
+      if (hold === undefined) return answered;
+      holds.delete(method);
+      return Deferred.succeed(hold.entered, undefined).pipe(
+        Effect.andThen(Deferred.await(hold.release)),
+        Effect.andThen(answered),
+      );
+    });
+
+  /** A bug in the adapter, while the test has dispatches broken. */
+  const unbroken = Effect.suspend(() =>
+    brokenDispatches ? Effect.die(new Error("A broken dispatch")) : Effect.void,
+  );
+
+  /**
+   * A dispatch the startup queue holds: the send waits there, so it answers
+   * `EngineIndeterminate` and applies nothing until the test lands it.
+   */
+  const startupQueue = (input: DispatchInput) =>
+    Effect.gen(function* () {
+      const waiting = deferred.get(input.key);
+      if (waiting !== undefined && !(yield* Deferred.isDone(waiting))) {
+        return yield* new EngineIndeterminate();
+      }
+      if (deferNext === null) return;
+      const land = deferNext;
+      deferNext = null;
+      deferred.set(input.key, land);
+      // Applied as first sent, once the test lands it.
+      yield* Effect.forkDetach(
+        Deferred.await(land).pipe(
+          Effect.andThen(
+            Effect.suspend(() => {
+              const session = sessions.get(input.sessionId);
+              return session === undefined ? Effect.void : applyDispatch(session, input);
+            }),
+          ),
+          Effect.ignore,
+        ),
+      );
+      return yield* new EngineIndeterminate();
     });
 
   /** Fails the test: the caller broke the contract, which no engine would tolerate. */
@@ -414,12 +619,16 @@ const make = Effect.gen(function* () {
       toolCalls: new Map(),
       hostSpeech: [],
       closedRequests: [],
-      backgroundWork: false,
+      background: false,
       ended: null,
     };
     session.turns.set(turn.turnId, turn);
     return turn;
   };
+
+  /** Whether background work some turn of the session left still runs: what the engine's stop counts. */
+  const backgroundRuns = (session: SessionRecord) =>
+    [...session.turns.values()].some((turn) => turn.background);
 
   const closeRequest = (
     session: SessionRecord,
@@ -482,14 +691,24 @@ const make = Effect.gen(function* () {
 
   /**
    * A new turn, at the end of the queue; it starts at once if nothing runs and
-   * the queue is not held. The newer turn takes the place of any pending
-   * continuation, which no longer resumes the session's latest turn.
+   * the queue is not held, and is otherwise reported `turn-queued`, whatever
+   * its cause, as the adapter reports a run the engine queued. The newer turn
+   * takes the place of any pending continuation, which no longer resumes the
+   * session's latest turn.
    */
   const addTurn = (session: SessionRecord, cause: TurnCause, at: DateTime.Utc) => {
     for (const turn of session.turns.values()) dropContinuation(session, turn, at);
     const turn = newTurn(session, cause);
     session.waiting.push(turn.turnId);
     startNext(session, at);
+    if (session.waiting.includes(turn.turnId)) {
+      emit(session, at, (stamp) => ({
+        _tag: "turn-queued",
+        ...stamp,
+        turnId: turn.turnId,
+        cause: turn.cause,
+      }));
+    }
     return turn;
   };
 
@@ -563,7 +782,7 @@ const make = Effect.gen(function* () {
       turnId: turn.turnId,
       cause: turn.cause,
       outcome,
-      backgroundWork: turn.backgroundWork,
+      backgroundWork: turn.background,
       continuation,
     }));
     for (const settlement of settlements) emit(session, at, settlement);
@@ -586,6 +805,16 @@ const make = Effect.gen(function* () {
       endTurn(session, turn, { _tag: "failed", failure, retryAt: null }, at, "other");
       return;
     }
+    if (session.holdStartup) {
+      session.holdStartup = false;
+      session.heldStartup = turn.turnId;
+      return;
+    }
+    beginTurn(session, turn, at);
+  };
+
+  /** The turn's provider turn starts. */
+  const beginTurn = (session: SessionRecord, turn: TurnRecord, at: DateTime.Utc): void => {
     turn.startedAt = at;
     emit(session, at, (stamp) => ({
       _tag: "turn-started",
@@ -624,16 +853,24 @@ const make = Effect.gen(function* () {
 
   /**
    * Stop as it takes effect, after `stop` returned: the engine's own stop holds
-   * the queue and disarms a pending continuation, each waiting turn is
-   * cancelled (taken off the queue first: cancelling one starts no other), the
-   * provider's interrupt ends the running turn, and the background work every
-   * turn left running ends, also in a session whose last turn already ended.
+   * the queue and disarms a pending continuation, each turn in `cancels` (the
+   * turns that waited when the Stop was sent, which the adapter cancels one by
+   * one) is cancelled, taken off the queue first: cancelling one starts no
+   * other. A turn queued since stays, held. The provider's interrupt ends the
+   * running turn, and the background work every turn left running ends, also
+   * in a session whose last turn already ended.
    */
-  const stopSession = (session: SessionRecord, at: DateTime.Utc) => {
-    for (const turn of session.turns.values()) turn.backgroundWork = false;
+  const stopSession = (
+    session: SessionRecord,
+    at: DateTime.Utc,
+    cancels: ReadonlyArray<TurnId>,
+  ) => {
+    for (const turn of session.turns.values()) turn.background = false;
     holdWaiting(session, at);
     for (const turn of session.turns.values()) dropContinuation(session, turn, at);
-    for (const turnId of session.waiting.splice(0)) {
+    const cancelled = session.waiting.filter((turnId) => cancels.includes(turnId));
+    for (const turnId of cancelled) session.waiting.splice(session.waiting.indexOf(turnId), 1);
+    for (const turnId of cancelled) {
       const turn = session.turns.get(turnId);
       if (turn !== undefined) endTurn(session, turn, { _tag: "cancelled" }, at, "stop");
     }
@@ -644,8 +881,15 @@ const make = Effect.gen(function* () {
     }
   };
 
+  /** Whether anything a Stop targets can still run in the session. */
+  const stoppable = (session: SessionRecord) =>
+    session.running !== null ||
+    [...session.turns.values()].some(
+      (turn) => turn.background || (turn.ended !== null && turn.ended.continuation !== null),
+    );
+
   const retire = (session: SessionRecord, at: DateTime.Utc) => {
-    stopSession(session, at);
+    stopSession(session, at, [...session.waiting]);
     session.retired = true;
   };
 
@@ -682,7 +926,7 @@ const make = Effect.gen(function* () {
           startedAt: turn.startedAt,
           finishedAt: turn.ended.at,
           outcome: turn.ended.outcome,
-          backgroundWork: turn.backgroundWork,
+          backgroundWork: turn.background,
           continuation: turn.ended.continuation,
           steps,
         });
@@ -727,9 +971,14 @@ const make = Effect.gen(function* () {
       ? b._tag === "start" && a.freshContext === b.freshContext
       : b._tag === "steer" && a.turnId === b.turnId;
 
-  /** The engine claims the files before it looks at the key. */
-  const claimAttachments = (attachments: ReadonlyArray<DispatchAttachment>) =>
+  /**
+   * The engine claims the files before it looks at the key. It refuses a text
+   * over its input limit too; the server never sends one.
+   */
+  const claimAttachments = (text: string, attachments: ReadonlyArray<DispatchAttachment>) =>
     Effect.gen(function* () {
+      if (engineInputLength(text) > ENGINE_INPUT_LIMIT)
+        return yield* misuse("a text over the engine's input limit");
       const now = yield* DateTime.now;
       for (const attachment of attachments) {
         const usableUntil = staged.get(attachment.stagedId);
@@ -840,6 +1089,8 @@ const make = Effect.gen(function* () {
             subscribers: new Map(),
             raceNextStart: false,
             failNextStart: null,
+            holdStartup: false,
+            heldStartup: null,
           });
           return sessionId;
         }),
@@ -864,106 +1115,145 @@ const make = Effect.gen(function* () {
       ),
 
     dispatch: (input) =>
-      command(
-        Effect.gen(function* () {
-          const { key, sessionId, delivery } = input;
-          yield* claimAttachments(input.attachments);
-          if (keys.has(key)) {
-            return yield* misuse(`dispatch key ${key} sent again without redispatch`);
-          }
-          // The adapter's checks, before anything is sent.
-          const session = yield* liveSession(sessionId);
-          if (delivery._tag === "start") {
-            const busyWith = session.running ?? session.waiting[0];
-            if (busyWith !== undefined) {
-              return yield* new SessionBusy({ sessionId, turnId: busyWith });
+      door(
+        "dispatch",
+        command(
+          Effect.gen(function* () {
+            yield* unbroken;
+            const { key, sessionId, delivery } = input;
+            yield* claimAttachments(input.text, input.attachments);
+            if (keys.has(key)) {
+              return yield* misuse(`dispatch key ${key} sent again without redispatch`);
             }
-          }
-          if (rejectDispatch) {
-            rejectDispatch = false;
-            return yield* refuse(key, sessionId);
-          }
-          return yield* applyDispatch(session, input);
-        }),
+            // The adapter's checks, before anything is sent.
+            const session = yield* liveSession(sessionId);
+            if (delivery._tag === "start") {
+              const busyWith = session.running ?? session.waiting[0];
+              if (busyWith !== undefined) {
+                return yield* new SessionBusy({ sessionId, turnId: busyWith });
+              }
+            }
+            yield* startupQueue(input);
+            if (rejectDispatch) {
+              rejectDispatch = false;
+              return yield* refuse(key, sessionId);
+            }
+            return yield* applyDispatch(session, input);
+          }),
+        ),
       ),
 
     redispatch: (input) =>
-      command(
-        Effect.gen(function* () {
-          const { key, sessionId, text, delivery } = input;
-          // Staged ids may be fresh on a resend; the rest must match.
-          yield* claimAttachments(input.attachments);
-          const previous = yield* priorUse(key, "dispatch");
-          if (previous?.command === "dispatch") {
-            if (previous.sessionId !== sessionId) {
-              return yield* misuse(`dispatch key ${key} sent to a second session`);
+      door(
+        "redispatch",
+        command(
+          Effect.gen(function* () {
+            yield* unbroken;
+            const { key, sessionId, text, delivery } = input;
+            // Staged ids may be fresh on a resend; the rest must match.
+            yield* claimAttachments(input.text, input.attachments);
+            yield* startupQueue(input);
+            const previous = yield* priorUse(key, "dispatch");
+            if (previous?.command === "dispatch") {
+              if (previous.sessionId !== sessionId) {
+                return yield* misuse(`dispatch key ${key} sent to a second session`);
+              }
+              if (previous.outcome === "rejected") return yield* new DispatchRejected({ key });
+              const first = sessions.get(sessionId)?.dispatches.get(key);
+              if (
+                first !== undefined &&
+                (first.text !== text || !sameDelivery(first.delivery, delivery))
+              ) {
+                return yield* misuse(`dispatch key ${key} repeated with another input`);
+              }
+              return;
             }
-            if (previous.outcome === "rejected") return yield* new DispatchRejected({ key });
-            const first = sessions.get(sessionId)?.dispatches.get(key);
-            if (
-              first !== undefined &&
-              (first.text !== text || !sameDelivery(first.delivery, delivery))
-            ) {
-              return yield* misuse(`dispatch key ${key} repeated with another input`);
+            // No local check: the engine plans the command itself.
+            const session = sessions.get(sessionId);
+            if (session === undefined || session.retired) {
+              // An inactive thread is refused while planning, with a rejected receipt.
+              return yield* refuse(key, sessionId);
             }
-            return;
-          }
-          // No local check: the engine plans the command itself.
-          const session = sessions.get(sessionId);
-          if (session === undefined || session.retired) {
-            // An inactive thread is refused while planning, with a rejected receipt.
-            return yield* refuse(key, sessionId);
-          }
-          if (rejectDispatch) {
-            rejectDispatch = false;
-            return yield* refuse(key, sessionId);
-          }
-          yield* applyDispatch(session, input);
-        }),
+            if (rejectDispatch) {
+              rejectDispatch = false;
+              return yield* refuse(key, sessionId);
+            }
+            yield* applyDispatch(session, input);
+          }),
+        ),
       ),
 
     stageAttachment: () =>
-      command(
-        Effect.gen(function* () {
-          const id = EngineAttachmentId.make(newId("attachment"));
-          const usableUntil = DateTime.addDuration(yield* DateTime.now, STAGED_USABLE_FOR);
-          staged.set(id, usableUntil);
-          return { id, usableUntil };
-        }),
+      door(
+        "stageAttachment",
+        command(
+          Effect.gen(function* () {
+            const id = EngineAttachmentId.make(newId("attachment"));
+            const usableUntil = DateTime.addDuration(yield* DateTime.now, STAGED_USABLE_FOR);
+            staged.set(id, usableUntil);
+            return { id, usableUntil };
+          }),
+        ),
       ),
 
     stop: ({ key, sessionId }) =>
-      command(
-        Effect.gen(function* () {
-          if ((yield* priorUse(key, "stop")) !== undefined) return;
-          const session = yield* liveSession(sessionId);
-          keys.set(key, { command: "stop" });
-          // The engine answers first; the stop takes effect after.
-          yield* Effect.forkDetach(
-            Effect.yieldNow.pipe(
-              Effect.andThen(DateTime.now),
-              Effect.map((at) => stopSession(session, at)),
-            ),
-          );
-        }),
+      door(
+        "stop",
+        command(
+          Effect.gen(function* () {
+            const previous = yield* priorUse(key, "stop");
+            const refuse = previous?.command === "stop" && previous.outcome === "rejected";
+            if (previous !== undefined && !refuse) return;
+            const session = yield* liveSession(sessionId);
+            if (refuse || rejectStop) {
+              rejectStop = false;
+              keys.set(key, { command: "stop", outcome: "rejected" });
+              if (stoppable(session)) return yield* new StopRejected({ key });
+              return;
+            }
+            keys.set(key, { command: "stop", outcome: "applied" });
+            const during = turnDuringStop?.sessionId === sessionId ? turnDuringStop : null;
+            if (during !== null) {
+              turnDuringStop = null;
+              const at = yield* DateTime.now;
+              stopSession(session, at, [...session.waiting]);
+              const turn = addTurn(session, { _tag: "background" }, at);
+              yield* Deferred.succeed(during.started, turn.turnId);
+              return yield* Deferred.await(during.reply);
+            }
+            const delayed = stopEffects;
+            stopEffects = null;
+            const cancels = [...session.waiting];
+            // The engine answers first; the stop takes effect after.
+            yield* Effect.forkDetach(
+              (delayed === null ? Effect.yieldNow : Deferred.await(delayed)).pipe(
+                Effect.andThen(DateTime.now),
+                Effect.map((at) => stopSession(session, at, cancels)),
+              ),
+            );
+          }),
+        ),
       ),
 
     resumeQueue: ({ sessionId, hold }) =>
-      command(
-        Effect.gen(function* () {
-          const session = yield* liveSession(sessionId);
-          if (!session.holdCursors.has(hold)) return yield* misuse(`no hold at ${hold}`);
-          if (session.resumedHolds.has(hold)) return;
-          session.resumedHolds.add(hold);
-          if (!session.held) return;
-          if (session.replacedSessionWorking) {
-            // Held again in answer, and not reported until the work ends.
-            session.unreportedHold = true;
-            return;
-          }
-          session.held = false;
-          startNext(session, yield* DateTime.now);
-        }),
+      door(
+        "resumeQueue",
+        command(
+          Effect.gen(function* () {
+            const session = yield* liveSession(sessionId);
+            if (!session.holdCursors.has(hold)) return yield* misuse(`no hold at ${hold}`);
+            if (session.resumedHolds.has(hold)) return;
+            session.resumedHolds.add(hold);
+            if (!session.held) return;
+            if (session.replacedSessionWorking) {
+              // Held again in answer, and not reported until the work ends.
+              session.unreportedHold = true;
+              return;
+            }
+            session.held = false;
+            startNext(session, yield* DateTime.now);
+          }),
+        ),
       ),
 
     respond: ({ key, sessionId, requestId, response }) =>
@@ -987,21 +1277,24 @@ const make = Effect.gen(function* () {
       ),
 
     respondSecret: ({ sessionId, requestId, answer }) =>
-      command(
-        Effect.gen(function* () {
-          const session = yield* liveSession(sessionId);
-          const open = session.requests.get(requestId);
-          if (open === undefined || open.request._tag !== "secret") {
-            return yield* new RequestClosed({ requestId });
-          }
-          session.secretAnswers.push({ requestId, answer });
-          closeRequest(
-            session,
-            open,
-            answer._tag === "provide" ? "provided" : "declined",
-            yield* DateTime.now,
-          );
-        }),
+      door(
+        "respondSecret",
+        command(
+          Effect.gen(function* () {
+            const session = yield* liveSession(sessionId);
+            const open = session.requests.get(requestId);
+            if (open === undefined || open.request._tag !== "secret") {
+              return yield* new RequestClosed({ requestId });
+            }
+            session.secretAnswers.push({ requestId, answer });
+            closeRequest(
+              session,
+              open,
+              answer._tag === "provide" ? "provided" : "declined",
+              yield* DateTime.now,
+            );
+          }),
+        ),
       ),
 
     events: ({ sessionId, after }) =>
@@ -1013,22 +1306,28 @@ const make = Effect.gen(function* () {
           }
           // Read the history and join the live feed in one step, so no event
           // falls between them.
-          const at = yield* DateTime.now;
-          const from = after === null ? null : parseCursor(after);
-          let lastCursor = after ?? cursorOf(0);
-          if (from === null || from < session.replayableFrom) {
-            const replaced = replacement(session, from, at);
-            lastCursor = replaced.cursor;
-            Queue.offerUnsafe(queue, replaced);
-          } else {
-            for (const entry of session.log) {
-              if (entry.sequence <= from) continue;
-              lastCursor = entry.event.cursor;
-              Queue.offerUnsafe(queue, entry.event);
+          const join = Effect.gen(function* () {
+            const at = yield* DateTime.now;
+            const from = after === null ? null : parseCursor(after);
+            let lastCursor = after ?? cursorOf(0);
+            if (from === null || from < session.replayableFrom) {
+              const replaced = replacement(session, from, at);
+              lastCursor = replaced.cursor;
+              Queue.offerUnsafe(queue, replaced);
+            } else {
+              for (const entry of session.log) {
+                if (entry.sequence <= from) continue;
+                lastCursor = entry.event.cursor;
+                Queue.offerUnsafe(queue, entry.event);
+              }
             }
-          }
-          session.subscribers.set(queue, { lastCursor });
+            session.subscribers.set(queue, { lastCursor });
+          });
           yield* Effect.addFinalizer(() => Effect.sync(() => session.subscribers.delete(queue)));
+          const held = withheld.get(sessionId);
+          if (held === undefined) return yield* join;
+          // Stalled: it joins only once the test releases it.
+          yield* Effect.forkScoped(Deferred.await(held).pipe(Effect.andThen(join)));
         }),
       ),
 
@@ -1037,14 +1336,25 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const session = yield* liveSession(sessionId);
           const at = yield* DateTime.now;
+          const dropped = droppedMarker;
+          droppedMarker = null;
+          if (dropped !== null) return yield* Deferred.succeed(dropped, undefined);
           // Every event is handed to the streams as it happens, so each stream
           // is already caught up: the marker follows what it was last given.
+          // The TestEngine knows every tool's persistence: its work is never in doubt.
+          const backgroundWork: BackgroundWork =
+            session.running === null && backgroundRuns(session) ? "pending" : "none";
+          // The running turn, also one whose provider turn has not started, and those waiting.
+          const runnableTurns =
+            session.running === null ? [...session.waiting] : [session.running, ...session.waiting];
           for (const [subscriber, state] of session.subscribers) {
             Queue.offerUnsafe(subscriber, {
               _tag: "synchronized",
               cursor: state.lastCursor,
               at,
               token,
+              backgroundWork,
+              runnableTurns,
             });
           }
           // Tool calls the engine records late appear only after this marker.
@@ -1079,14 +1389,116 @@ const make = Effect.gen(function* () {
       loseReply = true;
     }),
 
+    holdNext: (method) =>
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        holds.set(method, { entered, release });
+        return {
+          entered: Deferred.await(entered),
+          release: Deferred.succeed(release, undefined).pipe(Effect.asVoid),
+        };
+      }),
+
+    holdNextAnswer: (method) =>
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        answerHolds.set(method, { entered, release });
+        return {
+          entered: Deferred.await(entered),
+          release: Deferred.succeed(release, undefined).pipe(Effect.asVoid),
+        };
+      }),
+
+    withholdEvents: (sessionId) =>
+      Effect.gen(function* () {
+        const release = yield* Deferred.make<void>();
+        withheld.set(sessionId, release);
+        return {
+          release: Effect.sync(() => withheld.delete(sessionId)).pipe(
+            Effect.andThen(Deferred.succeed(release, undefined)),
+            Effect.andThen(Effect.yieldNow),
+            Effect.asVoid,
+          ),
+        };
+      }),
+
+    breakDispatches: (broken) =>
+      Effect.sync(() => {
+        brokenDispatches = broken;
+      }),
+
+    delayNextStopEffects: Effect.gen(function* () {
+      const release = yield* Deferred.make<void>();
+      stopEffects = release;
+      return {
+        release: Deferred.succeed(release, undefined).pipe(
+          Effect.andThen(Effect.yieldNow),
+          Effect.asVoid,
+        ),
+      };
+    }),
+
+    deferNextDispatch: Effect.gen(function* () {
+      const land = yield* Deferred.make<void>();
+      deferNext = land;
+      return {
+        land: Deferred.succeed(land, undefined).pipe(
+          Effect.andThen(Effect.yieldNow),
+          Effect.asVoid,
+        ),
+      };
+    }),
+
     rejectNextDispatch: Effect.sync(() => {
       rejectDispatch = true;
     }),
+
+    rejectNextStop: Effect.sync(() => {
+      rejectStop = true;
+    }),
+
+    holdNextStartup: (sessionId) =>
+      Effect.gen(function* () {
+        const session = yield* existingSession(sessionId);
+        session.holdStartup = true;
+        return {
+          release: Effect.gen(function* () {
+            const turnId = session.heldStartup;
+            session.heldStartup = null;
+            const turn = turnId === null ? undefined : session.turns.get(turnId);
+            if (turn === undefined || turn.ended !== null) return;
+            beginTurn(session, turn, yield* DateTime.now);
+          }),
+        };
+      }),
 
     startEngineTurnDuringNextDispatch: (sessionId) =>
       Effect.gen(function* () {
         const session = yield* existingSession(sessionId);
         session.raceNextStart = true;
+      }),
+
+    dropNextMarker: Effect.gen(function* () {
+      const requested = yield* Deferred.make<void>();
+      droppedMarker = requested;
+      return { requested: Deferred.await(requested) };
+    }),
+
+    startEngineTurnDuringNextStop: (sessionId) =>
+      Effect.gen(function* () {
+        yield* existingSession(sessionId);
+        const started = yield* Deferred.make<TurnId>();
+        const reply = yield* Deferred.make<void>();
+        turnDuringStop = { sessionId, started, reply };
+        return {
+          started: Deferred.await(started),
+          reply: Deferred.succeed(reply, undefined).pipe(
+            Effect.andThen(Effect.yieldNow),
+            Effect.asVoid,
+          ),
+        };
       }),
 
     holdQueue: ({ sessionId, heldAgainOnResume }) =>
@@ -1150,6 +1562,23 @@ const make = Effect.gen(function* () {
           turn.toolCalls.set(call.callId, { call, state: "unrecorded" });
         }
         return call.callId;
+      }),
+
+    recordToolInput: ({ sessionId, turnId, callId, input }) =>
+      Effect.gen(function* () {
+        const session = yield* existingSession(sessionId);
+        const turn = yield* runningTurn(session, turnId);
+        const record = turn.toolCalls.get(callId);
+        if (record?.state !== "open") return yield* misuse(`tool call ${callId} is not open`);
+        record.call = { ...record.call, inputDigest: yield* toolInputDigest(input) };
+        const call = record.call;
+        emit(session, yield* DateTime.now, (stamp) => ({
+          _tag: "tool-call",
+          ...stamp,
+          turnId,
+          call,
+          state: "open",
+        }));
       }),
 
     closeToolCall: ({ sessionId, turnId, callId }) =>
@@ -1226,13 +1655,10 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const session = yield* existingSession(sessionId);
         const turn = yield* runningTurn(session, turnId);
-        turn.backgroundWork = true;
+        turn.background = true;
       }),
 
-    backgroundWorkRunning: (sessionId) =>
-      existingSession(sessionId).pipe(
-        Effect.map((session) => [...session.turns.values()].some((turn) => turn.backgroundWork)),
-      ),
+    backgroundWorkRunning: (sessionId) => Effect.map(existingSession(sessionId), backgroundRuns),
 
     finishTurn: ({ sessionId, turnId, outcome, continuation }) =>
       Effect.gen(function* () {
@@ -1276,6 +1702,15 @@ const make = Effect.gen(function* () {
         const session = yield* existingSession(sessionId);
         session.replayableFrom = sequence;
         session.log.length = 0;
+      }),
+
+    loseSession: (sessionId) =>
+      Effect.gen(function* () {
+        const session = yield* existingSession(sessionId);
+        session.retired = true;
+        for (const subscriber of session.subscribers.keys()) {
+          yield* Queue.fail(subscriber, new SessionNotFound({ sessionId }));
+        }
       }),
 
     dispatches: (sessionId) =>

@@ -77,6 +77,18 @@ it.effect("refuses to write through a link to a place that does not exist yet", 
   }).pipe(Effect.scoped, Effect.provide(files)),
 );
 
+it.effect("writes a file whose name is as long as a file system takes", () =>
+  Effect.gen(function* () {
+    const memory = yield* MemoryFiles.MemoryFiles;
+    const name = MemoryPath.make(`${"n".repeat(252)}.md`);
+
+    yield* memory.write({ scope: shared, path: name, text: "Long name.", revision: null });
+
+    const read = yield* memory.read(shared, name);
+    assert.strictEqual(Option.getOrUndefined(read)?.text, "Long name.");
+  }).pipe(Effect.scoped, Effect.provide(files)),
+);
+
 it.effect("writes only over the revision the writer read", () =>
   Effect.gen(function* () {
     const memory = yield* MemoryFiles.MemoryFiles;

@@ -48,6 +48,11 @@ export const FailureClass = Schema.Literals([
   "engine-unavailable",
   /** The bot's working context could not be resumed. */
   "session-lost",
+  /**
+   * A Stop that does not cover the work ended it before it reached the bot: a
+   * room's archival or deletion, or a stop from the engine's own console.
+   */
+  "stopped",
   "unknown",
 ]);
 export type FailureClass = typeof FailureClass.Type;

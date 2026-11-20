@@ -31,6 +31,7 @@ export const en = {
   "failure.permissionError": "Its provider needs signing in again",
   "failure.engineUnavailable": "Can’t reach the engine",
   "failure.sessionLost": "Lost its working context",
+  "failure.stopped": "Not delivered: the work was stopped",
   "failure.unknown": "Stopped by an unexpected error",
 
   "summary.fromYou": "You: {text}",
@@ -67,7 +68,7 @@ export const en = {
   "message.cancelled": "Not sent: you stopped the bot first",
   "message.failed.rejected": "Not delivered: the engine refused it",
   "message.failed.unresolved": "May have been delivered. Sending again may repeat the work.",
-  "message.failed.stopped": "Not delivered: you stopped the room",
+  "message.failed.stopped": "Not delivered: the work was stopped",
   "message.retry": "Send again",
 
   "file.open": "Open {name}",
@@ -144,6 +145,10 @@ export const en = {
   "notice.chainFanOut": "Not every bot was asked: one message may wake only a few.",
   "notice.undelivered": "A reply didn’t arrive",
   "notice.waitingInConversation": "{name} is waiting on you in its own conversation.",
+  "notice.sessionLost": "Lost its working context. New messages wait until it has a new one.",
+  "notice.observationFailed":
+    "Couldn’t keep up with this bot’s work. What shows here may be behind.",
+  "notice.tooLong": "Something meant for this bot was too long to pass on, so it was left out.",
   "notice.retry": "Try again",
   "notice.openConversation": "Open",
 
