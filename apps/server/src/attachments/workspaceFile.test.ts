@@ -59,6 +59,23 @@ it.layer(NodeServices.layer)("readWorkspaceFile", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect(
+    "reads a file whose name begins with two dots, and refuses a path that climbs out",
+    () =>
+      Effect.gen(function* () {
+        const { fs, path, workspace, outside, readWorkspaceFile } = yield* places;
+        yield* fs.writeFileString(path.join(workspace, "..draft.md"), "The draft.");
+        const read = yield* readWorkspaceFile(workspace, "..draft.md", 1024);
+        assert.strictEqual(read._tag === "read" ? read.name : read._tag, "..draft.md");
+
+        yield* fs.writeFileString(path.join(outside, "secret.txt"), "secret");
+        const climbing = path.relative(workspace, path.join(outside, "secret.txt"));
+        assert.deepStrictEqual(yield* readWorkspaceFile(workspace, climbing, 1024), {
+          _tag: "outside",
+        });
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("refuses what is not a regular file", () =>
     Effect.gen(function* () {
       const { fs, path, workspace, readWorkspaceFile } = yield* places;

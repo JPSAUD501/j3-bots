@@ -121,9 +121,12 @@ export const workspaceReader = Effect.gen(function* () {
     given: string,
     limit: number,
   ): Effect.fn.Return<WorkspaceRead, never, Scope.Scope> {
+    // Outside when the way from the root climbs out of it: a first segment of
+    // `..`, not merely a name that begins with two dots, such as `..draft.md`.
     const isInside = (location: string) => {
       const relative = path.relative(root, location);
-      return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+      const [first] = relative.split(path.sep);
+      return relative !== "" && first !== ".." && !path.isAbsolute(relative);
     };
 
     const resolved = yield* fs.realPath(path.resolve(root, given)).pipe(Effect.option);
