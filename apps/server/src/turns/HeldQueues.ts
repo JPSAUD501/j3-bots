@@ -75,11 +75,16 @@ export const layer = Layer.effect(
       signals,
     );
 
-    /** A session whose hold is still to be resumed, and can be now. */
+    /**
+     * A session whose hold is still to be resumed, and can be now. A retired
+     * session is taken out of use, not resumed: its queue holds nothing the
+     * bot still waits for. Read again in the gate, so a session retired
+     * meanwhile is left alone.
+     */
     const holdPending = sql`
       s.queue_held_cursor IS NOT NULL
         AND s.queue_held_cursor IS NOT s.queue_resumed_cursor
-        AND s.lost_at IS NULL AND s.engine_session_id IS NOT NULL
+        AND s.lost_at IS NULL AND s.retired_at IS NULL AND s.engine_session_id IS NOT NULL
         AND NOT EXISTS (
           SELECT 1 FROM stop_targets t WHERE t.session_id = s.id AND t.stopped_at IS NULL
         )

@@ -412,10 +412,25 @@ export const layer = Layer.effect(
       yield* refreshMessages(sources);
     }, Effect.orDie);
 
-    /** The catch-up notes and held messages its envelope carried go to the next one. */
+    /**
+     * The catch-up notes and held messages its envelope carried go to the next
+     * one. A digest is for the session its dispatch was written into: once
+     * that session is lost or retired, the rotation that replaces it writes
+     * the digest for the next one (or, for a fresh start, none), so the one
+     * carried here is dropped, and a bot never has two waiting.
+     */
     const returnConsumed = Effect.fn("Ledger.returnConsumed")(function* (
       dispatchId: DispatchRowId,
     ) {
+      yield* sql`
+        DELETE FROM catch_up_notes
+        WHERE consumed_dispatch_id = ${dispatchId}
+          AND json_extract(note_json, '$._tag') = 'session-rotated'
+          AND EXISTS (
+            SELECT 1 FROM dispatches d JOIN sessions s ON s.id = d.session_id
+            WHERE d.id = ${dispatchId} AND (s.retired_at IS NOT NULL OR s.lost_at IS NOT NULL)
+          )
+      `;
       yield* sql`UPDATE catch_up_notes SET consumed_dispatch_id = NULL WHERE consumed_dispatch_id = ${dispatchId}`;
       yield* sql`UPDATE held_messages SET consumed_dispatch_id = NULL WHERE consumed_dispatch_id = ${dispatchId}`;
     }, Effect.orDie);

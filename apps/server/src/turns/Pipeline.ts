@@ -523,6 +523,23 @@ export const layer = Layer.effect(
       `,
     });
 
+    /** A planned session, if it still takes new work where the dispatch is written. */
+    const plannedSession = SqlSchema.findOneOption({
+      Request: SessionRowId,
+      Result: Schema.Struct({ id: SessionRowId }),
+      execute: (id) => sql`
+        SELECT id FROM sessions
+        WHERE id = ${id} AND retired_at IS NULL AND lost_at IS NULL AND ${takesNewWorkSql(sql)}
+      `,
+    });
+
+    /** Those of the wakes still pending. */
+    const pendingWakes = SqlSchema.findAll({
+      Request: Schema.Array(Schema.String),
+      Result: Schema.Struct({ id: Schema.String }),
+      execute: (ids) => sql`SELECT id FROM wakes WHERE ${sql.in("id", ids)} AND status = 'pending'`,
+    });
+
     /** The busy deadlines still ahead: the dispatcher looks again at the earliest. */
     const busyDeadlines = SqlSchema.findAll({
       Request: Schema.String,
@@ -892,20 +909,9 @@ export const layer = Layer.effect(
     const writeDispatch = Effect.fn("Pipeline.writeDispatch")(function* (plan: Plan) {
       return yield* transaction(
         Effect.gen(function* () {
-          const [live] = yield* sql<{ readonly n: number }>`
-            SELECT COUNT(*) AS n FROM sessions
-            WHERE id = ${plan.sessionId} AND retired_at IS NULL AND lost_at IS NULL
-              AND ${takesNewWorkSql(sql)}
-          `;
-          if ((live?.n ?? 0) === 0) return "stale" as const;
-          const still = yield* sql<{ readonly n: number }>`
-            SELECT COUNT(*) AS n FROM wakes
-            WHERE ${sql.in(
-              "id",
-              plan.wakes.map((wake) => wake.id),
-            )} AND status = 'pending'
-          `;
-          if ((still[0]?.n ?? 0) !== plan.wakes.length) return null;
+          if (Option.isNone(yield* plannedSession(plan.sessionId))) return "stale" as const;
+          const still = yield* pendingWakes(plan.wakes.map((wake) => wake.id));
+          if (still.length !== plan.wakes.length) return null;
           const fitted = yield* envelopeOf(plan, yield* sinceLastTurn(plan.botId));
           yield* dropUnseen(plan.botId, fitted.dropped);
           const { wake } = fitted;

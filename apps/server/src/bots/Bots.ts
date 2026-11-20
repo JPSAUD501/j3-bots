@@ -108,7 +108,7 @@ export const layer = Layer.effect(
     const ids = yield* Ids;
     const signals = yield* Signals;
     const stops = yield* Stops;
-    const { requestBotRotation, dropDigests } = rotationRequests(sql, signals);
+    const { requestBotRotation, forgetConversation } = rotationRequests(sql, signals);
 
     /** The provider of the bot's live main session, if it has one. */
     const liveMainProvider = (botId: BotId) =>
@@ -266,27 +266,36 @@ export const layer = Layer.effect(
       // first: removing a project already gone succeeds, so a deletion that
       // fails after it is retried whole, while a project left behind by a
       // deletion that committed first would never be removed. A retry after
-      // the deletion finds no bot here and gets the receipt.
-      if (Option.isSome(yield* store.find(input.botId))) {
-        yield* sessions
-          .removeProject(input.botId)
-          .pipe(Effect.catch(() => new Conflict({ reason: "engine-unavailable" })));
-      }
-      yield* receipts.once({
-        commandId: input.commandId,
-        method: "bot.delete",
-        payload: input,
-        result: Schema.Void,
-        apply: Effect.gen(function* () {
-          yield* require(input.botId);
-          yield* rooms.releaseBot(input.botId);
-          const carried = yield* attachments.ofTarget({ _tag: "conversation", botId: input.botId });
-          yield* store.remove(input.botId);
-          yield* attachments.purge(carried);
-          yield* changes.touch({ _tag: "bot", botId: input.botId });
-          yield* sql.afterCommit(workspaces.remove(input.botId, input.deleteFiles));
+      // the deletion finds no bot here and gets the receipt. No provisioning
+      // runs from the removal to the commit, or the rotator could open the
+      // bot's session again in a project made anew.
+      yield* sessions.withoutProvisioning(
+        Effect.gen(function* () {
+          if (Option.isSome(yield* store.find(input.botId))) {
+            yield* sessions
+              .removeProject(input.botId)
+              .pipe(Effect.catch(() => new Conflict({ reason: "engine-unavailable" })));
+          }
+          yield* receipts.once({
+            commandId: input.commandId,
+            method: "bot.delete",
+            payload: input,
+            result: Schema.Void,
+            apply: Effect.gen(function* () {
+              yield* require(input.botId);
+              yield* rooms.releaseBot(input.botId);
+              const carried = yield* attachments.ofTarget({
+                _tag: "conversation",
+                botId: input.botId,
+              });
+              yield* store.remove(input.botId);
+              yield* attachments.purge(carried);
+              yield* changes.touch({ _tag: "bot", botId: input.botId });
+              yield* sql.afterCommit(workspaces.remove(input.botId, input.deleteFiles));
+            }),
+          });
         }),
-      });
+      );
     });
 
     const freshStart = Effect.fn("Bots.freshStart")(function* (input: {
@@ -300,10 +309,10 @@ export const layer = Layer.effect(
         result: Schema.Void,
         apply: Effect.gen(function* () {
           yield* require(input.botId);
-          // A clean slate: the work in progress stops, no digest waits for
-          // the new session, and none is written for it.
+          // A clean slate: the work in progress stops, and nothing of the
+          // conversation so far reaches the new session or its successors.
           yield* stops.record(input.botId, { _tag: "bot" });
-          yield* dropDigests(input.botId);
+          yield* forgetConversation(input.botId);
           yield* requestBotRotation(input.botId, "fresh-start");
         }),
       });

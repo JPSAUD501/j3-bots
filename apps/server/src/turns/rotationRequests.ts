@@ -96,5 +96,22 @@ export const rotationRequests = (sql: SqlClient.SqlClient, signals: Signals["Ser
     `;
   }, Effect.orDie);
 
-  return { requestRotation, requestBotRotation, dropDigests };
+  /**
+   * A fresh start: the digests no envelope carried yet are dropped, and no
+   * later digest reaches back past what the conversation holds now, also when
+   * the new session is replaced in its turn.
+   */
+  const forgetConversation = Effect.fn("rotationRequests.forgetConversation")(function* (
+    botId: BotId,
+  ) {
+    yield* dropDigests(botId);
+    yield* sql`
+      UPDATE conversations SET digest_from_position = (
+        SELECT COALESCE(MAX(position) + 1, 0) FROM entries WHERE conversation_bot_id = ${botId}
+      )
+      WHERE bot_id = ${botId}
+    `;
+  }, Effect.orDie);
+
+  return { requestRotation, requestBotRotation, dropDigests, forgetConversation };
 };

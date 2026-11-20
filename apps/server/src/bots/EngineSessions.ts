@@ -70,6 +70,14 @@ export class EngineSessions extends Context.Service<
     ) => Effect.Effect<void, EngineDown | SessionNotFound | ModelUnavailable>;
     /** Removes the bot's project, and every session in it, from the engine. */
     readonly removeProject: (botId: BotId) => Effect.Effect<void, EngineDown>;
+    /**
+     * Runs `effect` with no provisioning of any bot alongside it. A bot's
+     * deletion removes its project and its rows within it, so the rotator
+     * cannot give the engine a project for a bot that is going.
+     */
+    readonly withoutProvisioning: <A, E, R>(
+      effect: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E, R>;
     /** The session an engine session id belongs to, if it is a live one of a bot. */
     readonly ofEngineSession: (sessionId: SessionId) => Effect.Effect<Option.Option<BotSession>>;
   }
@@ -155,32 +163,46 @@ export const layer = Layer.effect(
       // The bot moved to another provider since the row was written: the
       // rotator replaces the row, which never opens.
       if (session.provider_id !== selected.bot.model.providerId) return;
-      const opened = { model: selected.bot.model, permissionMode: selected.bot.permissionMode };
       const sessionId = yield* engine.openSession({
         key: IdempotencyKey.make(session.id),
         projectId,
         title: "Main",
-        ...opened,
+        model: selected.bot.model,
+        permissionMode: selected.bot.permissionMode,
       });
+      /**
+       * Brings the session to the bot's settings as they stand, if it is
+       * still on their provider, and answers what it applied.
+       */
+      const align = Effect.fnUntraced(function* () {
+        const now = yield* bots.find(botId);
+        if (Option.isNone(now) || now.value.bot.model.providerId !== session.provider_id) {
+          return null;
+        }
+        const { model, permissionMode } = now.value.bot;
+        yield* engine
+          .configureSession({ sessionId, model, permissionMode })
+          // Lost meanwhile: the rotator replaces it, with the bot's settings.
+          .pipe(Effect.catchTag("SessionNotFound", () => Effect.void));
+        return { model, permissionMode };
+      });
+      // Before the session takes work: a retried opening answers with the
+      // session the engine opened first, with the settings of that attempt,
+      // and the bot's may have changed since.
+      const applied = yield* align();
       yield* sql`UPDATE sessions SET engine_session_id = ${sessionId} WHERE id = ${session.id}`.pipe(
         Effect.orDie,
       );
-      // A change of model or permission mode that committed while the session
-      // opened found it unopened, and left it to this.
+      // A change that committed after that found the session unopened, and
+      // left it to this.
       const now = yield* bots.find(botId);
-      if (Option.isNone(now) || now.value.bot.model.providerId !== session.provider_id) return;
-      const { model, permissionMode } = now.value.bot;
-      const modelChanged = model.modelId !== opened.model.modelId;
-      const modeChanged = permissionMode !== opened.permissionMode;
-      if (modelChanged || modeChanged) {
-        yield* engine
-          .configureSession({
-            sessionId,
-            ...(modelChanged ? { model } : {}),
-            ...(modeChanged ? { permissionMode } : {}),
-          })
-          // Lost meanwhile: the rotator replaces it, with the bot's settings.
-          .pipe(Effect.catchTag("SessionNotFound", () => Effect.void));
+      if (
+        applied !== null &&
+        Option.isSome(now) &&
+        (now.value.bot.model.modelId !== applied.model.modelId ||
+          now.value.bot.permissionMode !== applied.permissionMode)
+      ) {
+        yield* align();
       }
     }, provisioning.withPermits(1));
 
@@ -214,6 +236,12 @@ export const layer = Layer.effect(
       return Option.map(row, (found): BotSession => ({ id: found.id, botId: found.bot_id }));
     }, Effect.orDie);
 
-    return EngineSessions.of({ provision, configure, removeProject, ofEngineSession });
+    return EngineSessions.of({
+      provision,
+      configure,
+      removeProject,
+      withoutProvisioning: provisioning.withPermits(1),
+      ofEngineSession,
+    });
   }),
 );

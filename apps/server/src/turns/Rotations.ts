@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BotId } from "@j3-bots/contracts";
+import { BotId, type Entry } from "@j3-bots/contracts";
 import { Engine, SessionId } from "@j3-bots/engine-t3";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -16,8 +16,6 @@ import { Entries } from "../entries/Entries.ts";
 import { Ids } from "../Ids.ts";
 import { Flag, json, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
-import { UNNAMED_OPERATOR } from "../settings/BasePrompt.ts";
-import { SettingsStore } from "../settings/SettingsStore.ts";
 import { conversationDigest } from "./digest.ts";
 import { Ledger } from "./Ledger.ts";
 import { CatchUpNote, SessionRowId } from "./model.ts";
@@ -117,7 +115,6 @@ export const layer = Layer.effect(
     const engine = yield* Engine;
     const sessions = yield* EngineSessions;
     const entries = yield* Entries;
-    const settings = yield* SettingsStore;
     const observer = yield* Observer;
     const signals = yield* Signals;
     const readiness = yield* Readiness;
@@ -192,28 +189,43 @@ export const layer = Layer.effect(
       return isIdle(work) && work.continuations === 0 && !work.stopUnsettled;
     });
 
+    /** Where the bot's conversation starts for a digest: after its latest fresh start. */
+    const digestStart = SqlSchema.findOneOption({
+      Request: BotId,
+      Result: Schema.Struct({ digest_from_position: Schema.NullOr(Schema.Number) }),
+      execute: (botId) => sql`
+        SELECT digest_from_position FROM conversations WHERE bot_id = ${botId}
+      `,
+    });
+
     /**
      * The conversation's digest, read back from its latest entries until it
-     * holds as many messages as a digest takes, or the conversation's start.
+     * holds as many messages as a digest takes, or the conversation's start:
+     * its first entry, or its first after the operator's latest fresh start.
      */
     const digestOf = Effect.fn("Rotations.digestOf")(function* (botId: BotId) {
-      const operator = (yield* settings.get).operatorName ?? UNNAMED_OPERATOR;
       const target = { _tag: "conversation", botId } as const;
+      const from = Option.match(yield* digestStart(botId).pipe(Effect.orDie), {
+        onNone: () => 0,
+        onSome: (row) => row.digest_from_position ?? 0,
+      });
+      const since = (page: ReadonlyArray<Entry>) => page.filter((entry) => entry.order >= from);
       // Pages newest first, each oldest first; the digest reads them all oldest first.
-      const pages = [yield* entries.latest(target, DIGEST_PAGE)];
-      let older = pages[0]?.length === DIGEST_PAGE;
-      let digest = conversationDigest(pages.toReversed().flat(), operator);
+      const latest = yield* entries.latest(target, DIGEST_PAGE);
+      const pages = [since(latest)];
+      let older = latest.length === DIGEST_PAGE && (latest[0]?.order ?? 0) > from;
+      let digest = conversationDigest(pages.toReversed().flat());
       while (!digest.full && older) {
         const first = pages.at(-1)?.[0];
         if (first === undefined) break;
         const page = yield* entries
           .history({ target, before: first.order, limit: DIGEST_PAGE })
           .pipe(Effect.orDie);
-        pages.push(page.entries);
-        older = page.hasOlder;
-        digest = conversationDigest(pages.toReversed().flat(), operator);
+        pages.push(since(page.entries));
+        older = page.hasOlder && (page.entries[0]?.order ?? 0) > from;
+        digest = conversationDigest(pages.toReversed().flat());
       }
-      return digest.text;
+      return digest.messages;
     });
 
     /**
@@ -255,7 +267,8 @@ export const layer = Layer.effect(
     /**
      * Whether the engine shows the session quiet as `waits` requires, from a
      * marker taken after its events are known: no turn it can still run, and
-     * for `everything` no background work pending.
+     * for `everything` no background work pending. `quiet-with-background` is
+     * quiet for `turns`, with background work the retirement ends.
      */
     const engineQuiet = Effect.fn("Rotations.engineQuiet")(function* (
       session: Due,
@@ -266,8 +279,10 @@ export const layer = Layer.effect(
         Effect.map(({ backgroundWork, runnableTurns }) =>
           runnableTurns.length > 0
             ? ("busy" as const)
-            : waits === "everything" && backgroundWork
-              ? ("background" as const)
+            : backgroundWork
+              ? waits === "everything"
+                ? ("background" as const)
+                : ("quiet-with-background" as const)
               : ("quiet" as const),
         ),
         Effect.catchTags({
@@ -290,6 +305,7 @@ export const layer = Layer.effect(
       outcome: ReturnType<typeof passOutcome>,
     ) {
       const waits = waitsFor(session);
+      let endsBackgroundWork = false;
       if (waits !== "nothing" && session.engine_session_id !== null) {
         // Its state counts only once its events are known.
         yield* observer.watch(session.id);
@@ -309,6 +325,9 @@ export const layer = Layer.effect(
           case "deferred":
           case "unavailable":
             return engineShows satisfies Replacement;
+          case "quiet-with-background":
+            endsBackgroundWork = true;
+            break;
           case "quiet":
             break;
         }
@@ -321,7 +340,7 @@ export const layer = Layer.effect(
           reason: retired.lost ? "lost" : retired.rotation_reason,
         }),
       );
-      if (retired.rotation_reason === "context-recovered" && retired.engine_session_id !== null) {
+      if (endsBackgroundWork) {
         yield* Effect.logInfo(
           "Background work the replaced session still had ends with its retirement",
         ).pipe(Effect.annotateLogs({ botId: retired.bot_id }));
@@ -388,7 +407,24 @@ export const layer = Layer.effect(
         if (replaced) yield* signals.dispatch.fire;
         for (const session of yield* retiredInUse(undefined).pipe(Effect.orDie)) {
           const retired = yield* Effect.exit(engine.retireSession(session.engine_session_id));
-          if (retired._tag === "Failure") return { _tag: "unavailable" } as const;
+          if (retired._tag === "Failure") {
+            const error = Cause.findErrorOption(retired.cause);
+            // An engine that takes no commands ends the pass; any other
+            // failure leaves this session for a later pass, and the others go on.
+            if (Option.isSome(error) && error.value._tag !== "EngineIndeterminate") {
+              return { _tag: "unavailable" } as const;
+            }
+            if (Option.isNone(error)) {
+              yield* Effect.logWarning(
+                "A replaced session could not be retired; it is tried again",
+                {
+                  cause: retired.cause,
+                },
+              );
+            }
+            outcome.defer();
+            continue;
+          }
           yield* sql`
             UPDATE sessions SET engine_retired_at = ${timeText(yield* DateTime.now)}
             WHERE id = ${session.id}

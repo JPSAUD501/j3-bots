@@ -33,7 +33,13 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
       { type: "routine-delivered", routine: "Routine", at, text: "text" },
       { type: "held-message", message },
       { type: "profile-changed", changes: [{ field: "job", value: "text" }] },
-      { type: "session-rotated", digest: "text" },
+      {
+        type: "session-rotated",
+        digest: [
+          { from: "user", text: "text", files: [] },
+          { from: "you", text: "text", files: ["a.pdf"] },
+        ],
+      },
     ],
     answer: {
       question: "text",

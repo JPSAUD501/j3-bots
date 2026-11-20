@@ -128,7 +128,15 @@ export const CatchUpNote = Schema.Union([
     ),
   }),
   /** The bot's main session was replaced; `digest` is what the new one is told of the conversation. */
-  Schema.TaggedStruct("session-rotated", { digest: Schema.String }),
+  Schema.TaggedStruct("session-rotated", {
+    digest: Schema.Array(
+      Schema.Struct({
+        from: Schema.Literals(["user", "you"]),
+        text: Schema.String,
+        files: Schema.Array(Schema.String),
+      }),
+    ),
+  }),
 ]);
 export type CatchUpNote = typeof CatchUpNote.Type;
 

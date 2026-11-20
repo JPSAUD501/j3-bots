@@ -7,7 +7,7 @@ import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
 import { Command, Flag, Prompt } from "effect/cli";
 import { AdminClient } from "../admin/AdminClient.ts";
-import { providerBaseUrlProblem } from "../admin/protocol.ts";
+import { baseUrlForm, providerBaseUrlProblem } from "../admin/protocol.ts";
 import * as ServerConfig from "../config.ts";
 import { refuse, userFacing } from "./errors.ts";
 
@@ -33,8 +33,15 @@ export const normalizeBaseUrl = (
 ):
   | { readonly _tag: "url"; readonly url: string }
   | { readonly _tag: "problem"; readonly problem: string } => {
-  const trimmed = text.trim().replace(/\/+$/, "");
-  const root = trimmed.endsWith("/v1") ? trimmed.slice(0, -"/v1".length) : trimmed;
+  const trimmed = text.trim();
+  // Written in its base form, unless that would drop a part the check refuses.
+  const url = URL.canParse(trimmed) ? new URL(trimmed) : null;
+  const plain =
+    url !== null && url.username === "" && url.password === "" && !/[?#]/.test(trimmed)
+      ? baseUrlForm(url)
+      : trimmed;
+  const bare = plain.replace(/\/+$/, "");
+  const root = bare.endsWith("/v1") ? bare.slice(0, -"/v1".length) : bare;
   const problem = providerBaseUrlProblem(root);
   return problem === undefined ? { _tag: "url", url: root } : { _tag: "problem", problem };
 };
@@ -73,8 +80,9 @@ const readBaseUrl = Effect.fn("readBaseUrl")(function* (flag: Option.Option<stri
   if (Option.isSome(flag)) {
     const root = normalizeBaseUrl(flag.value);
     if (root._tag === "url") return root.url;
+    // The text is not repeated: it may hold a credential.
     return yield* refuse(
-      `${flag.value} is not a base URL J3 Bots can use: ${root.problem}. ${EXAMPLES}`,
+      `--base-url is not a base URL J3 Bots can use: ${root.problem}. ${EXAMPLES}`,
     );
   }
   if (!(yield* (yield* Stdio.Stdio).stdinIsTerminal)) {

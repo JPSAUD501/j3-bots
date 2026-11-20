@@ -682,3 +682,41 @@ describe("a turn the engine ran on recovered context", () => {
     assert.deepStrictEqual(recovered(diff(mirror, view, at)), [false]);
   });
 });
+
+describe("a turn told after it ran", () => {
+  it("carries the times the engine recorded, not the time it is told", () => {
+    const startedAt = DateTime.makeUnsafe("2026-11-20T09:00:00Z");
+    const finishedAt = DateTime.makeUnsafe("2026-11-20T09:05:00Z");
+    const mirror = emptyMirror();
+    const { view } = replacement(mirror, false, at);
+    // Started and ended while the stream was down: the replay tells both at once, later.
+    applyEvent(
+      mirror,
+      event("run.updated", {
+        id: "run-1",
+        ordinal: 1,
+        userMessageId: "message-1",
+        status: "completed",
+        threadId: "thread-1",
+        providerInstanceId: "codex",
+        modelSelection: { instanceId: "codex", model: "gpt-5" },
+        providerThreadId: null,
+        rootNodeId: null,
+        activeAttemptId: null,
+        requestedAt: startedAt,
+        startedAt,
+        completedAt: finishedAt,
+        checkpointId: null,
+        contextHandoffId: null,
+      }),
+    );
+    const times = diff(mirror, view, at).flatMap((told) =>
+      told._tag === "turn-started"
+        ? [told.startedAt]
+        : told._tag === "turn-finished"
+          ? [told.finishedAt]
+          : [],
+    );
+    assert.deepStrictEqual(times, [startedAt, finishedAt]);
+  });
+});

@@ -61,12 +61,22 @@ const isLoopback = (hostname: string) =>
   hostname === "localhost" || hostname === "[::1]" || /^127\.\d+\.\d+\.\d+$/.test(hostname);
 
 /**
+ * A URL's base form: its origin and its path, as the URL parser writes them
+ * (lower-case host, no default port, dot segments resolved, tabs and line
+ * breaks dropped), with no `/` for an empty path.
+ */
+export const baseUrlForm = (url: URL) => `${url.origin}${url.pathname === "/" ? "" : url.pathname}`;
+
+/**
  * Why `text` is not an endpoint's base URL as the engine is given it, or
  * undefined when it is one: `https`, or `http` to a loopback host only, since
  * the key travels with every request in clear otherwise; no credentials,
- * query or fragment, since the base URL is kept in plain text and the key
- * travels on its own; and no trailing `/` or `/v1`, which each harness adds
- * itself.
+ * query or fragment, not even an empty `?` or `#`, which the parser drops but
+ * a harness would append its path after, since the base URL is kept in plain
+ * text and the key travels on its own; no trailing `/` or `/v1`, which each
+ * harness adds itself; and written in its base form (`baseUrlForm`), so the
+ * text the engine is given is the URL that was checked. A problem never
+ * repeats the text, which may hold a credential.
  */
 export const providerBaseUrlProblem = (text: string): string | undefined => {
   if (!URL.canParse(text) || text.length > 1000) return "it is not a URL";
@@ -77,8 +87,11 @@ export const providerBaseUrlProblem = (text: string): string | undefined => {
     return "plain http would send the key in clear to another machine; use https, or http only to this machine (localhost, 127.0.0.1 or [::1])";
   }
   if (url.username !== "" || url.password !== "") return "it carries a user name or password";
-  if (url.search !== "" || url.hash !== "") return "it has a query or fragment";
+  if (text.includes("?") || text.includes("#")) return "it has a query or fragment";
   if (text.endsWith("/") || url.pathname.endsWith("/v1")) return "it ends in / or /v1";
+  if (baseUrlForm(url) !== text) {
+    return "it is not written as scheme://host[:port][/path], in lower case, without a default port or . and .. segments";
+  }
   return undefined;
 };
 

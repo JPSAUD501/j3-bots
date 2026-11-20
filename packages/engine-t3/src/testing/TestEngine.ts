@@ -179,8 +179,17 @@ export class TestEngineControl extends Context.Service<
      * the same key opens the session.
      */
     readonly failNextOpenSessions: (count: number) => Effect.Effect<void>;
+    /**
+     * The next call of `openSession` opens the session and then fails with
+     * `EngineIndeterminate`, as when its reply was lost. A later call under the
+     * same key returns that session as it was opened, as the engine answers a
+     * replayed key.
+     */
+    readonly loseNextOpenSessionReply: Effect.Effect<void>;
     /** The model a session runs, as it was opened or last configured. */
     readonly sessionModel: (sessionId: SessionId) => Effect.Effect<ModelChoice>;
+    /** The permission mode a session runs, as it was opened or last configured. */
+    readonly sessionPermissionMode: (sessionId: SessionId) => Effect.Effect<PermissionMode>;
     /**
      * The engine refuses the next `stop` it receives, applying nothing and
      * keeping a rejected receipt, as when a read fails while it plans the
@@ -484,6 +493,7 @@ const make = Effect.gen(function* () {
   let loseReply = false;
   let rejectDispatch = false;
   let failingOpenSessions = 0;
+  let losingOpenSessionReply = false;
   let rejectStop = false;
   const holds = new Map<
     HeldMethod,
@@ -810,6 +820,7 @@ const make = Effect.gen(function* () {
       _tag: "turn-finished",
       ...stamp,
       turnId: turn.turnId,
+      finishedAt: at,
       cause: turn.cause,
       outcome,
       backgroundWork: turn.background,
@@ -852,6 +863,7 @@ const make = Effect.gen(function* () {
       ...stamp,
       turnId: turn.turnId,
       cause: turn.cause,
+      startedAt: at,
     }));
   };
 
@@ -1134,6 +1146,10 @@ const make = Effect.gen(function* () {
             holdStartup: false,
             heldStartup: null,
           });
+          if (losingOpenSessionReply) {
+            losingOpenSessionReply = false;
+            return yield* new EngineIndeterminate();
+          }
           return sessionId;
         }),
       ),
@@ -1504,12 +1520,24 @@ const make = Effect.gen(function* () {
         failingOpenSessions = count;
       }),
 
+    loseNextOpenSessionReply: Effect.sync(() => {
+      losingOpenSessionReply = true;
+    }),
+
     sessionModel: (sessionId) =>
       Effect.suspend(() => {
         const session = sessions.get(sessionId);
         return session === undefined
           ? misuse(`no session ${sessionId}`)
           : Effect.succeed(session.model);
+      }),
+
+    sessionPermissionMode: (sessionId) =>
+      Effect.suspend(() => {
+        const session = sessions.get(sessionId);
+        return session === undefined
+          ? misuse(`no session ${sessionId}`)
+          : Effect.succeed(session.permissionMode);
       }),
 
     rejectNextStop: Effect.sync(() => {

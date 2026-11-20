@@ -821,9 +821,24 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     readonly model?: ModelChoice;
     readonly permissionMode?: PermissionMode;
   }) {
-    yield* liveProjection(input.sessionId);
+    // Only what differs from what the thread runs is sent: a session opened
+    // again under its key is the one the engine opened first, as it was
+    // opened then, and is set to the caller's settings this way.
+    const thread = (yield* liveProjection(input.sessionId)).thread;
     const threadId = ThreadId.make(input.sessionId);
-    const selection = input.model === undefined ? undefined : yield* modelSelection(input.model);
+    const wanted = input.model === undefined ? undefined : yield* modelSelection(input.model);
+    const selection =
+      wanted !== undefined &&
+      (thread === undefined ||
+        thread.modelSelection.instanceId !== wanted.instanceId ||
+        thread.modelSelection.model !== wanted.model)
+        ? wanted
+        : undefined;
+    const mode =
+      input.permissionMode !== undefined &&
+      (thread === undefined || thread.runtimeMode !== RUNTIME_MODES[input.permissionMode])
+        ? input.permissionMode
+        : undefined;
     if (selection !== undefined) {
       yield* sendSessionCommand(input.sessionId, {
         type: "thread.model-selection.set",
@@ -832,12 +847,12 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
         modelSelection: selection,
       });
     }
-    if (input.permissionMode !== undefined) {
+    if (mode !== undefined) {
       const send = sendSessionCommand(input.sessionId, {
         type: "thread.runtime-mode.set",
         commandId: commandId("mode", `${input.sessionId}:${yield* uniqueKey}`),
         threadId,
-        runtimeMode: RUNTIME_MODES[input.permissionMode],
+        runtimeMode: RUNTIME_MODES[mode],
       });
       yield* selection === undefined ? send : afterSending(send);
     }
@@ -1597,7 +1612,11 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     Stream.repeat(Schedule.spaced(PROVIDER_RESUBSCRIBE)),
   );
   yield* stateChanges(state).pipe(
-    Stream.switchMap((current) => (current._tag === "ready" ? reports : Stream.empty)),
+    // An engine that is not ready reports nothing: a report from before it
+    // left is not kept for when it is back.
+    Stream.switchMap((current) =>
+      current._tag === "ready" ? reports : Stream.succeed<ReadonlyArray<ServerProvider>>([]),
+    ),
     Stream.runForEach((providers) => SubscriptionRef.set(reported, providers)),
     Effect.forkScoped,
   );

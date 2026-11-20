@@ -1109,7 +1109,7 @@ export const layer = Layer.effect(
         case "replaced":
           return yield* replaced(session, event);
         case "turn-started":
-          return yield* startTurn(session, event.turnId, event.cause, event.at);
+          return yield* startTurn(session, event.turnId, event.cause, event.startedAt);
         case "turn-queued":
           return yield* queuedTurn(session, event.turnId, event.cause);
         case "steered":
@@ -1145,7 +1145,7 @@ export const layer = Layer.effect(
             continuation: event.continuation,
             continued: false,
             contextRecovered: event.contextRecovered,
-            at: event.at,
+            at: event.finishedAt,
           });
         case "continuation-dropped":
           return yield* continuationDropped(session, event.turnId);

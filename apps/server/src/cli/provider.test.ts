@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
+import { providerBaseUrlProblem } from "../admin/protocol.ts";
 import { normalizeBaseUrl } from "./provider.ts";
 
 it("takes the endpoint's root from what the operator typed, and refuses what is no base URL", () => {
@@ -15,13 +16,34 @@ it("takes the endpoint's root from what the operator typed, and refuses what is 
     _tag: "url",
     url: "https://proxy.lan/api",
   });
+  // The URL the server checks and the engine is given is the one the parser reads.
+  assert.deepStrictEqual(normalizeBaseUrl("HTTPS://Proxy.LAN:443/a/../api/v1/"), {
+    _tag: "url",
+    url: "https://proxy.lan/api",
+  });
   for (const refused of [
     "ftp://proxy.lan",
     "https://user:secret@proxy.lan",
     "https://proxy.lan/?key=secret",
+    // Empty delimiters the parser drops, after which a harness's `/v1` would land.
+    "https://proxy.lan?",
+    "https://proxy.lan/api#",
     "proxy.lan:8317",
   ]) {
-    assert.strictEqual(normalizeBaseUrl(refused)._tag, "problem", refused);
+    const normalized = normalizeBaseUrl(refused);
+    assert.strictEqual(normalized._tag, "problem", refused);
+    if (normalized._tag === "problem") assert.notInclude(normalized.problem, "secret");
+  }
+});
+
+it("takes only a base URL in its base form from a client, as the CLI sends it", () => {
+  assert.isUndefined(providerBaseUrlProblem("https://proxy.lan/api"));
+  for (const refused of [
+    "https://Proxy.lan",
+    "https://proxy.lan:443",
+    "https://proxy.lan/a/../b",
+  ]) {
+    assert.isDefined(providerBaseUrlProblem(refused), refused);
   }
 });
 

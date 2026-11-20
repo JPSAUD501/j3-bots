@@ -18,6 +18,7 @@ export {
   type AttachmentRef,
   type BotWake,
   type CatchUpItem,
+  type DigestMessage,
   type OperatorMessage,
   type ProfileChange,
   renderWake,

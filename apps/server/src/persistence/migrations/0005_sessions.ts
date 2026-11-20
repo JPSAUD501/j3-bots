@@ -26,6 +26,11 @@ export default Effect.gen(function* () {
   // row first and the engine thread after, retried until the engine answers.
   yield* sql`ALTER TABLE sessions ADD COLUMN engine_retired_at TEXT`;
 
+  // Where a bot's conversation starts for a digest: the position of its first
+  // entry after the operator's latest fresh start. Earlier entries are never
+  // told to a session again (`turns/Rotations.ts`).
+  yield* sql`ALTER TABLE conversations ADD COLUMN digest_from_position INTEGER`;
+
   // Turn usage is read newest first, from a time on.
   yield* sql`CREATE INDEX turns_started ON turns (started_at)`;
 

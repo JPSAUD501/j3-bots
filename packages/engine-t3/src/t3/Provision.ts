@@ -7,6 +7,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Hex from "effect/encoding/Hex";
@@ -89,14 +90,18 @@ const stagedKeyFile = (path: Path.Path, secrets: string, generation: string) =>
   path.join(secrets, `${STAGED_KEY_PREFIX}${generation}.bin`);
 
 /**
- * The variable that carries the connection's key to each harness: Claude
- * Code reads `ANTHROPIC_AUTH_TOKEN`; Codex reads the variable its model
- * provider's `env_key` names.
+ * The variable that carries a generation's key to the harnesses. Its name
+ * carries the generation, and so does the engine's secret file that holds it,
+ * so a new key never overwrites the one an earlier URL is paired with. Each
+ * harness's own configuration names the variable next to the URL: Codex's
+ * model provider takes it as `env_key`, and Claude Code reads it through an
+ * `apiKeyHelper`, which sends what it prints as the bearer token. **Verified**
+ * with Claude Code 2.1.328 against a CLIProxyAPI endpoint: a turn answered
+ * with the URL in the home's `settings.json` `env` and the key only in the
+ * variable, and failed with the helper's error when the variable was missing.
  */
-const CONNECTION_KEY_VARIABLE = {
-  "claude-code": "ANTHROPIC_AUTH_TOKEN",
-  codex: "J3_PROVIDER_KEY",
-} as const;
+const KEY_VARIABLE_PREFIX = "J3_PROVIDER_KEY_";
+const keyVariable = (generation: string) => `${KEY_VARIABLE_PREFIX}${generation}`;
 
 /** Codex's name for the connection's model provider. A dot would not survive TOML's dotted keys. */
 const CODEX_MODEL_PROVIDER = "j3";
@@ -161,6 +166,16 @@ const DRIVERS = {
 const secretFileName = (instanceId: string, variable: string) =>
   `provider-env-${Base64Url.encode(instanceId)}-${Base64Url.encode(variable)}.bin`;
 
+/** The key generation an instance's secret file holds, if it holds one. */
+const keyGenerationOf = (instanceId: string, name: string): string | null => {
+  const prefix = `provider-env-${Base64Url.encode(instanceId)}-`;
+  if (!name.startsWith(prefix) || !name.endsWith(".bin")) return null;
+  const variable = Base64Url.decodeString(name.slice(prefix.length, -".bin".length));
+  return Result.isSuccess(variable) && variable.success.startsWith(KEY_VARIABLE_PREFIX)
+    ? variable.success.slice(KEY_VARIABLE_PREFIX.length)
+    : null;
+};
+
 const JsonObject = Schema.Record(Schema.String, Schema.Unknown);
 const decodeJsonObject = Schema.decodeUnknownOption(Schema.fromJsonString(JsonObject));
 const isJsonObject = Schema.is(JsonObject);
@@ -185,29 +200,22 @@ const secretVariable = (name: string): SettingsVariable => ({
 });
 
 /**
- * The variables through which an instance reaches the connection: for Claude
- * Code the endpoint, the key, and tool search turned off, which an endpoint
- * other than Anthropic's own may not serve (**Assumed** from the operator's
- * proxy setup, which turns it off for that reason); for Codex the key its
- * model provider names.
+ * The variables the engine gives an instance for the connection: the key of
+ * each generation in `generations`, and for Claude Code tool search turned
+ * off, which an endpoint other than Anthropic's own may not serve
+ * (**Assumed** from the operator's proxy setup, which turns it off for that
+ * reason). The URL is not among them: it is in the harness's own
+ * configuration, with the name of its key's variable.
  */
 const connectionVariables = (
   spec: InstanceSpec,
-  connection: StoredConnection | null,
+  generations: ReadonlyArray<string>,
 ): ReadonlyArray<SettingsVariable> => {
-  if (connection === null) return [];
-  switch (spec.kind) {
-    case "claude-code":
-      return [
-        { name: "ANTHROPIC_BASE_URL", value: connection.baseUrl, sensitive: false },
-        secretVariable(CONNECTION_KEY_VARIABLE["claude-code"]),
-        { name: "ENABLE_TOOL_SEARCH", value: "false", sensitive: false },
-      ];
-    case "codex":
-      return [secretVariable(CONNECTION_KEY_VARIABLE.codex)];
-    case "acp-local":
-      return [];
-  }
+  if (spec.kind === "acp-local" || generations.length === 0) return [];
+  const keys = generations.map((generation) => secretVariable(keyVariable(generation)));
+  return spec.kind === "claude-code"
+    ? [...keys, { name: "ENABLE_TOOL_SEARCH", value: "false", sensitive: false }]
+    : keys;
 };
 
 const instanceConfig = (input: ProvisionInput, spec: InstanceSpec) => {
@@ -231,7 +239,7 @@ const instanceConfig = (input: ProvisionInput, spec: InstanceSpec) => {
 /** The settings file with J3 Bots' keys and instances merged into what the engine keeps there. */
 const engineSettings = (
   input: ProvisionInput,
-  connection: StoredConnection | null,
+  generations: (spec: InstanceSpec) => ReadonlyArray<string>,
   existing: Readonly<Record<string, unknown>>,
 ) => ({
   ...existing,
@@ -244,7 +252,7 @@ const engineSettings = (
         displayName: spec.name,
         enabled: true,
         environment: [
-          ...connectionVariables(spec, connection),
+          ...connectionVariables(spec, generations(spec)),
           ...spec.environment.map((variable) => secretVariable(variable.name)),
         ],
         config: instanceConfig(input, spec),
@@ -268,7 +276,7 @@ const codexConfig = (input: ProvisionInput, connection: StoredConnection | null)
             values: [
               ["name", "J3 Bots provider connection"],
               ["base_url", `${connection.baseUrl}/v1`],
-              ["env_key", CONNECTION_KEY_VARIABLE.codex],
+              ["env_key", keyVariable(connection.generation)],
               ["wire_api", "responses"],
             ],
           },
@@ -286,9 +294,10 @@ const codexConfig = (input: ProvisionInput, connection: StoredConnection | null)
       ["developer_instructions", input.basePrompt],
       ["model_provider", connection === null ? undefined : CODEX_MODEL_PROVIDER],
     ],
-    owns: ([table, name]) =>
-      (table === "model_providers" && name === CODEX_MODEL_PROVIDER) ||
-      (table === "mcp_servers" && name === TOOL_SERVER),
+    owns: [
+      ["model_providers", CODEX_MODEL_PROVIDER],
+      ["mcp_servers", TOOL_SERVER],
+    ],
     tables: [...modelProvider, tools],
   };
 };
@@ -310,6 +319,91 @@ export const activeConnection = Effect.fn("engine.activeConnection")(function* (
   return (yield* readConnection(home))?.baseUrl ?? null;
 });
 
+/** A harness configuration file J3 Bots cannot edit safely, which it left as it is. */
+class HarnessConfigUnreadable extends Schema.TaggedError<HarnessConfigUnreadable>()(
+  "HarnessConfigUnreadable",
+  { file: Schema.String, reason: Schema.String },
+) {
+  override get message(): string {
+    return `${this.file} was left as it is: ${this.reason}. Correct it or move it aside, and J3 Bots writes its part at the next start.`;
+  }
+}
+
+/** The names of the variables each instance has in the engine's settings, as last written. */
+const DeclaredVariables = Schema.Struct({
+  providerInstances: Schema.Record(
+    Schema.String,
+    Schema.Struct({
+      environment: Schema.optional(Schema.Array(Schema.Struct({ name: Schema.String }))),
+    }),
+  ),
+});
+const decodeDeclared = Schema.decodeUnknownOption(DeclaredVariables);
+
+/** The key generations the engine's settings give an instance. */
+const declaredGenerations = (
+  settings: Readonly<Record<string, unknown>>,
+  instanceId: string,
+): ReadonlyArray<string> =>
+  Option.match(decodeDeclared(settings), {
+    onNone: () => [],
+    onSome: (declared) =>
+      (declared.providerInstances[instanceId]?.environment ?? []).flatMap((variable) =>
+        variable.name.startsWith(KEY_VARIABLE_PREFIX)
+          ? [variable.name.slice(KEY_VARIABLE_PREFIX.length)]
+          : [],
+      ),
+  });
+
+/**
+ * Claude Code's `settings.json` with J3 Bots' part set: auto-memory off, and
+ * the connection's URL and the variable its key is read from, together, or
+ * neither when there is no connection. The rest is the harness's own.
+ */
+const claudeSettings = (
+  settings: Readonly<Record<string, unknown>>,
+  connection: StoredConnection | null,
+) => {
+  const rest = Object.fromEntries(
+    Object.entries(settings).filter(([key]) => key !== "apiKeyHelper" && key !== "env"),
+  );
+  const env = Object.fromEntries(
+    Object.entries(isJsonObject(settings["env"]) ? settings["env"] : {}).filter(
+      ([key]) => key !== "ANTHROPIC_BASE_URL",
+    ),
+  );
+  return {
+    ...rest,
+    // **Read** in Claude Code 2.1.328: `autoMemoryEnabled: false` turns auto-memory off.
+    autoMemoryEnabled: false,
+    ...(connection === null
+      ? Object.keys(env).length === 0
+        ? {}
+        : { env }
+      : {
+          env: { ...env, ANTHROPIC_BASE_URL: connection.baseUrl },
+          apiKeyHelper: `printenv ${keyVariable(connection.generation)}`,
+        }),
+  };
+};
+
+/**
+ * Writes the engine's settings and each harness's configuration for the
+ * recorded connection, so that every URL a harness is given comes with its
+ * own key, whichever step a failure cuts short:
+ *
+ * 1. The key goes into the engine's secret store under its generation's
+ *    variable, beside the keys of earlier generations, which stay.
+ * 2. The engine's settings name the new variable next to those the harnesses'
+ *    configuration may still name.
+ * 3. Each harness's configuration gets the URL with the name of its key's
+ *    variable, in one file.
+ * 4. The engine's settings name the new variable alone.
+ * 5. The keys no variable names any more are removed.
+ *
+ * Done on every provisioning, so a connection whose activation was cut short
+ * is completed at the next start.
+ */
 export const provision = Effect.fn("engine.provision")(function* (input: ProvisionInput) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -331,10 +425,6 @@ export const provision = Effect.fn("engine.provision")(function* (input: Provisi
   yield* input.files.folder(secrets);
   yield* fs.chmod(secrets, 0o700);
 
-  // The committed generation is activated: its key goes to every instance
-  // that reaches the connection, and its URL into the settings below. Done on
-  // every provisioning, so a connection whose activation was cut short is
-  // completed at the next start.
   const recorded = yield* readConnection(input.home);
   const stagedKey =
     recorded === null
@@ -348,19 +438,34 @@ export const provision = Effect.fn("engine.provision")(function* (input: Provisi
     );
   }
   const connection = stagedKey === null ? null : recorded;
+  const current = connection === null ? [] : [connection.generation];
+  const settingsFile = path.join(userdata, "settings.json");
+  const before = yield* readObject(settingsFile);
+  const secretFile = (spec: InstanceSpec, variable: string) =>
+    path.join(secrets, secretFileName(spec.instanceId, variable));
+
+  // 1.
   for (const spec of input.instances) {
-    if (stagedKey !== null && spec.kind !== "acp-local") {
-      yield* input.files.write(
-        path.join(secrets, secretFileName(spec.instanceId, CONNECTION_KEY_VARIABLE[spec.kind])),
-        stagedKey,
-      );
+    if (stagedKey !== null && connection !== null && spec.kind !== "acp-local") {
+      yield* input.files.write(secretFile(spec, keyVariable(connection.generation)), stagedKey);
     }
     for (const variable of spec.environment) {
-      yield* input.files.write(
-        path.join(secrets, secretFileName(spec.instanceId, variable.name)),
-        Redacted.value(variable.value),
-      );
+      yield* input.files.write(secretFile(spec, variable.name), Redacted.value(variable.value));
     }
+  }
+
+  // 2.
+  yield* writeJson(
+    settingsFile,
+    engineSettings(
+      input,
+      (spec) => [...new Set([...declaredGenerations(before, spec.instanceId), ...current])],
+      before,
+    ),
+  );
+
+  // 3.
+  for (const spec of input.instances) {
     switch (spec.kind) {
       case "claude-code": {
         yield* input.files.folder(spec.home);
@@ -381,22 +486,21 @@ export const provision = Effect.fn("engine.provision")(function* (input: Provisi
             },
           },
         });
-        const settingsFile = path.join(spec.home, "settings.json");
-        const settings = yield* readObject(settingsFile);
-        // **Read** in Claude Code 2.1.328: `autoMemoryEnabled: false` turns auto-memory off.
-        yield* writeJson(settingsFile, {
-          ...settings,
-          autoMemoryEnabled: false,
-        });
+        const harnessSettings = path.join(spec.home, "settings.json");
+        yield* writeJson(
+          harnessSettings,
+          claudeSettings(yield* readObject(harnessSettings), connection),
+        );
         break;
       }
       case "codex": {
         yield* input.files.folder(spec.home);
         const configFile = path.join(spec.home, "config.toml");
-        yield* input.files.write(
-          configFile,
-          editToml(yield* readText(configFile), codexConfig(input, connection)),
-        );
+        const edited = editToml(yield* readText(configFile), codexConfig(input, connection));
+        if (edited._tag === "unreadable") {
+          return yield* new HarnessConfigUnreadable({ file: configFile, reason: edited.reason });
+        }
+        yield* input.files.write(configFile, edited.text);
         break;
       }
       case "acp-local":
@@ -404,13 +508,24 @@ export const provision = Effect.fn("engine.provision")(function* (input: Provisi
     }
   }
 
-  const settingsFile = path.join(userdata, "settings.json");
-  const existing = yield* readObject(settingsFile);
-  yield* writeJson(settingsFile, engineSettings(input, connection, existing));
+  // 4.
+  yield* writeJson(
+    settingsFile,
+    engineSettings(input, () => current, yield* readObject(settingsFile)),
+  );
 
-  // Keys staged for a generation that never became the connection, or that
-  // another one replaced.
-  for (const name of yield* fs.readDirectory(secrets)) {
+  // 5. Every other generation's key: one whose activation was cut short
+  // before the engine's settings named it is removed here too.
+  const stored = yield* fs.readDirectory(secrets);
+  for (const spec of input.instances) {
+    for (const name of stored) {
+      const generation = keyGenerationOf(spec.instanceId, name);
+      if (generation !== null && generation !== connection?.generation) {
+        yield* input.files.remove(path.join(secrets, name));
+      }
+    }
+  }
+  for (const name of stored) {
     if (
       name.startsWith(STAGED_KEY_PREFIX) &&
       (connection === null ||
@@ -436,14 +551,15 @@ export const writeBasePrompt = Effect.fn("engine.writeBasePrompt")(function* (in
     if (spec.kind !== "codex") continue;
     const configFile = path.join(spec.home, "config.toml");
     const text = yield* fs.readFileString(configFile).pipe(Effect.orElseSucceed(() => ""));
-    yield* input.files.write(
-      configFile,
-      editToml(text, {
-        keys: [["developer_instructions", input.basePrompt]],
-        owns: () => false,
-        tables: [],
-      }),
-    );
+    const edited = editToml(text, {
+      keys: [["developer_instructions", input.basePrompt]],
+      owns: [],
+      tables: [],
+    });
+    if (edited._tag === "unreadable") {
+      return yield* new HarnessConfigUnreadable({ file: configFile, reason: edited.reason });
+    }
+    yield* input.files.write(configFile, edited.text);
   }
 });
 

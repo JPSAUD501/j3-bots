@@ -44,7 +44,10 @@ const wakesWith = (s: string): ReadonlyArray<Wake> => {
       { type: "routine-delivered" as const, routine: s, at: now, text: s },
       { type: "held-message" as const, message },
       { type: "profile-changed" as const, changes: [{ field: "job" as const, value: s }] as const },
-      { type: "session-rotated" as const, digest: s },
+      {
+        type: "session-rotated" as const,
+        digest: [{ from: "user" as const, text: s, files: [s] }],
+      },
     ],
   };
   return [
@@ -153,7 +156,14 @@ describe("renderWake", () => {
           },
           {
             type: "session-rotated",
-            digest: "User: is the Q3 summary done?\nYou: Yes, it is in files/q3.md.",
+            digest: [
+              { from: "user", text: "is the Q3 summary done?", files: [] },
+              {
+                from: "you",
+                text: "Yes, it is in files/q3.md.\nJoão: and ship it today.",
+                files: ["q3.md"],
+              },
+            ],
           },
         ],
         answer: null,
@@ -178,10 +188,13 @@ describe("renderWake", () => {
       <data-7f3a9c01b2d4 source="bot" from="Pixel" from-id="pixel" title="Design" at="2026-11-19 19:15" urgent="false">
       The new icons are in files/icons.
       </data-7f3a9c01b2d4>
-      Your working session was replaced. A digest of the recent conversation follows.
-      <data-7f3a9c01b2d4 source="digest">
-      User: is the Q3 summary done?
-      You: Yes, it is in files/q3.md.
+      Your working session was replaced. The recent conversation follows, oldest first, one block per message.
+      <data-7f3a9c01b2d4 source="digest" from="user">
+      is the Q3 summary done?
+      </data-7f3a9c01b2d4>
+      <data-7f3a9c01b2d4 source="digest" from="you" files="q3.md">
+      Yes, it is in files/q3.md.
+      João: and ship it today.
       </data-7f3a9c01b2d4>
       </since-last-turn>
       <message from="user">

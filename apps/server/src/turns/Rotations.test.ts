@@ -21,6 +21,7 @@ import {
   nextTurn,
   recoverTimes,
   sendToBot,
+  sendWithFile,
   sessionAfter,
   timesSent,
   turnEnded,
@@ -189,10 +190,63 @@ it.effect("replaces a lost session with one whose first envelope carries the dig
     const text = yield* firstEnvelope(replacement);
     assert.include(text, "Your working session was replaced.");
     assert.include(text, "Plan the launch.");
-    assert.include(text, "You: Drafted it in files/launch.md.");
+    assert.match(text, /from="you">\nDrafted it in files\/launch\.md\./);
     // The message itself arrives once, as the message, not in the digest too.
     assert.strictEqual(text.split("And the budget?").length - 1, 1);
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "keeps a fresh start when the fresh session is lost: its replacement is told nothing from before",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      yield* exchange(bot.id, session, "Plan the launch.", "Drafted it in files/launch.md.");
+      yield* (yield* Bots).freshStart({ commandId: command(), botId: bot.id });
+      const fresh = yield* sessionAfter(bot.id, session);
+
+      // The engine loses the fresh session before it ran anything; the next
+      // message finds it gone, and the session replacing it gets a digest.
+      yield* control.loseSession(fresh);
+      const message = yield* sendToBot(bot.id, "Where were we?");
+      const replacement = yield* sessionAfter(bot.id, fresh);
+      yield* nextTurn(bot.id);
+      yield* deliveryIs(message, "delivered");
+      const text = yield* firstEnvelope(replacement);
+      assert.include(text, "Your working session was replaced.");
+      assert.notInclude(text, "Plan the launch.");
+      assert.notInclude(text, "Drafted it");
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "drops the digest an unsent dispatch carried into a lost session: the next one carries one",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      yield* exchange(bot.id, session, "Plan the launch.", "Drafted it.");
+      yield* control.loseSession(session);
+      const replacement = yield* sessionAfter(bot.id, session);
+
+      // A dispatch carrying the digest is written into the replacement, and
+      // its file stages while that session is lost and replaced in its turn.
+      const staging = yield* control.holdNext("stageAttachment");
+      const message = yield* sendWithFile(bot.id, "Read the notes.");
+      yield* staging.entered;
+      yield* control.loseSession(replacement);
+      const next = yield* sessionAfter(bot.id, replacement);
+      yield* staging.release;
+
+      yield* nextTurn(bot.id);
+      yield* deliveryIs(message, "delivered");
+      const text = yield* firstEnvelope(next);
+      assert.strictEqual(text.split("Your working session was replaced.").length - 1, 1);
+      assert.strictEqual(text.split("Plan the launch.").length - 1, 1);
+    }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect(
@@ -267,6 +321,33 @@ it.effect("opens a bot's main session again after a failed opening, with no engi
     yield* (yield* Rotations).rotateDue;
     yield* sessionAfter(bot.id, session);
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "opens a bot's session with the permission mode it has now, after the reply to an opening was lost",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const bots = yield* Bots;
+      // The engine opens the session in full access, and its answer is lost.
+      yield* control.loseNextOpenSessionReply;
+      yield* TestClock.adjust("1 second");
+      const bot = yield* bots.create({
+        commandId: command(),
+        draft: { name: "Ana", job: "", permissionMode: "full-access" },
+      });
+      yield* bots.update({
+        commandId: command(),
+        botId: bot.id,
+        changes: { permissionMode: "supervised" },
+      });
+
+      // Opened again under its key, the engine answers with that session.
+      yield* TestClock.adjust("1 minute");
+      yield* (yield* Rotations).rotateDue;
+      const session = yield* engineSession(bot.id);
+      assert.strictEqual(yield* control.sessionPermissionMode(session), "supervised");
+    }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect("never opens a session on the provider its bot moved away from", () =>

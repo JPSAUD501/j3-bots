@@ -99,9 +99,17 @@ export type CatchUpItem =
     }
   /**
    * The bot's working session was replaced since its last turn; `digest`
-   * summarizes the recent conversation for the new one.
+   * holds the recent conversation for the new one, oldest first.
    */
-  | { readonly type: "session-rotated"; readonly digest: string };
+  | { readonly type: "session-rotated"; readonly digest: ReadonlyArray<DigestMessage> };
+
+/** One message of a session digest: who wrote it, its text, and the names of its files. */
+export interface DigestMessage {
+  /** `user` for the operator, `you` for the bot. */
+  readonly from: "user" | "you";
+  readonly text: string;
+  readonly files: ReadonlyArray<string>;
+}
 
 interface WakeBase {
   /** When the wake is dispatched. */
@@ -374,8 +382,27 @@ const writeSinceLastTurn = (w: EnvelopeWriter, items: ReadonlyArray<CatchUpItem>
         writeProfileChanges(w, item.changes);
         break;
       case "session-rotated":
-        w.line("Your working session was replaced. A digest of the recent conversation follows.");
-        w.data([["source", "digest"]], item.digest);
+        if (item.digest.length === 0) {
+          w.line(
+            "Your working session was replaced. Nothing had been said in the conversation yet.",
+          );
+          break;
+        }
+        // One block per message, its author an attribute: no text of one can
+        // pass for another's author.
+        w.line(
+          "Your working session was replaced. The recent conversation follows, oldest first, one block per message.",
+        );
+        for (const message of item.digest) {
+          w.data(
+            [
+              ["source", "digest"],
+              ["from", message.from],
+              ["files", message.files.length === 0 ? null : message.files.join(", ")],
+            ],
+            message.text,
+          );
+        }
         break;
     }
   }

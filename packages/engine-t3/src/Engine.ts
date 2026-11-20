@@ -333,7 +333,9 @@ export class Engine extends Context.Service<
 
     /**
      * A new, idle session in the project. `key` is the server's own id for the
-     * session, written before this call, so a retry returns the same session.
+     * session, written before this call, so a retry returns the same session:
+     * with the model and permission mode it was first opened with, which a
+     * retry with other settings does not change. `configureSession` sets them.
      */
     readonly openSession: (input: {
       readonly key: IdempotencyKey;
@@ -343,7 +345,11 @@ export class Engine extends Context.Service<
       readonly permissionMode: PermissionMode;
     }) => Effect.Effect<SessionId, EngineDown | ProjectNotFound | ModelUnavailable>;
 
-    /** Changes the model or permission mode of a session, from its next turn. */
+    /**
+     * Changes the model or permission mode of a session, from its next turn.
+     * Sends only what differs from what the session runs, so it also brings a
+     * session to settings it may already have.
+     */
     readonly configureSession: (input: {
       readonly sessionId: SessionId;
       readonly model?: ModelChoice;

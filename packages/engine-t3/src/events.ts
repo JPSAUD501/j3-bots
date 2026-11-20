@@ -285,7 +285,16 @@ export const SessionEvent = Schema.Union([
    * dispatch is the moment that dispatch is delivered: the server admits it
    * here, not when `dispatch` returned.
    */
-  Schema.TaggedStruct("turn-started", { ...at, turnId: TurnId, cause: TurnCause }),
+  Schema.TaggedStruct("turn-started", {
+    ...at,
+    turnId: TurnId,
+    cause: TurnCause,
+    /**
+     * When its provider turn started, as the engine recorded it. `at` is when
+     * the event was sent, which a replay after a reconnect puts later.
+     */
+    startedAt: Schema.DateTimeUtc,
+  }),
   /**
    * The engine queued a start behind another turn: it has the turn, which has
    * not started. Sent once, before the turn's `turn-started` or
@@ -391,6 +400,8 @@ export const SessionEvent = Schema.Union([
   Schema.TaggedStruct("turn-finished", {
     ...at,
     turnId: TurnId,
+    /** When it ended, as the engine recorded it; `at` is when the event was sent. */
+    finishedAt: Schema.DateTimeUtc,
     /**
      * Why the turn started, as `turn-started` says it, and the same when the
      * turn never started: a waiting turn that `stop` cancelled, or one that
