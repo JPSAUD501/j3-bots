@@ -121,14 +121,18 @@ const credentials = (stored: Option.Option<DeviceCredential>) =>
   );
 
 interface StorageOptions {
-  /** Fails every transaction, as a full disk would. */
-  readonly refuseCommits?: boolean;
+  /** Fails every transaction while it says so, as a full disk would. */
+  readonly refuseCommits?: () => boolean;
   /** Fails every attempt to empty a table. */
   readonly refuseClears?: boolean;
   /** Holds every transaction until the latch opens. */
   readonly commitGate?: Latch.Latch;
   /** Receives one item as each transaction starts, before the gate. */
   readonly committing?: Queue.Queue<void>;
+  /** Holds every read, once it has read, until the latch opens. */
+  readonly readGate?: Latch.Latch;
+  /** Receives one item as each read the gate holds has read. */
+  readonly reading?: Queue.Queue<void>;
 }
 
 /** One window's watch on the device's storage: what it is told when another window changes it. */
@@ -162,6 +166,14 @@ const makeStorage = (options: StorageOptions) => {
       readAll: (name) =>
         Effect.sync(
           () => new Map([...table(name)].toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))),
+        ).pipe(
+          Effect.tap(() => {
+            const gate = options.readGate;
+            if (gate === undefined || gate.isOpen()) return Effect.void;
+            return (
+              options.reading === undefined ? Effect.void : Queue.offer(options.reading, undefined)
+            ).pipe(Effect.andThen(gate.await));
+          }),
         ),
       write: (name, key, value) =>
         Effect.sync(() => void table(name).set(key, value)).pipe(Effect.andThen(changed([name]))),
@@ -172,30 +184,32 @@ const makeStorage = (options: StorageOptions) => {
           ? Effect.fail(new LocalStorageError({ operation: "remove" }))
           : Effect.sync(() => table(name).clear()).pipe(Effect.andThen(changed([name]))),
       commit: (changes, expected = []) =>
-        options.refuseCommits === true
-          ? Effect.fail(new LocalStorageError({ operation: "write" }))
-          : (options.committing === undefined
-              ? Effect.void
-              : Queue.offer(options.committing, undefined)
-            ).pipe(
-              Effect.andThen(options.commitGate?.await ?? Effect.void),
-              Effect.andThen(
-                Effect.sync(() => {
-                  const holds = expected.every(
-                    ({ table: name, key, value }) => (table(name).get(key) ?? null) === value,
-                  );
-                  if (!holds) return false;
-                  for (const { table: name, key, value } of changes) {
-                    if (value === null) table(name).delete(key);
-                    else table(name).set(key, value);
-                  }
-                  return true;
-                }),
+        Effect.suspend(() =>
+          options.refuseCommits?.() === true
+            ? Effect.fail(new LocalStorageError({ operation: "write" }))
+            : (options.committing === undefined
+                ? Effect.void
+                : Queue.offer(options.committing, undefined)
+              ).pipe(
+                Effect.andThen(options.commitGate?.await ?? Effect.void),
+                Effect.andThen(
+                  Effect.sync(() => {
+                    const holds = expected.every(
+                      ({ table: name, key, value }) => (table(name).get(key) ?? null) === value,
+                    );
+                    if (!holds) return false;
+                    for (const { table: name, key, value } of changes) {
+                      if (value === null) table(name).delete(key);
+                      else table(name).set(key, value);
+                    }
+                    return true;
+                  }),
+                ),
+                Effect.tap((applied) =>
+                  applied ? changed(changes.map((change) => change.table)) : Effect.void,
+                ),
               ),
-              Effect.tap((applied) =>
-                applied ? changed(changes.map((change) => change.table)) : Effect.void,
-              ),
-            ),
+        ),
       changes: Stream.callback<LocalTable>((queue) =>
         Effect.acquireRelease(
           Effect.sync(() => {

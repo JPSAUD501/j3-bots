@@ -385,15 +385,15 @@ const goOffline = Effect.gen(function* () {
 });
 
 /** A paired device with one bot, from a client that has closed since. */
-const pairedDevice = (botName: string) =>
+const pairedDevice = (botName: string, options?: Parameters<typeof TestPlatform.makeDevice>[0]) =>
   Effect.gen(function* () {
-    const device = TestPlatform.makeDevice();
+    const device = TestPlatform.makeDevice(options);
     const first = yield* Effect.gen(function* () {
       yield* pairAndConnect;
       return { botId: yield* createBot(botName), credential: yield* savedCredential };
     }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
     const target: EntryTarget = { _tag: "conversation", botId: first.botId };
-    return { device, target, credential: first.credential };
+    return { device, target, botId: first.botId, credential: first.credential };
   });
 
 /** Runs `effect` with a wall clock that stands still, and timers that run as usual. */
@@ -1552,7 +1552,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       assert.strictEqual(yield* Queue.size(sends), 0);
     }).pipe(
       Effect.scoped,
-      Effect.provide(client(Option.none(), TestPlatform.makeDevice({ refuseCommits: true }))),
+      Effect.provide(client(Option.none(), TestPlatform.makeDevice({ refuseCommits: () => true }))),
     ),
   );
 
@@ -1926,6 +1926,130 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       }).pipe(atOneInstant, Effect.scoped, Effect.provide(client(credential, device)));
     }),
   );
+
+  it.effect("does nothing when Discard finds a later attempt refused the same way", () =>
+    Effect.gen(function* () {
+      const { sends, refusing } = yield* Fakes;
+      const { device, target, credential } = yield* pairedDevice("Stubborn");
+      refusing.add("refused twice");
+      const notSent = (state: ConversationState) =>
+        outgoingIn(state).some((message) => message.status._tag === "not-sent");
+
+      yield* Effect.gen(function* () {
+        const one = yield* Conversations;
+        const conversation = yield* one.open(target);
+        yield* one.enqueue({ target, text: "refused twice" });
+        const commandId = yield* Queue.take(sends);
+        yield* waitFor(conversation.state, notSent);
+        // This tab reads the outbox no more: it is offline, and nobody tells it anything.
+        yield* goOffline;
+
+        // Another tab sends it again, and the server refuses it the same way.
+        yield* Effect.gen(function* () {
+          const two = yield* Conversations;
+          yield* waitFor((yield* two.open(target)).state, notSent);
+          assert.strictEqual((yield* two.resend(commandId))._tag, "failed");
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(client(credential, { ...device, window: device.unannounced })),
+        );
+        assert.strictEqual(yield* Queue.take(sends), commandId);
+
+        // This tab's Discard is for the attempt it saw, which is over.
+        yield* one.discard(commandId);
+        assert.deepStrictEqual(yield* unsent(device.storage), [commandId]);
+        assert.isTrue(notSent(conversation.state.get()));
+      }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+    }),
+  );
+
+  it.effect("answers a Retry from the outbox after it, not from a read made before", () =>
+    Effect.gen(function* () {
+      const { sends, refusing } = yield* Fakes;
+      const readGate = yield* Latch.make(true);
+      const reading = yield* Queue.unbounded<void>();
+      const { device, target, credential } = yield* pairedDevice("Second chance", {
+        readGate,
+        reading,
+      });
+      refusing.add("refused, then taken");
+
+      yield* Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const conversation = yield* conversations.open(target);
+        yield* conversations.enqueue({ target, text: "refused, then taken" });
+        const commandId = yield* Queue.take(sends);
+        yield* waitFor(conversation.state, (state) =>
+          outgoingIn(state).some((message) => message.status._tag === "not-sent"),
+        );
+        refusing.delete("refused, then taken");
+
+        // A read of the outbox has found it refused, and is held before this tab follows it.
+        yield* readGate.close;
+        yield* Queue.take(reading);
+        const retrying = yield* conversations
+          .resend(commandId)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* readGate.open;
+
+        assert.strictEqual((yield* Fiber.join(retrying))._tag, "done");
+        assert.strictEqual(yield* Queue.take(sends), commandId);
+      }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+    }),
+  );
+
+  it.effect("records an answer the device could not record, and never sends it again", () => {
+    let full = false;
+    return Effect.gen(function* () {
+      const { gate, sends, refusing } = yield* Fakes;
+      const { device, target, credential } = yield* pairedDevice("Full disk", {
+        refuseCommits: () => full,
+      });
+      refusing.add("refused while the disk was full");
+
+      yield* Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const conversation = yield* conversations.open(target);
+        yield* gate.close;
+        yield* conversations.enqueue({ target, text: "refused while the disk was full" });
+        const commandId = yield* Queue.take(sends);
+        // The device fills up while the server holds the message.
+        full = true;
+        yield* gate.open;
+
+        const shown = yield* waitFor(conversation.state, (state) =>
+          outgoingIn(state).some((message) => message.status._tag === "unrecorded"),
+        );
+        assert.deepStrictEqual(
+          outgoingIn(shown).map((message) => messageStatus(message)),
+          [{ _tag: "unrecorded" }],
+        );
+        // Sweeps go by, and none sends it again.
+        const again = yield* Queue.take(sends).pipe(Effect.timeoutOption("400 millis"));
+        assert.isTrue(Option.isNone(again));
+
+        full = false;
+        const recorded = yield* waitFor(conversation.state, (state) =>
+          outgoingIn(state).some((message) => message.status._tag === "not-sent"),
+        );
+        assert.deepStrictEqual(
+          outgoingIn(recorded).map((message) => messageStatus(message)),
+          [
+            {
+              _tag: "not-sent",
+              failure: { _tag: "refused", error: new NotFound({ resource: "bot" }) },
+            },
+          ],
+        );
+        assert.deepStrictEqual(yield* unsent(device.storage), [commandId]);
+        assert.strictEqual(yield* Queue.size(sends), 0);
+      }).pipe(
+        Effect.scoped,
+        Effect.ensuring(gate.open),
+        Effect.provide(client(credential, device)),
+      );
+    });
+  });
 
   it.effect("keeps, and does not send, a draft whose images together are over the limit", () =>
     Effect.gen(function* () {

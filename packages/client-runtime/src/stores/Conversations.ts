@@ -27,6 +27,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import type * as Redacted from "effect/Redacted";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -71,35 +72,43 @@ export interface OutgoingMessage {
   /**
    * `sending` until the server accepts it, waiting through disconnections;
    * `accepted` once it has, until its entry arrives or the conversation
-   * closes; `not-sent` when the server refused it. A message sent again after
-   * a reload leaves once accepted: its entry may be older than the history
-   * loaded, and shows where it belongs.
+   * closes; `not-sent` when the server refused it. `unrecorded` when the server answered and the device could
+   * not record the answer: this window keeps trying to record it, and sends
+   * nothing again. A message sent again after a reload leaves once accepted:
+   * its entry may be older than the history loaded, and shows where it belongs.
    */
   readonly status:
     | { readonly _tag: "sending" }
     | { readonly _tag: "accepted" }
-    | { readonly _tag: "not-sent"; readonly failure: IntentFailure };
+    | { readonly _tag: "not-sent"; readonly failure: IntentFailure }
+    | { readonly _tag: "unrecorded" };
 }
 
-/** An outgoing message the device keeps: one the server has not accepted. */
+/** An outgoing message as the device keeps it: one the server has not accepted. */
 type KeptMessage = OutgoingMessage & {
-  readonly status: Exclude<OutgoingMessage["status"], { readonly _tag: "accepted" }>;
+  readonly status: { readonly _tag: "sending" } | { readonly _tag: "not-sent" };
 };
 
 /**
- * An outgoing message as this window holds it. `sequence` is its place in
- * the device's queue and `value` the stored record it was read from; both
- * are null for a message the device could not keep, which this window alone
- * holds and sends.
+ * An outgoing message as this window holds it. `kept` is the device's record
+ * of it as this window last read it, with the stored value a claim on it
+ * expects; null for a message the device could not keep, which this window
+ * alone holds and sends.
  */
 interface Held {
   readonly message: OutgoingMessage;
-  readonly sequence: number | null;
-  readonly value: string | null;
+  readonly kept: { readonly record: StoredMessage; readonly value: string } | null;
 }
 
-/** A held message that is due: the server has not answered it yet. */
-type Due = Held & { readonly message: KeptMessage & { readonly status: { _tag: "sending" } } };
+/**
+ * A held message that is due: the server has not answered it, or this
+ * window has its answer and the device does not yet.
+ */
+type Due = Held & {
+  readonly message: OutgoingMessage & {
+    readonly status: { readonly _tag: "sending" } | { readonly _tag: "unrecorded" };
+  };
+};
 
 const isRpcClientError = Schema.is(RpcClientError);
 
@@ -118,6 +127,12 @@ const StoredMessage = Schema.TaggedStruct("message", {
   createdAt: Schema.DateTimeUtc,
   /** Its place in the device's queue, given in the transaction that kept it. */
   sequence: NonNegativeInt,
+  /**
+   * Which attempt to deliver it this is: 0 when it was kept, one more with
+   * each Retry. A refusal records the attempt it answers, so two attempts
+   * never leave the same record.
+   */
+  attempt: NonNegativeInt,
   status: Schema.Union([
     Schema.TaggedStruct("sending", {}),
     Schema.TaggedStruct("not-sent", { failure: IntentFailureSchema }),
@@ -161,6 +176,14 @@ const decodeCounter = Schema.decodeUnknownOption(StoredCounter);
 const SETTLED_KEPT = Duration.minutes(10);
 
 /**
+ * How a delivery tries again to record the server's answer when the device
+ * fails to: three more times within about a seventh of a second, while it
+ * holds the conversation's lock. After that, the window keeps the answer and
+ * tries again at its next read of the outbox.
+ */
+const RECORD_RETRY = { schedule: Schedule.exponential("20 millis"), times: 3 };
+
+/**
  * How often a connected window reads the outbox and sends what is due, on
  * top of being told by the window that changed it. A window can close between
  * keeping a message and telling the others, so this bounds how long such a
@@ -188,6 +211,8 @@ export interface ConversationState {
 export type MessageStatus =
   | { readonly _tag: "sending" }
   | { readonly _tag: "not-sent"; readonly failure: IntentFailure }
+  /** The server answered, and this device could not record the answer yet. */
+  | { readonly _tag: "unrecorded" }
   /** Recorded; not every recipient has it yet. */
   | { readonly _tag: "queued" }
   | { readonly _tag: "delivered" }
@@ -246,6 +271,15 @@ export interface Conversation {
  * only for a message whose own persistence failed. A delivery runs only on a
  * live connection, and holds a conversation's lock only while that
  * connection lives.
+ *
+ * Every attempt to deliver a message has its own persisted revision. A claim
+ * (Retry, Discard, recording an answer) names the revision it expects. A
+ * caller waiting on an attempt is answered only from storage that reflects
+ * that attempt. The command id stays the same across attempts, so the server
+ * applies the message once. Recording the server's answer is part of the
+ * attempt: the delivery keeps the conversation's lock until the device holds
+ * it, and a window that has an answer the device could not record records it
+ * rather than send the attempt again.
  */
 export class Conversations extends Context.Service<
   Conversations,
@@ -504,25 +538,48 @@ export const layer = Layer.effect(
 
     const stores = makeKeyed(scope, targetKey, openStore);
 
-    // Callers of `send` and `resend` waiting for their message's result.
-    const waiting = new Map<CommandId, Deferred.Deferred<IntentResult<EntryId>>>();
-    const settleWaiting = (commandId: CommandId, result: IntentResult<EntryId>) => {
-      const caller = waiting.get(commandId);
-      waiting.delete(commandId);
-      return caller === undefined ? Effect.void : Deferred.succeed(caller, result);
+    /**
+     * A caller of `send` or `resend` waiting for its message's result. `after`
+     * is the number of outbox reads started when it began to wait, after its
+     * attempt was claimed: only a later read reflects that attempt.
+     */
+    interface Waiter {
+      readonly commandId: CommandId;
+      readonly after: number;
+      readonly result: Deferred.Deferred<IntentResult<EntryId>>;
+    }
+    const waiting = new Set<Waiter>();
+    // Outbox reads started, in the order they start.
+    let reads = 0;
+    const answer = (waiter: Waiter, result: IntentResult<EntryId>) => {
+      waiting.delete(waiter);
+      return Deferred.succeed(waiter.result, result);
     };
-    /** The result of delivering the message `commandId`, once it has one. */
+    const settleWaiting = (commandId: CommandId, result: IntentResult<EntryId>) =>
+      Effect.forEach(
+        [...waiting].filter((waiter) => waiter.commandId === commandId),
+        (waiter) => answer(waiter, result),
+        { discard: true },
+      );
+    /** The result of the attempt to deliver `commandId` this caller just claimed, once it has one. */
     const awaitResult = (commandId: CommandId) => {
-      const result = Deferred.makeUnsafe<IntentResult<EntryId>>();
-      waiting.set(commandId, result);
-      return Deferred.await(result);
+      const waiter: Waiter = { commandId, after: reads, result: Deferred.makeUnsafe() };
+      waiting.add(waiter);
+      return Deferred.await(waiter.result);
     };
     const unexpected: IntentResult<EntryId> = { _tag: "failed", failure: { _tag: "unexpected" } };
 
+    // Answers the server gave that the device could not record, by command id,
+    // with the stored value of the attempt each answers.
+    const unrecorded = new Map<
+      CommandId,
+      { readonly value: string; readonly result: IntentResult<EntryId> }
+    >();
+
     const queueOrder = (a: Held, b: Held) => {
-      if (a.sequence === null) return b.sequence === null ? 0 : 1;
-      if (b.sequence === null) return -1;
-      return a.sequence - b.sequence;
+      if (a.kept === null) return b.kept === null ? 0 : 1;
+      if (b.kept === null) return -1;
+      return a.kept.record.sequence - b.kept.record.sequence;
     };
     const heldOf = (record: StoredMessage, value: string): Held => ({
       message: {
@@ -533,12 +590,15 @@ export const layer = Layer.effect(
         attachments: record.attachments,
         mentions: record.mentions,
         createdAt: record.createdAt,
-        status: record.status,
+        status:
+          record.status._tag === "sending" && unrecorded.get(record.commandId)?.value === value
+            ? { _tag: "unrecorded" }
+            : record.status,
       },
-      sequence: record.sequence,
-      value,
+      kept: { record, value },
     });
-    const isDue = (held: Held): held is Due => held.message.status._tag === "sending";
+    const isDue = (held: Held): held is Due =>
+      held.message.status._tag === "sending" || held.message.status._tag === "unrecorded";
     /** Changes the status of a message the device does not keep, which only this window holds. */
     const setUnkeptStatus = (commandId: CommandId, status: OutgoingMessage["status"]) =>
       outbox.update((list) =>
@@ -551,24 +611,35 @@ export const layer = Layer.effect(
 
     /**
      * Makes this window's list a projection of `stored`, the outbox as the
-     * device keeps it, and settles every caller whose message has an outcome
-     * there. A message this window alone holds keeps its own state, and so
-     * does one accepted, until its entry arrives or its conversation closes.
+     * device keeps it, read as the `read`th read, and settles every caller
+     * whose attempt has an outcome there. A message this window alone holds
+     * keeps its own state, and so does one accepted, until its entry arrives
+     * or its conversation closes.
      */
     const reconcile = Effect.fnUntraced(function* (
       stored: ReadonlyMap<string, { record: StoredRecord; value: string }>,
+      read: number,
     ) {
+      // An answer the device holds now, or one for an attempt it no longer keeps, is done with.
+      for (const [commandId, { value }] of unrecorded) {
+        if (stored.get(commandId)?.value !== value) unrecorded.delete(commandId);
+      }
       const held = outbox.get();
       const next: Array<Held> = [];
       for (const item of held) {
         const { message } = item;
-        if (item.sequence === null || message.status._tag === "accepted") {
+        if (item.kept === null || message.status._tag === "accepted") {
           next.push(item);
           continue;
         }
         const kept = stored.get(message.commandId);
         if (kept?.record._tag === "message") {
-          next.push(kept.value === item.value ? item : heldOf(kept.record, kept.value));
+          const current = heldOf(kept.record, kept.value);
+          next.push(
+            kept.value === item.kept.value && current.message.status._tag === message.status._tag
+              ? item
+              : current,
+          );
         } else if (
           kept?.record._tag === "settled" &&
           kept.record.outcome._tag === "accepted" &&
@@ -594,25 +665,26 @@ export const layer = Layer.effect(
       }
 
       const unkept = new Set(
-        ordered.flatMap((item) => (item.sequence === null ? [item.message.commandId] : [])),
+        ordered.flatMap((item) => (item.kept === null ? [item.message.commandId] : [])),
       );
-      const outcomes: Array<readonly [CommandId, IntentResult<EntryId>]> = [];
-      for (const commandId of waiting.keys()) {
-        if (unkept.has(commandId)) continue;
-        const kept = stored.get(commandId)?.record;
-        if (kept === undefined) outcomes.push([commandId, unexpected]);
+      const outcomes: Array<readonly [Waiter, IntentResult<EntryId>]> = [];
+      for (const waiter of waiting) {
+        // A read started before the attempt was claimed knows nothing of it.
+        if (read <= waiter.after || unkept.has(waiter.commandId)) continue;
+        const kept = stored.get(waiter.commandId)?.record;
+        if (kept === undefined) outcomes.push([waiter, unexpected]);
         else if (kept._tag === "settled") {
           outcomes.push([
-            commandId,
+            waiter,
             kept.outcome._tag === "accepted"
               ? { _tag: "done", value: kept.outcome.entryId }
               : unexpected,
           ]);
         } else if (kept.status._tag === "not-sent") {
-          outcomes.push([commandId, { _tag: "failed", failure: kept.status.failure }]);
+          outcomes.push([waiter, { _tag: "failed", failure: kept.status.failure }]);
         }
       }
-      yield* Effect.forEach(outcomes, ([commandId, result]) => settleWaiting(commandId, result), {
+      yield* Effect.forEach(outcomes, ([waiter, result]) => answer(waiter, result), {
         discard: true,
       });
     });
@@ -620,14 +692,16 @@ export const layer = Layer.effect(
     /**
      * Reads the outbox, makes this window's list follow it, removes outcomes
      * older than `SETTLED_KEPT`, and returns what is due, in queue order:
-     * every message the device keeps that the server has not answered, then
-     * those this window alone holds. One read at a time, so each projection
-     * is at least as new as the one before. Storage that cannot be read
-     * leaves the list as it is, and only this window's own messages due.
+     * every message the device keeps that the server has not answered, or
+     * whose answer only this window has, then those this window alone holds.
+     * One read at a time, so each projection is at least as new as the one
+     * before. Storage that cannot be read leaves the list as it is, and only
+     * this window's own messages due.
      */
     const refreshLock = Semaphore.makeUnsafe(1);
     const refresh: Effect.Effect<ReadonlyArray<Due>> = refreshLock.withPermits(1)(
       Effect.gen(function* () {
+        const read = ++reads;
         const records = yield* storage.readAll("outbox");
         const now = yield* DateTime.now;
         const stored = new Map<string, { record: StoredRecord; value: string }>();
@@ -646,7 +720,7 @@ export const layer = Layer.effect(
           }
           stored.set(key, { record, value });
         }
-        yield* reconcile(stored);
+        yield* reconcile(stored, read);
         if (expired.length > 0) {
           yield* storage
             .commit(
@@ -668,7 +742,7 @@ export const layer = Layer.effect(
           outbox
             .get()
             .filter(isDue)
-            .filter((held) => read || held.sequence === null),
+            .filter((held) => read || held.kept === null),
         ),
       ),
     );
@@ -695,9 +769,12 @@ export const layer = Layer.effect(
             ? 0
             : Option.match(decodeCounter(counter), { onNone: () => 0, onSome: ({ next }) => next });
         // The message passed `messageProblem`, so nothing in it can fail to encode.
-        const value = yield* encodeRecord({ ...message, _tag: "message", sequence }).pipe(
-          Effect.orDie,
-        );
+        const value = yield* encodeRecord({
+          ...message,
+          _tag: "message",
+          sequence,
+          attempt: 0,
+        }).pipe(Effect.orDie);
         const claimed = yield* storage.commit(
           [
             ...alongside,
@@ -727,50 +804,58 @@ export const layer = Layer.effect(
 
     /**
      * Records what the server answered for `due`: on the device, claiming the
-     * record as it was sent, or in memory for a message this window alone
-     * holds. The drain's next read shows it and settles its caller.
+     * attempt it answers, or in memory for a message this window alone holds.
+     * A device that fails to record it is asked again a few times; after
+     * that, this window keeps the answer, shows the message as unrecorded,
+     * and records it at a later read instead of sending it again. The drain's
+     * next read shows the outcome and settles its callers. Runs to its end
+     * once started: the answer is part of the attempt.
      */
-    const recordAnswer = Effect.fnUntraced(function* (due: Due, result: IntentResult<EntryId>) {
-      const { message } = due;
-      if (due.value === null || due.sequence === null) {
-        if (result._tag === "failed") {
-          setUnkeptStatus(message.commandId, { _tag: "not-sent", failure: result.failure });
-        } else if (stores.isOpen(message.target)) {
-          setUnkeptStatus(message.commandId, { _tag: "accepted" });
-        } else {
-          removeOutgoing(new Set([message.commandId]));
-        }
-        return yield* settleWaiting(message.commandId, result);
-      }
-      const outcome: StoredRecord =
-        result._tag === "done"
-          ? {
-              _tag: "settled",
-              commandId: message.commandId,
-              outcome: { _tag: "accepted", entryId: result.value },
-              at: yield* DateTime.now,
+    const recordAnswer = (due: Due, result: IntentResult<EntryId>) =>
+      Effect.uninterruptible(
+        Effect.gen(function* () {
+          const { message, kept } = due;
+          if (kept === null) {
+            if (result._tag === "failed") {
+              setUnkeptStatus(message.commandId, { _tag: "not-sent", failure: result.failure });
+            } else if (stores.isOpen(message.target)) {
+              setUnkeptStatus(message.commandId, { _tag: "accepted" });
+            } else {
+              removeOutgoing(new Set([message.commandId]));
             }
-          : {
-              ...message,
-              _tag: "message",
-              sequence: due.sequence,
-              status: { _tag: "not-sent", failure: result.failure },
-            };
-      // It was read from the device, so it encodes again.
-      const value = yield* encodeRecord(outcome).pipe(Effect.orDie);
-      yield* storage
-        .commit(
-          [{ table: "outbox", key: message.commandId, value }],
-          [{ table: "outbox", key: message.commandId, value: due.value }],
-        )
-        .pipe(
-          Effect.catchTag("LocalStorageError", (error) =>
-            Effect.logWarning("The outcome of a sent message is not kept", error).pipe(
-              Effect.andThen(settleWaiting(message.commandId, result)),
-            ),
-          ),
-        );
-    });
+            return yield* settleWaiting(message.commandId, result);
+          }
+          const outcome: StoredRecord =
+            result._tag === "done"
+              ? {
+                  _tag: "settled",
+                  commandId: message.commandId,
+                  outcome: { _tag: "accepted", entryId: result.value },
+                  at: yield* DateTime.now,
+                }
+              : { ...kept.record, status: { _tag: "not-sent", failure: result.failure } };
+          // It was read from the device, so it encodes again.
+          const value = yield* encodeRecord(outcome).pipe(Effect.orDie);
+          // Not holding means another window recorded this attempt, or moved on from it.
+          const recorded = yield* storage
+            .commit(
+              [{ table: "outbox", key: message.commandId, value }],
+              [{ table: "outbox", key: message.commandId, value: kept.value }],
+            )
+            .pipe(
+              Effect.retry(RECORD_RETRY),
+              Effect.as(true),
+              Effect.catchTag("LocalStorageError", (error) =>
+                Effect.logWarning(
+                  "The server's answer to a message is not recorded yet",
+                  error,
+                ).pipe(Effect.as(false)),
+              ),
+            );
+          if (recorded) unrecorded.delete(message.commandId);
+          else unrecorded.set(message.commandId, { value: kept.value, result });
+        }),
+      );
 
     /** Sends `due` on `client`, and records the answer. Succeeds with `false` when the socket gave none. */
     const deliver = (due: Due, client: J3RpcClient) =>
@@ -791,28 +876,46 @@ export const layer = Layer.effect(
       );
 
     /**
-     * Sends what `key` has left on `client`, one message at a time, while
+     * A socket deliveries run on, with them, while it is open, and the
+     * targets it is sending, and those given more to send meanwhile. They end
+     * with the socket.
+     */
+    interface Session {
+      readonly client: J3RpcClient;
+      readonly deliveries: FiberSet.FiberSet<void>;
+      readonly draining: Set<string>;
+      readonly again: Set<string>;
+    }
+
+    /**
+     * Sends what `key` has left on `session`, one message at a time, while
      * this window holds the conversation's lock: one window sends a
      * conversation's messages at a time, so the server records them in the
      * order they were kept. It reads them after taking the lock, once the
      * window before it recorded what it delivered, so a kept message goes
-     * once. Succeeds with `false` when the socket gave no answer: the message
-     * stays due, under the same command id, for the next socket or another
-     * window.
+     * once. An answer this window has and the device does not, it records
+     * instead of sending again. Succeeds with `false` when the socket gave no
+     * answer: the attempt stays due, under the same command id, for the next
+     * socket or another window.
      */
-    const drain = (key: string, client: J3RpcClient) =>
+    const drain = (key: string, session: Session) =>
       locks.withLock(
         `j3-bots/outbox/${key}`,
         Effect.gen(function* () {
           const tried = new Set<CommandId>();
           while (true) {
-            again.delete(key);
+            session.again.delete(key);
             const next = (yield* refresh).find(
               (due) => targetKey(due.message.target) === key && !tried.has(due.message.commandId),
             );
             if (next === undefined) return true;
             tried.add(next.message.commandId);
-            if (!(yield* deliver(next, client))) return false;
+            const known = unrecorded.get(next.message.commandId);
+            if (known !== undefined && known.value === next.kept?.value) {
+              yield* recordAnswer(next, known.result);
+            } else if (!(yield* deliver(next, session.client))) {
+              return false;
+            }
           }
         }),
       );
@@ -825,14 +928,7 @@ export const layer = Layer.effect(
     // Asks this window to read the outbox and send what is due. One pending wake is enough.
     const wakes = yield* Queue.sliding<void>(1);
     const wake = Effect.asVoid(Queue.offer(wakes, undefined));
-    // The socket deliveries run on, with them, while it is open.
-    let live: {
-      readonly client: J3RpcClient;
-      readonly deliveries: FiberSet.FiberSet<void>;
-    } | null = null;
-    // Targets this window is sending, and those given more to send meanwhile.
-    const draining = new Set<string>();
-    const again = new Set<string>();
+    let live: Session | null = null;
     let pauses = 0;
 
     /** Has this window send what is due, on the open socket, unless sending is paused. */
@@ -844,14 +940,14 @@ export const layer = Layer.effect(
         return Effect.forEach(
           keys,
           (key) => {
-            if (draining.has(key)) {
-              again.add(key);
+            if (session.draining.has(key)) {
+              session.again.add(key);
               return Effect.void;
             }
-            draining.add(key);
-            return drain(key, session.client).pipe(
-              Effect.ensuring(Effect.sync(() => draining.delete(key))),
-              Effect.tap((finished) => (finished && again.has(key) ? wake : Effect.void)),
+            session.draining.add(key);
+            return drain(key, session).pipe(
+              Effect.ensuring(Effect.sync(() => session.draining.delete(key))),
+              Effect.tap((finished) => (finished && session.again.has(key) ? wake : Effect.void)),
               Effect.asVoid,
               FiberSet.run(session.deliveries),
             );
@@ -879,7 +975,12 @@ export const layer = Layer.effect(
     yield* connection
       .eachSession((client) =>
         Effect.gen(function* () {
-          const session = { client, deliveries: yield* FiberSet.make<void>() };
+          const session: Session = {
+            client,
+            deliveries: yield* FiberSet.make<void>(),
+            draining: new Set(),
+            again: new Set(),
+          };
           live = session;
           yield* Effect.addFinalizer(() =>
             Effect.sync(() => {
@@ -896,8 +997,9 @@ export const layer = Layer.effect(
       Effect.acquireUseRelease(
         Effect.suspend(() => {
           pauses += 1;
-          again.clear();
-          return live === null ? Effect.void : FiberSet.clear(live.deliveries);
+          if (live === null) return Effect.void;
+          live.again.clear();
+          return FiberSet.clear(live.deliveries);
         }),
         () => effect,
         () =>
@@ -940,7 +1042,7 @@ export const layer = Layer.effect(
       );
       const result = awaitResult(message.commandId);
       if (kept) yield* refresh;
-      else outbox.update((list) => [...list, { message, sequence: null, value: null }]);
+      else outbox.update((list) => [...list, { message, kept: null }]);
       yield* wake;
       return yield* result;
     });
@@ -959,20 +1061,22 @@ export const layer = Layer.effect(
     const resend = Effect.fn("Conversations.resend")(function* (commandId: CommandId) {
       const held = outbox.get().find((candidate) => candidate.message.commandId === commandId);
       if (held === undefined) return unexpected;
-      const { message, sequence, value } = held;
+      const { message, kept } = held;
       if (message.status._tag !== "not-sent") return unexpected;
       const status = { _tag: "sending" } as const;
-      if (sequence === null || value === null) {
+      if (kept === null) {
         setUnkeptStatus(commandId, status);
       } else {
-        // It was read from the device, so it encodes again.
-        const sending = yield* encodeRecord({ ...message, _tag: "message", sequence, status }).pipe(
-          Effect.orDie,
-        );
+        // A new attempt, claiming the one it follows. It was read from the device, so it encodes again.
+        const sending = yield* encodeRecord({
+          ...kept.record,
+          attempt: kept.record.attempt + 1,
+          status,
+        }).pipe(Effect.orDie);
         const claimed = yield* storage
           .commit(
             [{ table: "outbox", key: commandId, value: sending }],
-            [{ table: "outbox", key: commandId, value }],
+            [{ table: "outbox", key: commandId, value: kept.value }],
           )
           .pipe(
             Effect.catchTag("LocalStorageError", (error) =>
@@ -993,17 +1097,18 @@ export const layer = Layer.effect(
     const discard = Effect.fn("Conversations.discard")(function* (commandId: CommandId) {
       const held = outbox.get().find((candidate) => candidate.message.commandId === commandId);
       if (held?.message.status._tag !== "not-sent") return;
-      if (held.value === null) return removeOutgoing(new Set([commandId]));
+      if (held.kept === null) return removeOutgoing(new Set([commandId]));
       const settled = yield* encodeRecord({
         _tag: "settled",
         commandId,
         outcome: { _tag: "discarded" },
         at: yield* DateTime.now,
       }).pipe(Effect.orDie);
+      // Claims the attempt this window shows as not sent, and no later one.
       yield* storage
         .commit(
           [{ table: "outbox", key: commandId, value: settled }],
-          [{ table: "outbox", key: commandId, value: held.value }],
+          [{ table: "outbox", key: commandId, value: held.kept.value }],
         )
         .pipe(
           Effect.catchTag("LocalStorageError", (error) =>
@@ -1055,11 +1160,10 @@ export const layer = Layer.effect(
     const discardAll = withSendingPaused(
       Effect.gen(function* () {
         outbox.set([]);
-        const given = [...waiting.keys()];
+        unrecorded.clear();
         yield* Effect.forEach(
-          given,
-          (commandId) =>
-            settleWaiting(commandId, { _tag: "failed", failure: { _tag: "not-paired" } }),
+          [...waiting],
+          (waiter) => answer(waiter, { _tag: "failed", failure: { _tag: "not-paired" } }),
           { discard: true },
         );
         yield* storage.clear("outbox");

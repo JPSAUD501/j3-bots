@@ -109,6 +109,7 @@ export function galleryVariants(now: DateTime.Utc) {
       _tag: "not-sent",
       failure: { _tag: "unexpected" },
     }),
+    unrecorded: outgoing("unrecorded", "And November", { _tag: "unrecorded" }),
     bot: message(
       "bot",
       scout,

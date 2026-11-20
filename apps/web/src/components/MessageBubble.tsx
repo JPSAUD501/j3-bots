@@ -45,6 +45,8 @@ const statusKey = (status: MessageStatus, submitting: boolean): KeyWith | null =
       return "message.sending";
     case "not-sent":
       return notSentKeys[status.failure._tag];
+    case "unrecorded":
+      return "message.unrecorded";
     case "queued":
       return "message.queued";
     case "delivered":
@@ -95,6 +97,8 @@ export function MessageBubble({
   const time = clockTime(message.createdAt, ctx);
   const status = messageStatus(message);
   const failed = status._tag === "failed" || status._tag === "not-sent";
+  // The device could not record what the server answered: a problem, though nothing to retry.
+  const troubled = failed || status._tag === "unrecorded";
   const key = statusKey(status, submitting);
   const deliveryText = key === null ? null : t(key);
   // Sent again, Send again goes; focus that was on it moves to the message, which stays whatever
@@ -149,7 +153,7 @@ export function MessageBubble({
           <span
             role="status"
             className={cn(
-              failed && !submitting ? "text-blocked" : "text-muted-foreground",
+              troubled && !submitting ? "text-blocked" : "text-muted-foreground",
               // Its end padding sets the text on the line Send again's text ends on.
               !failed && "pe-1",
             )}
