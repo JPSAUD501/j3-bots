@@ -9,6 +9,7 @@ import {
   type EntryTarget,
   Invalid,
   MAX_ATTACHMENT_NAME_LENGTH,
+  MAX_ATTACHMENT_SIZE,
   NonNegativeInt,
 } from "@j3-bots/contracts";
 import { normalizeAttachmentMetadata } from "@j3-bots/engine-t3";
@@ -58,7 +59,8 @@ export interface NewFile {
 
 /**
  * Stores one file, in the transaction of the caller of `withStore`. Fails with
- * `Invalid("attachment")` for an empty file or unusable metadata, before
+ * `Invalid("attachment")` for an empty file, one above `MAX_ATTACHMENT_SIZE`
+ * or unusable metadata, before
  * anything is written, and with `Conflict("private-location")`, writing no
  * bytes, when the attachments folder has left private state.
  */
@@ -77,7 +79,8 @@ export class Attachments extends Context.Service<
     /**
      * Stores an operator's upload, or with `bot` a file that bot delivers, in
      * a transaction of its own. Fails with `Invalid("attachment")` for an
-     * empty file or unusable metadata, and with `Conflict("private-location")`,
+     * empty file, one above `MAX_ATTACHMENT_SIZE` or unusable metadata, and
+     * with `Conflict("private-location")`,
      * storing nothing, when the attachments folder has left private state.
      */
     readonly store: (file: NewFile) => Effect.Effect<Attachment, Invalid | Conflict>;
@@ -151,6 +154,7 @@ export const layer = Layer.effect(
       const metadata = normalizeAttachmentMetadata(file);
       if (
         file.bytes.length === 0 ||
+        file.bytes.length > MAX_ATTACHMENT_SIZE ||
         metadata === undefined ||
         metadata.name.length > MAX_ATTACHMENT_NAME_LENGTH
       ) {

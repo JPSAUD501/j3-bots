@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { type Attachment, type BotId, Conflict, RoomId } from "@j3-bots/contracts";
+import {
+  type Attachment,
+  type BotId,
+  Conflict,
+  MAX_ATTACHMENT_SIZE,
+  RoomId,
+} from "@j3-bots/contracts";
 import { SessionId, TurnId, toolInputDigest, ToolInputDigest } from "@j3-bots/engine-t3";
 import type { ToolInput } from "@j3-bots/prompts";
 import * as DateTime from "effect/DateTime";
@@ -8,11 +14,11 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Attachments } from "../attachments/Attachments.ts";
+import { workspaceReader } from "../attachments/workspaceFile.ts";
 import { BotStore } from "../bots/BotStore.ts";
 import type { BotSession } from "../bots/EngineSessions.ts";
 import { Entries } from "../entries/Entries.ts";
@@ -53,6 +59,12 @@ interface Pin {
   readonly botId: BotId;
   readonly turnId: TurnId;
   readonly callId: string;
+  /**
+   * The arguments the call was matched by. The engine can record an open,
+   * unclaimed call again with other arguments, so the pin holds only while
+   * the call still has these.
+   */
+  readonly digest: ToolInputDigest;
   readonly audience: Audience;
 }
 
@@ -94,13 +106,13 @@ export const layer = Layer.effect(
     const sql = yield* SqlClient.SqlClient;
     const transaction = transactional(sql);
     const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
     const observer = yield* Observer;
     const entries = yield* Entries;
     const ledger = yield* Ledger;
     const attachments = yield* Attachments;
     const bots = yield* BotStore;
     const routing = yield* RoomRouting;
+    const readWorkspaceFile = yield* workspaceReader;
     const targetOf = liveTarget(sql);
 
     const engineSessionOf = SqlSchema.findOneOption({
@@ -167,6 +179,7 @@ export const layer = Layer.effect(
             botId: caller.botId,
             turnId: found.value.engine_turn_id,
             callId: found.value.engine_call_id,
+            digest,
             audience: audienceOf(found.value),
           } satisfies Pin;
         }
@@ -176,14 +189,18 @@ export const layer = Layer.effect(
       return yield* new TurnEnded();
     });
 
-    /** The call is still open in the session's admitted turn, and that turn has not finished. */
+    /**
+     * The call is still open in the session's admitted turn, with the
+     * arguments it was matched by, and that turn has not finished.
+     */
     const stillAdmitted = (found: Pin) =>
       sql<{ readonly n: number }>`
         SELECT COUNT(*) AS n FROM engine_tool_calls c
         JOIN sessions s ON s.id = c.session_id AND s.admitted_turn_id = c.engine_turn_id
         JOIN turns t ON t.session_id = c.session_id AND t.engine_turn_id = c.engine_turn_id
         WHERE c.session_id = ${found.sessionId} AND c.engine_call_id = ${found.callId}
-          AND c.engine_turn_id = ${found.turnId} AND c.open = 1 AND t.finished_at IS NULL
+          AND c.engine_turn_id = ${found.turnId} AND c.input_digest = ${found.digest}
+          AND c.open = 1 AND t.finished_at IS NULL
           AND s.retired_at IS NULL AND s.lost_at IS NULL
       `.pipe(
         Effect.orDie,
@@ -192,8 +209,9 @@ export const layer = Layer.effect(
 
     /**
      * Admits the request in the caller's transaction, from what is committed
-     * there and not from what `match` read: the call must still be open and
-     * unclaimed in the running admitted turn, and the room the turn speaks
+     * there and not from what `match` read: the call must still be open,
+     * unclaimed and with the arguments it was matched by in the running
+     * admitted turn, and the room the turn speaks
      * for still live (also for a `say` to the operator, which a room's work
      * makes). A retry of a request already admitted gets its stored result.
      */
@@ -255,10 +273,13 @@ export const layer = Layer.effect(
     });
 
     /**
-     * Reads the files a `say` attaches from the bot's workspace; they are
-     * copied into the attachment store once the request is admitted, so the
-     * operator can open them after the bot changes or removes its copy. Paths
-     * outside the workspace, and empty files, are refused.
+     * Reads the files a `say` attaches from the bot's workspace;
+     * they are copied into the attachment store once the request is admitted,
+     * so the operator can open them after the bot changes or removes its copy.
+     * Paths outside the workspace, also by a link swapped in on the way, what
+     * is not a regular file, empty files and files above
+     * `MAX_ATTACHMENT_SIZE`, of which no more than that is read, are refused
+     * (`readWorkspaceFile`).
      */
     const workspaceFiles = Effect.fn("Speech.workspaceFiles")(function* (
       botId: BotId,
@@ -276,19 +297,26 @@ export const layer = Layer.effect(
             `${given} is a URL. Save the file into your workspace first, then attach its path.`,
           );
         }
-        const real = yield* fs
-          .realPath(path.resolve(root, given))
-          .pipe(Effect.mapError(() => refuse(`There is no file at ${given} in your workspace.`)));
-        const relative = path.relative(root, real);
-        if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
-          return yield* refuse(`${given} is outside your workspace. Copy it under files/ first.`);
+        const read = yield* readWorkspaceFile(root, given, MAX_ATTACHMENT_SIZE);
+        switch (read._tag) {
+          case "missing":
+            return yield* refuse(`There is no file at ${given} in your workspace.`);
+          case "outside":
+            return yield* refuse(`${given} is outside your workspace. Copy it under files/ first.`);
+          case "not-a-file":
+            return yield* refuse(`${given} is not a file.`);
+          case "too-large":
+            return yield* refuse(
+              `${given} cannot be attached: it is larger than ${MAX_ATTACHMENT_SIZE / 1024 / 1024} MiB.`,
+            );
+          case "unreadable":
+            return yield* refuse(`${given} could not be read.`);
+          case "read":
+            if (read.bytes.length === 0) {
+              return yield* refuse(`${given} cannot be attached: it is empty.`);
+            }
+            files.push({ name: read.name, mediaType: mediaTypeOf(read.name), bytes: read.bytes });
         }
-        const bytes = yield* fs
-          .readFile(real)
-          .pipe(Effect.mapError(() => refuse(`${given} could not be read.`)));
-        if (bytes.length === 0) return yield* refuse(`${given} cannot be attached: it is empty.`);
-        const name = path.basename(real);
-        files.push({ name, mediaType: mediaTypeOf(name), bytes });
       }
       return files;
     });
