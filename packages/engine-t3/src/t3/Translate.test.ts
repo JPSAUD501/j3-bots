@@ -13,6 +13,7 @@ import { IdempotencyKey, TurnId } from "../ids.ts";
 import { messageIdFor } from "./Keys.ts";
 import {
   applyEvent,
+  backgroundWorkPending,
   diff,
   dispositionOf,
   emptyMirror,
@@ -176,5 +177,100 @@ describe("a start the engine queues behind another turn", () => {
     );
     assert.deepStrictEqual(diff(mirror, view, at), []);
     assert.deepStrictEqual(dispositionOf(mirror, key), Option.some({ _tag: "queued", turnId }));
+  });
+});
+
+describe("backgroundWorkPending", () => {
+  const at = DateTime.makeUnsafe("2026-11-20T12:00:00Z");
+  const decodeEvent = Schema.decodeUnknownSync(OrchestrationV2DomainEvent);
+  const event = (type: string, payload: unknown) =>
+    decodeEvent({ id: `event-${type}`, threadId: "thread-1", occurredAt: at, type, payload });
+  const run = (status: string, ordinal: number) =>
+    event("run.updated", {
+      id: `run-${ordinal}`,
+      ordinal,
+      userMessageId: `message-${ordinal}`,
+      status,
+      threadId: "thread-1",
+      providerInstanceId: "codex",
+      modelSelection: { instanceId: "codex", model: "gpt-5" },
+      providerThreadId: null,
+      rootNodeId: null,
+      activeAttemptId: null,
+      requestedAt: at,
+      startedAt: at,
+      completedAt: status === "running" ? null : at,
+      checkpointId: null,
+      contextHandoffId: null,
+    });
+  const item = (fields: Record<string, unknown>) =>
+    event("turn-item.updated", {
+      threadId: "thread-1",
+      runId: "run-1",
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 10,
+      title: null,
+      startedAt: at,
+      completedAt: null,
+      updatedAt: at,
+      ...fields,
+    });
+  const command = (status: string) =>
+    item({ id: "item-command", type: "command_execution", input: "npm run dev", status });
+
+  // The engine's rule (**Read** at `db51b67`, `derivePendingBackgroundWork`).
+  it("counts live work left by an ended run, as the engine's stop does", () => {
+    const mirror = emptyMirror();
+    applyEvent(mirror, run("completed", 1));
+    applyEvent(mirror, command("running"));
+    assert.isTrue(backgroundWorkPending(mirror));
+
+    // A running run is the stop's target instead, and its turn is open.
+    applyEvent(mirror, run("running", 2));
+    assert.isFalse(backgroundWorkPending(mirror));
+    applyEvent(mirror, run("interrupted", 2));
+    applyEvent(mirror, command("interrupted"));
+    assert.isFalse(backgroundWorkPending(mirror));
+
+    // A tool the agent keeps running on purpose is never pending.
+    applyEvent(
+      mirror,
+      item({
+        id: "item-tool",
+        type: "dynamic_tool",
+        toolName: "dev_server",
+        input: { persistent: true },
+        status: "running",
+      }),
+    );
+    assert.isFalse(backgroundWorkPending(mirror));
+
+    // A task only the provider thread reports.
+    applyEvent(
+      mirror,
+      event("provider-thread.updated", {
+        id: "provider-thread-1",
+        driver: "codex",
+        providerInstanceId: "codex",
+        providerSessionId: null,
+        appThreadId: "thread-1",
+        ownerNodeId: null,
+        nativeThreadRef: null,
+        nativeConversationHeadRef: null,
+        status: "active",
+        firstRunOrdinal: 1,
+        lastRunOrdinal: 2,
+        handoffIds: [],
+        forkedFrom: null,
+        pendingBackgroundTasks: [{ taskId: "task-1", kind: "monitor" }],
+        createdAt: at,
+        updatedAt: at,
+      }),
+    );
+    assert.isTrue(backgroundWorkPending(mirror));
   });
 });

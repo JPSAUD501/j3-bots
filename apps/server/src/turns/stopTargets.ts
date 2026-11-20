@@ -63,9 +63,10 @@ export const stopTargets = (sql: SqlClient.SqlClient) => {
 
     /**
      * Confirms every unsettled target of the session once the latest round of
-     * each was observed (the events were synchronized past its acknowledgment)
-     * and the events show nothing left running: no turn, no dispatch the engine
-     * has not settled, no continuation pending. Whether one was confirmed.
+     * each was observed (the events were synchronized past its acknowledgment,
+     * with no background work pending at the marker) and the events show
+     * nothing left running: no turn, no dispatch the engine has not settled,
+     * no continuation pending. Whether one was confirmed.
      */
     confirm: Effect.fn("stopTargets.confirm")(function* (sessionId: SessionRowId) {
       const rows = yield* sql<{ readonly n: number }>`

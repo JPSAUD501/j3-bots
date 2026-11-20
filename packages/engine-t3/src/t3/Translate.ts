@@ -2,9 +2,11 @@
 import type { FailureClass, Question, QuestionAnswers, WorkStep } from "@j3-bots/contracts";
 import { MAX_CARD_QUESTIONS, MAX_QUESTION_OPTIONS, WorkStepId } from "@j3-bots/contracts";
 import {
+  isOrchestrationV2WorkActive,
   OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderFailureClass,
+  type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2ThreadProjection,
@@ -14,6 +16,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import type { DispatchDisposition } from "../Engine.ts";
 import type {
@@ -59,6 +62,7 @@ type Run = OrchestrationV2Run;
 type Item = OrchestrationV2TurnItem;
 type RuntimeRequest = OrchestrationV2RuntimeRequest;
 type Thread = OrchestrationV2AppThread;
+type ProviderThread = OrchestrationV2ProviderThread;
 
 /** The engine's state of one thread, as far as J3 Bots reads it. */
 export interface Mirror {
@@ -67,6 +71,8 @@ export interface Mirror {
   readonly runs: Map<string, Run>;
   readonly items: Map<string, Item>;
   readonly requests: Map<string, RuntimeRequest>;
+  /** Read only for the background work they report (`backgroundWorkPending`). */
+  readonly providerThreads: Map<string, ProviderThread>;
   /**
    * `toolInputDigest` of each `j3` tool call's input, by item id, with the
    * input it was taken of. Kept by `digestToolCalls`, which `diff` relies on.
@@ -87,6 +93,7 @@ export const emptyMirror = (): Mirror => ({
   runs: new Map(),
   items: new Map(),
   requests: new Map(),
+  providerThreads: new Map(),
   toolDigests: new Map(),
   fetched: new Map(),
 });
@@ -97,6 +104,7 @@ export const copyMirror = (mirror: Mirror): Mirror => ({
   runs: new Map(mirror.runs),
   items: new Map(mirror.items),
   requests: new Map(mirror.requests),
+  providerThreads: new Map(mirror.providerThreads),
   toolDigests: new Map(mirror.toolDigests),
   fetched: new Map(mirror.fetched),
 });
@@ -114,6 +122,7 @@ export const mirrorOf = (
     runs: new Map(projection.runs.map((run) => [run.id, run])),
     items: new Map(projection.turnItems.map((item) => [item.id, item])),
     requests: new Map(projection.runtimeRequests.map((request) => [request.id, request])),
+    providerThreads: new Map(projection.providerThreads.map((thread) => [thread.id, thread])),
     toolDigests: new Map(),
     fetched: new Map(fetched),
   };
@@ -123,7 +132,7 @@ export const mirrorOf = (
 
 const isThread = Schema.is(OrchestrationV2AppThread);
 
-/** Applies one engine event. Returns whether it touched anything J3 Bots reads. */
+/** Applies one engine event. Returns whether it touched what the session's events are made of. */
 export const applyEvent = (mirror: Mirror, event: OrchestrationV2DomainEvent): boolean => {
   switch (event.type) {
     case "run.created":
@@ -138,6 +147,10 @@ export const applyEvent = (mirror: Mirror, event: OrchestrationV2DomainEvent): b
       mirror.requests.set(event.payload.id, event.payload);
       dropUnheld(mirror);
       return true;
+    case "provider-thread.updated":
+      // No session event is made of it.
+      mirror.providerThreads.set(event.payload.id, event.payload);
+      return false;
     default:
       // Every thread event carries the whole thread record.
       if (event.type.startsWith("thread.") && isThread(event.payload)) {
@@ -329,6 +342,64 @@ const hasBackgroundWork = (mirror: Mirror, run: Run) =>
       ((item.type === "command_execution" && item.completionWake === "always") ||
         item.type === "subagent"),
   );
+
+const ACTIVE_RUN: ReadonlySet<Run["status"]> = new Set(["preparing", "starting", "running"]);
+const SETTLED_FOR_BACKGROUND: ReadonlySet<Run["status"]> = new Set([
+  "cancelled",
+  "completed",
+  "failed",
+  "interrupted",
+  "waiting",
+]);
+const BACKGROUND_ITEM: ReadonlySet<Item["type"]> = new Set([
+  "command_execution",
+  "dynamic_tool",
+  "subagent",
+]);
+
+/** A dynamic tool the agent keeps running on purpose, which the engine never counts as pending. */
+const isPersistentTool = (item: Item) =>
+  item.type === "dynamic_tool" &&
+  Predicate.hasProperty(item.input, "persistent") &&
+  item.input.persistent === true;
+
+/**
+ * Whether the session has background work the engine counts as pending: what
+ * `thread.stop` interrupts in a session whose latest run has ended, an
+ * interrupt that lands only after the stop answered. This is the engine's own
+ * rule (**Read** at `db51b67`, `orchestrationV2PendingBackgroundWork.ts`,
+ * `derivePendingBackgroundWork`, as `Orchestrator.ts`, `dispatchThreadStop`,
+ * calls it): with no active run and the latest run settled, a task its
+ * provider thread reports, or a live command, dynamic tool or subagent item
+ * outside a rolled-back run.
+ */
+export const backgroundWorkPending = (mirror: Mirror): boolean => {
+  const runs = [...mirror.runs.values()];
+  if (runs.some((run) => ACTIVE_RUN.has(run.status))) return false;
+  const latest = runs
+    .filter((run) => run.status !== "queued")
+    .reduce<Run | undefined>(
+      (last, run) => (last === undefined || run.ordinal > last.ordinal ? run : last),
+      undefined,
+    );
+  if (latest === undefined || !SETTLED_FOR_BACKGROUND.has(latest.status)) return false;
+  const active = mirror.thread?.activeProviderThreadId ?? null;
+  const tasks = [...mirror.providerThreads.values()].some(
+    (thread) =>
+      (active === null || thread.id === active) && (thread.pendingBackgroundTasks?.length ?? 0) > 0,
+  );
+  const rolledBack = new Set(runs.flatMap((run) => (run.status === "rolled_back" ? [run.id] : [])));
+  return (
+    tasks ||
+    [...mirror.items.values()].some(
+      (item) =>
+        BACKGROUND_ITEM.has(item.type) &&
+        isOrchestrationV2WorkActive(item.status) &&
+        !isPersistentTool(item) &&
+        (item.runId === null || !rolledBack.has(item.runId)),
+    )
+  );
+};
 
 /** A run that executed, as the engine counts it: neither queued nor cancelled before it started. */
 const wasExecuted = (run: Run) =>

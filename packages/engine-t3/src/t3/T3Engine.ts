@@ -93,6 +93,7 @@ import { upload } from "./upload.ts";
 import {
   activeTurn,
   applyEvent,
+  backgroundWorkPending,
   changesToFetch,
   copyMirror,
   copyView,
@@ -1226,6 +1227,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
           yield* Queue.offer(output, {
             _tag: "synchronized",
             token,
+            backgroundWork: backgroundWorkPending(mirror),
             cursor: lastCursor,
             at: DateTime.makeUnsafe(yield* Clock.currentTimeMillis),
           });

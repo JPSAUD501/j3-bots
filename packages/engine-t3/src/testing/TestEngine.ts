@@ -1256,12 +1256,16 @@ const make = Effect.gen(function* () {
           if (dropped !== null) return yield* Deferred.succeed(dropped, undefined);
           // Every event is handed to the streams as it happens, so each stream
           // is already caught up: the marker follows what it was last given.
+          const backgroundWork =
+            session.running === null &&
+            [...session.turns.values()].some((turn) => turn.backgroundWork);
           for (const [subscriber, state] of session.subscribers) {
             Queue.offerUnsafe(subscriber, {
               _tag: "synchronized",
               cursor: state.lastCursor,
               at,
               token,
+              backgroundWork,
             });
           }
           // Tool calls the engine records late appear only after this marker.

@@ -108,7 +108,16 @@ interface Following {
   readonly _tag: "open";
   readonly opened: Deferred.Deferred<void>;
   readonly caughtUp: Deferred.Deferred<void, NotObserved>;
-  readonly tokens: Map<SyncToken, Deferred.Deferred<void, NotObserved>>;
+  readonly tokens: Map<SyncToken, Deferred.Deferred<Synchronized, NotObserved>>;
+}
+
+/** The session as a `synchronize` left it, beyond what its applied events say. */
+export interface Synchronized {
+  /**
+   * Background work the engine counts as pending still runs, with no turn
+   * running: what a Stop of an idle session interrupts, after it answered.
+   */
+  readonly backgroundWork: boolean;
 }
 
 /**
@@ -221,7 +230,7 @@ export class Observer extends Context.Service<
     readonly synchronize: (
       sessionId: SessionRowId,
       engineSessionId: SessionId,
-    ) => Effect.Effect<void, EngineDown | SessionNotFound | NotObserved>;
+    ) => Effect.Effect<Synchronized, EngineDown | SessionNotFound | NotObserved>;
   }
 >()("@j3-bots/server/turns/Observer") {}
 
@@ -1091,7 +1100,11 @@ export const layer = Layer.effect(
           return yield* queueHeld(session, event.cursor);
         case "synchronized": {
           const waiting = follow.tokens.get(event.token);
-          if (waiting !== undefined) yield* sql.afterCommit(Deferred.succeed(waiting, undefined));
+          if (waiting !== undefined) {
+            yield* sql.afterCommit(
+              Deferred.succeed(waiting, { backgroundWork: event.backgroundWork }),
+            );
+          }
           return;
         }
       }
@@ -1358,7 +1371,7 @@ export const layer = Layer.effect(
       function* (sessionId: SessionRowId, engineSessionId: SessionId) {
         yield* watch(sessionId);
         const token = SyncToken.make(yield* ids.make("sync"));
-        const applied = Deferred.makeUnsafe<void, NotObserved>();
+        const applied = Deferred.makeUnsafe<Synchronized, NotObserved>();
         // Registered only on a stream still open: one that closed has failed
         // its waiters already and would never fail this one.
         const follow = yield* Effect.sync(() => {
@@ -1370,7 +1383,7 @@ export const layer = Layer.effect(
         if (follow === undefined) return yield* new NotObserved();
         // Abandoned at the deadline, the call is interrupted, which cancels
         // the adapter's catch-up for it.
-        yield* engine
+        return yield* engine
           .synchronize({ sessionId: engineSessionId, token })
           .pipe(
             Effect.andThen(Deferred.await(applied)),

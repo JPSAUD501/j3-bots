@@ -297,6 +297,48 @@ it.effect("ends the private work in a session when its room is archived", () =>
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect(
+  "confirms a Stop of an idle session only once the background work it interrupts ended",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const sql = yield* SqlClient.SqlClient;
+      const stops = yield* Stops;
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      yield* sendToBot(bot.id, "Watch the build.");
+      const watching = yield* nextTurn(bot.id);
+      yield* control.startBackgroundWork({ sessionId: session, turnId: watching });
+      yield* control.finishTurn({
+        sessionId: session,
+        turnId: watching,
+        outcome: { _tag: "completed" },
+      });
+      yield* turnEnded(bot.id);
+
+      // The engine takes the Stop, and its interrupt of the work the ended turn
+      // left running is slow: the marker after the Stop still finds it running.
+      const effects = yield* control.delayNextStopEffects;
+      yield* stops.stopBot({ commandId: command(), botId: bot.id });
+      yield* stops.runPending;
+      const unsettled = sql<{ readonly n: number }>`
+      SELECT COUNT(*) AS n FROM stop_targets WHERE sent_at IS NOT NULL AND stopped_at IS NULL
+    `.pipe(Effect.orDie);
+      assert.deepStrictEqual(yield* unsettled, [{ n: 1 }]);
+      const after = yield* sendToBot(bot.id, "Then tag the release.");
+      yield* stops.runPending;
+      assert.deepStrictEqual(yield* unsettled, [{ n: 1 }]);
+      assert.isTrue(yield* control.backgroundWorkRunning(session));
+
+      // Once the work ended, the next pass confirms the Stop, and what waited goes.
+      yield* effects.release;
+      yield* TestClock.adjust(RETRY_TICK);
+      yield* stopSettled;
+      yield* nextTurn(bot.id, watching);
+      yield* deliveryIs(after, "delivered");
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("stops a run that starts while the Stop's commands are on their way", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;

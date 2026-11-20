@@ -426,6 +426,15 @@ export const SessionEvent = Schema.Union([
    * stream, before this one. It changes no state; its cursor is that of the
    * last event delivered, so storing it is harmless.
    */
-  Schema.TaggedStruct("synchronized", { ...at, token: SyncToken }),
+  Schema.TaggedStruct("synchronized", {
+    ...at,
+    token: SyncToken,
+    /**
+     * The session has background work the engine counts as pending, with no
+     * turn running: what `stop` interrupts in an idle session, and which ends
+     * only after the stop answered.
+     */
+    backgroundWork: Schema.Boolean,
+  }),
 ]);
 export type SessionEvent = typeof SessionEvent.Type;

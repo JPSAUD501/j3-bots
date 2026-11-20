@@ -379,8 +379,10 @@ export class Engine extends Context.Service<
      * `db51b67`, `Orchestrator.ts`, `dispatchThreadStop`: the interrupt is an
      * effect run after the commit). The events say when they did: the running
      * turn's `turn-finished`, a `turn-finished` with `cancelled` for each
-     * waiting turn, `steer-dropped` for each untaken steer and
-     * `continuation-dropped` for a disarmed continuation.
+     * waiting turn, `steer-dropped` for each untaken steer,
+     * `continuation-dropped` for a disarmed continuation, and a
+     * `synchronized` without `backgroundWork` for the background work of a
+     * turn that had already ended.
      *
      * A message the engine counts as a user's releases the hold Stop put on
      * the queue, so a dispatch sent between the stop and the cancels starts a
@@ -473,8 +475,10 @@ export class Engine extends Context.Service<
      * stream of the session, after every event the engine had recorded for the
      * session when this was called. Once the server has applied that event, it
      * knows the session's state as of this call: the bot tool bridge uses it to
-     * find the `tool-call` a tool request came from. Choose the token, and start
-     * waiting for it, before calling.
+     * find the `tool-call` a tool request came from. The event also says
+     * whether the session still has background work the engine counts as
+     * pending, which a Stop's interrupt ends only after it answered. Choose
+     * the token, and start waiting for it, before calling.
      *
      * A stream counts as open from when it is subscribed, so one subscribed
      * before this call emits the event even if it has emitted nothing yet
