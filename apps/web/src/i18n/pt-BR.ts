@@ -215,6 +215,7 @@ export const ptBR: Catalog = {
   "details.workingContext": "Contexto de trabalho",
   "details.freshStartHint":
     "Recomeçar limpa o que {name} tem em mente. A conversa, a memória, as rotinas e os arquivos continuam.",
+  "details.freshStartStops": "Interrompe qualquer trabalho que {name} tenha em andamento.",
   "details.freshStart": "Recomeçar",
   "details.freshStart.done": "{name} recomeçou do zero.",
   "details.freshStart.failed": "Não foi possível recomeçar. Tente de novo.",
@@ -260,17 +261,18 @@ export const ptBR: Catalog = {
   "firstRun.incompatible.title": "O motor está na versão errada",
   "firstRun.incompatible.body":
     "O motor está na versão {running}, e esta versão do J3 Bots precisa da {pinned}.",
-  "firstRun.signIn.title": "Entre em um provedor",
-  "firstRun.signIn.body":
-    "Os bots rodam nas suas próprias assinaturas. Entre em uma delas na máquina que roda o J3 Bots; esta página atualiza quando você entrar.",
-  "firstRun.signIn.copy": "Copiar o comando que entra em {name}",
-  "firstRun.signIn.copied": "Copiado",
-  "firstRun.signIn.selected": "Comando selecionado. Copie manualmente.",
+  "firstRun.connect.title": "Conecte seus provedores",
+  "firstRun.connect.body":
+    "Os bots chegam aos modelos por um endpoint que você roda, como um proxy na frente das suas assinaturas. Rode isto na máquina que roda o J3 Bots: ele pede o endereço e a chave do endpoint. Esta página atualiza quando os provedores estiverem prontos.",
+  "firstRun.connect.copy": "Copiar o comando que conecta seus provedores",
+  "firstRun.connect.copied": "Copiado",
+  "firstRun.connect.selected": "Comando selecionado. Copie manualmente.",
   "firstRun.unavailable.title": "Nenhum provedor pode rodar um bot agora",
   "firstRun.unavailable.body":
     "O estado de cada provedor está abaixo. Esta página atualiza assim que um deles estiver pronto.",
   "provider.ready": "Pronto",
-  "provider.signInRequired": "Sem login",
+  "provider.notConnected": "Não conectado",
+  "provider.noModels": "Conectado, mas o motor ainda não lista nenhum modelo dele",
   "provider.unavailable": "Indisponível agora",
   "firstRun.create.title": "Conheça seu primeiro bot",
   "firstRun.create.body":
