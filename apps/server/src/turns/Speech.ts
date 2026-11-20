@@ -16,7 +16,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
-import { Attachments } from "../attachments/Attachments.ts";
+import { Attachments, isStorable } from "../attachments/Attachments.ts";
 import { workspaceReader } from "../attachments/workspaceFile.ts";
 import { BotStore } from "../bots/BotStore.ts";
 import type { BotSession } from "../bots/EngineSessions.ts";
@@ -46,6 +46,13 @@ import {
   SessionRowId,
 } from "./model.ts";
 import { Observer } from "./Observer.ts";
+
+/**
+ * The most bytes the files of one `say` take together. The operator's own
+ * upload path has no total per message, so it is one upload's limit: a `say`
+ * buffers at most this much, also on a small host.
+ */
+const MAX_SAY_ATTACHMENTS_SIZE = 25 * 1024 * 1024;
 
 /** How many times a request is matched again after the first try, and within how long. */
 const MATCH_RETRIES = 5;
@@ -277,7 +284,10 @@ export const layer = Layer.effect(
      * Paths outside the workspace, also by a link swapped in on the way, what
      * is not a regular file, empty files and files above
      * `MAX_ATTACHMENT_SIZE`, of which no more than that is read, are refused
-     * (`readWorkspaceFile`).
+     * (`readWorkspaceFile`), and so are files together above
+     * `MAX_SAY_ATTACHMENTS_SIZE`, of which no more than that is read, and a
+     * name the store would not take. Every file is checked before any is
+     * stored.
      */
     const workspaceFiles = Effect.fn("Speech.workspaceFiles")(function* (
       botId: BotId,
@@ -294,13 +304,15 @@ export const layer = Layer.effect(
       }
       const root = bot.value.workspaceRoot.value;
       const files: Array<WorkspaceFile> = [];
+      let total = 0;
       for (const given of paths) {
         if (/^[a-z][a-z0-9+.-]*:\/\//i.test(given)) {
           return yield* refuse(
             `${given} is a URL. Save the file into your workspace first, then attach its path.`,
           );
         }
-        const read = yield* readWorkspaceFile(root, given, MAX_ATTACHMENT_SIZE);
+        const left = MAX_SAY_ATTACHMENTS_SIZE - total;
+        const read = yield* readWorkspaceFile(root, given, Math.min(MAX_ATTACHMENT_SIZE, left));
         switch (read._tag) {
           case "missing":
             return yield* refuse(`There is no file at ${given} in your workspace.`);
@@ -310,7 +322,9 @@ export const layer = Layer.effect(
             return yield* refuse(`${given} is not a file.`);
           case "too-large":
             return yield* refuse(
-              `${given} cannot be attached: it is larger than ${MAX_ATTACHMENT_SIZE / 1024 / 1024} MiB.`,
+              left < MAX_ATTACHMENT_SIZE
+                ? `${given} cannot be attached: the files together are larger than ${MAX_SAY_ATTACHMENTS_SIZE / 1024 / 1024} MiB. Attach fewer, or send the rest in another message.`
+                : `${given} cannot be attached: it is larger than ${MAX_ATTACHMENT_SIZE / 1024 / 1024} MiB.`,
             );
           case "unreadable":
             return yield* refuse(`${given} could not be read.`);
@@ -318,7 +332,14 @@ export const layer = Layer.effect(
             if (read.bytes.length === 0) {
               return yield* refuse(`${given} cannot be attached: it is empty.`);
             }
-            files.push({ name: read.name, mediaType: mediaTypeOf(read.name), bytes: read.bytes });
+            const file = { name: read.name, mediaType: mediaTypeOf(read.name), bytes: read.bytes };
+            if (!isStorable({ ...file, size: file.bytes.length })) {
+              return yield* refuse(
+                `${given} cannot be attached: its name cannot be used. Rename it and attach it again.`,
+              );
+            }
+            total += file.bytes.length;
+            files.push(file);
         }
       }
       return files;

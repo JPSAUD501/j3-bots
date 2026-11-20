@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import type { BotId } from "@j3-bots/contracts";
+import { type BotId, MAX_ATTACHMENT_NAME_LENGTH, MAX_ATTACHMENT_SIZE } from "@j3-bots/contracts";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import { NO_TURN_REFUSAL } from "@j3-bots/prompts";
 import * as Effect from "effect/Effect";
@@ -10,6 +10,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import { Attachments } from "../attachments/Attachments.ts";
 import { BotStore } from "../bots/BotStore.ts";
+import { Layout } from "../Layout.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
@@ -312,4 +313,83 @@ it.effect(
       assert.strictEqual(reply._tag, "refused");
       assert.deepStrictEqual(yield* botSaid(bot.id), []);
     }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+/** The bot's turn calls `say` with these files, written in its workspace first. */
+const sayWithFiles = (
+  files: ReadonlyArray<{ readonly name: string; readonly bytes: Uint8Array }>,
+) =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const { bot, session, turnId } = yield* working("Send me the files.");
+    const workspace = Option.getOrThrow(yield* (yield* BotStore).find(bot.id)).workspacePath;
+    yield* fs.makeDirectory(path.join(workspace, "files"), { recursive: true });
+    for (const file of files)
+      yield* fs.writeFile(path.join(workspace, "files", file.name), file.bytes);
+    const args = {
+      text: "Here they are.",
+      attachments: files.map((file) => `files/${file.name}`),
+    };
+    yield* control.toolCall({
+      sessionId: session,
+      turnId,
+      tool: "say",
+      input: args,
+      recorded: "now",
+    });
+    const reply = yield* (yield* BotTools).call({
+      requestId: "call-1",
+      sessionId: session,
+      tool: "say",
+      arguments: args,
+    });
+    return { bot, reply };
+  });
+
+/** Every blob file in the attachment store. */
+const storedBlobs = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const { attachments } = yield* Layout;
+  if (!(yield* fs.exists(attachments))) return [];
+  const entries = yield* fs.readDirectory(attachments, { recursive: true });
+  const files: Array<string> = [];
+  for (const entry of entries) {
+    const info = yield* fs.stat(path.join(attachments, entry));
+    if (info.type === "File") files.push(entry);
+  }
+  return files;
+});
+
+it.effect("checks every file a say attaches before it stores any", () =>
+  Effect.gen(function* () {
+    const { bot, reply } = yield* sayWithFiles([
+      { name: "notes.md", bytes: new TextEncoder().encode("Notes.") },
+      {
+        name: `${"n".repeat(MAX_ATTACHMENT_NAME_LENGTH)}.md`,
+        bytes: new TextEncoder().encode("Long."),
+      },
+    ]);
+
+    assert.include(reply._tag === "refused" ? reply.message : "", "its name cannot be used");
+    assert.deepStrictEqual(yield* botSaid(bot.id), []);
+    assert.deepStrictEqual(yield* storedBlobs, []);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("refuses a say whose files together pass the limit", () =>
+  Effect.gen(function* () {
+    // Each within one upload's limit; together past what one say takes.
+    const half = MAX_ATTACHMENT_SIZE / 2 + 1;
+    const { bot, reply } = yield* sayWithFiles([
+      { name: "first.bin", bytes: new Uint8Array(half).fill(1) },
+      { name: "second.bin", bytes: new Uint8Array(half).fill(2) },
+    ]);
+
+    assert.include(reply._tag === "refused" ? reply.message : "", "the files together");
+    assert.deepStrictEqual(yield* botSaid(bot.id), []);
+    assert.deepStrictEqual(yield* storedBlobs, []);
+  }).pipe(Effect.provide(TestDomain.layer)),
 );

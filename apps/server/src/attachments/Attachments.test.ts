@@ -150,4 +150,37 @@ it.layer(server)("attachments", (it) => {
       yield* fs.remove(path.dirname(keptFile));
     }),
   );
+
+  it.effect("removes the bytes a store wrote for a transaction that rolled back", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const sql = yield* SqlClient.SqlClient;
+      const layout = yield* Layout;
+      const attachments = yield* Attachments;
+      yield* fs.makeDirectory(layout.attachments, { recursive: true });
+      const before = yield* fs.readDirectory(layout.attachments, { recursive: true });
+
+      const failed = yield* attachments
+        .withStore((put) =>
+          transactional(sql)(
+            put({ name: "draft.txt", mediaType: "text/plain", bytes: bytesOf("rolled back") }).pipe(
+              Effect.andThen(Effect.fail("after the file" as const)),
+            ),
+          ),
+        )
+        .pipe(Effect.flip);
+
+      assert.strictEqual(failed, "after the file");
+      const [blobs] = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM blobs b JOIN attachments a ON a.sha256 = b.sha256
+        WHERE a.name = 'draft.txt'
+      `;
+      assert.strictEqual(blobs?.count, 0);
+      const after = yield* fs.readDirectory(layout.attachments, { recursive: true });
+      assert.deepStrictEqual(
+        after.filter((entry) => !before.includes(entry) && entry.length > 2),
+        [],
+      );
+    }),
+  );
 });
