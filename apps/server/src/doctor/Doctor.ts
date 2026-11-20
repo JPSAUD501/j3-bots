@@ -16,7 +16,7 @@ import { socketOwner } from "../service/owner.ts";
 import * as Unit from "../service/unit.ts";
 import { Host } from "../system/Host.ts";
 import { type PortUse, portAdvice } from "../system/Ports.ts";
-import { Systemd } from "../system/Systemd.ts";
+import { lingerAdvice, Systemd } from "../system/Systemd.ts";
 import { isBuilt } from "../web/built.ts";
 
 // `j3-bots doctor`: everything the server needs from this machine, checked
@@ -479,18 +479,14 @@ const serviceChecks = Effect.fn("doctor.service")(function* (unitText: Option.Op
   }
 
   const linger = yield* systemd.linger;
-  checks.push(
-    linger === "yes"
-      ? check("Start at boot", "ok", "Lingering is on: the service runs without a login session.")
-      : check(
-          "Start at boot",
-          "warning",
-          linger === "no"
-            ? "Lingering is off: the service stops when this user's last session ends and does not start at boot."
-            : "Could not tell whether lingering is on for this user.",
-          'Run `sudo loginctl enable-linger "$(id -un)"` once.',
-        ),
-  );
+  if (linger === "yes") {
+    checks.push(
+      check("Start at boot", "ok", "Lingering is on: the service runs without a login session."),
+    );
+  } else {
+    const { summary, fix } = lingerAdvice(linger);
+    checks.push(check("Start at boot", "warning", summary, fix));
+  }
 
   checks.push(
     (yield* systemd.memoryControllerDelegated)

@@ -11,13 +11,15 @@ import { HOME_ENTRIES } from "../home/entries.ts";
 import { install as installService } from "../service/install.ts";
 import { socketOwner } from "../service/owner.ts";
 import * as Unit from "../service/unit.ts";
-import { Systemd } from "../system/Systemd.ts";
+import { type Linger, lingerAdvice, Systemd } from "../system/Systemd.ts";
 import { refuse, userFacing } from "./errors.ts";
 
-const LINGER_HINT = [
-  "Lingering is off for this user, so the service stops when your last session ends and does not start at boot.",
-  'Turn it on once with: sudo loginctl enable-linger "$(id -un)"',
-].join("\n");
+/** The lines that say what lingering not known to be on means, after a blank one. */
+const lingerLines = (linger: Linger): ReadonlyArray<string> => {
+  if (linger === "yes") return [];
+  const { summary, fix } = lingerAdvice(linger);
+  return ["", summary, fix];
+};
 
 const ENGINE_STATES: Record<EngineStatus["state"]["_tag"], string> = {
   starting: "starting",
@@ -52,7 +54,7 @@ const install = Command.make("install").pipe(
         "Logs: journalctl --user -u j3-bots -f",
         ...installed.overrides.map((name) => ServerConfig.overrideNote(name, config.configFile)),
       ];
-      if (installed.linger !== "yes") lines.push("", LINGER_HINT);
+      lines.push(...lingerLines(installed.linger));
       yield* Console.log(lines.join("\n"));
     }),
   ),
@@ -122,7 +124,7 @@ const status = Command.make("status").pipe(
       if (unit.active === "failed" || unit.active === "activating") {
         lines.push("Read why with: journalctl --user -u j3-bots -n 100");
       }
-      if ((yield* systemd.linger) !== "yes") lines.push("", LINGER_HINT);
+      lines.push(...lingerLines(yield* systemd.linger));
       yield* Console.log(lines.join("\n"));
     }),
   ),
