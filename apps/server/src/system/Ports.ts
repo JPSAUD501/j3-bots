@@ -170,7 +170,9 @@ export const listen = (
  * as soon as it is made and answers a request only once something is served
  * on it, so a server bound before its routes are built drops whatever arrives
  * in between: a client that connects the moment the port opens would wait
- * forever. Built in this order, the port opens with the routes ready.
+ * forever. Built in this order, the port opens with the routes ready. For the
+ * same reason, a step of the listener's own that waits, such as setting a
+ * socket's mode, goes on the layer this returns, never on `server`.
  * `logAddress` logs where it listens once it serves.
  */
 export const serve = <A, E, R, S, SE, SR>(

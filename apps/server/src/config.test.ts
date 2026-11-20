@@ -99,7 +99,7 @@ it.layer(NodeServices.layer)("server configuration", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("refuses a home inside a Git checkout, even before the home exists", () =>
+  it.effect("refuses a home in a Git checkout, even before it exists or through a link", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -112,6 +112,21 @@ it.layer(NodeServices.layer)("server configuration", (it) => {
         assert.deepInclude(failure(exit), { setting: "J3_HOME", reason: "home-in-git-checkout" });
       }
       assert.isFalse(yield* fs.exists(path.join(checkout, "state")));
+
+      // A home named through a link that leads into the checkout.
+      const alias = path.join(yield* freshHome, "j3");
+      yield* fs.makeDirectory(path.join(checkout, "state"));
+      yield* fs.symlink(path.join(checkout, "state"), alias);
+      for (const home of [alias, path.join(alias, "j3")]) {
+        for (const step of [load, initializeHome]) {
+          const exit = yield* withEnvironment(step, { J3_HOME: home }).pipe(Effect.exit);
+          assert.deepInclude(failure(exit), {
+            setting: "J3_HOME",
+            reason: "home-in-git-checkout",
+          });
+        }
+      }
+      assert.deepStrictEqual(yield* fs.readDirectory(path.join(checkout, "state")), []);
     }).pipe(Effect.scoped),
   );
 

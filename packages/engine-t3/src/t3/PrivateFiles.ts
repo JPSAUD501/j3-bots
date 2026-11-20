@@ -62,11 +62,18 @@ export interface PrivateFiles {
    */
   readonly write: (file: string, contents: string) => Effect.Effect<void, StorageError>;
   /**
+   * Checks `file` as `writeStream` does, before anything is fetched to write
+   * there: its folder is created and checked, and `file` itself is checked
+   * and must be a regular file or absent. The bytes it already holds; 0 when
+   * absent.
+   */
+  readonly writable: (file: string) => Effect.Effect<number, StorageError>;
+  /**
    * Writes `bytes` into `file` (mode 0600 if created), after what it already
-   * holds when `append`, or from empty. `file` must be a regular file or
-   * absent, in a checked folder, and is checked itself; it is opened so that
-   * a link at its name is refused, never followed, even one made after the
-   * check.
+   * holds when `append`, or from empty. `file` is checked as `writable`
+   * checks it, and opened so that a link at its name is refused, never
+   * followed, even one made after the check. An interruption lets the chunk
+   * being written finish before the file is closed.
    */
   readonly writeStream: <E>(
     file: string,
@@ -149,19 +156,25 @@ export const makePrivateFiles = Effect.fnUntraced(function* (
     );
   });
 
+  const writable = Effect.fnUntraced(function* (file: string) {
+    yield* folder(path.dirname(file));
+    if (!(yield* isPrivate(file))) return yield* refuse(file);
+    const existing = yield* fs.lstat(file).pipe(
+      Effect.asSome,
+      Effect.catchReason("PlatformError", "NotFound", () => Effect.succeedNone),
+    );
+    if (Option.isNone(existing)) return 0;
+    if (existing.value.type !== "File") return yield* refuse(file);
+    return Number(existing.value.size);
+  });
+
   const writeStream = <E>(
     file: string,
     append: boolean,
     bytes: Stream.Stream<Uint8Array, E>,
   ): Effect.Effect<void, StorageError | E> =>
     Effect.gen(function* () {
-      yield* folder(path.dirname(file));
-      if (!(yield* isPrivate(file))) return yield* refuse(file);
-      const existing = yield* fs.lstat(file).pipe(
-        Effect.asSome,
-        Effect.catchReason("PlatformError", "NotFound", () => Effect.succeedNone),
-      );
-      if (Option.isSome(existing) && existing.value.type !== "File") return yield* refuse(file);
+      yield* writable(file);
       const { O_WRONLY, O_CREAT, O_NOFOLLOW, O_APPEND, O_TRUNC } = NodeFs.constants;
       const flags = O_WRONLY | O_CREAT | O_NOFOLLOW | (append ? O_APPEND : O_TRUNC);
       const fd = yield* Effect.acquireRelease(
@@ -173,8 +186,12 @@ export const makePrivateFiles = Effect.fnUntraced(function* (
         ),
         closeFile,
       );
-      yield* Stream.runForEach(bytes, (chunk) => writeAll(file, fd, chunk));
+      // Interrupting a write leaves Node's `fs.write` running: closing the
+      // descriptor under it could let it land in whatever file reuses the
+      // number. So each chunk, with its short-write continuation, finishes
+      // first; the stream stays interruptible between chunks.
+      yield* Stream.runForEach(bytes, (chunk) => Effect.uninterruptible(writeAll(file, fd, chunk)));
     }).pipe(Effect.scoped);
 
-  return { folder, write, writeStream } satisfies PrivateFiles;
+  return { folder, write, writable, writeStream } satisfies PrivateFiles;
 });

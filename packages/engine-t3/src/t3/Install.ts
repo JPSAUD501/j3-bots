@@ -125,6 +125,9 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
   const fail = (reason: EngineInstallFailed["reason"]) =>
     new EngineInstallFailed({ reason, version: pin.version });
   const storage = () => fail("storage");
+  /** Removes `location`, a link itself rather than what it leads to; a missing one is fine. */
+  const remove = (location: string) =>
+    fs.remove(location, { recursive: true, force: true }).pipe(Effect.mapError(storage));
 
   const target = runtimeDirectory(path, input.home);
   const executable = path.join(target, "t3");
@@ -149,13 +152,10 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
   const expected = checksumFor(sums, archive);
   if (Option.isNone(expected)) return yield* fail("unsupported-platform");
 
-  yield* input.files.folder(path.dirname(target)).pipe(Effect.mapError(storage));
   const partial = `${target}.partial`;
-  // What a regular file there already holds; `files.writeStream` refuses anything else.
-  const have = yield* fs.lstat(partial).pipe(
-    Effect.map((info) => (info.type === "File" ? Number(info.size) : 0)),
-    Effect.orElseSucceed(() => 0),
-  );
+  // Checked before the download starts, so a link or a folder there fails at
+  // once rather than after a large download; the write itself checks again.
+  const have = yield* input.files.writable(partial).pipe(Effect.mapError(storage));
 
   // Resume with a range request; a server that ignores it sends the whole file again.
   const response = yield* client
@@ -186,13 +186,18 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
   );
   if (hash.digest("hex") !== expected.value) {
     // A corrupt partial would fail the same way forever; start over next time.
-    yield* fs.remove(partial).pipe(Effect.ignore);
+    yield* remove(partial);
     return yield* fail("checksum");
   }
 
+  // The runtime folder is checked again: the download may have taken long.
+  // Whatever is at the staging name is removed (a link itself, never what it
+  // leads to), and the folder is then created only if nothing is there, so a
+  // link planted in between is never followed into.
   const staging = `${target}.staging`;
-  yield* fs.remove(staging, { recursive: true }).pipe(Effect.ignore);
-  yield* fs.makeDirectory(staging, { recursive: true }).pipe(Effect.mapError(storage));
+  yield* input.files.folder(path.dirname(staging)).pipe(Effect.mapError(storage));
+  yield* remove(staging);
+  yield* fs.makeDirectory(staging, { mode: 0o700 }).pipe(Effect.mapError(storage));
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const exit = yield* spawner
     .exitCode(ChildProcess.make("tar", ["-xzf", partial, "-C", staging]))
@@ -211,9 +216,9 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
   yield* fs
     .writeFileString(path.join(root, INSTALLED_MARKER), `${expected.value}\n`)
     .pipe(Effect.mapError(storage));
-  yield* fs.remove(target, { recursive: true }).pipe(Effect.ignore);
+  yield* remove(target);
   yield* fs.rename(root, target).pipe(Effect.mapError(storage));
-  yield* fs.remove(staging, { recursive: true }).pipe(Effect.ignore);
-  yield* fs.remove(partial).pipe(Effect.ignore);
+  yield* remove(staging);
+  yield* remove(partial);
   return executable;
 });

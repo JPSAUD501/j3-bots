@@ -246,6 +246,25 @@ const enclosingCheckout = Effect.fn("enclosingCheckout")(function* (start: strin
   }
 });
 
+/**
+ * Refuses a home inside a Git checkout, by its path as written and by where
+ * its links lead: `J3_HOME` may name a link into a checkout. A home that does
+ * not exist yet is checked through its future parents.
+ */
+const refuseHomeInCheckout = Effect.fn("refuseHomeInCheckout")(function* (home: string) {
+  const real = yield* realLocation(home);
+  const locations = Option.isSome(real) ? [home, real.value] : [home];
+  for (const location of locations) {
+    if (Option.isSome(yield* enclosingCheckout(location))) {
+      return yield* new ConfigRefused({
+        setting: "J3_HOME",
+        reason: "home-in-git-checkout",
+        subject: home,
+      });
+    }
+  }
+});
+
 /** `J3_HOME`, or `~/.j3-bots`, as an absolute path. */
 export const resolveHome = Effect.gen(function* () {
   const path = yield* Path.Path;
@@ -303,14 +322,7 @@ export const load = Effect.gen(function* () {
   const file = yield* readConfigFile(configFile);
   const fileSetting = (name: keyof ConfigFile) => `${name} in ${configFile}`;
 
-  // A home that does not exist yet is checked through its future parents.
-  if (Option.isSome(yield* enclosingCheckout(home))) {
-    return yield* new ConfigRefused({
-      setting: "J3_HOME",
-      reason: "home-in-git-checkout",
-      subject: home,
-    });
-  }
+  yield* refuseHomeInCheckout(home);
   const adminSocket = path.join(home, ADMIN_SOCKET);
   if (new TextEncoder().encode(adminSocket).length > MAX_SOCKET_PATH_BYTES) {
     return yield* new ConfigRefused({
@@ -514,13 +526,7 @@ export const initializeHome = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const home = yield* resolveHome;
-  if (Option.isSome(yield* enclosingCheckout(home))) {
-    return yield* new ConfigRefused({
-      setting: "J3_HOME",
-      reason: "home-in-git-checkout",
-      subject: home,
-    });
-  }
+  yield* refuseHomeInCheckout(home);
   yield* fs.makeDirectory(home, { recursive: true, mode: 0o700 });
   yield* fs
     .writeFileString(path.join(home, CONFIG_FILE), `${encodeDefaults(DEFAULTS)}\n`, {

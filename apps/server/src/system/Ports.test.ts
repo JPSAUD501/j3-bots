@@ -23,7 +23,9 @@ const CONFIG_FILE = "/home/pi/.j3-bots/config.json";
 /** The port `context`'s server listens on. */
 const portOf = (context: Context.Context<HttpServer.HttpServer>) => {
   const { address } = Context.get(context, HttpServer.HttpServer);
-  return NetAddress.isInetAddress(address) ? address.port : 0;
+  assert.isTrue(NetAddress.isInetAddress(address));
+  if (!NetAddress.isInetAddress(address)) throw new Error("the server listens on no port");
+  return address.port;
 };
 
 /** A port another program listens on, for as long as the test runs. */
@@ -66,11 +68,21 @@ it.effect("names the port and the setting when another program holds it", () =>
   }).pipe(Effect.scoped),
 );
 
-it.live("answers a request sent the moment the port accepts connections", () =>
+/** A step that waits on the filesystem several times over. */
+const slowStep = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  for (let read = 0; read < 20; read++) yield* fs.stat(".");
+});
+
+/**
+ * The status of a request sent the moment the server binds, before anything is
+ * served on it, to routes whose build waits on the filesystem, as the web
+ * client's does. With `stepOnceServed`, the listener also has a step of its
+ * own that waits, as the admin socket sets its socket's mode.
+ */
+const firstAnswer = (stepOnceServed: boolean) =>
   Effect.gen(function* () {
     const first = Promise.withResolvers<number>();
-    // The request leaves as soon as the server has bound, before anything is
-    // served on it.
     const server = Ports.listen(
       () => NodeHttp.createServer(),
       { host: "127.0.0.1", port: 0 },
@@ -86,19 +98,19 @@ it.live("answers a request sent the moment the port accepts connections", () =>
         }),
       ),
     );
-    // Routes whose build waits on the filesystem, as the web client's does.
     const app = Layer.unwrap(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        for (let read = 0; read < 20; read++) yield* fs.stat(".");
-        return HttpRouter.add("GET", "/", HttpServerResponse.empty());
-      }),
+      slowStep.pipe(Effect.as(HttpRouter.add("GET", "/", HttpServerResponse.empty()))),
     );
-    yield* Layer.build(
-      Ports.serve(app, server, { logAddress: false }).pipe(Layer.provide(NodeServices.layer)),
-    );
-    assert.strictEqual(yield* Effect.promise(() => first.promise), 204);
-  }).pipe(Effect.scoped),
+    const served = Ports.serve(app, server, { logAddress: false });
+    yield* Layer.build(stepOnceServed ? served.pipe(Layer.tap(() => slowStep)) : served);
+    return yield* Effect.promise(() => first.promise);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+
+it.live("answers a request sent the moment the port accepts connections", () =>
+  Effect.gen(function* () {
+    assert.strictEqual(yield* firstAnswer(false), 204);
+    assert.strictEqual(yield* firstAnswer(true), 204);
+  }),
 );
 
 it.live(

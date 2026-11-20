@@ -24,9 +24,10 @@ const DIGEST = NodeCrypto.createHash("sha256").update(ARCHIVE).digest("hex");
 
 /**
  * The release server: its checksums, and the archive, from the byte a range
- * asks for. Every range asked is recorded in `ranges`.
+ * asks for. Every request for the archive is recorded in `requests`, by the
+ * range it asks for, or `whole`.
  */
-const release = (ranges: Array<string>) =>
+const release = (requests: Array<string>) =>
   HttpClient.make((request) => {
     if (request.url === releaseUrl("SHA256SUMS")) {
       return Effect.succeed(
@@ -34,7 +35,7 @@ const release = (ranges: Array<string>) =>
       );
     }
     const range = /^bytes=(\d+)-$/.exec(request.headers["range"] ?? "");
-    if (range?.[1] !== undefined) ranges.push(range[0]);
+    requests.push(range?.[0] ?? "whole");
     const from = Number(range?.[1] ?? 0);
     return Effect.succeed(
       HttpClientResponse.fromWeb(
@@ -44,10 +45,16 @@ const release = (ranges: Array<string>) =>
     );
   });
 
-/** Installs into a fresh home, with the download in `partial` prepared by `prepare`. */
+/** Where an install keeps its download and unpacks it. */
+interface Workspace {
+  readonly partial: string;
+  readonly staging: string;
+}
+
+/** Installs into a fresh home, with its workspace prepared by `prepare`. */
 const install = (
-  ranges: Array<string>,
-  prepare: (partial: string) => Effect.Effect<void, PlatformError.PlatformError>,
+  requests: Array<string>,
+  prepare: (workspace: Workspace) => Effect.Effect<void, PlatformError.PlatformError>,
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -55,31 +62,38 @@ const install = (
     const home = yield* fs.makeTempDirectoryScoped();
     const runtime = path.join(home, "j3", "runtime");
     yield* fs.makeDirectory(runtime, { recursive: true });
-    const partial = path.join(runtime, `${pin.version}.partial`);
-    yield* prepare(partial);
+    const workspace: Workspace = {
+      partial: path.join(runtime, `${pin.version}.partial`),
+      staging: path.join(runtime, `${pin.version}.staging`),
+    };
+    yield* prepare(workspace);
     // Every location counts as private: what refuses a link here is the write itself.
     const files = yield* makePrivateFiles(() => Effect.succeed(true));
     const exit = yield* ensureInstalled({ home, platform: "linux", arch: "x64", files }).pipe(
-      Effect.provideService(HttpClient.HttpClient, release(ranges)),
+      Effect.provideService(HttpClient.HttpClient, release(requests)),
       Effect.exit,
     );
     const error = Exit.isFailure(exit) ? Exit.findErrorOption(exit) : Option.none();
-    return { home, partial, reason: Option.getOrUndefined(error)?.reason };
+    return { ...workspace, reason: Option.getOrUndefined(error)?.reason };
   });
 
 const machine = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto);
 
 describe("ensureInstalled", () => {
-  it.effect("never writes a download through a link planted where it resumes", () =>
+  it.effect("refuses a link planted where it resumes, before downloading anything", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const outside = path.join(yield* fs.makeTempDirectoryScoped(), "owner-file");
       yield* fs.writeFileString(outside, "the owner's file");
+      const requests: Array<string> = [];
 
-      const { partial, reason } = yield* install([], (partial) => fs.symlink(outside, partial));
+      const { partial, reason } = yield* install(requests, ({ partial }) =>
+        fs.symlink(outside, partial),
+      );
 
       assert.strictEqual(reason, "storage");
+      assert.deepStrictEqual(requests, []);
       assert.strictEqual(yield* fs.readFileString(outside), "the owner's file");
       assert.strictEqual((yield* fs.lstat(partial)).type, "SymbolicLink");
     }).pipe(Effect.scoped, Effect.provide(machine)),
@@ -88,16 +102,32 @@ describe("ensureInstalled", () => {
   it.effect("resumes an interrupted download from where it stopped", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const ranges: Array<string> = [];
+      const requests: Array<string> = [];
 
-      const { partial, reason } = yield* install(ranges, (partial) =>
+      const { partial, reason } = yield* install(requests, ({ partial }) =>
         fs.writeFile(partial, ARCHIVE.slice(0, 10)),
       );
 
-      assert.deepStrictEqual(ranges, ["bytes=10-"]);
+      assert.deepStrictEqual(requests, ["bytes=10-"]);
       // The resumed file matched the release's digest; only unpacking it failed.
       assert.strictEqual(reason, "extract");
       assert.deepStrictEqual(yield* fs.readFile(partial), ARCHIVE);
+    }).pipe(Effect.scoped, Effect.provide(machine)),
+  );
+
+  it.effect("never unpacks into or clears through a link planted where it unpacks", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const outside = yield* fs.makeTempDirectoryScoped();
+      yield* fs.writeFileString(path.join(outside, "owner-file"), "the owner's file");
+
+      const { staging, reason } = yield* install([], ({ staging }) => fs.symlink(outside, staging));
+
+      // The download matched; only unpacking it failed, in a folder of its own.
+      assert.strictEqual(reason, "extract");
+      assert.deepStrictEqual(yield* fs.readDirectory(outside), ["owner-file"]);
+      assert.strictEqual((yield* fs.lstat(staging)).type, "Directory");
     }).pipe(Effect.scoped, Effect.provide(machine)),
   );
 });

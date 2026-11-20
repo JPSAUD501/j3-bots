@@ -380,7 +380,7 @@ const pairingCheck = (status: Option.Option<AdminStatus>, outside: boolean) => {
         "Pairing",
         "warning",
         "No device is paired yet.",
-        "Run `j3-bots pair` and enter the code in the web client.",
+        "In this release the web client is served but cannot pair yet: it does not connect to the server, so a code from `j3-bots pair` cannot be entered.",
       )
     : check(
         "Pairing",

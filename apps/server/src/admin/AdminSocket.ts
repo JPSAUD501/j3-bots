@@ -64,24 +64,31 @@ const routes = Layer.mergeAll(
   ),
 );
 
-const listen = Layer.unwrap(
+// Node removes the socket file when the server closes.
+const listen = (adminSocket: string) =>
+  Layer.mergeAll(
+    Layer.effect(HttpServer.HttpServer)(
+      Ports.makeServer(() => NodeHttp.createServer(), {
+        path: adminSocket,
+        gracefulShutdownTimeout: "1 second",
+      }),
+    ),
+    NodeHttpServer.layerHttpServices,
+  );
+
+const served = Layer.unwrap(
   Effect.gen(function* () {
     const { adminSocket } = yield* ServerConfig;
     const fs = yield* FileSystem.FileSystem;
-    // Node removes the socket file when the server closes.
-    return Layer.mergeAll(
-      Layer.effect(HttpServer.HttpServer)(
-        Ports.makeServer(() => NodeHttp.createServer(), {
-          path: adminSocket,
-          gracefulShutdownTimeout: "1 second",
-        }),
-      ),
-      NodeHttpServer.layerHttpServices,
-    ).pipe(Layer.tap(() => fs.chmod(adminSocket, 0o600)));
+    // The private home (0700) is what keeps other users out; the socket's own
+    // mode is defence in depth. It is set once the routes are served, because
+    // anything that waits between the bind and the handler (`Ports.serve`)
+    // would leave a request that arrived in between unanswered.
+    return Ports.serve(routes, listen(adminSocket), { logAddress: false }).pipe(
+      Layer.tap(() => fs.chmod(adminSocket, 0o600)),
+    );
   }),
 );
-
-const served = Ports.serve(routes, listen, { logAddress: false });
 
 /**
  * The admin socket's routes, listening at `<home>/admin.sock`. Its server is
