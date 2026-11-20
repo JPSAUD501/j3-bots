@@ -331,7 +331,7 @@ const providerCheck = Effect.fn("doctor.provider")(function* (
         harness.name,
         "problem",
         `${provider.name} has no way to reach its models yet.`,
-        `Run \`${provider.status.command}\` as this user. The engine picks the change up without a restart.`,
+        `Run \`${provider.status.command}\` as this user.`,
       );
     }
   }

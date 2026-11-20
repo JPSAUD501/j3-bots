@@ -126,8 +126,9 @@ const connect = Command.make("connect", { baseUrl: baseUrlFlag }).pipe(
         case "active":
           return yield* Console.log(
             [
-              `Claude Code and Codex now reach their models through ${outcome.baseUrl}.`,
-              "The engine picks the change up by itself. `j3-bots doctor` shows when each provider is ready.",
+              `Claude Code and Codex reach their models through ${outcome.baseUrl} from the next time each starts.`,
+              "One already running keeps the connection it started with, and Codex runs one process for all its work. To put every bot on this connection now, restart J3 Bots: `systemctl --user restart j3-bots`. That stops any work a bot has running.",
+              "`j3-bots doctor` shows when each provider is ready.",
             ].join("\n"),
           );
       }
