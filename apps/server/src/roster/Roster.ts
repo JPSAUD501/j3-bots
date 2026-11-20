@@ -101,7 +101,11 @@ export const layer = Layer.effect(
         const room = yield* rooms.find(scope.roomId);
         return Option.isSome(room)
           ? ({ _tag: "changed", upsert: [yield* roomItem(room.value)], remove: [] } as const)
-          : ({ _tag: "changed", upsert: [], remove: [{ _tag: "room", roomId: scope.roomId }] } as const);
+          : ({
+              _tag: "changed",
+              upsert: [],
+              remove: [{ _tag: "room", roomId: scope.roomId }],
+            } as const);
       }
       const bot = yield* bots.find(scope.botId);
       return Option.isSome(bot)

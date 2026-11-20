@@ -22,9 +22,7 @@ const fingerprintText = (payload: unknown): string =>
   JSON.stringify(payload, (_key: string, member: unknown): unknown => {
     if (DateTime.isDateTime(member)) return DateTime.formatIso(member);
     return Predicate.isObject(member) && !Array.isArray(member)
-      ? Object.fromEntries(
-          Object.entries(member).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
-        )
+      ? Object.fromEntries(Object.entries(member).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
       : member;
   });
 

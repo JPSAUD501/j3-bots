@@ -70,7 +70,11 @@ const decodeRoutine = Schema.decodeUnknownEffect(Routine);
 const encodeTrigger = Schema.encodeEffect(json(RoutineTrigger));
 
 export type RoutineFrame =
-  | { readonly _tag: "snapshot"; readonly sequence: Sequence; readonly routines: ReadonlyArray<Routine> }
+  | {
+      readonly _tag: "snapshot";
+      readonly sequence: Sequence;
+      readonly routines: ReadonlyArray<Routine>;
+    }
   | {
       readonly _tag: "changed";
       readonly sequence: Sequence;
@@ -98,7 +102,7 @@ export interface RoutineChanges {
  * again. Fails with `Invalid` for a schedule that does not parse, names an
  * unknown time zone, or runs more often than every five minutes.
  */
-export const nextRun = (
+const nextRun = (
   trigger: RoutineTrigger,
   now: DateTime.Utc,
 ): Effect.Effect<Option.Option<DateTime.Utc>, Invalid> => {
@@ -148,7 +152,10 @@ export class Routines extends Context.Service<
       readonly routineId: RoutineId;
       readonly before: RoutineRunId | null;
       readonly limit: number;
-    }) => Effect.Effect<{ readonly runs: ReadonlyArray<RoutineRun>; readonly hasOlder: boolean }, NotFound>;
+    }) => Effect.Effect<
+      { readonly runs: ReadonlyArray<RoutineRun>; readonly hasOlder: boolean },
+      NotFound
+    >;
     readonly create: (input: {
       readonly commandId: CommandId;
       readonly botId: BotId;
@@ -199,7 +206,10 @@ export const layer = Layer.effect(
     `);
 
     const routineRows = SqlSchema.findAll({
-      Request: Schema.Struct({ botId: Schema.NullOr(BotId), ids: Schema.NullOr(Schema.Array(RoutineId)) }),
+      Request: Schema.Struct({
+        botId: Schema.NullOr(BotId),
+        ids: Schema.NullOr(Schema.Array(RoutineId)),
+      }),
       Result: RoutineRow,
       execute: ({ botId, ids: routineIds }) =>
         routineIds !== null
@@ -289,7 +299,11 @@ export const layer = Layer.effect(
       change: "created" | "updated" | "paused" | "resumed" | "deleted",
       author: Author,
     ) {
-      yield* changes.record({ _tag: "routines", botId: routine.botId }, routine.id, change === "deleted");
+      yield* changes.record(
+        { _tag: "routines", botId: routine.botId },
+        routine.id,
+        change === "deleted",
+      );
       yield* entries.append({
         target: { _tag: "conversation", botId: routine.botId },
         entry: {
@@ -319,8 +333,7 @@ export const layer = Layer.effect(
           const now = yield* DateTime.now;
           const next = yield* nextRun(input.draft.trigger, now);
           const id = RoutineId.make(yield* ids.make("routine"));
-          const secret =
-            input.draft.trigger._tag === "webhook" ? yield* ids.make("hook") : null;
+          const secret = input.draft.trigger._tag === "webhook" ? yield* ids.make("hook") : null;
           const at = timeText(now);
           yield* sql`
             INSERT INTO routines (
@@ -427,7 +440,11 @@ export const layer = Layer.effect(
         Effect.gen(function* () {
           yield* requireBot(botId);
           const sequence = yield* changes.watermark;
-          return { _tag: "snapshot", sequence, routines: yield* list(botId) } satisfies RoutineFrame;
+          return {
+            _tag: "snapshot",
+            sequence,
+            routines: yield* list(botId),
+          } satisfies RoutineFrame;
         }),
       );
     });
@@ -442,7 +459,9 @@ export const layer = Layer.effect(
           const resume = yield* changes.since({ _tag: "routines", botId }, after);
           if (resume._tag === "gap") return Option.none<RoutineFrame>();
           const last = resume.changes.at(-1);
-          const touched = [...new Set(resume.changes.map((change) => RoutineId.make(change.entityId)))];
+          const touched = [
+            ...new Set(resume.changes.map((change) => RoutineId.make(change.entityId))),
+          ];
           const upsert = touched.length === 0 ? [] : yield* select({ botId: null, ids: touched });
           const present = new Set(upsert.map((routine) => routine.id));
           return Option.some<RoutineFrame>({
@@ -470,7 +489,9 @@ export const layer = Layer.effect(
               Stream.mapEffect(() =>
                 changesSince(botId, sequence).pipe(
                   // Too much changed at once to replay: start over.
-                  Effect.flatMap(Option.match({ onNone: () => snapshot(botId), onSome: Effect.succeed })),
+                  Effect.flatMap(
+                    Option.match({ onNone: () => snapshot(botId), onSome: Effect.succeed }),
+                  ),
                 ),
               ),
               Stream.filter(

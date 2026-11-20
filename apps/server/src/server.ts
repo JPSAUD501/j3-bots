@@ -12,7 +12,6 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as DeviceAuth from "./auth/DeviceAuth.ts";
 import * as ServerConfig from "./config.ts";
 import * as Domain from "./domain.ts";
 import * as Http from "./http.ts";

@@ -158,9 +158,7 @@ const download = HttpRouter.add(
       Effect.option,
     );
     const attachments = yield* Attachments;
-    const stored = Option.isSome(params)
-      ? yield* attachments.open(params.value.id)
-      : Option.none();
+    const stored = Option.isSome(params) ? yield* attachments.open(params.value.id) : Option.none();
     if (Option.isNone(stored)) return HttpServerResponse.empty({ status: 404 });
     const { attachment, path } = stored.value;
     return yield* HttpServerResponse.file(path, {

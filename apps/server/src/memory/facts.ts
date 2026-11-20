@@ -77,8 +77,7 @@ export const search = (
     })
     .filter(({ score }) => score > 0)
     .sort(
-      (a, b) =>
-        b.score - a.score || (b.fact.date ?? "9999").localeCompare(a.fact.date ?? "9999"),
+      (a, b) => b.score - a.score || (b.fact.date ?? "9999").localeCompare(a.fact.date ?? "9999"),
     )
     .slice(0, limit)
     .map(({ fact }) => fact);

@@ -7,6 +7,7 @@ import {
   EntryId,
   type EntryTarget,
   Invalid,
+  MAX_ATTACHMENT_NAME_LENGTH,
   NonNegativeInt,
 } from "@j3-bots/contracts";
 import { normalizeAttachmentMetadata } from "@j3-bots/engine-t3";
@@ -26,9 +27,6 @@ import { Ids } from "../Ids.ts";
 import { Layout } from "../Layout.ts";
 import { Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
-
-/** The longest name `POST /attachments` takes (`HTTP_PATHS.attachments`). */
-const MAX_NAME_LENGTH = 200;
 
 const AttachmentRow = Schema.Struct({
   id: AttachmentId,
@@ -128,7 +126,7 @@ export const layer = Layer.effect(
       if (
         input.bytes.length === 0 ||
         metadata === undefined ||
-        metadata.name.length > MAX_NAME_LENGTH
+        metadata.name.length > MAX_ATTACHMENT_NAME_LENGTH
       ) {
         return yield* new Invalid({ reason: "attachment" });
       }

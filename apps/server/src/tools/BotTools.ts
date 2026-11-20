@@ -18,7 +18,8 @@ import { type TurnToolCall, TurnTools } from "./TurnTools.ts";
 /** Why a call did nothing, in words the bot reads. */
 class Refused extends Schema.TaggedError<Refused>()("Refused", { reason: Schema.String }) {}
 
-const encodeJson = <S extends Schema.Top>(schema: S) => Schema.encodeEffect(Schema.toCodecJson(schema));
+const encodeJson = <S extends Schema.Top>(schema: S) =>
+  Schema.encodeEffect(Schema.toCodecJson(schema));
 
 /**
  * The `j3` tools' server side. A call is accepted only from a live session of
@@ -103,14 +104,12 @@ export const layer = Layer.effect(
             tier: input.tier ?? "log",
             scope: input.scope ?? "bot",
           })
-          .pipe(
-          Effect.map((result): Schema.Json => ({ ...result })),
-        ),
+          .pipe(Effect.map((result): Schema.Json => ({ ...result }))),
       ),
       forget: handler(tools.forget.input, (input, { caller }) =>
-        memory.forget({ botId: caller.botId, fact: input.fact, scope: input.scope ?? "bot" }).pipe(
-          Effect.map((result): Schema.Json => ({ ...result })),
-        ),
+        memory
+          .forget({ botId: caller.botId, fact: input.fact, scope: input.scope ?? "bot" })
+          .pipe(Effect.map((result): Schema.Json => ({ ...result }))),
       ),
       recall: handler(tools.recall.input, (input, { caller }) =>
         memory
@@ -121,9 +120,7 @@ export const layer = Layer.effect(
             limit: input.limit ?? 10,
           })
           .pipe(
-            Effect.map(
-              (facts): Schema.Json => ({ facts: facts.map((fact) => ({ ...fact })) }),
-            ),
+            Effect.map((facts): Schema.Json => ({ facts: facts.map((fact) => ({ ...fact })) })),
           ),
       ),
       list_routines: handler(tools.list_routines.input, (_input, { caller }) =>

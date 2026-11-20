@@ -28,7 +28,7 @@ export const scopeKey = (scope: ChangeScope): string =>
   scope._tag === "room" ? `room:${scope.roomId}` : `${scope._tag}:${scope.botId}`;
 
 /** One recorded change: the entity, and whether it was removed. */
-export interface Change {
+interface Change {
   readonly sequence: Sequence;
   readonly entityId: string;
   readonly removed: boolean;

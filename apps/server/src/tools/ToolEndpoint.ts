@@ -39,4 +39,6 @@ const listen = Layer.unwrap(
   }),
 );
 
-export const layer = HttpRouter.serve(routes, { disableListenLog: true }).pipe(Layer.provide(listen));
+export const layer = HttpRouter.serve(routes, { disableListenLog: true }).pipe(
+  Layer.provide(listen),
+);

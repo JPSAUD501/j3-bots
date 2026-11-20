@@ -259,7 +259,8 @@ export const layer = Layer.effect(
           const at = timeText(now);
           const members = change.members ?? room.members;
           const hostId = change.hostId ?? room.hostId;
-          const active = change.archived === undefined ? room.status === "active" : !change.archived;
+          const active =
+            change.archived === undefined ? room.status === "active" : !change.archived;
           if (active && (changesMore || room.status === "archived")) {
             if (hostId === null) return yield* new Invalid({ reason: "room-members" });
             yield* checkMembers(members, hostId);
@@ -308,13 +309,17 @@ export const layer = Layer.effect(
       const now = yield* DateTime.now;
       for (const room of yield* select({ id: null, botId })) {
         const rest = room.members.filter((member) => member !== botId);
-        const nextHost = room.hostId === botId ? (rest[0] ?? null) : room.hostId;
+        const archives = room.status === "active" && rest.length < 2;
+        // A room that stays active passes to the member who joined first; one
+        // archived here keeps no host.
+        const nextHost = room.hostId !== botId ? room.hostId : archives ? null : (rest[0] ?? null);
         yield* writeMembers(room.id, rest);
+        // Archived first: the database refuses an active room without a host.
+        if (archives) yield* archive(room.id, now);
         yield* sql`
           UPDATE rooms SET host_bot_id = ${nextHost}, updated_at = ${timeText(now)}
           WHERE id = ${room.id}
         `.pipe(Effect.orDie);
-        if (room.status === "active" && rest.length < 2) yield* archive(room.id, now);
         yield* changes.touch({ _tag: "room", roomId: room.id });
       }
     }, transaction);

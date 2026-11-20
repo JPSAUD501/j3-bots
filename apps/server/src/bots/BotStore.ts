@@ -109,11 +109,7 @@ export class BotStore extends Context.Service<
     readonly avatars: Effect.Effect<ReadonlyArray<Avatar>>;
     /** The bot and its conversation. */
     readonly insert: (bot: NewBot) => Effect.Effect<void>;
-    readonly update: (
-      id: BotId,
-      changes: BotChanges,
-      at: DateTime.Utc,
-    ) => Effect.Effect<void>;
+    readonly update: (id: BotId, changes: BotChanges, at: DateTime.Utc) => Effect.Effect<void>;
     /** Makes no bot primary; the caller then makes one primary, in the same transaction. */
     readonly clearPrimary: (at: DateTime.Utc) => Effect.Effect<ReadonlyArray<BotId>>;
     readonly setEngineProject: (id: BotId, projectId: EngineProjectId) => Effect.Effect<void>;
@@ -214,7 +210,10 @@ export const layer = Layer.effect(
 
     return BotStore.of({
       find,
-      list: listRows(undefined).pipe(Effect.orDie, Effect.map((rows) => rows.map(toStored))),
+      list: listRows(undefined).pipe(
+        Effect.orDie,
+        Effect.map((rows) => rows.map(toStored)),
+      ),
       avatars: avatarRows(undefined).pipe(Effect.orDie),
       insert,
       update,

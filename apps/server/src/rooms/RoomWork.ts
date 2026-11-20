@@ -19,4 +19,7 @@ export class RoomWork extends Context.Service<
   { readonly end: (roomId: RoomId) => Effect.Effect<void> }
 >()("@j3-bots/server/rooms/RoomWork") {}
 
-export const layer = Layer.succeed(RoomWork, RoomWork.of({ end: Effect.fn("RoomWork.end")(() => Effect.void) }));
+export const layer = Layer.succeed(
+  RoomWork,
+  RoomWork.of({ end: Effect.fn("RoomWork.end")(() => Effect.void) }),
+);

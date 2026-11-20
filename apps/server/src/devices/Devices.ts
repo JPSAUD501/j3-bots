@@ -128,15 +128,13 @@ export const layer = Layer.effect(
 
     const list = Effect.fn("Devices.list")(function* (current: DeviceId) {
       const rows = yield* deviceRows(undefined).pipe(Effect.orDie);
-      return rows.map(
-        (row): Device => ({
-          id: row.id,
-          name: row.name,
-          pairedAt: row.paired_at,
-          lastSeenAt: row.last_seen_at,
-          current: row.id === current,
-        }),
-      );
+      return rows.map((row): Device => ({
+        id: row.id,
+        name: row.name,
+        pairedAt: row.paired_at,
+        lastSeenAt: row.last_seen_at,
+        current: row.id === current,
+      }));
     });
 
     return Devices.of({ startPairing, pair, list });

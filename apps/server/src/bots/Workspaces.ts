@@ -115,7 +115,9 @@ export const layer = Layer.effect(
     const provision = Effect.fn("Workspaces.provision")(function* (botId: BotId) {
       const workspace = layout.workspace(botId);
       for (const folder of FOLDERS) {
-        yield* fs.makeDirectory(path.join(workspace, folder), { recursive: true }).pipe(Effect.orDie);
+        yield* fs
+          .makeDirectory(path.join(workspace, folder), { recursive: true })
+          .pipe(Effect.orDie);
       }
       yield* fs.makeDirectory(layout.sharedMemory, { recursive: true }).pipe(Effect.orDie);
       yield* fs.makeDirectory(layout.sharedSkills, { recursive: true }).pipe(Effect.orDie);
@@ -136,7 +138,9 @@ export const layer = Layer.effect(
       provision,
       render,
       renderAll: bots.list.pipe(
-        Effect.flatMap((all) => Effect.forEach(all, ({ bot }) => render(bot.id), { discard: true })),
+        Effect.flatMap((all) =>
+          Effect.forEach(all, ({ bot }) => render(bot.id), { discard: true }),
+        ),
       ),
       remove,
     });

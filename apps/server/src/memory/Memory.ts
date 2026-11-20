@@ -48,7 +48,10 @@ export class Memory extends Context.Service<
   Memory,
   {
     readonly list: (scope: MemoryScope) => Effect.Effect<ReadonlyArray<MemoryFile>, NotFound>;
-    readonly read: (scope: MemoryScope, path: MemoryPath) => Effect.Effect<MemoryDocument, NotFound>;
+    readonly read: (
+      scope: MemoryScope,
+      path: MemoryPath,
+    ) => Effect.Effect<MemoryDocument, NotFound>;
     readonly write: (input: {
       readonly commandId: CommandId;
       readonly scope: MemoryScope;

@@ -118,9 +118,15 @@ export type EntryFrame =
       readonly entries: ReadonlyArray<Entry>;
       readonly hasOlder: boolean;
     }
-  | { readonly _tag: "changed"; readonly sequence: Sequence; readonly upsert: ReadonlyArray<Entry> };
+  | {
+      readonly _tag: "changed";
+      readonly sequence: Sequence;
+      readonly upsert: ReadonlyArray<Entry>;
+    };
 
-const scopeOf = (target: EntryTarget): Extract<ChangeScope, { readonly _tag: "conversation" | "room" }> =>
+const scopeOf = (
+  target: EntryTarget,
+): Extract<ChangeScope, { readonly _tag: "conversation" | "room" }> =>
   target._tag === "conversation"
     ? { _tag: "conversation", botId: target.botId }
     : { _tag: "room", roomId: target.roomId };
@@ -150,7 +156,10 @@ export class Entries extends Context.Service<
       readonly target: EntryTarget;
       readonly before: EntryOrder;
       readonly limit: number;
-    }) => Effect.Effect<{ readonly entries: ReadonlyArray<Entry>; readonly hasOlder: boolean }, NotFound>;
+    }) => Effect.Effect<
+      { readonly entries: ReadonlyArray<Entry>; readonly hasOlder: boolean },
+      NotFound
+    >;
     /** Moves the operator's read mark forward to `through`. */
     readonly markRead: (target: EntryTarget, through: EntryOrder) => Effect.Effect<void, NotFound>;
     readonly summary: (target: EntryTarget) => Effect.Effect<TargetSummary>;
@@ -381,11 +390,12 @@ export const layer = Layer.effect(
           const resume = yield* changes.since(scopeOf(target), after);
           if (resume._tag === "gap") return Option.none<EntryFrame>();
           const last = resume.changes.at(-1);
-          if (last === undefined) return Option.some<EntryFrame>({
-            _tag: "changed",
-            sequence: after,
-            upsert: [],
-          });
+          if (last === undefined)
+            return Option.some<EntryFrame>({
+              _tag: "changed",
+              sequence: after,
+              upsert: [],
+            });
           const rows = yield* rowsOf({
             ids: [...new Set(resume.changes.map((change) => EntryId.make(change.entityId)))],
           }).pipe(Effect.orDie);

@@ -25,7 +25,6 @@ import { EngineState } from "../engine/EngineState.ts";
 import { Ids } from "../Ids.ts";
 import { Layout } from "../Layout.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
-import { transactional } from "../persistence/transaction.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import { freeAvatar } from "./avatars.ts";
 import { type BotChanges, BotStore } from "./BotStore.ts";
@@ -77,7 +76,6 @@ export const layer = Layer.effect(
   Bots,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    const transaction = transactional(sql);
     const store = yield* BotStore;
     const rooms = yield* Rooms;
     const attachments = yield* Attachments;

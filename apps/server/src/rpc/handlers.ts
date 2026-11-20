@@ -25,6 +25,7 @@ export const ServedRpcs = J3Rpcs.omit(
   "card.answer",
   "secret.provide",
   "notice.retry",
+  "message.retry",
   "bot.stop",
   "bot.freshStart",
   "routine.run",
