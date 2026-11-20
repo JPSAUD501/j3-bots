@@ -23,6 +23,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as NetAddress from "effect/net/NetAddress";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { ServerConfig } from "../config.ts";
@@ -32,6 +33,8 @@ import { ChangeLog, scopeKey } from "../persistence/ChangeLog.ts";
 import { Flag, json, Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
+import { EVERY_IPV4_INTERFACE, Network, reachableHosts } from "../system/Network.ts";
+import * as Tls from "../system/Tls.ts";
 import { Ledger } from "../turns/Ledger.ts";
 import { RoutineRuns } from "./RoutineRuns.ts";
 import { plannedRun } from "./schedule.ts";
@@ -156,13 +159,33 @@ export const layer = Layer.effect(
     const ledger = yield* Ledger;
     const routineRuns = yield* RoutineRuns;
     const scheduler = yield* Scheduler;
+    const network = yield* Network;
 
     /** A new webhook secret, which goes in the address after the routine's id. */
     const newSecret = Effect.map(random.randomBytes(SECRET_BYTES), Base64Url.encode);
 
-    const origin = `${config.tls._tag === "Some" ? "https" : "http"}://${
-      config.host.includes(":") ? `[${config.host}]` : config.host
-    }:${config.port}`;
+    // Where the server listens, as `j3-bots pair` reads it from the running
+    // listener. The configuration was checked as the server started, the
+    // certificate included.
+    const listener = {
+      scheme: Option.isSome(config.tls) ? ("https" as const) : ("http" as const),
+      address: config.host,
+      names: Option.isSome(config.tls)
+        ? yield* Tls.certificateNames(config.tls.value.certPath).pipe(Effect.orDie)
+        : [],
+    };
+
+    /**
+     * Where another device calls a webhook: the first address it reaches the
+     * server at, as `j3-bots pair` offers them, read when asked since
+     * interfaces come and go. With none, the address bound, or loopback when
+     * that is every interface.
+     */
+    const origin = Effect.gen(function* () {
+      const [host] = yield* reachableHosts(listener).pipe(Effect.provideService(Network, network));
+      const fallback = config.host === EVERY_IPV4_INTERFACE ? "127.0.0.1" : config.host;
+      return `${listener.scheme}://${NetAddress.formatUrlHostString(host ?? fallback)}:${config.port}`;
+    });
 
     const SELECT = sql.literal(`
       SELECT id, bot_id, name, instruction, trigger_json, enabled, webhook_secret, next_run_at,
@@ -206,6 +229,14 @@ export const layer = Layer.effect(
       `,
     });
 
+    const pendingWakes = SqlSchema.findAll({
+      Request: RoutineId,
+      Result: Schema.Struct({ id: Schema.String }),
+      execute: (routineId) => sql`
+        SELECT id FROM wakes WHERE routine_id = ${routineId} AND status = 'pending'
+      `,
+    });
+
     const toRun = Effect.fn("Routines.toRun")(function* (row: typeof RunRow.Type) {
       const delivered =
         row.wake_id === null
@@ -237,7 +268,7 @@ export const layer = Layer.effect(
         webhookUrl:
           row.webhook_secret === null
             ? null
-            : `${origin}${WEBHOOK_PATH}/${row.id}/${row.webhook_secret}`,
+            : `${yield* origin}${WEBHOOK_PATH}/${row.id}/${row.webhook_secret}`,
         nextRunAt: row.next_run_at,
         lastRun: last === undefined ? null : yield* toRun(last),
         runCount: row.run_count,
@@ -392,9 +423,7 @@ export const layer = Layer.effect(
         apply: Effect.gen(function* () {
           const routine = yield* find(input.routineId);
           // A run still waiting for its session has nothing left to run.
-          const waiting = yield* sql<{ readonly id: string }>`
-            SELECT id FROM wakes WHERE routine_id = ${routine.id} AND status = 'pending'
-          `.pipe(Effect.orDie);
+          const waiting = yield* pendingWakes(routine.id).pipe(Effect.orDie);
           yield* ledger.cancelWakes(waiting.map((wake) => wake.id));
           yield* sql`DELETE FROM routines WHERE id = ${routine.id}`.pipe(Effect.orDie);
           yield* announce(routine, "deleted", input.author);

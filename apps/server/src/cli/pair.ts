@@ -9,11 +9,8 @@ import * as NetAddress from "effect/net/NetAddress";
 import { AdminClient } from "../admin/AdminClient.ts";
 import type { ListenerStatus } from "../admin/protocol.ts";
 import * as ServerConfig from "../config.ts";
-import { isPrivateAddress, Network } from "../system/Network.ts";
+import { reachableHosts } from "../system/Network.ts";
 import { refuse, userFacing } from "./errors.ts";
-
-/** Interfaces of containers and virtual networks, which no other device reaches the server through. */
-const VIRTUAL_INTERFACE = /^(docker|veth|br-|virbr|cni|flannel|cali|podman)/;
 
 const NOT_RUNNING =
   "The server is not running, and pairing codes live in the running server. Start it with `systemctl --user start j3-bots` (or `j3-bots serve`), then run `j3-bots pair` again.";
@@ -35,25 +32,12 @@ const whereToOpen = Effect.fn("pair.whereToOpen")(function* (listener: ListenerS
           ...addresses.map((address) => `  ${url(address)}`),
           "On the new device, open J3 Bots at one of these addresses and enter the code.",
         ];
-  if (listener.scheme === "https") {
-    return listener.names.length === 0
-      ? [
-          `The server listens at https://<a name the server's certificate covers>:${listener.port}.`,
-          "On the new device, open J3 Bots there and enter the code.",
-        ]
-      : listing(listener.names);
-  }
-  let hosts = [listener.address];
-  if (listener.address === "0.0.0.0") {
-    const network = yield* Network;
-    hosts = (yield* network.ipv4Addresses)
-      .filter(
-        (entry) =>
-          !entry.internal &&
-          !VIRTUAL_INTERFACE.test(entry.interface) &&
-          isPrivateAddress(entry.address),
-      )
-      .map((entry) => entry.address);
+  const hosts = yield* reachableHosts(listener);
+  if (listener.scheme === "https" && hosts.length === 0) {
+    return [
+      `The server listens at https://<a name the server's certificate covers>:${listener.port}.`,
+      "On the new device, open J3 Bots there and enter the code.",
+    ];
   }
   return listing(hosts);
 });

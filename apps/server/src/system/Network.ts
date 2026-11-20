@@ -76,6 +76,37 @@ export const isPrivateAddress = (address: string): boolean => {
   return false;
 };
 
+/** The address that listens on every IPv4 interface. */
+export const EVERY_IPV4_INTERFACE = "0.0.0.0";
+
+/** Interfaces of containers and virtual networks, which no other device reaches the server through. */
+const VIRTUAL_INTERFACE = /^(docker|veth|br-|virbr|cni|flannel|cali|podman)/;
+
+/**
+ * The hosts another device reaches a listener at, best first. Over HTTPS a
+ * browser accepts only a name on the certificate (`names`), so no bare
+ * address is offered; over HTTP, the address bound or, for every IPv4
+ * interface (`0.0.0.0`), the private addresses of this machine's real
+ * interfaces. Empty when there is none.
+ */
+export const reachableHosts = Effect.fn("Network.reachableHosts")(function* (listener: {
+  readonly scheme: "http" | "https";
+  readonly address: string;
+  readonly names: ReadonlyArray<string>;
+}) {
+  if (listener.scheme === "https") return listener.names;
+  if (listener.address !== EVERY_IPV4_INTERFACE) return [listener.address];
+  const network = yield* Network;
+  return (yield* network.ipv4Addresses)
+    .filter(
+      (entry) =>
+        !entry.internal &&
+        !VIRTUAL_INTERFACE.test(entry.interface) &&
+        isPrivateAddress(entry.address),
+    )
+    .map((entry) => entry.address);
+});
+
 /**
  * Destroys, as it is accepted and before any of its bytes is read, every
  * connection whose local address `allows` refuses. A listener on every

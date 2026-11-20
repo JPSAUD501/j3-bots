@@ -41,6 +41,18 @@ const dnsNames = (subjectAltName: string | undefined) =>
     .flatMap((entry) => (entry.startsWith("DNS:") ? [entry.slice("DNS:".length)] : []))
     .filter((name) => !name.includes("*"));
 
+/** The DNS names the certificate at `certPath` covers, wildcards left out: the names clients open. */
+export const certificateNames = Effect.fn("Tls.certificateNames")(function* (certPath: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const cert = yield* fs
+    .readFileString(certPath)
+    .pipe(Effect.mapError(() => new TlsUnusable({ reason: "unreadable", path: certPath })));
+  return yield* Effect.try({
+    try: () => dnsNames(new NodeCrypto.X509Certificate(cert).subjectAltName),
+    catch: () => new TlsUnusable({ reason: "not-a-pair", path: certPath }),
+  });
+});
+
 /**
  * Reads a certificate and key and checks that Node can serve with them, the
  * way the HTTPS listener will, without opening one.

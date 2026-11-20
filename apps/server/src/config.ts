@@ -10,7 +10,7 @@ import * as Schema from "effect/Schema";
 import { HOME_ENTRIES, homeLayout } from "./home/entries.ts";
 import * as Installation from "./installation.ts";
 import { isWithin, realLocation } from "./paths.ts";
-import { isPrivateAddress, Network } from "./system/Network.ts";
+import { EVERY_IPV4_INTERFACE, isPrivateAddress, Network } from "./system/Network.ts";
 import * as TlsCredentials from "./system/Tls.ts";
 import { isBuilt } from "./web/built.ts";
 
@@ -139,7 +139,6 @@ const MAX_SOCKET_PATH_BYTES = 103;
 
 /** The `host` value that listens on every IPv4 interface, if all of them are private. */
 const LAN = "lan";
-const LAN_ADDRESS = "0.0.0.0";
 
 const Tls = Schema.Struct({ cert: Schema.NonEmptyString, key: Schema.NonEmptyString });
 
@@ -512,7 +511,7 @@ export const load = Effect.gen(function* () {
     configFile,
     databasePath: path.join(home, HOME_ENTRIES.database),
     engineHome: path.join(home, HOME_ENTRIES.engine),
-    host: hostValue === LAN ? LAN_ADDRESS : hostValue,
+    host: hostValue === LAN ? EVERY_IPV4_INTERFACE : hostValue,
     privateOnly: hostValue === LAN || Option.isNone(tls),
     port: ports.port,
     tls,

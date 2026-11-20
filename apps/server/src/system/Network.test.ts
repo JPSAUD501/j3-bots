@@ -4,7 +4,7 @@ import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import { guardConnections, isPrivateAddress } from "./Network.ts";
+import { guardConnections, isPrivateAddress, Network, reachableHosts } from "./Network.ts";
 
 /**
  * What a client that sends a request to a guarded server reads back, and
@@ -53,4 +53,32 @@ it.effect("judges an IPv4-mapped address, as a dual-stack socket reports it, as 
     assert.isTrue(isPrivateAddress("::ffff:10.0.0.4"));
     assert.isFalse(isPrivateAddress("::ffff:198.51.100.4"));
   }),
+);
+
+it.effect(
+  "offers the private addresses of real interfaces for every interface, and names over HTTPS",
+  () =>
+    Effect.gen(function* () {
+      const lan = { scheme: "http", address: "0.0.0.0", names: [] } as const;
+      assert.deepStrictEqual(yield* reachableHosts(lan), ["192.168.0.20", "10.0.0.7"]);
+      assert.deepStrictEqual(yield* reachableHosts({ ...lan, address: "192.168.0.20" }), [
+        "192.168.0.20",
+      ]);
+      assert.deepStrictEqual(
+        yield* reachableHosts({ scheme: "https", address: "0.0.0.0", names: ["j3.example.com"] }),
+        ["j3.example.com"],
+      );
+    }).pipe(
+      Effect.provideService(
+        Network,
+        Network.of({
+          ipv4Addresses: Effect.succeed([
+            { interface: "lo", address: "127.0.0.1", internal: true },
+            { interface: "eth0", address: "192.168.0.20", internal: false },
+            { interface: "docker0", address: "172.17.0.1", internal: false },
+            { interface: "wlan0", address: "10.0.0.7", internal: false },
+          ]),
+        }),
+      ),
+    ),
 );
