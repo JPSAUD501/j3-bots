@@ -284,7 +284,12 @@ export const BotRpcs = RpcGroup.make(
    * received yet. What was already done stays done.
    */
   Rpc.make("bot.stop", { payload: { ...command, botId: BotId }, error: CommandError }),
-  /** Resets the bot's working context. Conversation, memory, routines and files stay. */
+  /**
+   * Resets the bot's working context: stops any work it has running, then
+   * starts it on a new session that carries nothing over from the old one, not
+   * even a digest of the conversation. Conversation, memory, routines and
+   * files stay.
+   */
   Rpc.make("bot.freshStart", { payload: { ...command, botId: BotId }, error: CommandError }),
   /**
    * Removes the bot, its conversation, memory and routines. What it said in rooms
