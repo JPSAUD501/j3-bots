@@ -419,6 +419,8 @@ export const en = {
   "editBot.model.unavailable": "The engine no longer offers this model. Choose another to save.",
   "editBot.permissionMode": "Permission mode",
   "editBot.nextTurn": "{name} uses the new settings from its next turn.",
+  "editBot.providerChangeStops":
+    "Moving to another provider stops any work {name} has running. It then starts a new working context, with a summary of your conversation.",
   "editBot.cancel": "Cancel",
   "editBot.save": "Save changes",
   "editBot.saving": "Saving…",

@@ -424,6 +424,8 @@ export const ptBR: Catalog = {
   "editBot.model.unavailable": "O motor não oferece mais este modelo. Escolha outro para salvar.",
   "editBot.permissionMode": "Modo de permissão",
   "editBot.nextTurn": "{name} usa as novas configurações a partir do próximo turno.",
+  "editBot.providerChangeStops":
+    "Mudar de provedor interrompe qualquer trabalho que {name} tenha em andamento. Depois, ele começa um novo contexto de trabalho, com um resumo da conversa.",
   "editBot.cancel": "Cancelar",
   "editBot.save": "Salvar alterações",
   "editBot.saving": "Salvando…",
