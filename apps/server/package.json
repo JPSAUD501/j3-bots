@@ -4,6 +4,12 @@
   "private": true,
   "license": "AGPL-3.0-or-later",
   "type": "module",
+  "exports": {
+    "./testing": {
+      "types": "./src/testing/index.ts",
+      "import": "./src/testing/index.ts"
+    }
+  },
   "scripts": {
     "start": "node src/bin.ts",
     "typecheck": "effect-tsgo tsrs --noEmit",

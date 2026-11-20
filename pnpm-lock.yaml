@@ -170,9 +170,15 @@ catalogs:
     '@effect/tsgo':
       specifier: 0.67.1
       version: 0.67.1
+    '@types/react':
+      specifier: 19.3.0
+      version: 19.3.0
     knip:
       specifier: 6.34.0
       version: 6.34.0
+    react:
+      specifier: 19.3.0
+      version: 19.3.0
 
 overrides:
   '@effect/platform-node': 4.1.2
@@ -229,6 +235,31 @@ importers:
       '@effect/vitest':
         specifier: 4.1.2
         version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@types/node@24.12.4)(@vitest/ui@5.0.5)(effect@4.1.3)(jiti@2.7.0)(yaml@2.9.1)
+      vite-plus:
+        specifier: 1.4.0
+        version: 1.4.0(@types/node@24.12.4)(@vitest/ui@5.0.5)(jiti@2.7.0)(yaml@2.9.1)
+
+  packages/client-runtime:
+    dependencies:
+      '@j3-bots/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      effect:
+        specifier: 4.1.3
+        version: 4.1.3
+    devDependencies:
+      '@effect/vitest':
+        specifier: 4.1.2
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@types/node@24.12.4)(@vitest/ui@5.0.5)(effect@4.1.3)(jiti@2.7.0)(yaml@2.9.1)
+      '@j3-bots/server':
+        specifier: workspace:*
+        version: link:../../apps/server
+      '@types/react':
+        specifier: 'catalog:'
+        version: 19.3.0
+      react:
+        specifier: 'catalog:'
+        version: 19.3.0
       vite-plus:
         specifier: 1.4.0
         version: 1.4.0(@types/node@24.12.4)(@vitest/ui@5.0.5)(jiti@2.7.0)(yaml@2.9.1)
@@ -968,6 +999,9 @@ packages:
   '@types/node@24.12.4':
     resolution: {integrity: sha512-GUUEShf+PBCGW2KaXwcIt3Yk+e3pkKwWKb9GSyM9WQVE+ep2jzmHdGsHzu4wgcZy5fN9FBdVzjpBQsYlpfpgLA==}
 
+  '@types/react@19.3.0':
+    resolution: {integrity: sha512-N0rFCuH9YoxG9/m61l9MfpJKfmLOVU0em7ipIz6TRgSSkvReLB9vL85GB+yr8Bs5leqpvg96JSwF4ZS1s4viQg==}
+
   '@types/ws@8.18.2':
     resolution: {integrity: sha512-67MQl+fpWKVTT1NYdnmo3U4sc/xPo/zQBncVnI74qmQa0z/b+1g6iYqNmGCPbxO+zz2aklb08a0oHfegiVd0/w==}
 
@@ -1221,6 +1255,9 @@ packages:
   convert-source-map@2.0.0:
     resolution: {integrity: sha512-Kvp459HrV2FEJ1CAsi1Ku+MY3kasH19TFykTz2xWmMeq6bk2NU3XXvfJ+Q61m0xktWwt+1HSYf3JZsTms3aRJg==}
 
+  csstype@3.2.4:
+    resolution: {integrity: sha512-PoKaoPzQapnEoqUSnHx1u6W6ku8CVEgKsnpmmzU3m1nwkidpPBQ8V/Zq2+bWNrsOKoKLwTGdbx6xF7BXP1zLVQ==}
+
   dequal@2.0.3:
     resolution: {integrity: sha512-0je+qPKHEMohvfRTCEo3CrPG6cAzAYgmzKyxRiYSSDkS6eGJdyVJm7WaYA5ECaAD9wLB2T4EEeymA5aFVcYXCA==}
     engines: {node: '>=6'}
@@ -1449,6 +1486,10 @@ packages:
 
   react-is@17.0.2:
     resolution: {integrity: sha512-w2GsyukL62IJnlaff/nRegPQR94C/XXamvMWmSHRJ4y7Ts/4ocGRmTHvOs8PSE6pB3dWOrD/nueuU5sduBsQ4w==}
+
+  react@19.3.0:
+    resolution: {integrity: sha512-E8LUcbtBWt20bbl2YoHfx4ZDBdxVTfOKtCZn9cDSJ4l6/nuoApcpIBcj47t2wZoVX8g2ZHuMHbiShgCR1T5Sog==}
+    engines: {node: '>=0.10.0'}
 
   redis@6.3.1:
     resolution: {integrity: sha512-mV96ZKxQ4CGn3SyEGaY0Lb9YA443mdVey3c+mdr0NAUaBxiOZGoYCWX8PoM55kictSOmxlJRtZJxIsmZm3jL+w==}
@@ -2063,6 +2104,10 @@ snapshots:
     dependencies:
       undici-types: 7.16.0
 
+  '@types/react@19.3.0':
+    dependencies:
+      csstype: 3.2.4
+
   '@types/ws@8.18.2':
     dependencies:
       '@types/node': 24.12.4
@@ -2292,6 +2337,8 @@ snapshots:
   chai@6.3.0: {}
 
   convert-source-map@2.0.0: {}
+
+  csstype@3.2.4: {}
 
   dequal@2.0.3: {}
 
@@ -2541,6 +2588,8 @@ snapshots:
       react-is: 17.0.2
 
   react-is@17.0.2: {}
+
+  react@19.3.0: {}
 
   redis@6.3.1:
     dependencies:

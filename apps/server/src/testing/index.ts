@@ -1,0 +1,52 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import { J3Rpcs } from "@j3-bots/contracts";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpServer from "effect/http/HttpServer";
+import * as NetAddress from "effect/net/NetAddress";
+import type * as Rpc from "effect/rpc/Rpc";
+import type * as RpcGroup from "effect/rpc/RpcGroup";
+import type { CurrentDevice } from "../auth/DeviceAuth.ts";
+import * as Http from "../http.ts";
+import * as Handlers from "../rpc/handlers.ts";
+import * as RpcSocket from "../RpcSocket.ts";
+import * as TestDomain from "./domain.ts";
+
+export { DeviceAuth } from "../auth/DeviceAuth.ts";
+export { Bots } from "../bots/Bots.ts";
+export { Devices } from "../devices/Devices.ts";
+export { Entries } from "../entries/Entries.ts";
+
+/** The RPCs of the contract this server does not answer yet. */
+export type UnservedRpcs = Exclude<
+  RpcGroup.Rpcs<typeof J3Rpcs>,
+  RpcGroup.Rpcs<typeof Handlers.ServedRpcs>
+>;
+
+/** What the domain offers the handlers of the RPCs it does not serve yet. */
+type DomainServices = Layer.Success<typeof TestDomain.layer> | CurrentDevice;
+
+/**
+ * The server as a client meets it, for client tests: its HTTP routes and the
+ * RPC socket on a free loopback port, over the in-memory engine and a fresh
+ * database. `unserved` answers the RPCs the server does not serve yet, so a
+ * client can be tested against the whole contract.
+ */
+export const layer = (unserved: Layer.Layer<Rpc.ToHandler<UnservedRpcs>, never, DomainServices>) =>
+  HttpRouter.serve(
+    Layer.mergeAll(
+      Http.routes,
+      RpcSocket.layer(J3Rpcs, Layer.mergeAll(Handlers.handlers, unserved)),
+    ),
+  ).pipe(Layer.provideMerge(NodeHttpServer.layerTest), Layer.provideMerge(TestDomain.layer));
+
+/** The `http:` origin the test server listens on. */
+export const origin = Effect.gen(function* () {
+  const { address } = yield* HttpServer.HttpServer;
+  if (!NetAddress.isInetAddress(address)) {
+    return yield* Effect.die("The test server listens on a TCP port");
+  }
+  return new URL(`http://127.0.0.1:${address.port}`);
+});
