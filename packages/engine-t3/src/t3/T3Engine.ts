@@ -619,19 +619,36 @@ export const make = Effect.fn("engine.make")(function* (options: EngineOptions) 
   // ---------------------------------------------------------------------------
   // Requests
 
-  /** The open request a response is for, or `RequestClosed`. */
-  const openRequest = Effect.fnUntraced(function* (sessionId: SessionId, requestId: RequestId) {
-    const mirror = yield* projection(sessionId);
-    const found = findRequest(mirror, requestId);
-    if (Option.isNone(found) || found.value.resolution !== undefined) {
-      return yield* new RequestClosed({ requestId });
-    }
+  /** The request an answer is for, open or not, or `RequestClosed` if the engine has none. */
+  const knownRequest = Effect.fnUntraced(function* (sessionId: SessionId, requestId: RequestId) {
+    const found = findRequest(yield* projection(sessionId), requestId);
+    if (Option.isNone(found)) return yield* new RequestClosed({ requestId });
     return found.value;
   });
 
-  /** A response that does not fit its request is the caller's bug, not the engine's. */
-  const mismatched = (requestId: RequestId, answer: string) =>
-    Effect.die(new Error(`A ${answer} cannot answer request ${requestId}`));
+  /**
+   * Sends an answer to an approval or a question. The engine replays a command
+   * id it already applied (**Read**, `db51b67`, `Orchestrator.ts`), so a retry
+   * with the same key succeeds even after the answer closed the request. It
+   * refuses any other answer to a request that is no longer pending, which is
+   * `RequestClosed`.
+   */
+  const sendAnswer = (sessionId: SessionId, requestId: RequestId, input: OrchestrationV2Command) =>
+    command(input).pipe(
+      Effect.catchTags({
+        EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
+        OrchestrationV2DispatchCommandError: (error) =>
+          projection(sessionId).pipe(
+            Effect.flatMap((mirror) => {
+              const now = findRequest(mirror, requestId);
+              return Option.isSome(now) && now.value.resolution === undefined
+                ? refused(error)
+                : Effect.fail(new RequestClosed({ requestId }));
+            }),
+          ),
+      }),
+      Effect.asVoid,
+    );
 
   const respond = Effect.fn("Engine.respond")(function* (input: {
     readonly key: IdempotencyKey;
@@ -639,20 +656,22 @@ export const make = Effect.fn("engine.make")(function* (options: EngineOptions) 
     readonly requestId: RequestId;
     readonly response: RequestResponse;
   }) {
-    const state = yield* openRequest(input.sessionId, input.requestId);
-    const { answerTo, request } = state;
+    const { answerTo, request } = yield* knownRequest(input.sessionId, input.requestId);
     const response = input.response;
     const fits =
       response._tag === "approval" ? request._tag === "approval" : request._tag === "question";
     if (answerTo._tag !== "runtime-request" || !fits) {
-      return yield* mismatched(input.requestId, `${response._tag} response`);
+      // The caller's bug, not the engine's.
+      return yield* Effect.die(
+        new Error(`A ${response._tag} response cannot answer request ${input.requestId}`),
+      );
     }
     const threadId = ThreadId.make(input.sessionId);
     const requestId = RuntimeRequestId.make(answerTo.requestId);
     const commandIdOf = commandId("respond", input.key);
     switch (response._tag) {
       case "approval":
-        return yield* sendSessionCommand(input.sessionId, {
+        return yield* sendAnswer(input.sessionId, input.requestId, {
           type: "runtime-request.respond",
           commandId: commandIdOf,
           threadId,
@@ -666,7 +685,7 @@ export const make = Effect.fn("engine.make")(function* (options: EngineOptions) 
             answer.text === null ? answer.optionIds : [...answer.optionIds, answer.text];
           answers[questionId] = chosen.length === 1 && chosen[0] !== undefined ? chosen[0] : chosen;
         }
-        return yield* sendSessionCommand(input.sessionId, {
+        return yield* sendAnswer(input.sessionId, input.requestId, {
           type: "runtime-request.respond",
           commandId: commandIdOf,
           threadId,
@@ -675,7 +694,7 @@ export const make = Effect.fn("engine.make")(function* (options: EngineOptions) 
         });
       }
       case "dismiss":
-        return yield* sendSessionCommand(input.sessionId, {
+        return yield* sendAnswer(input.sessionId, input.requestId, {
           type: "thread.user-input.dismiss",
           commandId: commandIdOf,
           threadId,
@@ -689,9 +708,10 @@ export const make = Effect.fn("engine.make")(function* (options: EngineOptions) 
     readonly requestId: RequestId;
     readonly answer: SecretAnswer;
   }) {
-    const state = yield* openRequest(input.sessionId, input.requestId);
-    if (state.answerTo._tag !== "secret") {
-      return yield* mismatched(input.requestId, "secret");
+    const state = yield* knownRequest(input.sessionId, input.requestId);
+    // A secret is answered once by nature: an answered request, or one that is no secret, is closed to it.
+    if (state.answerTo._tag !== "secret" || state.resolution !== undefined) {
+      return yield* new RequestClosed({ requestId: input.requestId });
     }
     yield* rpc["secrets.answerRequest"]({
       threadId: ThreadId.make(input.sessionId),

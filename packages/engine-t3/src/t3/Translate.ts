@@ -101,13 +101,42 @@ const itemsOf = (mirror: Mirror, run: Run) =>
     .filter((item) => item.runId === run.id)
     .sort((a, b) => a.ordinal - b.ordinal);
 
-export const causeOf = (run: Run): TurnCause => {
+type UserMessage = Extract<Item, { type: "user_message" }>;
+
+const STEER_INTENTS: ReadonlySet<UserMessage["inputIntent"]> = new Set([
+  "steer",
+  "promoted_queued_to_steer",
+]);
+
+const userMessagesOf = (mirror: Mirror, run: Run) =>
+  itemsOf(mirror, run).filter((item): item is UserMessage => item.type === "user_message");
+
+/**
+ * The message a run was started for. Not `run.userMessageId`: the engine
+ * moves that to a steer it restarts the run with (**Verified**). The run's own
+ * message item keeps the message it opened with.
+ */
+const openingMessageOf = (mirror: Mirror, run: Run): string | undefined => {
+  const messages = userMessagesOf(mirror, run);
+  if (messages.length === 0) return run.userMessageId;
+  return messages.find((item) => !STEER_INTENTS.has(item.inputIntent))?.messageId;
+};
+
+/**
+ * A steer waiting for its turn to be ready to read it. It is no turn: the
+ * engine cancels it when it steers the message into that turn (**Read**,
+ * `db51b67`, `Orchestrator.ts`), and it starts only as a follow-up.
+ */
+const isWaitingSteer = (run: Run) => run.steerWhenReadyRunId !== undefined && !hasStarted(run);
+
+export const causeOf = (mirror: Mirror, run: Run): TurnCause => {
   const continued =
     run.restartContinuationOfRunId ??
     run.usageLimitContinuationOfRunId ??
     run.manualContinuationOfRunId;
   if (continued !== undefined) return { _tag: "continuation", turnId: TurnId.make(continued) };
-  const dispatch = dispatchOfMessage(run.userMessageId);
+  const opening = openingMessageOf(mirror, run);
+  const dispatch = opening === undefined ? Option.none() : dispatchOfMessage(opening);
   if (Option.isSome(dispatch)) return { _tag: "dispatch", key: dispatch.value.key };
   return { _tag: "background" };
 };
@@ -412,18 +441,72 @@ const openRequestOf = (state: RequestState): OpenRequest => ({
 // ---------------------------------------------------------------------------
 // Steers and dispatches
 
-const STEER_INTENTS: ReadonlySet<string> = new Set(["steer", "promoted_queued_to_steer"]);
+/** A J3 Bots steer the engine holds, by its key, with the turn it was sent to. */
+interface SteerRecord {
+  readonly key: IdempotencyKey;
+  readonly messageId: string;
+  readonly target: string;
+}
 
-/** A steer's own item: the message the engine added to the turn it steers. */
-const steerItemsOf = (mirror: Mirror, run: Run) =>
-  itemsOf(mirror, run).flatMap((item) => {
-    if (item.type !== "user_message" || !STEER_INTENTS.has(item.inputIntent)) return [];
-    const dispatch = dispatchOfMessage(item.messageId);
-    return Option.isSome(dispatch) ? [{ item, key: dispatch.value.key }] : [];
+const steersOf = (mirror: Mirror): ReadonlyArray<SteerRecord> => {
+  const steers = new Map<string, SteerRecord>();
+  const add = (messageId: string, target: string) => {
+    const dispatch = dispatchOfMessage(messageId);
+    if (Option.isSome(dispatch) && dispatch.value.delivery === "steer" && !steers.has(messageId)) {
+      steers.set(messageId, { key: dispatch.value.key, messageId, target });
+    }
+  };
+  // The engine's own record of a steer in its turn comes first: it names the turn that has it.
+  for (const item of mirror.items.values()) {
+    if (
+      item.type === "user_message" &&
+      STEER_INTENTS.has(item.inputIntent) &&
+      item.runId !== null
+    ) {
+      add(item.messageId, item.runId);
+    }
+  }
+  for (const run of mirror.runs.values()) {
+    if (run.steerWhenReadyRunId !== undefined) add(run.userMessageId, run.steerWhenReadyRunId);
+  }
+  return [...steers.values()];
+};
+
+const STOPPED: ReadonlySet<Run["status"]> = new Set(["interrupted", "cancelled"]);
+
+/**
+ * How a steer settled, once that is final. It is read once the agent's turn
+ * has its message, completed. Unread, it is dropped only when Stop ends its
+ * turn; any other end makes it a follow-up turn of its own, which shows as
+ * that turn's cause instead.
+ */
+const settlementOf = (mirror: Mirror, steer: SteerRecord): SteerSettlement | undefined => {
+  for (const item of mirror.items.values()) {
+    if (
+      item.type === "user_message" &&
+      item.messageId === steer.messageId &&
+      STEER_INTENTS.has(item.inputIntent) &&
+      item.status === "completed" &&
+      item.runId !== null
+    ) {
+      return { key: steer.key, turnId: TurnId.make(item.runId), settlement: "read" };
+    }
+  }
+  const target = mirror.runs.get(steer.target);
+  if (target === undefined || !STOPPED.has(target.status)) return undefined;
+  const followedUp = [...mirror.runs.values()].some(
+    (run) => !isWaitingSteer(run) && openingMessageOf(mirror, run) === steer.messageId,
+  );
+  return followedUp
+    ? undefined
+    : { key: steer.key, turnId: TurnId.make(target.id), settlement: "dropped" };
+};
+
+const settlementsOf = (mirror: Mirror) =>
+  steersOf(mirror).flatMap((steer) => {
+    const settled = settlementOf(mirror, steer);
+    return settled === undefined ? [] : [settled];
   });
-
-const steerSettlement = (item: Item): SteerSettlement["settlement"] | undefined =>
-  item.status === "completed" ? "read" : item.status === "cancelled" ? "dropped" : undefined;
 
 /**
  * How the engine accepted a dispatch, from its record of the dispatch's
@@ -435,29 +518,17 @@ export const dispositionOf = (
 ): Option.Option<DispatchDisposition> => {
   const start = messageIdFor("start", key);
   const steer = messageIdFor("steer", key);
-  // A steer the engine added to a turn, read or not.
-  for (const item of mirror.items.values()) {
-    if (
-      item.type === "user_message" &&
-      item.messageId === steer &&
-      STEER_INTENTS.has(item.inputIntent) &&
-      item.runId !== null
-    ) {
-      return Option.some({ _tag: "steered", turnId: TurnId.make(item.runId) });
-    }
-  }
+  const steered = steersOf(mirror).find((record) => record.messageId === steer);
+  // A steer the engine added to a turn or holds for one, read or not.
+  if (steered !== undefined)
+    return Option.some({ _tag: "steered", turnId: TurnId.make(steered.target) });
   for (const run of runsInOrder(mirror)) {
-    if (run.userMessageId !== start && run.userMessageId !== steer) continue;
-    // A steer waiting for its turn to be ready to read it.
-    if (run.steerWhenReadyRunId !== undefined) {
-      return Option.some({ _tag: "steered", turnId: TurnId.make(run.steerWhenReadyRunId) });
-    }
-    if (run.userMessageId === steer)
-      return Option.some({ _tag: "new-turn", turnId: turnIdOf(run) });
-    const own = [...mirror.items.values()].find(
-      (item) => item.type === "user_message" && item.messageId === start && item.runId === run.id,
+    const opening = openingMessageOf(mirror, run);
+    if (opening === steer) return Option.some({ _tag: "new-turn", turnId: turnIdOf(run) });
+    if (opening !== start) continue;
+    const queued = userMessagesOf(mirror, run).some(
+      (item) => item.messageId === start && item.inputIntent === "queued_turn",
     );
-    const queued = own?.type === "user_message" && own.inputIntent === "queued_turn";
     return Option.some({ _tag: queued ? "queued" : "started", turnId: turnIdOf(run) });
   }
   return Option.none();
@@ -506,34 +577,25 @@ export type EventBody = DistributiveOmit<SessionEvent, "cursor" | "at">;
  */
 export const diff = (mirror: Mirror, view: View): ReadonlyArray<EventBody> => {
   const events: Array<EventBody> = [];
+  const settlements = settlementsOf(mirror);
   for (const run of runsInOrder(mirror)) {
     const turnId = turnIdOf(run);
     const turn = view.turns.get(run.id) ?? { started: false, finished: false };
     view.turns.set(run.id, turn);
     if (turn.finished) continue;
+    if (isWaitingSteer(run)) continue;
     if (!turn.started && hasStarted(run)) {
       turn.started = true;
-      events.push({ _tag: "turn-started", turnId, cause: causeOf(run) });
+      events.push({ _tag: "turn-started", turnId, cause: causeOf(mirror, run) });
     }
-    for (const { item, key } of steerItemsOf(mirror, run)) {
-      const settlement = steerSettlement(item);
-      if (settlement === undefined || view.steers.has(item.id)) continue;
-      view.steers.add(item.id);
-      events.push({ _tag: settlement === "read" ? "steered" : "steer-dropped", key, turnId });
-    }
-    // A steer that never reached its turn: Stop cancelled the run it waited in.
-    if (run.steerWhenReadyRunId !== undefined && run.status === "cancelled") {
-      const dispatch = dispatchOfMessage(run.userMessageId);
-      if (Option.isSome(dispatch) && !view.steers.has(run.id)) {
-        view.steers.add(run.id);
-        events.push({
-          _tag: "steer-dropped",
-          key: dispatch.value.key,
-          turnId: TurnId.make(run.steerWhenReadyRunId),
-        });
-      }
-      turn.finished = true;
-      continue;
+    for (const settled of settlements) {
+      if (settled.turnId !== turnId || view.steers.has(settled.key)) continue;
+      view.steers.add(settled.key);
+      events.push({
+        _tag: settled.settlement === "read" ? "steered" : "steer-dropped",
+        key: settled.key,
+        turnId,
+      });
     }
     for (const state of requestsOf(mirror, run)) {
       if (state.resolution === undefined && !view.requests.has(state.requestId)) {
@@ -596,6 +658,7 @@ export const replacement = (
   }> = [];
   const steers: Array<SteerSettlement> = [];
 
+  const settlements = settlementsOf(mirror);
   for (const run of runsInOrder(mirror)) {
     const turnId = turnIdOf(run);
     const ended = isEnded(run);
@@ -603,38 +666,24 @@ export const replacement = (
       !ended ||
       (since !== null &&
         (run.completedAt === null || DateTime.isGreaterThanOrEqualTo(run.completedAt, since)));
-    if (!listed) continue;
-    const isWaitingSteer = run.steerWhenReadyRunId !== undefined;
-    if (!ended && !isWaitingSteer) {
+    if (!listed || isWaitingSteer(run)) continue;
+    if (!ended) {
       openTurns.push({
         turnId,
-        cause: causeOf(run),
+        cause: causeOf(mirror, run),
         startedAt: hasStarted(run) ? (run.startedAt ?? run.requestedAt) : null,
         steps: stepsOf(mirror, run),
       });
-    } else if (ended && !isWaitingSteer) {
+    } else {
       endedTurns.push({
         turnId,
-        cause: causeOf(run),
+        cause: causeOf(mirror, run),
         outcome: outcomeOf(mirror, run),
         backgroundWork: hasBackgroundWork(mirror, run),
         steps: stepsOf(mirror, run),
       });
     }
-    if (isWaitingSteer && run.status === "cancelled") {
-      const dispatch = dispatchOfMessage(run.userMessageId);
-      if (Option.isSome(dispatch) && run.steerWhenReadyRunId !== undefined) {
-        steers.push({
-          key: dispatch.value.key,
-          turnId: TurnId.make(run.steerWhenReadyRunId),
-          settlement: "dropped",
-        });
-      }
-    }
-    for (const { item, key } of steerItemsOf(mirror, run)) {
-      const settlement = steerSettlement(item);
-      if (settlement !== undefined) steers.push({ key, turnId, settlement });
-    }
+    for (const settled of settlements) if (settled.turnId === turnId) steers.push(settled);
     for (const state of requestsOf(mirror, run)) {
       const resolution = state.resolution ?? (ended ? ("expired" as const) : undefined);
       if (resolution === undefined) openRequests.push(openRequestOf(state));
@@ -676,9 +725,12 @@ export const queuedRuns = (mirror: Mirror) =>
 
 /** Whether the engine holds a queue that holds a J3 Bots dispatch. */
 export const holdsDispatch = (mirror: Mirror) =>
-  queuedRuns(mirror).some(
-    (run) => run.queueHeld === true && Option.isSome(dispatchOfMessage(run.userMessageId)),
-  );
+  queuedRuns(mirror).some((run) => {
+    const opening = openingMessageOf(mirror, run);
+    return (
+      run.queueHeld === true && opening !== undefined && Option.isSome(dispatchOfMessage(opening))
+    );
+  });
 
 export const runOf = (mirror: Mirror, turnId: TurnId) =>
   Option.fromNullishOr(mirror.runs.get(turnId));
