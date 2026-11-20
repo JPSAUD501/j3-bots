@@ -18,6 +18,7 @@ import {
   dispositionOf,
   emptyMirror,
   engineAnswersOf,
+  nothingToStop,
   replacement,
 } from "./Translate.ts";
 
@@ -192,48 +193,49 @@ describe("a start the engine queues behind another turn", () => {
   });
 });
 
-describe("backgroundWorkPending", () => {
-  const at = DateTime.makeUnsafe("2026-11-20T12:00:00Z");
-  const decodeEvent = Schema.decodeUnknownSync(OrchestrationV2DomainEvent);
-  const event = (type: string, payload: unknown) =>
-    decodeEvent({ id: `event-${type}`, threadId: "thread-1", occurredAt: at, type, payload });
-  const run = (status: string, ordinal: number) =>
-    event("run.updated", {
-      id: `run-${ordinal}`,
-      ordinal,
-      userMessageId: `message-${ordinal}`,
-      status,
-      threadId: "thread-1",
-      providerInstanceId: "codex",
-      modelSelection: { instanceId: "codex", model: "gpt-5" },
-      providerThreadId: null,
-      rootNodeId: null,
-      activeAttemptId: null,
-      requestedAt: at,
-      startedAt: at,
-      completedAt: status === "running" ? null : at,
-      checkpointId: null,
-      contextHandoffId: null,
-    });
-  const item = (fields: Record<string, unknown>) =>
-    event("turn-item.updated", {
-      threadId: "thread-1",
-      runId: "run-1",
-      nodeId: null,
-      providerThreadId: null,
-      providerTurnId: null,
-      nativeItemRef: null,
-      parentItemId: null,
-      ordinal: 10,
-      title: null,
-      startedAt: at,
-      completedAt: null,
-      updatedAt: at,
-      ...fields,
-    });
-  const command = (status: string) =>
-    item({ id: "item-command", type: "command_execution", input: "npm run dev", status });
+const at = DateTime.makeUnsafe("2026-11-20T12:00:00Z");
+const decodeEvent = Schema.decodeUnknownSync(OrchestrationV2DomainEvent);
+const event = (type: string, payload: unknown) =>
+  decodeEvent({ id: `event-${type}`, threadId: "thread-1", occurredAt: at, type, payload });
+const LIVE_RUN = new Set(["queued", "preparing", "starting", "running", "waiting"]);
+const run = (status: string, ordinal: number) =>
+  event("run.updated", {
+    id: `run-${ordinal}`,
+    ordinal,
+    userMessageId: `message-${ordinal}`,
+    status,
+    threadId: "thread-1",
+    providerInstanceId: "codex",
+    modelSelection: { instanceId: "codex", model: "gpt-5" },
+    providerThreadId: null,
+    rootNodeId: null,
+    activeAttemptId: null,
+    requestedAt: at,
+    startedAt: status === "queued" || status === "starting" ? null : at,
+    completedAt: LIVE_RUN.has(status) ? null : at,
+    checkpointId: null,
+    contextHandoffId: null,
+  });
+const item = (fields: Record<string, unknown>) =>
+  event("turn-item.updated", {
+    threadId: "thread-1",
+    runId: "run-1",
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 10,
+    title: null,
+    startedAt: at,
+    completedAt: null,
+    updatedAt: at,
+    ...fields,
+  });
+const command = (status: string) =>
+  item({ id: "item-command", type: "command_execution", input: "npm run dev", status });
 
+describe("backgroundWorkPending", () => {
   // The engine's rule (**Read** at `db51b67`, `derivePendingBackgroundWork`).
   it("counts live work left by an ended run, as the engine's stop does", () => {
     const mirror = emptyMirror();
@@ -284,5 +286,24 @@ describe("backgroundWorkPending", () => {
       }),
     );
     assert.isTrue(backgroundWorkPending(mirror));
+  });
+});
+
+describe("what a Stop leaves to run", () => {
+  it("counts only what a Stop targets: no turn but the queue's, no background work", () => {
+    const mirror = emptyMirror();
+    applyEvent(mirror, run("completed", 1));
+    applyEvent(mirror, run("queued", 2));
+    assert.isTrue(nothingToStop(mirror, at));
+
+    // Work the ended turn left running keeps a refused stop from being moot.
+    applyEvent(mirror, command("running"));
+    assert.isFalse(nothingToStop(mirror, at));
+    applyEvent(mirror, command("interrupted"));
+    assert.isTrue(nothingToStop(mirror, at));
+
+    // A turn the engine is starting, which no event has told of yet.
+    applyEvent(mirror, run("starting", 3));
+    assert.isFalse(nothingToStop(mirror, at));
   });
 });

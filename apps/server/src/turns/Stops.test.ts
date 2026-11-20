@@ -364,6 +364,44 @@ it.effect("stops a run that starts while the Stop's commands are on their way", 
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("sends a fresh round after the engine refused a Stop while its work still runs", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const stops = yield* Stops;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Watch the build.");
+    const watching = yield* nextTurn(bot.id);
+    yield* control.startBackgroundWork({ sessionId: session, turnId: watching });
+    yield* control.finishTurn({
+      sessionId: session,
+      turnId: watching,
+      outcome: { _tag: "completed" },
+    });
+    yield* turnEnded(bot.id);
+
+    // The engine refuses the Stop, as when a read fails while it plans it,
+    // and the work the ended turn left keeps running.
+    yield* control.rejectNextStop;
+    yield* stops.stopBot({ commandId: command(), botId: bot.id });
+    yield* stops.runPending;
+    const after = yield* sendToBot(bot.id, "Then tag the release.");
+    yield* stops.runPending;
+    assert.isTrue(yield* control.backgroundWorkRunning(session));
+    yield* deliveryIs(after, "pending");
+
+    // Once its backoff passed, a fresh round stops the work. The engine
+    // interrupts it after it answered, so a later pass confirms the Stop, and
+    // what waited goes.
+    yield* TestClock.adjust(RETRY_TICK);
+    yield* until(control.backgroundWorkRunning(session).pipe(Effect.map((running) => !running)));
+    yield* TestClock.adjust(RETRY_TICK);
+    yield* stopSettled;
+    yield* nextTurn(bot.id, watching);
+    yield* deliveryIs(after, "delivered");
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("stops a fenced key that lands in the queue after the Stop's cancels", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;

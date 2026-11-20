@@ -178,9 +178,16 @@ export default Effect.gen(function* () {
     ALTER TABLE stop_targets ADD COLUMN observed_at TEXT
       CHECK (observed_at IS NULL OR sent_at IS NOT NULL)
   `;
-  // When the Stop runner tries a session again after its work there failed
-  // unexpectedly: a durable deadline like every other worker's.
+  // When the Stop runner tries a session again: after its work there failed
+  // unexpectedly, or, on a fresh round, after the engine refused the round
+  // before it. A durable deadline like every other worker's.
   yield* sql`ALTER TABLE stop_targets ADD COLUMN retry_at TEXT`;
+  // When the engine refused the round while its work could still run, which
+  // spends the round's key: a fresh round follows, with backoff.
+  yield* sql`
+    ALTER TABLE stop_targets ADD COLUMN rejected_at TEXT
+      CHECK (rejected_at IS NULL OR (issued_at IS NOT NULL AND sent_at IS NULL))
+  `;
 
   // When the engine answered that it has no such session. Nothing is planned
   // into it or watched there again; part 2b gives the bot a new one.

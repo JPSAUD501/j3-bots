@@ -22,6 +22,7 @@ import type {
   RequestClosed,
   SessionBusy,
   SessionNotFound,
+  StopRejected,
 } from "./errors.ts";
 import type { SessionEvent } from "./events.ts";
 import type {
@@ -387,17 +388,23 @@ export class Engine extends Context.Service<
      * A message the engine counts as a user's releases the hold Stop put on
      * the queue, so a dispatch sent between the stop and the cancels starts a
      * turn the cancels miss (**Read**, `sentByUserFromClient`). The caller
-     * sends a session nothing while a Stop of it is unsettled. A command the
-     * engine refuses as moot (the turn already ended) counts as done.
+     * sends a session nothing while a Stop of it is unsettled.
      *
-     * `key` is derived from the Stop command and the session, and stored with
-     * the Stop's targets before this call. Wakes J3 Bots holds for the bot are
-     * the server's to cancel.
+     * Every command is resolved by its key, as a dispatch is: an error reply
+     * is answered by a resend of the same command, whose receipt says whether
+     * the engine applied it. A refusal is moot, and counts as done, when
+     * nothing it targets can still run. Otherwise it is `StopRejected`, and
+     * the key is spent. `EngineIndeterminate` is resolved by calling again
+     * with the same key.
+     *
+     * `key` is derived from the Stop command, the session and the round, and
+     * stored with the Stop's targets before this call. Wakes J3 Bots holds
+     * for the bot are the server's to cancel.
      */
     readonly stop: (input: {
       readonly key: IdempotencyKey;
       readonly sessionId: SessionId;
-    }) => Effect.Effect<void, EngineDown | SessionNotFound>;
+    }) => Effect.Effect<void, EngineDown | SessionNotFound | StopRejected>;
 
     /**
      * Releases the session's held queue, in answer to the `queue-held` event

@@ -1436,6 +1436,24 @@ export const queuedRuns = (mirror: Mirror) =>
   runsInOrder(mirror).filter((run) => run.status === "queued" || run.status === "preparing");
 
 /**
+ * Whether nothing a Stop targets can still run in the session: no run that
+ * has not ended, other than those waiting in the queue, which a Stop cancels
+ * one by one; no background work the engine counts as pending; no
+ * continuation the engine will start on its own. A refusal of a Stop's
+ * command is moot only then.
+ */
+export const nothingToStop = (mirror: Mirror, now: DateTime.Utc): boolean => {
+  const waiting = new Set(queuedRuns(mirror).map((run) => run.id));
+  return (
+    !runsInOrder(mirror).some(
+      (run) =>
+        (!isEnded(run) && !waiting.has(run.id)) ||
+        (isEnded(run) && continuationOf(mirror, run, now) !== null),
+    ) && !backgroundWorkPending(mirror)
+  );
+};
+
+/**
  * Whether the engine holds the session's queue: its waiting runs do not start
  * on their own. The engine marks each waiting run, not the thread (**Read** at
  * `db51b67`, `OrchestrationV2Run.queueHeld`).

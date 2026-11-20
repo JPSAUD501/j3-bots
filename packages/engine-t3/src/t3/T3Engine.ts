@@ -60,6 +60,7 @@ import {
   RequestClosed,
   SessionBusy,
   SessionNotFound,
+  StopRejected,
 } from "../errors.ts";
 import type { SessionEvent } from "../events.ts";
 import {
@@ -108,6 +109,7 @@ import {
   keepFetched,
   knowsDispatch,
   mirrorOf,
+  nothingToStop,
   queuedRuns,
   replacement,
   type EventBody,
@@ -438,6 +440,46 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       ),
     );
 
+  /** The class name an error reply keeps of the engine's error, if it kept one. */
+  const causeName = (error: OrchestrationV2DispatchCommandError) =>
+    Option.map(decodeErrorName(error.cause), ({ name }) => name);
+
+  /**
+   * Sends a keyed command, and once more on an error reply that proves
+   * nothing, so every answer comes from the key's receipt: the engine can
+   * answer with an error after it applied a command, and answers its first
+   * submission of a command it refused while planning with the same kind of
+   * error as any other. A resend answers `{sequence}` if the key was applied,
+   * and `OrchestratorCommandPreviouslyRejectedError` if it was refused.
+   * **Read** at `db51b67`, `dispatchWithReceiptEffect`, `replayCommandReceipt`.
+   * A reply lost on the way is `EngineIndeterminate`, resolved by sending the
+   * same key again.
+   */
+  const sendByReceipt = Effect.fnUntraced(function* (input: OrchestrationV2Command) {
+    const send = command(input).pipe(
+      Effect.as(Option.none<string>()),
+      Effect.catchTags({
+        EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
+        OrchestrationV2DispatchCommandError: (error) =>
+          Effect.succeedSome(Option.getOrElse(causeName(error), () => "")),
+      }),
+    );
+    for (let attempt = 0; attempt < 2; attempt++) {
+      // Once the first send went out, no failure but a named refusal proves
+      // that nothing was applied: the engine may have taken the first one.
+      const refusal = yield* attempt === 0 ? send : afterSending(send);
+      if (Option.isNone(refusal)) return "applied" as const;
+      if (REJECTIONS.has(refusal.value)) return "rejected" as const;
+      if (refusal.value === CLAIM_ERROR) {
+        return yield* Effect.die(
+          new Error(`A staged file the engine cannot claim: ${input.commandId}`),
+        );
+      }
+    }
+    // Twice an error that proves nothing either way.
+    return yield* new EngineIndeterminate();
+  });
+
   /** An engine refusal the interface has no error for: a bug or a broken setup, not a state. */
   const refused = (error: { readonly message: string }) =>
     Effect.die(new Error(`The engine refused a command: ${error.message}`));
@@ -614,24 +656,21 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   // Stop
 
   /**
-   * Sends one command of a Stop. The engine refuses a step that has become moot
-   * (the run it cancels already ended), which counts as done.
+   * Sends one command of a round of a Stop, resolved by its receipt as a
+   * dispatch is (`sendByReceipt`). A refusal of a step that has become moot
+   * (the run it cancels already ended, nothing the engine's stop targets can
+   * still run) counts as done; any other is `StopRejected`, keyed by the
+   * round, whose key it spends.
    */
-  const sendStopStep = (
-    sessionId: SessionId,
+  const sendStopStep = Effect.fnUntraced(function* (
+    round: { readonly key: IdempotencyKey; readonly sessionId: SessionId },
     input: OrchestrationV2Command,
-    isMoot: (mirror: Mirror) => boolean,
-  ) =>
-    command(input).pipe(
-      Effect.catchTags({
-        EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
-        OrchestrationV2DispatchCommandError: (error) =>
-          afterSending(projection(sessionId)).pipe(
-            Effect.flatMap((mirror) => (isMoot(mirror) ? Effect.void : refused(error))),
-          ),
-      }),
-      Effect.asVoid,
-    );
+    isMoot: (mirror: Mirror, now: DateTime.Utc) => boolean,
+  ) {
+    if ((yield* sendByReceipt(input)) === "applied") return;
+    const mirror = yield* afterSending(projection(round.sessionId));
+    if (!isMoot(mirror, yield* DateTime.now)) return yield* new StopRejected({ key: round.key });
+  });
 
   /**
    * The engine's stop, then a cancel per waiting run. Each command is answered
@@ -654,14 +693,14 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     const threadId = ThreadId.make(input.sessionId);
     // The engine's stop ends the running turn and only holds the queue.
     yield* sendStopStep(
-      input.sessionId,
+      input,
       {
         type: "thread.stop",
         commandId: commandId("stop", input.key),
         threadId,
         stopDelegatedTasks: true,
       },
-      (mirror) => Option.isNone(activeTurn(mirror)),
+      nothingToStop,
     );
     // J3 Bots' Stop also ends every turn that waits.
     yield* afterSending(
@@ -669,7 +708,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
         const held = yield* projection(input.sessionId);
         for (const run of queuedRuns(held)) {
           yield* sendStopStep(
-            input.sessionId,
+            input,
             {
               type: "queued-run.cancel",
               commandId: commandId(`cancel-${run.id}`, input.key),
@@ -711,7 +750,10 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   });
 
   const retireSession = Effect.fn("Engine.retireSession")(function* (sessionId: SessionId) {
-    const retire = stop({ key: IdempotencyKey.make(`retire:${sessionId}`), sessionId }).pipe(
+    // A fresh key on every call: a Stop the engine refused spends its key.
+    const key = IdempotencyKey.make(`retire:${sessionId}:${yield* uniqueKey}`);
+    const retire = stop({ key, sessionId }).pipe(
+      Effect.catchTag("StopRejected", () => Effect.fail(new EngineIndeterminate())),
       Effect.andThen(
         afterSending(
           sendSessionCommand(sessionId, {
@@ -731,19 +773,6 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   // ---------------------------------------------------------------------------
   // Dispatch
 
-  /** The class name an error reply keeps of the engine's error, if it kept one. */
-  const causeName = (error: OrchestrationV2DispatchCommandError) =>
-    Option.map(decodeErrorName(error.cause), ({ name }) => name);
-
-  /**
-   * Sends a dispatch, and once more on an error reply that proves nothing, so
-   * every answer comes from the key's receipt: the engine can answer with an
-   * error after it applied a command, and answers its first submission of a
-   * command it refused while planning with the same kind of error as any
-   * other. A resend answers `{sequence}` if the key was applied, and
-   * `OrchestratorCommandPreviouslyRejectedError` if it was refused. **Read**
-   * at `db51b67`, `dispatchWithReceiptEffect`, `replayCommandReceipt`.
-   */
   const sendDispatch = Effect.fnUntraced(function* (input: DispatchInput) {
     const kind = input.delivery._tag;
     const attachments: Array<ChatAttachment> = input.attachments.map((attachment) => ({
@@ -753,7 +782,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       mimeType: attachment.mediaType,
       sizeBytes: attachment.size,
     }));
-    const send = command({
+    const sent = yield* sendByReceipt({
       type: "message.dispatch",
       commandId: commandId("dispatch", input.key),
       threadId: ThreadId.make(input.sessionId),
@@ -774,26 +803,8 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
               targetRunId: RunId.make(input.delivery.turnId),
             },
           }),
-    }).pipe(
-      Effect.as(Option.none<string>()),
-      Effect.catchTags({
-        EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
-        OrchestrationV2DispatchCommandError: (error) =>
-          Effect.succeedSome(Option.getOrElse(causeName(error), () => "")),
-      }),
-    );
-    for (let attempt = 0; attempt < 2; attempt++) {
-      // Once the first send went out, no failure but a named refusal proves
-      // that nothing was applied: the engine may have taken the first one.
-      const refusal = yield* attempt === 0 ? send : afterSending(send);
-      if (Option.isNone(refusal)) return;
-      if (REJECTIONS.has(refusal.value)) return yield* new DispatchRejected({ key: input.key });
-      if (refusal.value === CLAIM_ERROR) {
-        return yield* Effect.die(new Error(`A staged file the engine cannot claim: ${input.key}`));
-      }
-    }
-    // Twice an error that proves nothing either way.
-    return yield* new EngineIndeterminate();
+    });
+    if (sent === "rejected") return yield* new DispatchRejected({ key: input.key });
   });
 
   const dispatch = Effect.fn("Engine.dispatch")(function* (input: DispatchInput) {

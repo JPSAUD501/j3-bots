@@ -35,6 +35,7 @@ import {
   RequestClosed,
   SessionBusy,
   SessionNotFound,
+  StopRejected,
 } from "../errors.ts";
 import type {
   EndedTurn,
@@ -77,11 +78,11 @@ import { toolInputDigest } from "../toolCaller.ts";
 // after the bridge sees them; usage-limit continuations; requests that expire
 // with their turn, and whose card can change while they are open; host
 // speech; replies lost after a command was applied; staged files that expire;
-// calls held in flight, a Stop whose effects lag its acknowledgment and a
-// dispatch that waits in the startup queue and lands late; synchronization
-// markers; and resume by cursor with
-// replay or a replacement that repeats turns already seen end, as the real
-// engine may. The adapter's conformance suite runs the same scenarios against
+// calls held in flight, a Stop whose effects lag its acknowledgment, a Stop
+// refused while its work can still run, and a dispatch that waits in the
+// startup queue and lands late; synchronization markers; and resume by cursor
+// with replay or a replacement that repeats turns already seen end, as the
+// real engine may. The adapter's conformance suite runs the same scenarios against
 // the real engine, which keeps this double honest.
 
 /** The engine methods a test can hold in flight with `holdNext`. */
@@ -166,6 +167,15 @@ export class TestEngineControl extends Context.Service<
      * `redispatch` of the key, after a lost reply too.
      */
     readonly rejectNextDispatch: Effect.Effect<void>;
+    /**
+     * The engine refuses the next `stop` it receives, applying nothing and
+     * keeping a rejected receipt, as when a read fails while it plans the
+     * stop. It and every later call with its key fail with `StopRejected`
+     * while anything a Stop targets can still run in the session (a running
+     * or starting turn, background work, a pending continuation), and
+     * succeed as moot once nothing can.
+     */
+    readonly rejectNextStop: Effect.Effect<void>;
     /**
      * Background work wakes the session while the next `start` dispatch is on
      * its way: the adapter's busy check passes, and the engine then queues the
@@ -396,7 +406,8 @@ type AppliedKey =
       readonly sessionId: SessionId;
       readonly outcome: "applied" | "rejected";
     }
-  | { readonly command: "stop" | "respond" };
+  | { readonly command: "stop"; readonly outcome: "applied" | "rejected" }
+  | { readonly command: "respond" };
 
 const initialStatus: EngineStatus = {
   state: { _tag: "ready" },
@@ -412,6 +423,7 @@ const make = Effect.gen(function* () {
   let reachable = true;
   let loseReply = false;
   let rejectDispatch = false;
+  let rejectStop = false;
   const holds = new Map<
     HeldMethod,
     { readonly entered: Deferred.Deferred<void>; readonly release: Deferred.Deferred<void> }
@@ -818,6 +830,13 @@ const make = Effect.gen(function* () {
     }
   };
 
+  /** Whether anything a Stop targets can still run in the session. */
+  const stoppable = (session: SessionRecord) =>
+    session.running !== null ||
+    [...session.turns.values()].some(
+      (turn) => turn.backgroundWork || (turn.ended !== null && turn.ended.continuation !== null),
+    );
+
   const retire = (session: SessionRecord, at: DateTime.Utc) => {
     stopSession(session, at, [...session.waiting]);
     session.retired = true;
@@ -1124,9 +1143,17 @@ const make = Effect.gen(function* () {
         "stop",
         command(
           Effect.gen(function* () {
-            if ((yield* priorUse(key, "stop")) !== undefined) return;
+            const previous = yield* priorUse(key, "stop");
+            const refuse = previous?.command === "stop" && previous.outcome === "rejected";
+            if (previous !== undefined && !refuse) return;
             const session = yield* liveSession(sessionId);
-            keys.set(key, { command: "stop" });
+            if (refuse || rejectStop) {
+              rejectStop = false;
+              keys.set(key, { command: "stop", outcome: "rejected" });
+              if (stoppable(session)) return yield* new StopRejected({ key });
+              return;
+            }
+            keys.set(key, { command: "stop", outcome: "applied" });
             const during = turnDuringStop?.sessionId === sessionId ? turnDuringStop : null;
             if (during !== null) {
               turnDuringStop = null;
@@ -1364,6 +1391,10 @@ const make = Effect.gen(function* () {
 
     rejectNextDispatch: Effect.sync(() => {
       rejectDispatch = true;
+    }),
+
+    rejectNextStop: Effect.sync(() => {
+      rejectStop = true;
     }),
 
     startEngineTurnDuringNextDispatch: (sessionId) =>

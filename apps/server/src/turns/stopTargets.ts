@@ -10,6 +10,7 @@ import {
   type Audience,
   audienceOf,
   type DispatchSeq,
+  recoveryBackoff,
   type SessionRowId,
   type WakeFailure,
 } from "./model.ts";
@@ -129,6 +130,43 @@ export const stopTargets = (sql: SqlClient.SqlClient) => {
         `;
       }
       return targets.length > 0;
+    }, Effect.orDie),
+
+    /**
+     * The engine refused a round while what the Stop targets can still run,
+     * which spends the round's key (`StopRejected`): the round is marked
+     * refused, and the target gets a fresh round, sent once the backoff of
+     * its refused rounds passes. A newer round, opened meanwhile by a turn
+     * that started, goes out on its own instead.
+     */
+    rejectRound: Effect.fn("stopTargets.rejectRound")(function* (round: {
+      readonly stop_id: string;
+      readonly session_id: SessionRowId;
+      readonly round: number;
+    }) {
+      const at = yield* DateTime.now;
+      yield* sql`
+        UPDATE stop_targets SET rejected_at = ${timeText(at)}
+        WHERE stop_id = ${round.stop_id} AND session_id = ${round.session_id}
+          AND round = ${round.round}
+      `;
+      const [refused] = yield* sql<{ readonly n: number }>`
+        SELECT COUNT(*) AS n FROM stop_targets
+        WHERE stop_id = ${round.stop_id} AND session_id = ${round.session_id}
+          AND rejected_at IS NOT NULL
+      `;
+      const retryAt = DateTime.addDuration(at, recoveryBackoff(refused?.n ?? 1));
+      const next = round.round + 1;
+      yield* sql`
+        INSERT INTO stop_targets (stop_id, session_id, round, engine_key, retry_at)
+        SELECT ${round.stop_id}, ${round.session_id}, ${next},
+          ${stopKey(round.stop_id, round.session_id, next)}, ${timeText(retryAt)}
+        WHERE NOT EXISTS (
+          SELECT 1 FROM stop_targets
+          WHERE stop_id = ${round.stop_id} AND session_id = ${round.session_id}
+            AND round > ${round.round}
+        )
+      `;
     }, Effect.orDie),
 
     /**

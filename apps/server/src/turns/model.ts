@@ -148,9 +148,9 @@ export const DispatchStatus = Schema.Literals([
 export type DispatchStatus = typeof DispatchStatus.Type;
 
 /**
- * How long a recovery waits after its `n`th undecided answer, and an answer or
- * a held queue's resume after its `n`th lost reply: doubling from 2 s to 10
- * min.
+ * How long a recovery waits after its `n`th undecided answer, an answer or a
+ * held queue's resume after its `n`th lost reply, and a Stop target's fresh
+ * round after its `n`th refused one: doubling from 2 s to 10 min.
  */
 export const recoveryBackoff = (n: number): Duration.Duration =>
   Duration.min(Duration.seconds(2 * 2 ** Math.max(0, n - 1)), Duration.minutes(10));

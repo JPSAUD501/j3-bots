@@ -133,6 +133,28 @@ export class DispatchRejected extends Schema.TaggedError<DispatchRejected>()("Di
   }
 }
 
+/**
+ * The engine refused a round of a Stop, and something the Stop targets can
+ * still run: a turn that has not ended and is not waiting in the queue,
+ * background work the engine counts as pending, or a continuation it will
+ * start on its own. The adapter reports it only once a resend of the key
+ * found its rejected receipt (`OrchestratorCommandPreviouslyRejectedError`),
+ * as for `DispatchRejected`; the engine keeps that receipt for good, so the
+ * key is spent. A refusal while nothing targeted can run is moot and counts
+ * as done. **Read** at `db51b67`, `Orchestrator.ts`: a refusal while planning
+ * commits a rejected receipt (L16018-16034), and a resend replays it
+ * (`replayCommandReceipt`, L15867-15877).
+ *
+ * The caller stops the session again with a fresh key.
+ */
+export class StopRejected extends Schema.TaggedError<StopRejected>()("StopRejected", {
+  key: IdempotencyKey,
+}) {
+  override get message(): string {
+    return `The engine refused the Stop ${this.key} while its work can still run.`;
+  }
+}
+
 /** The request was already answered, or expired with its turn. */
 export class RequestClosed extends Schema.TaggedError<RequestClosed>()("RequestClosed", {
   requestId: RequestId,

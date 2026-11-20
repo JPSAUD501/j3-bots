@@ -64,7 +64,9 @@ const Fenced = Schema.Struct({
 /**
  * How one session's Stop work went in a pass of the runner: done for now
  * (also when it waits for the recovery, whose settling nudges the runner),
- * left for a later pass, or refused by the engine, which ends the pass.
+ * left for a later pass (also when a durable deadline of its own now holds
+ * it), or refused by an engine that cannot take commands, which ends the
+ * pass.
  */
 type Progress = "done" | "deferred" | "unavailable";
 
@@ -316,11 +318,20 @@ export const layer = Layer.effect(
           Effect.andThen(engine.stop({ key: round.engine_key, sessionId: engineSessionId })),
           Effect.andThen(markSent(round)),
           Effect.as("done" satisfies Progress as Progress),
-          // The engine has no such session: nothing runs there.
-          Effect.catchTag("SessionNotFound", () =>
-            transaction(sessionLost(round.session_id)).pipe(Effect.as("done" satisfies Progress)),
-          ),
-          Effect.catchTags(downProgress),
+          Effect.catchTags({
+            // The engine has no such session: nothing runs there.
+            SessionNotFound: () =>
+              transaction(sessionLost(round.session_id)).pipe(
+                Effect.as("done" satisfies Progress as Progress),
+              ),
+            // Refused while its work can still run, which spends the key: a
+            // fresh round goes out once its backoff passes.
+            StopRejected: () =>
+              transaction(targets.rejectRound(round)).pipe(
+                Effect.as("deferred" satisfies Progress as Progress),
+              ),
+            ...downProgress,
+          }),
         ),
       );
     });
