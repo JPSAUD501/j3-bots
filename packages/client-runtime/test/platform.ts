@@ -2,6 +2,7 @@
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -20,10 +21,12 @@ import {
   FileTransfer,
   LocalStorageError,
   type LocalTable,
+  makeInProcessLocks,
   Network,
   type NetworkStatus,
   ServerAddress,
   TransferFailed,
+  WindowLocks,
 } from "../src/ports.ts";
 
 /** Test controls over the device's network: its status, and the sockets open on it. */
@@ -81,12 +84,17 @@ const credentials = (stored: Option.Option<DeviceCredential>) =>
     }),
   );
 
-/**
- * The device's storage for drafts and unsent messages, in memory. Made apart
- * from a client, so a second client on it is the same device after a reload.
- * `refuseCommits` fails every transaction, as a full disk would.
- */
-export const makeStorage = (options: { readonly refuseCommits?: boolean } = {}) => {
+interface StorageOptions {
+  /** Fails every transaction, as a full disk would. */
+  readonly refuseCommits?: boolean;
+  /** Fails every attempt to empty a table. */
+  readonly refuseClears?: boolean;
+  /** Holds every transaction until the latch opens. */
+  readonly commitGate?: Latch.Latch;
+}
+
+/** The device's storage for drafts and unsent messages, in memory. */
+const makeStorage = (options: StorageOptions) => {
   const tables = new Map<LocalTable, Map<string, string>>([
     ["drafts", new Map()],
     ["outbox", new Map()],
@@ -96,16 +104,28 @@ export const makeStorage = (options: { readonly refuseCommits?: boolean } = {}) 
     readAll: (name) => Effect.sync(() => new Map(table(name))),
     write: (name, key, value) => Effect.sync(() => void table(name).set(key, value)),
     remove: (name, key) => Effect.sync(() => void table(name).delete(key)),
-    clear: (name) => Effect.sync(() => table(name).clear()),
-    commit: (changes) =>
+    clear: (name) =>
+      options.refuseClears === true
+        ? Effect.fail(new LocalStorageError({ operation: "remove" }))
+        : Effect.sync(() => table(name).clear()),
+    commit: (changes, expected = []) =>
       options.refuseCommits === true
         ? Effect.fail(new LocalStorageError({ operation: "write" }))
-        : Effect.sync(() => {
-            for (const { table: name, key, value } of changes) {
-              if (value === null) table(name).delete(key);
-              else table(name).set(key, value);
-            }
-          }),
+        : (options.commitGate?.await ?? Effect.void).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                const holds = expected.every(
+                  ({ table: name, key, value }) => (table(name).get(key) ?? null) === value,
+                );
+                if (!holds) return false;
+                for (const { table: name, key, value } of changes) {
+                  if (value === null) table(name).delete(key);
+                  else table(name).set(key, value);
+                }
+                return true;
+              }),
+            ),
+          ),
   });
 };
 
@@ -139,21 +159,38 @@ const transfer = Layer.effect(
 ).pipe(Layer.provide(FetchHttpClient.layer));
 
 /**
+ * What clients of one device share: a second client on it is the same device
+ * after a reload, or another tab of the same browser.
+ */
+export interface TestDevice {
+  readonly storage: ClientStorage["Service"];
+  readonly locks: WindowLocks["Service"];
+}
+
+export const makeDevice = (options: StorageOptions = {}): TestDevice => ({
+  storage: makeStorage(options),
+  locks: makeInProcessLocks(),
+});
+
+/**
  * A platform for tests: the credential in memory, a network the test turns
  * off and on, Node's own `fetch` and `WebSocket`, and retries in milliseconds.
+ * `http` stands between the client and the server, as a reverse proxy would.
  */
 export const layer = (
   origin: URL,
   stored: Option.Option<DeviceCredential> = Option.none(),
-  storage: ClientStorage["Service"] = makeStorage(),
+  device: TestDevice = makeDevice(),
+  http: Layer.Layer<HttpClient.HttpClient> = FetchHttpClient.layer,
 ) =>
   Layer.mergeAll(
     Layer.succeed(ServerAddress, { origin }),
     credentials(stored),
-    Layer.succeed(ClientStorage, storage),
+    Layer.succeed(ClientStorage, device.storage),
+    Layer.succeed(WindowLocks, device.locks),
     transfer,
     network,
-    FetchHttpClient.layer,
+    http,
     SecureRandom.layerWebCrypto,
     Layer.succeed(ReconnectPolicy, {
       initialDelay: Duration.millis(5),

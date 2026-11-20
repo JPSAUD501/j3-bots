@@ -179,8 +179,8 @@ const isRpcClientError = Schema.is(RpcClientError);
  * The link to the server: pairing, the ticket handshake, the socket, and
  * reconnecting with backoff. Every socket is opened with a fresh single-use
  * ticket, so a refused handshake costs nothing: the next attempt asks for a new
- * ticket, and a 401 from the ticket route is what tells the client it is no
- * longer paired.
+ * ticket, and the server's own `NotAuthenticated` from the ticket route is
+ * what tells the client it is no longer paired.
  */
 export class Connection extends Context.Service<
   Connection,

@@ -5,9 +5,10 @@ import {
   CredentialStore,
   type DeviceCredential,
   FileTransfer,
-  type LocalChange,
+  type LocalRecord,
   LocalStorageError,
   type LocalTable,
+  makeInProcessLocks,
   Network,
   type NetworkStatus,
   type Platform,
@@ -15,6 +16,7 @@ import {
   TransferFailed,
   type UploadRequest,
   type UploadResponse,
+  WindowLocks,
 } from "@j3-bots/client-runtime";
 import { DeviceId, DeviceToken } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
@@ -92,6 +94,8 @@ const credentials = Layer.effect(
   }),
 );
 
+const idbRecord = ({ table, key, value }: LocalRecord) => ({ store: table, key, value });
+
 const storage = Layer.succeed(
   ClientStorage,
   ClientStorage.of({
@@ -125,14 +129,60 @@ const storage = Layer.succeed(
         catch: () => new LocalStorageError({ operation: "remove" }),
       }),
     ),
-    commit: Effect.fn("ClientStorage.commit")((changes: ReadonlyArray<LocalChange>) =>
-      Effect.tryPromise({
-        try: () =>
-          Idb.commit(changes.map(({ table, key, value }) => ({ store: table, key, value }))),
-        catch: () => new LocalStorageError({ operation: "write" }),
-      }),
+    commit: Effect.fn("ClientStorage.commit")(
+      (changes: ReadonlyArray<LocalRecord>, expected: ReadonlyArray<LocalRecord> = []) =>
+        Effect.tryPromise({
+          try: () => Idb.commit(changes.map(idbRecord), expected.map(idbRecord)),
+          catch: () => new LocalStorageError({ operation: "write" }),
+        }),
     ),
   }),
+);
+
+/**
+ * Asks for the lock `name` and resolves once this tab holds it. `release`
+ * lets go of it, or withdraws the request if it is still waiting.
+ */
+const requestLock = (name: string) => {
+  const withdraw = new AbortController();
+  let release = () => withdraw.abort();
+  const held = new Promise<void>((granted) => {
+    navigator.locks
+      .request(
+        name,
+        { signal: withdraw.signal },
+        () =>
+          new Promise<void>((done) => {
+            release = done;
+            granted();
+          }),
+      )
+      // A withdrawn request rejects; nothing waits for it any more.
+      .catch(() => undefined);
+  });
+  return { held, release: () => release() };
+};
+
+/**
+ * The Web Locks API: one lock per name across every tab of this origin. It
+ * exists only in a secure context; a page served over plain HTTP on a local
+ * network locks within its own tab.
+ */
+const locks = Layer.sync(WindowLocks, () =>
+  window.isSecureContext
+    ? WindowLocks.of({
+        withLock: Effect.fn("WindowLocks.withLock")(function* <A, E, R>(
+          name: string,
+          effect: Effect.Effect<A, E, R>,
+        ) {
+          return yield* Effect.acquireUseRelease(
+            Effect.sync(() => requestLock(name)),
+            (request) => Effect.promise(() => request.held).pipe(Effect.andThen(effect)),
+            (request) => Effect.sync(request.release),
+          );
+        }),
+      })
+    : makeInProcessLocks(),
 );
 
 /** Uploads with `XMLHttpRequest`, the one browser API that reports upload progress. */
@@ -177,6 +227,7 @@ export const platform: Layer.Layer<Platform> = Layer.mergeAll(
   Layer.succeed(ServerAddress, { origin: new URL(window.location.origin) }),
   credentials,
   storage,
+  locks,
   transfer,
   network,
   FetchHttpClient.layer,

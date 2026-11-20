@@ -71,7 +71,11 @@ export const make = Effect.fnUntraced(function* (origin: URL) {
       ),
     );
 
-  /** A 401 means the device is not paired or was revoked. */
+  /**
+   * A 401 carrying the server's own `NotAuthenticated` means the device is not
+   * paired or was revoked. Any other 401 comes from something in between, such
+   * as a reverse proxy whose own login expired: the server was not reached.
+   */
   const socketTicket = (token: Redacted.Redacted<DeviceToken>) =>
     send(
       HttpClientRequest.post(url(HTTP_PATHS.socketTicket)).pipe(
@@ -84,7 +88,7 @@ export const make = Effect.fnUntraced(function* (origin: URL) {
             case 200:
               return decode(response, SocketTicketGrant);
             case 401:
-              return Effect.fail(new NotAuthenticated());
+              return decode(response, NotAuthenticated).pipe(Effect.flatMap(Effect.fail));
             default:
               return Effect.fail(new ServerUnreachable());
           }

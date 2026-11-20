@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { DeviceId, DeviceToken } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
-import type * as Effect from "effect/Effect";
+import * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
 import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import type * as Stream from "effect/Stream";
 
 // What each platform gives the runtime. The runtime imports nothing from a
@@ -88,8 +89,8 @@ export type LocalTable =
   /** Messages the operator sent that the server has not accepted yet. */
   | "outbox";
 
-/** One change to the client's records: the record's new value, or `null` to remove it. */
-export interface LocalChange {
+/** One of the client's records as it is or is to be: its value, or `null` for none. */
+export interface LocalRecord {
   readonly table: LocalTable;
   readonly key: string;
   readonly value: string | null;
@@ -130,13 +131,57 @@ export class ClientStorage extends Context.Service<
     readonly clear: (table: LocalTable) => Effect.Effect<void, LocalStorageError>;
     /**
      * Applies every change or none, in one transaction, so a record moved from
-     * one table to another is never in both and never in neither.
+     * one table to another is never in both and never in neither. The same
+     * transaction first reads each record of `expected`: unless every one
+     * still holds the value given, it writes nothing and succeeds with `false`.
      */
     readonly commit: (
-      changes: ReadonlyArray<LocalChange>,
-    ) => Effect.Effect<void, LocalStorageError>;
+      changes: ReadonlyArray<LocalRecord>,
+      expected?: ReadonlyArray<LocalRecord>,
+    ) => Effect.Effect<boolean, LocalStorageError>;
   }
 >()("@j3-bots/client-runtime/ports/ClientStorage") {}
+
+/**
+ * Locks every window of this client on the device shares, so that what one
+ * guards runs in one window at a time: the Web Locks API in a browser, an
+ * in-process lock where the client has one window. A page served over plain
+ * HTTP on a local network has no Web Locks API; each of its tabs then locks
+ * for itself alone.
+ */
+export class WindowLocks extends Context.Service<
+  WindowLocks,
+  {
+    /**
+     * Runs `effect` once this window holds the lock `name`, and lets go of it
+     * when `effect` ends. Interrupted while it waits, it gives up the request.
+     */
+    readonly withLock: <A, E, R>(
+      name: string,
+      effect: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E, R>;
+  }
+>()("@j3-bots/client-runtime/ports/WindowLocks") {}
+
+/** Locks held within this process only, for a platform with one window. */
+export const makeInProcessLocks = (): WindowLocks["Service"] => {
+  const locks = new Map<string, Semaphore.Semaphore>();
+  const lockFor = (name: string) => {
+    const known = locks.get(name);
+    if (known !== undefined) return known;
+    const made = Semaphore.makeUnsafe(1);
+    locks.set(name, made);
+    return made;
+  };
+  return WindowLocks.of({
+    withLock: Effect.fn("WindowLocks.withLock")(function* <A, E, R>(
+      name: string,
+      effect: Effect.Effect<A, E, R>,
+    ) {
+      return yield* lockFor(name).withPermits(1)(effect);
+    }),
+  });
+};
 
 /** One upload, as the runtime asks the platform to send it. */
 export interface UploadRequest {

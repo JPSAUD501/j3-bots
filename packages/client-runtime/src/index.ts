@@ -46,15 +46,17 @@ export {
   CredentialStore,
   type DeviceCredential,
   FileTransfer,
-  type LocalChange,
+  type LocalRecord,
   type LocalTable,
   LocalStorageError,
+  makeInProcessLocks,
   Network,
   type NetworkStatus,
   ServerAddress,
   TransferFailed,
   type UploadRequest,
   type UploadResponse,
+  WindowLocks,
 } from "./ports.ts";
 export { Cell, type Readable, waitFor } from "./Store.ts";
 export {
@@ -70,7 +72,7 @@ export {
   targetKey,
 } from "./stores/Conversations.ts";
 export { type BotDraft, freshStartAction } from "./stores/Details.ts";
-export { Devices } from "./stores/Devices.ts";
+export { Devices, type RevokeResult } from "./stores/Devices.ts";
 export { type Draft, type DraftFile, type DraftSendResult } from "./stores/Drafts.ts";
 export { EngineStatus } from "./stores/EngineStatus.ts";
 export { Presence } from "./stores/Presence.ts";

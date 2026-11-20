@@ -15,6 +15,8 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Base64Url from "effect/encoding/Base64Url";
 import { Connection } from "../connection/Connection.ts";
 import { Files, uploadProblem } from "../files/Files.ts";
 import {
@@ -37,9 +39,14 @@ export type DraftFile =
 export interface Draft {
   readonly text: string;
   readonly files: ReadonlyArray<DraftFile>;
+  /**
+   * `send` is moving it to the outbox, which takes a few milliseconds. It
+   * takes no change meanwhile: what it holds is what goes.
+   */
+  readonly sending: boolean;
 }
 
-const empty: Draft = { text: "", files: [] };
+const empty: Draft = { text: "", files: [], sending: false };
 
 /** What `send` did with the draft. */
 export type DraftSendResult =
@@ -52,11 +59,22 @@ export type DraftSendResult =
   /** The text is longer than `MAX_MESSAGE_LENGTH`. */
   | "too-long"
   /** The device could not keep the message, so it stays in the draft. */
-  | "not-kept";
+  | "not-kept"
+  /**
+   * Another window sent or changed the draft since this one read it. Nothing
+   * was sent, and the draft now shows what the device keeps.
+   */
+  | "changed-elsewhere";
 
-/** A draft as the device keeps it: the text and the files already on the server. */
+/**
+ * A draft as the device keeps it: the text and the files already on the
+ * server. Each write gives it a new `revision`, so a window can tell whether
+ * the draft is still the one it read.
+ */
 const StoredDraft = Schema.fromJsonString(
-  Schema.toCodecJson(Schema.Struct({ text: MessageText, files: Schema.Array(Attachment) })),
+  Schema.toCodecJson(
+    Schema.Struct({ revision: Schema.String, text: MessageText, files: Schema.Array(Attachment) }),
+  ),
 );
 const encodeStored = Schema.encodeEffect(StoredDraft);
 const decodeStored = Schema.decodeUnknownOption(StoredDraft);
@@ -72,21 +90,30 @@ const localFileOf = (file: DraftFile): LocalFile =>
 
 const isEmpty = (draft: Draft) => draft.text === "" && draft.files.length === 0;
 
+/** A draft as the device keeps it, as this window shows it. */
+const shown = (stored: typeof StoredDraft.Type): Draft => ({
+  text: stored.text,
+  files: stored.files.map((attachment) => ({ _tag: "ready", key: attachment.id, attachment })),
+  sending: false,
+});
+
 /**
  * Every conversation's draft, kept on the device so a reload loses nothing:
  * its text, and the files already uploaded for it. A file still uploading is
- * kept only in memory. Files upload as soon as they are attached, and the
- * draft is sent once they all have.
+ * kept only in memory. Files upload as soon as they are attached; the draft
+ * can be sent once they all have.
  */
 export class Drafts extends Context.Service<
   Drafts,
   {
     /** Drafts by `targetKey`. A target with no entry has an empty draft. */
     readonly state: Readable<ReadonlyMap<string, Draft>>;
+    /** Changes the draft's text, unless it is `sending`. */
     readonly setText: (target: EntryTarget, text: string) => Effect.Effect<void>;
     /**
      * Adds files to the draft and uploads each the contract's limits allow.
      * A file that breaks one stays in the draft as `failed`, saying which.
+     * A draft that is `sending` takes no files.
      */
     readonly attach: (
       target: EntryTarget,
@@ -97,7 +124,8 @@ export class Drafts extends Context.Service<
     /**
      * Moves the draft to the outbox in one storage transaction, so a crash
      * leaves it in exactly one of them, and sending twice sends once: the
-     * second finds the draft empty.
+     * second finds the draft empty. The transaction claims the draft as this
+     * window last read or wrote it, so two windows never send it twice.
      */
     readonly send: (target: EntryTarget, mentions?: Mentions) => Effect.Effect<DraftSendResult>;
     /**
@@ -115,6 +143,7 @@ export const layer = Layer.effect(
     const connection = yield* Connection;
     const files = yield* Files;
     const conversations = yield* Conversations;
+    const random = yield* SecureRandom.SecureRandom;
     const scope = yield* Scope.Scope;
 
     const stored = yield* storage
@@ -127,17 +156,13 @@ export const layer = Layer.effect(
         ),
       );
     const restored = new Map<string, Draft>();
+    // Each draft as the device keeps it, by key, as this window last read or wrote it.
+    const known = new Map<string, string>();
     for (const [key, value] of stored) {
       const draft = decodeStored(value);
       if (Option.isNone(draft)) continue;
-      restored.set(key, {
-        text: draft.value.text,
-        files: draft.value.files.map((attachment) => ({
-          _tag: "ready",
-          key: attachment.id,
-          attachment,
-        })),
-      });
+      restored.set(key, shown(draft.value));
+      known.set(key, value);
     }
     const state = new Cell<ReadonlyMap<string, Draft>>(restored);
     const uploads = new Map<string, Fiber.Fiber<void>>();
@@ -153,15 +178,20 @@ export const layer = Layer.effect(
       text: draft.text,
       files: draft.files.flatMap((file) => (file._tag === "ready" ? [file.attachment] : [])),
     });
+    const revision = random.randomBytes(12).pipe(Effect.map(Base64Url.encode));
     const writeOne = (key: string) => {
       const draft = state.get().get(key) ?? empty;
       const record = persisted(draft);
-      const write =
-        record.text === "" && record.files.length === 0
-          ? storage.remove("drafts", key)
-          : encodeStored(record).pipe(
-              Effect.flatMap((value) => storage.write("drafts", key, value)),
-            );
+      const write = Effect.gen(function* () {
+        if (record.text === "" && record.files.length === 0) {
+          yield* storage.remove("drafts", key);
+          known.delete(key);
+          return;
+        }
+        const value = yield* encodeStored({ revision: yield* revision, ...record });
+        yield* storage.write("drafts", key, value);
+        known.set(key, value);
+      });
       return write.pipe(
         Effect.catchTags({
           LocalStorageError: (error) => Effect.logWarning("A draft is kept in memory only", error),
@@ -178,16 +208,21 @@ export const layer = Layer.effect(
       }
     }).pipe(Effect.forkIn(scope));
 
-    /** Changes one draft at once, and has the writer keep it. */
+    /** Shows `draft` as the draft of `key`. */
+    const show = (key: string, draft: Draft) => {
+      const next = new Map(state.get());
+      if (isEmpty(draft)) next.delete(key);
+      else next.set(key, draft);
+      state.set(next);
+    };
+
+    /** Changes one draft at once, unless it is `sending`, and has the writer keep it. */
     const changeNow = (key: string, update: (draft: Draft) => Draft) => {
-      const current = state.get();
-      const before = current.get(key) ?? empty;
+      const before = state.get().get(key) ?? empty;
+      if (before.sending) return;
       const after = update(before);
       if (after === before) return;
-      const next = new Map(current);
-      if (isEmpty(after)) next.delete(key);
-      else next.set(key, after);
-      state.set(next);
+      show(key, after);
       unwritten.add(key);
       Queue.offerUnsafe(wake, void 0);
     };
@@ -214,6 +249,7 @@ export const layer = Layer.effect(
       added: ReadonlyArray<{ readonly name: string; readonly body: Blob }>,
     ) {
       const key = targetKey(target);
+      if (state.get().get(key)?.sending === true) return;
       const held = (state.get().get(key)?.files ?? [])
         .filter((file) => file._tag !== "failed")
         .map(localFileOf);
@@ -286,6 +322,24 @@ export const layer = Layer.effect(
         ).pipe(Effect.andThen(upload === undefined ? Effect.void : Fiber.interrupt(upload)));
       });
 
+    /** Shows the draft of `key` as the device keeps it, after another window changed it. */
+    const reload = (key: string, held: Draft) =>
+      storage.readAll("drafts").pipe(
+        Effect.map((records) => {
+          const value = records.get(key);
+          const draft = value === undefined ? Option.none() : decodeStored(value);
+          unwritten.delete(key);
+          if (value === undefined || Option.isNone(draft)) known.delete(key);
+          else known.set(key, value);
+          show(key, Option.isSome(draft) ? shown(draft.value) : empty);
+        }),
+        Effect.catchTag("LocalStorageError", (error) =>
+          Effect.logWarning("A draft another window changed could not be read", error).pipe(
+            Effect.andThen(Effect.sync(() => show(key, held))),
+          ),
+        ),
+      );
+
     const send = Effect.fn("Drafts.send")(function* (target: EntryTarget, mentions?: Mentions) {
       const key = targetKey(target);
       return yield* turn.withPermits(1)(
@@ -298,23 +352,36 @@ export const layer = Layer.effect(
           );
           if (text === "" && attachments.length === 0) return "empty";
           if (text.length > MAX_MESSAGE_LENGTH) return "too-long";
+          show(key, { ...draft, sending: true });
           // The outbox holds the message from here; its delivery outlives the caller.
           const kept = yield* conversations
             .enqueue(
               { target, text, attachments, ...(mentions === undefined ? {} : { mentions }) },
               [{ table: "drafts", key, value: null }],
+              [{ table: "drafts", key, value: known.get(key) ?? null }],
             )
             .pipe(
-              Effect.as(true),
+              Effect.map((claimed) => (claimed ? "sent" : "changed-elsewhere")),
               Effect.catchTag("LocalStorageError", (error) =>
                 Effect.logWarning("A message could not be kept; it stays in the draft", error).pipe(
-                  Effect.as(false),
+                  Effect.as("not-kept" as const),
                 ),
               ),
             );
-          if (!kept) return "not-kept";
-          changeNow(key, () => empty);
-          return "sent";
+          switch (kept) {
+            case "sent":
+              unwritten.delete(key);
+              known.delete(key);
+              show(key, empty);
+              break;
+            case "changed-elsewhere":
+              yield* reload(key, draft);
+              break;
+            case "not-kept":
+              show(key, draft);
+              break;
+          }
+          return kept;
         }),
       );
     });
@@ -325,6 +392,7 @@ export const layer = Layer.effect(
         uploads.clear();
         yield* Fiber.interruptAll(running);
         unwritten.clear();
+        known.clear();
         state.set(new Map());
         yield* storage.clear("drafts");
       }),

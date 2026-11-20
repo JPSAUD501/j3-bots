@@ -90,19 +90,45 @@ export async function clear(store: Store): Promise<void> {
   return committed(transaction);
 }
 
-/** Puts or deletes (`value: null`) each record, all in one transaction: every change or none. */
+interface IdbRecord {
+  readonly store: Store;
+  readonly key: string;
+  readonly value: string | null;
+}
+
+/**
+ * Puts or deletes (`value: null`) each record of `changes`, all in one
+ * transaction: every change or none. The transaction first reads each record
+ * of `expected`, and writes nothing, resolving `false`, unless every one holds
+ * the value given (`null` for no record).
+ */
 export async function commit(
-  changes: ReadonlyArray<{
-    readonly store: Store;
-    readonly key: string;
-    readonly value: string | null;
-  }>,
-): Promise<void> {
-  const stores = [...new Set(changes.map((change) => change.store))];
+  changes: ReadonlyArray<IdbRecord>,
+  expected: ReadonlyArray<IdbRecord> = [],
+): Promise<boolean> {
+  const stores = [...new Set([...changes, ...expected].map((record) => record.store))];
   const transaction = (await database()).transaction(stores, "readwrite");
-  for (const { store, key, value } of changes) {
-    if (value === null) transaction.objectStore(store).delete(key);
-    else transaction.objectStore(store).put(value, key);
+  const finished = committed(transaction);
+  let holds = true;
+  let unread = expected.length;
+  const apply = () => {
+    if (!holds) return;
+    for (const { store, key, value } of changes) {
+      if (value === null) transaction.objectStore(store).delete(key);
+      else transaction.objectStore(store).put(value, key);
+    }
+  };
+  // The writes go in from the last read's callback, while the transaction is still active.
+  for (const { store, key, value } of expected) {
+    const read = transaction.objectStore(store).get(key);
+    read.onsuccess = () => {
+      const stored: unknown = read.result;
+      if ((stored === undefined ? null : stored) !== value) holds = false;
+      unread -= 1;
+      if (unread === 0) apply();
+    };
   }
-  return committed(transaction);
+  if (expected.length === 0) apply();
+  await finished;
+  return holds;
 }

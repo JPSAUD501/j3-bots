@@ -46,6 +46,7 @@ import type {
   FileTransfer,
   Network,
   ServerAddress,
+  WindowLocks,
 } from "./ports.ts";
 import type { Readable } from "./Store.ts";
 import * as Conversations from "./stores/Conversations.ts";
@@ -67,6 +68,7 @@ export type Platform =
   | ClientStorage
   | FileTransfer
   | Network
+  | WindowLocks
   | HttpClient.HttpClient
   | Socket.WebSocketConstructor
   | SecureRandom.SecureRandom;
@@ -199,7 +201,8 @@ export interface J3Client {
     changes: Settings.SettingsChanges,
   ) => Promise<Actions.IntentResult<SettingsValue>>;
   readonly refreshDevices: () => void;
-  readonly revokeDevice: (deviceId: DeviceId) => Promise<Actions.IntentResult>;
+  /** Waits ten seconds at most; see `Devices.revoke`. */
+  readonly revokeDevice: (deviceId: DeviceId) => Promise<Devices.RevokeResult>;
   readonly startPairing: () => Promise<
     Actions.IntentResult<{ readonly code: PairingCode; readonly expiresAt: DateTime.Utc }>
   >;
