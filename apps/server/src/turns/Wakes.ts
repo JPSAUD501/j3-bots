@@ -9,6 +9,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { Ids } from "../Ids.ts";
 import { json, timeText } from "../persistence/columns.ts";
 import { type Audience, audienceColumns, PRIORITY, type WakeKind, WakePayload } from "./model.ts";
+import { liveTarget } from "./liveTarget.ts";
 import { Signals } from "./Signals.ts";
 import { stopTargets } from "./stopTargets.ts";
 
@@ -26,7 +27,8 @@ export interface NewWake {
   /**
    * What led to it: the operator, whose word a Stop never cancels ahead of
    * time, or the bot's own work that began at `since`, which a Stop covering
-   * it ended (`stopTargets.covers`).
+   * it ended (`stopTargets.covers`) and an archived or deleted room left with
+   * nowhere to go.
    */
   readonly cause:
     | { readonly _tag: "operator" }
@@ -40,7 +42,8 @@ const encodePayload = Schema.encodeEffect(json(WakePayload));
  * anything happens): in the caller's transaction, the one that writes their
  * cause, so a wake exists exactly when its cause does. A wake that follows
  * from work a Stop covers is not written: the operator stopped what it would
- * continue. The dispatcher looks once it commits.
+ * continue. Nor is one that follows from work for a room no longer active:
+ * nobody is there to see it. The dispatcher looks once it commits.
  */
 export class Wakes extends Context.Service<
   Wakes,
@@ -54,6 +57,7 @@ export const layer = Layer.effect(
     const ids = yield* Ids;
     const signals = yield* Signals;
     const stops = stopTargets(sql);
+    const live = liveTarget(sql);
 
     const record = Effect.fn("Wakes.record")(function* (wakes: ReadonlyArray<NewWake>) {
       const at = timeText(yield* DateTime.now);
@@ -61,7 +65,8 @@ export const layer = Layer.effect(
       for (const wake of wakes) {
         if (
           wake.cause._tag === "work" &&
-          (yield* stops.covers(wake.botId, wake.audience, wake.cause.since))
+          ((yield* stops.covers(wake.botId, wake.audience, wake.cause.since)) ||
+            (yield* live(wake.botId, wake.audience)) === null)
         ) {
           continue;
         }

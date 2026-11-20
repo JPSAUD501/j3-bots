@@ -1,24 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { type BotId, RoomId } from "@j3-bots/contracts";
+import type { BotId, RoomId } from "@j3-bots/contracts";
 import { IdempotencyKey } from "@j3-bots/engine-t3";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
-import * as SqlSchema from "effect/sql/SqlSchema";
 import { timeText } from "../persistence/columns.ts";
 import type { WakesAfter } from "./Ledger.ts";
-import { type Audience, sameAudience, type SessionRowId } from "./model.ts";
+import { type Audience, audienceOf, type SessionRowId, type WakeFailure } from "./model.ts";
+
+/** How a dispatch's work ended short of running to its end. */
+export type Ending =
+  /** The engine certainly never had it. */
+  | { readonly _tag: "unsent" }
+  /** The engine dropped the turn it was to start or ride. */
+  | { readonly _tag: "dropped" }
+  /** It failed: refused, or never known. */
+  | { readonly _tag: "failed"; readonly reason: WakeFailure };
 
 /** The engine key of one round of a Stop of one session. */
 export const stopKey = (stopId: string, sessionId: string, round: number): IdempotencyKey =>
   IdempotencyKey.make(`${stopId}:${sessionId}:${round}`);
-
-const StopScope = Schema.Struct({
-  scope: Schema.Literals(["bot", "room"]),
-  room_id: Schema.NullOr(RoomId),
-});
 
 /**
  * The bookkeeping of Stop targets the observer and the Stop runner share
@@ -27,39 +28,35 @@ const StopScope = Schema.Struct({
 export const stopTargets = (sql: SqlClient.SqlClient) => {
   const now = Effect.map(DateTime.now, timeText);
 
-  const latestStop = SqlSchema.findOneOption({
-    Request: Schema.String,
-    Result: StopScope,
-    execute: (sessionId) => sql`
-      SELECT s.scope, s.room_id FROM stops s
-      JOIN stop_targets t ON t.stop_id = s.id
-      WHERE t.session_id = ${sessionId}
-      ORDER BY s.rowid DESC LIMIT 1
-    `,
-  });
-
-  const fenceOf = SqlSchema.findOneOption({
-    Request: Schema.String,
-    Result: StopScope,
-    execute: (stopId) => sql`SELECT scope, room_id FROM stops WHERE id = ${stopId}`,
+  /**
+   * Whether a Stop of the bot covers work for `audience` that began at
+   * `since`: a bot Stop, or a room Stop of that room, that is still
+   * unsettled, or was recorded at or after `since` and so ended that work
+   * after it began. Such work wakes nobody and needs no notice.
+   */
+  const covers = Effect.fn("stopTargets.covers")(function* (
+    botId: BotId,
+    audience: Audience,
+    since: DateTime.Utc,
+  ) {
+    const roomId = audience._tag === "room" ? audience.roomId : null;
+    const rows = yield* sql<{ readonly n: number }>`
+      SELECT 1 AS n FROM stops s
+      WHERE s.bot_id = ${botId}
+        AND (s.scope = 'bot' OR (s.scope = 'room' AND s.room_id = ${roomId}))
+        AND (
+          s.created_at >= ${timeText(since)}
+          OR EXISTS (
+            SELECT 1 FROM stop_targets t WHERE t.stop_id = s.id AND t.stopped_at IS NULL
+          )
+        )
+      LIMIT 1
+    `.pipe(Effect.orDie);
+    return rows.length > 0;
   });
 
   return {
-    /**
-     * Whether the Stop that fenced a dispatch stopped what it was for: every
-     * one of a bot Stop, and a room Stop's own room. A room's Stop also fences
-     * private work in a member's session, which the operator did not stop.
-     */
-    stoppedByFence: Effect.fn("stopTargets.stoppedByFence")(function* (dispatch: {
-      readonly fenced_by_stop_id: string | null;
-      readonly audience: "conversation" | "room";
-      readonly audience_room_id: RoomId | null;
-    }) {
-      if (dispatch.fenced_by_stop_id === null) return false;
-      const fence = yield* fenceOf(dispatch.fenced_by_stop_id).pipe(Effect.orDie);
-      if (Option.isNone(fence) || fence.value.scope === "bot") return true;
-      return dispatch.audience === "room" && dispatch.audience_room_id === fence.value.room_id;
-    }),
+    covers,
 
     /**
      * Confirms every unsettled target of the session once the latest round of
@@ -131,49 +128,34 @@ export const stopTargets = (sql: SqlClient.SqlClient) => {
     }, Effect.orDie),
 
     /**
-     * What becomes of the wakes of a dispatch a Stop ended in the engine:
-     * cancelled when the operator stopped them (the bot, or the room they were
-     * for), failed as `stopped` when a room's Stop reached them on their way to
-     * the bot in private.
+     * What becomes of the wakes of a dispatch that will not run to its end,
+     * from the one Stop predicate (`covers`), read in the settlement's own
+     * transaction: when a Stop covers the work, the operator stopped it and
+     * its wakes are cancelled. Otherwise wakes the engine never had wait
+     * again, wakes whose turn the engine dropped (a room's Stop reached the
+     * bot's private work) fail as `stopped`, and any others fail with their
+     * own reason.
      */
-    wakesAfterStop: Effect.fn("stopTargets.wakesAfterStop")(function* (
-      sessionId: SessionRowId,
-      audience: Audience,
+    wakesAfter: Effect.fn("stopTargets.wakesAfter")(function* (
+      dispatch: {
+        readonly bot_id: BotId;
+        readonly audience: "conversation" | "room";
+        readonly audience_room_id: RoomId | null;
+        readonly created_at: DateTime.Utc;
+      },
+      ending: Ending,
     ) {
-      const stop = yield* latestStop(sessionId).pipe(Effect.orDie);
-      if (Option.isNone(stop) || stop.value.scope === "bot") {
-        return { _tag: "cancelled" } satisfies WakesAfter;
+      if (yield* covers(dispatch.bot_id, audienceOf(dispatch), dispatch.created_at)) {
+        return { _tag: "cancelled" } satisfies WakesAfter as WakesAfter;
       }
-      return sameAudience(audience, { _tag: "room", roomId: stop.value.room_id })
-        ? ({ _tag: "cancelled" } satisfies WakesAfter)
-        : ({ _tag: "failed", reason: "stopped" } satisfies WakesAfter);
-    }),
-
-    /**
-     * Whether a Stop of the bot covers work for `audience` that began at
-     * `since`: a bot Stop, or a room Stop of that room, that is still
-     * unsettled, or was recorded at or after `since` and so ended that work
-     * after it began. Such work wakes nobody and needs no notice.
-     */
-    covers: Effect.fn("stopTargets.covers")(function* (
-      botId: BotId,
-      audience: Audience,
-      since: DateTime.Utc,
-    ) {
-      const roomId = audience._tag === "room" ? audience.roomId : null;
-      const rows = yield* sql<{ readonly n: number }>`
-        SELECT 1 AS n FROM stops s
-        WHERE s.bot_id = ${botId}
-          AND (s.scope = 'bot' OR (s.scope = 'room' AND s.room_id = ${roomId}))
-          AND (
-            s.created_at >= ${timeText(since)}
-            OR EXISTS (
-              SELECT 1 FROM stop_targets t WHERE t.stop_id = s.id AND t.stopped_at IS NULL
-            )
-          )
-        LIMIT 1
-      `.pipe(Effect.orDie);
-      return rows.length > 0;
+      switch (ending._tag) {
+        case "unsent":
+          return { _tag: "pending" } satisfies WakesAfter as WakesAfter;
+        case "dropped":
+          return { _tag: "failed", reason: "stopped" } satisfies WakesAfter as WakesAfter;
+        case "failed":
+          return { _tag: "failed", reason: ending.reason } satisfies WakesAfter as WakesAfter;
+      }
     }),
   };
 };

@@ -16,7 +16,7 @@ import { Ledger } from "./Ledger.ts";
 import { recoveryBackoff, SessionRowId } from "./model.ts";
 import { Observer } from "./Observer.ts";
 import { Readiness } from "./Readiness.ts";
-import { DEFECT_RETRY, type Pass, onePassAtATime, passOutcome, reconcile } from "./reconciler.ts";
+import { type Pass, onePassAtATime, passOutcome, reconcile } from "./reconciler.ts";
 import { SessionGate } from "./SessionGate.ts";
 import { sessionLoss } from "./sessionRecords.ts";
 import { Signals } from "./Signals.ts";
@@ -170,14 +170,15 @@ export const layer = Layer.effect(
       yield* observer.watch(hold.id);
       if (!(yield* observer.ready(hold.id))) return "deferred" satisfies Step as Step;
       // Caught up first: a replacement or a replayed hold is applied before
-      // the hold is read in the gate.
+      // the hold is read in the gate. A catch-up that could not reach the
+      // engine is this session's alone: the pass goes on with the others.
       const caughtUp = yield* observer.synchronize(hold.id, hold.engine_session_id).pipe(
         Effect.as("synced" as const),
         Effect.catchTags({
           SessionNotFound: () => Effect.as(lost(hold.id), "lost" as const),
           NotObserved: () => Effect.succeed("deferred" as const),
           EngineIndeterminate: () => Effect.succeed("deferred" as const),
-          EngineUnavailable: () => Effect.succeed("unavailable" as const),
+          EngineUnavailable: () => Effect.succeed("deferred" as const),
           EngineIncompatible: () => Effect.succeed("unavailable" as const),
         }),
       );
@@ -188,7 +189,7 @@ export const layer = Layer.effect(
 
     /**
      * One hold at a time: a defect is logged and that hold is resumed again
-     * after a later deadline, while the pass goes on with the others.
+     * on the backoff of a lost reply, while the pass goes on with the others.
      */
     const supervised = (hold: Due) =>
       resumeOne(hold).pipe(
@@ -198,10 +199,7 @@ export const layer = Layer.effect(
             Effect.logError(
               "A held queue could not be resumed; it is tried again later",
               cause,
-            ).pipe(
-              Effect.andThen(DateTime.now),
-              Effect.flatMap((now) => later(hold, DateTime.addDuration(now, DEFECT_RETRY))),
-            ),
+            ).pipe(Effect.andThen(unanswered(hold))),
         ),
       );
 

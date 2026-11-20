@@ -25,7 +25,7 @@ import { Entries } from "../entries/Entries.ts";
 import { Layout } from "../Layout.ts";
 import { Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
-import { type DispatchRow, keyOf, Ledger, type WakesAfter } from "./Ledger.ts";
+import { type DispatchRow, keyOf, Ledger } from "./Ledger.ts";
 import {
   busyBackoff,
   type DispatchRowId,
@@ -36,6 +36,7 @@ import {
   type WakeFailure,
 } from "./model.ts";
 import { Observer } from "./Observer.ts";
+import { DEFECT_RETRY } from "./reconciler.ts";
 import { SessionGate } from "./SessionGate.ts";
 import { sessionLoss } from "./sessionRecords.ts";
 import { Signals } from "./Signals.ts";
@@ -50,7 +51,10 @@ export const inboxPath = (attachment: { readonly id: AttachmentId; readonly name
 export type SendResult =
   /** The dispatch moved on: it has an answer, or it was released or failed. */
   | "settled"
-  /** No answer yet: the recovery tries again at `next_attempt_at`. */
+  /**
+   * No answer yet: it is tried again at `next_attempt_at`, by the dispatcher
+   * when it was never sent, by the recovery when it was.
+   */
   | "scheduled"
   /**
    * Nothing to do now: it is settled, not due before its deadline, held by a
@@ -160,10 +164,7 @@ export const layer = Layer.effect(
     });
 
     /** The engine certainly applied nothing: the wakes wait again, unless the operator stopped them. */
-    const unsentWakes = (row: DispatchRow) =>
-      Effect.map(targets.stoppedByFence(row), (stopped): WakesAfter =>
-        stopped ? { _tag: "cancelled" } : { _tag: "pending" },
-      );
+    const unsentWakes = (row: DispatchRow) => targets.wakesAfter(row, { _tag: "unsent" });
 
     /**
      * It may have been sent, and will not be delivered: the wakes fail with
@@ -171,19 +172,12 @@ export const layer = Layer.effect(
      * them. They never wait again.
      */
     const sentWakes = (row: DispatchRow, reason: WakeFailure) =>
-      Effect.map(targets.stoppedByFence(row), (stopped): WakesAfter =>
-        stopped ? { _tag: "cancelled" } : { _tag: "failed", reason },
-      );
-
-    /** Reads the dispatch as it stands now, inside the result's transaction. */
-    const current = Effect.fn("Sender.current")(function* (dispatchId: DispatchRowId) {
-      return yield* ledger.find(dispatchId);
-    });
+      targets.wakesAfter(row, { _tag: "failed", reason });
 
     const releaseUnsent = (dispatchId: DispatchRowId) =>
       transaction(
         Effect.gen(function* () {
-          const row = yield* current(dispatchId);
+          const row = yield* ledger.find(dispatchId);
           if (Option.isNone(row)) return;
           yield* ledger.release(dispatchId, yield* unsentWakes(row.value));
         }),
@@ -231,7 +225,7 @@ export const layer = Layer.effect(
     const failSent = (dispatchId: DispatchRowId, reason: "rejected" | "unresolved") =>
       transaction(
         Effect.gen(function* () {
-          const row = yield* current(dispatchId);
+          const row = yield* ledger.find(dispatchId);
           if (Option.isNone(row)) return;
           yield* ledger.fail(dispatchId, reason, yield* sentWakes(row.value, reason));
         }),
@@ -245,7 +239,7 @@ export const layer = Layer.effect(
             UPDATE dispatches SET attempts = attempts - 1
             WHERE id = ${dispatchId} AND status = 'intended' AND attempts > 0
           `.pipe(Effect.orDie);
-          const row = yield* current(dispatchId);
+          const row = yield* ledger.find(dispatchId);
           if (
             Option.isSome(row) &&
             row.value.attempts === 0 &&
@@ -265,7 +259,7 @@ export const layer = Layer.effect(
     const undecided = (dispatchId: DispatchRowId) =>
       transaction(
         Effect.gen(function* () {
-          const row = yield* current(dispatchId);
+          const row = yield* ledger.find(dispatchId);
           if (Option.isNone(row) || row.value.status !== "intended") return "settled" as const;
           const session = yield* sessionState(row.value.session_id).pipe(Effect.orDie);
           const answers = row.value.indeterminate_answers + 1;
@@ -293,7 +287,7 @@ export const layer = Layer.effect(
     const stagingFailed = (dispatchId: DispatchRowId) =>
       transaction(
         Effect.gen(function* () {
-          const row = yield* current(dispatchId);
+          const row = yield* ledger.find(dispatchId);
           if (Option.isNone(row) || row.value.status !== "intended") return "settled" as const;
           const session = yield* sessionState(row.value.session_id).pipe(Effect.orDie);
           if (session.gone) {
@@ -448,14 +442,43 @@ export const layer = Layer.effect(
       return claimed.length > 0;
     });
 
-    /** A defect is logged, and the dispatch goes through `then`, which counts it. */
+    /**
+     * The last resort when counting a defect failed too: one write that only
+     * moves the dispatch's deadline, so it is looked at again later and never
+     * at once.
+     */
+    const postpone = Effect.fn("Sender.postpone")(function* (dispatchId: DispatchRowId) {
+      const next = DateTime.addDuration(yield* DateTime.now, DEFECT_RETRY);
+      yield* sql`
+        UPDATE dispatches SET next_attempt_at = ${timeText(next)} WHERE id = ${dispatchId}
+      `.pipe(Effect.orDie);
+      return "scheduled" satisfies SendResult as SendResult;
+    });
+
+    /**
+     * A defect is logged, and the dispatch goes through `then`, which counts
+     * it. When `then` fails as well, the dispatch is only postponed.
+     */
     const countDefect =
-      (what: string, then: Effect.Effect<SendResult>) =>
+      (what: string, dispatchId: DispatchRowId, then: Effect.Effect<SendResult>) =>
       <A>(effect: Effect.Effect<A>): Effect.Effect<A | SendResult> =>
         effect.pipe(
           Effect.catchCauseIf(
             (cause) => !Cause.hasInterruptsOnly(cause),
-            (cause) => Effect.andThen(Effect.logError(what, cause), then),
+            (cause) =>
+              Effect.andThen(
+                Effect.logError(what, cause),
+                then.pipe(
+                  Effect.catchCauseIf(
+                    (again) => !Cause.hasInterruptsOnly(again),
+                    (again) =>
+                      Effect.andThen(
+                        Effect.logError("A dispatch's defect could not be counted", again),
+                        postpone(dispatchId),
+                      ),
+                  ),
+                ),
+              ),
           ),
         );
 
@@ -496,11 +519,14 @@ export const layer = Layer.effect(
       }
       const sessionId = session.engine_session_id;
 
-      // Nothing is sent into a session before its events are followed and
-      // known from a committed cursor or snapshot; the event that makes it
-      // ready nudges the workers.
-      yield* observer.watch(row.session_id);
-      if (!(yield* observer.ready(row.session_id))) return "skipped" as const;
+      // Nothing new is sent into a session before its events are followed
+      // and known from a committed cursor or snapshot; the event that makes
+      // it ready nudges the workers. A resend needs no observation: its key
+      // makes the engine apply it once, whatever the server knows yet.
+      if (firstSend) {
+        yield* observer.watch(row.session_id);
+        if (!(yield* observer.ready(row.session_id))) return "skipped" as const;
+      }
 
       // A steer goes only into the turn it was planned for: once that turn is
       // no longer the admitted one, its wakes wait for the next dispatch.
@@ -565,12 +591,17 @@ export const layer = Layer.effect(
       const prepared = yield* prepare(dispatchId).pipe(
         countDefect(
           "A dispatch could not be prepared; it is tried again later",
+          dispatchId,
           stagingFailed(dispatchId),
         ),
       );
       if (typeof prepared === "string") return prepared;
       return yield* call(prepared.row, prepared.input, prepared.firstSend).pipe(
-        countDefect("A dispatch's send failed; it is recovered later", undecided(dispatchId)),
+        countDefect(
+          "A dispatch's send failed; it is recovered later",
+          dispatchId,
+          undecided(dispatchId),
+        ),
       );
     });
 
@@ -579,12 +610,15 @@ export const layer = Layer.effect(
       if (Option.isNone(found) || found.value.status !== "intended") return "none" as const;
       const result = yield* gate.run(found.value.session_id)(sendInGate(dispatchId));
       // Only a change wakes anyone: the session may take its next wake, a
-      // Stop may proceed, or the recovery has a new deadline.
+      // Stop may proceed, or the dispatch's owner has a new deadline: the
+      // dispatcher for one never sent, the recovery for a claimed one.
       if (result === "settled") {
         yield* signals.dispatch.fire;
         yield* signals.stops.fire;
       } else if (result === "scheduled") {
-        yield* signals.recovery.fire;
+        const after = yield* ledger.find(dispatchId);
+        const claimed = Option.isSome(after) && after.value.attempts > 0;
+        yield* (claimed ? signals.recovery : signals.dispatch).fire;
       }
       return result;
     });

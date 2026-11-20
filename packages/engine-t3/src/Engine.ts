@@ -457,8 +457,11 @@ export class Engine extends Context.Service<
      * fails only when the session no longer exists or the engine turns out not
      * to be the pinned version. A stream counts as open from when it is
      * subscribed (when it starts running), before it emits anything: a
-     * `synchronize` called after that reaches it. **Assumed**: not yet observed
-     * on a running engine for a stream that has emitted nothing.
+     * `synchronize` called after that reaches it. **Verified** on release
+     * `4969` by the conformance scenario "counts a stream as open from its
+     * subscription, before it emits anything", which subscribes and reads
+     * nothing, calls `synchronize`, and then reads until the `synchronized`
+     * event with its token arrives.
      */
     readonly events: (input: {
       readonly sessionId: SessionId;
@@ -475,7 +478,7 @@ export class Engine extends Context.Service<
      *
      * A stream counts as open from when it is subscribed, so one subscribed
      * before this call emits the event even if it has emitted nothing yet
-     * (**Assumed**, as on `events`).
+     * (**Verified**, as on `events`).
      * Each stream emits the event only once the engine's completion marker
      * reached it, and the call returns once every open stream has emitted it
      * or closed. A catch-up that fails or times out fails the call with

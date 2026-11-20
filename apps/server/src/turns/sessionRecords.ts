@@ -189,10 +189,9 @@ export const sessionLoss = (
       if (dispatch.status === "delivered") {
         yield* ledger.finish(dispatch.id, interrupted);
       } else {
-        const stopped = yield* targets.stoppedByFence(dispatch);
         yield* ledger.abandon(
           dispatch.id,
-          stopped ? { _tag: "cancelled" } : { _tag: "failed", reason: "unresolved" },
+          yield* targets.wakesAfter(dispatch, { _tag: "failed", reason: "unresolved" }),
         );
       }
     }

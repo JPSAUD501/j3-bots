@@ -250,8 +250,13 @@ export const layer = Layer.effect(
     const following = new Map<SessionRowId, Following | Reopening>();
     /** Consecutive times a session's stream ended in failure, for its reopening backoff. */
     const failures = new Map<SessionRowId, number>();
-    /** Sessions whose failure already shows a notice, until an event applies again. */
-    const noticed = new Set<SessionRowId>();
+    /**
+     * Sessions with an event that could not be applied: what the server knows
+     * of them is behind, so they are not ready until an event applies again.
+     */
+    const behind = new Set<SessionRowId>();
+    /** Sessions whose failure shows a notice already, until an event applies again. */
+    const shown = new Set<SessionRowId>();
 
     // ---- Reads ----------------------------------------------------------------
 
@@ -559,10 +564,12 @@ export const layer = Layer.effect(
         // It ended without starting: a Stop cancelled it while it waited, or it
         // failed before the provider took it, which the engine refused it with.
         yield* ledger.accept(dispatch.id, null);
-        const after =
+        const after = yield* stops.wakesAfter(
+          dispatch,
           end.outcome._tag === "cancelled"
-            ? yield* stops.wakesAfterStop(session.id, audienceOf(dispatch))
-            : ({ _tag: "failed", reason: "rejected" } as const);
+            ? { _tag: "dropped" }
+            : { _tag: "failed", reason: "rejected" },
+        );
         yield* ledger.drop(dispatch.id, end.turnId, after);
         return;
       }
@@ -627,7 +634,7 @@ export const layer = Layer.effect(
       yield* ledger.drop(
         dispatch.value.id,
         turnId,
-        yield* stops.wakesAfterStop(session.id, audienceOf(dispatch.value)),
+        yield* stops.wakesAfter(dispatch.value, { _tag: "dropped" }),
       );
     });
 
@@ -1051,7 +1058,7 @@ export const layer = Layer.effect(
       event: SessionEvent,
     ) {
       const caughtUp = yield* Deferred.poll(follow.caughtUp);
-      const wasReady = Option.isSome(caughtUp) && !noticed.has(session.id);
+      const wasReady = Option.isSome(caughtUp) && !behind.has(session.id);
       const applied = yield* transaction(
         Effect.gen(function* () {
           const now = yield* sessionNow(session.id);
@@ -1065,7 +1072,8 @@ export const layer = Layer.effect(
           yield* sql.afterCommit(
             Effect.sync(() => {
               failures.delete(session.id);
-              noticed.delete(session.id);
+              behind.delete(session.id);
+              shown.delete(session.id);
             }).pipe(Effect.andThen(Deferred.succeed(follow.caughtUp, undefined))),
           );
           yield* changes.touch({ _tag: "bot", botId: session.bot_id });
@@ -1113,32 +1121,54 @@ export const layer = Layer.effect(
         if (following.get(sessionId) === follow) following.delete(sessionId);
       });
 
-    /**
-     * A session's stream ended. Every waiter on it fails, to be retried; the
-     * stream is opened again with backoff unless the session is gone or the
-     * server is stopping. An event that cannot be applied is not skipped: it
-     * is logged with its cause, shown once as a notice, and read again.
-     */
-    const ended = Effect.fn("Observer.ended")(function* (
-      session: Watched,
-      follow: Following,
-      exit: Exit.Exit<void, SessionNotFound | EngineIncompatible>,
-    ) {
+    /** Every waiter on a stream that closed fails, to be retried. */
+    const closeWaiters = Effect.fn("Observer.closeWaiters")(function* (follow: Following) {
       const closed = new NotObserved();
       yield* Deferred.fail(follow.caughtUp, closed);
       for (const waiting of follow.tokens.values()) yield* Deferred.fail(waiting, closed);
+    });
+
+    /**
+     * The notice of an event that cannot be applied, shown once: in its own
+     * transaction, and counted as shown only once it commits. One that cannot
+     * be written is logged and tried again the next time the event fails.
+     */
+    const showObservationFailed = (session: Watched) =>
+      Effect.suspend(() =>
+        shown.has(session.id)
+          ? Effect.void
+          : transaction(
+              notify(session.bot_id, conversation, { _tag: "observation-failed" }, null),
+            ).pipe(
+              Effect.andThen(Effect.sync(() => shown.add(session.id))),
+              Effect.catchCauseIf(
+                (cause) => !Cause.hasInterruptsOnly(cause),
+                (cause) =>
+                  Effect.logError("The notice of an event that cannot be applied failed", cause),
+              ),
+            ),
+      );
+
+    /**
+     * What a stream's end means for the session: whether it is opened again.
+     * An event that cannot be applied is not skipped: it is logged with its
+     * cause, shown once as a notice, and read again.
+     */
+    const endOf = Effect.fn("Observer.endOf")(function* (
+      session: Watched,
+      exit: Exit.Exit<void, SessionNotFound | EngineIncompatible>,
+    ) {
       if (Exit.isSuccess(exit)) {
         // It stopped because the session was lost, or the engine ended it.
         if (Option.isNone(yield* watchedRow(session.id).pipe(Effect.orDie))) {
-          return yield* forget(session.id, follow);
+          return "forget" as const;
         }
         yield* Effect.logWarning("A session's event stream ended; it is opened again");
-        return yield* willReopen(session.id, follow);
+        return "reopen" as const;
       }
-      if (Cause.hasInterruptsOnly(exit.cause)) return yield* forget(session.id, follow);
+      if (Cause.hasInterruptsOnly(exit.cause)) return "forget" as const;
       const error = Cause.findErrorOption(exit.cause);
       if (Option.isSome(error) && error.value._tag === "SessionNotFound") {
-        yield* forget(session.id, follow);
         yield* Effect.logWarning("The engine no longer has a session", error.value);
         yield* transaction(
           Effect.gen(function* () {
@@ -1147,28 +1177,55 @@ export const layer = Layer.effect(
             }
           }),
         ).pipe(Effect.orDie);
-        return;
+        return "forget" as const;
       }
       if (Option.isSome(error)) {
         yield* Effect.logError("A session's event stream failed", error.value);
       } else {
+        behind.add(session.id);
         yield* Effect.logError("A session event could not be applied", exit.cause);
-        if (!noticed.has(session.id)) {
-          noticed.add(session.id);
-          yield* transaction(
-            notify(session.bot_id, conversation, { _tag: "observation-failed" }, null),
-          ).pipe(Effect.orDie);
-        }
+        yield* showObservationFailed(session);
       }
-      yield* willReopen(session.id, follow);
+      return "reopen" as const;
     });
 
+    /**
+     * A session's stream ended. It is opened again with backoff unless the
+     * session is gone or the server is stopping, also when handling its end
+     * failed. Its waiters fail last, so one that retries finds the session as
+     * its end left it.
+     */
+    const ended = Effect.fn("Observer.ended")(
+      function* (
+        session: Watched,
+        follow: Following,
+        exit: Exit.Exit<void, SessionNotFound | EngineIncompatible>,
+      ) {
+        const next = yield* endOf(session, exit).pipe(
+          Effect.catchCauseIf(
+            (cause) => !Cause.hasInterruptsOnly(cause),
+            (cause) =>
+              Effect.logError("A session's stream end could not be handled", cause).pipe(
+                Effect.as("reopen" as const),
+              ),
+          ),
+        );
+        yield* next === "reopen" ? willReopen(session.id, follow) : forget(session.id, follow);
+      },
+      (effect, _session, follow) => Effect.ensuring(effect, closeWaiters(follow)),
+    );
+
+    /**
+     * Opens the session's stream and starts reading it. A failure to open it
+     * leaves nothing behind: what was subscribed is closed, its waiters fail,
+     * and it is opened again with backoff.
+     */
     const open = Effect.fn("Observer.open")(function* (sessionId: SessionRowId, follow: Following) {
       const row = yield* watchedRow(sessionId).pipe(Effect.orDie);
       if (Option.isNone(row)) {
         // Nothing to follow: not opened yet, retired or lost.
         yield* forget(sessionId, follow);
-        yield* Deferred.fail(follow.caughtUp, new NotObserved());
+        yield* closeWaiters(follow);
         return;
       }
       const session = row.value;
@@ -1178,7 +1235,10 @@ export const layer = Layer.effect(
       const streamScope = yield* Scope.fork(scope);
       const pull = yield* Stream.toPull(
         engine.events({ sessionId: session.engine_session_id, after: session.events_cursor }),
-      ).pipe(Scope.provide(streamScope));
+      ).pipe(
+        Scope.provide(streamScope),
+        Effect.onError(() => Scope.close(streamScope, Exit.void)),
+      );
       // A committed cursor already says where the session stands; without
       // one, the first `replaced` does once it is applied.
       if (session.events_cursor !== null) yield* Deferred.succeed(follow.caughtUp, undefined);
@@ -1187,7 +1247,7 @@ export const layer = Layer.effect(
         // that is never applied.
         Stream.runForEachWhile((event) => apply(session, follow, event)),
         Effect.onExit((exit) =>
-          Effect.andThen(Scope.close(streamScope, Exit.void), ended(session, follow, exit)),
+          ended(session, follow, exit).pipe(Effect.ensuring(Scope.close(streamScope, Exit.void))),
         ),
         Effect.forkIn(scope),
       );
@@ -1208,6 +1268,18 @@ export const layer = Layer.effect(
         };
         following.set(sessionId, follow);
         return open(sessionId, follow).pipe(
+          Effect.catchCauseIf(
+            (cause) => !Cause.hasInterruptsOnly(cause),
+            (cause) =>
+              Effect.logError(
+                "A session's stream could not be opened; it is tried again",
+                cause,
+              ).pipe(
+                Effect.andThen(willReopen(sessionId, follow)),
+                Effect.ensuring(closeWaiters(follow)),
+              ),
+          ),
+          Effect.onInterrupt(() => Effect.andThen(forget(sessionId, follow), closeWaiters(follow))),
           Effect.ensuring(Deferred.succeed(follow.opened, undefined)),
         );
       }).pipe(Effect.withSpan("Observer.watch"));
@@ -1215,7 +1287,7 @@ export const layer = Layer.effect(
     const ready = Effect.fn("Observer.ready")(function* (sessionId: SessionRowId) {
       const follow = following.get(sessionId);
       // An event that cannot be applied leaves what the server knows behind.
-      if (follow?._tag !== "open" || noticed.has(sessionId)) return false;
+      if (follow?._tag !== "open" || behind.has(sessionId)) return false;
       const caughtUp = yield* Deferred.poll(follow.caughtUp);
       if (Option.isNone(caughtUp)) return false;
       return Exit.isSuccess(yield* Effect.exit(caughtUp.value));

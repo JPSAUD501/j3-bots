@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import { type BotId, type EntryTarget, PositiveInt } from "@j3-bots/contracts";
+import type { BotId, EntryTarget } from "@j3-bots/contracts";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -10,12 +9,14 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Domain from "../domain.ts";
 import { Entries } from "../entries/Entries.ts";
 import { Rooms } from "../rooms/Rooms.ts";
-import { SettingsStore } from "../settings/SettingsStore.ts";
 import { BotTools } from "../tools/BotTools.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
+  answerFirstOption,
+  askRegion,
   awaitEntry,
   command,
+  concurrentTurns,
   createBot,
   deliveryIs,
   engineSession,
@@ -23,13 +24,15 @@ import {
   gateSettled,
   holdGate,
   nextTurn,
+  recoverTimes,
   sendToBot,
+  sendWithFile,
   timesSent,
   turnEnded,
   until,
 } from "../testing/turns.ts";
 import { Cards } from "./Cards.ts";
-import { busyBackoff, DispatchRowId, recoveryBackoff } from "./model.ts";
+import { busyBackoff, DispatchRowId, MAX_INDETERMINATE_ANSWERS, recoveryBackoff } from "./model.ts";
 import { Pipeline } from "./Pipeline.ts";
 import { Wakes } from "./Wakes.ts";
 
@@ -387,12 +390,7 @@ it.effect("starts a bot refused busy once the deadline passes, after the turn's 
 it.effect("starts a ready bot with the last slot while another bot's session catches up", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;
-    const store = yield* SettingsStore;
-    const settings = yield* store.get;
-    yield* store.save(
-      { ...settings, budgets: { ...settings.budgets, concurrentTurns: PositiveInt.make(1) } },
-      yield* DateTime.now,
-    );
+    yield* concurrentTurns(1);
     const ana = yield* createBot("Ana");
     const anaSession = yield* engineSession(ana.id);
     const bia = yield* createBot("Bia");
@@ -464,5 +462,103 @@ it.effect("starts a turn with a steer whose turn ended while it waited for the g
         .map((dispatch) => dispatch.delivery._tag),
       ["start"],
     );
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("waits for a turn slot before sending a message whose file failed to stage", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const pipeline = yield* Pipeline;
+    yield* concurrentTurns(1);
+    const ana = yield* createBot("Ana");
+    const anaSession = yield* engineSession(ana.id);
+    const bia = yield* createBot("Bia");
+    const biaSession = yield* engineSession(bia.id);
+
+    // Ana's file is staged, and the reply is lost: nothing reached the engine.
+    const staging = yield* control.holdNext("stageAttachment");
+    const message = yield* sendWithFile(ana.id, "Read the notes.");
+    yield* staging.entered;
+    yield* control.loseNextReply;
+    yield* staging.release;
+    yield* gateSettled(ana.id);
+
+    // Bia takes the only slot, and Ana's retry falls due.
+    yield* sendToBot(bia.id, "Review the budget.");
+    const biaTurn = yield* nextTurn(bia.id);
+    yield* TestClock.adjust(recoveryBackoff(1));
+    yield* pipeline.recoverDue;
+    yield* flushed(ana.id);
+    assert.strictEqual(yield* timesSent(anaSession, "Read the notes."), 0);
+
+    yield* control.finishTurn({
+      sessionId: biaSession,
+      turnId: biaTurn,
+      outcome: { _tag: "completed" },
+    });
+    yield* turnEnded(bia.id);
+    yield* nextTurn(ana.id);
+    yield* deliveryIs(message, "delivered");
+    assert.strictEqual(yield* timesSent(anaSession, "Read the notes."), 1);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("sends an answer again from its notice when its turn failed to start", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Deploy it.");
+    const asking = yield* nextTurn(bot.id);
+    const card = yield* askRegion(bot.id, session, asking);
+    yield* control.finishTurn({
+      sessionId: session,
+      turnId: asking,
+      outcome: { _tag: "completed" },
+    });
+    yield* turnEnded(bot.id);
+
+    // The engine takes the answer, and its turn fails before the provider starts it.
+    yield* control.failNextStart({ sessionId: session, failure: "provider-error" });
+    yield* answerFirstOption(card);
+    const notice = yield* awaitEntry(bot.id, "notice");
+    assert.isTrue(notice.retryable);
+
+    yield* (yield* Pipeline).retryNotice({ commandId: command(), entryId: notice.id });
+    yield* nextTurn(bot.id, asking);
+    assert.strictEqual(yield* timesSent(session, "eu-west-1"), 2);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("refuses to send an answer again once the engine applied it late", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Deploy it.");
+    const asking = yield* nextTurn(bot.id);
+    const card = yield* askRegion(bot.id, session, asking);
+    yield* control.finishTurn({
+      sessionId: session,
+      turnId: asking,
+      outcome: { _tag: "completed" },
+    });
+    yield* turnEnded(bot.id);
+
+    // The answer's send is never answered, and its recovery gives up.
+    const deferred = yield* control.deferNextDispatch;
+    yield* answerFirstOption(card);
+    yield* flushed(bot.id);
+    yield* recoverTimes(MAX_INDETERMINATE_ANSWERS - 1);
+    const notice = yield* awaitEntry(bot.id, "notice");
+
+    // Then the engine applies it after all.
+    yield* deferred.land;
+    yield* nextTurn(bot.id, asking);
+    const refused = yield* (yield* Pipeline)
+      .retryNotice({ commandId: command(), entryId: notice.id })
+      .pipe(Effect.flip);
+    assert.strictEqual(refused._tag, "Conflict");
+    assert.strictEqual(yield* timesSent(session, "eu-west-1"), 1);
   }).pipe(Effect.provide(TestDomain.layer)),
 );

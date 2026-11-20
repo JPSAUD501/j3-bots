@@ -5,7 +5,7 @@ import {
   type Conflict,
   EntryId,
   NotFound,
-  type RoomId,
+  RoomId,
 } from "@j3-bots/contracts";
 import { Engine, IdempotencyKey, SessionId } from "@j3-bots/engine-t3";
 import * as Cause from "effect/Cause";
@@ -21,14 +21,14 @@ import { BotStore } from "../bots/BotStore.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
 import { Entries } from "../entries/Entries.ts";
 import { Ids } from "../Ids.ts";
-import { timeText } from "../persistence/columns.ts";
+import { Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { RoomWork } from "../rooms/RoomWork.ts";
 import { Ledger } from "./Ledger.ts";
-import { DispatchRowId, SessionRowId } from "./model.ts";
+import { AudienceColumn, DispatchRowId, SessionRowId } from "./model.ts";
 import { Observer } from "./Observer.ts";
 import { Readiness } from "./Readiness.ts";
-import { type Pass, onePassAtATime, passOutcome, reconcile } from "./reconciler.ts";
+import { DEFECT_RETRY, type Pass, onePassAtATime, passOutcome, reconcile } from "./reconciler.ts";
 import { SessionGate } from "./SessionGate.ts";
 import { sessionLoss } from "./sessionRecords.ts";
 import { Signals } from "./Signals.ts";
@@ -47,14 +47,18 @@ const Round = Schema.Struct({
   engine_key: IdempotencyKey,
   sent: Schema.BooleanFromBit,
   engine_session_id: Schema.NullOr(SessionId),
+  retry_at: Schema.NullOr(Time),
 });
 type Round = typeof Round.Type;
 
 const Fenced = Schema.Struct({
   id: DispatchRowId,
+  bot_id: BotId,
+  audience: AudienceColumn,
+  audience_room_id: Schema.NullOr(RoomId),
   status: Schema.Literals(["intended", "failed"]),
   attempts: Schema.Int,
-  in_scope: Schema.BooleanFromBit,
+  created_at: Time,
 });
 
 /**
@@ -176,7 +180,7 @@ export const layer = Layer.effect(
                 WHEN status = 'intended' AND attempts > 0 THEN NULL ELSE next_attempt_at
               END
             WHERE ${fenceable}
-            RETURNING id, status, attempts, ${inScope(scope)} AS in_scope
+            RETURNING id, bot_id, audience, audience_room_id, status, attempts, created_at
           `,
         })(undefined);
         // An undecided one the engine may have is settled by the recovery,
@@ -186,12 +190,12 @@ export const layer = Layer.effect(
           yield* sql.afterCommit(signals.recovery.fire);
         }
         for (const dispatch of fenced) {
-          // Never sent: released. Its wakes are cancelled when the operator
-          // stopped them, and wait again when they were private work.
+          // Never sent: released. Its wakes are cancelled when this Stop
+          // covers them, and wait again when they were private work.
           if (dispatch.status === "intended" && dispatch.attempts === 0) {
             yield* ledger.release(
               dispatch.id,
-              dispatch.in_scope ? { _tag: "cancelled" } : { _tag: "pending" },
+              yield* targets.wakesAfter(dispatch, { _tag: "unsent" }),
             );
           }
         }
@@ -229,7 +233,7 @@ export const layer = Layer.effect(
       Result: Round,
       execute: () => sql`
         SELECT t.stop_id, t.session_id, t.round, t.engine_key, t.sent_at IS NOT NULL AS sent,
-          s.engine_session_id
+          s.engine_session_id, t.retry_at
         FROM stop_targets t JOIN sessions s ON s.id = t.session_id
         WHERE t.stopped_at IS NULL AND s.lost_at IS NULL
           AND t.round = (
@@ -347,6 +351,9 @@ export const layer = Layer.effect(
           // The marker did not come in time: only this session waits.
           NotObserved: () => Effect.succeed("deferred" satisfies Progress as Progress),
           ...downProgress,
+          // A catch-up that could not reach the engine is this session's
+          // alone: the pass goes on with the others.
+          EngineUnavailable: () => Effect.succeed("deferred" satisfies Progress as Progress),
         }),
       );
       if (synced === "lost") return "done" satisfies Progress;
@@ -399,20 +406,53 @@ export const layer = Layer.effect(
         list.push(round);
         grouped.set(round.session_id, list);
       }
-      return [...grouped.values()];
+      return [...grouped];
     };
+
+    /** When the session's Stop work is tried again after a defect, if one is ahead. */
+    const retryOf = (rounds: ReadonlyArray<Round>) => {
+      let at: DateTime.Utc | null = null;
+      for (const round of rounds) {
+        if (
+          round.retry_at !== null &&
+          (at === null || DateTime.isGreaterThan(round.retry_at, at))
+        ) {
+          at = round.retry_at;
+        }
+      }
+      return at;
+    };
+
+    /** A defect in a session's Stop work: tried again there after a durable deadline. */
+    const retryLater = Effect.fn("Stops.retryLater")(function* (sessionId: SessionRowId) {
+      const at = DateTime.addDuration(yield* DateTime.now, DEFECT_RETRY);
+      yield* sql`
+        UPDATE stop_targets SET retry_at = ${timeText(at)}
+        WHERE session_id = ${sessionId} AND stopped_at IS NULL
+      `.pipe(Effect.orDie);
+      return at;
+    });
 
     /**
      * Runs one session's Stop work. A defect is logged and only that session
-     * waits for a later pass, as T3 Code's effect worker does with each item.
+     * waits, until a durable deadline like every other worker's item, as T3
+     * Code's effect worker does with each item.
      */
-    const supervised = (rounds: ReadonlyArray<Round>) =>
+    const supervised = (
+      sessionId: SessionRowId,
+      rounds: ReadonlyArray<Round>,
+      outcome: ReturnType<typeof passOutcome>,
+    ) =>
       advance(rounds).pipe(
         Effect.catchCauseIf(
           (cause) => !Cause.hasInterruptsOnly(cause),
           (cause) =>
-            Effect.logError("A Stop round failed; it is tried again", cause).pipe(
-              Effect.as("deferred" satisfies Progress as Progress),
+            Effect.logError("A Stop round failed; it is tried again later", cause).pipe(
+              Effect.andThen(retryLater(sessionId)),
+              Effect.map((at) => {
+                outcome.until(at);
+                return "done" satisfies Progress as Progress;
+              }),
             ),
         ),
       );
@@ -420,9 +460,15 @@ export const layer = Layer.effect(
     const runPass: Effect.Effect<Pass> = yield* onePassAtATime(
       Effect.gen(function* () {
         const outcome = passOutcome();
+        const now = yield* DateTime.now;
         const rounds = yield* latestRounds(undefined).pipe(Effect.orDie);
-        for (const session of bySession(rounds)) {
-          const progress = yield* supervised(session);
+        for (const [sessionId, session] of bySession(rounds)) {
+          const retry = retryOf(session);
+          if (retry !== null && DateTime.isGreaterThan(retry, now)) {
+            outcome.until(retry);
+            continue;
+          }
+          const progress = yield* supervised(sessionId, session, outcome);
           if (progress === "unavailable") return { _tag: "unavailable" } as const;
           if (progress === "deferred") outcome.defer();
         }

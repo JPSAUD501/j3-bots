@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import { type BotId, PositiveInt, WorkStepId } from "@j3-bots/contracts";
+import { type BotId, WorkStepId } from "@j3-bots/contracts";
 import { Engine, EventCursor, IdempotencyKey } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as DateTime from "effect/DateTime";
@@ -14,11 +14,11 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as Domain from "../domain.ts";
-import { SettingsStore } from "../settings/SettingsStore.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
   awaitEntry,
   command,
+  concurrentTurns,
   conversation,
   createBot,
   deliveryIs,
@@ -26,7 +26,9 @@ import {
   eventually,
   flushed,
   gateSettled,
+  mainSessionId,
   nextTurn,
+  noticesOf,
   sendToBot,
   timesSent,
   turnEnded,
@@ -35,6 +37,7 @@ import {
 import { BotTools } from "../tools/BotTools.ts";
 import { BotStates } from "./BotStates.ts";
 import { HeldQueues } from "./HeldQueues.ts";
+import { Observer } from "./Observer.ts";
 import { recoveryBackoff, STALL_AFTER } from "./model.ts";
 import { Stops } from "./Stops.ts";
 import { WorkSteps } from "./WorkSteps.ts";
@@ -231,14 +234,6 @@ it.effect("streams a fold's steps as they change, until its turn ends", () =>
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
-/** The kinds of notice the bot's conversation shows, oldest first. */
-const noticesOf = (botId: BotId) =>
-  conversation(botId).pipe(
-    Effect.map((entries) =>
-      entries.flatMap((entry) => (entry._tag === "notice" ? [entry.notice._tag] : [])),
-    ),
-  );
-
 const usageLimit = (at: DateTime.Utc) =>
   ({
     outcome: {
@@ -249,7 +244,7 @@ const usageLimit = (at: DateTime.Utc) =>
     continuation: { resumesAt: DateTime.addDuration(at, Duration.hours(1)) },
   }) as const;
 
-it.effect("cancels a steer the engine dropped after its send's reply was lost", () =>
+it.effect("settles a steer the engine dropped after its send's reply was lost", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;
     const bot = yield* createBot("Ana");
@@ -265,9 +260,10 @@ it.effect("cancels a steer the engine dropped after its send's reply was lost", 
     yield* gateSettled(bot.id);
 
     // Stopped from the engine's own console: the drop names the turn the
-    // steer was to ride, which the lost reply never did.
+    // steer was to ride, which the lost reply never did. No Stop of the
+    // server's covers it, so it did not reach the bot, visibly.
     yield* (yield* Engine).stop({ key: IdempotencyKey.make("console-stop"), sessionId: session });
-    yield* deliveryIs(steer, "cancelled");
+    yield* deliveryIs(steer, "failed");
     yield* turnEnded(bot.id);
     yield* flushed(bot.id);
     assert.strictEqual(yield* timesSent(session, "Also check the tests."), 1);
@@ -658,12 +654,7 @@ it.effect("plans nothing into a session whose events could not be applied, and h
   Effect.gen(function* () {
     const control = yield* TestEngineControl;
     const sql = yield* SqlClient.SqlClient;
-    const store = yield* SettingsStore;
-    const settings = yield* store.get;
-    yield* store.save(
-      { ...settings, budgets: { ...settings.budgets, concurrentTurns: PositiveInt.make(1) } },
-      yield* DateTime.now,
-    );
+    yield* concurrentTurns(1);
     const ana = yield* createBot("Ana");
     const anaSession = yield* engineSession(ana.id);
     yield* flushed(ana.id);
@@ -687,4 +678,76 @@ it.effect("plans nothing into a session whose events could not be applied, and h
     yield* deliveryIs(message, "delivered");
     assert.strictEqual(yield* timesSent(anaSession, "Plan the sprint."), 0);
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "opens a session's stream again when the notice of an event it cannot apply fails too",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const sql = yield* SqlClient.SqlClient;
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      yield* sendToBot(bot.id, "Run the checks.");
+      const turnId = yield* nextTurn(bot.id);
+
+      // The event cannot be applied, and neither can its notice.
+      yield* sql`
+      CREATE TRIGGER poison BEFORE INSERT ON work_steps BEGIN SELECT RAISE(ABORT, 'poison'); END
+    `;
+      yield* sql`
+      CREATE TRIGGER mute BEFORE INSERT ON entries WHEN NEW.kind = 'notice'
+      BEGIN SELECT RAISE(ABORT, 'mute'); END
+    `;
+      yield* control.step({
+        sessionId: session,
+        turnId,
+        step: {
+          id: WorkStepId.make("step-1"),
+          kind: "command",
+          label: "npm test",
+          status: "running",
+          startedAt: yield* DateTime.now,
+          finishedAt: null,
+        },
+      });
+      // Waiters learn the stream ended only once it was handled.
+      yield* (yield* Observer).synchronize(yield* mainSessionId(bot.id), session).pipe(Effect.flip);
+
+      yield* sql`DROP TRIGGER poison`;
+      yield* TestClock.adjust(Duration.seconds(2));
+      yield* until(
+        (yield* BotStates).of(bot.id).pipe(Effect.map((state) => state._tag === "working")),
+      );
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("opens a session's stream again when opening it failed", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const bot = yield* Effect.gen(function* () {
+      const created = yield* createBot("Ana");
+      yield* engineSession(created.id);
+      yield* flushed(created.id);
+      return created;
+    }).pipe(Effect.provide(Domain.layer));
+
+    // While the server is down, its record of where the session stands is
+    // damaged: the stream cannot be opened from it.
+    const [stored] = yield* sql<{ readonly events_cursor: string }>`
+      SELECT events_cursor FROM sessions WHERE bot_id = ${bot.id}
+    `;
+    yield* sql`UPDATE sessions SET events_cursor = '' WHERE bot_id = ${bot.id}`;
+
+    yield* Effect.gen(function* () {
+      yield* (yield* Observer).watch(yield* mainSessionId(bot.id));
+      yield* sql`
+        UPDATE sessions SET events_cursor = ${stored?.events_cursor ?? null} WHERE bot_id = ${bot.id}
+      `;
+      yield* TestClock.adjust(Duration.seconds(2));
+      const message = yield* sendToBot(bot.id, "Plan the sprint.");
+      yield* nextTurn(bot.id);
+      yield* deliveryIs(message, "delivered");
+    }).pipe(Effect.provide(Domain.layer));
+  }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
 );

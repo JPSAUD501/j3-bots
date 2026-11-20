@@ -44,7 +44,7 @@ import {
 } from "./model.ts";
 import { Observer } from "./Observer.ts";
 import { Readiness } from "./Readiness.ts";
-import { DEFECT_RETRY, type Pass, onePassAtATime, passOutcome, reconcile } from "./reconciler.ts";
+import { type Pass, onePassAtATime, passOutcome, reconcile } from "./reconciler.ts";
 import { sessionLoss } from "./sessionRecords.ts";
 import { Signals } from "./Signals.ts";
 import { Wakes } from "./Wakes.ts";
@@ -367,7 +367,7 @@ export const layer = Layer.effect(
 
     /**
      * One answer at a time: a defect is logged and that answer is sent again
-     * after a later deadline, while the pass goes on with the others.
+     * on the backoff of a lost reply, while the pass goes on with the others.
      */
     const supervised = (pending: typeof PendingResponse.Type) =>
       respondOne(pending).pipe(
@@ -375,8 +375,7 @@ export const layer = Layer.effect(
           (cause) => !Cause.hasInterruptsOnly(cause),
           (cause) =>
             Effect.logError("An answer could not be sent; it is tried again later", cause).pipe(
-              Effect.andThen(DateTime.now),
-              Effect.flatMap((now) => later(pending, DateTime.addDuration(now, DEFECT_RETRY))),
+              Effect.andThen(unanswered(pending)),
             ),
         ),
       );

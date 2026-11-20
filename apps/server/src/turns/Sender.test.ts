@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import type { BotId } from "@j3-bots/contracts";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
-import { Attachments } from "../attachments/Attachments.ts";
 import * as Domain from "../domain.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import * as TestDomain from "../testing/domain.ts";
@@ -21,56 +19,19 @@ import {
   flushed,
   gateSettled,
   nextTurn,
+  recoverTimes,
   roomOf,
   sendInRoom,
   sendToBot,
+  sendWithFile,
+  stopSettled,
   timesSent,
   turnEnded,
-  until,
 } from "../testing/turns.ts";
 import { BotStates } from "./BotStates.ts";
 import { MAX_INDETERMINATE_ANSWERS, recoveryBackoff } from "./model.ts";
 import { Pipeline } from "./Pipeline.ts";
 import { Stops } from "./Stops.ts";
-
-/** The operator writes to the bot with a file attached. */
-const sendWithFile = (botId: BotId, text: string) =>
-  Effect.gen(function* () {
-    const file = yield* (yield* Attachments).store({
-      name: "notes.txt",
-      mediaType: "text/plain",
-      bytes: new TextEncoder().encode("Release notes."),
-    });
-    return yield* (yield* Pipeline).sendMessage({
-      commandId: command(),
-      target: { _tag: "conversation", botId },
-      text,
-      attachments: [file.id],
-    });
-  });
-
-/** Runs the recovery once each backoff passes, `times` times. */
-const recoverTimes = (times: number) =>
-  Effect.gen(function* () {
-    const pipeline = yield* Pipeline;
-    for (let answer = 1; answer <= times; answer++) {
-      yield* TestClock.adjust(recoveryBackoff(answer));
-      yield* pipeline.recoverDue;
-    }
-  });
-
-/** Waits until no Stop waits on the engine. */
-const stopSettled = Effect.gen(function* () {
-  const sql = yield* SqlClient.SqlClient;
-  yield* until(
-    sql<{ readonly n: number }>`
-      SELECT COUNT(*) AS n FROM stop_targets WHERE stopped_at IS NULL
-    `.pipe(
-      Effect.orDie,
-      Effect.map(([row]) => (row?.n ?? 0) === 0),
-    ),
-  );
-});
 
 it.effect("never sends a message a Stop fenced while its send was staging in the gate", () =>
   Effect.gen(function* () {
@@ -332,5 +293,46 @@ it.effect("settles a lost session's undecided send without holding up another bo
     const message = yield* sendToBot(bia.id, "Check the dashboards.");
     yield* nextTurn(bia.id);
     yield* deliveryIs(message, "delivered");
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("goes on with another bot's recovery when settling one dispatch hits a defect", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const sql = yield* SqlClient.SqlClient;
+    const ana = yield* createBot("Ana");
+    const anaSession = yield* engineSession(ana.id);
+    const bia = yield* createBot("Bia");
+    yield* engineSession(bia.id);
+
+    // Both sends stay undecided: Ana's first, so the recovery reaches it first.
+    yield* control.deferNextDispatch;
+    yield* sendToBot(ana.id, "Back up the database.");
+    yield* flushed(ana.id);
+    yield* control.deferNextDispatch;
+    yield* sendToBot(bia.id, "Check the dashboards.");
+    yield* flushed(bia.id);
+
+    // Settling Ana's dispatch, and counting it against its bounds, are bugs
+    // here; only its deadline can still move. A trigger takes no bound
+    // values; the id is one the server generated.
+    yield* sql.unsafe(`
+      CREATE TRIGGER poison BEFORE UPDATE ON dispatches
+      WHEN NEW.bot_id = '${ana.id}' AND (
+        NEW.status IS NOT OLD.status
+        OR NEW.indeterminate_answers IS NOT OLD.indeterminate_answers
+        OR NEW.staging_failures IS NOT OLD.staging_failures
+      )
+      BEGIN SELECT RAISE(ABORT, 'poison'); END
+    `);
+    // Her session is lost, so its undecided send is due at once and settles.
+    yield* control.loseSession(anaSession);
+    yield* awaitEntry(ana.id, "notice");
+
+    // Bia's resend still goes out once its backoff passes.
+    const resend = yield* control.holdNext("redispatch");
+    yield* TestClock.adjust(recoveryBackoff(1));
+    yield* resend.entered;
+    yield* resend.release;
   }).pipe(Effect.provide(TestDomain.layer)),
 );

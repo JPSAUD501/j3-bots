@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
+import { WorkStepId } from "@j3-bots/contracts";
 import type { SessionId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -12,6 +14,9 @@ import { Rooms } from "../rooms/Rooms.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
   admittedTurn,
+  answerFirstOption,
+  askRegion,
+  awaitEntry,
   command,
   createBot,
   deliveryIs,
@@ -19,15 +24,17 @@ import {
   flushed,
   gateSettled,
   nextTurn,
+  noticesOf,
+  recoverTimes,
   roomOf,
   sendInRoom,
   sendToBot,
+  stopSettled,
   timesSent,
   turnEnded,
   until,
 } from "../testing/turns.ts";
-import { MAX_INDETERMINATE_ANSWERS, recoveryBackoff, SYNC_DEADLINE } from "./model.ts";
-import { Pipeline } from "./Pipeline.ts";
+import { MAX_INDETERMINATE_ANSWERS, SYNC_DEADLINE } from "./model.ts";
 import { RETRY_TICK } from "./reconciler.ts";
 import { Stops } from "./Stops.ts";
 
@@ -308,14 +315,6 @@ it.effect(
       const control = yield* TestEngineControl;
       const bot = yield* createBot("Ana");
       yield* engineSession(bot.id);
-      const pipeline = yield* Pipeline;
-      const recoverTimes = (times: number) =>
-        Effect.gen(function* () {
-          for (let answer = 1; answer <= times; answer++) {
-            yield* TestClock.adjust(recoveryBackoff(answer));
-            yield* pipeline.recoverDue;
-          }
-        });
 
       // A Stop fences a message whose send stays undecided, and confirms once
       // the recovery gives up on it.
@@ -332,10 +331,11 @@ it.effect(
       yield* flushed(bot.id);
 
       // The fenced key lands after all, which reopens the Stop. The Stop
-      // waits on the undecided send, which the recovery still settles.
+      // waits on the undecided send, which the recovery still settles: as
+      // stopped, since the reopened Stop ends whatever the session runs.
       yield* fenced.land;
       yield* recoverTimes(MAX_INDETERMINATE_ANSWERS - 1);
-      yield* deliveryIs(unfenced, "failed");
+      yield* deliveryIs(unfenced, "cancelled");
       yield* turnEnded(bot.id);
       yield* deliveryIs(stopped, "cancelled");
 
@@ -404,4 +404,161 @@ it.effect("starts no turn of its own for work a Stop covered that ended before t
 
     assert.strictEqual((yield* control.dispatches(session)).length, 1);
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "settles a Stop when its session is lost with a queued start the engine acknowledged",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const sql = yield* SqlClient.SqlClient;
+      const stops = yield* Stops;
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+
+      // The engine queues the start behind a turn of its own, and says so.
+      yield* control.startEngineTurnDuringNextDispatch(session);
+      const message = yield* sendToBot(bot.id, "Rewrite the intro.");
+      yield* nextTurn(bot.id);
+      yield* gateSettled(bot.id);
+      const [queued] = yield* sql<{ readonly status: string; readonly disposition: string | null }>`
+      SELECT status, disposition FROM dispatches WHERE bot_id = ${bot.id}
+    `;
+      assert.deepStrictEqual(queued, { status: "accepted", disposition: "queued" });
+
+      // The Stop is acknowledged and its effects never land; then the engine
+      // loses the session.
+      yield* control.delayNextStopEffects;
+      yield* stops.stopBot({ commandId: command(), botId: bot.id });
+      yield* stops.runPending;
+      yield* control.loseSession(session);
+
+      yield* stopSettled;
+      yield* deliveryIs(message, "cancelled");
+      assert.deepStrictEqual(yield* noticesOf(bot.id), ["session-lost"]);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("cancels a private message a bot Stop dropped after the room's archival", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const stops = yield* Stops;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    const room = yield* roomOf(bot.id);
+
+    // A room message whose recovery gave up: its key may still land, so the
+    // room's archival stops the session too.
+    yield* control.deferNextDispatch;
+    const inRoom = yield* sendInRoom(bot.id, room.id, "Tag the release.");
+    yield* flushed(bot.id);
+    yield* recoverTimes(MAX_INDETERMINATE_ANSWERS - 1);
+    yield* deliveryIs(inRoom, "failed");
+
+    // A private message waits in the engine behind a turn of the engine's own.
+    yield* control.startEngineTurnDuringNextDispatch(session);
+    const message = yield* sendToBot(bot.id, "What is left today?");
+    yield* nextTurn(bot.id);
+    yield* gateSettled(bot.id);
+
+    // The operator stops the bot, whose interrupt is slow, then archives the
+    // room, whose Stop drops the waiting turn.
+    yield* control.delayNextStopEffects;
+    yield* stops.stopBot({ commandId: command(), botId: bot.id });
+    yield* stops.runPending;
+    yield* (yield* Rooms).update({
+      commandId: command(),
+      roomId: room.id,
+      changes: { archived: true },
+    });
+
+    // The operator stopped it: cancelled, not failed and offered again.
+    yield* deliveryIs(message, "cancelled");
+    yield* turnEnded(bot.id);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("shows no retryable notice for an answer whose session is lost during a Stop", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const stops = yield* Stops;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Deploy it.");
+    const asking = yield* nextTurn(bot.id);
+    const card = yield* askRegion(bot.id, session, asking);
+    yield* control.finishTurn({
+      sessionId: session,
+      turnId: asking,
+      outcome: { _tag: "completed" },
+    });
+    yield* turnEnded(bot.id);
+
+    // The answer waits in the engine behind a turn of its own, and the
+    // recovery learns the engine has it.
+    yield* control.startEngineTurnDuringNextDispatch(session);
+    yield* control.loseNextReply;
+    yield* answerFirstOption(card);
+    yield* nextTurn(bot.id, asking);
+    yield* gateSettled(bot.id);
+    yield* recoverTimes(1);
+
+    // The operator stops the bot, and the session is lost before the
+    // interrupt lands.
+    yield* control.delayNextStopEffects;
+    yield* stops.stopBot({ commandId: command(), botId: bot.id });
+    yield* stops.runPending;
+    yield* control.loseSession(session);
+
+    yield* stopSettled;
+    yield* until(noticesOf(bot.id).pipe(Effect.map((kinds) => kinds.includes("session-lost"))));
+    assert.deepStrictEqual(yield* noticesOf(bot.id), ["session-lost"]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "sends a Stop's round once an undecided steer is resent into an unobservable session",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const sql = yield* SqlClient.SqlClient;
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      yield* sendToBot(bot.id, "Review the PR.");
+      const turnId = yield* nextTurn(bot.id);
+
+      // A steer the engine took, whose reply was lost.
+      const sending = yield* control.holdNext("dispatch");
+      yield* sendToBot(bot.id, "Also check the tests.");
+      yield* sending.entered;
+      yield* control.loseNextReply;
+      yield* sending.release;
+      yield* gateSettled(bot.id);
+
+      // An event of the session cannot be applied: what the server knows of
+      // it is behind, and it is not ready.
+      yield* sql`
+      CREATE TRIGGER poison BEFORE INSERT ON work_steps BEGIN SELECT RAISE(ABORT, 'poison'); END
+    `;
+      yield* control.step({
+        sessionId: session,
+        turnId,
+        step: {
+          id: WorkStepId.make("step-1"),
+          kind: "command",
+          label: "npm test",
+          status: "running",
+          startedAt: yield* DateTime.now,
+          finishedAt: null,
+        },
+      });
+      yield* awaitEntry(bot.id, "notice");
+
+      // The Stop waits on the steer, whose resend needs no observation: its
+      // key answers for it. Then the round goes out.
+      const round = yield* control.holdNext("stop");
+      yield* (yield* Stops).stopBot({ commandId: command(), botId: bot.id });
+      yield* round.entered;
+      yield* round.release;
+    }).pipe(Effect.provide(TestDomain.layer)),
 );
