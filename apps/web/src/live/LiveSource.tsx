@@ -359,7 +359,12 @@ function LiveShell({ children }: { children: ReactNode }) {
         ),
     revokeDevice: (deviceId) => j3.revokeDevice(deviceId).then((result) => result._tag === "done"),
     refreshDevices: j3.refreshDevices,
-    signOut: () => j3.signOut().then((result) => result !== "failed"),
+    signOut: () =>
+      j3.signOut().then((result) => {
+        // Another tab paired this browser again meanwhile: it stays signed in under that pairing.
+        if (result === "paired-anew") say(t("settings.signOut.pairedAnew"));
+        return result !== "failed";
+      }),
   };
 
   return (

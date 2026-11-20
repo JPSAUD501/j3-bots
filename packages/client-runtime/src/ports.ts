@@ -91,7 +91,8 @@ export class Network extends Context.Service<
  * conversation's unsent text and the files already uploaded for it, and
  * `outbox`, messages the operator sent that the server has not accepted yet.
  * Neither holds a secret, but both hold conversation text. Each record belongs
- * to the pairing that wrote it, and goes when that pairing ends.
+ * to the pairing that wrote it: a window shows, keeps and sends only the
+ * records of the pairing it follows, and those of a pairing that ended go.
  */
 export const LocalTable = Schema.Literals(["drafts", "outbox"]);
 export type LocalTable = typeof LocalTable.Type;
@@ -141,10 +142,20 @@ export class ClientStorage extends Context.Service<
      * one table to another is never in both and never in neither. The same
      * transaction first reads each record of `expected`: unless every one
      * still holds the value given, it writes nothing and succeeds with `false`.
+     *
+     * Given `pairing`, the same transaction also reads the device's
+     * credential, and writes nothing, succeeding with `false`, unless it is
+     * that pairing's. A record of a pairing that has ended is then never
+     * written, however late a window learns that it ended. A platform whose
+     * credential storage cannot take part in the transaction must keep its own
+     * copy of the paired device id, written in the same transaction as the
+     * credential, where this one can read it. On the web both are in one
+     * IndexedDB database.
      */
     readonly commit: (
       changes: ReadonlyArray<LocalRecord>,
       expected?: ReadonlyArray<LocalRecord>,
+      pairing?: DeviceId,
     ) => Effect.Effect<boolean, LocalStorageError>;
     /**
      * Emits a table each time another window of this client changed it, so

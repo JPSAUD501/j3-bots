@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import type { DeviceId } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -129,6 +130,9 @@ const makeCredentials = () => {
     seed: (credential: DeviceCredential) => {
       stored = Option.some(credential);
     },
+    /** The pairing whose credential the device holds now. */
+    pairing: (): DeviceId | null =>
+      Option.getOrNull(Option.map(stored, (credential) => credential.deviceId)),
     view: (window: object, heard?: Latch.Latch) =>
       CredentialStore.of({
         load: Effect.sync(() => stored),
@@ -192,9 +196,10 @@ interface Watcher {
  * The device's storage for drafts and unsent messages, in memory, as each
  * window sees it: `view(window)` tells every other window's watchers of the
  * tables it changes, unless `announce` is false. Like IndexedDB, it reads a
- * table in the order of its keys.
+ * table in the order of its keys. `pairing` says whose credential the device
+ * holds, which a transaction guarded by a pairing checks.
  */
-const makeStorage = (options: StorageOptions) => {
+const makeStorage = (options: StorageOptions, pairing: () => DeviceId | null) => {
   const tables = new Map<LocalTable, Map<string, string>>([
     ["drafts", new Map()],
     ["outbox", new Map()],
@@ -235,7 +240,7 @@ const makeStorage = (options: StorageOptions) => {
         options.refuseClears === true
           ? Effect.fail(new LocalStorageError({ operation: "remove" }))
           : Effect.sync(() => table(name).clear()).pipe(Effect.andThen(changed([name]))),
-      commit: (changes, expected = []) =>
+      commit: (changes, expected = [], owner) =>
         (options.committing === undefined
           ? Effect.void
           : Queue.offer(options.committing, undefined)
@@ -246,9 +251,11 @@ const makeStorage = (options: StorageOptions) => {
               options.refuseCommits?.() === true
                 ? Effect.fail(new LocalStorageError({ operation: "write" }))
                 : Effect.sync(() => {
-                    const holds = expected.every(
-                      ({ table: name, key, value }) => (table(name).get(key) ?? null) === value,
-                    );
+                    const holds =
+                      (owner === undefined || pairing() === owner) &&
+                      expected.every(
+                        ({ table: name, key, value }) => (table(name).get(key) ?? null) === value,
+                      );
                     if (!holds) return false;
                     for (const { table: name, key, value } of changes) {
                       if (value === null) table(name).delete(key);
@@ -335,8 +342,8 @@ export interface TestDevice {
 }
 
 export const makeDevice = (options: StorageOptions = {}): TestDevice => {
-  const view = makeStorage(options);
   const credentials = makeCredentials();
+  const view = makeStorage(options, credentials.pairing);
   return {
     storage: view({}),
     window: () => view({}),
@@ -346,6 +353,13 @@ export const makeDevice = (options: StorageOptions = {}): TestDevice => {
     credentials: (heard) => credentials.view({}, heard),
   };
 };
+
+/**
+ * How long an HTTP request may take in a test. As long as in production: a
+ * machine running many tests at once can take seconds to answer. A test of
+ * what a request that never answers does gives a shorter one.
+ */
+const REQUEST_TIMEOUT = Duration.seconds(10);
 
 /**
  * A platform for tests: the device's credential in memory, `stored` when given, a network the test turns
@@ -358,6 +372,7 @@ export const layer = (
   stored: Option.Option<DeviceCredential> = Option.none(),
   device: TestDevice = makeDevice(),
   http: Layer.Layer<HttpClient.HttpClient> = FetchHttpClient.layer,
+  requestTimeout: Duration.Duration = REQUEST_TIMEOUT,
 ) =>
   Layer.mergeAll(
     Layer.succeed(ServerAddress, { origin }),
@@ -377,7 +392,7 @@ export const layer = (
       initialDelay: Duration.millis(5),
       maxDelay: Duration.millis(20),
       openTimeout: Duration.seconds(5),
-      requestTimeout: Duration.seconds(1),
+      requestTimeout,
       pingTimeout: Duration.seconds(15),
     }),
   );

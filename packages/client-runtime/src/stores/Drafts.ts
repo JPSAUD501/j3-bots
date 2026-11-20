@@ -128,9 +128,17 @@ const sameKept = (one: Kept, other: Kept) =>
   one.files.length === other.files.length &&
   one.files.every((file, index) => file.id === other.files[index]?.id);
 
-/** The draft a stored record holds: an empty one for none, `undefined` for one it cannot read. */
-const keptIn = (record: string | undefined): Kept | undefined =>
-  record === undefined ? keptOf(empty) : Option.getOrUndefined(decodeStored(record));
+/**
+ * The draft of `pairing` a stored record holds: an empty one for none, or for
+ * another pairing's record, which no window following `pairing` shows, keeps
+ * or sends; `undefined` for one it cannot read.
+ */
+const keptIn = (record: string | undefined, pairing: DeviceId): Kept | undefined => {
+  if (record === undefined) return keptOf(empty);
+  const decoded = Option.getOrUndefined(decodeStored(record));
+  if (decoded === undefined) return undefined;
+  return decoded.pairing === pairing ? decoded : keptOf(empty);
+};
 
 /** A draft as the device keeps it, as this window shows it. */
 const shown = (kept: Kept): Draft => ({
@@ -161,13 +169,22 @@ const shown = (kept: Kept): Draft => ({
  * operator last saw in this window. When the device never kept the older
  * text either, it is lost, the lesser loss while the offer stays in view.
  *
- * Every draft belongs to the pairing that wrote it, read under the lock as
- * it is written. When the pairing a window follows ends, the window drops its
- * drafts and erases the device's records of that pairing, and only those:
- * another window may have paired anew and written its own. Until it has read
- * the drafts of the pairing it follows now, the drafts take no change. At
- * launch, before anything shows them, the drafts of every pairing the device
- * no longer holds go: a window can close before it erased them.
+ * Every draft belongs to the pairing that wrote it, and a window only ever
+ * shows, keeps or sends the drafts of the pairing it follows. The drafts hold
+ * that pairing of their own, which changes only under the lock, after the
+ * window dropped every draft it held: every read shows only that pairing's
+ * records, every write is that pairing's, and the storage transaction that
+ * writes it checks that the device's credential is still that pairing's. A
+ * window that learns late that its pairing ended therefore writes nothing,
+ * and another pairing's record, which no erasing removed, is never shown.
+ *
+ * When the pairing a window follows changes, from none, to none or to
+ * another, the window drops its drafts, erases the device's records of the
+ * pairing that ended, and only those, then reads those of the pairing it
+ * follows now; until it has, the drafts take no change. Erasing is cleanup:
+ * when it fails, nothing of that pairing shows anyway. At launch, the drafts
+ * of every pairing the device no longer holds go: a window can close before it
+ * erased them.
  */
 export class Drafts extends Context.Service<
   Drafts,
@@ -210,8 +227,9 @@ export class Drafts extends Context.Service<
      */
     readonly offers: Readable<ReadonlyMap<string, number>>;
     /**
-     * This window is dropping the drafts of a pairing that ended and reading
-     * those of the pairing it follows now. The drafts take no change meanwhile.
+     * This window does not hold the drafts of the pairing it follows yet: it
+     * is dropping those of a pairing that ended, or reading those of the
+     * pairing it follows now. The drafts take no change meanwhile.
      */
     readonly switching: Readable<boolean>;
     /**
@@ -288,22 +306,36 @@ export const layer = Layer.effect(
       }),
     );
 
-    /** Shows the drafts the device keeps. Runs under the lock, or before anything else does. */
-    const readStored = Effect.gen(function* () {
+    /**
+     * The pairing whose drafts this window holds, or null for none. It
+     * changes only under the lock, once every draft this window held is dropped.
+     */
+    let followed = connection.pairing.get();
+
+    /**
+     * Shows the drafts of `pairing` the device keeps. Runs under the lock, or
+     * before anything else does.
+     */
+    const readStored = Effect.fn("Drafts.readStored")(function* (pairing: DeviceId) {
       const restored = new Map<string, Draft>();
       for (const [key, value] of yield* storage.readAll("drafts")) {
-        // Even a record this window cannot read is the one its next write claims.
+        // Even a record this window does not show is the one its next write claims.
         known.set(key, value);
-        const draft = Option.map(decodeStored(value), shown);
-        if (Option.isSome(draft) && !isEmpty(draft.value)) restored.set(key, draft.value);
+        const kept = keptIn(value, pairing);
+        const draft = kept === undefined ? empty : shown(kept);
+        if (!isEmpty(draft)) restored.set(key, draft);
       }
       state.set(restored);
     });
-    yield* readStored.pipe(
-      Effect.catchTag("LocalStorageError", (error) =>
-        Effect.logWarning("Drafts could not be read", error),
-      ),
-    );
+    // The drafts of the pairing this window starts with show before anything else runs.
+    if (followed !== null) {
+      yield* readStored(followed).pipe(
+        Effect.catchTag("LocalStorageError", (error) =>
+          Effect.logWarning("Drafts could not be read", error),
+        ),
+      );
+    }
+
     const uploads = new Map<string, Fiber.Fiber<void>>();
     // Text on offer for `restore`, by key: text this window held, never kept,
     // when another window changed its draft, with the revision of the offer.
@@ -315,7 +347,14 @@ export const layer = Layer.effect(
       else displaced.set(key, { text, revision: ++offerRevision });
       offers.set(new Map([...displaced].map(([offered, { revision }]) => [offered, revision])));
     };
+    // Reading the drafts of the pairing this window follows now.
+    let loading = false;
     const switching = new Cell(false);
+    // Set as soon as the pairing changes, so no change slips in before the
+    // drafts are dropped.
+    const settle = () => switching.set(loading || connection.pairing.get() !== followed);
+    const unsubscribe = connection.pairing.subscribe(settle);
+    yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
     const changes = yield* PubSub.unbounded<DraftChangedElsewhere>();
     let nextKey = 0;
 
@@ -323,13 +362,6 @@ export const layer = Layer.effect(
     // window's drafts: each operation takes a few milliseconds.
     const lock = yield* Semaphore.make(1);
     const locked = lock.withPermits(1);
-
-    /**
-     * The pairing this window follows, once its credential is read. A record
-     * is written as the pairing read under the lock: one that ends after it
-     * erases the record, under the lock too.
-     */
-    const pairingNow = Effect.option(connection.deviceId);
 
     // Autosave goes through one writer that writes the latest draft of each
     // key, so a burst of keystrokes costs a few writes, never a queue of them.
@@ -353,16 +385,17 @@ export const layer = Layer.effect(
      * top (uploading, refused, or uploaded since this window last wrote), as
      * far as one message can carry them: a file that no longer fits is
      * refused, and says why. Has the writer keep the files it adds. Keeps the
-     * text this window held for `restore` when the device never kept it. Runs
-     * under the lock.
+     * text this window held for `restore` when the device never kept it. Only
+     * a record of `pairing`, the pairing this window follows, is shown or
+     * offered. Runs under the lock.
      */
-    const reload = (target: EntryTarget) => {
+    const reload = (target: EntryTarget, pairing: DeviceId) => {
       const key = targetKey(target);
       return Effect.gen(function* () {
         const value = (yield* storage.readAll("drafts")).get(key);
         const held = state.get().get(key) ?? empty;
-        const read = keptIn(known.get(key)) ?? keptOf(empty);
-        const stored = shown(keptIn(value) ?? keptOf(empty));
+        const read = keptIn(known.get(key), pairing) ?? keptOf(empty);
+        const stored = shown(keptIn(value, pairing) ?? keptOf(empty));
         // Text the device never kept, which this window shows no more.
         const offered = held.text !== "" && held.text !== stored.text && held.text !== read.text;
         if (offered) offer(key, held.text);
@@ -419,22 +452,28 @@ export const layer = Layer.effect(
 
     /**
      * Writes the draft of `target` as it is now, as `pairing`'s, unless the
-     * device keeps it so already. Runs under the lock.
+     * device keeps it so already, and only while the device's credential is
+     * `pairing`'s. Runs under the lock.
      */
     const writeOne = Effect.fn("Drafts.write")(
       function* (target: EntryTarget, pairing: DeviceId) {
         const key = targetKey(target);
         const record = keptOf(state.get().get(key) ?? empty);
         const expected = known.get(key);
-        const stored = keptIn(expected);
+        const stored = keptIn(expected, pairing);
         if (stored !== undefined && sameKept(record, stored)) return;
         const value = yield* encodeStored({ revision: yield* revision, pairing, ...record });
         const claimed = yield* storage.commit(
           [{ table: "drafts", key, value }],
           [{ table: "drafts", key, value: expected ?? null }],
+          pairing,
         );
-        if (!claimed) return yield* reload(target);
-        known.set(key, value);
+        if (claimed) {
+          known.set(key, value);
+          return;
+        }
+        // The pairing ended: the drafts are dropped as this window follows the next.
+        if (yield* connection.stillPaired(pairing)) yield* reload(target, pairing);
       },
       Effect.catchTags({
         LocalStorageError: (error) => Effect.logWarning("A draft is kept in memory only", error),
@@ -446,12 +485,12 @@ export const layer = Layer.effect(
         yield* Queue.take(wake);
         const targets = [...unwritten.values()];
         unwritten.clear();
-        // Without a pairing, nothing is kept: no window could send it.
-        if (Option.isNone(yield* pairingNow)) continue;
         for (const target of targets) {
           yield* locked(
-            Effect.flatMap(pairingNow, (pairing) =>
-              Option.isSome(pairing) ? writeOne(target, pairing.value) : Effect.void,
+            Effect.suspend(() =>
+              // Without a pairing, nothing is kept: no window could send it.
+              // A draft of a pairing this window no longer follows goes with it.
+              followed === null || switching.get() ? Effect.void : writeOne(target, followed),
             ),
           );
         }
@@ -604,16 +643,16 @@ export const layer = Layer.effect(
           // A sending draft takes no change, so only another window's change
           // replaces it, and the notice of that change says why nothing went.
           if (state.get().get(key) !== pressed) return "changed-elsewhere";
-          const pairing = yield* pairingNow;
+          const pairing = followed;
           // Without a pairing, the device keeps no message.
-          if (Option.isNone(pairing)) {
+          if (pairing === null) {
             show(key, draft);
             return "not-kept";
           }
           // The draft is left empty with a revision of its own; nothing can fail to encode.
           const handedOver = yield* encodeStored({
             revision: yield* revision,
-            pairing: pairing.value,
+            pairing,
             ...keptOf(empty),
           }).pipe(Effect.orDie);
           // The outbox holds the message from here; its delivery outlives the caller.
@@ -621,7 +660,7 @@ export const layer = Layer.effect(
             .enqueue(
               { target, text, attachments, ...(mentions === undefined ? {} : { mentions }) },
               {
-                pairing: pairing.value,
+                pairing,
                 alongside: [{ table: "drafts", key, value: handedOver }],
                 expected: [{ table: "drafts", key, value: known.get(key) ?? null }],
               },
@@ -647,7 +686,7 @@ export const layer = Layer.effect(
               show(key, empty);
               break;
             case "changed-elsewhere":
-              yield* reload(target);
+              yield* reload(target, pairing);
               break;
             default:
               // Not kept, or over a limit of a message: it stays as it was.
@@ -675,32 +714,47 @@ export const layer = Layer.effect(
         Effect.gen(function* () {
           // A window that follows a pairing made since already dropped these,
           // and shows that pairing's own.
-          if (connection.pairing.get() === pairing) yield* dropAll;
+          if (followed === pairing) yield* dropAll;
           if (pairing !== null) yield* erase(pairing);
         }),
       );
 
-    // When the pairing this window follows ends, its drafts go, here and on
-    // the device, and those another window kept since show.
+    // Whenever the pairing this window follows changes, from none, to none or
+    // to another, the drafts it held go, here and on the device, and those
+    // the device keeps for the pairing it follows now show.
     yield* Effect.gen(function* () {
-      let followed = connection.pairing.get();
       while (true) {
-        const next = yield* waitFor(connection.pairing, (current) => current !== followed);
-        const ended = followed;
-        followed = next;
-        if (ended === null) continue;
-        switching.set(true);
+        yield* waitFor(connection.pairing, (current) => current !== followed);
+        loading = true;
+        settle();
         yield* locked(
           Effect.gen(function* () {
+            const ended = followed;
+            const next = connection.pairing.get();
             yield* dropAll;
-            yield* erase(ended);
-            if (next !== null) yield* readStored;
+            followed = next;
+            if (ended !== null) {
+              yield* erase(ended).pipe(
+                Effect.catchTag("LocalStorageError", (error) =>
+                  Effect.logWarning("Drafts of a pairing that ended stay in local storage", error),
+                ),
+              );
+            }
+            if (next !== null) {
+              yield* readStored(next).pipe(
+                Effect.catchTag("LocalStorageError", (error) =>
+                  Effect.logWarning("Drafts could not be read", error),
+                ),
+              );
+            }
           }),
         ).pipe(
-          Effect.catchTag("LocalStorageError", (error) =>
-            Effect.logWarning("Drafts of a pairing that ended stay in local storage", error),
+          Effect.ensuring(
+            Effect.sync(() => {
+              loading = false;
+              settle();
+            }),
           ),
-          Effect.ensuring(Effect.sync(() => switching.set(false))),
         );
       }
     }).pipe(Effect.forkIn(scope));

@@ -433,6 +433,8 @@ export const ptBR: Catalog = {
   "settings.signOut.hint": "Sair encerra o acesso deste dispositivo e apaga o que ele guarda aqui.",
   "settings.signOut.pending": "Saindo…",
   "settings.signOut.failed": "A saída não terminou. Tente de novo.",
+  "settings.signOut.pairedAnew":
+    "O acesso antigo deste dispositivo terminou, mas outra aba pareou este navegador de novo, então ele continua conectado.",
   "settings.signOut.title": "Sair neste dispositivo?",
   "settings.signOut.body":
     "Este navegador perde o acesso, e parear de novo exige um código novo. Rascunhos e mensagens não enviadas são descartados. Seus bots e conversas continuam no servidor.",

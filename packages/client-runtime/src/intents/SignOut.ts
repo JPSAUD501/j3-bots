@@ -3,7 +3,6 @@ import type { DeviceId } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import { Connection } from "../connection/Connection.ts";
 import type { LocalStorageError } from "../ports.ts";
 import { Conversations } from "../stores/Conversations.ts";
@@ -19,6 +18,11 @@ export type SignOutResult =
   | "signed-out"
   /** Its credential is deleted here, but the server was out of reach and still lists it. */
   | "still-listed"
+  /**
+   * A pairing made while it signed out, here or in another window, stays, and
+   * this window follows it: the device is signed in under that pairing.
+   */
+  | "paired-anew"
   /** Its credential could not be deleted, so the device is still signed in here. */
   | "failed";
 
@@ -29,9 +33,11 @@ export class SignOut extends Context.Service<
     /**
      * Stops sending, revokes this device's pairing on the server if it is
      * connected, deletes that pairing's drafts and unsent messages, then its
-     * credential. The device is unpaired only once that deletion succeeded;
-     * without a credential, whatever text is left is discarded again. A
-     * pairing made meanwhile, here or in another window, keeps all of its own.
+     * credential. The pairing is the one this window follows when it is
+     * called, read before anything waits, and every step acts on it alone. The
+     * device is unpaired only once that deletion succeeded; without a
+     * credential, whatever text is left is discarded again. A pairing made
+     * meanwhile, here or in another window, keeps all of its own.
      */
     readonly run: Effect.Effect<SignOutResult>;
   }
@@ -69,25 +75,30 @@ export const layer = Layer.effect(
         ),
       );
 
-    const run = conversations.withSendingPaused(
-      Effect.gen(function* () {
-        // The pairing this ends, read once: another window may pair anew while
-        // the server answers, and this window follow it. That pairing stays.
-        const pairing = Option.getOrNull(yield* Effect.option(connection.deviceId));
-        const revoked = pairing !== null && (yield* revoke(pairing));
-        yield* erase(drafts.discardAll(pairing), "Drafts");
-        yield* erase(conversations.discardAll(pairing), "Unsent messages");
-        const reason = revoked ? "signed-out" : "still-listed";
-        return yield* connection.forget(reason, pairing).pipe(
-          Effect.as<SignOutResult>(reason),
-          Effect.catchTag("CredentialStorageError", (error) =>
-            Effect.logWarning("The credential could not be deleted", error).pipe(
-              Effect.as<SignOutResult>("failed"),
+    const run = Effect.suspend(() => {
+      // The pairing this ends, read before anything waits: stopping the
+      // deliveries waits for an answer being recorded, and meanwhile another
+      // window may pair anew and this window follow it. That pairing stays.
+      const pairing = connection.pairing.get();
+      return conversations.withSendingPaused(
+        Effect.gen(function* () {
+          const revoked = pairing !== null && (yield* revoke(pairing));
+          yield* erase(drafts.discardAll(pairing), "Drafts");
+          yield* erase(conversations.discardAll(pairing), "Unsent messages");
+          const reason = revoked ? "signed-out" : "still-listed";
+          return yield* connection.forget(reason, pairing).pipe(
+            Effect.map((forgotten): SignOutResult =>
+              forgotten === "paired-anew" ? "paired-anew" : reason,
             ),
-          ),
-        );
-      }),
-    );
+            Effect.catchTag("CredentialStorageError", (error) =>
+              Effect.logWarning("The credential could not be deleted", error).pipe(
+                Effect.as<SignOutResult>("failed"),
+              ),
+            ),
+          );
+        }),
+      );
+    });
 
     return SignOut.of({ run });
   }),

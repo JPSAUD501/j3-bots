@@ -187,8 +187,8 @@ export interface J3Client {
    */
   readonly draftOffers: Readable<ReadonlyMap<string, number>>;
   /**
-   * This window is reading the drafts of a pairing it follows now, after
-   * another ended: the drafts take no change meanwhile.
+   * This window is reading the drafts of the pairing it follows now, after
+   * the pairing changed: the drafts take no change meanwhile.
    */
   readonly draftsSwitching: Readable<boolean>;
   /** Puts back the text this window held, never kept, when another window changed the draft. */

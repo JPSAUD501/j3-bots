@@ -96,15 +96,29 @@ interface IdbRecord {
   readonly value: string | null;
 }
 
+/** What a record must hold for a transaction to apply: `holds` is given what is stored, or `undefined`. */
+export interface IdbExpectation {
+  readonly store: Store;
+  readonly key: string;
+  readonly holds: (stored: unknown) => boolean;
+}
+
+/** The expectation that the record holds exactly `value` (`null` for no record). */
+export const holding = ({ store, key, value }: IdbRecord): IdbExpectation => ({
+  store,
+  key,
+  holds: (stored) => (stored === undefined ? null : stored) === value,
+});
+
 /**
  * Puts or deletes (`value: null`) each record of `changes`, all in one
  * transaction: every change or none. The transaction first reads each record
- * of `expected`, and writes nothing, resolving `false`, unless every one holds
- * the value given (`null` for no record).
+ * of `expected`, and writes nothing, resolving `false`, unless every one
+ * holds what it expects.
  */
 export async function commit(
   changes: ReadonlyArray<IdbRecord>,
-  expected: ReadonlyArray<IdbRecord> = [],
+  expected: ReadonlyArray<IdbExpectation> = [],
 ): Promise<boolean> {
   const stores = [...new Set([...changes, ...expected].map((record) => record.store))];
   const transaction = (await database()).transaction(stores, "readwrite");
@@ -119,11 +133,10 @@ export async function commit(
     }
   };
   // The writes go in from the last read's callback, while the transaction is still active.
-  for (const { store, key, value } of expected) {
-    const read = transaction.objectStore(store).get(key);
+  for (const expectation of expected) {
+    const read = transaction.objectStore(expectation.store).get(expectation.key);
     read.onsuccess = () => {
-      const stored: unknown = read.result;
-      if ((stored === undefined ? null : stored) !== value) holds = false;
+      if (!expectation.holds(read.result)) holds = false;
       unread -= 1;
       if (unread === 0) apply();
     };

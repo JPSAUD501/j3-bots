@@ -426,6 +426,8 @@ export const en = {
   "settings.signOut.hint": "Signing out ends this device’s access and deletes what it keeps here.",
   "settings.signOut.pending": "Signing out…",
   "settings.signOut.failed": "Sign-out didn’t finish. Try again.",
+  "settings.signOut.pairedAnew":
+    "This device’s old access ended, but another tab paired this browser again, so it stays signed in.",
   "settings.signOut.title": "Sign out this device?",
   "settings.signOut.body":
     "This browser loses access, and pairing it again takes a new code. Drafts and unsent messages are discarded. Your bots and conversations stay on the server.",

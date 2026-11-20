@@ -458,7 +458,8 @@ export function SignOutDevice({
   quiet?: boolean;
 }) {
   const { t } = useI18n();
-  // Success leaves the app for pairing, so only a failure is ever shown here.
+  // Success leaves the app for pairing, or tells of another tab's new pairing
+  // in a notice, so only a failure is ever shown here.
   const [signOut, setSignOut] = useState<"idle" | "pending" | "failed">("idle");
   return (
     <div className={cn("flex flex-col gap-1.5", quiet ? "items-center" : "items-start")}>

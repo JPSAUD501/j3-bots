@@ -18,6 +18,7 @@ import * as Server from "@j3-bots/server/testing";
 import { assert, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Latch from "effect/Latch";
@@ -172,16 +173,20 @@ const client = (
   stored: Option.Option<DeviceCredential> = Option.none(),
   device = TestPlatform.makeDevice(),
   http?: Layer.Layer<HttpClient.HttpClient>,
+  requestTimeout?: Duration.Duration,
 ) =>
   Layer.unwrap(
     Effect.map(Server.origin, (origin) =>
       Layer.fresh(
         ClientRuntime.layer.pipe(
-          Layer.provideMerge(TestPlatform.layer(origin, stored, device, http)),
+          Layer.provideMerge(TestPlatform.layer(origin, stored, device, http, requestTimeout)),
         ),
       ),
     ),
   );
+
+/** For a test of a request that never answers: it gives up soon. */
+const SHORT_TIMEOUT = Duration.seconds(1);
 
 /**
  * A reverse proxy in front of the server whose own login has expired: it
@@ -595,7 +600,9 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         assert.strictEqual(waiting._tag === "waiting" && waiting.reason, "unreachable");
       }).pipe(
         Effect.scoped,
-        Effect.provide(client(credential, device, neverAnswers(HTTP_PATHS.socketTicket))),
+        Effect.provide(
+          client(credential, device, neverAnswers(HTTP_PATHS.socketTicket), SHORT_TIMEOUT),
+        ),
       );
     }),
   );
@@ -615,7 +622,12 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        client(Option.none(), TestPlatform.makeDevice(), neverAnswers(HTTP_PATHS.attachments, 1)),
+        client(
+          Option.none(),
+          TestPlatform.makeDevice(),
+          neverAnswers(HTTP_PATHS.attachments, 1),
+          SHORT_TIMEOUT,
+        ),
       ),
     ),
   );
@@ -2471,7 +2483,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           yield* network.loseReplies(false);
           yield* tickets.open;
 
-          assert.strictEqual(yield* Fiber.join(signingOut), "signed-out");
+          assert.strictEqual(yield* Fiber.join(signingOut), "paired-anew");
           assert.deepStrictEqual(
             Option.map(yield* savedCredential, (stored) => stored.deviceId),
             Option.some(paired.value.deviceId),
@@ -2584,6 +2596,210 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       assert.deepStrictEqual(yield* unsent(device.storage), []);
     }).pipe(Effect.provide(client(Option.none(), device)));
   });
+
+  it.effect("writes and sends nothing of a pairing a tab learns late has ended", () =>
+    Effect.gen(function* () {
+      const { device, target, credential } = yield* pairedDevice("Late to hear");
+      const key = targetKey(target);
+      const tickets = yield* Latch.make(true);
+      const heard = yield* Latch.make(false);
+
+      // A tab that runs other tabs' broadcasts late, and whose next socket ticket waits.
+      yield* Effect.gen(function* () {
+        const lateDrafts = yield* Drafts;
+        const lateConversations = yield* Conversations;
+        yield* waitFor((yield* Connection).state, isConnected);
+        yield* tickets.close;
+
+        yield* Effect.gen(function* () {
+          const drafts = yield* Drafts;
+          yield* waitFor((yield* Connection).state, isConnected);
+          assert.strictEqual(yield* (yield* SignOut).run, "signed-out");
+          yield* pairAndConnect;
+          yield* drafts.setText(target, "the new pairing's");
+          yield* whenStored(device.storage, "drafts", key, holds("the new pairing's"));
+
+          // The late tab still follows the pairing that ended, and writes and sends under it.
+          yield* lateDrafts.setText(target, "typed under the old pairing");
+          assert.strictEqual(yield* lateDrafts.send(target), "not-kept");
+          assert.deepStrictEqual(
+            yield* lateConversations.send({ target, text: "sent under the old pairing" }),
+            { _tag: "failed", failure: { _tag: "not-paired" } },
+          );
+
+          assert.deepStrictEqual(yield* unsent(device.storage), []);
+          yield* whenStored(device.storage, "drafts", key, holds("the new pairing's"));
+          assert.strictEqual(drafts.state.get().get(key)?.text, "the new pairing's");
+          assert.strictEqual(drafts.offers.get().size, 0);
+
+          // Once it hears, it follows the new pairing and shows its draft.
+          yield* heard.open;
+          yield* tickets.open;
+          yield* waitFor(lateDrafts.state, (state) => state.get(key)?.text === "the new pairing's");
+          assert.strictEqual(lateDrafts.offers.get().size, 0);
+        }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+      }).pipe(
+        Effect.scoped,
+        Effect.ensuring(Effect.andThen(tickets.open, heard.open)),
+        Effect.provide(
+          client(
+            credential,
+            { ...device, credentials: () => device.credentials(heard) },
+            heldAt(HTTP_PATHS.socketTicket, tickets),
+          ),
+        ),
+      );
+    }),
+  );
+
+  it.effect("shows and sends nothing of an ended pairing whose text could not be erased", () => {
+    let full = false;
+    const device = TestPlatform.makeDevice({ refuseCommits: () => full });
+    return Effect.gen(function* () {
+      const network = yield* TestPlatform.TestNetwork;
+      const drafts = yield* Drafts;
+      const conversations = yield* Conversations;
+      yield* pairAndConnect;
+      const target: EntryTarget = { _tag: "conversation", botId: yield* createBot("Not erased") };
+      const key = targetKey(target);
+      yield* goOffline;
+      yield* drafts.setText(target, "the old pairing's draft");
+      yield* whenStored(device.storage, "drafts", key, holds("the old pairing's draft"));
+      yield* conversations.enqueue({ target, text: "the old pairing's message" });
+
+      // The device refuses every write while this device signs out, so its text stays.
+      full = true;
+      assert.strictEqual(yield* (yield* SignOut).run, "still-listed");
+      assert.strictEqual((yield* unsent(device.storage)).length, 1);
+      full = false;
+
+      yield* network.set("online");
+      yield* pairAndConnect;
+      yield* waitFor(drafts.switching, (switching) => !switching);
+      assert.isUndefined(drafts.state.get().get(key));
+
+      // Its own draft takes the place of the old one, with nothing offered back.
+      yield* drafts.setText(target, "the new pairing's draft");
+      yield* whenStored(device.storage, "drafts", key, holds("the new pairing's draft"));
+      assert.strictEqual(drafts.offers.get().size, 0);
+
+      // Its own message is the first and only one the server gets.
+      const { sends } = yield* Fakes;
+      const conversation = yield* conversations.open(target);
+      yield* conversations.enqueue({ target, text: "the new pairing's message" });
+      const delivered = yield* Queue.take(sends);
+      const shown = yield* waitFor(conversation.state, (state) =>
+        state.items.some((item) => item._tag === "message" && item.commandId === delivered),
+      );
+      assert.deepStrictEqual(
+        shown.items.flatMap((item) =>
+          item._tag === "message" || item._tag === "outgoing" ? [item.text] : [],
+        ),
+        ["the new pairing's message"],
+      );
+      assert.strictEqual(yield* Queue.size(sends), 0);
+    }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
+  });
+
+  it.effect("signs out only its own pairing when another is made while an answer is recorded", () =>
+    Effect.gen(function* () {
+      const { gate, sends } = yield* Fakes;
+      const commitGate = yield* Latch.make(true);
+      const committing = yield* Queue.unbounded<void>();
+      const { device, target, credential } = yield* pairedDevice("Recorded late", {
+        commitGate,
+        committing,
+      });
+
+      yield* Effect.gen(function* () {
+        const leaving = yield* Connection;
+        yield* waitFor(leaving.state, isConnected);
+        yield* gate.close;
+        yield* (yield* Conversations).enqueue({ target, text: "answered while signing out" });
+        yield* Queue.take(sends);
+
+        // The device holds the transaction that records the server's answer.
+        yield* commitGate.close;
+        yield* Queue.clear(committing);
+        yield* gate.open;
+        yield* Queue.take(committing);
+        const signingOut = yield* (yield* SignOut).run.pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+
+        // Meanwhile another tab pairs anew, and this one follows it.
+        yield* Effect.gen(function* () {
+          const connection = yield* Connection;
+          yield* waitFor(connection.state, isConnected);
+          yield* pairAndConnect;
+          const paired = yield* savedCredential;
+          if (Option.isNone(paired)) return assert.fail("The new pairing was not saved");
+          yield* waitFor(leaving.pairing, (pairing) => pairing === paired.value.deviceId);
+          yield* commitGate.open;
+
+          assert.strictEqual(yield* Fiber.join(signingOut), "paired-anew");
+          assert.deepStrictEqual(
+            Option.map(yield* savedCredential, (stored) => stored.deviceId),
+            Option.some(paired.value.deviceId),
+          );
+          // The new pairing still works.
+          const drafts = yield* Drafts;
+          yield* drafts.setText(target, "after the other tab signed out");
+          yield* whenStored(
+            device.storage,
+            "drafts",
+            targetKey(target),
+            holds("after the other tab signed out"),
+          );
+          assert.isTrue(isConnected(connection.state.get()));
+        }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+      }).pipe(
+        Effect.scoped,
+        Effect.ensuring(Effect.andThen(gate.open, commitGate.open)),
+        Effect.provide(client(credential, device)),
+      );
+    }),
+  );
+
+  it.effect("shows the drafts already saved when a tab on the pairing screen is paired", () =>
+    Effect.gen(function* () {
+      const device = TestPlatform.makeDevice();
+      const heard = yield* Latch.make(false);
+      yield* Effect.gen(function* () {
+        const waiting = yield* Connection;
+        const waitingDrafts = yield* Drafts;
+        yield* waitFor(waiting.state, (state) => state._tag === "unpaired");
+
+        // Another tab pairs and writes a draft before this one hears.
+        const target = yield* Effect.gen(function* () {
+          yield* pairAndConnect;
+          const botId = yield* createBot("Saved first");
+          const written: EntryTarget = { _tag: "conversation", botId };
+          yield* (yield* Drafts).setText(written, "saved before this tab was paired");
+          yield* whenStored(
+            device.storage,
+            "drafts",
+            targetKey(written),
+            holds("saved before this tab was paired"),
+          );
+          return written;
+        }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
+
+        // Only now does this tab hear of the pairing.
+        yield* heard.open;
+        yield* waitFor(
+          waitingDrafts.state,
+          (state) => state.get(targetKey(target))?.text === "saved before this tab was paired",
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.ensuring(heard.open),
+        Effect.provide(
+          client(Option.none(), { ...device, credentials: () => device.credentials(heard) }),
+        ),
+      );
+    }),
+  );
 
   it.effect("answers Send again with what became of its own attempt, not of a later one", () =>
     Effect.gen(function* () {

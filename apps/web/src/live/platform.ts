@@ -86,7 +86,13 @@ const credentials = Layer.effect(
           try: () =>
             Idb.commit(
               [{ store: "credentials", key: CREDENTIAL_KEY, value: null }],
-              [{ store: "credentials", key: CREDENTIAL_KEY, value: stored(credential) }],
+              [
+                Idb.holding({
+                  store: "credentials",
+                  key: CREDENTIAL_KEY,
+                  value: stored(credential),
+                }),
+              ],
             ),
           catch: () => new CredentialStorageError({ operation: "clear" }),
         }).pipe(
@@ -100,6 +106,13 @@ const credentials = Layer.effect(
 );
 
 const idbRecord = ({ table, key, value }: LocalRecord) => ({ store: table, key, value });
+
+/** The expectation that the device's credential is `pairing`'s, read in the transaction it guards. */
+const credentialOf = (pairing: DeviceId): Idb.IdbExpectation => ({
+  store: "credentials",
+  key: CREDENTIAL_KEY,
+  holds: (stored) => Option.exists(decodeCredential(stored), (found) => found.deviceId === pairing),
+});
 
 /**
  * Tells this origin's other tabs which table of the client's records changed,
@@ -152,9 +165,17 @@ const storage = Layer.effect(
         }).pipe(Effect.andThen(announce([table]))),
       ),
       commit: Effect.fn("ClientStorage.commit")(
-        (changes: ReadonlyArray<LocalRecord>, expected: ReadonlyArray<LocalRecord> = []) =>
+        (
+          changes: ReadonlyArray<LocalRecord>,
+          expected: ReadonlyArray<LocalRecord> = [],
+          pairing?: DeviceId,
+        ) =>
           Effect.tryPromise({
-            try: () => Idb.commit(changes.map(idbRecord), expected.map(idbRecord)),
+            try: () =>
+              Idb.commit(changes.map(idbRecord), [
+                ...expected.map((record) => Idb.holding(idbRecord(record))),
+                ...(pairing === undefined ? [] : [credentialOf(pairing)]),
+              ]),
             catch: () => new LocalStorageError({ operation: "write" }),
           }).pipe(
             Effect.tap((applied) =>
