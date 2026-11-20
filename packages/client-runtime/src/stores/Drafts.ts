@@ -70,9 +70,10 @@ export interface DraftChangedElsewhere {
   /** This window was sending the draft, and sent nothing. */
   readonly whileSending: boolean;
   /**
-   * This window held text the device never kept, which `restore` puts back.
-   * Text the device kept, the other window had in front of it when it sent
-   * or changed the draft, so there is nothing to put back.
+   * This window holds text the device never kept, which `restore` puts back:
+   * from this change, or from an earlier one the operator has not restored
+   * yet. Text the device kept, the other window had in front of it when it
+   * sent or changed the draft, so there is nothing to put back.
    */
   readonly restorable: boolean;
 }
@@ -150,6 +151,15 @@ const shown = (kept: Kept): Draft => ({
  * upload progress and failed files live in memory only. The lock is this
  * window's own; between windows, the stored revision each write claims
  * decides.
+ *
+ * Text another window's change displaced stays on offer, one text per draft,
+ * until the operator restores it or sends the draft, however many changes
+ * come after. A later change that displaces no new text keeps the offer. One
+ * that displaces new text replaces the offer only when nothing is lost by it:
+ * the new text holds the offered one, or the device keeps it. Otherwise both
+ * were never kept, and the offer keeps the older text, which the operator was
+ * already shown and has not answered; the newer was typed over the draft the
+ * other window had in front of it.
  */
 export class Drafts extends Context.Service<
   Drafts,
@@ -227,7 +237,8 @@ export const layer = Layer.effect(
     }
     const state = new Cell<ReadonlyMap<string, Draft>>(restored);
     const uploads = new Map<string, Fiber.Fiber<void>>();
-    // Text this window held, never kept, when another window changed its draft, by key.
+    // Text on offer for `restore`, by key: text this window held, never kept,
+    // when another window changed its draft.
     const displaced = new Map<string, string>();
     const changes = yield* PubSub.unbounded<DraftChangedElsewhere>();
     let nextKey = 0;
@@ -269,9 +280,15 @@ export const layer = Layer.effect(
         const held = state.get().get(key) ?? empty;
         const read = keptIn(known.get(key)) ?? keptOf(empty);
         const stored = shown(keptIn(value) ?? keptOf(empty));
-        const restorable = held.text !== "" && held.text !== stored.text && held.text !== read.text;
-        if (restorable) displaced.set(key, held.text);
-        else displaced.delete(key);
+        const fresh = held.text !== "" && held.text !== stored.text && held.text !== read.text;
+        const offered = displaced.get(key);
+        if (
+          fresh &&
+          (offered === undefined || held.text.includes(offered) || stored.text.includes(offered))
+        ) {
+          displaced.set(key, held.text);
+        }
+        const restorable = displaced.has(key);
         if (value === undefined) known.delete(key);
         else known.set(key, value);
 
@@ -520,6 +537,7 @@ export const layer = Layer.effect(
           switch (kept) {
             case "sent":
               unwritten.delete(key);
+              displaced.delete(key);
               known.set(key, handedOver);
               show(key, empty);
               break;

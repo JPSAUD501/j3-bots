@@ -1294,6 +1294,54 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
     }),
   );
 
+  it.effect("keeps offering text another tab displaced through a later change", () =>
+    Effect.gen(function* () {
+      const device = TestPlatform.makeDevice();
+      const first = yield* Effect.gen(function* () {
+        yield* pairAndConnect;
+        const target: EntryTarget = { _tag: "conversation", botId: yield* createBot("Offered") };
+        yield* (yield* Drafts).setText(target, "shared");
+        yield* whenStored(device.storage, "drafts", targetKey(target), present);
+        return { target, credential: yield* savedCredential };
+      }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
+      const key = targetKey(first.target);
+
+      yield* Effect.gen(function* () {
+        const one = yield* Drafts;
+        yield* Effect.gen(function* () {
+          const two = yield* Drafts;
+          yield* one.setText(first.target, "shared, from one");
+          yield* whenStored(device.storage, "drafts", key, holds("from one"));
+          const notices = yield* two.changedElsewhere.pipe(
+            Stream.take(2),
+            Stream.runCollect,
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* two.setText(first.target, "shared, from two");
+          yield* waitFor(two.state, (state) => state.get(key)?.text === "shared, from one");
+
+          // Before this tab restores its text, the other tab clears the draft,
+          // and a file this tab uploads finds it changed again.
+          yield* one.setText(first.target, "");
+          yield* whenStored(device.storage, "drafts", key, noDraft);
+          yield* two.attach(first.target, [
+            { name: "later.txt", body: new Blob(["later"], { type: "text/plain" }) },
+          ]);
+
+          const offer = { target: first.target, whileSending: false, restorable: true };
+          assert.deepStrictEqual([...(yield* Fiber.join(notices))], [offer, offer]);
+          yield* two.restore(first.target);
+          yield* whenStored(
+            device.storage,
+            "drafts",
+            key,
+            (record) => holds("from two")(record) && holds("later.txt")(record),
+          );
+        }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+      }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+    }),
+  );
+
   it.effect(
     "keeps a draft longer than a message can hold through a reload, and does not send it",
     () =>
