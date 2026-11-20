@@ -42,9 +42,9 @@ export class CredentialStorageError extends Schema.TaggedError<CredentialStorage
 
 /**
  * The device credential in the platform's secure storage: the keychain or
- * keystore on mobile, the OS credential vault on desktop, and on the web the
- * best the browser offers (a non-extractable key wrapping the token in
- * IndexedDB, for example). The runtime keeps no other copy on disk.
+ * keystore on mobile, the OS credential vault on desktop, and on the web
+ * IndexedDB, which only pages of the server's own origin can read. The
+ * runtime keeps no other copy on disk.
  */
 export class CredentialStore extends Context.Service<
   CredentialStore,
@@ -71,3 +71,78 @@ export class Network extends Context.Service<
     readonly changes: Stream.Stream<NetworkStatus>;
   }
 >()("@j3-bots/client-runtime/ports/Network") {}
+
+/** What the client keeps on the device besides the credential. Neither holds a secret. */
+export type LocalTable =
+  /** Each conversation's unsent text and the files already uploaded for it. */
+  | "drafts"
+  /** Messages the operator sent that the server has not accepted yet. */
+  | "outbox";
+
+/** The device's storage for the client's own records could not be read or written. */
+export class LocalStorageError extends Schema.TaggedError<LocalStorageError>()(
+  "LocalStorageError",
+  { operation: Schema.Literals(["read", "write", "remove"]) },
+) {
+  override get message(): string {
+    return `The client's local storage failed to ${this.operation}.`;
+  }
+}
+
+/**
+ * Records the client keeps between launches so nothing the operator typed is
+ * lost to a reload or a crash: IndexedDB on the web, the app's own storage
+ * elsewhere. Values are text the runtime encodes and decodes with its own
+ * schemas. Each record is written alone, so two windows of one client never
+ * overwrite each other's records. When the storage fails, the client carries
+ * on with what it holds in memory.
+ */
+export class ClientStorage extends Context.Service<
+  ClientStorage,
+  {
+    /** Every record of `table`, by key. */
+    readonly readAll: (
+      table: LocalTable,
+    ) => Effect.Effect<ReadonlyMap<string, string>, LocalStorageError>;
+    readonly write: (
+      table: LocalTable,
+      key: string,
+      value: string,
+    ) => Effect.Effect<void, LocalStorageError>;
+    readonly remove: (table: LocalTable, key: string) => Effect.Effect<void, LocalStorageError>;
+  }
+>()("@j3-bots/client-runtime/ports/ClientStorage") {}
+
+/** One upload, as the runtime asks the platform to send it. */
+export interface UploadRequest {
+  readonly url: string;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly body: Blob;
+  /** Called as the body's bytes leave the device, with how many have so far. */
+  readonly onProgress: (sent: number) => void;
+}
+
+/** The server's answer to an upload, before the runtime reads it. */
+export interface UploadResponse {
+  readonly status: number;
+  readonly body: string;
+}
+
+/** The upload did not reach the server, or its answer did not come back. */
+export class TransferFailed extends Schema.TaggedError<TransferFailed>()("TransferFailed", {}) {
+  override get message(): string {
+    return "The file transfer failed.";
+  }
+}
+
+/**
+ * Sends a file's bytes to the server and reports progress as they go, which
+ * `fetch` cannot do: `XMLHttpRequest` in a browser, the platform's upload task
+ * elsewhere. Interrupting the effect aborts the transfer.
+ */
+export class FileTransfer extends Context.Service<
+  FileTransfer,
+  {
+    readonly upload: (request: UploadRequest) => Effect.Effect<UploadResponse, TransferFailed>;
+  }
+>()("@j3-bots/client-runtime/ports/FileTransfer") {}

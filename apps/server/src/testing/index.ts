@@ -14,6 +14,7 @@ import * as RpcSocket from "../RpcSocket.ts";
 import * as Ports from "../system/Ports.ts";
 import * as TestDomain from "./domain.ts";
 
+export { Attachments } from "../attachments/Attachments.ts";
 export { DeviceAuth } from "../auth/DeviceAuth.ts";
 export { Bots } from "../bots/Bots.ts";
 export { Devices } from "../devices/Devices.ts";

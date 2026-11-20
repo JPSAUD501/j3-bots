@@ -1,23 +1,27 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type {
-  ApprovalDecision,
-  AttachmentId,
+import {
+  type ApprovalDecision,
+  Attachment,
+  CommandError,
   CommandId,
-  Entry,
-  EntryId,
-  EntryOrder,
+  type Entry,
+  type EntryId,
+  type EntryOrder,
   EntryTarget,
   Mentions,
-  MessageEntry,
-  QuestionAnswers,
-  Sequence,
+  type MessageEntry,
+  MessageText,
+  type QuestionAnswers,
+  type Sequence,
 } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import type * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { Connection } from "../connection/Connection.ts";
@@ -29,6 +33,7 @@ import {
   type IntentResult,
   retryAction,
 } from "../intents/Actions.ts";
+import { ClientStorage } from "../ports.ts";
 import { Cell, type Readable } from "../Store.ts";
 import { makeKeyed } from "./keyed.ts";
 
@@ -41,14 +46,16 @@ export const targetKey = (target: EntryTarget) =>
 /**
  * A message the operator sent from this client that the conversation does not
  * show yet. It disappears when the server's entry for it arrives, matched by
- * its command id, so the message never shows twice.
+ * its command id, so the message never shows twice. It is kept on the device
+ * until the server has it, so a reload or a crash sends it once it can, with
+ * the same command id, and never twice.
  */
 export interface OutgoingMessage {
   readonly _tag: "outgoing";
   readonly commandId: CommandId;
   readonly target: EntryTarget;
   readonly text: string;
-  readonly attachments: ReadonlyArray<AttachmentId>;
+  readonly attachments: ReadonlyArray<Attachment>;
   readonly mentions: Mentions | null;
   readonly createdAt: DateTime.Utc;
   /**
@@ -59,6 +66,32 @@ export interface OutgoingMessage {
     | { readonly _tag: "sending" }
     | { readonly _tag: "not-sent"; readonly failure: IntentFailure };
 }
+
+const IntentFailureSchema = Schema.Union([
+  Schema.TaggedStruct("refused", { error: CommandError }),
+  Schema.TaggedStruct("not-paired", {}),
+  Schema.TaggedStruct("unexpected", {}),
+]);
+
+/** An outgoing message as the device keeps it. */
+const StoredOutgoing = Schema.fromJsonString(
+  Schema.toCodecJson(
+    Schema.Struct({
+      commandId: CommandId,
+      target: EntryTarget,
+      text: MessageText,
+      attachments: Schema.Array(Attachment),
+      mentions: Schema.NullOr(Mentions),
+      createdAt: Schema.DateTimeUtc,
+      status: Schema.Union([
+        Schema.TaggedStruct("sending", {}),
+        Schema.TaggedStruct("not-sent", { failure: IntentFailureSchema }),
+      ]),
+    }),
+  ),
+);
+const encodeStored = Schema.encodeEffect(StoredOutgoing);
+const decodeStored = Schema.decodeUnknownOption(StoredOutgoing);
 
 export type ConversationItem = Entry | OutgoingMessage;
 
@@ -134,10 +167,22 @@ export class Conversations extends Context.Service<
     readonly send: (input: {
       readonly target: EntryTarget;
       readonly text: string;
-      readonly attachments?: ReadonlyArray<AttachmentId>;
+      readonly attachments?: ReadonlyArray<Attachment>;
       readonly mentions?: Mentions;
     }) => Effect.Effect<IntentResult<EntryId>>;
-    /** Removes a message the server refused from the conversation. */
+    /**
+     * Shows the message at once and starts sending it as `send` does, without
+     * waiting for the server: returns once the message is in the outbox.
+     */
+    readonly enqueue: (input: {
+      readonly target: EntryTarget;
+      readonly text: string;
+      readonly attachments?: ReadonlyArray<Attachment>;
+      readonly mentions?: Mentions;
+    }) => Effect.Effect<void>;
+    /** Sends again, with its own command id, a message that was not sent. */
+    readonly resend: (commandId: CommandId) => Effect.Effect<IntentResult<EntryId>>;
+    /** Removes a message that was not sent from the conversation. */
     readonly discard: (commandId: CommandId) => Effect.Effect<void>;
     readonly retryMessage: (entryId: EntryId) => Effect.Effect<IntentResult>;
     readonly retryNotice: (entryId: EntryId) => Effect.Effect<IntentResult>;
@@ -151,10 +196,47 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const connection = yield* Connection;
     const actions = yield* Actions;
+    const storage = yield* ClientStorage;
     const scope = yield* Scope.Scope;
+
+    // What an earlier launch left unsent, oldest first. Storage that cannot be
+    // read leaves the outbox empty, as a fresh device's is.
+    const stored = yield* storage
+      .readAll("outbox")
+      .pipe(
+        Effect.catchTag("LocalStorageError", (error) =>
+          Effect.logWarning("Unsent messages could not be read", error).pipe(
+            Effect.as(new Map<string, string>()),
+          ),
+        ),
+      );
+    const restored = [...stored.values()]
+      .flatMap((value) => Option.toArray(decodeStored(value)))
+      .map((record): OutgoingMessage => ({ _tag: "outgoing", ...record }))
+      .toSorted((a, b) => a.createdAt.epochMilliseconds - b.createdAt.epochMilliseconds);
+
     // Outgoing messages of every target, so a message keeps its place while
     // its conversation is closed and reopened.
-    const outbox = new Cell<ReadonlyArray<OutgoingMessage>>([]);
+    const outbox = new Cell<ReadonlyArray<OutgoingMessage>>(restored);
+
+    const keep = (message: OutgoingMessage) =>
+      encodeStored(message).pipe(
+        Effect.flatMap((value) => storage.write("outbox", message.commandId, value)),
+        Effect.catchTags({
+          LocalStorageError: (error) =>
+            Effect.logWarning("An unsent message is kept in memory only", error),
+          SchemaError: (error) => Effect.logError("An unsent message could not be encoded", error),
+        }),
+      );
+    const forgetStored = (commandId: CommandId) =>
+      storage
+        .remove("outbox", commandId)
+        .pipe(
+          Effect.catchTag("LocalStorageError", (error) =>
+            Effect.logWarning("A sent message stays in local storage", error),
+          ),
+        );
+
     const removeOutgoing = (commandIds: ReadonlySet<CommandId>) => {
       if (!outbox.get().some((message) => commandIds.has(message.commandId))) return;
       outbox.update((list) => list.filter((message) => !commandIds.has(message.commandId)));
@@ -322,58 +404,88 @@ export const layer = Layer.effect(
         list.map((message) => (message.commandId === commandId ? { ...message, status } : message)),
       );
 
-    const send = Effect.fn("Conversations.send")(function* (input: {
-      readonly target: EntryTarget;
-      readonly text: string;
-      readonly attachments?: ReadonlyArray<AttachmentId>;
-      readonly mentions?: Mentions;
-    }) {
-      const commandId = yield* actions.commandId;
-      const attachments = input.attachments ?? [];
-      const createdAt = yield* DateTime.now;
-      outbox.update((list) => [
-        ...list,
-        {
-          _tag: "outgoing",
-          commandId,
-          target: input.target,
-          text: input.text,
-          attachments,
-          mentions: input.mentions ?? null,
-          createdAt,
-          status: { _tag: "sending" },
-        },
-      ]);
-      const delivery = connection
+    /**
+     * Sends `message` until the server answers, through any disconnection, in
+     * a fiber of the client's scope. The server applies its command id once, so sending
+     * it again after a reload is safe.
+     */
+    const deliver = (message: OutgoingMessage) =>
+      connection
         .call((client) =>
           client["message.send"]({
-            commandId,
-            target: input.target,
-            text: input.text,
-            attachments,
-            ...(input.mentions === undefined ? {} : { mentions: input.mentions }),
+            commandId: message.commandId,
+            target: message.target,
+            text: message.text,
+            attachments: message.attachments.map((attachment) => attachment.id),
+            ...(message.mentions === null ? {} : { mentions: message.mentions }),
           }),
         )
         .pipe(
           Effect.exit,
-          Effect.map((exit) => {
+          Effect.flatMap((exit): Effect.Effect<IntentResult<EntryId>> => {
             const result = intentResult(exit);
             if (result._tag === "failed") {
-              setStatus(commandId, { _tag: "not-sent", failure: result.failure });
-            } else if (!stores.isOpen(input.target)) {
-              // Nothing will show the entry; the next open reads it with the rest.
-              removeOutgoing(new Set([commandId]));
+              const status = { _tag: "not-sent", failure: result.failure } as const;
+              setStatus(message.commandId, status);
+              return keep({ ...message, status }).pipe(Effect.as(result));
             }
-            return result;
+            // Nothing will show the entry; the next open reads it with the rest.
+            if (!stores.isOpen(message.target)) removeOutgoing(new Set([message.commandId]));
+            return forgetStored(message.commandId).pipe(Effect.as(result));
           }),
+          Effect.forkIn(scope),
         );
-      return yield* Fiber.join(yield* Effect.forkIn(delivery, scope));
+
+    for (const message of restored) {
+      if (message.status._tag === "sending") yield* deliver(message);
+    }
+
+    const start = Effect.fn("Conversations.start")(function* (input: {
+      readonly target: EntryTarget;
+      readonly text: string;
+      readonly attachments?: ReadonlyArray<Attachment>;
+      readonly mentions?: Mentions;
+    }) {
+      const message: OutgoingMessage = {
+        _tag: "outgoing",
+        commandId: yield* actions.commandId,
+        target: input.target,
+        text: input.text,
+        attachments: input.attachments ?? [],
+        mentions: input.mentions ?? null,
+        createdAt: yield* DateTime.now,
+        status: { _tag: "sending" },
+      };
+      outbox.update((list) => [...list, message]);
+      yield* keep(message);
+      return yield* deliver(message);
+    });
+
+    const send = (input: Parameters<typeof start>[0]) =>
+      start(input).pipe(Effect.flatMap(Fiber.join));
+    const enqueue = Effect.fn("Conversations.enqueue")(function* (
+      input: Parameters<typeof start>[0],
+    ) {
+      yield* start(input);
+    });
+
+    const resend = Effect.fn("Conversations.resend")(function* (commandId: CommandId) {
+      const message = outbox.get().find((candidate) => candidate.commandId === commandId);
+      if (message?.status._tag !== "not-sent") {
+        return { _tag: "failed", failure: { _tag: "unexpected" } } as const;
+      }
+      const sending = { ...message, status: { _tag: "sending" } } as const;
+      setStatus(commandId, sending.status);
+      yield* keep(sending);
+      return yield* Fiber.join(yield* deliver(sending));
     });
 
     const discard = (commandId: CommandId) =>
-      Effect.sync(() => {
+      Effect.suspend(() => {
         const message = outbox.get().find((candidate) => candidate.commandId === commandId);
-        if (message?.status._tag === "not-sent") removeOutgoing(new Set([commandId]));
+        if (message?.status._tag !== "not-sent") return Effect.void;
+        removeOutgoing(new Set([commandId]));
+        return forgetStored(commandId);
       });
 
     const retryMessage = Effect.fn("Conversations.retryMessage")(function* (entryId: EntryId) {
@@ -418,6 +530,8 @@ export const layer = Layer.effect(
     return Conversations.of({
       open: stores.acquire,
       send,
+      enqueue,
+      resend,
       discard,
       retryMessage,
       retryNotice,

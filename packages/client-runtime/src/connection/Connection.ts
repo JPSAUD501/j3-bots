@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { J3Rpcs, Label, PairingCode, PROTOCOL_VERSION, type PairRequest } from "@j3-bots/contracts";
+import {
+  type DeviceToken,
+  J3Rpcs,
+  Label,
+  PairingCode,
+  PROTOCOL_VERSION,
+  type PairRequest,
+} from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -200,6 +207,16 @@ export class Connection extends Context.Service<
     readonly eachSession: <E>(
       use: (client: J3RpcClient) => Effect.Effect<void, E | RpcClientError>,
     ) => Effect.Effect<never, Exclude<E, RpcClientError>>;
+    /**
+     * The device token, for the HTTP routes that take it as a bearer: files.
+     * Waits while the credential is read; fails with `NotPaired` without one.
+     */
+    readonly bearer: Effect.Effect<Redacted.Redacted<DeviceToken>, NotPaired>;
+    /**
+     * Waits until a socket is open, which means the server answers and takes
+     * this device's credential. Fails with `NotPaired` once there is none.
+     */
+    readonly awaitConnected: Effect.Effect<void, NotPaired>;
   }
 >()("@j3-bots/client-runtime/connection/Connection") {}
 
@@ -481,6 +498,16 @@ export const layer = Layer.effect(
         Effect.andThen(Effect.never),
       );
 
+    const bearer = SubscriptionRef.changes(credential).pipe(
+      Stream.filter((current) => current._tag !== "loading"),
+      Stream.runHead,
+      Effect.flatMap((current) =>
+        Option.isSome(current) && current.value._tag === "paired"
+          ? Effect.succeed(current.value.credential.token)
+          : Effect.fail(new NotPaired()),
+      ),
+    );
+
     return Connection.of({
       state,
       pair,
@@ -488,6 +515,8 @@ export const layer = Layer.effect(
       reconnectNow: Queue.offer(wakes, void 0).pipe(Effect.asVoid),
       call,
       eachSession,
+      bearer,
+      awaitConnected: awaitSession(0).pipe(Effect.asVoid),
     });
   }),
 );

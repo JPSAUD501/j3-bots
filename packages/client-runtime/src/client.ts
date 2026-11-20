@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type {
+  Attachment,
   AttachmentId,
+  Bot,
+  BotFile,
   BotId,
   CommandId,
   Device,
@@ -8,10 +11,16 @@ import type {
   EngineStatus as EngineStatusValue,
   EntryId,
   EntryTarget,
+  MemoryDocument,
+  MemoryFile,
+  MemoryPath,
+  MemoryScope,
   Mentions,
   Notification,
   PairingCode,
   RosterItem,
+  Routine,
+  RoutineId,
   Settings as SettingsValue,
 } from "@j3-bots/contracts";
 import type * as DateTime from "effect/DateTime";
@@ -27,13 +36,23 @@ import type * as HttpClient from "effect/http/HttpClient";
 import type { RpcClientError } from "effect/rpc/RpcClientError";
 import type * as Socket from "effect/socket/Socket";
 import * as Connection from "./connection/Connection.ts";
+import * as Files from "./files/Files.ts";
 import * as Actions from "./intents/Actions.ts";
-import type { CredentialStore, Network, ServerAddress } from "./ports.ts";
+import type {
+  ClientStorage,
+  CredentialStore,
+  FileTransfer,
+  Network,
+  ServerAddress,
+} from "./ports.ts";
 import type { Readable } from "./Store.ts";
 import * as Conversations from "./stores/Conversations.ts";
+import * as Details from "./stores/Details.ts";
 import * as Devices from "./stores/Devices.ts";
+import * as Drafts from "./stores/Drafts.ts";
 import * as EngineStatus from "./stores/EngineStatus.ts";
 import * as Presence from "./stores/Presence.ts";
+import type { Loaded } from "./stores/reads.ts";
 import * as Roster from "./stores/Roster.ts";
 import * as Settings from "./stores/Settings.ts";
 import type { Synced } from "./stores/synced.ts";
@@ -43,6 +62,8 @@ import * as WorkSteps from "./stores/WorkSteps.ts";
 export type Platform =
   | ServerAddress
   | CredentialStore
+  | ClientStorage
+  | FileTransfer
   | Network
   | HttpClient.HttpClient
   | Socket.WebSocketConstructor
@@ -54,10 +75,16 @@ export const layer = Layer.mergeAll(
   EngineStatus.layer,
   Settings.layer,
   Devices.layer,
-  Conversations.layer,
+  Drafts.layer,
+  Details.layer,
   WorkSteps.layer,
   Presence.layer,
-).pipe(Layer.provideMerge(Actions.layer), Layer.provideMerge(Connection.layer));
+).pipe(
+  Layer.provideMerge(Conversations.layer),
+  Layer.provideMerge(Files.layer),
+  Layer.provideMerge(Actions.layer),
+  Layer.provideMerge(Connection.layer),
+);
 
 export interface ConversationHandle {
   readonly target: EntryTarget;
@@ -72,6 +99,17 @@ export interface WorkStepsHandle {
   readonly state: Readable<WorkSteps.WorkStepsState>;
   readonly release: () => void;
 }
+
+/** Server state held open until `release`. */
+export interface LoadedHandle<A> {
+  readonly state: Readable<Loaded<A>>;
+  readonly release: () => void;
+}
+
+/** A file's bytes, or why there are none. */
+export type DownloadResult =
+  | { readonly _tag: "done"; readonly value: Files.Download }
+  | { readonly _tag: "failed"; readonly reason: "not-found" | "unreachable" | "not-paired" };
 
 export type PairResult =
   | { readonly _tag: "paired" }
@@ -105,10 +143,40 @@ export interface J3Client {
   readonly send: (input: {
     readonly target: EntryTarget;
     readonly text: string;
-    readonly attachments?: ReadonlyArray<AttachmentId>;
+    readonly attachments?: ReadonlyArray<Attachment>;
     readonly mentions?: Mentions;
   }) => Promise<Actions.IntentResult<EntryId>>;
+  readonly resend: (commandId: CommandId) => Promise<Actions.IntentResult<EntryId>>;
   readonly discard: (commandId: CommandId) => void;
+
+  /** Every conversation's draft, by `targetKey`. Kept on the device. */
+  readonly drafts: Readable<ReadonlyMap<string, Drafts.Draft>>;
+  readonly setDraftText: (target: EntryTarget, text: string) => void;
+  /** Adds files to the draft and uploads them. */
+  readonly attachFiles: (
+    target: EntryTarget,
+    files: ReadonlyArray<{ readonly name: string; readonly body: Blob }>,
+  ) => void;
+  readonly detachFile: (target: EntryTarget, key: string) => void;
+  /** Sends the draft once and clears it. */
+  readonly sendDraft: (target: EntryTarget) => Promise<Drafts.DraftSendResult>;
+  /** A file's bytes, with this device's credential. */
+  readonly download: (id: AttachmentId) => Promise<DownloadResult>;
+
+  readonly openBotFiles: (botId: BotId) => LoadedHandle<ReadonlyArray<BotFile>>;
+  readonly openMemory: (scope: MemoryScope) => LoadedHandle<ReadonlyArray<MemoryFile>>;
+  readonly readMemory: (
+    scope: MemoryScope,
+    path: MemoryPath,
+  ) => Promise<Actions.IntentResult<MemoryDocument>>;
+  readonly openRoutines: (botId: BotId) => LoadedHandle<ReadonlyArray<Routine>>;
+  readonly setRoutineEnabled: (
+    routineId: RoutineId,
+    enabled: boolean,
+  ) => Promise<Actions.IntentResult<Routine>>;
+  readonly createBot: (draft: Details.BotDraft) => Promise<Actions.IntentResult<Bot>>;
+  readonly freshStart: (botId: BotId) => Promise<Actions.IntentResult>;
+  readonly deleteBot: (botId: BotId, deleteFiles: boolean) => Promise<Actions.IntentResult>;
   readonly retryMessage: (entryId: EntryId) => Promise<Actions.IntentResult>;
   readonly retryNotice: (entryId: EntryId) => Promise<Actions.IntentResult>;
   readonly answerCard: (
@@ -172,6 +240,9 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
         conversations: yield* Conversations.Conversations,
         workSteps: yield* WorkSteps.WorkSteps,
         presence: yield* Presence.Presence,
+        drafts: yield* Drafts.Drafts,
+        files: yield* Files.Files,
+        details: yield* Details.Details,
       };
     }),
   );
@@ -236,7 +307,45 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     },
 
     send: (input) => run.promise(conversations.send(input)),
+    resend: (commandId) => run.promise(conversations.resend(commandId)),
     discard: (commandId) => fire(conversations.discard(commandId)),
+
+    drafts: services.drafts.state,
+    setDraftText: (target, text) => run.sync(services.drafts.setText(target, text)),
+    attachFiles: (target, files) => fire(services.drafts.attach(target, files)),
+    detachFile: (target, key) => fire(services.drafts.detach(target, key)),
+    sendDraft: (target) => run.promise(services.drafts.send(target)),
+    download: (id) =>
+      run.promise(
+        services.files.download(id).pipe(
+          Effect.map((value): DownloadResult => ({ _tag: "done", value })),
+          Effect.catchTags({
+            AttachmentUnavailable: (error) =>
+              Effect.succeed<DownloadResult>({ _tag: "failed", reason: error.reason }),
+            NotPaired: () =>
+              Effect.succeed<DownloadResult>({ _tag: "failed", reason: "not-paired" }),
+          }),
+        ),
+      ),
+
+    openBotFiles: (botId) => {
+      const { value, release } = hold(services.details.files(botId));
+      return { state: value, release };
+    },
+    openMemory: (scope) => {
+      const { value, release } = hold(services.details.memory(scope));
+      return { state: value, release };
+    },
+    readMemory: (scope, path) => run.promise(services.details.readMemory(scope, path)),
+    openRoutines: (botId) => {
+      const { value, release } = hold(services.details.routines(botId));
+      return { state: value, release };
+    },
+    setRoutineEnabled: (routineId, enabled) =>
+      run.promise(services.details.setRoutineEnabled(routineId, enabled)),
+    createBot: (draft) => run.promise(services.details.createBot(draft)),
+    freshStart: (botId) => run.promise(services.details.freshStart(botId)),
+    deleteBot: (botId, deleteFiles) => run.promise(services.details.deleteBot(botId, deleteFiles)),
     retryMessage: (entryId) => run.promise(conversations.retryMessage(entryId)),
     retryNotice: (entryId) => run.promise(conversations.retryNotice(entryId)),
     answerCard: (entryId, answer) => run.promise(conversations.answerCard(entryId, answer)),

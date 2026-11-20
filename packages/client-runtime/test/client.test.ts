@@ -19,6 +19,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
+import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as ClientRuntime from "../src/client.ts";
@@ -30,8 +31,10 @@ import {
   type ConversationState,
   Conversations,
   messageStatus,
+  targetKey,
 } from "../src/stores/Conversations.ts";
 import { Devices } from "../src/stores/Devices.ts";
+import { Drafts } from "../src/stores/Drafts.ts";
 import { Roster } from "../src/stores/Roster.ts";
 import * as TestPlatform from "./platform.ts";
 
@@ -70,9 +73,10 @@ const unserved = Layer.mergeAll(
     Effect.gen(function* () {
       const { gate, sends } = yield* Fakes;
       const entries = yield* Server.Entries;
+      const files = yield* Server.Attachments;
       const applied = new Map<CommandId, EntryId>();
       const once = Semaphore.makeUnsafe(1);
-      return ({ commandId, target, text, mentions }) =>
+      return ({ commandId, target, text, attachments, mentions }) =>
         Effect.gen(function* () {
           yield* Queue.offer(sends, commandId);
           yield* gate.await;
@@ -80,6 +84,7 @@ const unserved = Layer.mergeAll(
             Effect.gen(function* () {
               const known = applied.get(commandId);
               if (known !== undefined) return known;
+              const stored = yield* Effect.forEach(attachments, (id) => files.open(id));
               const entry = yield* entries.append({
                 target,
                 commandId,
@@ -87,7 +92,9 @@ const unserved = Layer.mergeAll(
                   _tag: "message",
                   author: { _tag: "operator" },
                   text,
-                  attachments: [],
+                  attachments: stored.flatMap((file) =>
+                    Option.isSome(file) ? [file.value.attachment] : [],
+                  ),
                   mentions: mentions ?? { _tag: "bots", ids: [] },
                   delivery: { _tag: "pending" },
                   commandId,
@@ -137,13 +144,42 @@ const unserved = Layer.mergeAll(
 
 const server = Server.layer(unserved).pipe(Layer.provideMerge(fakes));
 
-/** A fresh client of the test server, with `stored` as its saved credential. */
-const client = (stored: Option.Option<DeviceCredential> = Option.none()) =>
+/**
+ * A fresh client of the test server, with `stored` as its saved credential.
+ * Two clients on one `storage` are one device before and after a reload.
+ */
+const client = (
+  stored: Option.Option<DeviceCredential> = Option.none(),
+  storage = TestPlatform.makeStorage(),
+) =>
   Layer.unwrap(
     Effect.map(Server.origin, (origin) =>
-      ClientRuntime.layer.pipe(Layer.provideMerge(TestPlatform.layer(origin, stored))),
+      ClientRuntime.layer.pipe(Layer.provideMerge(TestPlatform.layer(origin, stored, storage))),
     ),
   );
+
+/** The credential the client saved, for the same device's next launch. */
+const savedCredential = Effect.gen(function* () {
+  return yield* (yield* CredentialStore).load;
+});
+
+/** Polls the device's storage until `table`'s record for `key` passes `check`. */
+const whenStored = (
+  storage: ReturnType<typeof TestPlatform.makeStorage>,
+  table: "drafts" | "outbox",
+  key: string,
+  check: (record: string | undefined) => boolean,
+) =>
+  storage.readAll(table).pipe(
+    Effect.orDie,
+    Effect.repeat({
+      until: (records) => check(records.get(key)),
+      schedule: Schedule.spaced("5 millis"),
+    }),
+  );
+
+const present = (record: string | undefined) => record !== undefined;
+const absent = (record: string | undefined) => record === undefined;
 
 const isConnected = (state: ConnectionState) => state._tag === "connected";
 
@@ -412,6 +448,151 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       });
       // Once the resolved card has arrived, nothing is held for it any more.
       yield* waitFor(actions.state, (state) => !state.has(cardAction(card.id)));
+    }).pipe(Effect.scoped, Effect.provide(client())),
+  );
+
+  it.effect("sends a message an earlier launch left unsent, once", () =>
+    Effect.gen(function* () {
+      const { gate, sends } = yield* Fakes;
+      const storage = TestPlatform.makeStorage();
+
+      // The first launch sends while the server holds the command, then ends.
+      const first = yield* Effect.gen(function* () {
+        yield* pairAndConnect;
+        const botId = yield* createBot("Patient");
+        yield* gate.close;
+        yield* (yield* Conversations).enqueue({
+          target: { _tag: "conversation", botId },
+          text: "still there?",
+        });
+        const commandId = yield* Queue.take(sends);
+        return { botId, commandId, credential: yield* savedCredential };
+      }).pipe(Effect.scoped, Effect.provide(client(Option.none(), storage)));
+      yield* whenStored(storage, "outbox", first.commandId, present);
+
+      // The next launch on the same device sends it with the same command id.
+      yield* Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const conversation = yield* conversations.open({
+          _tag: "conversation",
+          botId: first.botId,
+        });
+        assert.strictEqual(yield* Queue.take(sends), first.commandId);
+        yield* gate.open;
+        const delivered = yield* waitFor(
+          conversation.state,
+          (state) =>
+            state.phase === "ready" &&
+            !state.items.some((item) => item._tag === "outgoing") &&
+            state.items.some(
+              (item) => item._tag === "message" && item.commandId === first.commandId,
+            ),
+        );
+        const copies = delivered.items.filter(
+          (item) => item._tag === "message" && item.commandId === first.commandId,
+        );
+        assert.strictEqual(copies.length, 1);
+        yield* whenStored(storage, "outbox", first.commandId, absent);
+      }).pipe(Effect.scoped, Effect.provide(client(first.credential, storage)));
+    }),
+  );
+
+  it.effect("keeps a draft and its uploaded file through a reload, and sends it once", () =>
+    Effect.gen(function* () {
+      const { gate, sends } = yield* Fakes;
+      const storage = TestPlatform.makeStorage();
+
+      const first = yield* Effect.gen(function* () {
+        yield* pairAndConnect;
+        const botId = yield* createBot("Reader");
+        const target: EntryTarget = { _tag: "conversation", botId };
+        const drafts = yield* Drafts;
+        yield* drafts.setText(target, "notes attached");
+        yield* drafts.attach(target, [
+          { name: "notes.txt", body: new Blob(["first line"], { type: "text/plain" }) },
+        ]);
+        const ready = yield* waitFor(drafts.state, (state) =>
+          (state.get(targetKey(target))?.files ?? []).some((file) => file._tag === "ready"),
+        );
+        const [file] = ready.get(targetKey(target))?.files ?? [];
+        if (file?._tag !== "ready") return assert.fail("No uploaded file");
+        assert.strictEqual(file.attachment.name, "notes.txt");
+        assert.strictEqual(file.attachment.size, "first line".length);
+        // Kept once the writer has the uploaded file too, not only the text.
+        yield* whenStored(
+          storage,
+          "drafts",
+          targetKey(target),
+          (record) => record?.includes(file.attachment.id) === true,
+        );
+        return { target, attachmentId: file.attachment.id, credential: yield* savedCredential };
+      }).pipe(Effect.scoped, Effect.provide(client(Option.none(), storage)));
+
+      yield* Effect.gen(function* () {
+        const drafts = yield* Drafts;
+        const restored = drafts.state.get().get(targetKey(first.target));
+        assert.strictEqual(restored?.text, "notes attached");
+        assert.deepStrictEqual(
+          restored?.files.map((file) => file._tag === "ready" && file.attachment.id),
+          [first.attachmentId],
+        );
+
+        // Sending twice, as a double tap would, sends once.
+        yield* gate.close;
+        const results = yield* Effect.all([drafts.send(first.target), drafts.send(first.target)], {
+          concurrency: "unbounded",
+        });
+        assert.deepStrictEqual(results.toSorted(), ["empty", "sent"]);
+        assert.isUndefined(drafts.state.get().get(targetKey(first.target)));
+        const commandId = yield* Queue.take(sends);
+        yield* gate.open;
+
+        const conversation = yield* (yield* Conversations).open(first.target);
+        const delivered = yield* waitFor(conversation.state, (state) =>
+          state.items.some((item) => item._tag === "message" && item.commandId === commandId),
+        );
+        const message = delivered.items.find(
+          (item) => item._tag === "message" && item.commandId === commandId,
+        );
+        assert.deepStrictEqual(
+          message?._tag === "message" && message.attachments.map((attachment) => attachment.id),
+          [first.attachmentId],
+        );
+        assert.strictEqual(yield* Queue.size(sends), 0);
+        yield* whenStored(storage, "drafts", targetKey(first.target), absent);
+      }).pipe(Effect.scoped, Effect.provide(client(first.credential, storage)));
+    }),
+  );
+
+  it.effect("refuses a file over the limits without uploading it, and holds the draft", () =>
+    Effect.gen(function* () {
+      yield* pairAndConnect;
+      const botId = yield* createBot("Picky");
+      const target: EntryTarget = { _tag: "conversation", botId };
+      const drafts = yield* Drafts;
+      yield* drafts.attach(target, [
+        { name: "empty.txt", body: new Blob([], { type: "text/plain" }) },
+        { name: "fine.txt", body: new Blob(["ok"], { type: "text/plain" }) },
+      ]);
+      const draft = drafts.state.get().get(targetKey(target));
+      assert.deepStrictEqual(
+        draft?.files.map((file) => [file._tag, file._tag === "failed" ? file.problem : null]),
+        [
+          ["failed", "empty"],
+          ["uploading", null],
+        ],
+      );
+      yield* waitFor(drafts.state, (state) =>
+        (state.get(targetKey(target))?.files ?? []).some((file) => file._tag === "ready"),
+      );
+      assert.strictEqual(yield* drafts.send(target), "not-ready");
+
+      const [refused] = drafts.state.get().get(targetKey(target))?.files ?? [];
+      if (refused === undefined) return assert.fail("No refused file");
+      yield* drafts.detach(target, refused.key);
+      yield* drafts.setText(target, "just the one");
+      assert.strictEqual(yield* drafts.send(target), "sent");
+      yield* Queue.take((yield* Fakes).sends);
     }).pipe(Effect.scoped, Effect.provide(client())),
   );
 });

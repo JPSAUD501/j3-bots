@@ -8,14 +8,20 @@ import * as Ref from "effect/Ref";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Socket from "effect/socket/Socket";
 import { ReconnectPolicy } from "../src/connection/Connection.ts";
 import {
+  ClientStorage,
   CredentialStore,
   type DeviceCredential,
+  FileTransfer,
+  type LocalTable,
   Network,
   type NetworkStatus,
   ServerAddress,
+  TransferFailed,
 } from "../src/ports.ts";
 
 /** Test controls over the device's network: its status, and the sockets open on it. */
@@ -73,13 +79,65 @@ const credentials = (stored: Option.Option<DeviceCredential>) =>
   );
 
 /**
+ * The device's storage for drafts and unsent messages, in memory. Made apart
+ * from a client, so a second client on it is the same device after a reload.
+ */
+export const makeStorage = () => {
+  const tables = new Map<LocalTable, Map<string, string>>([
+    ["drafts", new Map()],
+    ["outbox", new Map()],
+  ]);
+  const table = (name: LocalTable) => tables.get(name) ?? new Map<string, string>();
+  return ClientStorage.of({
+    readAll: (name) => Effect.sync(() => new Map(table(name))),
+    write: (name, key, value) => Effect.sync(() => void table(name).set(key, value)),
+    remove: (name, key) => Effect.sync(() => void table(name).delete(key)),
+  });
+};
+
+/**
+ * Uploads over the platform's `HttpClient`, which reports no progress until
+ * the end. A failure on the way fails the transfer.
+ */
+const transfer = Layer.effect(
+  FileTransfer,
+  Effect.gen(function* () {
+    const http = yield* HttpClient.HttpClient;
+    return FileTransfer.of({
+      upload: (request) =>
+        Effect.gen(function* () {
+          const bytes = yield* Effect.promise(() => request.body.arrayBuffer());
+          const response = yield* http.execute(
+            HttpClientRequest.post(request.url).pipe(
+              HttpClientRequest.setHeaders(request.headers),
+              HttpClientRequest.bodyUint8Array(
+                new Uint8Array(bytes),
+                request.headers["content-type"],
+              ),
+            ),
+          );
+          const body = yield* response.text;
+          request.onProgress(request.body.size);
+          return { status: response.status, body };
+        }).pipe(Effect.mapError(() => new TransferFailed())),
+    });
+  }),
+).pipe(Layer.provide(FetchHttpClient.layer));
+
+/**
  * A platform for tests: the credential in memory, a network the test turns
  * off and on, Node's own `fetch` and `WebSocket`, and retries in milliseconds.
  */
-export const layer = (origin: URL, stored: Option.Option<DeviceCredential> = Option.none()) =>
+export const layer = (
+  origin: URL,
+  stored: Option.Option<DeviceCredential> = Option.none(),
+  storage: ClientStorage["Service"] = makeStorage(),
+) =>
   Layer.mergeAll(
     Layer.succeed(ServerAddress, { origin }),
     credentials(stored),
+    Layer.succeed(ClientStorage, storage),
+    transfer,
     network,
     FetchHttpClient.layer,
     SecureRandom.layerWebCrypto,
