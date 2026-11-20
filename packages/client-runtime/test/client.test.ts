@@ -51,6 +51,8 @@ class Fakes extends Context.Service<
     readonly sends: Queue.Queue<CommandId>;
     /** Every `card.answer` the server received. */
     readonly answers: Queue.Queue<CommandId>;
+    /** The entry each `message.send` command made, on any socket. */
+    readonly applied: Map<CommandId, EntryId>;
   }
 >()("@j3-bots/client-runtime/test/client.test/Fakes") {}
 
@@ -61,6 +63,7 @@ const fakes = Layer.effect(
       gate: yield* Latch.make(true),
       sends: yield* Queue.unbounded<CommandId>(),
       answers: yield* Queue.unbounded<CommandId>(),
+      applied: new Map(),
     });
   }),
 );
@@ -71,10 +74,9 @@ const unserved = Layer.mergeAll(
   J3Rpcs.toLayerHandler(
     "message.send",
     Effect.gen(function* () {
-      const { gate, sends } = yield* Fakes;
+      const { gate, sends, applied } = yield* Fakes;
       const entries = yield* Server.Entries;
       const files = yield* Server.Attachments;
-      const applied = new Map<CommandId, EntryId>();
       const once = Semaphore.makeUnsafe(1);
       return ({ commandId, target, text, attachments, mentions }) =>
         Effect.gen(function* () {
@@ -504,6 +506,125 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           (item) => item._tag === "message" && item.commandId === first.commandId,
         );
         assert.strictEqual(copies.length, 1);
+        yield* whenStored(storage, "outbox", first.commandId, absent);
+      }).pipe(Effect.scoped, Effect.provide(client(first.credential, storage)));
+    }),
+  );
+
+  it.effect("sends two messages queued offline in the order they were written", () =>
+    Effect.gen(function* () {
+      yield* pairAndConnect;
+      const { gate, sends } = yield* Fakes;
+      const network = yield* TestPlatform.TestNetwork;
+      const connection = yield* Connection;
+      const drafts = yield* Drafts;
+      const botId = yield* createBot("Orderly");
+      const target: EntryTarget = { _tag: "conversation", botId };
+      const conversation = yield* (yield* Conversations).open(target);
+      yield* waitFor(conversation.state, (state) => state.phase === "ready");
+
+      yield* network.set("offline");
+      yield* waitFor(connection.state, (state) => state._tag === "offline");
+      for (const text of ["first", "second"]) {
+        yield* drafts.setText(target, text);
+        assert.strictEqual(yield* drafts.send(target), "sent");
+      }
+      const queued = conversation.state
+        .get()
+        .items.flatMap((item) => (item._tag === "outgoing" ? [item.commandId] : []));
+      assert.strictEqual(queued.length, 2);
+
+      yield* gate.close;
+      yield* network.set("online");
+      assert.strictEqual(yield* Queue.take(sends), queued[0]);
+      // The second waits until the server has answered the first.
+      const early = yield* Queue.take(sends).pipe(Effect.timeoutOption("100 millis"));
+      assert.isTrue(Option.isNone(early));
+      yield* gate.open;
+      assert.strictEqual(yield* Queue.take(sends), queued[1]);
+
+      const delivered = yield* waitFor(
+        conversation.state,
+        (state) => !state.items.some((item) => item._tag === "outgoing"),
+      );
+      assert.deepStrictEqual(
+        delivered.items.flatMap((item) => (item._tag === "message" ? [item.commandId] : [])),
+        queued,
+      );
+    }).pipe(Effect.scoped, Effect.provide(client())),
+  );
+
+  it.effect("keeps the draft when the device cannot keep the message", () =>
+    Effect.gen(function* () {
+      yield* pairAndConnect;
+      const { sends } = yield* Fakes;
+      const drafts = yield* Drafts;
+      const botId = yield* createBot("Careful");
+      const target: EntryTarget = { _tag: "conversation", botId };
+      const conversation = yield* (yield* Conversations).open(target);
+      yield* waitFor(conversation.state, (state) => state.phase === "ready");
+
+      yield* drafts.setText(target, "do not lose me");
+      assert.strictEqual(yield* drafts.send(target), "not-kept");
+
+      assert.strictEqual(drafts.state.get().get(targetKey(target))?.text, "do not lose me");
+      assert.isFalse(conversation.state.get().items.some((item) => item._tag === "outgoing"));
+      assert.strictEqual(yield* Queue.size(sends), 0);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(client(Option.none(), TestPlatform.makeStorage({ refuseCommits: true }))),
+    ),
+  );
+
+  it.effect("settles a message sent again whose entry is older than the history loaded", () =>
+    Effect.gen(function* () {
+      const { gate, sends } = yield* Fakes;
+      const storage = TestPlatform.makeStorage();
+
+      // The server accepts the message, and the device loses its answer: the
+      // record is still on the device, as after a crash.
+      const first = yield* Effect.gen(function* () {
+        yield* pairAndConnect;
+        const botId = yield* createBot("Chatty");
+        yield* gate.close;
+        yield* (yield* Conversations).enqueue({
+          target: { _tag: "conversation", botId },
+          text: "long ago",
+        });
+        const commandId = yield* Queue.take(sends);
+        const records = yield* storage.readAll("outbox").pipe(Effect.orDie);
+        const record = records.get(commandId);
+        if (record === undefined) return assert.fail("The message was not kept");
+        yield* gate.open;
+        yield* whenStored(storage, "outbox", commandId, absent);
+        return { botId, commandId, record, credential: yield* savedCredential };
+      }).pipe(Effect.scoped, Effect.provide(client(Option.none(), storage)));
+      yield* storage.write("outbox", first.commandId, first.record).pipe(Effect.orDie);
+      // More than one snapshot's worth of entries comes after it.
+      for (let index = 0; index < 101; index++) yield* botSays(first.botId, `reply ${index}`);
+
+      yield* Effect.gen(function* () {
+        const conversation = yield* (yield* Conversations).open({
+          _tag: "conversation",
+          botId: first.botId,
+        });
+        assert.strictEqual(yield* Queue.take(sends), first.commandId);
+        const settled = yield* waitFor(
+          conversation.state,
+          (state) =>
+            state.phase === "ready" &&
+            state.items.some(
+              (item) =>
+                item._tag === "outgoing" &&
+                item.commandId === first.commandId &&
+                item.status._tag === "accepted",
+            ),
+        );
+        assert.isFalse(
+          settled.items.some(
+            (item) => item._tag === "message" && item.commandId === first.commandId,
+          ),
+        );
         yield* whenStored(storage, "outbox", first.commandId, absent);
       }).pipe(Effect.scoped, Effect.provide(client(first.credential, storage)));
     }),

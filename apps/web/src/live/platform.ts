@@ -5,6 +5,7 @@ import {
   CredentialStore,
   type DeviceCredential,
   FileTransfer,
+  type LocalChange,
   LocalStorageError,
   type LocalTable,
   Network,
@@ -101,6 +102,13 @@ const storage = Layer.succeed(
       Effect.tryPromise({
         try: () => Idb.remove(table, key),
         catch: () => new LocalStorageError({ operation: "remove" }),
+      }),
+    ),
+    commit: Effect.fn("ClientStorage.commit")((changes: ReadonlyArray<LocalChange>) =>
+      Effect.tryPromise({
+        try: () =>
+          Idb.commit(changes.map(({ table, key, value }) => ({ store: table, key, value }))),
+        catch: () => new LocalStorageError({ operation: "write" }),
       }),
     ),
   }),

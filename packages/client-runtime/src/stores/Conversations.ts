@@ -16,7 +16,9 @@ import {
 } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -33,7 +35,7 @@ import {
   type IntentResult,
   retryAction,
 } from "../intents/Actions.ts";
-import { ClientStorage } from "../ports.ts";
+import { ClientStorage, type LocalChange, type LocalStorageError } from "../ports.ts";
 import { Cell, type Readable } from "../Store.ts";
 import { makeKeyed } from "./keyed.ts";
 
@@ -48,7 +50,8 @@ export const targetKey = (target: EntryTarget) =>
  * show yet. It disappears when the server's entry for it arrives, matched by
  * its command id, so the message never shows twice. It is kept on the device
  * until the server has it, so a reload or a crash sends it once it can, with
- * the same command id, and never twice.
+ * the same command id, and never twice. The messages of one conversation or
+ * room go one at a time, in the order they were sent.
  */
 export interface OutgoingMessage {
   readonly _tag: "outgoing";
@@ -60,12 +63,21 @@ export interface OutgoingMessage {
   readonly createdAt: DateTime.Utc;
   /**
    * `sending` until the server accepts it, waiting through disconnections;
-   * `not-sent` when the server refused it or the device is not paired.
+   * `accepted` once it has, until its entry arrives or the conversation
+   * closes: a message sent again after a reload may already be older than
+   * the history loaded; `not-sent` when the server refused it or the device
+   * is not paired.
    */
   readonly status:
     | { readonly _tag: "sending" }
+    | { readonly _tag: "accepted" }
     | { readonly _tag: "not-sent"; readonly failure: IntentFailure };
 }
+
+/** An outgoing message the device keeps: one the server has not accepted. */
+type KeptMessage = OutgoingMessage & {
+  readonly status: Exclude<OutgoingMessage["status"], { readonly _tag: "accepted" }>;
+};
 
 const IntentFailureSchema = Schema.Union([
   Schema.TaggedStruct("refused", { error: CommandError }),
@@ -117,7 +129,9 @@ export type MessageStatus =
   | { readonly _tag: "failed"; readonly reason: "rejected" | "unresolved" | "stopped" };
 
 export const messageStatus = (message: MessageEntry | OutgoingMessage): MessageStatus => {
-  if (message._tag === "outgoing") return message.status;
+  if (message._tag === "outgoing") {
+    return message.status._tag === "accepted" ? { _tag: "queued" } : message.status;
+  }
   switch (message.delivery._tag) {
     case "pending":
       return { _tag: "queued" };
@@ -171,15 +185,20 @@ export class Conversations extends Context.Service<
       readonly mentions?: Mentions;
     }) => Effect.Effect<IntentResult<EntryId>>;
     /**
-     * Shows the message at once and starts sending it as `send` does, without
-     * waiting for the server: returns once the message is in the outbox.
+     * Keeps the message on the device, with `alongside` in the same storage
+     * transaction, then shows it and starts sending it as `send` does, without
+     * waiting for the server. Fails, showing and sending nothing, when the
+     * device cannot keep it. `text` must fit `MAX_MESSAGE_LENGTH`.
      */
-    readonly enqueue: (input: {
-      readonly target: EntryTarget;
-      readonly text: string;
-      readonly attachments?: ReadonlyArray<Attachment>;
-      readonly mentions?: Mentions;
-    }) => Effect.Effect<void>;
+    readonly enqueue: (
+      input: {
+        readonly target: EntryTarget;
+        readonly text: string;
+        readonly attachments?: ReadonlyArray<Attachment>;
+        readonly mentions?: Mentions;
+      },
+      alongside?: ReadonlyArray<LocalChange>,
+    ) => Effect.Effect<void, LocalStorageError>;
     /** Sends again, with its own command id, a message that was not sent. */
     readonly resend: (commandId: CommandId) => Effect.Effect<IntentResult<EntryId>>;
     /** Removes a message that was not sent from the conversation. */
@@ -212,14 +231,14 @@ export const layer = Layer.effect(
       );
     const restored = [...stored.values()]
       .flatMap((value) => Option.toArray(decodeStored(value)))
-      .map((record): OutgoingMessage => ({ _tag: "outgoing", ...record }))
+      .map((record): KeptMessage => ({ _tag: "outgoing", ...record }))
       .toSorted((a, b) => a.createdAt.epochMilliseconds - b.createdAt.epochMilliseconds);
 
     // Outgoing messages of every target, so a message keeps its place while
     // its conversation is closed and reopened.
     const outbox = new Cell<ReadonlyArray<OutgoingMessage>>(restored);
 
-    const keep = (message: OutgoingMessage) =>
+    const keep = (message: KeptMessage) =>
       encodeStored(message).pipe(
         Effect.flatMap((value) => storage.write("outbox", message.commandId, value)),
         Effect.catchTags({
@@ -393,8 +412,23 @@ export const layer = Layer.effect(
         });
 
         const unsubscribe = outbox.subscribe(publish);
+        const close = () => {
+          unsubscribe();
+          // The server has these; the next open reads them with the rest.
+          removeOutgoing(
+            new Set(
+              outbox
+                .get()
+                .filter(
+                  (message) =>
+                    message.status._tag === "accepted" && targetKey(message.target) === key,
+                )
+                .map((message) => message.commandId),
+            ),
+          );
+        };
         const conversation: Conversation = { target, state, loadOlder, markRead };
-        return { value: conversation, run, close: unsubscribe };
+        return { value: conversation, run, close };
       });
 
     const stores = makeKeyed(scope, targetKey, openStore);
@@ -404,12 +438,8 @@ export const layer = Layer.effect(
         list.map((message) => (message.commandId === commandId ? { ...message, status } : message)),
       );
 
-    /**
-     * Sends `message` until the server answers, through any disconnection, in
-     * a fiber of the client's scope. The server applies its command id once, so sending
-     * it again after a reload is safe.
-     */
-    const deliver = (message: OutgoingMessage) =>
+    /** Sends `message` until the server answers, through any disconnection, and settles it. */
+    const deliverNow = (message: KeptMessage) =>
       connection
         .call((client) =>
           client["message.send"]({
@@ -429,24 +459,60 @@ export const layer = Layer.effect(
               setStatus(message.commandId, status);
               return keep({ ...message, status }).pipe(Effect.as(result));
             }
-            // Nothing will show the entry; the next open reads it with the rest.
-            if (!stores.isOpen(message.target)) removeOutgoing(new Set([message.commandId]));
+            // Its entry replaces it when it arrives. Nothing will show the entry
+            // of a closed conversation; the next open reads it with the rest.
+            if (stores.isOpen(message.target)) setStatus(message.commandId, { _tag: "accepted" });
+            else removeOutgoing(new Set([message.commandId]));
             return forgetStored(message.commandId).pipe(Effect.as(result));
           }),
+        );
+
+    // Completes, per target, when its last message given to `deliver` is settled.
+    const tails = new Map<string, Deferred.Deferred<void>>();
+
+    /**
+     * Delivers `message` in a fiber of the client's scope once every earlier
+     * message of its target is answered or not sent, so the server records a
+     * conversation's messages in the order they were sent. The server applies
+     * a command id once, so sending it again after a reload is safe.
+     */
+    const deliver = (message: KeptMessage) =>
+      Effect.suspend(() => {
+        const key = targetKey(message.target);
+        const previous = tails.get(key);
+        const settled = Deferred.makeUnsafe<void>();
+        tails.set(key, settled);
+        return (previous === undefined ? Effect.void : Deferred.await(previous)).pipe(
+          Effect.andThen(deliverNow(message)),
+          Effect.ensuring(
+            Effect.suspend(() => {
+              if (tails.get(key) === settled) tails.delete(key);
+              return Deferred.succeed(settled, undefined);
+            }),
+          ),
           Effect.forkIn(scope),
         );
+      });
+
+    /** The result of a delivery, or `not-paired` if the outbox gave it up. */
+    const resultOf = (fiber: Fiber.Fiber<IntentResult<EntryId>>) =>
+      Fiber.await(fiber).pipe(
+        Effect.map((exit): IntentResult<EntryId> =>
+          Exit.isSuccess(exit) ? exit.value : { _tag: "failed", failure: { _tag: "not-paired" } },
+        ),
+      );
 
     for (const message of restored) {
       if (message.status._tag === "sending") yield* deliver(message);
     }
 
-    const start = Effect.fn("Conversations.start")(function* (input: {
+    const outgoing = Effect.fn("Conversations.outgoing")(function* (input: {
       readonly target: EntryTarget;
       readonly text: string;
       readonly attachments?: ReadonlyArray<Attachment>;
       readonly mentions?: Mentions;
     }) {
-      const message: OutgoingMessage = {
+      return {
         _tag: "outgoing",
         commandId: yield* actions.commandId,
         target: input.target,
@@ -455,18 +521,30 @@ export const layer = Layer.effect(
         mentions: input.mentions ?? null,
         createdAt: yield* DateTime.now,
         status: { _tag: "sending" },
-      };
-      outbox.update((list) => [...list, message]);
-      yield* keep(message);
-      return yield* deliver(message);
+      } satisfies KeptMessage;
     });
 
-    const send = (input: Parameters<typeof start>[0]) =>
-      start(input).pipe(Effect.flatMap(Fiber.join));
+    /** Shows `message` and starts its delivery. */
+    const begin = (message: KeptMessage) =>
+      Effect.sync(() => outbox.update((list) => [...list, message])).pipe(
+        Effect.andThen(deliver(message)),
+      );
+
+    const send = Effect.fn("Conversations.send")(function* (input: Parameters<typeof outgoing>[0]) {
+      const message = yield* outgoing(input);
+      yield* keep(message);
+      return yield* resultOf(yield* begin(message));
+    });
+
     const enqueue = Effect.fn("Conversations.enqueue")(function* (
-      input: Parameters<typeof start>[0],
+      input: Parameters<typeof outgoing>[0],
+      alongside: ReadonlyArray<LocalChange> = [],
     ) {
-      yield* start(input);
+      const message = yield* outgoing(input);
+      // The caller checked the text's length; nothing else can fail to encode.
+      const value = yield* encodeStored(message).pipe(Effect.orDie);
+      yield* storage.commit([...alongside, { table: "outbox", key: message.commandId, value }]);
+      yield* begin(message);
     });
 
     const resend = Effect.fn("Conversations.resend")(function* (commandId: CommandId) {
@@ -477,7 +555,7 @@ export const layer = Layer.effect(
       const sending = { ...message, status: { _tag: "sending" } } as const;
       setStatus(commandId, sending.status);
       yield* keep(sending);
-      return yield* Fiber.join(yield* deliver(sending));
+      return yield* resultOf(yield* deliver(sending));
     });
 
     const discard = (commandId: CommandId) =>

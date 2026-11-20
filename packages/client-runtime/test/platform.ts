@@ -17,6 +17,7 @@ import {
   CredentialStore,
   type DeviceCredential,
   FileTransfer,
+  LocalStorageError,
   type LocalTable,
   Network,
   type NetworkStatus,
@@ -81,8 +82,9 @@ const credentials = (stored: Option.Option<DeviceCredential>) =>
 /**
  * The device's storage for drafts and unsent messages, in memory. Made apart
  * from a client, so a second client on it is the same device after a reload.
+ * `refuseCommits` fails every transaction, as a full disk would.
  */
-export const makeStorage = () => {
+export const makeStorage = (options: { readonly refuseCommits?: boolean } = {}) => {
   const tables = new Map<LocalTable, Map<string, string>>([
     ["drafts", new Map()],
     ["outbox", new Map()],
@@ -92,6 +94,15 @@ export const makeStorage = () => {
     readAll: (name) => Effect.sync(() => new Map(table(name))),
     write: (name, key, value) => Effect.sync(() => void table(name).set(key, value)),
     remove: (name, key) => Effect.sync(() => void table(name).delete(key)),
+    commit: (changes) =>
+      options.refuseCommits === true
+        ? Effect.fail(new LocalStorageError({ operation: "write" }))
+        : Effect.sync(() => {
+            for (const { table: name, key, value } of changes) {
+              if (value === null) table(name).delete(key);
+              else table(name).set(key, value);
+            }
+          }),
   });
 };
 

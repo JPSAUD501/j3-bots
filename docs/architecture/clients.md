@@ -84,7 +84,7 @@ A request in flight when its socket closes is sent again on the next socket. Tha
 
 ## Behavior every client must get right
 
-- **Offline and reconnect.** A message typed while disconnected is kept and sent on reconnect, exactly once.
+- **Offline and reconnect.** A message typed while disconnected is kept and sent on reconnect, exactly once, and the messages of one conversation reach the server in the order they were written. Sending moves the message from its draft to the outbox in one storage transaction, so a crash leaves it in exactly one of them; if the device cannot keep it, it stays in the draft and the operator is told.
 - **One conversation everywhere.** An entry sent or answered on one device appears on the others without a reload.
 - **Cards resolve once.** Answering a question or an approval on any device resolves it on all.
 - **State is the server's.** A client never infers "the bot is working" from its own timers. It shows what the server reports and marks its view as stale when disconnected.

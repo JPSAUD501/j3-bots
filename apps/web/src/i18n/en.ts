@@ -306,6 +306,8 @@ export const en = {
   "composer.file.nameTooLong": "The file name is too long",
   "composer.file.refused": "The server refused this file",
   "composer.file.notPaired": "This device is signed out",
+  "composer.notKept":
+    "This device couldn’t keep the message, so it wasn’t sent. It’s still in the message box.",
 
   "file.gone": "{name} is no longer on the server.",
   "file.unreachable": "{name} couldn’t be opened. Check the connection and try again.",

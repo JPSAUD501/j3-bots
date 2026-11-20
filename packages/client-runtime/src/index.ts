@@ -44,6 +44,7 @@ export {
   CredentialStore,
   type DeviceCredential,
   FileTransfer,
+  type LocalChange,
   type LocalTable,
   LocalStorageError,
   Network,

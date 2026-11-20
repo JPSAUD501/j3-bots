@@ -72,12 +72,22 @@ export class Network extends Context.Service<
   }
 >()("@j3-bots/client-runtime/ports/Network") {}
 
-/** What the client keeps on the device besides the credential. Neither holds a secret. */
+/**
+ * What the client keeps on the device besides the credential. Neither holds a
+ * secret, but both hold conversation text, so signing out clears them.
+ */
 export type LocalTable =
   /** Each conversation's unsent text and the files already uploaded for it. */
   | "drafts"
   /** Messages the operator sent that the server has not accepted yet. */
   | "outbox";
+
+/** One change to the client's records: the record's new value, or `null` to remove it. */
+export interface LocalChange {
+  readonly table: LocalTable;
+  readonly key: string;
+  readonly value: string | null;
+}
 
 /** The device's storage for the client's own records could not be read or written. */
 export class LocalStorageError extends Schema.TaggedError<LocalStorageError>()(
@@ -110,6 +120,13 @@ export class ClientStorage extends Context.Service<
       value: string,
     ) => Effect.Effect<void, LocalStorageError>;
     readonly remove: (table: LocalTable, key: string) => Effect.Effect<void, LocalStorageError>;
+    /**
+     * Applies every change or none, in one transaction, so a record moved from
+     * one table to another is never in both and never in neither.
+     */
+    readonly commit: (
+      changes: ReadonlyArray<LocalChange>,
+    ) => Effect.Effect<void, LocalStorageError>;
   }
 >()("@j3-bots/client-runtime/ports/ClientStorage") {}
 

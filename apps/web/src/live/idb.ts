@@ -83,3 +83,20 @@ export async function remove(store: Store, key: string): Promise<void> {
   transaction.objectStore(store).delete(key);
   return committed(transaction);
 }
+
+/** Puts or deletes (`value: null`) each record, all in one transaction: every change or none. */
+export async function commit(
+  changes: ReadonlyArray<{
+    readonly store: Store;
+    readonly key: string;
+    readonly value: string | null;
+  }>,
+): Promise<void> {
+  const stores = [...new Set(changes.map((change) => change.store))];
+  const transaction = (await database()).transaction(stores, "readwrite");
+  for (const { store, key, value } of changes) {
+    if (value === null) transaction.objectStore(store).delete(key);
+    else transaction.objectStore(store).put(value, key);
+  }
+  return committed(transaction);
+}

@@ -308,7 +308,10 @@ function LiveShell({ children }: { children: ReactNode }) {
         picked.map((file) => ({ name: file.name, body: file })),
       ),
     detachFile: j3.detachFile,
-    sendDraft: (asked) => void j3.sendDraft(asked),
+    sendDraft: (asked) =>
+      void j3.sendDraft(asked).then((result) => {
+        if (result === "not-kept") say(t("composer.notKept"));
+      }),
     loadOlder: (asked) => {
       if (viewKey !== null && targetKey(asked) === viewKey) conversation.loadOlder();
     },

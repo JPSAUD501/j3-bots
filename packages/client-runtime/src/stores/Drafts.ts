@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { Attachment, type EntryTarget, type Mentions, MessageText } from "@j3-bots/contracts";
+import {
+  Attachment,
+  type EntryTarget,
+  MAX_MESSAGE_LENGTH,
+  type Mentions,
+  MessageText,
+} from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -8,6 +14,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import { Files, uploadProblem } from "../files/Files.ts";
 import {
   admitFiles,
@@ -40,7 +47,11 @@ export type DraftSendResult =
   /** There was nothing to send. */
   | "empty"
   /** A file is still uploading or could not be attached. */
-  | "not-ready";
+  | "not-ready"
+  /** The text is longer than `MAX_MESSAGE_LENGTH`. */
+  | "too-long"
+  /** The device could not keep the message, so it stays in the draft. */
+  | "not-kept";
 
 /** A draft as the device keeps it: the text and the files already on the server. */
 const StoredDraft = Schema.fromJsonString(
@@ -83,8 +94,9 @@ export class Drafts extends Context.Service<
     /** Takes a file out of the draft, stopping its upload. */
     readonly detach: (target: EntryTarget, key: string) => Effect.Effect<void>;
     /**
-     * Sends the draft and clears it in one step, so sending twice sends once:
-     * the second finds the draft empty.
+     * Moves the draft to the outbox in one storage transaction, so a crash
+     * leaves it in exactly one of them, and sending twice sends once: the
+     * second finds the draft empty.
      */
     readonly send: (target: EntryTarget, mentions?: Mentions) => Effect.Effect<DraftSendResult>;
   }
@@ -126,6 +138,8 @@ export const layer = Layer.effect(
 
     // Writes go through one writer that always writes the latest draft of each
     // key, so a burst of keystrokes costs a few writes, never a queue of them.
+    // It and `send` take turns, so a draft is never written back once sent.
+    const turn = yield* Semaphore.make(1);
     const unwritten = new Set<string>();
     const wake = yield* Queue.sliding<void>(1);
     const persisted = (draft: Draft) => ({
@@ -153,7 +167,7 @@ export const layer = Layer.effect(
         yield* Queue.take(wake);
         const keys = [...unwritten];
         unwritten.clear();
-        for (const key of keys) yield* writeOne(key);
+        for (const key of keys) yield* turn.withPermits(1)(writeOne(key));
       }
     }).pipe(Effect.forkIn(scope));
 
@@ -265,30 +279,37 @@ export const layer = Layer.effect(
         ).pipe(Effect.andThen(upload === undefined ? Effect.void : Fiber.interrupt(upload)));
       });
 
-    /** Takes the draft for sending, clearing it in the same step, or says why not. */
-    const take = (key: string) =>
-      Effect.sync(() => {
-        const draft = state.get().get(key) ?? empty;
-        if (draft.files.some((file) => file._tag !== "ready")) return "not-ready" as const;
-        const text = draft.text.trim();
-        const attachments = draft.files.flatMap((file) =>
-          file._tag === "ready" ? [file.attachment] : [],
-        );
-        if (text === "" && attachments.length === 0) return "empty" as const;
-        changeNow(key, () => empty);
-        return { text, attachments };
-      });
-
     const send = Effect.fn("Drafts.send")(function* (target: EntryTarget, mentions?: Mentions) {
-      const taken = yield* take(targetKey(target));
-      if (typeof taken === "string") return taken;
-      // The outbox holds the message from here; its delivery outlives the caller.
-      yield* conversations.enqueue({
-        target,
-        ...taken,
-        ...(mentions === undefined ? {} : { mentions }),
-      });
-      return "sent" as const;
+      const key = targetKey(target);
+      return yield* turn.withPermits(1)(
+        Effect.gen(function* () {
+          const draft = state.get().get(key) ?? empty;
+          if (draft.files.some((file) => file._tag !== "ready")) return "not-ready";
+          const text = draft.text.trim();
+          const attachments = draft.files.flatMap((file) =>
+            file._tag === "ready" ? [file.attachment] : [],
+          );
+          if (text === "" && attachments.length === 0) return "empty";
+          if (text.length > MAX_MESSAGE_LENGTH) return "too-long";
+          // The outbox holds the message from here; its delivery outlives the caller.
+          const kept = yield* conversations
+            .enqueue(
+              { target, text, attachments, ...(mentions === undefined ? {} : { mentions }) },
+              [{ table: "drafts", key, value: null }],
+            )
+            .pipe(
+              Effect.as(true),
+              Effect.catchTag("LocalStorageError", (error) =>
+                Effect.logWarning("A message could not be kept; it stays in the draft", error).pipe(
+                  Effect.as(false),
+                ),
+              ),
+            );
+          if (!kept) return "not-kept";
+          changeNow(key, () => empty);
+          return "sent";
+        }),
+      );
     });
 
     return Drafts.of({ state, setText, attach, detach, send });
