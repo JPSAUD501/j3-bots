@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, describe, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
 import {
@@ -140,9 +142,55 @@ describe("makeToolReads", () => {
       yield* reads.resolve("session-1", "item-tool", reading);
       assert.strictEqual(attempts, 1);
 
-      yield* reads.keep("session-1", []);
+      // The latest view shows it ended: what was learned goes.
+      yield* reads.prune("session-1", 3, () => true);
       yield* reads.resolve("session-1", "item-tool", reading);
       assert.strictEqual(attempts, 2);
+    }),
+  );
+
+  // A transcript read exports the whole thread: a second one at once could
+  // stall the engine's other readers.
+  it.effect("starts no second read of a tool while one runs, whatever a stale view shows", () =>
+    Effect.gen(function* () {
+      const reads = makeToolReads();
+      let exports = 0;
+      const exporting = (done: Deferred.Deferred<void>) =>
+        Effect.suspend(() => {
+          exports++;
+          return Deferred.await(done).pipe(Effect.as<ToolPersistence>("transient"));
+        });
+      const resolve = (read: Effect.Effect<ToolPersistence>) =>
+        reads.resolve("session-1", "item-tool", read);
+
+      const firstDone = yield* Deferred.make<void>();
+      const first = yield* Effect.forkChild(resolve(exporting(firstDone)));
+      yield* Effect.yieldNow;
+      assert.strictEqual(exports, 1);
+
+      // The latest view has the tool live; an older one, from before it was
+      // reopened, has it ended. Only the latest prunes.
+      yield* reads.prune("session-1", 10, () => false);
+      yield* reads.prune("session-1", 9, () => true);
+      assert.deepStrictEqual(yield* resolve(exporting(firstDone)), Option.none());
+      assert.strictEqual(exports, 1);
+
+      // It ends, and is reopened: a second read claims it.
+      yield* reads.prune("session-1", 11, () => true);
+      const secondDone = yield* Deferred.make<void>();
+      const second = yield* Effect.forkChild(resolve(exporting(secondDone)));
+      yield* Effect.yieldNow;
+      assert.strictEqual(exports, 2);
+
+      // The first read ends: it changes only the entry it claimed, which is
+      // gone, so the second read still runs alone.
+      yield* Deferred.succeed(firstDone, undefined);
+      assert.deepStrictEqual(yield* Fiber.join(first), Option.some<ToolPersistence>("transient"));
+      assert.deepStrictEqual(yield* resolve(exporting(secondDone)), Option.none());
+      assert.strictEqual(exports, 2);
+
+      yield* Deferred.succeed(secondDone, undefined);
+      yield* Fiber.join(second);
     }),
   );
 });

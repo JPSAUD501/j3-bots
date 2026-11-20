@@ -114,25 +114,44 @@ type ToolRead =
 export interface ToolReads {
   /**
    * The tool's persistence: as settled before, or read now when no read of it
-   * runs and its backoff passed. None while nothing is known.
+   * runs and its backoff passed. None while nothing is known. A read changes
+   * only the entry it claimed: one forgotten meanwhile, and claimed again by
+   * a later read, is that read's.
    */
   readonly resolve: <E, R>(
     sessionId: string,
     itemId: string,
     read: Effect.Effect<ToolPersistence, E, R>,
   ) => Effect.Effect<Option.Option<ToolPersistence>, never, R>;
-  /** Forgets each tool of the session but those listed, which are still live. */
-  readonly keep: (sessionId: string, live: ReadonlyArray<string>) => Effect.Effect<void>;
+  /**
+   * Forgets each tool of the session that `ended` says a view of the session
+   * at engine sequence `sequence` shows ended. Only the latest view prunes:
+   * one older than a view that pruned before changes nothing, since a tool it
+   * shows ended may have been reopened since. A view that does not have a
+   * tool says nothing of it: a Stop's read may have claimed one no stream has
+   * seen yet, and the session's end forgets what is left.
+   */
+  readonly prune: (
+    sessionId: string,
+    sequence: number,
+    ended: (itemId: string) => boolean,
+  ) => Effect.Effect<void>;
   /** Forgets every tool of a session that is gone. */
   readonly forget: (sessionId: string) => Effect.Effect<void>;
 }
 
+interface SessionReads {
+  readonly tools: Map<string, ToolRead>;
+  /** The engine sequence of the latest view that pruned. */
+  prunedAt: number;
+}
+
 export const makeToolReads = (): ToolReads => {
-  const sessions = new Map<string, Map<string, ToolRead>>();
+  const sessions = new Map<string, SessionReads>();
   const readsOf = (sessionId: string) => {
     const found = sessions.get(sessionId);
     if (found !== undefined) return found;
-    const created = new Map<string, ToolRead>();
+    const created: SessionReads = { tools: new Map(), prunedAt: -1 };
     sessions.set(sessionId, created);
     return created;
   };
@@ -143,7 +162,7 @@ export const makeToolReads = (): ToolReads => {
     read: Effect.Effect<ToolPersistence, E, R>,
   ): Effect.Effect<Option.Option<ToolPersistence>, never, R> =>
     Effect.gen(function* () {
-      const reads = readsOf(sessionId);
+      const reads = readsOf(sessionId).tools;
       const before = reads.get(itemId);
       if (before?._tag === "settled") return Option.some(before.persistence);
       if (before?._tag === "reading") return Option.none();
@@ -151,9 +170,16 @@ export const makeToolReads = (): ToolReads => {
         return Option.none();
       }
       const failures = before?.failures ?? 0;
-      reads.set(itemId, { _tag: "reading", failures });
+      const claim: ToolRead = { _tag: "reading", failures };
+      reads.set(itemId, claim);
+      /** Replaces the claim, unless the tool was forgotten, or claimed again, meanwhile. */
+      const update = (next: ToolRead | undefined) => {
+        if (reads.get(itemId) !== claim) return;
+        if (next === undefined) reads.delete(itemId);
+        else reads.set(itemId, next);
+      };
       const settle = (persistence: ToolPersistence) => {
-        reads.set(itemId, { _tag: "settled", persistence });
+        update({ _tag: "settled", persistence });
         return Option.some(persistence);
       };
       return yield* read.pipe(
@@ -164,31 +190,25 @@ export const makeToolReads = (): ToolReads => {
               const failed = failures + 1;
               if (failed >= MAX_TOOL_READ_FAILURES) return settle("undecidable");
               const retryAt = now + Duration.toMillis(toolReadBackoff(failed));
-              reads.set(itemId, { _tag: "failed", failures: failed, retryAt });
+              update({ _tag: "failed", failures: failed, retryAt });
               return Option.none<ToolPersistence>();
             }),
         }),
         // An interrupted read, or a defect, learned nothing: the tool is as it was.
         Effect.onExit((exit) =>
-          Exit.isSuccess(exit)
-            ? Effect.void
-            : Effect.sync(() => {
-                if (before === undefined) reads.delete(itemId);
-                else reads.set(itemId, before);
-              }),
+          Exit.isSuccess(exit) ? Effect.void : Effect.sync(() => update(before)),
         ),
       );
     });
 
   return {
     resolve,
-    keep: (sessionId, live) =>
+    prune: (sessionId, sequence, ended) =>
       Effect.sync(() => {
-        const reads = sessions.get(sessionId);
-        if (reads === undefined) return;
-        const kept = new Set(live);
-        for (const itemId of reads.keys()) if (!kept.has(itemId)) reads.delete(itemId);
-        if (reads.size === 0) sessions.delete(sessionId);
+        const reads = readsOf(sessionId);
+        if (sequence < reads.prunedAt) return;
+        reads.prunedAt = sequence;
+        for (const itemId of reads.tools.keys()) if (ended(itemId)) reads.tools.delete(itemId);
       }),
     forget: (sessionId) => Effect.sync(() => void sessions.delete(sessionId)),
   };

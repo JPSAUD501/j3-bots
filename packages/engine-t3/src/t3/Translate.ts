@@ -481,7 +481,7 @@ const toolWork = (mirror: Mirror, item: DynamicTool): BackgroundWork => {
 };
 
 /** Live dynamic tools whose input the stream summarized: those whose persistence a read tells. */
-export const summarizedTools = (mirror: Mirror): ReadonlyArray<string> =>
+const summarizedTools = (mirror: Mirror): ReadonlyArray<string> =>
   [...mirror.items.values()].flatMap((item) =>
     item.type === "dynamic_tool" &&
     isOrchestrationV2WorkActive(item.status) &&
@@ -489,6 +489,19 @@ export const summarizedTools = (mirror: Mirror): ReadonlyArray<string> =>
       ? [item.id]
       : [],
   );
+
+/**
+ * Whether the mirror shows the item ended, or no longer a dynamic tool: what
+ * was learned of its persistence is no longer needed. False for an item the
+ * mirror does not have, which it may not have seen yet.
+ */
+export const isEndedTool = (mirror: Mirror, itemId: string): boolean => {
+  const item = mirror.items.get(itemId);
+  return (
+    item !== undefined &&
+    (item.type !== "dynamic_tool" || !isOrchestrationV2WorkActive(item.status))
+  );
+};
 
 /**
  * Live dynamic tools whose input the stream summarized and whose persistence

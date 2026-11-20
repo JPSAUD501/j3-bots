@@ -108,6 +108,7 @@ import {
   findRequest,
   isDeleted,
   isEnded,
+  isEndedTool,
   isRetired,
   keepFetched,
   knowsDispatch,
@@ -116,7 +117,6 @@ import {
   queuedRuns,
   replacement,
   runnableTurns,
-  summarizedTools,
   toolsToResolve,
   type EventBody,
   type Mirror,
@@ -547,24 +547,21 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
 
   /**
    * Settles in `mirror` the persistence of each tool whose input the stream
-   * summarized, as far as it can be read now, and forgets what was learned of
-   * the session's tools that are no longer live.
+   * summarized, as far as it can be read now. Only a stream prunes what was
+   * learned (`toolReads.prune`): it has every event in order, where this
+   * mirror is a read of its own.
    */
   const resolveTools = (sessionId: SessionId, mirror: Mirror) =>
-    toolReads.keep(sessionId, summarizedTools(mirror)).pipe(
-      Effect.andThen(
-        Effect.forEach(
-          toolsToResolve(mirror),
-          (itemId) =>
-            Effect.map(
-              toolPersistence(sessionId, itemId),
-              Option.map((persistence) => {
-                mirror.toolPersistence.set(itemId, persistence);
-              }),
-            ),
-          { discard: true },
+    Effect.forEach(
+      toolsToResolve(mirror),
+      (itemId) =>
+        Effect.map(
+          toolPersistence(sessionId, itemId),
+          Option.map((persistence) => {
+            mirror.toolPersistence.set(itemId, persistence);
+          }),
         ),
-      ),
+      { discard: true },
     );
 
   /** The state of a session that is still in use: a retired one is `SessionNotFound`. */
@@ -1288,10 +1285,13 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
          * too, for its persistence: one whose read failed is asked for again
          * on a pass here, which every event and every catch-up runs, once its
          * backoff passed, and until one succeeds or the reads give up the
-         * tool counts as pending.
+         * tool counts as pending. The stream, which has every event in order,
+         * is what prunes the session's reads, by what its mirror shows ended.
          */
         const fetchChanges = Effect.fnUntraced(function* () {
-          yield* toolReads.keep(input.sessionId, summarizedTools(mirror));
+          yield* toolReads.prune(input.sessionId, sequence, (itemId) =>
+            isEndedTool(mirror, itemId),
+          );
           for (const itemId of toolsToResolve(mirror)) {
             const key = `tool:${itemId}`;
             if (asked.has(key)) continue;
