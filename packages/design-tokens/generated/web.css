@@ -1,0 +1,156 @@
+/* Generated from packages/design-tokens/src by `pnpm --filter @j3-bots/design-tokens generate`. Do not edit. */
+
+:root,
+.light {
+  color-scheme: light;
+  --background: #fcfcfc;
+  --surface: #ffffff;
+  --sidebar: #f5f5f5;
+  --muted: #ebebed;
+  --border: #e4e4e7;
+  --input: #d4d4d8;
+  --foreground: #18181b;
+  --muted-foreground: #67676f;
+  --bubble-operator: #18181b;
+  --bubble-operator-foreground: #fafafa;
+  --bubble-bot: #f0f0f2;
+  --bubble-bot-foreground: #18181b;
+  --code-background: oklch(0 0 0 / 0.06);
+  --accent: oklch(0.49 0.22 264);
+  --accent-foreground: #ffffff;
+  --waiting: oklch(0.52 0.12 65);
+  --waiting-surface: oklch(0.975 0.03 85);
+  --blocked: oklch(0.53 0.2 27);
+  --blocked-surface: oklch(0.975 0.015 20);
+  --success: oklch(0.52 0.12 160);
+  --avatar-ink: #ffffff;
+  --scrim: oklch(0 0 0 / 0.32);
+  --bot-red: oklch(0.441 0.179 29);
+  --bot-orange: oklch(0.537 0.095 66);
+  --bot-yellow: oklch(0.618 0.127 97);
+  --bot-green: oklch(0.401 0.091 159);
+  --bot-teal: oklch(0.61 0.102 206);
+  --bot-blue: oklch(0.516 0.124 243);
+  --bot-indigo: oklch(0.322 0.193 281);
+  --bot-violet: oklch(0.622 0.183 295);
+  --bot-pink: oklch(0.451 0.136 336);
+  --bot-gray: oklch(0.532 0 0);
+}
+
+.dark {
+  color-scheme: dark;
+  --background: #000000;
+  --surface: #0e0e0f;
+  --sidebar: #070707;
+  --muted: #18181a;
+  --border: oklch(1 0 0 / 0.09);
+  --input: oklch(1 0 0 / 0.14);
+  --foreground: #f4f4f5;
+  --muted-foreground: #a1a1aa;
+  --bubble-operator: #f4f4f5;
+  --bubble-operator-foreground: #09090b;
+  --bubble-bot: #18181b;
+  --bubble-bot-foreground: #f4f4f5;
+  --code-background: oklch(1 0 0 / 0.08);
+  --accent: oklch(0.72 0.15 264);
+  --accent-foreground: #09090b;
+  --waiting: oklch(0.82 0.15 80);
+  --waiting-surface: oklch(0.21 0.045 70);
+  --blocked: oklch(0.71 0.17 25);
+  --blocked-surface: oklch(0.2 0.05 25);
+  --success: oklch(0.78 0.14 160);
+  --avatar-ink: #0b0b0c;
+  --scrim: oklch(0 0 0 / 0.6);
+  --bot-red: oklch(0.555 0.193 33);
+  --bot-orange: oklch(0.682 0.132 57);
+  --bot-yellow: oklch(0.79 0.162 94);
+  --bot-green: oklch(0.812 0.104 149);
+  --bot-teal: oklch(0.708 0.093 189);
+  --bot-blue: oklch(0.596 0.217 271);
+  --bot-indigo: oklch(0.72 0.151 295);
+  --bot-violet: oklch(0.523 0.148 298);
+  --bot-pink: oklch(0.584 0.094 349);
+  --bot-gray: oklch(0.93 0 0);
+}
+
+:root {
+  --duration-fast: 120ms;
+  --duration-state: 160ms;
+  --duration-slow: 200ms;
+  --avatar-breathe-period: 2400ms;
+  --avatar-breathe-steps: 12;
+  --avatar-spin-period: 1600ms;
+  --avatar-spin-steps: 8;
+  --layout-roster-width: 17.5rem;
+  --layout-details-width: 20rem;
+  --layout-text-column: 45rem;
+  --layout-row-pointer: 3.25rem;
+  --layout-row-touch: 4rem;
+  --layout-touch-target: 2.75rem;
+}
+
+@theme {
+  --color-*: initial;
+  --text-*: initial;
+  --radius-*: initial;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", Roboto, "Inter Variable", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  --spacing: 0.25rem;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --breakpoint-tablet: 48rem;
+  --breakpoint-wide: 75rem;
+  --container-tablet: 48rem;
+  --container-wide: 75rem;
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1rem;
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.125rem;
+  --text-base: 0.875rem;
+  --text-base--line-height: 1.25rem;
+  --text-lg: 1rem;
+  --text-lg--line-height: 1.5rem;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.75rem;
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-bubble: 1rem;
+  --radius-pill: 9999px;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-sidebar: var(--sidebar);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-foreground: var(--foreground);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-bubble-operator: var(--bubble-operator);
+  --color-bubble-operator-foreground: var(--bubble-operator-foreground);
+  --color-bubble-bot: var(--bubble-bot);
+  --color-bubble-bot-foreground: var(--bubble-bot-foreground);
+  --color-code-background: var(--code-background);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-waiting: var(--waiting);
+  --color-waiting-surface: var(--waiting-surface);
+  --color-blocked: var(--blocked);
+  --color-blocked-surface: var(--blocked-surface);
+  --color-success: var(--success);
+  --color-avatar-ink: var(--avatar-ink);
+  --color-scrim: var(--scrim);
+  --color-bot-red: var(--bot-red);
+  --color-bot-orange: var(--bot-orange);
+  --color-bot-yellow: var(--bot-yellow);
+  --color-bot-green: var(--bot-green);
+  --color-bot-teal: var(--bot-teal);
+  --color-bot-blue: var(--bot-blue);
+  --color-bot-indigo: var(--bot-indigo);
+  --color-bot-violet: var(--bot-violet);
+  --color-bot-pink: var(--bot-pink);
+  --color-bot-gray: var(--bot-gray);
+}

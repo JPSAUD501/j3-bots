@@ -270,6 +270,12 @@ importers:
         specifier: 4.1.3
         version: 4.1.3
 
+  packages/design-tokens:
+    devDependencies:
+      vite-plus:
+        specifier: 1.4.0
+        version: 1.4.0(@types/node@24.12.4)(@vitest/ui@5.0.5)(jiti@2.7.0)(yaml@2.9.1)
+
   packages/engine-t3:
     dependencies:
       '@effect/platform-node':

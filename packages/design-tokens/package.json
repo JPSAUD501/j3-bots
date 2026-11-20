@@ -1,0 +1,22 @@
+{
+  "name": "@j3-bots/design-tokens",
+  "version": "0.0.0",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./web.css": "./generated/web.css"
+  },
+  "scripts": {
+    "generate": "node scripts/generate.ts",
+    "typecheck": "effect-tsgo tsrs --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "devDependencies": {
+    "vite-plus": "catalog:"
+  }
+}
