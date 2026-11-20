@@ -39,6 +39,7 @@ import {
   TurnId,
 } from "../ids.ts";
 import { toolInputDigest } from "../toolCaller.ts";
+import { approvalDetail } from "./approvalDetail.ts";
 import { dispatchOfMessage, localIdFor, messageIdFor } from "./Keys.ts";
 import { TOOL_SERVER } from "./Provision.ts";
 
@@ -678,7 +679,8 @@ const requestOf = (mirror: Mirror, item: Item): RequestState | undefined => {
   const turnId = TurnId.make(item.runId);
   const openedAt = item.startedAt ?? item.updatedAt;
   switch (item.type) {
-    case "approval_request":
+    case "approval_request": {
+      const action = label(item.title ?? item.prompt, "Approval");
       return {
         requestId: RequestId.make(localIdFor(item.requestId)),
         answerTo: { _tag: "runtime-request", requestId: item.requestId },
@@ -687,13 +689,14 @@ const requestOf = (mirror: Mirror, item: Item): RequestState | undefined => {
         request: {
           _tag: "approval",
           kind: APPROVAL_KINDS[item.requestKind],
-          action: label(item.title ?? item.prompt, "Approval"),
-          detail: (item.prompt ?? item.reason ?? null)?.slice(0, 20_000) ?? null,
+          action,
+          detail: approvalDetail(action, [item.prompt, item.reason]),
           allowsSession:
             item.options?.some((option) => option.decision === "acceptForSession") ?? false,
         },
         resolution: runtimeResolution(mirror.requests.get(item.requestId), item),
       };
+    }
     case "user_input_request": {
       const request = questionRequestOf(item);
       if (request === undefined) return undefined;
