@@ -137,6 +137,13 @@ const COMMAND_TIMEOUT = Duration.seconds(30);
 const SYNC_TIMEOUT = Duration.seconds(30);
 /** How long fetching an approval's file change may take; past it the card stays a summary. */
 const FETCH_TIMEOUT = Duration.seconds(10);
+/**
+ * How long a `synchronized` waits on the engine's shell for undecidable tools
+ * before it reports them pending. Well inside the server's ten-second deadline
+ * for a whole `synchronize`, which also covers the wait for the marker, so the
+ * `pending` it falls back to still reaches the server and is applied in time.
+ */
+const SHELL_READ_TIMEOUT = Duration.seconds(3);
 /** Batches kept per session, for resuming an `events` stream by replay. */
 const BATCHES_KEPT = 32;
 /** How long a staged file stays usable: half the engine's 24-hour sweep. */
@@ -487,15 +494,16 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
    * The session's background work for a `synchronized` event: the mirror's,
    * and for tools no read of the item could decide, the engine's own
    * projection of the thread's pending work (`workInShell`), read with
-   * `getThreadFamily`, bounded at `FETCH_TIMEOUT`. A read that fails cannot
-   * say, so they count as pending: a Stop waits and synchronizes again.
+   * `getThreadFamily`, bounded at `SHELL_READ_TIMEOUT`. A read that fails or
+   * runs out cannot say, so they count as pending: a Stop waits and
+   * synchronizes again.
    */
   const reportedWork = (sessionId: SessionId, mirror: Mirror) => {
     const work = backgroundWorkOf(mirror);
     if (work._tag !== "undecided") return Effect.succeed<BackgroundWork>(work._tag);
     const threadId = ThreadId.make(sessionId);
     return rpc["orchestration.getThreadFamily"]({ threadId }).pipe(
-      Effect.timeout(FETCH_TIMEOUT),
+      Effect.timeout(SHELL_READ_TIMEOUT),
       Effect.map(({ threads }) =>
         workInShell(
           threads.find((thread) => thread.id === threadId),
