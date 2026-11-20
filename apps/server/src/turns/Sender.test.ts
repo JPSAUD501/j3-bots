@@ -145,6 +145,38 @@ it.effect("copies a file named only of dots into its own inbox folder", () =>
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect(
+  "copies a file whose name is long in UTF-8 under a shorter name, and tells the bot both",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+
+      // 229 bytes, which a file name takes only with nothing added, and 592, which none takes.
+      for (const [bot, name] of [
+        [yield* createBot("Ana"), `${"漢".repeat(75)}.txt`],
+        [yield* createBot("Bea"), `${"漢".repeat(196)}.txt`],
+      ] as const) {
+        const session = yield* engineSession(bot.id);
+        const message = yield* sendWithFile(bot.id, `Read ${name.length}.`, name);
+        yield* nextTurn(bot.id);
+        yield* deliveryIs(message, "delivered");
+        const folder = yield* inboxOf(bot.id, message);
+        const [copied] = yield* fs.readDirectory(folder);
+        assert.isDefined(copied);
+        assert.isAtMost(new TextEncoder().encode(copied).byteLength, 200);
+        assert.isTrue(copied.endsWith(".txt"));
+        assert.strictEqual(yield* fs.readFileString(path.join(folder, copied)), "Release notes.");
+        const [dispatch] = (yield* control.dispatches(session)).filter(({ text }) =>
+          text.includes(`Read ${name.length}.`),
+        );
+        assert.include(dispatch?.text, name);
+        assert.include(dispatch?.text, `${path.basename(folder)}/${copied}`);
+      }
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("resends a message without copying its file into the inbox again", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;

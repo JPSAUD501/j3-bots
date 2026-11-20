@@ -162,7 +162,7 @@ export const makePrivateFiles = Effect.fnUntraced(function* (
     const parent = path.dirname(file);
     yield* folder(parent);
     const suffix = Hex.encode(yield* random.randomBytes(TEMPORARY_NAME_BYTES));
-    const temporary = path.join(parent, `.${path.basename(file)}.${suffix}.j3-writing`);
+    const temporary = path.join(parent, `.${suffix}.j3-writing`);
     yield* fs.writeFileString(temporary, contents, { flag: "wx", mode: 0o600 }).pipe(
       Effect.andThen(fs.rename(temporary, file)),
       Effect.onError(() => remove(temporary).pipe(Effect.ignore)),

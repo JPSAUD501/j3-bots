@@ -16,8 +16,9 @@ const TEMPORARY_NAME_BYTES = 12;
 /**
  * Writes `data` to a new file (mode `mode`) of a random name in `file`'s
  * folder, one that must not exist yet, so a link planted in its place is
- * never followed; then `place`s it at `file`. The temporary file is gone
- * afterwards, whatever happened.
+ * never followed; then `place`s it at `file`. The temporary name is short and
+ * owes nothing to `file`'s, so any name the folder takes, it takes too. The
+ * temporary file is gone afterwards, whatever happened.
  */
 const writeBeside = Effect.fn("files.writeBeside")(function* (
   file: string,
@@ -29,7 +30,7 @@ const writeBeside = Effect.fn("files.writeBeside")(function* (
   const path = yield* Path.Path;
   const random = yield* SecureRandom.SecureRandom;
   const suffix = Hex.encode(yield* random.randomBytes(TEMPORARY_NAME_BYTES));
-  const temporary = path.join(path.dirname(file), `.${path.basename(file)}.${suffix}.j3-writing`);
+  const temporary = path.join(path.dirname(file), `.${suffix}.j3-writing`);
   const contents = typeof data === "string" ? new TextEncoder().encode(data) : data;
   yield* fs
     .writeFile(temporary, contents, { flag: "wx", mode })
