@@ -19,12 +19,23 @@ import type { EngineRequest } from "../events.ts";
 // command, under the command's item id. Such an approval has a native request
 // id of its own, so the item is taken only for the approval whose request id
 // is the item's.
+//
+// Read at db51b67: Claude Code's command item is not the command as it runs.
+// `commandInputFromClaudeTool` records the Bash tool's `command` trimmed, so a
+// trailing escaped space (`echo a\ `) is lost from it. Its approval prompt is
+// that same `command` untrimmed, taken first under the same non-blank test;
+// only a tool with no `command` gets a title instead, and the item then records
+// the tool's name and its input as JSON. So a Claude Code prompt that trims to
+// the item's input is the command exactly, and it is what the card shows.
 
 type Item = OrchestrationV2TurnItem;
 type ApprovalItem = Extract<Item, { type: "approval_request" }>;
 type GatedItem = Extract<Item, { type: "command_execution" | "file_change" }>;
 type RuntimeRequest = OrchestrationV2RuntimeRequest;
 export type Approval = Extract<EngineRequest, { _tag: "approval" }>;
+
+/** The engine's driver for Claude Code, as its items name it. Read at db51b67. */
+const CLAUDE = "claudeAgent";
 
 const KINDS: Record<ApprovalItem["requestKind"], Approval["kind"]> = {
   command: "command",
@@ -39,19 +50,39 @@ const MAX_REASON = 2_000;
 
 /**
  * A text as the engine gave it, with only its trailing line breaks dropped:
- * they show nothing. `undefined` when it is blank, and `cut` when it was longer
- * than an approval carries.
+ * they show nothing. `undefined` when it is blank. `whole` is false when it was
+ * longer than an approval carries, or when a dropped line break followed a
+ * backslash, which would join it to the line instead of ending it.
  */
 const verbatim = (text: string | null | undefined) => {
-  const kept = (text ?? "").replace(/[\r\n]+$/, "");
+  const given = text ?? "";
+  const kept = given.replace(/[\r\n]+$/, "");
   if (!/\S/.test(kept)) return undefined;
-  if (kept.length <= APPROVAL_TEXT_LENGTH) return { text: kept, cut: false };
-  return { text: kept.slice(0, APPROVAL_TEXT_LENGTH).replace(/[\r\n]+$/, ""), cut: true };
+  if (kept.length > APPROVAL_TEXT_LENGTH) {
+    return { text: kept.slice(0, APPROVAL_TEXT_LENGTH).replace(/[\r\n]+$/, ""), whole: false };
+  }
+  return { text: kept, whole: kept === given || !kept.endsWith("\\") };
 };
 
 const trimmed = (text: string | null | undefined) => {
   const kept = text?.trim() ?? "";
   return kept === "" ? undefined : kept;
+};
+
+/**
+ * Whether the provider offers a grant for the session when the approval lists
+ * no options. Read at db51b67: the engine's own client then offers its default
+ * list, which holds "Always allow this session" whatever the kind, and every
+ * adapter that leaves the options out takes `acceptForSession`: Codex for a
+ * command (`item/commandExecution/requestApproval`), a file change and a
+ * permission, Claude Code for any tool, through its permission suggestions.
+ */
+const SESSION_BY_DEFAULT: Record<ApprovalItem["requestKind"], boolean> = {
+  command: true,
+  "file-change": true,
+  "file-read": true,
+  "mcp-elicitation": true,
+  permission: true,
 };
 
 /**
@@ -87,11 +118,23 @@ interface Shown {
   readonly exact: boolean;
 }
 
+/** The command `gated` runs, as `approval` gives it. */
+const commandOf = (approval: ApprovalItem, gated: GatedItem & { type: "command_execution" }) =>
+  gated.nativeItemRef?.driver === CLAUDE
+    ? approval.prompt?.trim() === gated.input
+      ? approval.prompt
+      : undefined
+    : gated.input;
+
 /** What the held item says exactly, or `undefined` when it does not say what was asked. */
-const exactOf = (kind: Approval["kind"], gated: GatedItem): Shown | undefined => {
+const exactOf = (
+  kind: Approval["kind"],
+  approval: ApprovalItem,
+  gated: GatedItem,
+): Shown | undefined => {
   if (kind === "command" && gated.type === "command_execution") {
-    const command = verbatim(gated.input);
-    return command && { action: command.text, detail: null, exact: !command.cut };
+    const command = verbatim(commandOf(approval, gated));
+    return command && { action: command.text, detail: null, exact: command.whole };
   }
   if (kind === "file-change" && gated.type === "file_change") {
     const changes = gated.changes ?? [];
@@ -110,7 +153,7 @@ const exactOf = (kind: Approval["kind"], gated: GatedItem): Shown | undefined =>
     return {
       action: paths.text,
       detail: diff?.text ?? null,
-      exact: diff !== undefined && !diff.cut && !paths.cut,
+      exact: diff !== undefined && diff.whole && paths.whole,
     };
   }
   return undefined;
@@ -129,7 +172,7 @@ export function approvalOf(
 ): Approval {
   const kind = KINDS[approval.requestKind];
   const gated = gatedItem(approval, request, items);
-  const exact = gated === undefined ? undefined : exactOf(kind, gated);
+  const exact = gated === undefined ? undefined : exactOf(kind, approval, gated);
   const prompt = verbatim(approval.prompt);
   const summary = prompt ?? verbatim(approval.title);
   // A held file change with no diff gives its paths, but not the change: the
@@ -142,18 +185,24 @@ export function approvalOf(
         exact: false,
       };
   // The prompt, when the action came from elsewhere and the prompt says
-  // something else, is the provider's reason for asking.
+  // something else, is the provider's reason for asking. The action is compared
+  // as shown, untrimmed.
   const reasons = [
     trimmed(approval.reason),
-    shown.exact ? trimmed(approval.prompt) : undefined,
-  ].filter((text): text is string => text !== undefined && text !== shown.action.trim());
+    shown.exact && approval.prompt !== shown.action ? trimmed(approval.prompt) : undefined,
+  ].filter((text): text is string => text !== undefined && text !== shown.action);
   const reason = [...new Set(reasons)].join("\n\n").slice(0, MAX_REASON).trim();
+  // A grant for the session allows what is asked again, unseen, so it is offered only for an
+  // action shown exactly, and only when the provider takes one.
+  const sessionOffered =
+    approval.options === undefined
+      ? SESSION_BY_DEFAULT[approval.requestKind]
+      : approval.options.some((option) => option.decision === "acceptForSession");
   return {
     _tag: "approval",
     kind,
     ...shown,
     reason: reason === "" ? null : reason,
-    allowsSession:
-      approval.options?.some((option) => option.decision === "acceptForSession") ?? false,
+    allowsSession: shown.exact && sessionOffered,
   };
 }

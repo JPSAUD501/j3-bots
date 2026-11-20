@@ -15,7 +15,7 @@ const decodeItem = Schema.decodeUnknownSync(OrchestrationV2TurnItem);
 const decodeRequest = Schema.decodeUnknownSync(OrchestrationV2RuntimeRequest);
 const at = DateTime.makeUnsafe("2026-11-20T12:00:00Z");
 
-const item = (nativeId: string, fields: Record<string, unknown>) =>
+const item = (nativeId: string, fields: Record<string, unknown>, driver = "codex") =>
   decodeItem({
     id: `item-${nativeId}-${String(fields["type"])}`,
     threadId: "thread-1",
@@ -23,7 +23,7 @@ const item = (nativeId: string, fields: Record<string, unknown>) =>
     nodeId: null,
     providerThreadId: null,
     providerTurnId: null,
-    nativeItemRef: { driver: "codex", nativeId, strength: "strong" },
+    nativeItemRef: { driver, nativeId, strength: "strong" },
     parentItemId: null,
     ordinal: 1,
     status: "running",
@@ -35,12 +35,12 @@ const item = (nativeId: string, fields: Record<string, unknown>) =>
   });
 
 /** The runtime request of an approval, asking under `nativeId`. */
-const request = (nativeId: string) =>
+const request = (nativeId: string, driver = "codex") =>
   decodeRequest({
     id: `request-${nativeId}`,
     nodeId: `node-${nativeId}`,
     providerTurnId: null,
-    nativeRequestRef: { driver: "codex", nativeId, strength: "strong" },
+    nativeRequestRef: { driver, nativeId, strength: "strong" },
     kind: "command",
     status: "pending",
     responseCapability: { type: "message" },
@@ -48,17 +48,26 @@ const request = (nativeId: string) =>
     resolvedAt: null,
   });
 
-const approval = (nativeId: string, fields: Record<string, unknown>) => {
-  const decoded = item(nativeId, {
-    type: "approval_request",
-    requestId: `request-${nativeId}`,
-    status: "waiting",
-    options: [
+/** An approval item; `options: null` leaves the options out, as some providers do. */
+const approval = (nativeId: string, fields: Record<string, unknown>, driver = "codex") => {
+  const {
+    options = [
       { decision: "accept", label: "Allow" },
       { decision: "acceptForSession", label: "Allow for session" },
     ],
-    ...fields,
-  });
+    ...rest
+  } = fields;
+  const decoded = item(
+    nativeId,
+    {
+      type: "approval_request",
+      requestId: `request-${nativeId}`,
+      status: "waiting",
+      ...(options === null ? {} : { options }),
+      ...rest,
+    },
+    driver,
+  );
   if (decoded.type !== "approval_request") throw new Error("not an approval");
   return decoded;
 };
@@ -166,5 +175,73 @@ describe("approvalOf", () => {
     const shown = approvalOf(asked, asks, [asked, elsewhere, otherRun]);
     assert.strictEqual(shown.action, "Run the tests");
     assert.strictEqual(shown.exact, false);
+  });
+
+  it("shows a Claude Code command as its prompt gives it, which the item trims", () => {
+    // `echo a\ ` prints "a ", but the engine records `echo a\`, which prints "a".
+    const command = "echo a\\ ";
+    const asks = request("toolu-1", "claudeAgent");
+    const asked = approval("toolu-1", { requestKind: "command", prompt: command }, "claudeAgent");
+    const held = item(
+      "toolu-1",
+      { type: "command_execution", input: command.trim() },
+      "claudeAgent",
+    );
+    const shown = approvalOf(asked, asks, [asked, held]);
+    assert.strictEqual(shown.action, command);
+    assert.strictEqual(shown.exact, true);
+    assert.strictEqual(shown.reason, null);
+  });
+
+  it("calls a Claude Code command a summary when its prompt is not the command", () => {
+    const asks = request("toolu-2", "claudeAgent");
+    const asked = approval(
+      "toolu-2",
+      { requestKind: "command", prompt: "Run the migration" },
+      "claudeAgent",
+    );
+    const held = item(
+      "toolu-2",
+      { type: "command_execution", input: "pnpm db:migrate" },
+      "claudeAgent",
+    );
+    const shown = approvalOf(asked, asks, [asked, held]);
+    assert.strictEqual(shown.action, "Run the migration");
+    assert.strictEqual(shown.exact, false);
+    assert.strictEqual(shown.allowsSession, false);
+  });
+
+  it("calls a command a summary when its last line break continues the line", () => {
+    const asks = request("cmd-5");
+    const asked = approval("cmd-5", { requestKind: "command", prompt: "Print a" });
+    const held = item("cmd-5", { type: "command_execution", input: "echo a\\\n" });
+    assert.strictEqual(approvalOf(asked, asks, [asked, held]).exact, false);
+  });
+
+  it("offers a session grant for an exact action when the provider takes one", () => {
+    const asks = request("cmd-6");
+    const held = item("cmd-6", { type: "command_execution", input: "pnpm test" });
+    const offers = (options: ReadonlyArray<unknown> | null) => {
+      const asked = approval("cmd-6", { requestKind: "command", prompt: "pnpm test", options });
+      return approvalOf(asked, asks, [asked, held]).allowsSession;
+    };
+    // The options the provider lists, when it lists them.
+    assert.strictEqual(offers([{ decision: "accept", label: "Allow" }]), false);
+    assert.strictEqual(
+      offers([
+        { decision: "accept", label: "Allow" },
+        { decision: "acceptForSession", label: "Allow for session" },
+      ]),
+      true,
+    );
+    // Otherwise the engine's default for the kind, as Codex asks for a command.
+    assert.strictEqual(offers(null), true);
+  });
+
+  it("offers no session grant for a summary, whatever the provider offers", () => {
+    const asked = approval("cmd-7", { requestKind: "command", prompt: "Run the tests" });
+    const shown = approvalOf(asked, request("cmd-7"), [asked]);
+    assert.strictEqual(shown.exact, false);
+    assert.strictEqual(shown.allowsSession, false);
   });
 });

@@ -201,7 +201,11 @@ export const ApprovalEntry = Schema.TaggedStruct("approval", {
    * session, so nothing unseen is allowed beyond this once.
    */
   exact: Schema.Boolean,
-  /** Whether the engine offers "Allow for session". The card offers it only when `exact`. */
+  /**
+   * Whether the card offers "Allow for session": only when `exact`, and the
+   * provider takes such a grant for this approval. Never for a summary, since
+   * a grant allows again what nobody has seen exactly.
+   */
   allowsSession: Schema.Boolean,
   status: Schema.Union([
     Schema.TaggedStruct("pending", {}),
