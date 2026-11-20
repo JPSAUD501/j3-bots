@@ -47,10 +47,14 @@ export const createBot = (name: string) =>
     return yield* bots.create({ commandId: command(), draft: { name, job: "" } });
   });
 
+/** How long `eventually` waits for a change before it reads again anyway, in real time. */
+const POLL_INTERVAL = "20 millis";
+
 /**
  * Re-reads `read` each time the server commits a change a client could see,
  * until it finds a value. Every event the observer applies and every write to
- * an entry signals one, so this waits on what was made durable, never on time.
+ * an entry signals one; state written without one is read again after a short
+ * real-time interval, which the test clock does not hold back.
  */
 export const eventually = <A, E, R>(read: Effect.Effect<Option.Option<A>, E, R>) =>
   Effect.scoped(
@@ -59,7 +63,10 @@ export const eventually = <A, E, R>(read: Effect.Effect<Option.Option<A>, E, R>)
       while (true) {
         const found = yield* read;
         if (Option.isSome(found)) return found.value;
-        yield* PubSub.take(changes);
+        yield* Effect.raceFirst(
+          Effect.asVoid(PubSub.take(changes)),
+          TestClock.withLive(Effect.sleep(POLL_INTERVAL)),
+        );
       }
     }),
   );

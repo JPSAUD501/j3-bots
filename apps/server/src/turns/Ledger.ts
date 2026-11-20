@@ -96,9 +96,11 @@ const encodeOutcome = Schema.encodeEffect(json(TurnOutcome));
 /**
  * The dispatches whose failed wakes the engine certainly does not have: a
  * failed wake of any other (one the engine accepted late) may still reach the
- * bot, so its message is not failed, and a retry would send it twice.
+ * bot, so its message is not failed, and a retry would send it twice. A
+ * released dispatch never has failed wakes: its wakes wait again or are
+ * cancelled.
  */
-export const UNDELIVERED: ReadonlyArray<DispatchStatus> = ["failed", "dropped", "released"];
+export const UNDELIVERED: ReadonlyArray<DispatchStatus> = ["failed", "dropped"];
 
 const sameDelivery = (a: MessageDelivery, b: MessageDelivery): boolean =>
   a._tag === "failed" ? b._tag === "failed" && a.reason === b.reason : a._tag === b._tag;
@@ -289,7 +291,7 @@ export const layer = Layer.effect(
     ) {
       const rows = yield* sql<{ readonly n: number }>`
         SELECT 1 AS n FROM dispatches d
-        WHERE d.id = ${dispatchId} AND d.status IN ('failed', 'dropped')
+        WHERE d.id = ${dispatchId} AND ${sql.in("d.status", UNDELIVERED)}
           AND EXISTS (
             SELECT 1 FROM wakes w
             WHERE w.dispatch_id = d.id AND w.status = 'failed'
