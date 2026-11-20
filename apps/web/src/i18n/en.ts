@@ -114,13 +114,13 @@ export const en = {
   "approval.allowSession": "Allow for session",
   "approval.deny": "Deny",
   "approval.grant.everyCommand":
-    "Future command requests in this session will be allowed automatically",
+    "Choosing Allow for session will allow all future command requests in this session automatically",
   "approval.grant.everyFileChange":
+    "Choosing Allow for session will allow all future file change requests in this session automatically",
+  "approval.granted.everyCommand":
+    "Future command requests in this session will be allowed automatically",
+  "approval.granted.everyFileChange":
     "Future file change requests in this session will be allowed automatically",
-  "approval.grant.similarCommands":
-    "Similar command requests in this session will be allowed automatically, possibly every command",
-  "approval.grant.similarFileChanges":
-    "Similar file change requests in this session will be allowed automatically, possibly every file change",
   "approval.allowedOnce": "Allowed once",
   "approval.allowedSession": "Allowed for this session",
   "approval.denied": "Denied",

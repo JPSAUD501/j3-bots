@@ -173,21 +173,11 @@ const ApprovalText = Schema.String.check(
 
 /**
  * What a grant for the session allows without asking again, for the rest of
- * the session, as the provider applies it:
- *
- * - `every-command`, `every-file-change`: every later request of that kind,
- *   whatever it runs or changes.
- * - `similar-commands`, `similar-file-changes`: later requests the provider's
- *   own rule matches. The rule is the provider's and not recorded, so it can be
- *   as wide as every request of that kind.
+ * the session, as the provider applies it: every later request of that kind,
+ * whatever it runs or changes.
  */
 export const SessionGrant = Schema.Struct({
-  covers: Schema.Literals([
-    "every-command",
-    "every-file-change",
-    "similar-commands",
-    "similar-file-changes",
-  ]),
+  covers: Schema.Literals(["every-command", "every-file-change"]),
 });
 export type SessionGrant = typeof SessionGrant.Type;
 

@@ -73,12 +73,15 @@ export function MessageBubble({
         : failed
           ? t(failedKeys[delivery.reason])
           : null;
-  // Sent again, Send again goes; focus that was on it stays on the line.
+  // Sent again, Send again goes; focus that was on it moves to the message, which stays whatever
+  // its delivery line then says, even nothing.
   const { target, actions } = useFocusAfterActions<HTMLDivElement>(failed);
   return (
     <div
+      ref={target}
+      tabIndex={-1}
       className={cn(
-        "flex flex-col gap-1",
+        "flex flex-col gap-1 rounded-md outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
         fromOperator ? "items-end" : "items-start",
         startsGroup ? "mt-2" : "mt-0.5",
       )}
@@ -114,10 +117,8 @@ export function MessageBubble({
         // is queued, so a change to it, such as a failure, is announced once, and Send again is not
         // read as part of it. A delivered message leaves it empty, and empty it takes no room.
         <div
-          ref={target}
-          tabIndex={-1}
           className={cn(
-            "flex max-w-(--layout-bubble-width) flex-wrap items-center justify-end gap-x-1 text-end text-2xs outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+            "flex max-w-(--layout-bubble-width) flex-wrap items-center justify-end gap-x-1 text-end text-2xs",
             deliveryText === null && "absolute",
           )}
         >

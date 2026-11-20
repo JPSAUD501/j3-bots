@@ -6,6 +6,7 @@ import { useId, useState } from "react";
 import { useI18n } from "../app/context";
 import type { KeyWith } from "../i18n/i18n";
 import { webAddress } from "../lib/links";
+import { type FocusWatch, useFocusAfterActions } from "../lib/useFocusAfterActions";
 import { CardFrame } from "./CardFrame";
 import { Button } from "./ui/button";
 
@@ -39,9 +40,12 @@ export function SecretRequestCard({
   const { t } = useI18n();
   const fieldId = useId();
   const pending = entry.status === "pending";
+  // Answered, the field and its actions go; focus that was in them moves to the card.
+  const { target, actions } = useFocusAfterActions<HTMLElement>(pending);
 
   return (
     <CardFrame
+      ref={target}
       icon={<KeyRoundIcon />}
       title={pending ? t("secret.pending") : t("secret.title")}
       attention={pending}
@@ -64,6 +68,7 @@ export function SecretRequestCard({
           onProvide={onProvide}
           onDecline={onDecline}
           submitting={submitting}
+          focusWatch={actions}
         />
       ) : (
         <p className="text-xs text-muted-foreground">{t(closedText[entry.status])}</p>
@@ -72,14 +77,21 @@ export function SecretRequestCard({
   );
 }
 
-/** The masked field and its actions. Unmounted with the request, taking the typed value with it. */
+/**
+ * The masked field and its actions. Unmounted with the request, taking the typed value with it.
+ * While an answer is on its way they stay focusable but take no second one.
+ */
 function SecretForm({
   fieldId,
   entry,
   onProvide,
   onDecline,
   submitting,
-}: Required<SecretRequestCardProps> & { readonly fieldId: string }) {
+  focusWatch,
+}: Required<SecretRequestCardProps> & {
+  readonly fieldId: string;
+  readonly focusWatch: FocusWatch;
+}) {
   const { t } = useI18n();
   const [value, setValue] = useState("");
   const link = webAddress(entry.url);
@@ -92,12 +104,14 @@ function SecretForm({
         onProvide(Redacted.make(value));
         setValue("");
       }}
+      {...focusWatch}
     >
       <input
         id={fieldId}
         type="password"
         value={value}
-        disabled={submitting}
+        readOnly={submitting}
+        aria-disabled={submitting}
         onChange={(event) => setValue(event.currentTarget.value)}
         placeholder={entry.placeholder ?? undefined}
         autoComplete="off"
@@ -122,12 +136,19 @@ function SecretForm({
             type="button"
             variant="ghost-muted"
             size="sm"
-            disabled={submitting}
-            onClick={onDecline}
+            aria-disabled={submitting}
+            onClick={() => {
+              if (!submitting) onDecline();
+            }}
           >
             {t("secret.decline")}
           </Button>
-          <Button type="submit" variant="primary" size="sm" disabled={value === "" || submitting}>
+          <Button
+            type="submit"
+            variant="primary"
+            size="sm"
+            aria-disabled={value === "" || submitting}
+          >
             {t("secret.provide")}
           </Button>
         </span>

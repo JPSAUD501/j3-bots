@@ -8,6 +8,7 @@ import { CheckIcon, MessageCircleQuestionIcon } from "lucide-react";
 import { useId, useState, type ReactNode } from "react";
 import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
+import { type FocusWatch, useFocusAfterActions } from "../lib/useFocusAfterActions";
 import { assembleAnswers, type QuestionDraft } from "../presentation/question";
 import { CardFrame } from "./CardFrame";
 import { Button } from "./ui/button";
@@ -36,21 +37,29 @@ export function QuestionCard({
 }: QuestionCardProps) {
   const { t } = useI18n();
   const { status } = entry;
+  const pending = status._tag === "pending";
   const [first] = entry.questions;
+  // Answered, the controls go; focus that was in them moves to the card.
+  const { target, actions } = useFocusAfterActions<HTMLElement>(pending);
+  // While an answer is on its way the controls stay focusable but take no second one.
+  const answer = (answers: QuestionAnswers) => {
+    if (!submitting) onAnswer(answers);
+  };
+  const dismiss = () => {
+    if (!submitting) onDismiss();
+  };
   const answersOnTap =
-    status._tag === "pending" &&
-    entry.questions.length === 1 &&
-    !first.multiple &&
-    !first.acceptsText;
+    pending && entry.questions.length === 1 && !first.multiple && !first.acceptsText;
 
   return (
     <CardFrame
+      ref={target}
       icon={<MessageCircleQuestionIcon />}
-      title={status._tag === "pending" ? t("question.pending") : t("question.title")}
-      attention={status._tag === "pending"}
+      title={pending ? t("question.pending") : t("question.title")}
+      attention={pending}
       entryId={entry.id}
     >
-      {status._tag !== "pending" ? (
+      {!pending ? (
         <>
           {entry.questions.map((q) => (
             <Resolved
@@ -68,32 +77,34 @@ export function QuestionCard({
           </p>
         </>
       ) : answersOnTap ? (
-        <>
-          <fieldset className="flex flex-col gap-2" disabled={submitting}>
+        <div className="flex flex-col gap-3" {...actions}>
+          <fieldset className="flex flex-col gap-2">
             <legend className="mb-2 text-sm font-medium">{first.prompt}</legend>
             <div className="flex flex-col gap-1.5">
               {first.options.map((option) => (
                 <button
                   key={option.id}
                   type="button"
-                  onClick={() => onAnswer({ [first.id]: { optionIds: [option.id], text: null } })}
-                  className={cn(optionRow, "hover:bg-muted disabled:hover:bg-transparent")}
+                  aria-disabled={submitting}
+                  onClick={() => answer({ [first.id]: { optionIds: [option.id], text: null } })}
+                  className={cn(optionRow, "hover:bg-muted aria-disabled:hover:bg-transparent")}
                 >
                   <OptionText option={option} />
                 </button>
               ))}
             </div>
           </fieldset>
-          <Actions onDismiss={onDismiss} submitting={submitting} />
-        </>
+          <Actions onDismiss={dismiss} submitting={submitting} />
+        </div>
       ) : (
         // Keyed by the entry, so a draft never outlives the card it was typed into.
         <QuestionForm
           key={entry.id}
           questions={entry.questions}
-          onAnswer={onAnswer}
-          onDismiss={onDismiss}
+          onAnswer={answer}
+          onDismiss={dismiss}
           submitting={submitting}
+          focusWatch={actions}
         />
       )}
     </CardFrame>
@@ -101,18 +112,20 @@ export function QuestionCard({
 }
 
 const optionRow =
-  "flex min-h-9 w-full items-start gap-2.5 rounded-md border border-input px-3 py-2 text-start text-sm outline-none transition-colors duration-(--duration-fast) focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-default pointer-coarse:min-h-11";
+  "flex min-h-9 w-full items-start gap-2.5 rounded-md border border-input px-3 py-2 text-start text-sm outline-none transition-colors duration-(--duration-fast) focus-visible:outline-2 focus-visible:outline-accent aria-disabled:cursor-default data-readonly:cursor-default pointer-coarse:min-h-11";
 
 function QuestionForm({
   questions,
   onAnswer,
   onDismiss,
   submitting,
+  focusWatch,
 }: {
   questions: ReadonlyArray<Question>;
   onAnswer: (answers: QuestionAnswers) => void;
   onDismiss: () => void;
   submitting: boolean;
+  focusWatch: FocusWatch;
 }) {
   const [drafts, setDrafts] = useState<ReadonlyMap<string, QuestionDraft>>(() => new Map());
   const answers = assembleAnswers(questions, drafts);
@@ -128,15 +141,16 @@ function QuestionForm({
       className="flex flex-col gap-3"
       onSubmit={(event) => {
         event.preventDefault();
-        if (answers !== null && !submitting) onAnswer(answers);
+        if (answers !== null) onAnswer(answers);
       }}
+      {...focusWatch}
     >
       {questions.map((q) => (
         <QuestionFields
           key={q.id}
           question={q}
           draft={drafts.get(q.id) ?? null}
-          disabled={submitting}
+          readOnly={submitting}
           onChange={(change) => update(q.id, change)}
         />
       ))}
@@ -145,15 +159,16 @@ function QuestionForm({
   );
 }
 
+/** One question's fields. While the answer is on its way they are read-only, so focus stays. */
 function QuestionFields({
   question,
   draft,
-  disabled,
+  readOnly,
   onChange,
 }: {
   question: Question;
   draft: QuestionDraft | null;
-  disabled: boolean;
+  readOnly: boolean;
   onChange: (change: Partial<QuestionDraft>) => void;
 }) {
   const { t } = useI18n();
@@ -168,7 +183,7 @@ function QuestionFields({
         : t("question.typeInstead");
   const optionClass = cn(
     optionRow,
-    "group/option hover:bg-muted data-checked:border-foreground/60 data-checked:bg-muted data-disabled:hover:bg-transparent",
+    "group/option hover:bg-muted data-checked:border-foreground/60 data-checked:bg-muted data-readonly:hover:bg-transparent",
   );
   return (
     <div className="flex flex-col gap-2">
@@ -181,11 +196,15 @@ function QuestionFields({
             aria-labelledby={promptId}
             value={[...picked]}
             onValueChange={(optionIds) => onChange({ optionIds })}
-            disabled={disabled}
             className="flex flex-col gap-1.5"
           >
             {question.options.map((option) => (
-              <Checkbox.Root key={option.id} value={option.id} className={optionClass}>
+              <Checkbox.Root
+                key={option.id}
+                value={option.id}
+                readOnly={readOnly}
+                className={optionClass}
+              >
                 <Indicator shape="square">
                   <Checkbox.Indicator>
                     <CheckIcon className="size-3" strokeWidth={3} aria-hidden />
@@ -203,7 +222,7 @@ function QuestionFields({
               const option = question.options.find((o) => o.id === value);
               if (option) onChange({ optionIds: [option.id] });
             }}
-            disabled={disabled}
+            readOnly={readOnly}
             className="flex flex-col gap-1.5"
           >
             {question.options.map((option) => (
@@ -220,7 +239,8 @@ function QuestionFields({
         <textarea
           rows={1}
           value={draft?.text ?? ""}
-          disabled={disabled}
+          readOnly={readOnly}
+          aria-disabled={readOnly}
           onChange={(event) => onChange({ text: event.currentTarget.value })}
           placeholder={textLabel}
           aria-label={question.options.length > 0 ? textLabel : question.prompt}
@@ -280,11 +300,11 @@ function Actions({
   const { t } = useI18n();
   return (
     <div className="flex flex-wrap items-center justify-end gap-2">
-      <Button variant="ghost-muted" size="sm" onClick={onDismiss} disabled={submitting}>
+      <Button variant="ghost-muted" size="sm" onClick={onDismiss} aria-disabled={submitting}>
         {t("question.dismiss")}
       </Button>
       {canSend !== undefined && (
-        <Button type="submit" variant="primary" size="sm" disabled={!canSend || submitting}>
+        <Button type="submit" variant="primary" size="sm" aria-disabled={!canSend || submitting}>
           {t("question.send")}
         </Button>
       )}

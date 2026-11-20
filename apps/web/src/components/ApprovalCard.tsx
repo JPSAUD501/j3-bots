@@ -35,13 +35,17 @@ const summaryOnly: Record<ApprovalEntry["kind"], KeyWith> = {
   other: "approval.summaryOnly.other",
 };
 
-// What "Allow for session" allows from then on, in words, next to the button and on the card once
-// it was chosen.
+// What "Allow for session" allows from then on, in words: under the buttons, naming the button, so
+// on a phone it never reads as the consequence of the full-width button above it.
 const grantScope: Record<SessionGrant["covers"], KeyWith> = {
   "every-command": "approval.grant.everyCommand",
   "every-file-change": "approval.grant.everyFileChange",
-  "similar-commands": "approval.grant.similarCommands",
-  "similar-file-changes": "approval.grant.similarFileChanges",
+};
+
+// The same, on a card where it was chosen.
+const grantedScope: Record<SessionGrant["covers"], KeyWith> = {
+  "every-command": "approval.granted.everyCommand",
+  "every-file-change": "approval.granted.everyFileChange",
 };
 
 const code = "font-mono text-xs leading-5 whitespace-pre-wrap wrap-anywhere";
@@ -74,8 +78,10 @@ export function ApprovalCard({
   const { status, detail, sessionGrant } = entry;
   const pending = status._tag === "pending";
   const scopeId = useId();
+  const outcomeId = useId();
   const scope = sessionGrant === null ? null : t(grantScope[sessionGrant.covers]);
-  // Answered, the buttons go; focus that was on one stays on the card.
+  // Answered, the buttons and the pending diff go, and focus that was in them moves to the card. The
+  // command stays, and so does focus in it.
   const { target, actions } = useFocusAfterActions<HTMLElement>(pending);
   // While a decision is on its way the buttons stay focusable but take no second one.
   const decide = (decision: ApprovalDecision) => () => {
@@ -99,6 +105,7 @@ export function ApprovalCard({
         aria-label={t("approval.change")}
         tabIndex={0}
         className={cn(code, scrolls, "py-2", className)}
+        {...(pending ? actions : {})}
       >
         <CodeLines text={detail} tones={diffTones} inset />
       </pre>
@@ -110,6 +117,7 @@ export function ApprovalCard({
       title={t(kindTitle[entry.kind])}
       attention={pending}
       entryId={entry.id}
+      describedBy={pending ? undefined : outcomeId}
     >
       {entry.reason !== null && (
         <p className="text-xs text-muted-foreground whitespace-pre-line">{entry.reason}</p>
@@ -142,6 +150,7 @@ export function ApprovalCard({
           aria-label={t("approval.action")}
           tabIndex={0}
           className={cn(code, scrolls, "rounded-md py-2")}
+          {...(pending ? actions : {})}
         >
           <CodeLines text={entry.action} inset />
         </pre>
@@ -219,7 +228,7 @@ export function ApprovalCard({
           )}
         </div>
       ) : (
-        <div className="flex flex-col gap-0.5">
+        <div id={outcomeId} className="flex flex-col gap-0.5">
           <p
             className={
               status._tag === "decided" && status.decision === "deny"
@@ -229,9 +238,13 @@ export function ApprovalCard({
           >
             {status._tag === "decided" ? t(decisionText[status.decision]) : t("approval.expired")}
           </p>
-          {status._tag === "decided" && status.decision === "allow-session" && scope !== null && (
-            <p className="text-2xs text-muted-foreground">{scope}</p>
-          )}
+          {status._tag === "decided" &&
+            status.decision === "allow-session" &&
+            sessionGrant !== null && (
+              <p className="text-2xs text-muted-foreground">
+                {t(grantedScope[sessionGrant.covers])}
+              </p>
+            )}
         </div>
       )}
     </CardFrame>

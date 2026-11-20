@@ -249,7 +249,8 @@ export function galleryVariants(now: DateTime.Utc) {
         "+- [ ] Scan the pharmacy receipts",
         " - [ ] Fill in the donations section",
       ].join("\n"),
-      sessionGrant: null,
+      // The longest scope line, so the narrowest width shows it wrapped in every language.
+      sessionGrant: { covers: "every-file-change" },
     }),
     approval("approval-file-read", {
       kind: "file-read",

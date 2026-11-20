@@ -8,13 +8,15 @@ import { cn } from "../lib/cn";
  * one still waiting; its header says so in words as well. On a phone the card
  * takes the full column. The frame can take focus, so "Waiting for you" in the
  * header can bring the operator to it, and so a card whose actions go away
- * once answered can keep the keyboard's place.
+ * once answered can keep the keyboard's place. `describedBy` names the element
+ * that says how the request ended, so focus on the card reads it.
  */
 export function CardFrame({
   icon,
   title,
   attention = false,
   entryId,
+  describedBy,
   ref,
   children,
 }: {
@@ -22,6 +24,7 @@ export function CardFrame({
   title: string;
   attention?: boolean;
   entryId: EntryId;
+  describedBy?: string | undefined;
   ref?: Ref<HTMLElement>;
   children: ReactNode;
 }) {
@@ -29,6 +32,7 @@ export function CardFrame({
     <section
       ref={ref}
       aria-label={title}
+      aria-describedby={describedBy}
       data-entry-id={entryId}
       tabIndex={-1}
       className={cn(

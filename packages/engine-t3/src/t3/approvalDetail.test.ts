@@ -240,6 +240,24 @@ describe("approvalOf", () => {
     assert.strictEqual(approvalOf(asked, asks, [asked, held]).exact, false);
   });
 
+  it("calls a command a summary when a dropped carriage return may be part of it", () => {
+    const shownFor = (input: string) => {
+      const asks = request("cmd-6");
+      const asked = approval("cmd-6", { requestKind: "command", prompt: "Print a" });
+      const held = item("cmd-6", { type: "command_execution", input });
+      return approvalOf(asked, asks, [asked, held]);
+    };
+    // A carriage return the command ends with is the last character of its last argument.
+    for (const input of ["printf a\r", "printf a\r\n"]) {
+      const shown = shownFor(input);
+      assert.strictEqual(shown.exact, false);
+      assert.strictEqual(shown.action, "Print a");
+      assert.strictEqual(shown.sessionGrant, null);
+    }
+    // A line feed alone ends the line and shows nothing, so the command is still exact.
+    assert.strictEqual(shownFor("printf a\n").exact, true);
+  });
+
   it("says what a session grant covers, as each provider applies it", () => {
     const diff = "@@ -1 +1 @@\n-a\n+b\n";
     const grantOf = (
@@ -273,12 +291,10 @@ describe("approvalOf", () => {
     // Codex grants every later request of the kind.
     assert.deepStrictEqual(grantOf("codex", "command"), { covers: "every-command" });
     assert.deepStrictEqual(grantOf("codex", "file-change"), { covers: "every-file-change" });
-    // Claude Code applies its own rule, which can be as wide as the whole tool.
-    assert.deepStrictEqual(grantOf("claudeAgent", "command"), { covers: "similar-commands" });
-    assert.deepStrictEqual(grantOf("claudeAgent", "file-change"), {
-      covers: "similar-file-changes",
-    });
-    // A provider whose grant is not established is offered none.
+    // A provider whose grant is not established is offered none: Claude Code applies permission
+    // suggestions the engine never records, which can switch its mode.
+    assert.strictEqual(grantOf("claudeAgent", "command"), null);
+    assert.strictEqual(grantOf("claudeAgent", "file-change"), null);
     assert.strictEqual(grantOf("opencode", "command"), null);
     // Options the provider lists decide whether it takes a grant at all.
     assert.strictEqual(grantOf("codex", "command", [{ decision: "accept", label: "Allow" }]), null);

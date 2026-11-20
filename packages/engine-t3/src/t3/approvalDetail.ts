@@ -56,15 +56,25 @@ const MAX_REASON = 2_000;
  * they show nothing. `undefined` when it is blank. `whole` is false when it was
  * longer than an approval carries, or when a dropped line break followed a
  * backslash, which would join it to the line instead of ending it.
+ * `droppedReturn` is true when what was dropped held a carriage return, which
+ * can be a character of the text rather than part of a line break.
  */
 const verbatim = (text: string | null | undefined) => {
   const given = text ?? "";
   const kept = given.replace(/[\r\n]+$/, "");
   if (!/\S/.test(kept)) return undefined;
   if (kept.length > APPROVAL_TEXT_LENGTH) {
-    return { text: kept.slice(0, APPROVAL_TEXT_LENGTH).replace(/[\r\n]+$/, ""), whole: false };
+    return {
+      text: kept.slice(0, APPROVAL_TEXT_LENGTH).replace(/[\r\n]+$/, ""),
+      whole: false,
+      droppedReturn: false,
+    };
   }
-  return { text: kept, whole: kept === given || !kept.endsWith("\\") };
+  return {
+    text: kept,
+    whole: kept === given || !kept.endsWith("\\"),
+    droppedReturn: given.slice(kept.length).includes("\r"),
+  };
 };
 
 const trimmed = (text: string | null | undefined) => {
@@ -82,21 +92,19 @@ const trimmed = (text: string | null | undefined) => {
  *   `acceptForSession` without being asked (`item/commandExecution/requestApproval`,
  *   `item/fileChange/requestApproval`, and the older `execCommandApproval` and
  *   `applyPatchApproval`).
- * - Claude Code: `permissionResultFromDecision` answers with
- *   `updatedPermissions`: Claude Code's own permission suggestions, moved to the
- *   session, or, when it suggests none, an allow rule for the whole tool. The
- *   engine does not record the suggestions, so the rule can be as wide as every
- *   use of the tool.
  *
  * No other provider is listed: what its grant covers is not established, so
- * none is offered.
+ * none is offered. Claude Code is one: `permissionResultFromDecision` answers a
+ * grant with the CLI's own permission suggestions moved to the session, which
+ * can switch its permission mode (`setMode`, as to `acceptEdits`) or add
+ * directories, and those suggestions never reach the approval the engine
+ * records, so what the grant would cover cannot be told.
  */
 const SESSION_GRANTS: Record<
   string,
   Record<"command" | "file-change", SessionGrant["covers"]> | undefined
 > = {
   [CODEX]: { command: "every-command", "file-change": "every-file-change" },
-  [CLAUDE]: { command: "similar-commands", "file-change": "similar-file-changes" },
 };
 
 /**
@@ -156,7 +164,9 @@ const exactOf = (
       command && {
         action: command.text,
         detail: null,
-        exact: command.whole,
+        // A dropped carriage return may be the last character of an argument, which the card
+        // cannot show; a diff's, in a file with CRLF line endings, is only the line's ending.
+        exact: command.whole && !command.droppedReturn,
         fromPrompt: given.fromPrompt,
       }
     );
