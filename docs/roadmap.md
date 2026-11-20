@@ -22,8 +22,8 @@ If criterion 1 fails on a harness, that harness is not supported, or the design 
 
 The smallest thing worth using daily.
 
-- Server: engine supervision, the adapter, bots, one conversation each, the wake pipeline for `user` and `system` wakes, `say` and `ask`, approvals, memory with its tools, session rotation.
-- Web client: roster, conversation, details; cards for questions and approvals; the work fold; pairing.
+- Server: engine supervision, the adapter, bots, one conversation each, the wake pipeline for `user` and `system` wakes, `say` and `ask`, approvals, secret requests, attachments in both directions, memory with its tools, session rotation, settings.
+- Web client: roster, conversation, details with the bot's files; cards for questions, approvals and secret requests; the work fold; pairing.
 - First-run flow in which the bot opens the conversation.
 
 Done when the project owner uses one bot every day for two weeks from the web client and the PWA.

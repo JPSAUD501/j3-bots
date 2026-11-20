@@ -1,32 +1,34 @@
-import * as Context from "effect/Context";
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
-import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
+import { BotFile, MAX_ATTACHMENTS_PER_MESSAGE } from "./attachment.ts";
 import {
+  AttachmentId,
   BotId,
   CommandId,
   DeviceId,
   EntryId,
-  Label,
-  PositiveInt,
+  EntryOrder,
   RoomId,
   RoutineId,
   RoutineRunId,
   Sequence,
 } from "./base.ts";
 import { Avatar, Bot, ModelChoice, PermissionMode, Profile } from "./bot.ts";
-import { Device, DeviceToken, PairingCode } from "./device.ts";
+import { Device, PairingCode } from "./device.ts";
 import { EngineStatus, UsageTurn } from "./engineStatus.ts";
 import {
   ApprovalDecision,
   Entry,
+  EntryPreview,
   EntryTarget,
+  Mentions,
   MessageText,
   QuestionAnswers,
   WorkStep,
 } from "./entry.ts";
-import { CommandError, Invalid, NotAuthenticated, NotFound } from "./errors.ts";
+import { CommandError, NotFound } from "./errors.ts";
 import {
   MemoryDocument,
   MemoryFile,
@@ -37,81 +39,44 @@ import {
 } from "./memory.ts";
 import { Room, RoomMembers } from "./room.ts";
 import { Routine, RoutineInstruction, RoutineRun, RoutineTrigger } from "./routine.ts";
-
-/** Where clients open the WebSocket that carries every RPC in this file. */
-export const RPC_PATH = "/ws";
-
-/**
- * Bumped when a change to these groups would break a client built against the
- * previous version. Clients compare it with `server.info` before anything else.
- */
-export const PROTOCOL_VERSION = 1;
+import { Budgets, NotificationSettings, Settings, TimeZone } from "./settings.ts";
 
 // ---------------------------------------------------------------------------
 // Conventions
 //
-// Subscriptions (`*.subscribe`) stream a snapshot first and then changes. Each
-// frame carries a sequence; a client stores the sequence of the last frame it
-// applied and passes it as `after` when it subscribes again. If the server can
-// replay from there it sends only the newer changes; otherwise it sends a fresh
-// snapshot, which replaces what the client holds. Changes carry whole entities,
-// never deltas: the client upserts by id.
+// Every RPC here runs on the socket at `HTTP_PATHS.rpc`, which is authenticated
+// once, at the upgrade, and belongs to one device for its whole life. Revoking
+// that device closes the socket. A request that fails unexpectedly fails alone,
+// with a generic defect: the socket and its other subscriptions carry on.
+//
+// Subscriptions (`*.subscribe`) send the current state first and then changes.
+// Changes carry whole entities, never deltas: the client upserts by id. Only
+// `entries.subscribe` and `routines.subscribe` resume: each frame carries a
+// sequence, and a client that passes the last one it applied as `after` gets
+// only what changed since, or a snapshot when the server cannot replay that far
+// (see `entries.subscribe`). The roster and the engine status are small and
+// always start with a snapshot.
 //
 // Commands carry a client-generated `commandId`. Sending the same command again
 // with the same id has no further effect and returns the first result, so a
-// client retries freely after a dropped connection.
+// client retries freely after a dropped connection. `secret.provide` is the one
+// exception: its value must never be stored, so it has no receipt (see there).
 // ---------------------------------------------------------------------------
 
 const after = { after: Schema.NullOr(Sequence) };
 const command = { commandId: CommandId };
 
-export const ServerInfo = Schema.Struct({
-  protocolVersion: PositiveInt,
-  /** The J3 Bots release. */
-  version: Label,
-  startedAt: Schema.DateTimeUtc,
-});
-export type ServerInfo = typeof ServerInfo.Type;
-
-// The two groups a client may use before it is paired.
-
-/** The first request a client makes: it checks `protocolVersion` before anything else. */
-export const ServerRpcs = RpcGroup.make(Rpc.make("server.info", { success: ServerInfo }));
-
-export const PairingRpcs = RpcGroup.make(
-  /** Exchanges a pairing code for this client's device token. */
-  Rpc.make("device.pair", {
-    payload: { code: PairingCode, name: Label },
-    success: Schema.Struct({ deviceId: DeviceId, token: DeviceToken }),
-    error: Invalid,
-  }),
-);
-
-/** The paired device that made the current request. */
-export class CurrentDevice extends Context.Service<CurrentDevice, { readonly id: DeviceId }>()(
-  "@j3-bots/contracts/rpc/CurrentDevice",
-) {}
-
-/**
- * Every request outside `ServerRpcs` and `PairingRpcs` carries the device token in its
- * `authorization` header as `Bearer <token>`. Revoking a device fails its next
- * request and ends its open subscriptions with `NotAuthenticated`.
- */
-export class DeviceAuth extends RpcMiddleware.Service<DeviceAuth, { provides: CurrentDevice }>()(
-  "@j3-bots/contracts/rpc/DeviceAuth",
-  { error: NotAuthenticated, requiredForClient: true },
-) {}
-
 export const RosterItem = Schema.Union([
   Schema.TaggedStruct("bot", {
     bot: Bot,
-    lastEntry: Schema.NullOr(Entry),
+    lastEntry: Schema.NullOr(EntryPreview),
     lastActivityAt: Schema.NullOr(Schema.DateTimeUtc),
+    /** The conversation has entries after the operator's read mark. */
     unread: Schema.Boolean,
   }),
   Schema.TaggedStruct("room", {
     room: Room,
-    lastEntry: Schema.NullOr(Entry),
+    lastEntry: Schema.NullOr(EntryPreview),
     lastActivityAt: Schema.NullOr(Schema.DateTimeUtc),
     unread: Schema.Boolean,
   }),
@@ -129,25 +94,31 @@ const HistoryLimit = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 20
 /** Who the operator has, and what each is doing. */
 export const RosterRpcs = RpcGroup.make(
   Rpc.make("roster.subscribe", {
-    payload: after,
     success: Schema.Union([
-      Schema.TaggedStruct("snapshot", { sequence: Sequence, items: Schema.Array(RosterItem) }),
+      Schema.TaggedStruct("snapshot", { items: Schema.Array(RosterItem) }),
       Schema.TaggedStruct("changed", {
-        sequence: Sequence,
         upsert: Schema.Array(RosterItem),
         remove: Schema.Array(RosterItemKey),
       }),
     ]),
     stream: true,
   }),
-).middleware(DeviceAuth);
+);
 
 /** A conversation or a room: what was said, what is running, what is asked. */
 export const EntryRpcs = RpcGroup.make(
   /**
-   * The snapshot holds the most recent entries; older ones are read with
-   * `entries.history`. The stream fails with `NotFound` if the bot or room is
-   * deleted.
+   * The snapshot holds the most recent entries, sorted by `order`; older ones are
+   * read with `entries.history`. Its `sequence` is the watermark it was read at:
+   * every change after it follows as `changed`, and nothing at or before it
+   * does, so a client applies frames in order and never double-counts.
+   *
+   * With `after`, the server sends only the changes after that sequence when it
+   * still has them and there are at most a few hundred. Otherwise it sends a
+   * snapshot instead, which replaces everything the client holds for the target:
+   * the client drops its entries and re-reads history as the operator scrolls.
+   *
+   * The stream fails with `NotFound` if the bot or room is deleted.
    */
   Rpc.make("entries.subscribe", {
     payload: { target: EntryTarget, ...after },
@@ -164,28 +135,52 @@ export const EntryRpcs = RpcGroup.make(
   }),
   /** Entries before `before`, oldest first, for scrolling back. */
   Rpc.make("entries.history", {
-    payload: { target: EntryTarget, before: EntryId, limit: HistoryLimit },
+    payload: { target: EntryTarget, before: EntryOrder, limit: HistoryLimit },
     success: Schema.Struct({ entries: Schema.Array(Entry), hasOlder: Schema.Boolean }),
     error: NotFound,
   }),
-  /** The steps of a work fold, in order, when the operator opens it. */
+  /**
+   * The steps of a work fold while the operator has it open: every step so far,
+   * then each step as it is added or changes (upsert by id). The stream ends
+   * once the fold's turn has finished and its last step was sent.
+   */
   Rpc.make("entries.workSteps", {
     payload: { entryId: EntryId },
-    success: Schema.Array(WorkStep),
+    success: Schema.Union([
+      Schema.TaggedStruct("snapshot", { steps: Schema.Array(WorkStep) }),
+      Schema.TaggedStruct("step", { step: WorkStep }),
+    ]),
     error: NotFound,
+    stream: true,
   }),
   /** Everything up to `through` has been read. Moving the mark backwards is ignored. */
   Rpc.make("entries.markRead", {
-    payload: { target: EntryTarget, through: EntryId },
+    payload: { target: EntryTarget, through: EntryOrder },
     error: NotFound,
   }),
-  /** Returns the new message entry. */
+  /**
+   * Returns the new message entry. `attachments` are uploaded first with
+   * `POST /attachments`. `mentions` only applies in a room; leaving it out
+   * mentions nobody.
+   */
   Rpc.make("message.send", {
-    payload: { ...command, target: EntryTarget, text: MessageText.check(Schema.isMinLength(1)) },
+    payload: {
+      ...command,
+      target: EntryTarget,
+      text: MessageText,
+      attachments: Schema.Array(AttachmentId).check(
+        Schema.isMaxLength(MAX_ATTACHMENTS_PER_MESSAGE),
+      ),
+      mentions: Schema.optionalKey(Mentions),
+    },
     success: EntryId,
     error: CommandError,
   }),
-  /** Resolves a question or approval card everywhere. */
+  /**
+   * Resolves a question or approval card everywhere. Answering or dismissing an
+   * `ask` question wakes the bot with the answer; answering an `engine` question
+   * or an approval lets the turn that raised it continue.
+   */
   Rpc.make("card.answer", {
     payload: {
       ...command,
@@ -198,12 +193,32 @@ export const EntryRpcs = RpcGroup.make(
     },
     error: CommandError,
   }),
+  /**
+   * Answers a secret request. The value goes straight to the engine and is not
+   * stored, logged or kept in a receipt. Without a receipt, a retry after the
+   * first call succeeded fails with `Conflict("card-closed")`, which the client
+   * reads as done.
+   */
+  Rpc.make("secret.provide", {
+    payload: {
+      entryId: EntryId,
+      answer: Schema.Union([
+        Schema.TaggedStruct("provide", {
+          value: Schema.Redacted(
+            Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(10_000)),
+          ),
+        }),
+        Schema.TaggedStruct("decline", {}),
+      ]),
+    },
+    error: CommandError,
+  }),
   /** Runs again what a retryable notice says failed. */
   Rpc.make("notice.retry", {
     payload: { ...command, entryId: EntryId },
     error: CommandError,
   }),
-).middleware(DeviceAuth);
+);
 
 const ProfileChanges = Schema.Struct({
   name: Schema.optionalKey(Profile.fields.name),
@@ -242,16 +257,29 @@ export const BotRpcs = RpcGroup.make(
     success: Bot,
     error: CommandError,
   }),
-  /** Ends the bot's running work. What was already done stays done. */
+  /**
+   * Ends the bot's running work and cancels the messages and wakes it has not
+   * received yet. What was already done stays done.
+   */
   Rpc.make("bot.stop", { payload: { ...command, botId: BotId }, error: CommandError }),
   /** Resets the bot's working context. Conversation, memory, routines and files stay. */
   Rpc.make("bot.freshStart", { payload: { ...command, botId: BotId }, error: CommandError }),
-  /** Removes the bot, its conversation, memory and routines. */
+  /**
+   * Removes the bot, its conversation, memory and routines. What it said in rooms
+   * stays, shown as from a deleted bot. A room it hosted passes to another
+   * member; a room left with fewer than two members is archived.
+   */
   Rpc.make("bot.delete", {
     payload: { ...command, botId: BotId, deleteFiles: Schema.Boolean },
     error: CommandError,
   }),
-).middleware(DeviceAuth);
+  /** Files the bot delivered, newest first, before `before`. */
+  Rpc.make("bot.files", {
+    payload: { botId: BotId, before: Schema.NullOr(AttachmentId), limit: HistoryLimit },
+    success: Schema.Struct({ files: Schema.Array(BotFile), hasOlder: Schema.Boolean }),
+    error: NotFound,
+  }),
+);
 
 export const RoomRpcs = RpcGroup.make(
   Rpc.make("room.create", {
@@ -279,9 +307,10 @@ export const RoomRpcs = RpcGroup.make(
     error: CommandError,
   }),
   Rpc.make("room.delete", { payload: { ...command, roomId: RoomId }, error: CommandError }),
-).middleware(DeviceAuth);
+);
 
 export const RoutineRpcs = RpcGroup.make(
+  /** Resumes with `after` like `entries.subscribe`. */
   Rpc.make("routines.subscribe", {
     payload: { botId: BotId, ...after },
     success: Schema.Union([
@@ -334,7 +363,7 @@ export const RoutineRpcs = RpcGroup.make(
     payload: { ...command, routineId: RoutineId },
     error: CommandError,
   }),
-).middleware(DeviceAuth);
+);
 
 export const MemoryRpcs = RpcGroup.make(
   Rpc.make("memory.list", {
@@ -362,20 +391,35 @@ export const MemoryRpcs = RpcGroup.make(
     success: MemoryDocument,
     error: CommandError,
   }),
-).middleware(DeviceAuth);
+);
 
 export const EngineRpcs = RpcGroup.make(
-  Rpc.make("engine.subscribe", {
-    payload: after,
-    success: Schema.Struct({ sequence: Sequence, status: EngineStatus }),
-    stream: true,
-  }),
-  /** Turns that started after `since`, newest first. */
+  /** The current status, then every change. */
+  Rpc.make("engine.subscribe", { success: EngineStatus, stream: true }),
+  /** Turns that started after `since`, newest first, at most `limit`. */
   Rpc.make("usage.turns", {
-    payload: { since: Schema.DateTimeUtc },
-    success: Schema.Array(UsageTurn),
+    payload: {
+      since: Schema.DateTimeUtc,
+      limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1_000 })),
+    },
+    success: Schema.Struct({ turns: Schema.Array(UsageTurn), hasMore: Schema.Boolean }),
   }),
-).middleware(DeviceAuth);
+);
+
+export const SettingsRpcs = RpcGroup.make(
+  Rpc.make("settings.get", { success: Settings }),
+  /** Fields left out keep their value. Returns the settings as saved. */
+  Rpc.make("settings.update", {
+    payload: {
+      ...command,
+      timeZone: Schema.optionalKey(TimeZone),
+      budgets: Schema.optionalKey(Budgets),
+      notifications: Schema.optionalKey(NotificationSettings),
+    },
+    success: Settings,
+    error: CommandError,
+  }),
+);
 
 export const Notification = Schema.Struct({
   target: EntryTarget,
@@ -386,33 +430,32 @@ export type Notification = typeof Notification.Type;
 
 export const ClientRpcs = RpcGroup.make(
   /**
-   * What the operator is looking at on this connection. The server notifies
-   * about entries in a target no connected client has in view.
+   * What the operator is looking at on this socket. The server notifies about
+   * entries in a target no connected client has in view.
    */
   Rpc.make("client.view", { payload: { target: Schema.NullOr(EntryTarget) } }),
-  /** Notifications for this connection to show. Live only: missed ones are not replayed. */
+  /** Notifications for this socket to show. Live only: missed ones are not replayed. */
   Rpc.make("notifications.subscribe", { success: Notification, stream: true }),
   Rpc.make("devices.list", { success: Schema.Array(Device) }),
   /** A code a new client can pair with, shown on this one. */
   Rpc.make("pairing.start", {
     success: Schema.Struct({ code: PairingCode, expiresAt: Schema.DateTimeUtc }),
   }),
-  /** Closes that device's connection and refuses its token from now on. */
+  /** Closes that device's sockets at once and refuses its token from now on. */
   Rpc.make("device.revoke", {
     payload: { ...command, deviceId: DeviceId },
     error: NotFound,
   }),
-).middleware(DeviceAuth);
+);
 
-/** Every RPC a J3 Bots client can make, served at `RPC_PATH`. */
-export const J3Rpcs = ServerRpcs.merge(
-  PairingRpcs,
-  RosterRpcs,
+/** Every RPC a paired client can make, on the socket at `HTTP_PATHS.rpc`. */
+export const J3Rpcs = RosterRpcs.merge(
   EntryRpcs,
   BotRpcs,
   RoomRpcs,
   RoutineRpcs,
   MemoryRpcs,
   EngineRpcs,
+  SettingsRpcs,
   ClientRpcs,
 );

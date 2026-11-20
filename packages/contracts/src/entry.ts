@@ -1,13 +1,16 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Schema from "effect/Schema";
+import { Attachment } from "./attachment.ts";
 import {
-  AttachmentId,
   BotId,
   CommandId,
   EntryId,
+  EntryOrder,
   Label,
   NonNegativeInt,
   RoomId,
   RoutineId,
+  WorkStepId,
 } from "./base.ts";
 import { FailureClass } from "./bot.ts";
 import { RoutineTrigger } from "./routine.ts";
@@ -21,25 +24,33 @@ export type EntryTarget = typeof EntryTarget.Type;
 
 export const Author = Schema.Union([
   Schema.TaggedStruct("operator", {}),
+  /**
+   * The bot's id outlives the bot: entries keep it after the bot is deleted. A
+   * client that finds no bot with this id in the roster renders a deleted bot.
+   */
   Schema.TaggedStruct("bot", { botId: BotId }),
   /** J3 Bots itself. */
   Schema.TaggedStruct("system", {}),
 ]);
 export type Author = typeof Author.Type;
 
-export const Attachment = Schema.Struct({
-  id: AttachmentId,
-  name: Label,
-  mediaType: Label,
-  /** Bytes. */
-  size: NonNegativeInt,
-});
-export type Attachment = typeof Attachment.Type;
-
 export const MessageText = Schema.String.check(Schema.isMaxLength(100_000));
+
+/**
+ * Who a room message addresses. In a conversation it is always `bots` with no
+ * ids. The server routes room wakes from it, never from the text.
+ */
+export const Mentions = Schema.Union([
+  /** These members, in this order. No ids: nobody in particular, which wakes the host. */
+  Schema.TaggedStruct("bots", { ids: Schema.Array(BotId).check(Schema.isMaxLength(6)) }),
+  /** Every member, one at a time in member order. */
+  Schema.TaggedStruct("everyone", {}),
+]);
+export type Mentions = typeof Mentions.Type;
 
 const entry = {
   id: EntryId,
+  order: EntryOrder,
   author: Author,
   createdAt: Schema.DateTimeUtc,
 };
@@ -48,12 +59,14 @@ export const MessageEntry = Schema.TaggedStruct("message", {
   ...entry,
   text: MessageText,
   attachments: Schema.Array(Attachment),
+  mentions: Mentions,
   /**
    * `pending`: recorded, and the bot has not received it yet (it is busy, or the
-   * message waits on a budget). `delivered`: it reached the bot.
-   * Messages written by bots are always `delivered`.
+   * message waits on a budget). `delivered`: it reached the bot. `cancelled`:
+   * the operator stopped the bot before it received the message, so it never
+   * will. Messages written by bots are always `delivered`.
    */
-  delivery: Schema.Literals(["pending", "delivered"]),
+  delivery: Schema.Literals(["pending", "delivered", "cancelled"]),
   /** The operator's command that created it, so a client can replace its optimistic copy. */
   commandId: Schema.NullOr(CommandId),
 });
@@ -63,6 +76,8 @@ export const QuestionOption = Schema.Struct({
   id: Label,
   label: Label,
   description: Schema.NullOr(Schema.String.check(Schema.isMaxLength(1_000))),
+  /** `recommended` marks the option the bot suggests; `destructive`, one that loses something. */
+  style: Schema.Literals(["default", "recommended", "destructive"]),
 });
 export type QuestionOption = typeof QuestionOption.Type;
 
@@ -88,17 +103,24 @@ export const QuestionAnswers = Schema.Record(Label, QuestionAnswer);
 export type QuestionAnswers = typeof QuestionAnswers.Type;
 
 /**
- * `expired`: the turn that asked ended before an answer (stopped, failed, or the
- * engine dropped the request). Answering it is refused.
+ * A question for the operator. The two origins have different lifecycles:
+ *
+ * - `ask`: the bot called `ask`, which ended its turn. The card stays open until
+ *   the operator answers or dismisses it, however long that takes; either one
+ *   wakes the bot again with the answer.
+ * - `engine`: the harness's own question tool held a running turn. Answering it
+ *   lets that turn continue. It expires when its turn ends.
  */
 export const QuestionEntry = Schema.TaggedStruct("question", {
   ...entry,
+  origin: Schema.Literals(["ask", "engine"]),
   questions: Schema.NonEmptyArray(Question).check(Schema.isMaxLength(4)),
   status: Schema.Union([
     Schema.TaggedStruct("pending", {}),
     Schema.TaggedStruct("answered", { answers: QuestionAnswers }),
     /** The operator dismissed it, which the bot reads as "no". */
     Schema.TaggedStruct("dismissed", {}),
+    /** Only an `engine` question: its turn ended before an answer. Answering it is refused. */
     Schema.TaggedStruct("expired", {}),
   ]),
 });
@@ -107,6 +129,7 @@ export type QuestionEntry = typeof QuestionEntry.Type;
 export const ApprovalDecision = Schema.Literals(["allow-once", "allow-session", "deny"]);
 export type ApprovalDecision = typeof ApprovalDecision.Type;
 
+/** The engine holds a running turn on it. It expires when that turn ends. */
 export const ApprovalEntry = Schema.TaggedStruct("approval", {
   ...entry,
   kind: Schema.Literals(["command", "file-change", "file-read", "tool", "other"]),
@@ -124,6 +147,24 @@ export const ApprovalEntry = Schema.TaggedStruct("approval", {
 });
 export type ApprovalEntry = typeof ApprovalEntry.Type;
 
+/**
+ * A bot needs a credential only the operator can give. The client shows a
+ * masked input and sends the value with `secret.provide`, which hands it to the
+ * engine. The value is never stored in J3 Bots, so this entry has no field for
+ * it. It expires when the turn that asked ends.
+ */
+export const SecretRequestEntry = Schema.TaggedStruct("secret-request", {
+  ...entry,
+  /** What is being asked for, such as "GitHub token". */
+  label: Label,
+  reason: Schema.String.check(Schema.isMaxLength(2_000)),
+  /** A page where the operator can get or create the value. */
+  url: Schema.NullOr(Schema.String.check(Schema.isMaxLength(2_000))),
+  placeholder: Schema.NullOr(Label),
+  status: Schema.Literals(["pending", "provided", "declined", "expired"]),
+});
+export type SecretRequestEntry = typeof SecretRequestEntry.Type;
+
 /** How a turn ended, as the work fold shows it. */
 export const TurnEnding = Schema.Literals(["completed", "interrupted", "failed"]);
 export type TurnEnding = typeof TurnEnding.Type;
@@ -139,7 +180,9 @@ export const WorkFoldEntry = Schema.TaggedStruct("work-fold", {
 });
 export type WorkFoldEntry = typeof WorkFoldEntry.Type;
 
+/** A step replaces an earlier one with the same id: a running command, then its result. */
 export const WorkStep = Schema.Struct({
+  id: WorkStepId,
   kind: Schema.Literals([
     "command",
     "edit",
@@ -202,9 +245,36 @@ export const Entry = Schema.Union([
   MessageEntry,
   QuestionEntry,
   ApprovalEntry,
+  SecretRequestEntry,
   WorkFoldEntry,
   NoticeEntry,
   HandoffEntry,
   RoutineChangeEntry,
 ]);
 export type Entry = typeof Entry.Type;
+
+/** The most text an `EntryPreview` carries. */
+export const PREVIEW_LENGTH = 200;
+
+/**
+ * What the roster shows under a name: the latest entry, cut short. `text` is
+ * the message, the question or the action, at most `PREVIEW_LENGTH` characters,
+ * and empty for entries with no text of their own.
+ */
+export const EntryPreview = Schema.Struct({
+  entryId: EntryId,
+  kind: Schema.Literals([
+    "message",
+    "question",
+    "approval",
+    "secret-request",
+    "work-fold",
+    "notice",
+    "handoff",
+    "routine-change",
+  ]),
+  author: Author,
+  text: Schema.String.check(Schema.isMaxLength(PREVIEW_LENGTH)),
+  createdAt: Schema.DateTimeUtc,
+});
+export type EntryPreview = typeof EntryPreview.Type;

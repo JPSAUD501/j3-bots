@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Schema from "effect/Schema";
 
 // Engine identifiers are opaque to the rest of J3 Bots. Their values are stable,
@@ -9,7 +10,12 @@ const opaque = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256
 export const EngineProjectId = opaque.pipe(Schema.brand("EngineProjectId"));
 export type EngineProjectId = typeof EngineProjectId.Type;
 
-/** A session: the engine thread that holds a bot's working context. */
+/**
+ * A session: the engine thread that holds a bot's working context. Its value is
+ * the engine's thread id, which is also what identifies the caller of a bot
+ * tool (see `sessionOfToolCaller`). The server stores it next to its own id for
+ * the session and never derives one from the other.
+ */
 export const SessionId = opaque.pipe(Schema.brand("SessionId"));
 export type SessionId = typeof SessionId.Type;
 
@@ -17,11 +23,7 @@ export type SessionId = typeof SessionId.Type;
 export const TurnId = opaque.pipe(Schema.brand("TurnId"));
 export type TurnId = typeof TurnId.Type;
 
-/** A step inside a turn: a command, an edit, a search, a delegated task. */
-export const StepId = opaque.pipe(Schema.brand("StepId"));
-export type StepId = typeof StepId.Type;
-
-/** An approval or a question the engine is holding a turn on. */
+/** An approval, a question or a secret request the engine is holding a turn on. */
 export const RequestId = opaque.pipe(Schema.brand("RequestId"));
 export type RequestId = typeof RequestId.Type;
 
@@ -35,8 +37,11 @@ export type EventCursor = typeof EventCursor.Type;
 /**
  * Makes an engine command safe to repeat. The engine applies a key once; sending
  * it again returns the first outcome. Use a durable id the server already owns
- * for the intent, such as the wake id for a dispatch, so a retry after a crash
- * cannot do the work twice. Keys are global: never reuse one for another command.
+ * for the intent, written before the command is sent: the session's own id for
+ * `openSession`, the dispatch id for `dispatch`. Every engine identifier the
+ * adapter sends for the command (the command id, the message id, the thread id
+ * of a new session) is derived from the key, so a retry after a crash sends the
+ * same command. Keys are global: never reuse one for another command.
  */
 export const IdempotencyKey = Schema.String.check(
   Schema.isMinLength(1),

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import "vite-plus/test/config";
 import { defineConfig } from "vite-plus";
 
@@ -39,6 +40,19 @@ export default defineConfig({
       "eslint/no-empty-pattern": "error",
       "eslint/no-new": "error",
       "eslint/no-unneeded-ternary": "error",
+      // Only the engine adapter may know T3 Code exists (see the override below).
+      "eslint/no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@t3tools/*"],
+              message:
+                "Only packages/engine-t3 may import T3 Code. Use the Engine interface or @j3-bots/contracts.",
+            },
+          ],
+        },
+      ],
       "eslint/no-unsafe-optional-chaining": "error",
       "eslint/no-unused-vars": [
         "error",
@@ -64,5 +78,11 @@ export default defineConfig({
       "unicorn/prefer-string-starts-ends-with": "off",
       "unicorn/require-module-specifiers": "error",
     },
+    overrides: [
+      {
+        files: ["packages/engine-t3/**"],
+        rules: { "eslint/no-restricted-imports": "off" },
+      },
+    ],
   },
 });

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // @effect-diagnostics nodeBuiltinImport:off -- a synchronous hash of constant text at load; Effect's Digest is asynchronous and needs a service.
 import { BotId, RoomId, RoutineId } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
@@ -35,6 +36,7 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
     ],
     answer: {
       question: "text",
+      room: "Room",
       response: { type: "answered", chosen: [{ label: "label", value: "value" }], text: "text" },
     },
     messages: [
@@ -44,7 +46,7 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
   {
     ...base,
     kind: "user",
-    answer: { question: "text", response: { type: "dismissed" } },
+    answer: { question: "text", room: null, response: { type: "dismissed" } },
     messages: [],
   },
   {

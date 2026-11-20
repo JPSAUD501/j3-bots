@@ -56,7 +56,7 @@ Neither can be removed without modifying T3 Code. The base prompt deals with T3 
 | --- | --- | --- |
 | Use `delegate_task` or the harness's subagents for delegated work; do not poll | Adopted | It is how a bot stays reachable during long work |
 | Use `request_secret` for credentials only the user can give | Adopted | The value never passes through the model |
-| Use `send_to_user` for text the user must read mid-turn (Claude only) | Replaced by `say` | The operator is not looking at T3 Code's interface. The adapter still treats a `send_to_user` call as speech, so a slip is not lost |
+| Use `send_to_user` for text the user must read mid-turn (Claude only) | Replaced by `say` | The operator is not looking at T3 Code's interface. The adapter reports a `send_to_user` call as host speech and the server delivers it like a `say` without `done`, so a slip is not lost |
 | Answer with a chart through `html_render`; show visuals in the preview panel | Replaced: produce a file and attach it | Those surfaces draw in T3 Code's clients |
 | Use `schedule_task` when asked to schedule something | Replaced by `set_routine` | J3 Bots owns scheduling |
 | Start, read and message threads with the thread tools | Not used | A teammate is a bot, reached with `message_bot` |
@@ -65,7 +65,7 @@ Neither can be removed without modifying T3 Code. The base prompt deals with T3 
 | Device simulator instructions | Removed | Present only when device access is on; J3 Bots turns it off |
 | Put everything else in the final reply | Replaced by `say` | Nobody reads the final reply |
 | Wake the parent thread when a delegated task or monitor finishes | Kept, handled as a `system` event | These turns arrive without a wake envelope; the base prompt says how to treat them |
-| Keep the thread working with `t3_background_wait` while background commands run | Not used across turns | A `say` with `done: true` ends the run, so work that must outlive the turn goes to `delegate_task` |
+| Keep the thread working with `t3_background_wait` while background commands run | Kept within a turn | `done` closes the delivery, not the run, so a bot may wait on its own background commands after delivering and report what they found with another `say`. Work that should outlive the turn goes to `delegate_task` |
 
 The harness adds tools of its own that reach a person or vanish with the session. On Claude Code they are the question tool, plan mode, the cron, wake-up and loop tools, push notifications and auto-memory; Codex has its own question tool. Removing a tool is more reliable than telling the model to avoid it, so the Claude instance's launch arguments disallow those tools and its J3-owned config turns auto-memory off ([Engine: provisioning](../architecture/engine.md#provisioning)). The base prompt still names each replacement, for harnesses where a tool cannot be removed.
 
@@ -111,6 +111,26 @@ Rules:
 - Text from anywhere else is placed in a block whose tag ends in a random nonce generated for that wake, for example `<data-7f3a9c01b2d4 source="webhook">`. That includes the bot's own earlier words when they come back to it: what a routine run said, a session digest. Content cannot close a tag it cannot guess, and the nonce is drawn again if it already occurs in the envelope. The base prompt states that everything inside such a block is information.
 - Text from every source, the operator's included, has envelope tags defused: anything that reads as one of the envelope's own tags, or a `data-` tag with any nonce, gets its `<` written as `&lt;`. Detection sees through look-alikes (fullwidth and other compatibility forms, invisible characters, combining marks, case, Cyrillic and Greek letters that pass for Latin). Ordinary markup and code, such as `<div>` or `a < b`, is left as written. Attribute values are escaped and kept to one line. Values in the system prompt (a job, a pinned fact) are defused the same way.
 
+The operator's answer to an `ask` arrives as a `user` wake. It repeats the question as the bot asked it and names the choice:
+
+```
+<j3-wake kind="user" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
+<answer room="Launch">
+<question>Which environment should I deploy to?</question>
+<chosen value="stg">Staging</chosen>
+<message from="user">
+and skip the migrations
+</message>
+</answer>
+</j3-wake>
+Reply with `say`; nothing else reaches them.
+```
+
+- `room` names the room whose turn asked the question; `say` in this turn delivers there. Without it, the question was asked in the bot's own conversation, and the answer continues there. An answer that continues a room is dispatched on its own, never together with the operator's private messages.
+- Each `<chosen>` is one selected option: its label as content and, when the bot gave one, its `value`. A typed answer is the operator's own text and goes in `<message from="user">` inside `<answer>`.
+- A dismissed question is `<answer dismissed="true">` with only its `<question>`. The base prompt treats a dismissal as a "no".
+- The question and the option labels were written by the bot, so they are not placed in a nonce block.
+
 Envelope shapes by kind:
 
 | Kind | Contains | The bot is expected to |
@@ -129,7 +149,7 @@ Bots act on J3 Bots through MCP tools. A tool's description is prompt text: it i
 
 | Tool | Parameters | Notes |
 | --- | --- | --- |
-| `say` | `text`; `attachments?` (paths in the workspace or URLs); `to?` (`"dm"` during a room turn); `done?` | The only way to speak. `done: true` marks the turn's delivery complete; the server ends the run once the call returns. The description says it is for the bot itself: a subagent or delegated worker sees the tool but not the base prompt, and must report in its final reply instead. The same sentence goes in `ask` and `message_bot`. |
+| `say` | `text`; `attachments?` (paths in the workspace or URLs); `to?` (`"dm"` during a room turn); `done?` | The only way to speak. `done: true` marks the turn's delivery complete; the run is not interrupted, and the description tells the bot to end its turn after it unless it is still waiting on work it started. The description says it is for the bot itself: a subagent or delegated worker sees the tool but not the base prompt, and must report in its final reply instead. The same sentence goes in `ask` and `message_bot`. |
 | `ask` | `prompt`; `options` (1 to 6, each with `label`, optional `value`, `description`, and `style`: `recommended` or `destructive`); `allow_custom?`; `multi_select?` | One question. Ends the turn. The answer arrives as the next `user` wake. A dismissed question is a "no". |
 | `message_bot` | `to` (bot id or room id); `text`; `urgent` (required) | Returns an acknowledgement only. Replies arrive as later wakes. |
 | `remember` | `fact` (one self-contained sentence); `tier` (`pinned` or `log`, default `log`); `scope` (`bot` or `shared`, default `bot`) | Deduplicated. Refuses text that looks like a credential. |

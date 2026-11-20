@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 /**
  * `@j3-bots/prompts`: everything a bot reads that J3 Bots writes.
  *

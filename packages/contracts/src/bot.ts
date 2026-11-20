@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Schema from "effect/Schema";
 import { BotId, EntryId, Label, ModelId, ProviderId } from "./base.ts";
 
@@ -58,7 +59,11 @@ const since = { since: Schema.DateTimeUtc };
  */
 const stalled = { stalled: Schema.Boolean };
 
-/** What the avatar shows. A bot is in exactly one state. */
+/**
+ * What the bot is doing. A bot is in exactly one state. Whether it has said
+ * something the operator has not read is not a state: it is the roster item's
+ * `unread`, and a client shows an idle bot with unread entries as done.
+ */
 export const BotState = Schema.Union([
   Schema.TaggedStruct("idle", {}),
   /** A turn started and no visible work has happened yet. */
@@ -78,8 +83,6 @@ export const BotState = Schema.Union([
     /** When a usage limit resets, if the provider said. */
     retryAt: Schema.NullOr(Schema.DateTimeUtc),
   }),
-  /** A turn finished with a result the operator has not read. */
-  Schema.TaggedStruct("done", {}),
 ]);
 export type BotState = typeof BotState.Type;
 

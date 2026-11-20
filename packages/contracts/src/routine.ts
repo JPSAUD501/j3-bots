@@ -1,9 +1,12 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Schema from "effect/Schema";
 import { BotId, EntryId, Label, NonNegativeInt, RoutineId, RoutineRunId } from "./base.ts";
 
 export const RoutineTrigger = Schema.Union([
   /** A five-field cron expression, evaluated in `timeZone` (an IANA name). */
   Schema.TaggedStruct("schedule", { cron: Label, timeZone: Label }),
+  /** One run at `at`. The routine pauses itself once that run has started. */
+  Schema.TaggedStruct("once", { at: Schema.DateTimeUtc }),
   /** An HTTP endpoint on the J3 Bots server. */
   Schema.TaggedStruct("webhook", {}),
 ]);
@@ -40,7 +43,7 @@ export const Routine = Schema.Struct({
   instruction: RoutineInstruction,
   trigger: RoutineTrigger,
   enabled: Schema.Boolean,
-  /** The webhook trigger's address, with its secret. Null for a schedule. */
+  /** The webhook trigger's address, with its secret. Null for the other triggers. */
   webhookUrl: Schema.NullOr(Schema.String),
   nextRunAt: Schema.NullOr(Schema.DateTimeUtc),
   lastRun: Schema.NullOr(RoutineRun),

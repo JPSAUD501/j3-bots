@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import type { BotId, RoomId, RoutineId } from "@j3-bots/contracts";
 import { SecureRandom } from "effect/crypto";
 import * as DateTime from "effect/DateTime";
@@ -50,6 +51,11 @@ export interface OperatorMessage {
 export interface AskAnswer {
   /** The question as the bot asked it. */
   readonly question: string;
+  /**
+   * The room whose turn asked, where `say` delivers in this turn too; `null`
+   * when the question was asked in the bot's own conversation.
+   */
+  readonly room: string | null;
   readonly response:
     | {
         readonly type: "answered";
@@ -386,7 +392,10 @@ const writeOperatorMessage = (
 
 const writeAnswer = (w: EnvelopeWriter, answer: AskAnswer): void => {
   const { response } = answer;
-  w.open("answer", [["dismissed", response.type === "dismissed" ? "true" : null]]);
+  w.open("answer", [
+    ["room", answer.room],
+    ["dismissed", response.type === "dismissed" ? "true" : null],
+  ]);
   w.inline("question", [], answer.question);
   if (response.type === "answered") {
     for (const option of response.chosen)

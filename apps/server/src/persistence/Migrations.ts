@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import * as SqliteMigrator from "@effect/sql-sqlite-node/SqliteMigrator";
 import * as Effect from "effect/Effect";
 import Migration0001 from "./migrations/0001_initial.ts";

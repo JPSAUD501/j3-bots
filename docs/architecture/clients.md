@@ -8,7 +8,7 @@ J3 Bots has three clients: a web app, a desktop app and a mobile app. All three 
 
 **`packages/client-runtime`** holds everything a client does that is not drawing:
 
-- the connection: pairing, authentication, reconnect with backoff, resuming subscriptions by sequence;
+- the connection: pairing, authentication, reconnect with backoff, resuming the subscriptions that resume and re-reading the ones that start with a snapshot;
 - state: the roster, the open conversation, pending cards, routines, engine status;
 - commands: sending a message, answering a card, stopping a bot, each with its own idempotency key and optimistic entry;
 - drafts and unsent messages.
@@ -61,11 +61,17 @@ Plain HTTP is accepted only on loopback and private address ranges. Everything e
 
 A new client is paired with a one-time code.
 
-1. The operator runs `j3 pair` on the host, or opens Devices in an already paired client. Either shows a short code and a QR code that expire in a few minutes.
-2. The new client sends the code and receives a device token. The server stores only a hash.
-3. Devices are listed in settings with their last activity, and can be revoked. Revoking closes that device's connection immediately.
+1. The operator runs `j3 pair` on the host, or opens Devices in an already paired client. Either shows a code and a QR code that expire in five minutes. The code is ten characters of Crockford base32 (no `I`, `L`, `O` or `U`); clients accept it in lower case and with spaces or dashes.
+2. The new client sends the code to `POST /api/pair` and receives a device token. The server stores only a hash. A code works once.
+3. Devices are listed in settings with their last activity, and can be revoked. Revoking closes that device's connections immediately.
 
 A device token grants everything the operator can do in J3 Bots. There are no narrower roles in the first versions.
+
+## Connecting
+
+Every connection is one device's. The client opens the socket at `/ws` with its token as an `Authorization: Bearer` header. A browser cannot set that header on a WebSocket, so the web client first trades the token for a single-use ticket at `POST /api/socket-ticket` and opens `/ws?ticket=…` within a minute. Either way the server checks the credential once, at the upgrade, and the socket is that device's until it closes.
+
+A 401 at the upgrade means the device is not paired or was revoked: the client stops reconnecting and asks to pair again. A closed socket otherwise means reconnect. Files go over HTTP with the same bearer: `POST /attachments` before sending a message that carries them, and `GET /attachments/:id` to open one.
 
 ## Behavior every client must get right
 

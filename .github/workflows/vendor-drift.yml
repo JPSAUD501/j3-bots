@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: Vendor drift
+
+# The vendored T3 Code contracts must be exactly what the vendoring script
+# produces from the engine pin. This re-runs it and fails on any difference:
+# a hand edit, a moved tag, or a change to the script's output.
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  vendor-drift:
+    name: Vendored contracts match the engine pin
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      # The script reads engine.json with Node; nothing needs installing.
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
+        with:
+          node-version-file: package.json
+          run-install: false
+
+      - name: Re-vendor
+        run: scripts/vendor-t3-contracts.sh
+
+      - name: Compare
+        run: git diff --exit-code -- packages/engine-t3/vendor && test -z "$(git status --porcelain -- packages/engine-t3/vendor)"

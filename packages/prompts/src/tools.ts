@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { Avatar, MessageText, Profile, RoutineInstruction } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -228,7 +229,7 @@ export const tools = {
       "Send a message to your user. This is the only way they hear you: reply text outside this tool reaches nobody.",
       'During a room turn it goes to the room; `to: "dm"` sends it to your user privately instead.',
       "Attach files you produced, rather than linking workspace paths they cannot open.",
-      "Set `done: true` on the message that delivers the result, after every other call has returned: the run ends once it does.",
+      "Set `done: true` on the message that delivers the result, after every other call has returned, then end your turn.",
       "Returns once the message is recorded.",
       BOT_ONLY,
     ],

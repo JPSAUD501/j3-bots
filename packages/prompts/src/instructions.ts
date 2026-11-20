@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // @effect-diagnostics nodeBuiltinImport:off -- reads this package's own templates once at load: they are part of the code, not runtime data.
 import { readFileSync } from "node:fs";
 import { defuseTags } from "./text.ts";

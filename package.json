@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "typecheck": "vp run -r typecheck",
-    "lint": "vp lint --report-unused-disable-directives --deny-warnings",
+    "lint": "scripts/check-spdx.sh && vp lint --report-unused-disable-directives --deny-warnings",
     "fmt": "vp fmt",
     "fmt:check": "vp fmt --check",
     "test": "vp run -r test",

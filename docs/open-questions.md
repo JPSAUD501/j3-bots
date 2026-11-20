@@ -58,10 +58,6 @@ A message sent through `say` arrives whole. The operator sees the avatar working
 
 **Settled by** using M1.
 
-## 11. How are files a bot produces served to clients?
-
-Bots write to their workspace on the host. Clients are elsewhere. The server needs an authenticated file route, size limits, and a decision about files outside the workspace.
-
-## 12. Which harnesses beyond Claude Code and Codex are worth supporting?
+## 11. Which harnesses beyond Claude Code and Codex are worth supporting?
 
 Agents connected through ACP have no system-prompt field. T3 Code sends each turn to them as its own text followed by the dispatched message, so J3 Bots' base prompt would have to ride in instruction files or in every envelope, which behaves differently after compaction.

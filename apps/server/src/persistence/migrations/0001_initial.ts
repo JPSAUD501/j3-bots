@@ -1,13 +1,33 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
 // Times are ISO-8601 UTC text. Kind-specific fields live in `*_json` columns and
 // are decoded with the schemas in @j3-bots/contracts. Engine identifiers
-// (`engine_*`, session ids, event cursors) are opaque values from
-// @j3-bots/engine-t3, stored and never parsed.
+// (`engine_*` columns and event cursors) are opaque values from
+// @j3-bots/engine-t3, stored and never parsed. Secret values have no column
+// anywhere: they pass from the client to the engine without being stored.
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+
+  // The operator's preferences: always exactly one row.
+  yield* sql`
+    CREATE TABLE settings (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      time_zone TEXT NOT NULL,
+      hop_limit INTEGER NOT NULL CHECK (hop_limit >= 1),
+      fan_out_limit INTEGER NOT NULL CHECK (fan_out_limit >= 1),
+      concurrent_turns INTEGER NOT NULL CHECK (concurrent_turns >= 1),
+      notification_previews INTEGER NOT NULL CHECK (notification_previews IN (0, 1)),
+      updated_at TEXT NOT NULL
+    )
+  `;
+  yield* sql`
+    INSERT INTO settings (
+      id, time_zone, hop_limit, fan_out_limit, concurrent_turns, notification_previews, updated_at
+    ) VALUES (1, 'UTC', 4, 1, 2, 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  `;
 
   yield* sql`
     CREATE TABLE bots (
@@ -25,32 +45,37 @@ export default Effect.gen(function* () {
       pinned INTEGER NOT NULL DEFAULT 0 CHECK (pinned IN (0, 1)),
       hidden INTEGER NOT NULL DEFAULT 0 CHECK (hidden IN (0, 1)),
       workspace_path TEXT NOT NULL UNIQUE,
-      engine_project_id TEXT,
+      engine_project_id TEXT UNIQUE,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )
   `;
   yield* sql`CREATE UNIQUE INDEX bots_one_primary ON bots (is_primary) WHERE is_primary = 1`;
 
-  // One per bot. The operator's read mark drives "unread" in the roster.
+  // One per bot. "Unread" is entries ordered after the read mark, nothing else.
   yield* sql`
     CREATE TABLE conversations (
       bot_id TEXT PRIMARY KEY REFERENCES bots (id) ON DELETE CASCADE,
-      read_through_entry_id TEXT,
+      read_through_order INTEGER,
       created_at TEXT NOT NULL
     )
   `;
 
+  // A room keeps a host while it is in use. Deleting the host's bot fails until
+  // the server has handed the room to another member or archived it, which it
+  // does in the same transaction (see server.md, Rooms).
   yield* sql`
     CREATE TABLE rooms (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
-      host_bot_id TEXT NOT NULL REFERENCES bots (id),
+      host_bot_id TEXT REFERENCES bots (id) ON DELETE SET NULL,
       hop_limit INTEGER NOT NULL CHECK (hop_limit >= 1),
       pinned INTEGER NOT NULL DEFAULT 0 CHECK (pinned IN (0, 1)),
-      read_through_entry_id TEXT,
+      read_through_order INTEGER,
+      archived_at TEXT,
       created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
+      updated_at TEXT NOT NULL,
+      CHECK (archived_at IS NOT NULL OR host_bot_id IS NOT NULL)
     )
   `;
 
@@ -64,17 +89,23 @@ export default Effect.gen(function* () {
     )
   `;
 
-  // Engine threads that give a bot working context. At most one live main
-  // session per bot; side sessions run routines.
+  // Engine threads that give a bot working context. The id is J3 Bots' own and
+  // is the key the engine session is opened with; the engine's id arrives once
+  // it has been opened. At most one live main session per bot; side sessions
+  // run routines. `admitted_turn_id` is the turn bot tool calls bind to.
   yield* sql`
     CREATE TABLE sessions (
       id TEXT PRIMARY KEY,
       bot_id TEXT NOT NULL REFERENCES bots (id) ON DELETE CASCADE,
       purpose TEXT NOT NULL CHECK (purpose IN ('main', 'side')),
+      engine_session_id TEXT UNIQUE,
+      prompt_version TEXT NOT NULL,
       run_count INTEGER NOT NULL DEFAULT 0,
       events_cursor TEXT,
+      admitted_turn_id TEXT,
       created_at TEXT NOT NULL,
-      retired_at TEXT
+      retired_at TEXT,
+      CHECK (admitted_turn_id IS NULL OR engine_session_id IS NOT NULL)
     )
   `;
   yield* sql`
@@ -99,42 +130,92 @@ export default Effect.gen(function* () {
   `;
   yield* sql`CREATE INDEX routines_due ON routines (next_run_at) WHERE enabled = 1`;
 
-  // Everything a bot does starts as a wake, recorded before it is dispatched.
-  // Its id is the idempotency key of the engine dispatch.
+  // One message sent into one session: the durable intent behind an engine
+  // dispatch, written before the engine is called. Its id is the dispatch's
+  // idempotency key. The session and the envelope never change once written,
+  // so every retry sends the same text to the same place.
+  yield* sql`
+    CREATE TABLE dispatches (
+      id TEXT PRIMARY KEY,
+      bot_id TEXT NOT NULL REFERENCES bots (id) ON DELETE CASCADE,
+      session_id TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+      delivery TEXT NOT NULL CHECK (delivery IN ('start', 'steer')),
+      steer_turn_id TEXT,
+      fresh_context INTEGER NOT NULL DEFAULT 0 CHECK (fresh_context IN (0, 1)),
+      envelope TEXT NOT NULL,
+      status TEXT NOT NULL
+        CHECK (status IN ('intended', 'applied', 'finished', 'abandoned')),
+      disposition TEXT CHECK (disposition IN ('started', 'steered', 'new-turn')),
+      engine_turn_id TEXT,
+      outcome_json TEXT,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      CHECK ((delivery = 'steer') = (steer_turn_id IS NOT NULL)),
+      CHECK (delivery = 'start' OR fresh_context = 0),
+      CHECK ((disposition IS NULL) = (status IN ('intended', 'abandoned'))),
+      CHECK ((disposition IS NULL) = (engine_turn_id IS NULL))
+    )
+  `;
+  yield* sql`
+    CREATE TRIGGER dispatches_immutable_intent
+    BEFORE UPDATE OF session_id, delivery, steer_turn_id, fresh_context, envelope ON dispatches
+    BEGIN
+      SELECT RAISE(ABORT, 'a dispatch keeps the session and envelope it was written with');
+    END
+  `;
+  yield* sql`
+    CREATE INDEX dispatches_open ON dispatches (session_id, status)
+    WHERE status IN ('intended', 'applied')
+  `;
+  yield* sql`
+    CREATE UNIQUE INDEX dispatches_turn ON dispatches (session_id, engine_turn_id)
+    WHERE disposition IN ('started', 'new-turn')
+  `;
+
+  // Everything a bot does starts as a wake, recorded with the entry that
+  // caused it. J3 Bots holds pending wakes itself and dispatches one bot's next
+  // wakes, coalesced into one dispatch, only when its session is idle.
   yield* sql`
     CREATE TABLE wakes (
       id TEXT PRIMARY KEY,
       bot_id TEXT NOT NULL REFERENCES bots (id) ON DELETE CASCADE,
       kind TEXT NOT NULL CHECK (kind IN ('user', 'room', 'bot', 'routine', 'system')),
+      priority INTEGER NOT NULL,
       room_id TEXT REFERENCES rooms (id) ON DELETE SET NULL,
       routine_id TEXT REFERENCES routines (id) ON DELETE SET NULL,
-      session_id TEXT REFERENCES sessions (id),
       hops INTEGER NOT NULL DEFAULT 0,
       payload_json TEXT NOT NULL,
-      status TEXT NOT NULL
-        CHECK (status IN ('pending', 'dispatched', 'running', 'waiting', 'finished')),
-      attempts INTEGER NOT NULL DEFAULT 0,
-      engine_turn_id TEXT,
-      outcome_json TEXT,
+      status TEXT NOT NULL CHECK (status IN ('pending', 'dispatched', 'finished', 'cancelled')),
+      dispatch_id TEXT REFERENCES dispatches (id) ON DELETE SET NULL,
       created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
+      updated_at TEXT NOT NULL,
+      CHECK (status NOT IN ('dispatched', 'finished') OR dispatch_id IS NOT NULL)
     )
   `;
-  yield* sql`CREATE INDEX wakes_open ON wakes (status, created_at) WHERE status <> 'finished'`;
-  yield* sql`CREATE INDEX wakes_bot ON wakes (bot_id, created_at)`;
+  yield* sql`
+    CREATE INDEX wakes_pending ON wakes (bot_id, priority, created_at) WHERE status = 'pending'
+  `;
+  yield* sql`CREATE INDEX wakes_dispatch ON wakes (dispatch_id) WHERE dispatch_id IS NOT NULL`;
 
-  // Messages and cards, in a conversation or in a room. `seq` orders them.
+  // Messages and cards, in a conversation or in a room. `position` is the
+  // entry's order in its target, assigned once; `seq` only says when it was
+  // written. A bot author's id outlives the bot, so it has no foreign key.
   yield* sql`
     CREATE TABLE entries (
       seq INTEGER PRIMARY KEY AUTOINCREMENT,
       id TEXT NOT NULL UNIQUE,
       conversation_bot_id TEXT REFERENCES conversations (bot_id) ON DELETE CASCADE,
       room_id TEXT REFERENCES rooms (id) ON DELETE CASCADE,
+      position INTEGER NOT NULL CHECK (position >= 0),
       kind TEXT NOT NULL CHECK (
-        kind IN ('message', 'question', 'approval', 'work-fold', 'notice', 'handoff', 'routine-change')
+        kind IN (
+          'message', 'question', 'approval', 'secret-request', 'work-fold', 'notice', 'handoff',
+          'routine-change'
+        )
       ),
       author_kind TEXT NOT NULL CHECK (author_kind IN ('operator', 'bot', 'system')),
-      author_bot_id TEXT REFERENCES bots (id) ON DELETE SET NULL,
+      author_bot_id TEXT,
       wake_id TEXT REFERENCES wakes (id) ON DELETE SET NULL,
       command_id TEXT UNIQUE,
       body_json TEXT NOT NULL,
@@ -144,9 +225,99 @@ export default Effect.gen(function* () {
       CHECK ((author_kind = 'bot') = (author_bot_id IS NOT NULL))
     )
   `;
-  yield* sql`CREATE INDEX entries_conversation ON entries (conversation_bot_id, seq)`;
-  yield* sql`CREATE INDEX entries_room ON entries (room_id, seq)`;
+  yield* sql`
+    CREATE UNIQUE INDEX entries_conversation ON entries (conversation_bot_id, position)
+    WHERE conversation_bot_id IS NOT NULL
+  `;
+  yield* sql`
+    CREATE UNIQUE INDEX entries_room ON entries (room_id, position) WHERE room_id IS NOT NULL
+  `;
   yield* sql`CREATE INDEX entries_wake ON entries (wake_id) WHERE wake_id IS NOT NULL`;
+  yield* sql`
+    CREATE TRIGGER entries_fixed_place
+    BEFORE UPDATE OF conversation_bot_id, room_id, position, kind ON entries
+    BEGIN
+      SELECT RAISE(ABORT, 'an entry keeps its target, its place and its kind');
+    END
+  `;
+
+  // An `ask` card: the wake that asked, where the follow-up goes, and the wake
+  // the answer created, set in the same transaction as the answer.
+  yield* sql`
+    CREATE TABLE ask_cards (
+      entry_id TEXT PRIMARY KEY REFERENCES entries (id) ON DELETE CASCADE,
+      origin_wake_id TEXT REFERENCES wakes (id) ON DELETE SET NULL,
+      continuation_json TEXT NOT NULL,
+      follow_up_wake_id TEXT UNIQUE REFERENCES wakes (id) ON DELETE SET NULL
+    )
+  `;
+
+  // A card for something the engine holds a turn on: an approval, an engine
+  // question or a secret request. It closes with the request.
+  yield* sql`
+    CREATE TABLE engine_requests (
+      entry_id TEXT PRIMARY KEY REFERENCES entries (id) ON DELETE CASCADE,
+      session_id TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+      engine_request_id TEXT NOT NULL,
+      engine_turn_id TEXT NOT NULL,
+      UNIQUE (session_id, engine_request_id)
+    )
+  `;
+
+  // What a side session did, for the bot's next envelope in its main session.
+  yield* sql`
+    CREATE TABLE catch_up_notes (
+      id TEXT PRIMARY KEY,
+      bot_id TEXT NOT NULL REFERENCES bots (id) ON DELETE CASCADE,
+      text TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      delivered_dispatch_id TEXT REFERENCES dispatches (id) ON DELETE SET NULL
+    )
+  `;
+  yield* sql`
+    CREATE INDEX catch_up_notes_pending ON catch_up_notes (bot_id, created_at)
+    WHERE delivered_dispatch_id IS NULL
+  `;
+
+  // A non-urgent teammate message, held for the top of the recipient's next
+  // envelope. The sender's id outlives the sender.
+  yield* sql`
+    CREATE TABLE held_messages (
+      id TEXT PRIMARY KEY,
+      recipient_bot_id TEXT NOT NULL REFERENCES bots (id) ON DELETE CASCADE,
+      sender_bot_id TEXT NOT NULL,
+      handoff_entry_id TEXT REFERENCES entries (id) ON DELETE SET NULL,
+      text TEXT NOT NULL,
+      hops INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      delivered_dispatch_id TEXT REFERENCES dispatches (id) ON DELETE SET NULL
+    )
+  `;
+  yield* sql`
+    CREATE INDEX held_messages_pending ON held_messages (recipient_bot_id, created_at)
+    WHERE delivered_dispatch_id IS NULL
+  `;
+
+  // Files the operator sent and files bots delivered. Bytes live under
+  // `<J3_HOME>/attachments/`, at `storage_path` relative to it. A deleted
+  // bot's files stay with the room messages that carry them.
+  yield* sql`
+    CREATE TABLE attachments (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      media_type TEXT NOT NULL,
+      size INTEGER NOT NULL CHECK (size >= 0),
+      sha256 TEXT NOT NULL,
+      storage_path TEXT NOT NULL UNIQUE,
+      source TEXT NOT NULL CHECK (source IN ('operator', 'bot')),
+      bot_id TEXT REFERENCES bots (id) ON DELETE SET NULL,
+      entry_id TEXT REFERENCES entries (id) ON DELETE SET NULL,
+      created_at TEXT NOT NULL,
+      CHECK (source = 'bot' OR bot_id IS NULL)
+    )
+  `;
+  yield* sql`CREATE INDEX attachments_bot ON attachments (bot_id, created_at) WHERE bot_id IS NOT NULL`;
+  yield* sql`CREATE INDEX attachments_entry ON attachments (entry_id) WHERE entry_id IS NOT NULL`;
 
   yield* sql`
     CREATE TABLE routine_runs (
@@ -168,7 +339,6 @@ export default Effect.gen(function* () {
       name TEXT NOT NULL,
       token_hash TEXT NOT NULL UNIQUE,
       push_token TEXT,
-      notification_prefs_json TEXT NOT NULL DEFAULT '{}',
       paired_at TEXT NOT NULL,
       last_seen_at TEXT,
       revoked_at TEXT
@@ -186,8 +356,8 @@ export default Effect.gen(function* () {
     )
   `;
 
-  // What subscriptions resume from. Each change to something a client renders
-  // appends a row in its scope (`roster`, `conversation:<bot>`, `room:<room>`,
+  // What resumable subscriptions resume from. Each change to something a client
+  // renders appends a row in its scope (`conversation:<bot>`, `room:<room>`,
   // `routines:<bot>`); a client resumes with the last `seq` it applied. Pruning
   // old rows is safe: a cursor older than what is kept gets a fresh snapshot.
   yield* sql`

@@ -119,6 +119,6 @@ A bot is in exactly one of these, and the avatar carries it:
 | Working | A turn is running tools |
 | Waiting | The bot asked a question or needs an approval |
 | Blocked | The turn cannot continue: provider limit, error, engine unreachable |
-| Done | A turn finished with a result the operator has not read |
+| Done | Idle, with a result the operator has not read. It follows from the unread mark, so reading the result makes the bot idle on every device |
 
 "Working" and "stuck" must never look the same. A bot whose turn has produced no activity for a long time is shown as possibly stalled, with a way to check on it or stop it.
