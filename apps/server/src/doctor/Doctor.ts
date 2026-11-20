@@ -78,6 +78,8 @@ const HOME_SUMMARIES: Record<Home.HomeNotPrivate["reason"], (home: string) => st
     `${home} belongs to another user. The server refuses to start until this user owns it.`,
   "open-to-others": (home) =>
     `Other users on this machine can open ${home}, which holds the database, the engine's credential and the admin socket. The server refuses to start until only this user can.`,
+  "closed-to-owner": (home) =>
+    `This user's own permissions on ${home} do not let it read, write and open the files there. The server refuses to start until they do.`,
 };
 
 const homeCheck = Effect.fn("doctor.home")(function* (home: string) {

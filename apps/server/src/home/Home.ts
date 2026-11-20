@@ -25,7 +25,7 @@ const shellWord = (value: string) =>
 /** The home is not a folder only this user can open. */
 export class HomeNotPrivate extends Schema.TaggedError<HomeNotPrivate>()("HomeNotPrivate", {
   home: Schema.String,
-  reason: Schema.Literals(["not-a-folder", "not-owned", "open-to-others"]),
+  reason: Schema.Literals(["not-a-folder", "not-owned", "open-to-others", "closed-to-owner"]),
 }) {
   override get message(): string {
     switch (this.reason) {
@@ -35,6 +35,8 @@ export class HomeNotPrivate extends Schema.TaggedError<HomeNotPrivate>()("HomeNo
         return `${this.home} belongs to another user, so this user cannot keep it private. ${this.fix}`;
       case "open-to-others":
         return `Other users on this machine can open ${this.home}, which holds the database, the engine's credential and the admin socket. ${this.fix}`;
+      case "closed-to-owner":
+        return `This user's own permissions on ${this.home} do not let it read, write and open the files there. ${this.fix}`;
     }
   }
 
@@ -46,15 +48,16 @@ export class HomeNotPrivate extends Schema.TaggedError<HomeNotPrivate>()("HomeNo
       case "not-owned":
         return `Give it to this user: \`sudo chown -R "$(id -un)": ${shellWord(this.home)} && chmod 700 ${shellWord(this.home)}\`.`;
       case "open-to-others":
+      case "closed-to-owner":
         return `Run \`chmod 700 ${shellWord(this.home)}\`.`;
     }
   }
 }
 
 /**
- * Whether `home` is a folder owned by this user that no group and no other
- * user can open. A home that does not exist yet passes: the server creates it
- * private.
+ * Whether `home` is a folder owned by this user, which this user may read,
+ * write and search and no group and no other user can open. A home that does
+ * not exist yet passes: the server creates it private.
  */
 export const checkPrivate = Effect.fn("Home.checkPrivate")(function* (home: string) {
   const fs = yield* FileSystem.FileSystem;
@@ -69,6 +72,9 @@ export const checkPrivate = Effect.fn("Home.checkPrivate")(function* (home: stri
   }
   if ((info.value.mode & 0o077) !== 0) {
     return yield* new HomeNotPrivate({ home, reason: "open-to-others" });
+  }
+  if ((info.value.mode & 0o700) !== 0o700) {
+    return yield* new HomeNotPrivate({ home, reason: "closed-to-owner" });
   }
 });
 

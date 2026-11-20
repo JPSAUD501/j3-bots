@@ -146,11 +146,11 @@ it.layer(NodeServices.layer)("server configuration", (it) => {
       const locked = yield* freshHome;
       yield* writeConfigFile(locked, "{}");
       yield* fs.chmod(locked, 0o500);
-      const readOnly = yield* withEnvironment(initialize, { J3_HOME: locked }).pipe(
+      const closed = yield* withEnvironment(initialize, { J3_HOME: locked }).pipe(
         Effect.exit,
         Effect.ensuring(fs.chmod(locked, 0o700).pipe(Effect.orDie)),
       );
-      assert.deepInclude(failure(readOnly), { _tag: "HomeNotWritable", home: locked });
+      assert.deepInclude(failure(closed), { _tag: "HomeNotPrivate", reason: "closed-to-owner" });
     }).pipe(Effect.scoped),
   );
 

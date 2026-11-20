@@ -110,4 +110,18 @@ it.layer(NodeServices.layer)("home", (it) => {
       assert.deepStrictEqual(yield* fs.readDirectory(config.home), []);
     }).pipe(Effect.scoped),
   );
+
+  it.effect("refuses a home this user cannot search, as `chmod -R 600` leaves it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { home } = yield* freshHome;
+      yield* fs.chmod(home, 0o600);
+      const error = yield* Home.checkPrivate(home).pipe(
+        Effect.flip,
+        Effect.ensuring(fs.chmod(home, 0o700).pipe(Effect.orDie)),
+      );
+      assert.strictEqual(error.reason, "closed-to-owner");
+      assert.include(error.fix, "chmod 700");
+    }).pipe(Effect.scoped),
+  );
 });
