@@ -9,6 +9,7 @@ import * as Fiber from "effect/Fiber";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import { Bots } from "../bots/Bots.ts";
+import { Observer } from "./Observer.ts";
 import { BotTools } from "../tools/BotTools.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
@@ -375,6 +376,83 @@ it.effect(
       const session = yield* engineSession(bot.id);
       assert.strictEqual(yield* control.sessionPermissionMode(session), "supervised");
     }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "applies a permission mode lowered while the engine was unavailable before the bot's next turn",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const bots = yield* Bots;
+      yield* TestClock.adjust("1 second");
+      const bot = yield* bots.create({
+        commandId: command(),
+        draft: { name: "Ana", job: "", permissionMode: "full-access" },
+      });
+      const session = yield* engineSession(bot.id);
+      const main = yield* mainSessionId(bot.id);
+
+      // Saved while the engine cannot take it, and a message follows.
+      yield* control.setReachable(false);
+      const lowered = yield* bots.update({
+        commandId: command(),
+        botId: bot.id,
+        changes: { permissionMode: "supervised" },
+      });
+      assert.strictEqual(lowered.permissionMode, "supervised");
+      yield* sendToBot(bot.id, "Deploy the release.");
+
+      // The engine is back and the session still runs in full access: the
+      // message waits, with the session's events known.
+      const aligning = yield* control.holdNext("configureSession");
+      yield* control.setReachable(true);
+      yield* aligning.entered;
+      const observer = yield* Observer;
+      yield* until(observer.watch(main).pipe(Effect.andThen(observer.ready(main))));
+      yield* (yield* Pipeline).dispatchPending;
+      assert.strictEqual(yield* control.sessionPermissionMode(session), "full-access");
+      assert.strictEqual(yield* timesSent(session, "Deploy the release."), 0);
+
+      yield* aligning.release;
+      yield* nextTurn(bot.id);
+      assert.strictEqual(yield* control.sessionPermissionMode(session), "supervised");
+      assert.strictEqual(yield* timesSent(session, "Deploy the release."), 1);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("aligns a session again after its alignment failed, before it takes work", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bots = yield* Bots;
+    yield* TestClock.adjust("1 second");
+    const bot = yield* bots.create({
+      commandId: command(),
+      draft: { name: "Ana", job: "", permissionMode: "full-access" },
+    });
+    const session = yield* engineSession(bot.id);
+
+    // The engine applies the change, and its reply is lost: the server cannot
+    // tell, and the session takes no work.
+    const aligning = yield* control.holdNext("configureSession");
+    yield* bots.update({
+      commandId: command(),
+      botId: bot.id,
+      changes: { permissionMode: "supervised" },
+    });
+    yield* aligning.entered;
+    yield* sendToBot(bot.id, "Deploy the release.");
+    yield* control.loseNextReply;
+    yield* aligning.release;
+    yield* (yield* Rotations).rotateDue;
+    yield* flushed(bot.id);
+    assert.strictEqual(yield* timesSent(session, "Deploy the release."), 0);
+
+    // Tried again after its backoff.
+    yield* TestClock.adjust("5 seconds");
+    yield* nextTurn(bot.id);
+    assert.strictEqual(yield* control.sessionPermissionMode(session), "supervised");
+    assert.strictEqual(yield* timesSent(session, "Deploy the release."), 1);
+  }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect("never opens a session on the provider its bot moved away from", () =>

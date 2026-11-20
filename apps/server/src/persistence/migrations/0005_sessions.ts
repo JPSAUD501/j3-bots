@@ -26,6 +26,15 @@ export default Effect.gen(function* () {
   // row first and the engine thread after, retried until the engine answers.
   yield* sql`ALTER TABLE sessions ADD COLUMN engine_retired_at TEXT`;
 
+  // How many changes of its bot's model or permission mode a live session was
+  // not brought to yet. Nothing is planned or sent into a session above zero
+  // (`bots/EngineSessions.ts`). The sessions opened before are aligned once.
+  yield* sql`ALTER TABLE sessions ADD COLUMN settings_pending INTEGER NOT NULL DEFAULT 0`;
+  yield* sql`
+    UPDATE sessions SET settings_pending = 1
+    WHERE retired_at IS NULL AND engine_session_id IS NOT NULL
+  `;
+
   // Where a bot's conversation starts for a digest: the position of its first
   // entry after the operator's latest fresh start. Earlier entries are never
   // told to a session again (`turns/Rotations.ts`).

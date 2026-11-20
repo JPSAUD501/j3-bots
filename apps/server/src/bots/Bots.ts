@@ -59,10 +59,12 @@ export class Bots extends Context.Service<
       readonly draft: BotDraft;
     }) => Effect.Effect<Bot, CommandError>;
     /**
-     * A model of another provider stops the bot's work in progress, then
-     * replaces its main session, with a digest of the conversation; another
-     * model of the same provider, or a permission mode, applies to the
-     * session from its next turn.
+     * Succeeds once the change is saved. A model of another provider stops
+     * the bot's work in progress, then replaces its main session, with a
+     * digest of the conversation. Another model of the same provider, or a
+     * permission mode, is applied to the session by the rotator before its
+     * next turn: the session takes no work until the engine has it, retried
+     * while the engine is unavailable (`EngineSessions`).
      */
     readonly update: (input: {
       readonly commandId: CommandId;
@@ -220,6 +222,9 @@ export const layer = Layer.effect(
           const at = yield* DateTime.now;
           if (change.primary === true && !before.bot.primary) yield* makePrimary(at);
           yield* store.update(input.botId, change, at);
+          if (change.model !== undefined || change.permissionMode !== undefined) {
+            yield* sessions.settingsChanged(input.botId);
+          }
           // Compared with the provider the bot's live main session runs on, in
           // this transaction: an earlier change may not have reached it yet.
           // Moving to another provider is the operator's own action, so it
@@ -240,25 +245,6 @@ export const layer = Layer.effect(
       });
       if (change.profile !== undefined || change.model !== undefined) {
         yield* workspaces.render(bot.id);
-      }
-      // A session on another provider is not configured: the one that
-      // replaces it opens with the bot's settings.
-      if (change.model !== undefined || change.permissionMode !== undefined) {
-        yield* sessions
-          .configure(bot.id, {
-            ...(change.model === undefined ? {} : { model: change.model }),
-            ...(change.permissionMode === undefined
-              ? {}
-              : { permissionMode: change.permissionMode }),
-          })
-          .pipe(
-            Effect.catch((error) =>
-              Effect.logWarning("A bot's engine session keeps its previous settings", {
-                botId: bot.id,
-                error: error._tag,
-              }),
-            ),
-          );
       }
       return bot;
     });

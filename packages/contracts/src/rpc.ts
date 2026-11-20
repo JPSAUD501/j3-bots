@@ -265,6 +265,12 @@ export const BotRpcs = RpcGroup.make(
     success: Bot,
     error: CommandError,
   }),
+  /**
+   * Succeeds once the change is saved. A new model or permission mode reaches
+   * the bot's working session before its next turn: until the engine has it,
+   * the bot takes no new work, and the server keeps trying while the engine
+   * is unavailable. A turn already running keeps the settings it started with.
+   */
   Rpc.make("bot.update", {
     payload: {
       ...command,

@@ -46,6 +46,8 @@ A bot's permission mode is the engine's runtime mode for its sessions.
 
 J3 Bots' default for a new bot is **Auto** where the provider supports it and **Supervised** where it does not. Full access is a choice the operator makes per bot, with a plain statement of what it means.
 
+A changed mode is the bot's from the moment it is saved. A session the engine has not been brought to it, because the engine was restarting or unavailable when the operator changed it, takes no turn until it has been: the server sends no new work into it, retries the change, and only then lets the next turn start ([Server](server.md#sessions), Settings alignment). A turn already running keeps the mode it started with; stopping the bot ends it.
+
 In every mode, the bot's own `j3` tools run without asking: they only reach J3 Bots, which applies its own rules to each call. The engine's and the harness's other tools keep the mode's rules. The Codex behavior is **Verified** on release `4969`; see [Engine](engine.md#behaviors-j3-bots-designs-around).
 
 J3 Bots adds no sandbox. A bot in full access can read the operator's SSH keys, their other bots' folders, and J3 Bots' own database.

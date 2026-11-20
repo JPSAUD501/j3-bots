@@ -40,7 +40,10 @@ export const ROTATE_AFTER_RUNS = 200;
  */
 const BACKGROUND_RECHECK = Duration.seconds(30);
 
-/** A failed opening of a bot's main session is tried again: from 5 s, doubling up to 5 min. */
+/**
+ * A failed opening or alignment of a bot's main session is tried again: from
+ * 5 s, doubling up to 5 min.
+ */
 const openRetry = (failures: number) =>
   Duration.min(Duration.seconds(5 * 2 ** Math.min(failures - 1, 6)), Duration.minutes(5));
 
@@ -92,15 +95,17 @@ const waitsFor = (session: Due): Waits =>
  * use, retried until the engine answers, and its events are no longer
  * followed.
  *
- * It also keeps every live bot's main session opened: a missing or unopened
- * one is opened under its existing key on each pass, with backoff after a
- * failure, so a bot never waits for an engine restart to get one. And it asks
+ * It also keeps every live bot's main session opened and running the bot's
+ * settings: a missing or unopened one is opened under its existing key, and
+ * one with a settings change it was not brought to is aligned, on each pass,
+ * with backoff after a failure, so a bot never waits for an engine restart to
+ * get one, and never takes work with settings the operator replaced. And it asks
  * for the rotation of a session that ran `ROTATE_AFTER_RUNS` turns.
  */
 export class Rotations extends Context.Service<
   Rotations,
   {
-    /** One pass over the sessions due and the bots without an opened main session. */
+    /** One pass over the sessions due and the bots without an opened, aligned main session. */
     readonly rotateDue: Effect.Effect<void>;
     /** The rotator, for as long as the scope lives. */
     readonly run: Effect.Effect<never>;
@@ -164,8 +169,12 @@ export const layer = Layer.effect(
       `,
     });
 
-    /** Live bots whose main session is missing, or not opened yet. */
-    const unopened = SqlSchema.findAll({
+    /**
+     * Live bots whose main session is missing, not opened yet, or not brought
+     * to the bot's settings. A lost session, and one on a provider the bot
+     * left, are replaced instead.
+     */
+    const unprovisioned = SqlSchema.findAll({
       Request: Schema.Void,
       Result: Schema.Struct({ id: BotId }),
       execute: () => sql`
@@ -173,6 +182,7 @@ export const layer = Layer.effect(
           SELECT 1 FROM sessions s
           WHERE s.bot_id = b.id AND s.purpose = 'main' AND s.retired_at IS NULL
             AND s.engine_session_id IS NOT NULL
+            AND (s.settings_pending = 0 OR s.lost_at IS NOT NULL OR s.provider_id <> b.provider_id)
         )
         ORDER BY b.rowid
       `,
@@ -358,8 +368,9 @@ export const layer = Layer.effect(
 
     /**
      * Opens the bot's main session under its existing key, or a new one if it
-     * has none. An engine that takes no commands ends the pass, which runs
-     * again once it is ready; any other failure is tried again with backoff.
+     * has none, and brings it to the bot's settings. An engine that takes no
+     * commands ends the pass, which runs again once it is ready; any other
+     * failure is tried again with backoff.
      */
     const open = Effect.fn("Rotations.open")(function* (
       botId: BotId,
@@ -387,10 +398,13 @@ export const layer = Layer.effect(
       const at = DateTime.addDuration(now, openRetry(failures));
       openFailures.set(botId, { failures, at });
       outcome.until(at);
-      yield* Effect.logWarning("A bot's main session could not be opened; it is tried again", {
-        botId,
-        cause: opened.cause,
-      });
+      yield* Effect.logWarning(
+        "A bot's main session could not be opened or aligned; it is tried again",
+        {
+          botId,
+          cause: opened.cause,
+        },
+      );
       return "done" as const;
     });
 
@@ -407,7 +421,7 @@ export const layer = Layer.effect(
           if (result === "deferred") outcome.defer();
           if (result === "replaced") replaced = true;
         }
-        for (const { id } of yield* unopened(undefined).pipe(Effect.orDie)) {
+        for (const { id } of yield* unprovisioned(undefined).pipe(Effect.orDie)) {
           if ((yield* open(id, outcome)) === "unavailable") return { _tag: "unavailable" } as const;
         }
         // Wakes held for a replaced session go to the new one, opened by now

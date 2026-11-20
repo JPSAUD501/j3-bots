@@ -85,6 +85,7 @@ const SessionState = Schema.Struct({
   lost: Schema.BooleanFromBit,
   gone: Schema.BooleanFromBit,
   stop_unsettled: Schema.BooleanFromBit,
+  unaligned: Schema.BooleanFromBit,
 });
 
 /** How staging a dispatch's files went. */
@@ -172,7 +173,8 @@ export const layer = Layer.effect(
           (s.retired_at IS NOT NULL OR s.lost_at IS NOT NULL) AS gone,
           EXISTS (
             SELECT 1 FROM stop_targets t WHERE t.session_id = s.id AND t.stopped_at IS NULL
-          ) AS stop_unsettled
+          ) AS stop_unsettled,
+          s.settings_pending > 0 AS unaligned
         FROM sessions s WHERE s.id = ${sessionId}
       `,
     });
@@ -466,6 +468,10 @@ export const layer = Layer.effect(
           const claimed = yield* sql<{ readonly attempts: number }>`
             UPDATE dispatches SET attempts = attempts + 1, updated_at = ${at}
             WHERE id = ${row.id} AND status = 'intended' AND attempts = ${row.attempts}
+              AND NOT EXISTS (
+                SELECT 1 FROM sessions s
+                WHERE s.id = dispatches.session_id AND s.settings_pending > 0
+              )
               AND (
                 attempts > 0
                 OR (
@@ -572,6 +578,11 @@ export const layer = Layer.effect(
         return "settled" as const;
       }
       const sessionId = session.engine_session_id;
+
+      // Nothing goes into a session its bot's settings have not reached yet,
+      // not even a resend, which the engine would start as a turn if it never
+      // had the key. Its alignment nudges the workers.
+      if (session.unaligned) return "skipped" as const;
 
       // Nothing new is sent into a session before its events are followed
       // and known from a committed cursor or snapshot; the event that makes

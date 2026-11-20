@@ -507,10 +507,11 @@ export const layer = Layer.effect(
 
     /**
      * The bot's main session, if it can be planned into: live, opened in the
-     * engine, taking new work (`takesNewWorkSql`), and past the deadline of a
-     * busy refusal, which its next applied event ends sooner. A session due
-     * for any rotation but the run limit's takes nothing new: its bot's wakes
-     * wait for the session that replaces it.
+     * engine, running its bot's settings (`EngineSessions`), taking new work
+     * (`takesNewWorkSql`), and past the deadline of a busy refusal, which its
+     * next applied event ends sooner. A session due for any rotation but the
+     * run limit's takes nothing new: its bot's wakes wait for the session that
+     * replaces it. One not aligned yet takes nothing until it is.
      */
     const mainSession = SqlSchema.findOneOption({
       Request: Schema.Struct({ botId: Schema.String, now: Schema.String }),
@@ -518,8 +519,8 @@ export const layer = Layer.effect(
       execute: ({ botId, now }) => sql`
         SELECT id, bot_id FROM sessions
         WHERE bot_id = ${botId} AND purpose = 'main' AND retired_at IS NULL
-          AND lost_at IS NULL AND engine_session_id IS NOT NULL AND ${takesNewWorkSql(sql)}
-          AND (busy_until IS NULL OR busy_until <= ${now})
+          AND lost_at IS NULL AND engine_session_id IS NOT NULL AND settings_pending = 0
+          AND ${takesNewWorkSql(sql)} AND (busy_until IS NULL OR busy_until <= ${now})
       `,
     });
 
@@ -529,7 +530,8 @@ export const layer = Layer.effect(
       Result: Schema.Struct({ id: SessionRowId }),
       execute: (id) => sql`
         SELECT id FROM sessions
-        WHERE id = ${id} AND retired_at IS NULL AND lost_at IS NULL AND ${takesNewWorkSql(sql)}
+        WHERE id = ${id} AND retired_at IS NULL AND lost_at IS NULL AND settings_pending = 0
+          AND ${takesNewWorkSql(sql)}
       `,
     });
 
@@ -902,9 +904,9 @@ export const layer = Layer.effect(
      * Writes the dispatch for a plan, in one transaction: its envelope, its
      * files in order, its wakes linked, and the notes and held messages the
      * envelope consumed. Nothing changes if the plan no longer holds: its
-     * session was retired, lost or became due for a rotation that takes no new
-     * work since it was chosen (`stale`, planned again), or its wakes are no
-     * longer pending.
+     * session was retired, lost, became due for a rotation that takes no new
+     * work, or its bot's settings changed since it was chosen (`stale`,
+     * planned again), or its wakes are no longer pending.
      */
     const writeDispatch = Effect.fn("Pipeline.writeDispatch")(function* (plan: Plan) {
       return yield* transaction(

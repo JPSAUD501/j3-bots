@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BotId, ModelChoice, type PermissionMode, ProviderId } from "@j3-bots/contracts";
+import { BotId, type ModelChoice, type PermissionMode, ProviderId } from "@j3-bots/contracts";
 import {
   Engine,
   type EngineDown,
@@ -22,17 +22,10 @@ import * as SqlSchema from "effect/sql/SqlSchema";
 import { Ids } from "../Ids.ts";
 import { timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
+import { SessionGate } from "../turns/SessionGate.ts";
 import { Signals } from "../turns/Signals.ts";
 import { BotStore } from "./BotStore.ts";
 import { Workspaces } from "./Workspaces.ts";
-
-const sameModel = Schema.toEquivalence(ModelChoice);
-
-/** What a session is configured with from its bot's settings. */
-interface Settings {
-  readonly model: ModelChoice;
-  readonly permissionMode: PermissionMode;
-}
 
 const SessionRow = Schema.Struct({
   id: Schema.String,
@@ -40,6 +33,21 @@ const SessionRow = Schema.Struct({
   engine_session_id: Schema.NullOr(SessionId),
   provider_id: ProviderId,
 });
+
+/** A live session's alignment with its bot's settings. */
+const Alignment = Schema.Struct({
+  engine_session_id: Schema.NullOr(SessionId),
+  provider_id: ProviderId,
+  settings_pending: Schema.Int,
+});
+
+/** What the engine is asked to bring a session to, and the changes that covers. */
+interface Pending {
+  readonly sessionId: SessionId;
+  readonly model: ModelChoice;
+  readonly permissionMode: PermissionMode;
+  readonly changes: number;
+}
 
 /** A bot session as the server knows it. */
 export interface BotSession {
@@ -57,26 +65,38 @@ export interface BotSession {
  * replaced (`turns/Rotations.ts`), never opened on the provider it no longer
  * has.
  *
- * Opening is reconciled rather than done once: after a bot is created, and by
- * the rotator for every live bot without an opened main session, so a bot
- * whose session could not be opened gets it once the engine takes it.
+ * The bot's saved settings are what its session runs with. A session row
+ * counts the changes of its bot's model or permission mode it was not brought
+ * to yet (`settings_pending`): a new row starts at one, since an opening
+ * retried under its key answers with the settings of its first attempt, and a
+ * change adds one in the transaction that saves it. The dispatcher plans
+ * nothing into a session above zero, the sender sends nothing into it and a
+ * held engine queue is not resumed there, so no turn starts there with
+ * settings the operator replaced. Aligning sends the
+ * bot's settings as they stand, in the session's gate, and sets the count back
+ * to zero only if no change committed meanwhile.
+ *
+ * Opening and aligning are reconciled rather than done once: after a bot is
+ * created or changed, and by the rotator, with backoff, for every live bot
+ * whose main session is missing, unopened or not aligned, so a bot whose
+ * session could not be opened or aligned gets it once the engine takes it.
  */
 export class EngineSessions extends Context.Service<
   EngineSessions,
   {
-    /** Gives the bot its workspace, project and main session, whichever are missing. */
+    /**
+     * Gives the bot its workspace, project and main session, whichever are
+     * missing, and brings the session to the bot's settings.
+     */
     readonly provision: (
       botId: BotId,
-    ) => Effect.Effect<void, EngineDown | ProjectNotFound | ModelUnavailable>;
+    ) => Effect.Effect<void, EngineDown | ProjectNotFound | ModelUnavailable | SessionNotFound>;
     /**
-     * Applies a new model or permission mode to the bot's main session, when
-     * it runs on the model's provider: a session on another provider is being
-     * replaced, and the one that replaces it opens with the bot's settings.
+     * Records that the bot's model or permission mode changed: its main
+     * session takes no work until the rotator aligned it. Runs in the
+     * caller's transaction, the one that saves the change.
      */
-    readonly configure: (
-      botId: BotId,
-      changes: { readonly model?: ModelChoice; readonly permissionMode?: PermissionMode },
-    ) => Effect.Effect<void, EngineDown | SessionNotFound | ModelUnavailable>;
+    readonly settingsChanged: (botId: BotId) => Effect.Effect<void>;
     /** Removes the bot's project, and every session in it, from the engine. */
     readonly removeProject: (botId: BotId) => Effect.Effect<void, EngineDown>;
     /**
@@ -102,6 +122,7 @@ export const layer = Layer.effect(
     const workspaces = yield* Workspaces;
     const ids = yield* Ids;
     const signals = yield* Signals;
+    const gate = yield* SessionGate;
     // One provisioning at a time: a bot's creation and the rotator may both
     // find its session missing.
     const provisioning = yield* Semaphore.make(1);
@@ -137,9 +158,10 @@ export const layer = Layer.effect(
         if (Option.isSome(existing)) return { bot, session: existing.value };
         const id = yield* ids.make("session");
         yield* sql`
-        INSERT INTO sessions (id, bot_id, purpose, prompt_version, provider_id, created_at)
-        VALUES (
-          ${id}, ${botId}, 'main', ${PROMPT_VERSION}, ${bot.model.providerId},
+        INSERT INTO sessions (
+          id, bot_id, purpose, prompt_version, provider_id, settings_pending, created_at
+        ) VALUES (
+          ${id}, ${botId}, 'main', ${PROMPT_VERSION}, ${bot.model.providerId}, 1,
           ${timeText(yield* DateTime.now)}
         )
       `;
@@ -157,6 +179,99 @@ export const layer = Layer.effect(
       Effect.orDie,
     );
 
+    const settingsChanged = Effect.fn("EngineSessions.settingsChanged")(function* (botId: BotId) {
+      const marked = yield* sql`
+        UPDATE sessions SET settings_pending = settings_pending + 1
+        WHERE bot_id = ${botId} AND purpose = 'main' AND retired_at IS NULL
+        RETURNING id
+      `;
+      // The rotator aligns it.
+      if (marked.length > 0) yield* sql.afterCommit(signals.rotations.fire);
+    }, Effect.orDie);
+
+    const alignment = SqlSchema.findOneOption({
+      Request: Schema.String,
+      Result: Alignment,
+      execute: (id) => sql`
+        SELECT engine_session_id, provider_id, settings_pending FROM sessions
+        WHERE id = ${id} AND retired_at IS NULL AND lost_at IS NULL
+      `,
+    });
+
+    /**
+     * The session's pending changes and the bot's settings as they stand, read
+     * together; `null` when there is nothing to align: no changes pending, not
+     * opened yet, gone, or on a provider the bot left.
+     */
+    const pending = Effect.fn("EngineSessions.pending")(
+      function* (botId: BotId, rowId: string) {
+        const found = yield* bots.find(botId);
+        const row = yield* alignment(rowId);
+        if (Option.isNone(found) || Option.isNone(row)) return null;
+        const { bot } = found.value;
+        const session = row.value;
+        if (
+          session.settings_pending === 0 ||
+          session.engine_session_id === null ||
+          session.provider_id !== bot.model.providerId
+        ) {
+          return null;
+        }
+        return {
+          sessionId: session.engine_session_id,
+          model: bot.model,
+          permissionMode: bot.permissionMode,
+          changes: session.settings_pending,
+        } satisfies Pending;
+      },
+      transaction,
+      Effect.orDie,
+    );
+
+    /** Marks the session aligned, unless a change committed since `changes` were read. */
+    const aligned = Effect.fn("EngineSessions.aligned")(function* (rowId: string, changes: number) {
+      const cleared = yield* sql`
+        UPDATE sessions SET settings_pending = 0
+        WHERE id = ${rowId} AND settings_pending = ${changes}
+        RETURNING id
+      `;
+      return cleared.length > 0;
+    }, Effect.orDie);
+
+    /**
+     * Brings the bot's opened main session to the bot's settings, if it has
+     * changes it was not brought to and still runs on the bot's provider: a
+     * session on another provider is being replaced, and the one that
+     * replaces it opens with the bot's settings. In the session's gate, so it
+     * never crosses a send, and two alignments never cross either: one that
+     * read older settings could otherwise reach the engine after a newer one.
+     */
+    const align = Effect.fn("EngineSessions.align")(function* (botId: BotId) {
+      const session = yield* mainSession(botId).pipe(Effect.orDie);
+      if (Option.isNone(session)) return;
+      const rowId = session.value.id;
+      yield* gate.run(rowId)(
+        Effect.gen(function* () {
+          for (;;) {
+            const due = yield* pending(botId, rowId);
+            if (due === null) return;
+            yield* engine.configureSession({
+              sessionId: due.sessionId,
+              model: due.model,
+              permissionMode: due.permissionMode,
+            });
+            if (yield* aligned(rowId, due.changes)) {
+              // A wake waiting for the session is dispatched now, and a
+              // held queue resumed.
+              yield* signals.dispatch.fire;
+              yield* signals.resumes.fire;
+              return;
+            }
+          }
+        }),
+      );
+    });
+
     const provision = Effect.fn("EngineSessions.provision")(function* (botId: BotId) {
       const found = yield* bots.find(botId);
       if (Option.isNone(found)) return;
@@ -168,77 +283,27 @@ export const layer = Layer.effect(
         yield* bots.setEngineProject(botId, projectId);
       }
       const selected = yield* selection(botId);
-      if (selected === null || selected.session.engine_session_id !== null) return;
+      if (selected === null) return;
       const { session } = selected;
+      const settings = selected.bot;
       // The bot moved to another provider since the row was written: the
       // rotator replaces the row, which never opens.
-      if (session.provider_id !== selected.bot.model.providerId) return;
-      const sessionId = yield* engine.openSession({
-        key: IdempotencyKey.make(session.id),
-        projectId,
-        title: "Main",
-        model: selected.bot.model,
-        permissionMode: selected.bot.permissionMode,
-      });
-      /** The bot's settings as they stand, while it is still on the session's provider. */
-      const settings = (now: Option.Option<{ readonly bot: Settings }>): Settings | null =>
-        Option.isNone(now) || now.value.bot.model.providerId !== session.provider_id
-          ? null
-          : { model: now.value.bot.model, permissionMode: now.value.bot.permissionMode };
-      /** Brings the session to the bot's settings as they stand, and answers what it applied. */
-      const align = Effect.fnUntraced(function* () {
-        const applied = settings(yield* bots.find(botId));
-        if (applied === null) return null;
-        yield* engine
-          .configureSession({ sessionId, ...applied })
-          // Lost meanwhile: the rotator replaces it, with the bot's settings.
-          .pipe(Effect.catchTag("SessionNotFound", () => Effect.void));
-        return applied;
-      });
-      /**
-       * Records the engine's session, which makes it take work, only while
-       * the bot's settings are still the ones applied: a change that
-       * committed since found the session unopened and left it to this.
-       * Answers whether it was recorded.
-       */
-      const publish = (applied: Settings | null) =>
-        transaction(
-          Effect.gen(function* () {
-            const now = settings(yield* bots.find(botId));
-            const same =
-              now === null || applied === null
-                ? now === applied
-                : sameModel(now.model, applied.model) &&
-                  now.permissionMode === applied.permissionMode;
-            if (!same) return false;
-            yield* sql`UPDATE sessions SET engine_session_id = ${sessionId} WHERE id = ${session.id}`;
-            // A wake waiting for the bot's session is dispatched now.
-            yield* sql.afterCommit(signals.dispatch.fire);
-            return true;
-          }),
-        ).pipe(Effect.orDie);
-      // Before the session takes work: a retried opening answers with the
-      // session the engine opened first, with the settings of that attempt,
-      // and the bot's may have changed since; and again for each change that
-      // committed while it was aligned.
-      let applied = yield* align();
-      while (!(yield* publish(applied))) applied = yield* align();
+      if (session.provider_id !== settings.model.providerId) return;
+      if (session.engine_session_id === null) {
+        const sessionId = yield* engine.openSession({
+          key: IdempotencyKey.make(session.id),
+          projectId,
+          title: "Main",
+          model: settings.model,
+          permissionMode: settings.permissionMode,
+        });
+        // Recorded before it is aligned, which it takes no work until.
+        yield* sql`UPDATE sessions SET engine_session_id = ${sessionId} WHERE id = ${session.id}`.pipe(
+          Effect.orDie,
+        );
+      }
+      yield* align(botId);
     }, provisioning.withPermits(1));
-
-    const configure = Effect.fn("EngineSessions.configure")(function* (
-      botId: BotId,
-      changes: { readonly model?: ModelChoice; readonly permissionMode?: PermissionMode },
-    ) {
-      const session = yield* mainSession(botId).pipe(Effect.orDie);
-      if (Option.isNone(session) || session.value.engine_session_id === null) {
-        // Not opened yet: it opens with the bot's current settings.
-        return;
-      }
-      if (changes.model !== undefined && changes.model.providerId !== session.value.provider_id) {
-        return;
-      }
-      yield* engine.configureSession({ sessionId: session.value.engine_session_id, ...changes });
-    });
 
     const removeProject = Effect.fn("EngineSessions.removeProject")(function* (botId: BotId) {
       const found = yield* bots.find(botId);
@@ -257,7 +322,7 @@ export const layer = Layer.effect(
 
     return EngineSessions.of({
       provision,
-      configure,
+      settingsChanged,
       removeProject,
       withoutProvisioning: provisioning.withPermits(1),
       ofEngineSession,

@@ -279,6 +279,10 @@ it.effect(
         sql<{ readonly engine_session_id: SessionId | null }>`
         SELECT engine_session_id FROM sessions WHERE bot_id = ${botId}
       `.pipe(Effect.map((rows) => rows[0]?.engine_session_id ?? null));
+      const takesWork = (botId: string) =>
+        sql<{ readonly aligned: number }>`
+        SELECT settings_pending = 0 AS aligned FROM sessions WHERE bot_id = ${botId}
+      `.pipe(Effect.map((rows) => rows[0]?.aligned === 1));
 
       // The session is aligned once it opened; the change commits meanwhile,
       // and finds it unopened.
@@ -296,13 +300,14 @@ it.effect(
       const second = yield* control.holdNext("configureSession");
       yield* first.release;
 
-      // Aligned again before it takes work: it is not recorded meanwhile.
+      // Aligned again before it takes work: it takes none meanwhile.
       yield* second.entered;
-      assert.isNull(yield* recorded(stored.bot.id));
+      assert.isFalse(yield* takesWork(stored.bot.id));
       yield* second.release;
       yield* Fiber.join(creating);
       const sessionId = yield* recorded(stored.bot.id);
       if (sessionId === null) return assert.fail("The session was not recorded");
+      assert.isTrue(yield* takesWork(stored.bot.id));
       assert.strictEqual(yield* control.sessionPermissionMode(sessionId), lowered);
     }).pipe(Effect.provide(TestDomain.layer)),
 );
