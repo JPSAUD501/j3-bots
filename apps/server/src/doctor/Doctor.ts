@@ -10,6 +10,7 @@ import * as Option from "effect/Option";
 import rootPackage from "../../../../package.json" with { type: "json" };
 import { AdminClient } from "../admin/AdminClient.ts";
 import type { AdminStatus } from "../admin/protocol.ts";
+import { PAIRING_CAVEAT } from "../cli/pair.ts";
 import * as ServerConfig from "../config.ts";
 import * as Home from "../home/Home.ts";
 import { socketOwner } from "../service/owner.ts";
@@ -376,12 +377,7 @@ const pairingCheck = (status: Option.Option<AdminStatus>, outside: boolean) => {
   }
   const count = status.value.pairedDevices;
   return count === 0
-    ? check(
-        "Pairing",
-        "warning",
-        "No device is paired yet.",
-        "In this release the web client is served but cannot pair yet: it does not connect to the server, so a code from `j3-bots pair` cannot be entered.",
-      )
+    ? check("Pairing", "warning", "No device is paired yet.", PAIRING_CAVEAT)
     : check(
         "Pairing",
         "ok",

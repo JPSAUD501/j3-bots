@@ -106,14 +106,15 @@ j3-bots pair
 Pairing code: 7Q2MV-K9XDA
 
 It works once, for the next 5 minutes.
-Open J3 Bots on the new device and enter it there:
+The server listens at:
   http://192.168.1.40:3737
   http://100.101.102.103:3737
+In this release the web client cannot complete pairing yet: a code from `j3-bots pair` has nowhere to be entered.
 ```
 
-`pair` asks the running server for the code over its admin socket, `~/.j3-bots/admin.sock`. Only this user can connect to that socket, so the command works only on the Pi, as the user that runs the service. The addresses come from the server too: the port and scheme it listens on and, with `lan`, the Pi's private addresses, leaving out container and virtual-network interfaces such as `docker0`. Open one of them on the phone or computer you are pairing and enter the code.
+`pair` asks the running server for the code over its admin socket, `~/.j3-bots/admin.sock`. Only this user can connect to that socket, so the command works only on the Pi, as the user that runs the service. The addresses come from the server too: the port and scheme it listens on and, with `lan`, the Pi's private addresses, leaving out container and virtual-network interfaces such as `docker0`.
 
-In this release the web client is served but not yet connected to the server: the address opens on "Connecting to J3 Bots" and stays there, so the code cannot be entered yet.
+In this release the web client cannot complete pairing yet, so the code has nowhere to be entered. `j3-bots doctor` says whether a web client is built and served.
 
 A browser treats a plain-HTTP address other than `localhost` as insecure, and on such an address it does not install J3 Bots as an app (a PWA). To install it on a phone, serve HTTPS: put a certificate and key in `tls` (paths relative to the data directory work). With Tailscale, `tailscale cert <machine>.<tailnet>.ts.net` issues one for the Pi's tailnet name. Over HTTPS, `pair` prints the names on the certificate, such as `https://<machine>.<tailnet>.ts.net:3737`, and no bare addresses, which the browser would not accept. A wildcard name names no one host, so it is not printed; for a certificate with only wildcards, open a name it covers.
 

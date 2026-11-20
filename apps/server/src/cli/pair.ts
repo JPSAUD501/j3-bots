@@ -18,8 +18,12 @@ const VIRTUAL_INTERFACE = /^(docker|veth|br-|virbr|cni|flannel|cali|podman)/;
 const NOT_RUNNING =
   "The server is not running, and pairing codes live in the running server. Start it with `systemctl --user start j3-bots` (or `j3-bots serve`), then run `j3-bots pair` again.";
 
+/** What a code can be entered in, in this release: nothing yet. */
+export const PAIRING_CAVEAT =
+  "In this release the web client cannot complete pairing yet: a code from `j3-bots pair` has nowhere to be entered.";
+
 /**
- * Where a new device opens the running server, as it listens. Over HTTPS a
+ * Where a new device reaches the running server, as it listens. Over HTTPS a
  * browser accepts only a name on the certificate, so no bare address is
  * offered; plain HTTP is offered on the private addresses it serves.
  */
@@ -28,13 +32,8 @@ const whereToOpen = Effect.fn("pair.whereToOpen")(function* (listener: ListenerS
     `${listener.scheme}://${NetAddress.formatUrlHostString(host)}:${listener.port}`;
   if (listener.scheme === "https") {
     return listener.names.length === 0
-      ? [
-          `Open https://<a name the server's certificate covers>:${listener.port} on the new device and enter it there.`,
-        ]
-      : [
-          "Open J3 Bots on the new device and enter it there:",
-          ...listener.names.map((name) => `  ${url(name)}`),
-        ];
+      ? [`The server listens at https://<a name the server's certificate covers>:${listener.port}.`]
+      : ["The server listens at:", ...listener.names.map((name) => `  ${url(name)}`)];
   }
   let hosts = [listener.address];
   if (listener.address === "0.0.0.0") {
@@ -49,11 +48,8 @@ const whereToOpen = Effect.fn("pair.whereToOpen")(function* (listener: ListenerS
       .map((entry) => entry.address);
   }
   return hosts.length === 0
-    ? ["Open J3 Bots on the new device and enter it there."]
-    : [
-        "Open J3 Bots on the new device and enter it there:",
-        ...hosts.map((host) => `  ${url(host)}`),
-      ];
+    ? []
+    : ["The server listens at:", ...hosts.map((host) => `  ${url(host)}`)];
 });
 
 /** `ABCDE-FGHJK`: two halves, easier to read out and type. */
@@ -82,6 +78,7 @@ export const pairCommand = Command.make("pair").pipe(
           "",
           `It works once, for the next ${minutes} minute${minutes === 1 ? "" : "s"}.`,
           ...(yield* whereToOpen(status.value.listener)),
+          PAIRING_CAVEAT,
         ].join("\n"),
       );
     }),
