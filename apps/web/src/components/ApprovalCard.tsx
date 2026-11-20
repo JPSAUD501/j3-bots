@@ -7,6 +7,7 @@ import type { KeyWith } from "../i18n/i18n";
 import { cn } from "../lib/cn";
 import { touchTarget } from "../lib/touchTarget";
 import { CardFrame } from "./CardFrame";
+import { CodeLines } from "./CodeLines";
 import { Button } from "./ui/button";
 
 const kindTitle: Record<ApprovalEntry["kind"], KeyWith> = {
@@ -23,13 +24,16 @@ const decisionText: Record<ApprovalDecision, KeyWith> = {
   deny: "approval.denied",
 };
 
-const code = "rounded-md bg-code-background px-2.5 py-2 font-mono text-xs leading-5";
+const code = "font-mono text-xs leading-5 whitespace-pre-wrap wrap-anywhere";
+const scrolls =
+  "max-h-64 overflow-auto outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent";
 
 /**
  * A bot asking to do one exact thing its permission mode does not allow
- * outright. While it waits, the card shows one block: everything the action
- * will do when the bot spelled it out, else the action itself, so nobody
- * approves from a summary. A decided card shows the action and folds the rest.
+ * outright. The exact action is always on the card. While it waits, the card
+ * shows one block: the action, then, past a seam, whatever the bot added (what
+ * a command will do, a file change's diff), so nobody approves from a summary.
+ * A decided card shows the action and folds the rest.
  */
 export function ApprovalCard({
   entry,
@@ -42,8 +46,10 @@ export function ApprovalCard({
   submitting?: boolean;
 }) {
   const { t } = useI18n();
-  const { status } = entry;
+  const { status, detail } = entry;
   const pending = status._tag === "pending";
+  const detailLabel =
+    entry.kind === "file-change" ? t("approval.detail.fileChange") : t("approval.detail");
   const icon =
     status._tag === "decided" ? (
       status.decision === "deny" ? (
@@ -55,27 +61,38 @@ export function ApprovalCard({
       <ShieldIcon />
     );
   return (
-    <CardFrame icon={icon} title={t(kindTitle[entry.kind])} attention={pending} entryId={entry.id}>
+    <CardFrame
+      icon={icon}
+      title={t(kindTitle[entry.kind])}
+      attention={pending}
+      entryId={entry.id}
+      className="@max-tablet:max-w-full"
+    >
       {pending ? (
-        // One block: the whole plan when the bot gave one, else the action itself. Focusable,
-        // so the keyboard can scroll a long plan before deciding.
-        <pre
-          role="region"
-          aria-label={t("approval.detail")}
-          tabIndex={0}
-          className={cn(
-            code,
-            "max-h-64 overflow-auto whitespace-pre-wrap wrap-anywhere outline-none focus-visible:outline-2 focus-visible:outline-accent",
+        // One block in two parts, joined by a seam of the card's own surface. The action stays put;
+        // only what follows it scrolls, so the action never leaves view.
+        <div className="flex flex-col gap-px overflow-hidden rounded-md">
+          <pre className={cn(code, "bg-code-background px-2.5 py-2 font-medium")}>
+            <CodeLines text={entry.action} />
+          </pre>
+          {detail !== null && (
+            // Focusable, so the keyboard can scroll a long plan or diff before deciding.
+            <pre
+              role="region"
+              aria-label={detailLabel}
+              tabIndex={0}
+              className={cn(code, scrolls, "bg-code-background px-2.5 py-2")}
+            >
+              <CodeLines text={detail} />
+            </pre>
           )}
-        >
-          {entry.detail ?? entry.action}
-        </pre>
+        </div>
       ) : (
         <>
-          <code className={cn(code, "block whitespace-pre-wrap wrap-anywhere")}>
-            {entry.action}
-          </code>
-          {entry.detail !== null && (
+          <pre className={cn(code, "rounded-md bg-code-background px-2.5 py-2")}>
+            <CodeLines text={entry.action} />
+          </pre>
+          {detail !== null && (
             <Collapsible.Root>
               <Collapsible.Trigger
                 className={cn(
@@ -87,16 +104,18 @@ export function ApprovalCard({
                   className="size-3.5 transition-transform duration-(--duration-state) group-data-panel-open:rotate-90"
                   aria-hidden
                 />
-                {t("approval.showDetail")}
+                {entry.kind === "file-change"
+                  ? t("approval.showDetail.fileChange")
+                  : t("approval.showDetail")}
               </Collapsible.Trigger>
               <Collapsible.Panel className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-(--duration-slow) ease-standard data-ending-style:h-0 data-starting-style:h-0">
                 <pre
-                  className={cn(
-                    code,
-                    "mt-2 max-h-64 overflow-auto whitespace-pre-wrap wrap-anywhere",
-                  )}
+                  role="region"
+                  aria-label={detailLabel}
+                  tabIndex={0}
+                  className={cn(code, scrolls, "mt-2 rounded-md bg-code-background px-2.5 py-2")}
                 >
-                  {entry.detail}
+                  <CodeLines text={detail} />
                 </pre>
               </Collapsible.Panel>
             </Collapsible.Root>
@@ -104,18 +123,31 @@ export function ApprovalCard({
         </>
       )}
       {pending ? (
+        // On a phone the buttons fill the row and share it; when they wrap, each row stays full, so
+        // they still read as one group.
         <div className="flex flex-wrap justify-end gap-2">
-          <Button size="sm" disabled={submitting} onClick={() => onDecide("deny")}>
+          <Button
+            size="sm"
+            className="@max-tablet:grow"
+            disabled={submitting}
+            onClick={() => onDecide("deny")}
+          >
             {t("approval.deny")}
           </Button>
           {entry.allowsSession && (
-            <Button size="sm" disabled={submitting} onClick={() => onDecide("allow-session")}>
+            <Button
+              size="sm"
+              className="@max-tablet:grow"
+              disabled={submitting}
+              onClick={() => onDecide("allow-session")}
+            >
               {t("approval.allowSession")}
             </Button>
           )}
           <Button
             variant="primary"
             size="sm"
+            className="@max-tablet:grow"
             disabled={submitting}
             onClick={() => onDecide("allow-once")}
           >

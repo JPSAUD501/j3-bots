@@ -47,6 +47,17 @@ export function usageLimitText(resetsAt: DateTime.Utc | null, ctx: TimeContext):
     : t("failure.usageLimitUntil", { when: timeInSentence(resetsAt, ctx) });
 }
 
+/**
+ * The same limit in a roster row, where the line is cut short: the reset time
+ * leads, "Limit resets at 4:15 PM", so it survives the cut.
+ */
+function rosterUsageLimitText(resetsAt: DateTime.Utc | null, ctx: TimeContext): string {
+  const { t } = ctx.i18n;
+  return resetsAt === null
+    ? t("failure.usageLimit")
+    : t("roster.usageLimitUntil", { when: timeInSentence(resetsAt, ctx) });
+}
+
 function failureText(
   failure: FailureClass,
   retryAt: DateTime.Utc | null,
@@ -169,7 +180,13 @@ export function rosterLine(item: RosterItem, ctx: PresentationContext): StatusLi
           tone: "waiting",
         };
       case "blocked":
-        return { text: failureText(state.failure, state.retryAt, ctx), tone: "blocked" };
+        return {
+          text:
+            state.failure === "usage-limit"
+              ? rosterUsageLimitText(state.retryAt, ctx)
+              : failureText(state.failure, state.retryAt, ctx),
+          tone: "blocked",
+        };
       case "thinking":
         return state.stalled
           ? stalledLine(state.since, ctx)

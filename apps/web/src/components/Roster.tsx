@@ -21,8 +21,11 @@ const sameKey = (item: RosterItem, key: RosterItemKey | null) =>
 /**
  * Arrow keys move from the search field into the rows and between them; Home
  * and End jump to the ends of the list. Up from the first row returns to search.
+ * Only unmodified keys: `Alt+↑` and `Alt+↓` belong to the shell, which moves
+ * between conversations with them.
  */
 function moveFocus(event: KeyboardEvent<HTMLElement>) {
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
   const rows = [...event.currentTarget.querySelectorAll<HTMLElement>("[data-roster-row]")];
   const search = event.currentTarget.querySelector<HTMLElement>("[data-roster-search]");
   const inSearch = search !== null && document.activeElement === search;

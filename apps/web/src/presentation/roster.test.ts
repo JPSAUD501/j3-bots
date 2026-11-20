@@ -2,7 +2,7 @@
 import { EntryId, RoomId, type Bot, type EntryPreview, type RosterItem } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { at, bot, context, plain, preview } from "../test/fixtures";
-import { filterRoster, orderRoster, rosterLine } from "./roster";
+import { filterRoster, orderRoster, presenceLine, rosterLine } from "./roster";
 
 const ctx = context("2026-11-20T15:00:00Z", "en", { scout: "Scout", wren: "Wren" });
 
@@ -111,22 +111,31 @@ describe("rosterLine", () => {
     });
   });
 
-  it("says when a usage limit resets, in the blocked tone, with the day when it is not today", () => {
-    const limited = (retryAt: string) =>
-      row(bot("Scout", { _tag: "blocked", failure: "usage-limit", retryAt: at(retryAt) }));
-    const line = rosterLine(limited("2026-11-20T18:30:00Z"), ctx);
+  it("leads a usage limit with when it resets, in the blocked tone, with the day when it is not today", () => {
+    const limited = (retryAt: string | null) =>
+      bot("Scout", {
+        _tag: "blocked",
+        failure: "usage-limit",
+        retryAt: retryAt === null ? null : at(retryAt),
+      });
+    const line = rosterLine(row(limited("2026-11-20T18:30:00Z")), ctx);
     expect({ ...line, text: plain(line.text) }).toEqual({
-      text: "Usage limit reached, resets at 3:30 PM",
+      text: "Limit resets at 3:30 PM",
       tone: "blocked",
     });
-    expect(plain(rosterLine(limited("2026-11-21T12:00:00Z"), ctx).text)).toBe(
-      "Usage limit reached, resets tomorrow at 9:00 AM",
+    expect(plain(rosterLine(row(limited("2026-11-21T12:00:00Z")), ctx).text)).toBe(
+      "Limit resets tomorrow at 9:00 AM",
     );
-    expect(plain(rosterLine(limited("2026-11-23T12:00:00Z"), ctx).text)).toBe(
-      "Usage limit reached, resets Monday at 9:00 AM",
+    expect(plain(rosterLine(row(limited("2026-11-23T12:00:00Z")), ctx).text)).toBe(
+      "Limit resets Monday at 9:00 AM",
     );
+    expect(rosterLine(row(limited(null)), ctx).text).toBe("Usage limit reached");
     const pt = context("2026-11-20T15:00:00Z", "pt-BR");
-    expect(plain(rosterLine(limited("2026-11-21T12:00:00Z"), pt).text)).toBe(
+    expect(plain(rosterLine(row(limited("2026-11-20T19:15:00Z")), pt).text)).toBe(
+      "Limite renova às 16:15",
+    );
+    // The conversation header has the room for the whole sentence.
+    expect(plain(presenceLine(limited("2026-11-21T12:00:00Z"), pt)?.text ?? "")).toBe(
       "Limite de uso atingido, renova amanhã às 09:00",
     );
   });

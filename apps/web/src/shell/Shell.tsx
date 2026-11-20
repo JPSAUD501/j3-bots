@@ -50,7 +50,8 @@ function modelName(engine: EngineStatus | null, bot: Bot): string | null {
   return provider && model ? `${provider.name} · ${model.name}` : null;
 }
 
-const finePointer = () => window.matchMedia("(pointer: fine)").matches;
+/** A touch screen, where a focused composer would raise the keyboard over the conversation. */
+const coarsePointer = () => window.matchMedia("(pointer: coarse)").matches;
 
 interface ShellProps {
   readonly data: ShellData;
@@ -100,7 +101,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
       if (detailsModal) return;
       if (detailsOpen) detailsHeadingRef.current?.focus();
       else titleRef.current?.focus();
-    } else if (before.selectionKey !== selectionKey && selectionKey !== null && finePointer()) {
+    } else if (before.selectionKey !== selectionKey && selectionKey !== null && !coarsePointer()) {
       composerRef.current?.focus();
     }
   }, [selectionKey, detailsOpen, detailsModal]);

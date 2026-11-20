@@ -54,19 +54,26 @@ function cronInWords(cron: string, i18n: I18n, zone: string | null): string | nu
   const [minute = "", hour = "", dayOfMonth = "", month = "", dayOfWeek = ""] = fields;
   if (month !== "*") return null;
 
-  const every = /^\*\/(\d+)$/.exec(minute);
-  if (every?.[1] !== undefined && hour === "*" && dayOfMonth === "*" && dayOfWeek === "*") {
-    return i18n.plural("schedule.everyMinutes", Number(every[1]));
+  const daily = dayOfMonth === "*" && dayOfWeek === "*";
+  const everyMinutes = step(minute, 60);
+  if (everyMinutes !== null && hour === "*" && daily) {
+    return i18n.plural("schedule.everyMinutes", everyMinutes);
   }
 
   const m = number(minute, 59);
   if (m === null) return null;
-  if (hour === "*" && dayOfMonth === "*" && dayOfWeek === "*") {
-    // A zone whose offset is not whole hours moves the minute too, so it is named here as well.
-    const at = String(m).padStart(2, "0");
+  // A zone whose offset is not whole hours moves the minute too, so it is named here as well.
+  const at = String(m).padStart(2, "0");
+  if (hour === "*" && daily) {
     return zone === null
       ? i18n.t("schedule.hourly", { minute: at })
       : i18n.t("schedule.hourly.zoned", { minute: at, zone });
+  }
+  const everyHours = step(hour, 24);
+  if (everyHours !== null && daily) {
+    return zone === null
+      ? i18n.plural("schedule.everyHours", everyHours, { minute: at })
+      : i18n.plural("schedule.everyHours.zoned", everyHours, { minute: at, zone });
   }
 
   const h = number(hour, 23);
@@ -108,6 +115,19 @@ function cronInWords(cron: string, i18n: I18n, zone: string | null): string | nu
   return zone === null
     ? i18n.t("schedule.onDays", { days: list, time })
     : i18n.t("schedule.onDays.zoned", { days: list, time, zone });
+}
+
+/**
+ * The step of a `*\/N` field over a cycle of `cycle` units, when N divides the
+ * cycle evenly: only then does it run at the same spacing all the way round.
+ * `*\/7` minutes runs at :56 and again at :00, which "every 7 minutes" would
+ * misstate.
+ */
+function step(field: string, cycle: number): number | null {
+  const match = /^\*\/(\d{1,2})$/.exec(field);
+  if (match?.[1] === undefined) return null;
+  const n = Number(match[1]);
+  return n > 0 && cycle % n === 0 ? n : null;
 }
 
 function number(field: string, max: number): number | null {

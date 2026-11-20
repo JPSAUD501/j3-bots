@@ -7,6 +7,7 @@
 export const en = {
   "bot.unknown": "A deleted bot",
 
+  "roster.usageLimitUntil": "Limit resets {when}",
   "roster.label": "Bots and rooms",
   "roster.search": "Search",
   "roster.new": "New bot or room",
@@ -97,6 +98,8 @@ export const en = {
   "approval.kind.other": "Wants permission",
   "approval.detail": "Everything it will do",
   "approval.showDetail": "Show everything it will do",
+  "approval.detail.fileChange": "The change",
+  "approval.showDetail.fileChange": "Show the change",
   "approval.allowOnce": "Allow once",
   "approval.allowSession": "Allow for session",
   "approval.deny": "Deny",
@@ -137,13 +140,18 @@ export const en = {
   "routine.lastRun.silent": "Last run had nothing to report {when}",
   "routine.lastRun.failed": "Last run failed {when}",
   "routine.lastRun.skipped": "Last run was skipped {when}: the one before was still going",
-  "routine.lastRunWithCount.one": "{lastRun} · {count} run",
-  "routine.lastRunWithCount.other": "{lastRun} · {count} runs",
+  // No-break spaces: the line may wrap inside the last run's sentence, never around the count.
+  "routine.lastRunWithCount.one": "{lastRun}\u00a0·\u00a0{count}\u00a0run",
+  "routine.lastRunWithCount.other": "{lastRun}\u00a0·\u00a0{count}\u00a0runs",
 
   "schedule.webhook": "When its webhook is called",
   "schedule.once": "Once, on {when}",
   "schedule.everyMinutes.one": "Every minute",
   "schedule.everyMinutes.other": "Every {count} minutes",
+  "schedule.everyHours.one": "Every hour at minute {minute}",
+  "schedule.everyHours.other": "Every {count} hours at minute {minute}",
+  "schedule.everyHours.zoned.one": "Every hour at minute {minute} ({zone})",
+  "schedule.everyHours.zoned.other": "Every {count} hours at minute {minute} ({zone})",
   "schedule.hourly": "Every hour at minute {minute}",
   "schedule.daily": "Every day at {time}",
   "schedule.weekdays": "Weekdays at {time}",
@@ -230,6 +238,7 @@ export const en = {
     "Bots run on your own subscriptions. Sign in to one on the machine that runs J3 Bots; this page updates when you do.",
   "firstRun.signIn.copy": "Copy the command that signs in to {name}",
   "firstRun.signIn.copied": "Copied",
+  "firstRun.signIn.selected": "Command selected. Copy it manually.",
   "firstRun.unavailable.title": "No provider can run a bot right now",
   "firstRun.unavailable.body":
     "Each provider’s state is below. This page updates as soon as one is ready.",

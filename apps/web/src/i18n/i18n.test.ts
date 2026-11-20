@@ -11,15 +11,15 @@ describe("createI18n", () => {
     expect(createI18n("pt-BR").plural("schedule.everyMinutes", 1234)).toBe("A cada 1.234 minutos");
   });
 
-  it("splits a sentence around a value drawn apart from it", () => {
+  it("splits a sentence around a value drawn apart from it, keeping its no-break spaces", () => {
     const lastRun = { drawn: "apart" };
     expect(createI18n("en").pluralParts("routine.lastRunWithCount", 1, { lastRun })).toEqual([
       lastRun,
-      " · 1 run",
+      "\u00a0·\u00a01\u00a0run",
     ]);
     expect(createI18n("pt-BR").pluralParts("routine.lastRunWithCount", 1234, { lastRun })).toEqual([
       lastRun,
-      " · 1.234 execuções",
+      "\u00a0·\u00a01.234\u00a0execuções",
     ]);
   });
 

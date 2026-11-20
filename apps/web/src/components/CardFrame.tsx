@@ -35,9 +35,11 @@ export function CardFrame({
         className,
       )}
     >
+      {/* The header's top corners follow the inside edge of the card's border, so a filled header
+          keeps the card's silhouette. */}
       <header
         className={cn(
-          "flex items-center gap-2 border-b px-3 py-2 text-xs font-medium",
+          "flex items-center gap-2 rounded-t-[calc(var(--radius-md)-1px)] border-b px-3 py-2 text-xs font-medium",
           attention
             ? "border-waiting/25 bg-waiting-surface text-waiting"
             : "border-border text-muted-foreground",

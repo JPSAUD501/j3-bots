@@ -49,6 +49,7 @@ export function QuestionCard({
       title={status._tag === "pending" ? t("question.pending") : t("question.title")}
       attention={status._tag === "pending"}
       entryId={entry.id}
+      className="@max-tablet:max-w-full"
     >
       {status._tag !== "pending" ? (
         <>

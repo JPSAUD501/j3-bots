@@ -86,8 +86,9 @@ export function ConversationHeader({
       >
         <ChevronLeftIcon />
       </Button>
-      {/* The title button stretches over the whole block, so a click anywhere opens the details. */}
-      <div className="relative flex min-w-0 items-center gap-2.5 rounded-md px-1.5 py-1 has-[[data-title]:hover]:bg-muted has-[[data-title]:focus-visible]:outline-2 has-[[data-title]:focus-visible]:outline-accent">
+      {/* The title button stretches over the whole block, so a click anywhere opens the details. On a
+          phone, where it is the only way to the details, the block is a full touch target. */}
+      <div className="relative flex min-w-0 items-center @max-tablet:min-h-(--layout-touch-target) gap-2.5 rounded-md px-1.5 py-1 has-[[data-title]:hover]:bg-muted has-[[data-title]:focus-visible]:outline-2 has-[[data-title]:focus-visible]:outline-accent">
         {subject._tag === "bot" ? (
           <BotAvatar avatar={subject.bot.profile.avatar} state={subject.bot.state} size={28} />
         ) : (
@@ -118,13 +119,14 @@ export function ConversationHeader({
           </button>
           {line &&
             (waitingOn !== null ? (
-              // On touch screens this line is the button at the end of the header instead.
+              // On touch screens this line is the button at the end of the header instead. Only a coarse
+              // pointer hides it: with no pointer at all (keyboard only, a TV), it stays.
               <button
                 type="button"
                 onClick={() => onGoToWaiting(waitingOn)}
                 aria-label={t("presence.waiting.goTo")}
                 className={cn(
-                  "relative z-10 hidden max-w-full truncate rounded-sm text-2xs underline underline-offset-2 pointer-fine:block",
+                  "relative z-10 block max-w-full truncate rounded-sm text-2xs underline underline-offset-2 pointer-coarse:hidden",
                   toneClass[line.tone],
                 )}
               >
@@ -158,7 +160,7 @@ export function ConversationHeader({
           <Button size="sm" onClick={onStop} aria-keyshortcuts={stopShortcut.aria}>
             <SquareIcon className="size-3 fill-current" aria-hidden />
             {t("conversation.stop")}
-            <Kbd className="hidden pointer-fine:inline-flex">{stopShortcut.label}</Kbd>
+            <Kbd className="pointer-coarse:hidden">{stopShortcut.label}</Kbd>
           </Button>
         )}
         <Button

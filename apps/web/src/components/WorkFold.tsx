@@ -19,6 +19,7 @@ import { cn } from "../lib/cn";
 import { touchTarget } from "../lib/touchTarget";
 import { millisBetween, shortDuration } from "../lib/time";
 import { workFoldTitle } from "../presentation/roster";
+import { CodeLines } from "./CodeLines";
 
 const stepIcon: Record<WorkStep["kind"], typeof TerminalIcon> = {
   command: TerminalIcon,
@@ -84,14 +85,13 @@ export function WorkFold({ entry, steps, onOpenChange, defaultOpen = false }: Wo
                 <li key={step.id} className="flex min-h-7 items-start gap-2 py-1 text-xs">
                   <Icon aria-hidden className="mt-px size-3.5 shrink-0 text-muted-foreground" />
                   {/* Long commands and paths wrap: every step reads in full without a pointer. */}
-                  <span
-                    className={cn(
-                      "min-w-0 flex-1 break-words",
-                      step.kind === "command" && "font-mono text-2xs break-all whitespace-pre-wrap",
-                    )}
-                  >
-                    {step.label}
-                  </span>
+                  {step.kind === "command" ? (
+                    <span className="min-w-0 flex-1 font-mono text-2xs whitespace-pre-wrap wrap-anywhere">
+                      <CodeLines text={step.label} />
+                    </span>
+                  ) : (
+                    <span className="min-w-0 flex-1 wrap-break-word">{step.label}</span>
+                  )}
                   <StepStatus step={step} />
                 </li>
               );

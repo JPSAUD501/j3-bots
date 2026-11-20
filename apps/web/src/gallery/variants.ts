@@ -204,13 +204,32 @@ export function galleryVariants(now: DateTime.Utc) {
     status: { _tag: "pending" },
     ...extra,
   });
-  const plan =
-    "rm -rf build/ && pnpm build\n  removes 214 files in build/\n  rebuilds every package (about 40 s)";
   const approvalEntries: ReadonlyArray<ApprovalEntry> = [
-    approval("approval", { detail: plan }),
-    approval("approval-file", {
+    approval("approval", {
+      detail: [
+        "Removes the 214 files in build/, then rebuilds every package in the workspace from a clean tree, which takes about 40 s.",
+        "Nothing outside build/ is touched.",
+      ].join("\n"),
+    }),
+    approval("approval-file-change", {
       kind: "file-change",
       action: "notes/taxes-2026/checklist.md",
+      detail: [
+        "@@ -3,5 +3,7 @@",
+        " ## Before filing",
+        " ",
+        " - [x] Download the bank statements for 2026",
+        "-- [ ] Ask the accountant about the home office",
+        "+- [x] Ask the accountant about the home office",
+        "+  Answer: deductible up to the share of floor area used only for work; keep the floor plan and the electricity bills with the return.",
+        "+- [ ] Scan the pharmacy receipts",
+        " - [ ] Fill in the donations section",
+      ].join("\n"),
+      allowsSession: false,
+    }),
+    approval("approval-file-read", {
+      kind: "file-read",
+      action: "~/Documents/taxes-2026/receipts.csv",
       allowsSession: false,
     }),
     approval("approval-submitting", {
@@ -220,11 +239,10 @@ export function galleryVariants(now: DateTime.Utc) {
     approval("approval-allowed", {
       action: "pnpm --filter site deploy --env staging",
       detail: [
-        "pnpm --filter site deploy --env staging",
-        "  builds apps/site for production (about 1 min)",
-        "  uploads 38 files to the staging bucket",
-        "  invalidates the staging CDN cache",
-        "  posts the preview link to the #site channel",
+        "builds apps/site for production (about 1 min)",
+        "uploads 38 files to the staging bucket",
+        "invalidates the staging CDN cache",
+        "posts the preview link to the #site channel",
       ].join("\n"),
       status: { _tag: "decided", decision: "allow-session" },
     }),

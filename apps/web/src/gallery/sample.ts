@@ -383,7 +383,7 @@ export function sampleTeam(now: DateTime.Utc) {
       kind: "command",
       action: "pnpm db:migrate --env staging --to 0042_invoice_totals",
       detail:
-        "pnpm db:migrate --env staging --to 0042_invoice_totals\n  → adds the column invoices.total_cents\n  → fills it for 18,204 invoices, 500 at a time\n  → keeps the billing API read-only for about 40 s\n  → writes the migration log to logs/migrate-0042.txt",
+        "→ adds the column invoices.total_cents\n→ fills it for 18,204 invoices, 500 at a time\n→ keeps the billing API read-only for about 40 s\n→ writes the migration log to logs/migrate-0042.txt",
       allowsSession: true,
       status: { _tag: "pending" },
     },

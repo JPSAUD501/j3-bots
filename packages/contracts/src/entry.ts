@@ -160,10 +160,20 @@ export type ApprovalDecision = typeof ApprovalDecision.Type;
 export const ApprovalEntry = Schema.TaggedStruct("approval", {
   ...entry,
   kind: Schema.Literals(["command", "file-change", "file-read", "tool", "other"]),
-  /** The exact action, in one line: the command, the file, the tool. */
+  /**
+   * The exact action, in one line: the command, the file's path, the tool call.
+   * The card always shows it.
+   */
   action: Label,
-  /** The full command or change, when the one line cannot hold it. */
-  detail: Schema.NullOr(Schema.String.check(Schema.isMaxLength(20_000))),
+  /**
+   * What the card shows under the action, never a repeat of it: for a command,
+   * what it will do or its lines past the first; for a file change, the unified
+   * diff, from its first hunk header. Null when there is nothing to add; never
+   * empty or padded with whitespace.
+   */
+  detail: Schema.NullOr(
+    Schema.String.check(Schema.isMinLength(1), Schema.isTrimmed(), Schema.isMaxLength(20_000)),
+  ),
   /** Whether "Allow for session" is offered. */
   allowsSession: Schema.Boolean,
   status: Schema.Union([

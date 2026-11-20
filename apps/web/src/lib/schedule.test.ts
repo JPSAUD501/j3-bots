@@ -22,6 +22,22 @@ describe("scheduleInWords", () => {
     expect(once === null ? null : plain(once)).toBe("Once, on Nov 23, 2026, 8:47 AM");
   });
 
+  it("says an interval only when it divides the hour or the day evenly", () => {
+    expect(words("*/15 * * * *")).toBe("Every 15 minutes");
+    expect(words("*/1 * * * *")).toBe("Every minute");
+    expect(words("0 */6 * * *")).toBe("Every 6 hours at minute 00");
+    expect(words("30 */2 * * *", context("2026-11-20T17:40:00Z", "pt-BR"))).toBe(
+      "A cada 2 horas, no minuto 30",
+    );
+    expect(words("0 */6 * * *", en, "Asia/Kolkata")).toBe(
+      "Every 6 hours at minute 00 (India Standard Time)",
+    );
+    // These run at uneven spacing (:56, then :00) or never, so they keep their expression.
+    for (const cron of ["*/7 * * * *", "*/0 * * * *", "0 */5 * * *", "0 */0 * * *"]) {
+      expect(words(cron), cron).toBeNull();
+    }
+  });
+
   it("names a list of days, reading cron's 7 as Sunday", () => {
     expect(words("0 17 * * 1,4")).toBe("Every Monday and Thursday at 5:00 PM");
     expect(words("0 10 * * 6,7")).toBe("Weekends at 10:00 AM");

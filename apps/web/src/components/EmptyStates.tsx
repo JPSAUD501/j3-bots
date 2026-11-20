@@ -144,38 +144,46 @@ function ProviderRow({ provider }: { provider: ProviderStatus }) {
  * A shell command, wrapped so it reads in full on any width, with a button
  * pinned to its top corner that copies it. Where the page has no clipboard
  * (served over plain HTTP on the local network) or the browser refuses, the
- * button selects the command so it can be copied by hand.
+ * button selects the command and says, in words and to screen readers, to
+ * copy it by hand.
  */
 function CommandLine({ command, copyLabel }: { command: string; copyLabel: string }) {
   const { t } = useI18n();
-  const [copied, setCopied] = useState(false);
+  const [result, setResult] = useState<"none" | "copied" | "selected">("none");
   const codeRef = useRef<HTMLElement>(null);
   const select = () => {
     if (codeRef.current) window.getSelection()?.selectAllChildren(codeRef.current);
+    setResult("selected");
   };
   const copy = () => {
     if (!("clipboard" in navigator)) {
       select();
       return;
     }
-    navigator.clipboard.writeText(command).then(() => setCopied(true), select);
+    navigator.clipboard.writeText(command).then(() => setResult("copied"), select);
   };
   return (
-    <span className="flex items-start gap-1 rounded-md bg-code-background ps-2.5">
-      <code
-        ref={codeRef}
-        className="min-w-0 flex-1 py-1.5 font-mono text-xs break-all whitespace-pre-wrap"
-      >
-        {command}
-      </code>
-      <Button
-        variant="ghost-muted"
-        size="icon-sm"
-        aria-label={copied ? t("firstRun.signIn.copied") : copyLabel}
-        onClick={copy}
-      >
-        {copied ? <CheckIcon /> : <CopyIcon />}
-      </Button>
+    <span className="flex flex-col">
+      <span className="flex items-start gap-1 rounded-md bg-code-background ps-2.5">
+        <code
+          ref={codeRef}
+          className="min-w-0 flex-1 py-1.5 font-mono text-xs whitespace-pre-wrap wrap-anywhere"
+        >
+          {command}
+        </code>
+        <Button
+          variant="ghost-muted"
+          size="icon-sm"
+          aria-label={result === "copied" ? t("firstRun.signIn.copied") : copyLabel}
+          onClick={copy}
+        >
+          {result === "copied" ? <CheckIcon /> : <CopyIcon />}
+        </Button>
+      </span>
+      {/* Present, though empty, from the start, so the sentence is announced when it appears. */}
+      <span role="status" className="text-xs text-muted-foreground not-empty:mt-1">
+        {result === "selected" && t("firstRun.signIn.selected")}
+      </span>
     </span>
   );
 }
@@ -240,8 +248,8 @@ export function NoSelection({ nextShortcut }: { nextShortcut: string }) {
     <Centered>
       <Ensemble />
       <Heading title={t("empty.noSelection.title")} body={t("empty.noSelection.body")} />
-      {/* A keyboard shortcut means nothing on a touch screen. */}
-      <p className="hidden items-center gap-1.5 text-xs text-muted-foreground pointer-fine:flex">
+      {/* A keyboard shortcut means nothing on a touch screen; only a coarse pointer hides it. */}
+      <p className="flex items-center gap-1.5 text-xs text-muted-foreground pointer-coarse:hidden">
         <Kbd>{nextShortcut}</Kbd>
         {t("empty.noSelection.shortcut")}
       </p>
