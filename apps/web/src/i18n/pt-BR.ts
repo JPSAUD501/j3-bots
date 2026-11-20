@@ -142,6 +142,10 @@ export const ptBR: Catalog = {
   "notice.chainFanOut": "Nem todos os bots foram chamados: uma mensagem só pode acordar alguns.",
   "notice.undelivered": "Uma resposta não chegou",
   "notice.waitingInConversation": "{name} está esperando por você na própria conversa.",
+  "notice.sessionLost":
+    "Perdeu o contexto de trabalho. Novas mensagens esperam até ele ter um novo.",
+  "notice.observationFailed":
+    "Não deu para acompanhar o trabalho deste bot. O que aparece aqui pode estar atrasado.",
   "notice.retry": "Tentar de novo",
   "notice.openConversation": "Abrir",
 

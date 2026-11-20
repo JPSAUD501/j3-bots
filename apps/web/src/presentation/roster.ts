@@ -153,6 +153,10 @@ export function noticeText(
       return t("notice.waitingInConversation", {
         name: ctx.botName(notice.botId) ?? t("bot.unknown"),
       });
+    case "session-lost":
+      return t("notice.sessionLost");
+    case "observation-failed":
+      return t("notice.observationFailed");
   }
 }
 

@@ -144,6 +144,9 @@ export const en = {
   "notice.chainFanOut": "Not every bot was asked: one message may wake only a few.",
   "notice.undelivered": "A reply didn’t arrive",
   "notice.waitingInConversation": "{name} is waiting on you in its own conversation.",
+  "notice.sessionLost": "Lost its working context. New messages wait until it has a new one.",
+  "notice.observationFailed":
+    "Couldn’t keep up with this bot’s work. What shows here may be behind.",
   "notice.retry": "Try again",
   "notice.openConversation": "Open",
 
