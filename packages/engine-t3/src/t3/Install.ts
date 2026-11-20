@@ -125,9 +125,7 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
   const fail = (reason: EngineInstallFailed["reason"]) =>
     new EngineInstallFailed({ reason, version: pin.version });
   const storage = () => fail("storage");
-  /** Removes `location`, a link itself rather than what it leads to; a missing one is fine. */
-  const remove = (location: string) =>
-    fs.remove(location, { recursive: true, force: true }).pipe(Effect.mapError(storage));
+  const remove = (location: string) => input.files.remove(location).pipe(Effect.mapError(storage));
 
   const target = runtimeDirectory(path, input.home);
   const executable = path.join(target, "t3");
@@ -144,6 +142,11 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
       Effect.andThen(Effect.fail(fail("download"))),
     );
 
+  const partial = `${target}.partial`;
+  // Checked before anything is fetched, so a link or a folder there fails at
+  // once rather than after a large download; the write itself checks again.
+  const have = yield* input.files.writable(partial).pipe(Effect.mapError(storage));
+
   const sums = yield* client.get(releaseUrl("SHA256SUMS")).pipe(
     Effect.flatMap(HttpClientResponse.filterStatusOk),
     Effect.flatMap((response) => response.text),
@@ -151,11 +154,6 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
   );
   const expected = checksumFor(sums, archive);
   if (Option.isNone(expected)) return yield* fail("unsupported-platform");
-
-  const partial = `${target}.partial`;
-  // Checked before the download starts, so a link or a folder there fails at
-  // once rather than after a large download; the write itself checks again.
-  const have = yield* input.files.writable(partial).pipe(Effect.mapError(storage));
 
   // Resume with a range request; a server that ignores it sends the whole file again.
   const response = yield* client
@@ -179,6 +177,8 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
       .pipe(Effect.catchTags({ StorageExposed: storage, PlatformError: storage }));
   }
 
+  // Checked again before it is read: the download may have taken long.
+  yield* input.files.writable(partial).pipe(Effect.mapError(storage));
   const hash = NodeCrypto.createHash("sha256");
   yield* fs.stream(partial).pipe(
     Stream.runForEach((chunk) => Effect.sync(() => hash.update(chunk))),

@@ -48,8 +48,9 @@ class StorageExposed extends Schema.TaggedError<StorageExposed>()("StorageExpose
 type StorageError = StorageExposed | PlatformError.PlatformError;
 
 /**
- * The adapter's writes of private state. Each checks its folder with the
- * caller's containment check first, and a refusal is logged where it happens.
+ * The adapter's writes and removals of private state. Each checks its folder
+ * with the caller's containment check first, and a refusal is logged where it
+ * happens.
  */
 export interface PrivateFiles {
   /** Creates `folder` (mode 0700) if missing. */
@@ -80,6 +81,12 @@ export interface PrivateFiles {
     append: boolean,
     bytes: Stream.Stream<Uint8Array, E>,
   ) => Effect.Effect<void, StorageError | E>;
+  /**
+   * Removes `location`, with everything in it if it is a folder, once the
+   * folder that holds it passes the check. A link at `location` is removed
+   * itself, never what it leads to; a missing one is fine.
+   */
+  readonly remove: (location: string) => Effect.Effect<void, StorageError>;
 }
 
 /** Random bytes in a temporary file's name: never guessed ahead of the write. */
@@ -145,6 +152,12 @@ export const makePrivateFiles = Effect.fnUntraced(function* (
     yield* fs.makeDirectory(location, { recursive: true, mode: 0o700 });
   });
 
+  const remove = Effect.fnUntraced(function* (location: string) {
+    const parent = path.dirname(location);
+    if (!(yield* isPrivate(parent))) return yield* refuse(parent);
+    yield* fs.remove(location, { recursive: true, force: true });
+  });
+
   const write = Effect.fnUntraced(function* (file: string, contents: string) {
     const parent = path.dirname(file);
     yield* folder(parent);
@@ -152,7 +165,7 @@ export const makePrivateFiles = Effect.fnUntraced(function* (
     const temporary = path.join(parent, `.${path.basename(file)}.${suffix}.j3-writing`);
     yield* fs.writeFileString(temporary, contents, { flag: "wx", mode: 0o600 }).pipe(
       Effect.andThen(fs.rename(temporary, file)),
-      Effect.onError(() => fs.remove(temporary, { force: true }).pipe(Effect.ignore)),
+      Effect.onError(() => remove(temporary).pipe(Effect.ignore)),
     );
   });
 
@@ -193,5 +206,5 @@ export const makePrivateFiles = Effect.fnUntraced(function* (
       yield* Stream.runForEach(bytes, (chunk) => Effect.uninterruptible(writeAll(file, fd, chunk)));
     }).pipe(Effect.scoped);
 
-  return { folder, write, writable, writeStream } satisfies PrivateFiles;
+  return { folder, write, writable, writeStream, remove } satisfies PrivateFiles;
 });

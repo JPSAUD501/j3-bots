@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- The release lists a SHA-256 of its archive, computed here as the install checks it.
+// @effect-diagnostics nodeBuiltinImport:off -- The release lists a SHA-256 of its archive, computed here as the install checks it; a folder swapped for a link mid-download takes node:fs, from inside the response body.
 import * as NodeCrypto from "node:crypto";
+import * as NodeFs from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -24,12 +25,14 @@ const DIGEST = NodeCrypto.createHash("sha256").update(ARCHIVE).digest("hex");
 
 /**
  * The release server: its checksums, and the archive, from the byte a range
- * asks for. Every request for the archive is recorded in `requests`, by the
- * range it asks for, or `whole`.
+ * asks for. Every request is recorded in `requests`: `SHA256SUMS`, or the
+ * archive by the range it asks for, or `whole`. `afterArchive` runs once the
+ * install has read the archive's last byte, before it has written it.
  */
-const release = (requests: Array<string>) =>
+const release = (requests: Array<string>, afterArchive: () => void) =>
   HttpClient.make((request) => {
     if (request.url === releaseUrl("SHA256SUMS")) {
+      requests.push("SHA256SUMS");
       return Effect.succeed(
         HttpClientResponse.fromWeb(request, new Response(`${DIGEST}  ${ARCHIVE_NAME}\n`)),
       );
@@ -37,25 +40,50 @@ const release = (requests: Array<string>) =>
     const range = /^bytes=(\d+)-$/.exec(request.headers["range"] ?? "");
     requests.push(range?.[0] ?? "whole");
     const from = Number(range?.[1] ?? 0);
+    const body = new ReadableStream<Uint8Array>({
+      start: (controller) => controller.enqueue(ARCHIVE.slice(from)),
+      pull: (controller) => {
+        afterArchive();
+        controller.close();
+      },
+    });
     return Effect.succeed(
-      HttpClientResponse.fromWeb(
-        request,
-        new Response(ARCHIVE.slice(from), { status: from > 0 ? 206 : 200 }),
-      ),
+      HttpClientResponse.fromWeb(request, new Response(body, { status: from > 0 ? 206 : 200 })),
     );
   });
 
 /** Where an install keeps its download and unpacks it. */
 interface Workspace {
+  readonly runtime: string;
   readonly partial: string;
   readonly staging: string;
 }
 
-/** Installs into a fresh home, with its workspace prepared by `prepare`. */
-const install = (
-  requests: Array<string>,
-  prepare: (workspace: Workspace) => Effect.Effect<void, PlatformError.PlatformError>,
-) =>
+interface Setup {
+  /** Prepares the workspace before the install starts. */
+  readonly prepare?: (workspace: Workspace) => Effect.Effect<void, PlatformError.PlatformError>;
+  /** Runs once the install has read the whole archive, before it has written it. */
+  readonly afterArchive?: (workspace: Workspace) => void;
+  /**
+   * Whether only what is inside the home, links resolved, counts as private.
+   * Otherwise every location does, and what refuses a link is the write itself.
+   */
+  readonly homeOnly?: boolean;
+}
+
+/** Whether `location`, through its nearest parent that exists, links resolved, is inside `home`. */
+const insideHome = Effect.fn("insideHome")(function* (home: string, location: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  let existing = location;
+  while (!(yield* fs.exists(existing))) existing = path.dirname(existing);
+  const real = yield* fs.realPath(existing);
+  const realHome = yield* fs.realPath(home);
+  return real === realHome || real.startsWith(`${realHome}/`);
+});
+
+/** Installs into a fresh home, set up as `setup` says. */
+const install = (requests: Array<string>, setup: Setup) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -63,14 +91,25 @@ const install = (
     const runtime = path.join(home, "j3", "runtime");
     yield* fs.makeDirectory(runtime, { recursive: true });
     const workspace: Workspace = {
+      runtime,
       partial: path.join(runtime, `${pin.version}.partial`),
       staging: path.join(runtime, `${pin.version}.staging`),
     };
-    yield* prepare(workspace);
-    // Every location counts as private: what refuses a link here is the write itself.
-    const files = yield* makePrivateFiles(() => Effect.succeed(true));
+    yield* setup.prepare?.(workspace) ?? Effect.void;
+    const files = yield* makePrivateFiles((location) =>
+      setup.homeOnly === true
+        ? insideHome(home, location).pipe(
+            Effect.provideService(FileSystem.FileSystem, fs),
+            Effect.provideService(Path.Path, path),
+            Effect.orElseSucceed(() => false),
+          )
+        : Effect.succeed(true),
+    );
     const exit = yield* ensureInstalled({ home, platform: "linux", arch: "x64", files }).pipe(
-      Effect.provideService(HttpClient.HttpClient, release(requests)),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        release(requests, () => setup.afterArchive?.(workspace)),
+      ),
       Effect.exit,
     );
     const error = Exit.isFailure(exit) ? Exit.findErrorOption(exit) : Option.none();
@@ -88,9 +127,9 @@ describe("ensureInstalled", () => {
       yield* fs.writeFileString(outside, "the owner's file");
       const requests: Array<string> = [];
 
-      const { partial, reason } = yield* install(requests, ({ partial }) =>
-        fs.symlink(outside, partial),
-      );
+      const { partial, reason } = yield* install(requests, {
+        prepare: ({ partial }) => fs.symlink(outside, partial),
+      });
 
       assert.strictEqual(reason, "storage");
       assert.deepStrictEqual(requests, []);
@@ -104,11 +143,11 @@ describe("ensureInstalled", () => {
       const fs = yield* FileSystem.FileSystem;
       const requests: Array<string> = [];
 
-      const { partial, reason } = yield* install(requests, ({ partial }) =>
-        fs.writeFile(partial, ARCHIVE.slice(0, 10)),
-      );
+      const { partial, reason } = yield* install(requests, {
+        prepare: ({ partial }) => fs.writeFile(partial, ARCHIVE.slice(0, 10)),
+      });
 
-      assert.deepStrictEqual(requests, ["bytes=10-"]);
+      assert.deepStrictEqual(requests, ["SHA256SUMS", "bytes=10-"]);
       // The resumed file matched the release's digest; only unpacking it failed.
       assert.strictEqual(reason, "extract");
       assert.deepStrictEqual(yield* fs.readFile(partial), ARCHIVE);
@@ -122,12 +161,37 @@ describe("ensureInstalled", () => {
       const outside = yield* fs.makeTempDirectoryScoped();
       yield* fs.writeFileString(path.join(outside, "owner-file"), "the owner's file");
 
-      const { staging, reason } = yield* install([], ({ staging }) => fs.symlink(outside, staging));
+      const { staging, reason } = yield* install([], {
+        prepare: ({ staging }) => fs.symlink(outside, staging),
+      });
 
       // The download matched; only unpacking it failed, in a folder of its own.
       assert.strictEqual(reason, "extract");
       assert.deepStrictEqual(yield* fs.readDirectory(outside), ["owner-file"]);
       assert.strictEqual((yield* fs.lstat(staging)).type, "Directory");
     }).pipe(Effect.scoped, Effect.provide(machine)),
+  );
+
+  it.effect(
+    "neither reads nor removes through a runtime folder swapped for a link mid-download",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const outside = yield* fs.makeTempDirectoryScoped();
+        const ownerFile = path.join(outside, `${pin.version}.partial`);
+        yield* fs.writeFileString(ownerFile, "the owner's file");
+
+        const { reason } = yield* install([], {
+          homeOnly: true,
+          afterArchive: ({ runtime }) => {
+            NodeFs.renameSync(runtime, `${runtime}.moved`);
+            NodeFs.symlinkSync(outside, runtime);
+          },
+        });
+
+        assert.strictEqual(reason, "storage");
+        assert.strictEqual(yield* fs.readFileString(ownerFile), "the owner's file");
+      }).pipe(Effect.scoped, Effect.provide(machine)),
   );
 });
