@@ -82,6 +82,7 @@ import {
 } from "./Credential.ts";
 import { EngineInstallFailed, ensureInstalled } from "./Install.ts";
 import { commandIdFor, messageIdFor, projectIdFor, threadIdFor } from "./Keys.ts";
+import { isMissingThread } from "./missingThread.ts";
 import { ORCHESTRATION_PROTOCOL, pin } from "./Pin.ts";
 import type { FileChangeItem } from "./approvalDetail.ts";
 import { cursorFor, makeBatches, type BatchPlace } from "./Batches.ts";
@@ -199,7 +200,9 @@ type LoopInput =
   | { readonly _tag: "item"; readonly item: OrchestrationV2ThreadStreamItem }
   /** A file change an open approval holds, fetched whole. */
   | { readonly _tag: "fetched"; readonly item: FileChangeItem }
+  /** The stream ended or a read failed: it is opened again once the engine is ready. */
   | { readonly _tag: "lost" }
+  /** The engine has no record of the session's thread. */
   | { readonly _tag: "missing" }
   | {
       readonly _tag: "sync";
@@ -412,8 +415,13 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
           Effect.catchTags({
             RpcClientError: () => Effect.fail(new EngineUnavailable()),
             EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
-            OrchestrationV2GetThreadProjectionError: () =>
-              Effect.fail(new SessionNotFound({ sessionId })),
+            // Only a thread the engine has no record of is lost; a read that failed may succeed again.
+            OrchestrationV2GetThreadProjectionError: (error) =>
+              Effect.fail(
+                isMissingThread(error)
+                  ? new SessionNotFound({ sessionId })
+                  : new EngineUnavailable(),
+              ),
           }),
         ),
       ),
@@ -1158,8 +1166,8 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
               Stream.runForEach((item) => Queue.offer(inputs, { _tag: "item", item })),
               Effect.as<LoopInput>({ _tag: "lost" }),
               Effect.catchTags({
-                OrchestrationV2GetThreadProjectionError: () =>
-                  Effect.succeed<LoopInput>({ _tag: "missing" }),
+                OrchestrationV2GetThreadProjectionError: (error) =>
+                  Effect.succeed<LoopInput>({ _tag: isMissingThread(error) ? "missing" : "lost" }),
               }),
               Effect.orElseSucceed((): LoopInput => ({ _tag: "lost" })),
             );
@@ -1206,8 +1214,8 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
             ),
             Effect.timeoutOption(SYNC_TIMEOUT),
             Effect.map((caught) => (Option.isSome(caught) && marked ? "marked" : "late")),
-            Effect.catchTag("OrchestrationV2GetThreadProjectionError", () =>
-              Effect.succeed("missing" as const),
+            Effect.catchTag("OrchestrationV2GetThreadProjectionError", (error) =>
+              Effect.succeed(isMissingThread(error) ? ("missing" as const) : ("lost" as const)),
             ),
             Effect.orElseSucceed(() => "lost" as const),
           );

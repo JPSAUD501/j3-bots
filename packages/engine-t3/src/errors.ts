@@ -63,10 +63,12 @@ export class ProjectNotFound extends Schema.TaggedError<ProjectNotFound>()("Proj
 }
 
 /**
- * The session does not exist, or it was retired. From `dispatch`, the adapter
- * found this before sending anything: the key was never sent, and the caller
- * may use the wakes again. `redispatch` never fails this way, since it skips
- * every local check.
+ * The session does not exist, or it was retired. Only the engine's word that
+ * it has no record of the session's thread makes it missing: a read the
+ * engine failed is `EngineUnavailable`, never a loss. From `dispatch`, the
+ * adapter found this before sending anything: the key was never sent, and
+ * the caller may use the wakes again. `redispatch` never fails this way,
+ * since it skips every local check.
  */
 export class SessionNotFound extends Schema.TaggedError<SessionNotFound>()("SessionNotFound", {
   sessionId: SessionId,
