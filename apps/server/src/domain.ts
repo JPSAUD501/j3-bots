@@ -34,6 +34,7 @@ import * as Readiness from "./turns/Readiness.ts";
 import * as Rotations from "./turns/Rotations.ts";
 import * as RunningWork from "./turns/RunningWork.ts";
 import * as Sender from "./turns/Sender.ts";
+import * as SendPause from "./turns/SendPause.ts";
 import * as SessionGate from "./turns/SessionGate.ts";
 import * as Signals from "./turns/Signals.ts";
 import * as Speech from "./turns/Speech.ts";
@@ -100,6 +101,7 @@ export const layer = Layer.mergeAll(BotTools.layer, Turns.layer).pipe(
       Usage.layer,
       Signals.layer,
       SessionGate.layer,
+      SendPause.layer,
       Readiness.layer,
       DeviceAuth.layer,
     ),

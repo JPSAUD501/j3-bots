@@ -40,6 +40,7 @@ import {
 import { inboxPath } from "./inbox.ts";
 import { Observer } from "./Observer.ts";
 import { DEFECT_RETRY } from "./reconciler.ts";
+import { SendPause } from "./SendPause.ts";
 import { SessionGate } from "./SessionGate.ts";
 import { sessionLoss } from "./sessionRecords.ts";
 import { Signals } from "./Signals.ts";
@@ -143,6 +144,7 @@ export const layer = Layer.effect(
     const engine = yield* Engine;
     const ledger = yield* Ledger;
     const gate = yield* SessionGate;
+    const pause = yield* SendPause;
     const signals = yield* Signals;
     const observer = yield* Observer;
     const attachments = yield* Attachments;
@@ -697,7 +699,11 @@ export const layer = Layer.effect(
       );
 
     const send = Effect.fn("Sender.send")(function* (dispatchId: DispatchRowId, owner: SendOwner) {
-      const result = yield* sendOnce(dispatchId, owner);
+      // A first send waits out a pause (`SendPause`); a key already sent is
+      // work the engine may have, which a pause counts anyway.
+      const result = yield* owner === "dispatcher"
+        ? pause.sending(sendOnce(dispatchId, owner))
+        : sendOnce(dispatchId, owner);
       // Only a change wakes anyone: the session may take its next wake, a
       // Stop may proceed, or the dispatch's owner has a new deadline: the
       // dispatcher for one never sent, the recovery for a claimed one.

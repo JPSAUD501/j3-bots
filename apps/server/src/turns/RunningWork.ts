@@ -18,13 +18,17 @@ const EngineSessionRow = Schema.Struct({
   engine_session_id: SessionId,
 });
 
+/** How many sessions `bots` reads from the engine at once. */
+const READ_CONCURRENCY = 4;
+
 /**
  * The bots with work running in the engine: what a restart of the engine
- * stops. A session counts when a turn of it runs or the engine has a
- * dispatch of it, or when the engine shows a turn it can still run or
- * background work pending. A session whose state cannot be read now counts,
- * so the operator is asked rather than told nothing runs. With the engine not
- * ready, nothing runs in it.
+ * stops. A session counts when a turn of it runs, the engine has a dispatch
+ * of it or may have one whose answer was lost, or the engine shows a turn it
+ * can still run or background work pending. A session whose state cannot be
+ * read now counts, so the operator is asked rather than told nothing runs.
+ * With the engine not ready, nothing runs in it. Read under a `SendPause`, so
+ * no first send lands between the reading and what the caller does with it.
  */
 export class RunningWork extends Context.Service<
   RunningWork,
@@ -50,20 +54,33 @@ export const layer = Layer.effect(
       `,
     });
 
+    /** Whether the session has a dispatch sent whose answer is not known: the engine may have it. */
+    const sentUnanswered = SqlSchema.findAll({
+      Request: SessionRowId,
+      Result: Schema.Struct({ id: Schema.String }),
+      execute: (sessionId) => sql`
+        SELECT id FROM dispatches
+        WHERE session_id = ${sessionId} AND status = 'intended' AND attempts > 0
+        LIMIT 1
+      `,
+    });
+
     const running = Effect.fn("RunningWork.running")(function* (
       session: typeof EngineSessionRow.Type,
     ) {
       const local = yield* work(session.id);
       if (local.admitted !== null || local.runningTurns > 0 || local.inEngine > 0) return true;
+      if ((yield* sentUnanswered(session.id).pipe(Effect.orDie)).length > 0) return true;
       return yield* observer.synchronize(session.id, session.engine_session_id).pipe(
         Effect.map(
           ({ backgroundWork, runnableTurns }) =>
             backgroundWork === "pending" || runnableTurns.length > 0,
         ),
+        // Only a session the engine no longer has runs nothing for certain.
         Effect.catchTags({
           SessionNotFound: () => Effect.succeed(false),
-          EngineUnavailable: () => Effect.succeed(false),
-          EngineIncompatible: () => Effect.succeed(false),
+          EngineUnavailable: () => Effect.succeed(true),
+          EngineIncompatible: () => Effect.succeed(true),
           EngineIndeterminate: () => Effect.succeed(true),
           NotObserved: () => Effect.succeed(true),
         }),
@@ -72,12 +89,13 @@ export const layer = Layer.effect(
 
     const bots = Effect.gen(function* () {
       if ((yield* engineState.current).state._tag !== "ready") return [];
-      const working = new Set<BotId>();
-      for (const session of yield* inEngine(undefined).pipe(Effect.orDie)) {
-        if (working.has(session.bot_id)) continue;
-        if (yield* running(session)) working.add(session.bot_id);
-      }
-      return [...working];
+      const sessions = yield* inEngine(undefined).pipe(Effect.orDie);
+      const found = yield* Effect.forEach(
+        sessions,
+        (session) => Effect.map(running(session), (busy) => (busy ? [session.bot_id] : [])),
+        { concurrency: READ_CONCURRENCY },
+      );
+      return [...new Set(found.flat())];
     }).pipe(Effect.withSpan("RunningWork.bots"));
 
     return RunningWork.of({ bots });

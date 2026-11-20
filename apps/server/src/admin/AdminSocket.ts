@@ -20,6 +20,7 @@ import { EngineState } from "../engine/EngineState.ts";
 import { Listener } from "../listener.ts";
 import * as Ports from "../system/Ports.ts";
 import { RunningWork } from "../turns/RunningWork.ts";
+import { SendPause } from "../turns/SendPause.ts";
 import { WebClientStatus } from "../web/WebClient.ts";
 import {
   ADMIN_PATHS,
@@ -30,10 +31,11 @@ import {
 } from "./protocol.ts";
 
 // The admin socket: how `j3-bots pair`, `j3-bots doctor` and
-// `j3-bots provider connect` reach the running server. A Unix socket in the home, which only the operator's user can open,
-// so it needs no credential. Nothing on the network reaches it. The server
-// binds it only while it holds the home (`home/Home.ts`), which also removed
-// any socket a stopped server left there.
+// `j3-bots provider connect` reach the running server. A Unix socket in the
+// home, which only the operator's user can open, so it needs no credential.
+// Nothing on the network reaches it. The server binds it only while it holds
+// the home (`home/Home.ts`), which also removed any socket a stopped server
+// left there.
 
 const routes = Layer.mergeAll(
   Layer.unwrap(
@@ -82,11 +84,18 @@ const routes = Layer.mergeAll(
       );
       if (request._tag === "None") return HttpServerResponse.empty({ status: 400 });
       const { baseUrl, key, stopWork } = request.value;
-      const working = stopWork ? [] : yield* (yield* RunningWork).bots;
-      const outcome: ProviderConnectionOutcome =
-        working.length > 0
-          ? { _tag: "work-running", bots: working.length }
-          : yield* (yield* Engine).connectProviders({ baseUrl, key: Redacted.make(key) });
+      const runningWork = yield* RunningWork;
+      const engine = yield* Engine;
+      // No new work starts between the check and the restart: first sends
+      // wait until the engine is back, or the connection was refused.
+      const outcome = yield* (yield* SendPause).paused(
+        Effect.gen(function* () {
+          const working = stopWork ? [] : yield* runningWork.bots;
+          return working.length > 0
+            ? ({ _tag: "work-running", bots: working.length } satisfies ProviderConnectionOutcome)
+            : yield* engine.connectProviders({ baseUrl, key: Redacted.make(key) });
+        }),
+      );
       return yield* HttpServerResponse.schemaJson(ProviderConnectionOutcome)(outcome).pipe(
         Effect.orDie,
       );
