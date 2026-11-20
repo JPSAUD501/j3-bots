@@ -19,9 +19,10 @@ const roomFields = {
 };
 
 /**
- * A room that takes messages. An archived room stays readable and takes none:
- * a room is archived when deleting bots leaves it with fewer than two members,
- * so it may have fewer and no host.
+ * A room that takes messages. An archived room stays readable and takes none.
+ * The operator archives a room with `room.update`, and a room is archived when
+ * deleting bots leaves it with fewer than two members, so an archived room may
+ * have fewer and no host.
  */
 export const Room = Schema.Union([
   Schema.Struct({

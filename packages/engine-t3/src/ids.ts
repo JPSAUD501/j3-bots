@@ -43,6 +43,19 @@ export const HostSpeechId = opaque.pipe(Schema.brand("HostSpeechId"));
 export type HostSpeechId = typeof HostSpeechId.Type;
 
 /**
+ * One call the bot made to a `j3` tool, as the engine records it in its turn.
+ * Stable: the server claims each one for at most one tool request.
+ */
+export const ToolCallId = opaque.pipe(Schema.brand("ToolCallId"));
+export type ToolCallId = typeof ToolCallId.Type;
+
+/** What `toolInputDigest` makes of a tool call's input: lowercase hex SHA-256. */
+export const ToolInputDigest = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/)).pipe(
+  Schema.brand("ToolInputDigest"),
+);
+export type ToolInputDigest = typeof ToolInputDigest.Type;
+
+/**
  * The caller's name for one `Engine.synchronize` call, echoed by the
  * `synchronized` event it produces.
  */

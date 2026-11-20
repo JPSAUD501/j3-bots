@@ -77,13 +77,30 @@ it.layer(TestDatabase.layer)("database", (it) => {
       `.pipe(Effect.flip);
       assert.include(String(rewritten.reason.cause), "keeps the session, audience and envelope");
 
+      // A repeat answered `applied-earlier`: applied, with no disposition to record.
+      yield* sql`
+        INSERT INTO dispatches (
+          id, bot_id, session_id, audience, delivery, envelope, status, attempts, created_at,
+          updated_at
+        ) VALUES (
+          'dispatch-0', 'echo', 'session-1', 'conversation', 'start', '<j3-wake/>', 'intended', 2,
+          ${now}, ${now}
+        )
+      `;
+      yield* sql`UPDATE dispatches SET status = 'accepted' WHERE id = 'dispatch-0'`;
+      yield* sql`
+        UPDATE dispatches SET status = 'delivered', engine_turn_id = 'turn-1'
+        WHERE id = 'dispatch-0'
+      `;
+
+      // The steer rides on turn-1, which is not its own.
       yield* sql`
         UPDATE dispatches
         SET status = 'accepted', disposition = 'steered', disposition_turn_id = 'turn-1',
           engine_turn_id = 'turn-1'
         WHERE id = 'dispatch-1'
       `;
-      // The steer went unread: the dispatch moves to the engine's follow-up turn,
+      // The steer was requeued: the dispatch moves to the engine's follow-up turn,
       // and keeps the answer the engine gave first.
       yield* sql`
         UPDATE dispatches SET status = 'delivered', engine_turn_id = 'turn-2'

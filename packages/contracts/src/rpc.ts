@@ -198,9 +198,14 @@ export const EntryRpcs = RpcGroup.make(
   }),
   /**
    * Answers a secret request. The value goes straight to the engine and is not
-   * stored, logged or kept in a receipt. Without a receipt, a retry after the
-   * first call succeeded fails with `Conflict("card-closed")`, which the client
-   * reads as done.
+   * stored, logged or kept in a receipt.
+   *
+   * Answers how the card resolved. `confirmed` is true only when this call's
+   * own answer is the one the engine took. Otherwise the card was already
+   * closed, or the engine's reply was lost and a retry found it closed: the
+   * resolution is what the card shows, which may be this answer, another
+   * device's, or `expired`. Only a confirmed `provided` or `declined` means
+   * this call did it; `expired` means no answer was taken.
    */
   Rpc.make("secret.provide", {
     payload: {
@@ -214,6 +219,10 @@ export const EntryRpcs = RpcGroup.make(
         Schema.TaggedStruct("decline", {}),
       ]),
     },
+    success: Schema.Struct({
+      resolution: Schema.Literals(["provided", "declined", "expired"]),
+      confirmed: Schema.Boolean,
+    }),
     error: CommandError,
   }),
   /** Runs again what a retryable notice says failed. */
@@ -296,7 +305,13 @@ export const RoomRpcs = RpcGroup.make(
     success: Room,
     error: CommandError,
   }),
-  /** Fails with `Conflict("room-archived")` for an archived room. */
+  /**
+   * `archived: true` archives the room: its pending wakes are cancelled, its
+   * running work is stopped as `bot.stop` stops it, and its open `ask` cards
+   * expire. An archived room takes only `pinned` and `archived: false`, and
+   * fails with `Conflict("room-archived")` for anything else; unarchiving
+   * needs two to six members and a host, which the same update may give.
+   */
   Rpc.make("room.update", {
     payload: {
       ...command,
@@ -306,6 +321,7 @@ export const RoomRpcs = RpcGroup.make(
       hostId: Schema.optionalKey(BotId),
       hopLimit: Schema.optionalKey(RoomHopLimit),
       pinned: Schema.optionalKey(Schema.Boolean),
+      archived: Schema.optionalKey(Schema.Boolean),
     },
     success: Room,
     error: CommandError,

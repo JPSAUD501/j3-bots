@@ -16,11 +16,11 @@ J3 Bots keeps two kinds of state, in two places, for two different readers.
 | Room | Name, members, host, status (active or archived) and when it was archived. A sequence of entries |
 | Entry | A message or a card, with its author, its time, its delivery state and its fixed place (`order`) in its conversation or room |
 | Session | J3 Bots' own id, its bot, its purpose (main or side), the engine thread id once the engine has one, the prompt version it was created with, its run count, the cursor of the engine events applied so far, and the turn it has admitted with that turn's audience |
-| Wake | Kind, priority, target bot, audience, payload, hop count, status, and the dispatch that delivered it |
-| Dispatch | One delivery to the engine: the target session, the audience, start or steer, the rendered envelope and its files, the disposition the engine reported first, the turn that delivers it, its status, the Stop that fenced it, the outcome. Several coalesced wakes share one |
-| Stop | The operator's Stop of one bot: its command id, and per target session the engine key and whether it was stopped |
+| Wake | Kind, priority, target bot, audience, payload, hop count, status (pending, dispatched, finished, cancelled or failed), and the dispatch that delivered it |
+| Dispatch | One delivery to the engine: the target session, the audience, start or steer, the rendered envelope and its files, how many times it was sent, the disposition the engine reported first if it reported one, the turn that delivers it, its status and, when abandoned, why, a pending continuation of its turn, the Stop that fenced it, the outcome. Several coalesced wakes share one |
+| Stop | The operator's Stop of one bot, or of a room's work when the room is archived: its command id, and per target session the engine key and whether it was stopped |
 | Ask card | For an `ask` question: the wake it came from and the audience of the turn that asked |
-| Tool call | A bot tool call pinned to the turn and audience it came from, with its result |
+| Tool call | A bot tool call pinned to the turn and audience it came from and to the engine's record of the call, with its result |
 | Engine request | For an approval, an engine question or a secret request: the session, the engine's request id and the turn it belongs to |
 | Catch-up note | What a bot's main session has not seen yet, consumed by its next main-session dispatch |
 | Held message | A non-urgent teammate message waiting for the recipient's next envelope |
@@ -75,8 +75,8 @@ J3 Bots owns waiting and priority. A pending wake stays in the server's database
 For each pending wake the dispatcher applies, in order:
 
 - **Budget.** A wake caused by a bot carries a hop count. If the chain that led here exceeds the limit, the wake is cancelled and the conversation or room shows that the chain stopped. See [Budgets](#budgets).
-- **Readiness.** A wake is dispatched only into an idle session: no admitted turn, no dispatch accepted but not yet delivered or finished, and no turn the engine started on its own. The one exception is below: a `user` wake for a running turn with the same audience.
-- **Coalescing.** Pending wakes of a bot with the same kind and the same audience that are ready for the same session become one dispatch: three messages in one room that arrived while the bot was busy are delivered together. Wakes for different audiences never share a dispatch, so one turn always speaks to one place.
+- **Readiness.** A wake is dispatched only into an idle session: no admitted turn, no dispatch that may be in the engine and is not yet finished (sent but unanswered, accepted, or delivered), and no turn the engine started on its own; a pending continuation holds back every wake but the operator's. The one exception is below: a `user` wake for a running turn with the same audience. Nothing at all is dispatched into a session while a Stop of it is unsettled ([Stop](#stop)).
+- **Coalescing.** Pending wakes of a bot with the same kind and the same audience that are ready for the same session become one dispatch: three messages in one room that arrived while the bot was busy are delivered together. Wakes for different audiences never share a dispatch, so one turn always speaks to one place. Coalescing stops at the engine's limits for one message (`attachmentLimitViolation` on the dispatch's files together): the wakes that would break them wait for the next dispatch, oldest first, so a batch whose files do not fit becomes consecutive dispatches. A single wake always fits, because each message's files were checked when it was sent.
 - **Concurrency.** At most N turns run at once across all bots. Higher-priority wakes take a free slot first.
 - **Blocked providers.** If the bot's provider is at its usage limit, routine and bot wakes wait for the reset. An operator wake is dispatched anyway so the operator gets the engine's own limit message.
 
@@ -92,32 +92,39 @@ Before anything is written, a message's files are checked against the engine's l
 
 In one transaction the dispatcher renders the envelope, writes a **dispatch** with the target session, the audience, the delivery (start, or steer with the turn), that envelope and its files in order, links the coalesced wakes to it, and consumes the bot's catch-up note and held messages into the envelope. A dispatch never changes its session, its audience or its envelope afterwards; the database refuses it.
 
-Then it stages each file in the engine (`stageAttachment`) and stores the id the engine minted, and calls the engine with the dispatch id as the key. The adapter derives the engine's command id and message id from that key ([Engine: the adapter's interface](engine.md#the-adapters-interface)), so sending the same dispatch again is the same command, with the same staged files. A staged file is staged again only while the dispatch is still unsent and its `usableUntil` has passed. A retried staging after a lost reply leaves an unused copy, which the engine removes.
+Then it stages each file in the engine (`stageAttachment`) and stores the id the engine minted, raises the dispatch's attempt count, and calls the engine with the dispatch id as the key. The adapter derives the engine's command id and message id from that key ([Engine: the adapter's interface](engine.md#the-adapters-interface)), so sending the same dispatch again is the same command. A staged file is staged again whenever its `usableUntil` has passed before a send, including a repeat, because the engine claims the files before it looks at the key; a copy a repeat does not use is removed by the engine. A retried staging after a lost reply leaves an unused copy the same way.
 
-The engine's answer records **acceptance**, as the dispatch's disposition, which never changes:
+The engine's answer records **acceptance**. Its first disposition is stored and never changes:
 
 | Disposition | Meaning | What the server does |
 | --- | --- | --- |
 | `started` | A new turn started | The turn is admitted when its `turn-started` arrives |
-| `queued` | A turn the engine began while the start was on its way runs first; this message's turn waits behind it | The turn is admitted when its `turn-started` arrives |
-| `steered` | The message was added to the running turn | The wakes ride on that turn once the agent reads it (see below) |
-| `new-turn` | A steer arrived too late, or the provider cannot steer: the message became its own turn, possibly after the running one | The turn is admitted when its `turn-started` arrives |
+| `queued` | A turn the engine began while the start was on its way runs first; this message's turn waits behind it | The turn is admitted when its `turn-started` arrives, with this dispatch's audience, whatever the turn ahead of it was for |
+| `steered` | The message was given to that turn | The dispatch waits for the steer to settle (see below) |
+| `new-turn` | A steer arrived too late, or the provider can take no steer: the message became its own turn, possibly after the running one | The turn is admitted when its `turn-started` arrives |
+| `applied-earlier` | A repeat of a key the engine had already applied, which does not say how | The dispatch is accepted with no disposition stored; the events say where it went, as for any other |
 
-**Delivery** is what the events say, not the disposition: a dispatch is delivered when `turn-started` arrives with the cause `dispatch` and its key, or, for a steer, when the agent reads it (`steered`). A steer the agent never read ends one of two ways. If its turn ends any way other than Stop, the engine starts it as a follow-up turn with the same dispatch as its cause; the server moves the dispatch and its wakes to that turn and admits it like a started one, while `lookupDispatch` keeps answering `steered`. If Stop ends its turn, the engine drops it (`steer-dropped`) and shows its own notice; the dispatch is dropped and its wakes are cancelled with the Stop.
+**Delivery** is what the events say, not the disposition: a dispatch is delivered when `turn-started` arrives with the cause `dispatch` and its key, or, for a steer, when it settles as taken. A steer settles only after the turn it steered has ended, with one event right after that turn's `turn-finished`: `steered` (taken: the dispatch is delivered and finishes with that turn's outcome), `steer-requeued` (the turn ended any way but Stop without taking it, and the engine queued it as a follow-up turn: the dispatch and its wakes move to that turn, which is admitted when it starts) or `steer-dropped` (Stop ended the turn first: the dispatch is dropped, its wakes are cancelled with the Stop, and the engine shows its own notice). Until then the dispatch is accepted and undecided, and no `undelivered` wake fires for it.
 
-`SessionBusy` means the adapter already saw a turn in the session and sent nothing: the dispatch is abandoned and its wakes wait again. It is a best-effort check; a turn that begins just after it gives `queued` instead.
+Events about a key can arrive before the engine's answer does, after a lost reply. They prove it applied: the server records the dispatch as accepted, with no disposition, and applies them.
 
-**Abandoning** a dispatch means it was never applied: in the same transaction its wakes return to pending, and the catch-up notes and held messages it consumed are released for the next envelope. A dropped dispatch releases them the same way.
+**Refusals.**
 
-**Reconciliation.** When the server cannot tell whether a dispatch reached the engine (it crashed during the call, or the call failed with `EngineIndeterminate` because the reply was lost), it asks: `lookupDispatch` answers applied, not applied, or unknown. Applied records the disposition. Not applied sends the same dispatch again. Unknown waits and asks again. A lost reply is never taken as "not applied": only the lookup proves that. A dispatch moves to a replacement session only after a definite answer: applied means it ran where it was sent; not applied lets the server abandon it and dispatch its wakes afresh in the new session. The server never guesses, so a wake is never delivered twice and never silently lost.
+- `SessionBusy`: the adapter already saw a turn in the session and sent nothing. The dispatch is abandoned as `not-applied` and its wakes wait again. It is a best-effort check; a turn that begins just after it gives `queued` instead.
+- `SessionNotFound`: the engine has no such session and applied nothing. The dispatch is abandoned as `not-applied`, its wakes wait again, and the bot gets a new session ([Sessions](#sessions)).
+- `DispatchRejected`: the engine refused the key and applied nothing. The dispatch is abandoned as `rejected`. Its catch-up notes and held messages are released for the next envelope, and its wakes **fail visibly**: each shows, where it came from, that it did not reach the bot, with a retry action for an operator message. They never return to pending, because the same wakes would be refused the same way.
+
+**Abandoning** a dispatch means it will never be delivered. In the same transaction its catch-up notes and held messages are released, and its wakes go back to pending when the engine applied nothing and the wakes may go again (`not-applied`), or fail visibly otherwise. A dropped dispatch releases its notes and messages the same way.
+
+**Recovery.** When the server cannot tell whether a dispatch reached the engine (it crashed during the call, or the call failed with `EngineIndeterminate`), it sends the same dispatch again: the same key, the same envelope, the same delivery and the same files. The engine applies a key once, so the answer to the repeat is the answer for the key: a disposition, `applied-earlier`, or a refusal. A lost reply is never taken as "not applied". A dispatch with no recorded attempt was never sent, which is the only other proof of that. The server keeps sending until it has an answer, with backoff while the engine is unreachable. Two things end the wait without one: the session is retired or removed (a rotation, a fresh start, a deleted bot), or the dispatch is older than a day. The engine keeps its receipts for good, so the day is J3 Bots' own bound, matching how long the engine keeps a session's events. The dispatch is then abandoned as `unresolved` and its wakes fail visibly; if a turn later names its key, the server still attributes the turn to its audience. A dispatch moves to a replacement session only through its wakes, after it was abandoned. The server never guesses, so a wake is never delivered twice and never silently lost.
 
 ### 4. The turn is observed, and admitted
 
 The adapter streams each session's events, and the server derives the bot's state from them: thinking, working, waiting on a request, blocked, idle. Clients see that state live. Each event is applied and its cursor stored in one transaction, so a restart neither skips nor repeats one. A stream that resumes too late to replay starts with one replacement of the session's state, and the server reconciles against it by stable ids (turn, request, speech and dispatch key), so a turn, a speech or a resolution it already applied changes nothing when it comes again ([Engine](engine.md#the-adapters-interface)).
 
-A session has at most one **admitted turn**: the turn bot tool calls bind to, with its **audience**, where its speech goes (the bot's conversation, or one room). A turn caused by a dispatch is admitted when it starts, with the dispatch's audience. A turn the engine started to continue another, after a usage limit reset or an engine restart, keeps the audience of the turn it continues, and the dispatch of that turn stays open until it ends. A turn the engine started for background work that finished is admitted with the bot's own conversation as its audience.
+A session has at most one **admitted turn**: its running turn, once the provider took it, with its **audience**, where its speech goes (the bot's conversation, or one room). A turn caused by a dispatch is admitted when it starts, with the dispatch's audience; a `queued` start keeps its own audience even when the turn ahead of it was a room's. A turn the engine started to continue another after a usage limit reset is admitted with the audience of the turn it continues ([Continuations](#5-the-outcome-closes-the-dispatch)). A turn the engine started for background work that finished is admitted with the bot's own conversation as its audience.
 
-What the bot *says* does not come from the event stream. It comes from the bot calling J3 Bots' `say` tool, which appends an entry to the audience of the turn the call came from and returns ([Bot tools](#bot-tools)). A `say` or `ask` that arrives when the session has no admitted turn is refused with a typed error (`NoAdmittedTurn`), and nothing is delivered. A call to the engine's own `send_to_user` tool arrives as host speech and is delivered once per speech id, like a `say` without `done`, so a slip is not lost.
+What the bot *says* does not come from the event stream. It comes from the bot calling J3 Bots' `say` tool, which appends an entry to the audience of the turn the call came from and returns ([Bot tools](#bot-tools)). A `say` or `ask` that cannot be matched to a call of the session's running turn fails with a typed `TurnEnded` result, and nothing is published or recorded. A call to the engine's own `send_to_user` tool arrives as host speech and is delivered once per speech id, like a `say` without `done`, so a slip is not lost.
 
 A `say` with `done: true` **closes the delivery**: the dispatch's wakes are finished, and the operator sees the bot's reply as delivered. It does not interrupt the run. The bot is expected to end its turn; if it keeps working, what it says next still reaches the same audience. The server never interrupts a run to end it, because an interrupt may drop the delivery of a delegated task's completion ([Engine](engine.md#behaviors-j3-bots-designs-around)).
 
@@ -127,15 +134,19 @@ The turn's final reply text is never published: the base prompt tells the bot it
 
 When the turn ends, the dispatch records how: completed, failed (with the engine's error class), interrupted, or waiting on the operator, and its wakes are finished. A failed routine wake is retried according to its routine's policy; a failed operator wake is shown in the conversation with a retry action.
 
-The adapter knows which turn delivers a dispatch because every engine run names the message that started it, and that message's id comes from the dispatch key; a steer's follow-up turn keeps the same message. A turn the engine started on its own closes no dispatch.
+The adapter knows which turn delivers a dispatch because every engine run names the message that started it, and that message's id comes from the dispatch key; a steer's follow-up turn keeps the same message, and a run the engine restarted to take a steer keeps the message of its first attempt. A turn the engine started on its own closes no dispatch.
+
+**Continuations.** A turn that fails at a usage limit may end with a pending continuation: the engine will resume it at the reset ([Engine](engine.md#the-adapters-interface)). Its `turn-finished` then leaves the dispatch delivered rather than finished, with the outcome so far and the reset time recorded, and no `undelivered` wake fires. When the continuation turn starts, its cause names the turn it continues; the server follows that one link, moving the dispatch's turn and its audience to the new turn, so a chain of continuations is followed a link at a time. The dispatch finishes when a turn ends with no continuation pending, or when `continuation-dropped` arrives, with the last outcome; only then does an `undelivered` wake fire if nothing was delivered. A pending continuation keeps the session busy for automated wakes, which wait for the reset anyway. An operator wake is still dispatched; the engine then drops the continuation, because it resumes only the session's latest turn. The engine's continuation after its own restart is turned off, so a turn a restart cut short ends `interrupted` like any other.
 
 ### Stop
 
 The operator's Stop is a separate path, never a side effect of `done`, and a durable one: it is written down before the engine is called, and finished after a crash.
 
-1. **Record.** In one transaction the server writes the Stop under its command id with its **targets**: every session of the bot with a turn, a turn waiting in the engine or background work. Each target gets an engine key derived from the Stop's command id and the session id. The same transaction **fences** every dispatch of the bot that has not been accepted yet, so it is never sent again, and cancels every wake the server still holds for the bot; each shows as cancelled where it came from.
-2. **Settle the fenced dispatches.** A fenced dispatch whose call may still be in flight is waited for, and after a lost reply it is looked up, so nothing the bot was sent lands behind the Stop. One that was not applied is abandoned, with its wakes cancelled. One that was applied is in the session, and the stop below ends it.
-3. **Stop each target.** `stop` with the target's key ends the running turn and the delegated work the engine can reach, cancels every turn waiting in the engine and drops unread steers. The adapter derives each engine command from the key, so a retried Stop, or a resumed one after a crash, sends the same commands. The Stop is finished when every target is stopped.
+1. **Record.** In one transaction the server writes the Stop under its command id with its **targets**: every session of the bot with a turn, a turn waiting in the engine, background work, or a dispatch that may have been sent (`intended` with an attempt, `accepted` or `delivered`). Each target gets an engine key derived from the Stop's command id and the session id. The same transaction **fences** every dispatch of the bot that has not been accepted yet, so it is never sent for delivery again, and cancels every wake the server still holds for the bot; each shows as cancelled where it came from. A fenced dispatch that was never sent is abandoned at once as `not-applied`, with its wakes cancelled.
+2. **Settle the fenced dispatches.** A fenced dispatch whose call may still be in flight is waited for. One whose reply was lost is sent once more with the same key, before the stop, to learn the answer for its key: if the engine had applied it, the repeat applies nothing; if it had not, the repeat applies it, and the stop that follows ends it. Either way nothing the bot was sent lands behind the Stop. One the engine refused is abandoned, with its wakes cancelled.
+3. **Stop each target.** `stop` with the target's key ends the running turn and the delegated work the engine can reach, cancels every turn waiting in the engine and drops untaken steers. The adapter derives each engine command from the key, so a retried Stop, or a resumed one after a crash, sends the same commands. The Stop is finished when every target is stopped.
+
+**A session with an unsettled Stop takes nothing.** From the moment its target is recorded until `stop` succeeds for it, the server sends that session no dispatch (only the repeats of step 2), and the adapter resumes no held queue in it. The engine's Stop is two steps, and a message arriving between them could restart a turn the Stop is ending ([Engine](engine.md#behaviors-j3-bots-designs-around)). The rule survives a restart: at start the server sends the Stop of every unstopped target again before it opens those sessions' events.
 
 The events that follow close the rest: the running turn ends interrupted, a waiting turn ends cancelled and its dispatch is dropped, a dropped steer drops its dispatch. Wakes of a dropped dispatch are cancelled with the Stop. Background work the engine could not reach may still wake the bot later, as a background turn.
 
@@ -147,13 +158,13 @@ Two kinds of card wait on the operator, with separate lifecycles.
 
 **The engine's requests** belong to a running turn: an approval, a question asked through the harness's own tool, or a secret request. The card stores the session, the engine's request id and the turn. Answering it sends the answer to the engine for that turn, keyed by the answering command, and the turn continues. When the turn ends, every request still open on it expires, and its card shows that it expired.
 
-**A secret request** comes from a bot calling the engine's `request_secret` tool. Its card shows the label, the reason, an optional link and a placeholder, never a value. The operator's answer travels in its own request (`secret.provide`), which hands the value straight to the engine. The value never enters an entry, a change, a log or a command receipt. The card records only that a value was provided, or declined, or that the request expired, from the request's resolution. `secret.provide` has no receipt, so a retry after a lost reply can find the request closed: it took effect if the resolution is the one it asked for.
+**A secret request** comes from a bot calling the engine's `request_secret` tool. Its card shows the label, the reason, an optional link and a placeholder, never a value. The operator's answer travels in its own request (`secret.provide`), which hands the value straight to the engine. The value never enters an entry, a change, a log or a command receipt. The card records only that a value was provided, or declined, or that the request expired, from the request's resolution. `secret.provide` answers with that resolution and whether this call's own answer was the one taken. It has no receipt, so after a lost reply a retry may find the request closed: the server synchronizes the session and answers with the card's resolution, unconfirmed, because the closing answer may have been another device's. A closed card is never reported as success: `expired` means no answer was taken, and only a confirmed `provided` or `declined` is this call's.
 
 ## Attachments
 
 Files cross the server in both directions as attachments. Bytes and names are stored apart: a **blob** is the bytes, stored once under `<J3_HOME>/attachments` by their SHA-256; an **attachment** is a name and a media type over a blob. The same bytes sent twice, or under two names, are one blob and two attachments.
 
-- A client uploads a file with `POST /attachments` before sending the message that carries it, and gets its id. An empty file is refused; each file is limited to 25 MiB. `message.send` names up to ten, and the server checks them against the engine's limits before it writes anything: inline images (GIF, JPEG, PNG, WebP) at most 10 MiB each and 80 MiB together.
+- A client uploads a file with `POST /attachments` before sending the message that carries it, and gets its id. The server puts its name and media type in the form the engine's upload takes (`normalizeAttachmentMetadata`: the name trimmed, the media type lowercased without parameters, at most 100 characters) and stores that, so a staging never fails on metadata. An empty file, a blank name or an unusable media type is refused; each file is limited to 25 MiB. `message.send` names up to ten, and the server checks them against the engine's limits before it writes anything: inline images (GIF, JPEG, PNG, WebP) at most 10 MiB each and 80 MiB together. Coalesced wakes are checked again together ([coalescing](#2-the-server-holds-waiting-wakes)).
 - The dispatch lists its files in order. Before its first send, each is staged in the engine, which mints its own id for it; the server keeps that id with the dispatch, so a retry sends the same staged file. If the dispatch is still unsent when the staged file's `usableUntil` passes, the server stages it again.
 - A file a bot attaches to `say` is copied from its workspace into the same store, so the operator's devices can open it after the bot has changed or removed its copy. Paths outside the workspace are refused.
 - `GET /attachments/:id` serves a file to a paired device only, with the device token as a bearer.
@@ -169,7 +180,7 @@ A session's id is J3 Bots' own, written before the engine is asked for a thread 
 
 Because the main session does not see what a side session did, the server keeps a **catch-up note** per bot, in the database. When the bot next wakes in its main session, the envelope begins with what happened since: "Routine 'Morning repo check' ran at 08:03 and told the user: …". The note is consumed in the same transaction that writes that dispatch, so it is neither lost nor shown twice.
 
-**Rotation.** The server replaces a bot's main session when any of these is true: it passed a threshold of runs, the engine reports a provider-side failure to resume, the operator changed the bot's provider, or the operator asked for a fresh start. The new session's first envelope carries a digest of the recent conversation. The conversation itself is untouched. The old session is retired, not deleted: its dispatches can still be looked up.
+**Rotation.** The server replaces a bot's main session when any of these is true: it passed a threshold of runs, the engine reports a provider-side failure to resume, the operator changed the bot's provider, or the operator asked for a fresh start. The new session's first envelope carries a digest of the recent conversation. The conversation itself is untouched. The old session is retired, not deleted. A dispatch to it still waiting for an answer is abandoned as `unresolved`.
 
 ## Bot tools
 
@@ -177,19 +188,23 @@ Bots act on J3 Bots through a small MCP server named `j3`. The harness starts it
 
 The bridge identifies its caller from `T3CODE_THREAD_ID`, an environment variable the engine sets for each stdio MCP server the harness starts, with the session's thread id. The bridge reads it with `sessionOfToolCaller` from `packages/engine-t3` and never names the variable itself. The server maps that id to a session and a bot. A call from an unknown thread is refused. **Verified** on Claude Code on releases `4941` and `4969`, and on Codex from `4969`, the pinned release ([Engine](engine.md#version-pinning)).
 
-**Admission handshake.** A call carries a session, not a turn, and the server's view of the session can trail the engine by a few events: a call made in the first moments of a turn could otherwise bind to the turn before it. So before it resolves the turn, the server catches up:
+**Matching a call to its turn.** A request carries a session, not a turn, and the server's view of the session can trail the engine by a few events: a call made at the end of one turn could otherwise act for the next. So the server matches each request to the engine's own record of the call. The engine reports every `j3` tool call as a `tool-call` event in its turn, with the bare tool name and a digest of its input ([Engine](engine.md#the-adapters-interface)).
 
-1. It picks a token, starts waiting for it, and calls `synchronize` for the session.
-2. When its event applier has applied the `synchronized` event with that token, every event the engine had when the call arrived has been applied.
-3. It reads the session's admitted turn and audience. With none, the call is refused with `NoAdmittedTurn`. Otherwise the call is **pinned**: stored under the bridge's id for the call with that turn and audience, and everything the call does acts for them, even if the session admits another turn meanwhile.
+1. It picks a token, starts waiting for it, and calls `synchronize` for the session. When its event applier has applied the `synchronized` event with that token, every event the engine had when the request arrived has been applied.
+2. It looks, in the session's running admitted turn, for an open call to the same tool whose input digest equals `toolInputDigest` of the request's arguments and that no other request has claimed. It takes the oldest.
+3. The engine records the call apart from the request, so the call may not be there yet. Without a match the server synchronizes again, up to five times within two seconds.
+4. With a match, the request is **pinned**: stored under the bridge's id for the request with the turn, the turn's audience and the engine's id for the call, which no other request can claim. Everything the request does acts for that turn and audience, even if the session admits another turn meanwhile.
+5. Without one, the request fails with a typed `TurnEnded` result, and nothing is published or recorded: the call belongs to a turn that has ended, or to no turn of this session.
 
-The bridge gives each call one id and reuses it when it retries the forward, so a retry finds the stored call, acts for the same turn, and returns the stored result instead of acting twice. If the engine cannot be reached, the server retries the handshake until the call's deadline and then fails the call as retryable.
+A call whose audience is a room that is now archived fails with `Conflict("room-archived")`, and nothing is published.
+
+The bridge gives each request one id and reuses it when it retries the forward, so a retry finds the stored request, acts for the same turn, and returns the stored result instead of acting twice. If the engine cannot be reached, the server retries the match until the request's deadline and then fails it as retryable.
 
 The `j3` tools are pre-approved in every permission mode, so they never raise an approval card. How each harness is told so is in [Engine](engine.md#provisioning).
 
 | Tool | Purpose |
 | --- | --- |
-| `say` | Deliver a message to the admitted turn's audience: the operator, or the room during a room turn. Optional attachments. `done` marks the delivery complete. |
+| `say` | Deliver a message to the audience of the turn that made the call: the operator, or the room during a room turn. Optional attachments. `done` marks the delivery complete. |
 | `ask` | Put one question to the operator as a card with options. Ends the turn. |
 | `message_bot` | Send a message to a teammate. `urgent` wakes them now; otherwise it waits for their next turn. Returns only a delivery acknowledgement. |
 | `remember`, `forget`, `recall` | Write, remove and search memory, in the bot's own scope or the shared one. |
@@ -202,7 +217,9 @@ The complete parameter schemas and the wording of each description are part of t
 
 ## Rooms
 
-A room is J3 Bots data: members, host, entries, and a status. An active room has two to six members and a host among them. An archived room is read-only: it takes no messages and no changes, and it may have fewer than two members and no host. There is no engine object behind it.
+A room is J3 Bots data: members, host, entries, and a status. An active room has two to six members and a host among them. An archived room is read-only: it takes no messages and no changes but `pinned` and unarchiving, and it may have fewer than two members and no host. There is no engine object behind it.
+
+**Archiving** a room, by the operator (`room.update` with `archived: true`) or because deleting bots left it too small, is one transaction that cancels every pending wake addressed to the room, expires the room's open `ask` cards (an answer can no longer reach it), and records a Stop for every member session whose turn, waiting turn or dispatch has the room as its audience. That Stop then runs as any other ([Stop](#stop)). A bot tool call whose audience is the archived room fails with `Conflict("room-archived")`. Unarchiving needs two to six members and a host, which the same update may give.
 
 When an entry is added to a room, the server decides who wakes:
 
@@ -228,7 +245,7 @@ Deleting a bot removes its conversation, sessions, wakes, routines and memory, a
 
 - Entries it wrote in rooms keep their author id. Nothing refers to the bot row, so the entries outlive it, and clients render the author as a deleted bot.
 - If it hosted a room, the room passes to the member who joined first among the rest, in the same transaction. The database refuses to leave an active room without a host.
-- A room left with fewer than two members is archived, in the same transaction: it stays readable, takes no new messages, and keeps no host if its host was the deleted bot. Pending wakes addressed to it are cancelled.
+- A room left with fewer than two members is archived, in the same transaction, as [Rooms](#rooms) describes: it stays readable, takes no new messages, and keeps no host if its host was the deleted bot.
 - Files it produced stay in the attachment store while an entry refers to them.
 
 ## Teammate messages
@@ -292,7 +309,7 @@ Clients use one WebSocket to the server, with typed requests and subscriptions d
 
 Unread has one source of truth: the conversation's read mark against its newest entry. A bot that finished its turn is idle, and its reply is unread until the operator reads it; there is no separate "done" state.
 
-**Commands** carry a client-generated id and are idempotent: send a message, answer a card, stop a bot, create or change a bot, a room or a routine, edit memory, change settings. `secret.provide` is the exception: it keeps no receipt, because a receipt would hold the value.
+**Commands** carry a client-generated id and are idempotent: send a message, answer a card, stop a bot, create or change a bot, a room or a routine, edit memory, change settings. `secret.provide` is the exception: it keeps no receipt, because a receipt would hold the value; it answers with the card's resolution instead.
 
 The server pages history by `order`; a client asks for older entries as the operator scrolls.
 
@@ -313,9 +330,9 @@ The server reads its settings from the environment. A default applies only when 
 
 | Failure | What the server does |
 | --- | --- |
-| The engine process exits | Restarts it, reconnects, and resumes each session's events from its stored cursor, by replay or replacement. The engine cancels the turn that was running and its open requests expire. If the turn left background work, the engine continues it with a turn of its own, which keeps the original turn's audience and whose end closes the original turn's dispatch; otherwise its dispatch is recorded as interrupted and handled like a failed one. Dispatches whose result was never recorded are reconciled with a lookup before anything is sent again. The adapter resumes the engine's held queue where it holds a J3 Bots dispatch |
-| The engine socket drops | Reconnects with backoff, resumes each session's events, and reconciles dispatches whose reply was lost |
+| The engine process exits | Restarts it, reconnects, sends again the Stop of every unstopped target, and resumes each session's events from its stored cursor, by replay or replacement. The engine cancels the turn that was running and its open requests expire; the turn's dispatch is recorded as interrupted and handled like a failed one (the engine's restart continuation is turned off). Dispatches whose answer was never recorded are sent again with their key before anything new is sent. The adapter resumes each held queue once, except in a session with an unsettled Stop |
+| The engine socket drops | Reconnects with backoff, resumes each session's events, and sends again the dispatches whose reply was lost |
 | A turn fails | Records the engine's error class on the dispatch and shows it; retries only routine wakes, with a cap |
-| A provider hits its limit | Marks the provider's bots blocked with the reset time; holds automated wakes until then. A dispatch already waiting in the engine starts at the reset |
-| The server process exits | On start, loads held wakes and reconciles every dispatch that was written but not recorded as applied. No turn starts twice, because a dispatch keeps its key and its envelope |
-| A session cannot be resumed | Rotates to a new session seeded from memory and the recent conversation, after its dispatches in flight are reconciled |
+| A provider hits its limit | Marks the provider's bots blocked with the reset time; holds automated wakes until then. The turn that hit it stays open as a pending continuation, and a dispatch already waiting in the engine starts at the reset |
+| The server process exits | On start, sends again the Stop of every unstopped target, loads held wakes, and sends again every dispatch that was sent but has no recorded answer. No turn starts twice, because a dispatch keeps its key and its envelope |
+| A session cannot be resumed | Rotates to a new session seeded from memory and the recent conversation, after its dispatches in flight have an answer or are abandoned as `unresolved` |
