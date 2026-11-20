@@ -141,9 +141,12 @@ class UnitValueRefused extends Schema.TaggedError<UnitValueRefused>()("UnitValue
 
 /**
  * The share of the machine's memory past which systemd makes the service give
- * memory back before it takes more: the server, the engine and every harness
- * it runs share it. On a 4 GB Raspberry Pi that leaves about 1.6 GB to the
- * system and everything else. It slows the service down under pressure and
+ * memory back before it takes more. It applies to the processes in the J3 Bots
+ * service's cgroup: the server and the engine. The provider processes the
+ * engine launches through `systemd-run --user --scope` land in a scope of
+ * their own, outside this cgroup, so it does not cover them
+ * (`docs/architecture/engine.md`). On a 4 GB Raspberry Pi it leaves about
+ * 1.6 GB to everything else. It slows the service down under pressure and
  * never kills it.
  */
 const MEMORY_HIGH_SHARE = 0.6;

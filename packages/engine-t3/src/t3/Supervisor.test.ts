@@ -13,8 +13,10 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as HttpClient from "effect/http/HttpClient";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as HttpClientError from "effect/http/HttpClientError";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { makePrivateFiles } from "./PrivateFiles.ts";
 import { type ProcessState, stateChanges, supervise } from "./Supervisor.ts";
 
 /** A loopback port a program that is not an engine listens on, for as long as the test runs. */
@@ -55,7 +57,10 @@ const machine = Layer.mergeAll(
   ),
   FileSystem.layerNoop({}),
   Path.layer,
+  SecureRandom.layerWebCrypto,
 );
+
+const files = makePrivateFiles(() => Effect.succeed(true));
 
 describe("supervise", () => {
   it.effect("stops when its scope closes while a start is under way", () =>
@@ -72,6 +77,7 @@ describe("supervise", () => {
         beforeStart: Deferred.succeed(preparing, undefined).pipe(Effect.andThen(Effect.never)),
         checkAccess: Effect.succeed("granted"),
         reissueCredential: Effect.void,
+        files: yield* files,
       }).pipe(Scope.provide(scope));
       yield* Deferred.await(preparing);
 
@@ -96,6 +102,7 @@ describe("supervise", () => {
         }),
         checkAccess: Effect.succeed("granted"),
         reissueCredential: Effect.void,
+        files: yield* files,
       });
 
       const waiting = yield* stateChanges(state).pipe(

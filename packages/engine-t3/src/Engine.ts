@@ -218,6 +218,14 @@ export interface EngineOptions {
    * bot when the session next starts its provider.
    */
   readonly systemPromptFile: string;
+  /**
+   * The caller's containment check: whether `location`, links resolved, is
+   * still private state the adapter may write. The adapter asks it for every
+   * folder it writes in, at the moment it writes, and leaves alone one it
+   * refuses. The folders under `home` it writes are `writtenFolders` (in
+   * `@j3-bots/engine-t3/live`), for the caller to check at start too.
+   */
+  readonly isPrivate: (location: string) => Effect.Effect<boolean>;
 }
 
 /**

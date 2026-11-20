@@ -6,10 +6,10 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import { Command } from "effect/cli";
-import { AdminClient } from "../admin/AdminClient.ts";
 import * as ServerConfig from "../config.ts";
 import { HOME_ENTRIES } from "../home/entries.ts";
 import { install as installService } from "../service/install.ts";
+import { socketOwner } from "../service/owner.ts";
 import * as Unit from "../service/unit.ts";
 import { Systemd } from "../system/Systemd.ts";
 import { refuse, userFacing } from "./errors.ts";
@@ -102,22 +102,22 @@ const status = Command.make("status").pipe(
         );
       }
       const home = yield* serviceHome(unitFile);
-      const unit = yield* systemd.unitState(Unit.UNIT_NAME);
+      // Only the service's own server: another one may hold the home meanwhile.
+      const {
+        owner,
+        status: running,
+        unit,
+      } = yield* socketOwner(path.join(home, HOME_ENTRIES.adminSocket));
       const lines = [
         `${Unit.UNIT_NAME}: ${unit.active}, ${unit.enabled ? "enabled" : "not enabled"}. Data: ${home}.`,
       ];
-      const admin = yield* AdminClient;
-      const running = yield* admin
-        .status(path.join(home, HOME_ENTRIES.adminSocket))
-        .pipe(Effect.option, Effect.map(Option.flatten));
-      // Only the service's own server: another one may hold the home meanwhile.
-      if (
-        Option.isSome(running) &&
-        unit.active === "active" &&
-        Option.contains(unit.mainPid, running.value.pid)
-      ) {
+      if (owner === "service" && Option.isSome(running)) {
         const { version, listener } = running.value;
         lines.push(`J3 Bots ${version} answers, listening on port ${listener.port}.`);
+      } else if (owner === "other") {
+        lines.push(
+          "A J3 Bots server outside the service holds this home, so the service cannot run until it stops.",
+        );
       }
       if (unit.active === "failed" || unit.active === "activating") {
         lines.push("Read why with: journalctl --user -u j3-bots -n 100");

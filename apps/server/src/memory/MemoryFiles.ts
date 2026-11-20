@@ -18,7 +18,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Digest from "effect/crypto/Digest";
-import { Layout } from "../Layout.ts";
+import { Layout, type PrivateLocationExposed } from "../Layout.ts";
 import { realLocation } from "../paths.ts";
 
 const decodePath = Schema.decodeUnknownOption(MemoryPath);
@@ -27,9 +27,10 @@ const decodePath = Schema.decodeUnknownOption(MemoryPath);
  * The memory files of a scope, as Markdown on disk. Every path is resolved
  * inside the scope's folder, symbolic links included, so no path a client or a
  * bot gives reaches a file outside it. Writes replace a file whole (written
- * aside, then renamed) and are serialized, so a read-modify-write here never
- * loses another one; a bot's own file tools are outside that, which is why a
- * client's write names the revision it read.
+ * to a new file beside it, then renamed: `Layout.writeFile`) and are
+ * serialized, so a read-modify-write here never loses another one; a bot's own
+ * file tools are outside that, which is why a client's write names the revision
+ * it read.
  */
 export class MemoryFiles extends Context.Service<
   MemoryFiles,
@@ -42,7 +43,9 @@ export class MemoryFiles extends Context.Service<
     ) => Effect.Effect<Option.Option<MemoryDocument>, Invalid>;
     /**
      * Replaces the file's text if it is still at `revision`; `null` creates it
-     * and fails if it exists. Fails with `Conflict("stale-revision")` otherwise.
+     * and fails if it exists. Fails with `Conflict("stale-revision")` otherwise,
+     * and with `Conflict("private-location")` when the file would leave the
+     * server's private data.
      */
     readonly write: (input: {
       readonly scope: MemoryScope;
@@ -53,12 +56,13 @@ export class MemoryFiles extends Context.Service<
     /**
      * Reads the file (empty when missing), and writes what `change` returns
      * unless it returns `None`, as one step no other write here interleaves with.
+     * Fails with `Conflict("private-location")` as `write` does.
      */
     readonly modify: <A>(
       scope: MemoryScope,
       path: MemoryPath,
       change: (text: string) => readonly [A, Option.Option<string>],
-    ) => Effect.Effect<A, Invalid>;
+    ) => Effect.Effect<A, Invalid | Conflict>;
   }
 >()("@j3-bots/server/memory/MemoryFiles") {}
 
@@ -84,36 +88,49 @@ export const layer = Layer.effect(
       return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
     };
 
+    /** A write that would leave private state: nothing was written. */
+    const exposed = (error: PrivateLocationExposed) =>
+      Effect.logWarning(error.message).pipe(
+        Effect.andThen(Effect.fail(new Conflict({ reason: "private-location" }))),
+      );
+
     /**
      * The file's absolute path, refused unless it stays inside the scope's
-     * folder, links resolved. A write also needs the folder itself to be
-     * private (`Layout.writable`): a link made while the server runs may have
-     * moved it.
+     * folder, links resolved. Creates nothing.
      */
     const resolve = Effect.fn("MemoryFiles.resolve")(function* (
       scope: MemoryScope,
       file: MemoryPath,
-      access: "read" | "write",
     ) {
       const root = rootOf(scope);
-      if (access === "write") {
-        yield* layout.writable(root).pipe(
-          Effect.tapError((exposed) => Effect.logWarning(exposed.message)),
-          Effect.mapError(() => new Invalid({ reason: "memory-path" })),
-        );
-      }
-      const realRoot = yield* fs
-        .makeDirectory(root, { recursive: true })
-        .pipe(Effect.andThen(fs.realPath(root)), Effect.orDie);
       const target = path.resolve(root, file);
-      const real = yield* realLocation(target).pipe(
-        Effect.provideService(FileSystem.FileSystem, fs),
-        Effect.provideService(Path.Path, path),
-      );
-      if (!isInside(root, target) || Option.isNone(real) || !isInside(realRoot, real.value)) {
+      if (!isInside(root, target)) return yield* new Invalid({ reason: "memory-path" });
+      const locate = (location: string) =>
+        realLocation(location).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+        );
+      const realRoot = yield* locate(root);
+      const real = yield* locate(target);
+      if (Option.isNone(realRoot) || Option.isNone(real) || !isInside(realRoot.value, real.value)) {
         return yield* new Invalid({ reason: "memory-path" });
       }
       return target;
+    });
+
+    /**
+     * `resolve`, for a write: the scope's folder must be private
+     * (`Layout.writable`) before it is created, since a link made while the
+     * server runs may have moved it.
+     */
+    const resolveForWrite = Effect.fn("MemoryFiles.resolveForWrite")(function* (
+      scope: MemoryScope,
+      file: MemoryPath,
+    ) {
+      const root = rootOf(scope);
+      yield* layout.writable(root).pipe(Effect.catchTag("PrivateLocationExposed", exposed));
+      yield* fs.makeDirectory(root, { recursive: true }).pipe(Effect.orDie);
+      return yield* resolve(scope, file);
     });
 
     const readText = Effect.fn("MemoryFiles.readText")(function* (target: string) {
@@ -121,12 +138,10 @@ export const layer = Layer.effect(
       return Option.some(yield* fs.readFileString(target));
     }, Effect.orDie);
 
-    const writeText = Effect.fn("MemoryFiles.writeText")(function* (target: string, text: string) {
-      yield* fs.makeDirectory(path.dirname(target), { recursive: true });
-      const aside = `${target}.j3-writing`;
-      yield* fs.writeFileString(aside, text);
-      yield* fs.rename(aside, target);
-    }, Effect.orDie);
+    const writeText = (target: string, text: string) =>
+      layout
+        .writeFile(target, text)
+        .pipe(Effect.catchTags({ PrivateLocationExposed: exposed, PlatformError: Effect.die }));
 
     const list = Effect.fn("MemoryFiles.list")(function* (scope: MemoryScope) {
       const root = rootOf(scope);
@@ -151,7 +166,7 @@ export const layer = Layer.effect(
     }, Effect.orDie);
 
     const read = Effect.fn("MemoryFiles.read")(function* (scope: MemoryScope, file: MemoryPath) {
-      const text = yield* readText(yield* resolve(scope, file, "read"));
+      const text = yield* readText(yield* resolve(scope, file));
       if (Option.isNone(text)) return Option.none<MemoryDocument>();
       const document: MemoryDocument = {
         path: file,
@@ -167,7 +182,7 @@ export const layer = Layer.effect(
       readonly text: string;
       readonly revision: MemoryRevision | null;
     }) {
-      const target = yield* resolve(input.scope, input.path, "write");
+      const target = yield* resolveForWrite(input.scope, input.path);
       const current = yield* readText(target);
       const currentRevision = Option.isSome(current) ? yield* revisionOf(current.value) : null;
       if (currentRevision !== input.revision) {
@@ -187,7 +202,7 @@ export const layer = Layer.effect(
       file: MemoryPath,
       change: (text: string) => readonly [A, Option.Option<string>],
     ) {
-      const target = yield* resolve(scope, file, "write");
+      const target = yield* resolveForWrite(scope, file);
       const current = yield* readText(target);
       const [result, next] = change(Option.getOrElse(current, () => ""));
       if (Option.isSome(next)) yield* writeText(target, next.value);

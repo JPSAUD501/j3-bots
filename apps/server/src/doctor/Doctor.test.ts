@@ -61,6 +61,8 @@ interface World {
   /** Variables set in this shell besides the home and the folders. */
   readonly environment: Record<string, string>;
   readonly server: Option.Option<AdminStatus> | "broken";
+  /** Whether the kernel says the unit's main process holds the admin socket, if it can say. */
+  readonly holder: Option.Option<boolean>;
   readonly systemd: boolean;
   readonly unitInstalled: boolean;
   readonly unit: UnitState;
@@ -80,6 +82,7 @@ const HEALTHY: World = {
   unitPath: "/usr/bin",
   environment: {},
   server: Option.some(running()),
+  holder: Option.none(),
   systemd: true,
   unitInstalled: true,
   unit: { enabled: true, active: "active", mainPid: Option.some(4242) },
@@ -142,7 +145,7 @@ const diagnoseIn = (changes: Partial<World> = {}) =>
           searchPath: world.searchPath,
           freeSpace: () => Effect.succeed(world.freeBytes),
           portState: (host, port) => Effect.succeed({ _tag: world.ports(host, port) }),
-          holdsSocket: () => Effect.die("doctor never asks who holds the admin socket"),
+          holdsSocket: () => Effect.succeed(world.holder),
           findExecutable: (name, searchPath) =>
             Effect.succeed(
               Option.fromNullishOr(
@@ -357,6 +360,33 @@ it.layer(NodeServices.layer)("doctor", (it) => {
       assertFlagged(named(stopped.checks, "Server"), "warning");
       const broken = yield* diagnoseIn({ server: "broken" });
       assertFlagged(named(broken.checks, "Server"), "problem");
+    }),
+  );
+
+  it.effect("with the service installed, describes only the service's own server", () =>
+    Effect.gen(function* () {
+      // A server started by hand holds the home, with an engine that is not the pinned one.
+      const foreground = Option.some({
+        ...running({
+          engine: {
+            state: { _tag: "incompatible", runningVersion: "0.1.9" },
+            pinnedVersion: "0.1.11",
+            providers: [],
+          },
+          pairedDevices: 0,
+        }),
+        pid: 999,
+      });
+      const { checks } = yield* diagnoseIn({ server: foreground, ports: () => "in-use" });
+      assertFlagged(named(checks, "Server"), "warning", "outside the service (process 999)");
+      assert.strictEqual(named(checks, "Ports").status, "skipped");
+      assert.notInclude(named(checks, "Engine").summary, "0.1.9");
+      assert.strictEqual(named(checks, "Pairing").status, "skipped");
+
+      // Without the service, that server is the one the report is about.
+      const served = yield* diagnoseIn({ server: foreground, unitInstalled: false });
+      assert.strictEqual(named(served.checks, "Server").status, "ok");
+      assertFlagged(named(served.checks, "Engine"), "problem", "0.1.9");
     }),
   );
 

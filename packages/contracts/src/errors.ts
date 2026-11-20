@@ -59,6 +59,12 @@ export class Conflict extends Schema.TaggedError<Conflict>()("Conflict", {
     "engine-unavailable",
     /** The room is archived: it takes no messages and no changes. */
     "room-archived",
+    /**
+     * Where the file would go now leads, through a symbolic link made after
+     * start, out of the server's private data. Nothing was written; removing
+     * the link lets it through again.
+     */
+    "private-location",
   ]),
 }) {
   override get message(): string {

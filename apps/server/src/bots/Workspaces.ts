@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { type BotId, MemoryPath } from "@j3-bots/contracts";
+import { type BotId, MemoryPath, type MemoryScope } from "@j3-bots/contracts";
 import {
   type BotInstructionsInput,
   renderBotInstructions,
@@ -14,7 +14,7 @@ import * as Path from "effect/Path";
 import * as Semaphore from "effect/Semaphore";
 import { EngineState } from "../engine/EngineState.ts";
 import { SYSTEM_PROMPT_FILE, WORKSPACE_ENTRIES } from "../home/entries.ts";
-import { Layout } from "../Layout.ts";
+import { Layout, type PrivateLocationExposed } from "../Layout.ts";
 import { MemoryFiles } from "../memory/MemoryFiles.ts";
 import { SettingsStore } from "../settings/SettingsStore.ts";
 import { BotStore } from "./BotStore.ts";
@@ -29,7 +29,10 @@ export const PINNED_FILE = {
 const UNNAMED_OPERATOR = "your user";
 
 const { generated, instructions: AGENTS_FILE, memory: MEMORY, skills, files } = WORKSPACE_ENTRIES;
-const FOLDERS = [generated, `${MEMORY}/log`, skills, files] as const;
+/** Folders the server writes in a workspace. */
+const SERVER_FOLDERS = [generated, `${MEMORY}/log`] as const;
+/** Folders that are the bot's own: created once, then the bot's to change, links included. */
+const BOT_FOLDERS = [skills, files] as const;
 
 /**
  * A bot's workspace folder and the files J3 Bots generates in it
@@ -43,7 +46,10 @@ const FOLDERS = [generated, `${MEMORY}/log`, skills, files] as const;
 export class Workspaces extends Context.Service<
   Workspaces,
   {
-    /** Creates the folders, if missing, and writes the generated files. */
+    /**
+     * Creates the folders, if missing, and writes the generated files. A
+     * folder or file that has left private state is skipped with a warning.
+     */
     readonly provision: (botId: BotId) => Effect.Effect<void>;
     /** Rewrites the generated files of one bot. Does nothing for a bot that no longer exists. */
     readonly render: (botId: BotId) => Effect.Effect<void>;
@@ -72,26 +78,44 @@ export const layer = Layer.effect(
     const pinnedText = (document: Option.Option<{ readonly text: string }>) =>
       Option.match(document, { onNone: () => "", onSome: ({ text }) => text });
 
-    const writeFile = Effect.fn("Workspaces.writeFile")(function* (target: string, text: string) {
-      yield* layout.writable(target);
-      const aside = `${target}.j3-writing`;
-      yield* fs.makeDirectory(path.dirname(target), { recursive: true });
-      yield* fs.writeFileString(aside, text);
-      yield* fs.rename(aside, target);
-    }, Effect.orDie);
+    /**
+     * A write refused because its location left private state (see
+     * `docs/architecture/security.md`): logged and skipped, so one tampered
+     * workspace never stops the others.
+     */
+    const skipExposed = (error: PrivateLocationExposed) =>
+      Effect.logWarning(`${error.message} It was skipped.`);
+
+    const writeFile = (target: string, text: string) =>
+      layout
+        .writeFile(target, text)
+        .pipe(Effect.catchTags({ PrivateLocationExposed: skipExposed, PlatformError: Effect.die }));
+
+    /** Creates `folder` if missing, unless it has left private state. */
+    const makeFolder = (folder: string) =>
+      layout.writable(folder).pipe(
+        Effect.flatMap((checked) => fs.makeDirectory(checked, { recursive: true })),
+        Effect.catchTags({ PrivateLocationExposed: skipExposed, PlatformError: Effect.die }),
+      );
 
     const render = Effect.fn("Workspaces.render")(function* (botId: BotId) {
       const stored = yield* bots.find(botId);
       if (Option.isNone(stored)) return;
       const { bot } = stored.value;
       const now = yield* settings.get;
-      // Paths are J3 Bots' own constants: they always resolve inside the folder.
-      const pinnedBot = yield* memory
-        .read({ _tag: "bot", botId }, PINNED_FILE.bot)
-        .pipe(Effect.orDie);
-      const pinnedShared = yield* memory
-        .read({ _tag: "shared" }, PINNED_FILE.shared)
-        .pipe(Effect.orDie);
+      // Paths are J3 Bots' own constants, but the bot's tools may have made
+      // one a link out of its folder: then that note is left out.
+      const pinned = (scope: MemoryScope, file: MemoryPath) =>
+        memory.read(scope, file).pipe(
+          Effect.catchTag("Invalid", () =>
+            Effect.logWarning("A pinned note leads out of its memory folder; it was left out", {
+              botId,
+              file,
+            }).pipe(Effect.as(Option.none())),
+          ),
+        );
+      const pinnedBot = yield* pinned({ _tag: "bot", botId }, PINNED_FILE.bot);
+      const pinnedShared = yield* pinned({ _tag: "shared" }, PINNED_FILE.shared);
       const input: BotInstructionsInput = {
         operator: { name: now.operatorName ?? UNNAMED_OPERATOR, timeZone: now.timeZone },
         profile: {
@@ -113,14 +137,24 @@ export const layer = Layer.effect(
     });
 
     const provision = Effect.fn("Workspaces.provision")(function* (botId: BotId) {
-      const workspace = yield* layout.writable(layout.workspace(botId)).pipe(Effect.orDie);
-      for (const folder of FOLDERS) {
-        yield* fs
-          .makeDirectory(path.join(workspace, folder), { recursive: true })
-          .pipe(Effect.orDie);
+      const workspace = yield* layout.writable(layout.workspace(botId)).pipe(
+        Effect.asSome,
+        Effect.catchTag("PrivateLocationExposed", (error) =>
+          skipExposed(error).pipe(Effect.as(Option.none<string>())),
+        ),
+      );
+      if (Option.isNone(workspace)) return;
+      for (const folder of [
+        ...SERVER_FOLDERS.map((name) => path.join(workspace.value, name)),
+        layout.sharedMemory,
+        layout.sharedSkills,
+      ]) {
+        yield* makeFolder(folder);
       }
-      yield* fs.makeDirectory(layout.sharedMemory, { recursive: true }).pipe(Effect.orDie);
-      yield* fs.makeDirectory(layout.sharedSkills, { recursive: true }).pipe(Effect.orDie);
+      for (const name of BOT_FOLDERS) {
+        const folder = path.join(workspace.value, name);
+        if (Option.isNone(yield* fs.lstat(folder).pipe(Effect.option))) yield* makeFolder(folder);
+      }
       yield* render(botId);
     });
 

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import * as EngineLive from "@j3-bots/engine-t3/live";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -469,8 +470,12 @@ export const load = Effect.gen(function* () {
     const overlap = overlapsWebRoot(real);
     if (Option.isSome(overlap)) return yield* refuseWebClient(overlap.value, held);
   }
-  // What the server writes stays inside the home, outside the client's folder.
-  const written = homeLayout(path, home).written(yield* workspaceNames(home));
+  // What the server and the engine adapter write stays inside the home,
+  // outside the client's folder.
+  const written = [
+    ...homeLayout(path, home).written(yield* workspaceNames(home)),
+    ...EngineLive.writtenFolders(path, path.join(home, HOME_ENTRIES.engine)),
+  ];
   for (const held of written) {
     const real = yield* realLocation(held);
     const overlap = Option.flatMap(real, overlapsWebRoot);

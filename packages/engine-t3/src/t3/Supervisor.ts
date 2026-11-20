@@ -21,6 +21,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type { Access } from "./Credential.ts";
 import { ORCHESTRATION_PROTOCOL, pin } from "./Pin.ts";
+import { engineFolders, type PrivateFiles } from "./PrivateFiles.ts";
 
 // Runs the engine as a child process and says, at every moment, whether it can
 // take commands. Being down is a state, not a failure: the supervisor restarts
@@ -54,6 +55,8 @@ export interface SupervisorInput<E> {
   readonly checkAccess: Effect.Effect<Access>;
   /** Mints a fresh credential, once the engine refused the current one. */
   readonly reissueCredential: Effect.Effect<void>;
+  /** Where the record of the started process is written. */
+  readonly files: PrivateFiles;
 }
 
 const STARTUP_TIMEOUT = Duration.seconds(90);
@@ -133,7 +136,7 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
   const path = yield* Path.Path;
   const { state } = input;
   const check = probe(input.port).pipe(Effect.provideService(HttpClient.HttpClient, http));
-  const recordFile = path.join(input.home, "j3", "engine-process.json");
+  const recordFile = path.join(engineFolders(path, input.home).j3, "engine-process.json");
 
   const command = ChildProcess.make(
     input.executable,
@@ -195,7 +198,7 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
 
   const record = (pid: number, environmentId: string) =>
     encodeEngineProcess({ pid, environmentId }).pipe(
-      Effect.flatMap((text) => fs.writeFileString(recordFile, text, { mode: 0o600 })),
+      Effect.flatMap((text) => input.files.write(recordFile, text)),
       Effect.catch((error) => Effect.logWarning("Recording the engine process failed", error)),
     );
 

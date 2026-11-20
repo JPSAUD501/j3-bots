@@ -13,6 +13,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { archiveName, pin, releaseUrl } from "./Pin.ts";
+import { engineFolders, type PrivateFiles } from "./PrivateFiles.ts";
 
 // Installs the pinned engine release into the J3-owned engine home:
 //
@@ -61,7 +62,7 @@ const releasePlatform = (platform: string, arch: string): Option.Option<string> 
   Option.fromNullishOr(RELEASE_PLATFORMS[platform]?.[arch]);
 
 const runtimeDirectory = (path: Path.Path, home: string) =>
-  path.join(home, "j3", "runtime", pin.version);
+  path.join(engineFolders(path, home).runtime, pin.version);
 
 /** The digest `SHA256SUMS` lists for `file`. */
 const checksumFor = (sums: string, file: string): Option.Option<string> => {
@@ -117,6 +118,7 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
   readonly home: string;
   readonly platform: string;
   readonly arch: string;
+  readonly files: PrivateFiles;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -147,7 +149,7 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
   const expected = checksumFor(sums, archive);
   if (Option.isNone(expected)) return yield* fail("unsupported-platform");
 
-  yield* fs.makeDirectory(path.dirname(target), { recursive: true }).pipe(Effect.mapError(storage));
+  yield* input.files.folder(path.dirname(target)).pipe(Effect.mapError(storage));
   const partial = `${target}.partial`;
   const have = yield* fs.stat(partial).pipe(
     Effect.map((info) => Number(info.size)),

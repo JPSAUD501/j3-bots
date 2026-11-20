@@ -91,10 +91,17 @@ class HomeBlocked extends Schema.TaggedError<HomeBlocked>()("HomeBlocked", {
       case "lock-unusable":
         return `${this.path}, which keeps a second server off this home, cannot be opened. Check that this user can write to the folder that holds it.`;
       case "not-a-socket":
-        return `${this.path} is where the admin socket goes, but something else is there. Move it away and start again.`;
+        return `${this.path} is where the admin socket goes, but something else is there. Move it out of the way (\`mv ${shellWord(this.path)} ${shellWord(`${this.path}.old`)}\`), then try again.`;
     }
   }
 }
+
+/** Fails when something that is not a socket is where the admin socket goes. */
+export const checkSocketPath = Effect.fn("Home.checkSocketPath")(function* (adminSocket: string) {
+  if ((yield* Socket.probe(adminSocket)) === "not-a-socket") {
+    return yield* new HomeBlocked({ path: adminSocket, reason: "not-a-socket" });
+  }
+});
 
 const LOCK_FILE = HOME_ENTRIES.lock;
 const SQLITE_BUSY = 5;

@@ -104,12 +104,16 @@ export const layer = Layer.effect(
             tier: input.tier ?? "log",
             scope: input.scope ?? "bot",
           })
-          .pipe(Effect.map((result): Schema.Json => ({ ...result }))),
+          .pipe(
+            refuseFailure,
+            Effect.map((result): Schema.Json => ({ ...result })),
+          ),
       ),
       forget: handler(tools.forget.input, (input, { caller }) =>
-        memory
-          .forget({ botId: caller.botId, fact: input.fact, scope: input.scope ?? "bot" })
-          .pipe(Effect.map((result): Schema.Json => ({ ...result }))),
+        memory.forget({ botId: caller.botId, fact: input.fact, scope: input.scope ?? "bot" }).pipe(
+          refuseFailure,
+          Effect.map((result): Schema.Json => ({ ...result })),
+        ),
       ),
       recall: handler(tools.recall.input, (input, { caller }) =>
         memory

@@ -47,6 +47,8 @@ interface Machine {
   readonly server: Option.Option<AdminStatus>;
   /** What systemd says of the unit, before and after it was (re)started. */
   readonly active: string;
+  /** Whether a plain file is where the admin socket goes. */
+  readonly socketBlocked?: boolean;
 }
 
 /** Installs on a temporary home with a fake systemd; what it did, and what it returned. */
@@ -60,6 +62,9 @@ const installOn = (machine: Machine) =>
     const unitFile = path.join(configHome, "systemd", "user", "j3-bots.service");
     yield* fs.makeDirectory(home, { mode: 0o700 });
     yield* fs.writeFileString(path.join(home, "config.json"), machine.configFile);
+    if (machine.socketBlocked === true) {
+      yield* fs.writeFileString(path.join(home, "admin.sock"), "not a socket");
+    }
     yield* fs.makeDirectory(path.dirname(unitFile), { recursive: true });
     yield* fs.writeFileString(unitFile, "previous unit");
 
@@ -175,6 +180,16 @@ it.layer(NodeServices.layer)("service install", (it) => {
       });
       assert.deepInclude(failure(exit), { _tag: "ServiceNotInstalled", reason: "configuration" });
       assert.include(failure(exit)?.toString() ?? "", "3739");
+      assert.deepStrictEqual(calls, []);
+      assert.strictEqual(unit, "previous unit");
+    }),
+  );
+
+  it.effect("leaves the unit as it was when a file is where the admin socket goes", () =>
+    Effect.gen(function* () {
+      const { exit, calls, unit } = yield* installOn({ ...HEALTHY, socketBlocked: true });
+      assert.deepInclude(failure(exit), { _tag: "ServiceNotInstalled", reason: "configuration" });
+      assert.include(failure(exit)?.toString() ?? "", "admin.sock.old");
       assert.deepStrictEqual(calls, []);
       assert.strictEqual(unit, "previous unit");
     }),

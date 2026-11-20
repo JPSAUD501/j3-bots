@@ -111,8 +111,13 @@ it.effect(
           .modify(scope, MemoryPath.make("log/2026-11.md"), () => [undefined, Option.some("x")])
           .pipe(Effect.exit);
 
-        assert.isTrue(Exit.isFailure(write));
-        assert.isTrue(Exit.isFailure(appended));
+        // Refused with a reason a client can show, not as a malformed path.
+        for (const exit of [write, appended]) {
+          assert.deepInclude(Option.getOrUndefined(Exit.findErrorOption(exit)), {
+            _tag: "Conflict",
+            reason: "private-location",
+          });
+        }
         assert.deepStrictEqual(yield* fs.readDirectory(published), []);
       }
     }).pipe(Effect.provide(files)),

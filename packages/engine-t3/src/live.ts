@@ -2,3 +2,4 @@
 // The `Engine` over a real T3 Code server: install, provision, supervise, connect.
 export { layer } from "./t3/T3Engine.ts";
 export { EngineInstallFailed, type EngineInstall, inspectInstall } from "./t3/Install.ts";
+export { writtenFolders } from "./t3/PrivateFiles.ts";

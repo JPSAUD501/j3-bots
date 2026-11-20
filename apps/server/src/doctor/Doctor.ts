@@ -12,6 +12,7 @@ import { AdminClient } from "../admin/AdminClient.ts";
 import type { AdminStatus } from "../admin/protocol.ts";
 import * as ServerConfig from "../config.ts";
 import * as Home from "../home/Home.ts";
+import { socketOwner } from "../service/owner.ts";
 import * as Unit from "../service/unit.ts";
 import { Host } from "../system/Host.ts";
 import { type PortUse, portAdvice } from "../system/Ports.ts";
@@ -362,9 +363,15 @@ const webClientCheck = Effect.fn("doctor.webClient")(function* (
   return check("Web client", "ok", `Served from ${config.webClient.directory}.`);
 });
 
-const pairingCheck = (status: Option.Option<AdminStatus>) => {
+const pairingCheck = (status: Option.Option<AdminStatus>, outside: boolean) => {
   if (Option.isNone(status)) {
-    return check("Pairing", "skipped", "Start the server to see which devices are paired.");
+    return check(
+      "Pairing",
+      "skipped",
+      outside
+        ? "Start the service, once the server outside it stops, to see which devices are paired."
+        : "Start the server to see which devices are paired.",
+    );
   }
   const count = status.value.pairedDevices;
   return count === 0
@@ -518,10 +525,90 @@ const describedConfiguration = Effect.fn("doctor.describedConfiguration")(functi
   });
 });
 
+/**
+ * The server answering on the admin socket, as the report may describe it:
+ * `described` when it is the one the report is about (the service's own main
+ * process, with the service installed; any, without), `outside` when the
+ * service is installed but another process holds the home, `garbled` when a
+ * server answers in other words than this release's, and `none`.
+ */
+type LiveServer =
+  | { readonly _tag: "none" }
+  | { readonly _tag: "described"; readonly status: AdminStatus }
+  | { readonly _tag: "outside"; readonly status: Option.Option<AdminStatus> }
+  | { readonly _tag: "garbled" };
+
+const NO_SERVER: LiveServer = { _tag: "none" };
+const GARBLED: LiveServer = { _tag: "garbled" };
+
+const liveServer = Effect.fn("doctor.liveServer")(function* (
+  socket: string,
+  serviceInstalled: boolean,
+) {
+  if (serviceInstalled) {
+    const { owner, status } = yield* socketOwner(socket);
+    switch (owner) {
+      case "nobody":
+        return NO_SERVER;
+      case "service":
+        return Option.match(status, {
+          onNone: () => GARBLED,
+          onSome: (answered): LiveServer => ({ _tag: "described", status: answered }),
+        });
+      case "other":
+        return { _tag: "outside", status } satisfies LiveServer;
+      case "unknown":
+        return GARBLED;
+    }
+  }
+  const admin = yield* AdminClient;
+  const answer = yield* admin.status(socket).pipe(Effect.result);
+  if (answer._tag === "Failure") return GARBLED;
+  return Option.match(answer.success, {
+    onNone: () => NO_SERVER,
+    onSome: (answered): LiveServer => ({ _tag: "described", status: answered }),
+  });
+});
+
+const serverCheck = (live: LiveServer) => {
+  switch (live._tag) {
+    case "garbled":
+      return check(
+        "Server",
+        "problem",
+        "A server answers on the admin socket, but not as expected.",
+        "Restart it: `systemctl --user restart j3-bots`.",
+      );
+    case "described":
+      return check(
+        "Server",
+        "ok",
+        `J3 Bots ${live.status.version} is running at ${listenerAddress(live.status.listener)}.`,
+      );
+    case "outside":
+      return check(
+        "Server",
+        "warning",
+        Option.match(live.status, {
+          onNone: () => "A server outside the service holds this home, so the service cannot run.",
+          onSome: ({ version, pid, listener }) =>
+            `J3 Bots ${version} is running at ${listenerAddress(listener)} outside the service (process ${pid}), so the service cannot run. This report describes the service, not that server.`,
+        }),
+        "If you started it yourself on purpose, nothing is wrong. Otherwise stop it, then run `systemctl --user restart j3-bots`.",
+      );
+    case "none":
+      return check(
+        "Server",
+        "warning",
+        "The server is not running.",
+        "Start it with `systemctl --user start j3-bots`, or `j3-bots serve` in a terminal.",
+      );
+  }
+};
+
 /** Every check, in the order the report shows them. */
 export const diagnose = Effect.gen(function* () {
   const host = yield* Host;
-  const admin = yield* AdminClient;
   const checks: Array<Check> = [nodeCheck(host.nodeVersion)];
 
   const unitText = yield* installedUnit;
@@ -558,47 +645,38 @@ export const diagnose = Effect.gen(function* () {
   checks.push(yield* homeCheck(config.home));
   checks.push(yield* diskCheck(config.home));
 
-  const answer = yield* admin.status(config.adminSocket).pipe(Effect.result);
-  const status = answer._tag === "Success" ? answer.success : Option.none();
-  checks.push(
-    answer._tag === "Failure"
-      ? check(
-          "Server",
-          "problem",
-          "A server answers on the admin socket, but not as expected.",
-          "Restart it: `systemctl --user restart j3-bots`.",
-        )
-      : Option.isSome(status)
-        ? check(
-            "Server",
-            "ok",
-            `J3 Bots ${status.value.version} is running at ${listenerAddress(status.value.listener)}.`,
-          )
-        : check(
-            "Server",
-            "warning",
-            "The server is not running.",
-            "Start it with `systemctl --user start j3-bots`, or `j3-bots serve` in a terminal.",
-          ),
-  );
-  checks.push(
-    Option.isSome(status)
-      ? runningPortsCheck(status.value)
-      : answer._tag === "Failure"
-        ? check(
-            "Ports",
-            "skipped",
-            "A server holds the admin socket, so its ports are not checked.",
-          )
-        : yield* freePortsCheck(config),
-  );
+  const live = yield* liveServer(config.adminSocket, Option.isSome(unitText));
+  // Only a server the report describes lends it live diagnostics.
+  const status = live._tag === "described" ? Option.some(live.status) : Option.none();
+  checks.push(serverCheck(live));
+  switch (live._tag) {
+    case "described":
+      checks.push(runningPortsCheck(live.status));
+      break;
+    case "garbled":
+      checks.push(
+        check("Ports", "skipped", "A server holds the admin socket, so its ports are not checked."),
+      );
+      break;
+    case "outside":
+      checks.push(
+        check(
+          "Ports",
+          "skipped",
+          "A server outside the service holds this home, so the service's ports are not checked.",
+        ),
+      );
+      break;
+    case "none":
+      checks.push(yield* freePortsCheck(config));
+  }
   checks.push(yield* engineCheck(config, status));
   const servicePath = Option.flatMapNullishOr(unitText, (text) =>
     Unit.environmentOf(text).get("PATH"),
   );
   for (const harness of HARNESSES) checks.push(yield* providerCheck(harness, status, servicePath));
   checks.push(yield* webClientCheck(config, status));
-  checks.push(pairingCheck(status));
+  checks.push(pairingCheck(status, live._tag === "outside"));
   checks.push(...(yield* serviceChecks(unitText)));
   if (Option.isSome(shellSettings)) checks.push(shellSettings.value);
   return checks;

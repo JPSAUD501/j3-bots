@@ -12,6 +12,7 @@ import * as Home from "./home/Home.ts";
 import * as Http from "./http.ts";
 import * as Installation from "./installation.ts";
 import { SYSTEM_PROMPT_FILE } from "./home/entries.ts";
+import * as Layout from "./Layout.ts";
 import * as Listener from "./listener.ts";
 import * as Sqlite from "./persistence/Sqlite.ts";
 import * as Network from "./system/Network.ts";
@@ -20,7 +21,8 @@ import * as ToolEndpoint from "./tools/ToolEndpoint.ts";
 const logShutdown = Layer.effectDiscard(Effect.addFinalizer(() => Effect.logInfo("Shutting down")));
 
 /**
- * The engine, run under `<J3_HOME>/engine`. Each harness starts this
+ * The engine, run under `<J3_HOME>/engine`, writing only where the home's
+ * containment check allows. Each harness starts this
  * package's `j3` bridge as the bot tools' MCP server, pointed at the tool
  * endpoint on loopback.
  *
@@ -32,6 +34,7 @@ const engine = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     const bridge = yield* Installation.bridgeEntryPoint;
+    const layout = yield* Layout.Layout;
     return EngineLive.layer({
       home: config.engineHome,
       port: config.enginePort,
@@ -42,9 +45,11 @@ const engine = Layer.unwrap(
         args: [bridge, "--server", `http://127.0.0.1:${config.toolPort}`],
       },
       systemPromptFile: SYSTEM_PROMPT_FILE,
+      // The adapter's writes go through the same containment check as the server's.
+      isPrivate: (location) => layout.writable(location).pipe(Effect.isSuccess),
     });
   }),
-);
+).pipe(Layer.provide(Layout.layer));
 
 /**
  * The whole server. Built in dependency order: configuration, the home taken

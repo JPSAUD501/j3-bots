@@ -2,6 +2,7 @@
 import {
   Attachment,
   AttachmentId,
+  Conflict,
   HTTP_PATHS,
   Invalid,
   MAX_ATTACHMENT_SIZE,
@@ -134,7 +135,10 @@ const upload = HttpRouter.add(
     const attachments = yield* Attachments;
     return yield* attachments.store({ name, mediaType, bytes: bytes.success }).pipe(
       Effect.flatMap((attachment) => respond(Attachment, attachment, 200)),
-      Effect.catchTag("Invalid", () => invalid),
+      Effect.catchTags({
+        Invalid: () => invalid,
+        Conflict: (error) => respond(Conflict, error, 409),
+      }),
     );
   }),
 );

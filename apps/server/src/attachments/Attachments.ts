@@ -4,6 +4,7 @@ import {
   AttachmentId,
   type BotFile,
   BotId,
+  Conflict,
   EntryId,
   type EntryTarget,
   Invalid,
@@ -57,12 +58,16 @@ export interface StoredFile {
 export class Attachments extends Context.Service<
   Attachments,
   {
-    /** Stores an upload. Fails with `Invalid("attachment")` for an empty file or unusable metadata. */
+    /**
+     * Stores an upload. Fails with `Invalid("attachment")` for an empty file or
+     * unusable metadata, and with `Conflict("private-location")`, storing
+     * nothing, when the attachments folder has left private state.
+     */
     readonly store: (input: {
       readonly name: string;
       readonly mediaType: string;
       readonly bytes: Uint8Array;
-    }) => Effect.Effect<Attachment, Invalid>;
+    }) => Effect.Effect<Attachment, Invalid | Conflict>;
     readonly open: (id: AttachmentId) => Effect.Effect<Option.Option<StoredFile>>;
     /** Files the bot delivered with a message, newest first, before `before`. */
     readonly botFiles: (input: {
@@ -137,12 +142,17 @@ export const layer = Layer.effect(
       const at = timeText(yield* DateTime.now);
       yield* blobFiles.withPermits(1)(
         Effect.gen(function* () {
-          if (!(yield* fs.exists(target))) {
-            yield* layout.writable(target);
-            yield* fs.makeDirectory(path.dirname(target), { recursive: true });
-            const aside = `${target}.${id}.writing`;
-            yield* fs.writeFile(aside, input.bytes);
-            yield* fs.rename(aside, target);
+          if (!(yield* fs.exists(target).pipe(Effect.orDie))) {
+            yield* layout.writeFile(target, input.bytes).pipe(
+              Effect.catchTags({
+                // Logged here; the caller learns only that nothing was stored.
+                PrivateLocationExposed: (exposed) =>
+                  Effect.logWarning(exposed.message).pipe(
+                    Effect.andThen(Effect.fail(new Conflict({ reason: "private-location" }))),
+                  ),
+                PlatformError: Effect.die,
+              }),
+            );
           }
           yield* transaction(
             Effect.gen(function* () {
@@ -156,8 +166,8 @@ export const layer = Layer.effect(
                 VALUES (${id}, ${sha}, ${metadata.name}, ${metadata.mediaType}, 'operator', ${at})
               `;
             }),
-          );
-        }).pipe(Effect.orDie),
+          ).pipe(Effect.orDie);
+        }),
       );
       return yield* decodeAttachment({
         id,

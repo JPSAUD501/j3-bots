@@ -21,14 +21,16 @@ export const HOME_ENTRIES = {
   web: "web",
 } as const;
 
-/** What the server keeps in a bot's workspace, by name. */
+/** What a bot's workspace holds, by name. */
 export const WORKSPACE_ENTRIES = {
   /** Generated: `system.md`. */
   generated: ".j3",
   /** Generated, for harnesses that read one (Codex). */
   instructions: "AGENTS.md",
   memory: "memory",
+  /** The bot's own, which the server creates once and never writes. */
   skills: "skills",
+  /** The bot's own, which the server creates once and never writes. */
   files: "files",
 } as const;
 
@@ -63,10 +65,12 @@ export const homeLayout = (path: Path.Path, home: string) => {
     /**
      * Every location the server writes, for a home whose bots are `bots`:
      * each entry of the home but `web`, the database's journal beside it, the
-     * shared folders, and each bot's workspace and what the server keeps in it.
+     * shared folders, and each bot's workspace with what the server writes in
+     * it: not `skills` and `files`, which are the bot's, links included.
      */
     written: (bots: ReadonlyArray<string>) => {
       const { config, database, engine, shared, attachments, adminSocket, lock } = HOME_ENTRIES;
+      const { generated, instructions, memory } = WORKSPACE_ENTRIES;
       return [
         ...[config, engine, HOME_ENTRIES.bots, shared, attachments, adminSocket, lock].map(
           (entry) => path.join(home, entry),
@@ -77,7 +81,7 @@ export const homeLayout = (path: Path.Path, home: string) => {
         sharedSkills,
         ...bots.flatMap((bot) => [
           workspace(bot),
-          ...Object.values(WORKSPACE_ENTRIES).map((entry) => path.join(workspace(bot), entry)),
+          ...[generated, instructions, memory].map((entry) => path.join(workspace(bot), entry)),
         ]),
       ];
     },
