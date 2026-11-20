@@ -220,6 +220,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
     const target = targetOf(key);
     const view = data.conversation(target);
     const draft = data.draft(target);
+    const offer = data.offer(target);
     const recipient = item._tag === "bot" ? item.bot.profile.name : item.room.name;
     const toggleDetails = () => navigation.setDetailsOpen(!detailsOpen);
     const goToEntry = (entryId: EntryId) => {
@@ -290,18 +291,20 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
             onValueChange={(value) => intents.setDraftText(target, value)}
             files={draft.files}
             sending={draft.sending}
+            loading={data.draftsLoading}
             onAttachFiles={(files) => intents.attachFiles(target, files)}
             onDetachFile={(fileKey) => intents.detachFile(target, fileKey)}
             onSend={() => intents.sendDraft(target)}
             {...(dictate ? { onDictate: () => dictate(target) } : {})}
-            {...(data.restorable(target)
-              ? {
+            {...(offer === null
+              ? {}
+              : {
                   replaced: {
+                    revision: offer,
                     onRestore: () => intents.restoreDraft(target),
                     onDismiss: () => intents.dismissDraftOffer(target),
                   },
-                }
-              : {})}
+                })}
             inputRef={composerRef}
           />
         </div>

@@ -170,6 +170,8 @@ interface StorageOptions {
   readonly refuseCommits?: () => boolean;
   /** Fails every attempt to empty a table. */
   readonly refuseClears?: boolean;
+  /** Fails a read when it says so, as a disk that fails now and then would. */
+  readonly refuseReads?: () => boolean;
   /** Holds every transaction until the latch opens, before it can fail. */
   readonly commitGate?: Latch.Latch;
   /** Receives one item as each transaction starts, before the gate. */
@@ -209,8 +211,13 @@ const makeStorage = (options: StorageOptions) => {
       });
     return ClientStorage.of({
       readAll: (name) =>
-        Effect.sync(
-          () => new Map([...table(name)].toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))),
+        Effect.suspend(() =>
+          options.refuseReads?.() === true
+            ? Effect.fail(new LocalStorageError({ operation: "read" }))
+            : Effect.sync(
+                () =>
+                  new Map([...table(name)].toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))),
+              ),
         ).pipe(
           Effect.tap(() => {
             const gate = options.readGate;

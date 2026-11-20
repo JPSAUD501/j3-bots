@@ -303,9 +303,12 @@ export interface Conversation {
  * records it rather than send the attempt again, and tries on its own
  * schedule, without a socket.
  *
- * Every record belongs to the pairing that kept it. When the pairing a window
- * follows ends, the window drops its messages and erases the device's
- * records of that pairing, and only those.
+ * Every record belongs to the pairing that kept it, read as it is kept, in
+ * turn with erasing a pairing's records. When the pairing a window follows
+ * ends, the window drops its messages and erases the device's records of
+ * that pairing, and only those. At launch, before anything shows or sends
+ * them, the records of every pairing the device no longer holds go: a window
+ * can close before it erased them.
  *
  * An accepted message leaves the list once the conversation shows its entry,
  * or once a read of the conversation started after this window knew the
@@ -330,13 +333,13 @@ export class Conversations extends Context.Service<
       readonly mentions?: Mentions;
     }) => Effect.Effect<IntentResult<EntryId>, InvalidMessage>;
     /**
-     * Keeps the message on the device, with `alongside` in the same storage
-     * transaction, then shows it and starts sending it as `send` does, without
-     * waiting for the server. Succeeds with `false`, keeping, showing and
-     * sending nothing, when a record of `expected` no longer holds the value
-     * given; fails the same way when the device cannot keep it, with
-     * `NotPaired` without a pairing, or with `InvalidMessage` when it breaks a
-     * limit of `message.send`.
+     * Keeps the message on the device, with the `claim`'s `alongside` in the
+     * same storage transaction, then shows it and starts sending it as `send`
+     * does, without waiting for the server. Succeeds with `false`, keeping,
+     * showing and sending nothing, when a record of `expected` no longer
+     * holds the value given; fails the same way when the device cannot keep
+     * it, with `NotPaired` without a pairing or with another than the
+     * claim's, or with `InvalidMessage` when it breaks a limit of `message.send`.
      */
     readonly enqueue: (
       input: {
@@ -345,8 +348,12 @@ export class Conversations extends Context.Service<
         readonly attachments?: ReadonlyArray<Attachment>;
         readonly mentions?: Mentions;
       },
-      alongside?: ReadonlyArray<LocalRecord>,
-      expected?: ReadonlyArray<LocalRecord>,
+      claim?: {
+        /** The pairing `alongside` belongs to: with another, it fails with `NotPaired`. */
+        readonly pairing: DeviceId;
+        readonly alongside: ReadonlyArray<LocalRecord>;
+        readonly expected: ReadonlyArray<LocalRecord>;
+      },
     ) => Effect.Effect<boolean, LocalStorageError | InvalidMessage | NotPaired>;
     /**
      * Sends again, with its own command id, a message that was not sent. Does
@@ -369,11 +376,12 @@ export class Conversations extends Context.Service<
      */
     readonly withSendingPaused: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
     /**
-     * Stops every delivery and drops this pairing's outbox, here and on the
-     * device. It happens by itself whenever the pairing ends: a message
-     * belongs to the pairing that wrote it.
+     * Stops every delivery and erases every message of `pairing` on the
+     * device, and drops every message here while this window still follows
+     * it. It happens by itself whenever the pairing ends: a message belongs
+     * to the pairing that wrote it.
      */
-    readonly discardAll: Effect.Effect<void, LocalStorageError>;
+    readonly discardAll: (pairing: DeviceId | null) => Effect.Effect<void, LocalStorageError>;
   }
 >()("@j3-bots/client-runtime/stores/Conversations") {}
 
@@ -690,8 +698,11 @@ export const layer = Layer.effect(
       CommandId,
       { readonly due: KeptDue; readonly result: IntentResult<EntryId> }
     >();
-    // Asks this window to try again to record what `unrecorded` holds. One pending ask is enough.
-    const recordAgain = yield* Queue.sliding<void>(1);
+    // Asks this window to try again what the device failed to do: record what
+    // `unrecorded` holds, or read the outbox. One pending ask is enough.
+    const tryAgain = yield* Queue.sliding<void>(1);
+    // The last read of the outbox failed, so the list may not show what the device keeps.
+    let readFailed = false;
 
     const queueOrder = (a: Held, b: Held) => {
       if (a.kept === null) return b.kept === null ? 0 : 1;
@@ -847,6 +858,13 @@ export const layer = Layer.effect(
         Effect.catchTag("LocalStorageError", (error) =>
           Effect.logWarning("Unsent messages could not be read", error).pipe(Effect.as(false)),
         ),
+        // Nothing else may read it again soon: a window offline is told nothing.
+        Effect.tap((read) =>
+          Effect.sync(() => {
+            readFailed = !read;
+            if (!read) Queue.offerUnsafe(tryAgain, undefined);
+          }),
+        ),
         Effect.map((read) =>
           outbox
             .get()
@@ -978,7 +996,7 @@ export const layer = Layer.effect(
             unrecorded.set(message.commandId, { due: { ...due, kept }, result });
             // Shown at once: the read below may fail as the write did.
             setStatus((held) => held.kept?.value === kept.value, { _tag: "unrecorded" });
-            yield* Queue.offer(recordAgain, undefined);
+            yield* Queue.offer(tryAgain, undefined);
           }
           return yield* refresh;
         }),
@@ -1053,25 +1071,96 @@ export const layer = Layer.effect(
         }),
       );
 
-    // Records, every `sweep`, the answers the device could not record. Each
-    // waits for its conversation's lock, so it never runs beside a delivery.
+    // A `sweep` after the device failed, records the answers it could not
+    // record, and reads the outbox again if the last read failed. Each answer
+    // waits for its conversation's lock, so it never runs beside a delivery,
+    // and on its own: a lock another window holds keeps no other answer waiting.
+    const recording = new Set<CommandId>();
     yield* Effect.gen(function* () {
       while (true) {
-        yield* Queue.take(recordAgain);
+        yield* Queue.take(tryAgain);
         yield* Effect.sleep(sweep);
-        yield* Effect.forEach(
-          [...unrecorded],
-          ([commandId, { due, result }]) =>
-            locks.withLock(
+        for (const [commandId, { due, result }] of unrecorded) {
+          if (recording.has(commandId)) continue;
+          recording.add(commandId);
+          yield* locks
+            .withLock(
               lockOf(targetKey(due.message.target)),
               Effect.suspend(() =>
                 unrecorded.get(commandId)?.due === due ? recordAnswer(due, result) : Effect.void,
               ),
-            ),
-          { concurrency: "unbounded", discard: true },
-        );
+            )
+            .pipe(
+              Effect.ensuring(
+                Effect.sync(() => {
+                  recording.delete(commandId);
+                  // A newer answer to it waited for this one.
+                  if (unrecorded.has(commandId)) Queue.offerUnsafe(tryAgain, undefined);
+                }),
+              ),
+              Effect.forkIn(scope),
+            );
+        }
+        if (readFailed) yield* refresh;
       }
     }).pipe(Effect.forkIn(scope));
+
+    /**
+     * Erases the device's records of the pairings `ended` names, each claimed
+     * as read, so a record another window wrote meanwhile stays. `ended` is
+     * asked after each read of the outbox. The counter goes with the last of
+     * them: with no message left to order, the next one may start again from
+     * the first sequence.
+     */
+    const eraseWhere = Effect.fn("Conversations.eraseWhere")(function* <E>(
+      ended: Effect.Effect<(pairing: DeviceId) => boolean, E>,
+    ) {
+      while (true) {
+        const records = yield* storage.readAll("outbox");
+        const isEnded = yield* ended;
+        const owned = [...records].flatMap(([key, value]): ReadonlyArray<LocalRecord> =>
+          Option.exists(decodeRecord(value), (record) => isEnded(record.pairing))
+            ? [{ table: "outbox", key, value }]
+            : [],
+        );
+        const counter = records.get(COUNTER_KEY);
+        if (counter !== undefined && owned.length === records.size - 1) {
+          owned.push({ table: "outbox", key: COUNTER_KEY, value: counter });
+        }
+        if (owned.length === 0) return;
+        const erased = yield* storage.commit(
+          owned.map((record) => ({ ...record, value: null })),
+          owned,
+        );
+        if (erased) return;
+      }
+    });
+    const erase = (pairing: DeviceId) =>
+      eraseWhere(Effect.succeed((owner: DeviceId) => owner === pairing));
+
+    // A window can close after its pairing ended and before it erased that
+    // pairing's records. They go before anything shows or sends them. The
+    // credential is read after the records: a record was kept after its
+    // pairing was saved, so one whose pairing the device no longer holds
+    // belongs to a pairing that ended.
+    yield* eraseWhere(
+      Effect.map(connection.storedPairing, (stored) => (owner: DeviceId) => owner !== stored),
+    ).pipe(
+      Effect.catchTags({
+        LocalStorageError: (error) =>
+          Effect.logWarning("Unsent messages of a pairing that ended stay in local storage", error),
+        CredentialStorageError: (error) =>
+          Effect.logWarning(
+            "Unsent messages are kept: the device's pairing could not be read",
+            error,
+          ),
+      }),
+    );
+
+    // Keeping a message and erasing a pairing's records take turns, so no
+    // message is kept for a pairing whose records were already erased.
+    const pairingLock = Semaphore.makeUnsafe(1);
+    const withPairing = pairingLock.withPermits(1);
 
     // What an earlier launch left unsent. Each goes once accepted: its entry
     // may be older than the history a conversation loads.
@@ -1186,8 +1275,9 @@ export const layer = Layer.effect(
     const send = Effect.fn("Conversations.send")(function* (input: Parameters<typeof outgoing>[0]) {
       const message = yield* outgoing(input);
       // With nothing expected, only a storage failure, or no pairing, leaves it unkept.
-      const kept = yield* connection.deviceId.pipe(
-        Effect.flatMap((pairing) => keep(message, pairing, [], [])),
+      const kept = yield* withPairing(
+        Effect.flatMap(connection.deviceId, (pairing) => keep(message, pairing, [], [])),
+      ).pipe(
         Effect.catchTags({
           NotPaired: () => Effect.succeed(false),
           LocalStorageError: (error) =>
@@ -1205,11 +1295,20 @@ export const layer = Layer.effect(
 
     const enqueue = Effect.fn("Conversations.enqueue")(function* (
       input: Parameters<typeof outgoing>[0],
-      alongside: ReadonlyArray<LocalRecord> = [],
-      expected: ReadonlyArray<LocalRecord> = [],
+      claim?: {
+        readonly pairing: DeviceId;
+        readonly alongside: ReadonlyArray<LocalRecord>;
+        readonly expected: ReadonlyArray<LocalRecord>;
+      },
     ) {
       const message = yield* outgoing(input);
-      const kept = yield* keep(message, yield* connection.deviceId, alongside, expected);
+      const kept = yield* withPairing(
+        Effect.gen(function* () {
+          const pairing = yield* connection.deviceId;
+          if (claim !== undefined && claim.pairing !== pairing) return yield* new NotPaired();
+          return yield* keep(message, pairing, claim?.alongside ?? [], claim?.expected ?? []);
+        }),
+      );
       if (kept) yield* refresh.pipe(Effect.andThen(wake));
       return kept;
     });
@@ -1329,43 +1428,16 @@ export const layer = Layer.effect(
       );
     });
 
-    /**
-     * Erases the device's outbox records of `pairing`, each claimed as read,
-     * so a record another window wrote meanwhile stays.
-     */
-    /**
-     * Erases the device's records of `pairing`. The counter goes with the
-     * last of them: with no message left to order, the next one may start
-     * again from the first sequence.
-     */
-    const erase = Effect.fn("Conversations.erase")(function* (pairing: DeviceId) {
-      while (true) {
-        const records = yield* storage.readAll("outbox");
-        const owned = [...records].flatMap(([key, value]): ReadonlyArray<LocalRecord> =>
-          Option.exists(decodeRecord(value), (record) => record.pairing === pairing)
-            ? [{ table: "outbox", key, value }]
-            : [],
-        );
-        const counter = records.get(COUNTER_KEY);
-        if (counter !== undefined && owned.length === records.size - 1) {
-          owned.push({ table: "outbox", key: COUNTER_KEY, value: counter });
-        }
-        if (owned.length === 0) return;
-        const erased = yield* storage.commit(
-          owned.map((record) => ({ ...record, value: null })),
-          owned,
-        );
-        if (erased) return;
-      }
-    });
-
-    const discardAll = withSendingPaused(
-      Effect.gen(function* () {
-        yield* dropAll;
-        const pairing = connection.pairing.get();
-        if (pairing !== null) yield* erase(pairing);
-      }),
-    );
+    const discardAll = (pairing: DeviceId | null) =>
+      withSendingPaused(
+        withPairing(
+          Effect.gen(function* () {
+            // A window that follows a pairing made since already dropped these.
+            if (connection.pairing.get() === pairing) yield* dropAll;
+            if (pairing !== null) yield* erase(pairing);
+          }),
+        ),
+      );
 
     // When the pairing this window follows ends, its messages go, here and
     // on the device, and what is left is read again once sending resumes.
@@ -1376,7 +1448,7 @@ export const layer = Layer.effect(
         const ended = followed;
         followed = next;
         if (ended === null) continue;
-        yield* withSendingPaused(Effect.andThen(dropAll, erase(ended))).pipe(
+        yield* withSendingPaused(withPairing(Effect.andThen(dropAll, erase(ended)))).pipe(
           Effect.catchTag("LocalStorageError", (error) =>
             Effect.logWarning(
               "Unsent messages of a pairing that ended stay in local storage",

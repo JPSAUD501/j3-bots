@@ -31,14 +31,27 @@ interface ComposerProps {
   readonly files?: ReadonlyArray<DraftFile>;
   /** The draft is on its way to the outbox, for a few milliseconds: it takes no change. */
   readonly sending?: boolean;
+  /**
+   * The drafts of the pairing this device follows now are being read, after
+   * another pairing ended: until they show, the draft takes no change.
+   */
+  readonly loading?: boolean;
   /** Files the operator picked, pasted or dropped. Without it, the composer takes no files. */
   readonly onAttachFiles?: (files: ReadonlyArray<File>) => void;
   readonly onDetachFile?: (key: string) => void;
   readonly onSend: () => void;
   /** Without it, the trailing button is always Send. */
   readonly onDictate?: () => void;
-  /** Text the operator wrote here was replaced in another tab, and can come back. */
-  readonly replaced?: { readonly onRestore: () => void; readonly onDismiss: () => void };
+  /**
+   * Text the operator wrote here was replaced in another tab, and can come
+   * back. `revision` changes whenever newer text is replaced, which is
+   * announced again.
+   */
+  readonly replaced?: {
+    readonly revision: number;
+    readonly onRestore: () => void;
+    readonly onDismiss: () => void;
+  };
   readonly inputRef?: RefObject<HTMLTextAreaElement | null>;
 }
 
@@ -92,12 +105,13 @@ const nameOf = (file: DraftFile) => (file._tag === "ready" ? file.attachment.nam
  * pill; the message goes once they all have. With nothing to send, the
  * trailing button dictates where dictation exists. A message over a limit
  * of `message.send` is kept, and says why instead of sending. While Send hands
- * the draft over, the field stays focused but read-only, and attaching and
- * removing files show as unavailable; files dropped or pasted meanwhile are not
- * taken, and the composer asks for them again. Text replaced in another tab
- * is offered back above the pill until the operator restores or dismisses it;
- * either way the focus returns to the field. The field draws no ring of its
- * own: the pill takes the focus outline.
+ * the draft over, or the drafts load, the field stays focused but read-only,
+ * and attaching and removing files show as unavailable; files dropped or
+ * pasted meanwhile are not taken, and the composer asks for them again. Many
+ * files scroll within their own list, so the pill and what sits above it stay
+ * in view. Text replaced in another tab is offered back above the pill until
+ * the operator restores or dismisses it; either way the focus returns to the
+ * field. The field draws no ring of its own: the pill takes the focus outline.
  */
 export function Composer({
   draftKey,
@@ -106,6 +120,7 @@ export function Composer({
   onValueChange,
   files = [],
   sending = false,
+  loading = false,
   onAttachFiles,
   onDetachFile,
   onSend,
@@ -127,8 +142,10 @@ export function Composer({
     value.trim(),
     files.flatMap((file) => (file._tag === "ready" ? [file.attachment] : [])),
   );
-  const ready = !sending && !empty && !uploading && !blocked && problem === null;
-  // Files dropped or pasted while Send hands the draft over, which the draft did not take.
+  // The draft takes no change while it is handed over or loads.
+  const frozen = sending || loading;
+  const ready = !frozen && !empty && !uploading && !blocked && problem === null;
+  // Files dropped or pasted while the draft took no change, which it did not take.
   const [notTaken, setNotTaken] = useState(false);
   // They were not taken for this draft: another conversation's composer does not ask for them.
   const [notTakenFor, setNotTakenFor] = useState(draftKey);
@@ -141,11 +158,11 @@ export function Composer({
   };
   const attach = (list: FileList | null) => {
     if (!onAttachFiles || list === null || list.length === 0) return;
-    setNotTaken(sending);
-    if (!sending) onAttachFiles([...list]);
+    setNotTaken(frozen);
+    if (!frozen) onAttachFiles([...list]);
   };
   const detach = (key: string) => {
-    if (!sending) onDetachFile?.(key);
+    if (!frozen) onDetachFile?.(key);
   };
   // The notice leaves with the button that was pressed: the focus goes back to the text.
   const answerReplaced = (answer: () => void) => {
@@ -179,13 +196,16 @@ export function Composer({
       }}
     >
       {files.length > 0 && (
-        <ul aria-label={t("composer.files")} className="flex flex-wrap gap-1.5">
+        <ul
+          aria-label={t("composer.files")}
+          className="flex max-h-28 flex-wrap gap-1.5 overflow-y-auto overscroll-contain"
+        >
           {files.map((file) => (
             <DraftFileChip
               key={file.key}
               file={file}
               onRemove={onDetachFile ? () => detach(file.key) : undefined}
-              unavailable={sending}
+              unavailable={frozen}
             />
           ))}
         </ul>
@@ -198,9 +218,9 @@ export function Composer({
               variant="ghost"
               size="sm"
               onClick={() => {
-                if (!sending) answerReplaced(replaced.onRestore);
+                if (!frozen) answerReplaced(replaced.onRestore);
               }}
-              aria-disabled={sending}
+              aria-disabled={frozen}
             >
               {t("composer.restore")}
             </Button>
@@ -214,9 +234,13 @@ export function Composer({
           </div>
         </div>
       )}
-      {/* Replaced text and a file that cannot go are announced; progress is there to see, not to hear. */}
+      {/* Replaced text is announced each time newer text is replaced: a new node, though the words are the same. */}
       <p role="status" className="sr-only">
-        {[...(replaced ? [t("composer.replaced")] : []), ...failures].join(" ")}
+        {replaced && <span key={replaced.revision}>{t("composer.replaced")}</span>}
+      </p>
+      {/* A file that cannot go is announced; progress is there to see, not to hear. */}
+      <p role="status" className="sr-only">
+        {failures.join(" ")}
       </p>
       <div className="flex items-end gap-1 rounded-pill border border-input bg-surface p-1 shadow-xs has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:outline-offset-2 has-[textarea:focus-visible]:outline-accent">
         {onAttachFiles && (
@@ -225,9 +249,9 @@ export function Composer({
               variant="ghost-muted"
               size="icon-pill"
               onClick={() => {
-                if (!sending) pickerRef.current?.click();
+                if (!frozen) pickerRef.current?.click();
               }}
-              aria-disabled={sending}
+              aria-disabled={frozen}
               aria-label={t("composer.attach")}
             >
               <PlusIcon />
@@ -249,7 +273,7 @@ export function Composer({
           ref={fieldRef}
           rows={1}
           value={value}
-          readOnly={sending}
+          readOnly={frozen}
           onChange={(event) => {
             setNotTaken(false);
             onValueChange(event.currentTarget.value);
@@ -315,7 +339,7 @@ function DraftFileChip({
 }: {
   file: DraftFile;
   onRemove: (() => void) | undefined;
-  /** The draft is on its way to the outbox: the file cannot be removed meanwhile. */
+  /** The draft takes no change: the file cannot be removed meanwhile. */
   unavailable: boolean;
 }) {
   const i18n = useI18n();

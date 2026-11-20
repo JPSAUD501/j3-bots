@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import type { DeviceId } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { Connection } from "../connection/Connection.ts";
 import type { LocalStorageError } from "../ports.ts";
 import { Conversations } from "../stores/Conversations.ts";
@@ -25,10 +27,11 @@ export class SignOut extends Context.Service<
   SignOut,
   {
     /**
-     * Stops sending, revokes this device on the server if it is connected,
-     * deletes the drafts and unsent messages, then deletes the credential.
-     * The device is unpaired only once that deletion succeeded; without a
-     * credential, whatever text is left is discarded again.
+     * Stops sending, revokes this device's pairing on the server if it is
+     * connected, deletes that pairing's drafts and unsent messages, then its
+     * credential. The device is unpaired only once that deletion succeeded;
+     * without a credential, whatever text is left is discarded again. A
+     * pairing made meanwhile, here or in another window, keeps all of its own.
      */
     readonly run: Effect.Effect<SignOutResult>;
   }
@@ -42,11 +45,10 @@ export const layer = Layer.effect(
     const drafts = yield* Drafts;
     const conversations = yield* Conversations;
 
-    /** Whether the server revoked this device. Revoking it closes its socket, so the answer is often `not-paired`. */
-    const revokeThis = Effect.gen(function* () {
+    /** Whether the server revoked `pairing`. Revoking it closes its socket, so the answer is often `not-paired`. */
+    const revoke = Effect.fn("SignOut.revoke")(function* (pairing: DeviceId) {
       if (connection.state.get()._tag !== "connected") return false;
-      const deviceId = yield* connection.deviceId;
-      const result = yield* devices.revoke(deviceId);
+      const result = yield* devices.revoke(pairing);
       switch (result._tag) {
         case "done":
           return true;
@@ -58,7 +60,7 @@ export const layer = Layer.effect(
             (result.failure._tag === "refused" && result.failure.error._tag === "NotFound")
           );
       }
-    }).pipe(Effect.catchTag("NotPaired", () => Effect.succeed(false)));
+    });
 
     const erase = (deleted: Effect.Effect<void, LocalStorageError>, what: string) =>
       deleted.pipe(
@@ -69,11 +71,14 @@ export const layer = Layer.effect(
 
     const run = conversations.withSendingPaused(
       Effect.gen(function* () {
-        const revoked = yield* revokeThis;
-        yield* erase(drafts.discardAll, "Drafts");
-        yield* erase(conversations.discardAll, "Unsent messages");
+        // The pairing this ends, read once: another window may pair anew while
+        // the server answers, and this window follow it. That pairing stays.
+        const pairing = Option.getOrNull(yield* Effect.option(connection.deviceId));
+        const revoked = pairing !== null && (yield* revoke(pairing));
+        yield* erase(drafts.discardAll(pairing), "Drafts");
+        yield* erase(conversations.discardAll(pairing), "Unsent messages");
         const reason = revoked ? "signed-out" : "still-listed";
-        return yield* connection.forget(reason).pipe(
+        return yield* connection.forget(reason, pairing).pipe(
           Effect.as<SignOutResult>(reason),
           Effect.catchTag("CredentialStorageError", (error) =>
             Effect.logWarning("The credential could not be deleted", error).pipe(

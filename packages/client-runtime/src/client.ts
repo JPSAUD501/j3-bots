@@ -181,10 +181,16 @@ export interface J3Client {
     listener: (change: Drafts.DraftChangedElsewhere) => void,
   ) => () => void;
   /**
-   * The drafts, by `targetKey`, whose text another window's change displaced:
-   * `restoreDraft` puts it back, `dismissDraftOffer` lets it go.
+   * The drafts, by `targetKey`, whose text another window's change displaced,
+   * each with the revision of its offer, which grows whenever new text is
+   * displaced: `restoreDraft` puts it back, `dismissDraftOffer` lets it go.
    */
-  readonly draftOffers: Readable<ReadonlySet<string>>;
+  readonly draftOffers: Readable<ReadonlyMap<string, number>>;
+  /**
+   * This window is reading the drafts of a pairing it follows now, after
+   * another ended: the drafts take no change meanwhile.
+   */
+  readonly draftsSwitching: Readable<boolean>;
   /** Puts back the text this window held, never kept, when another window changed the draft. */
   readonly restoreDraft: (target: EntryTarget) => void;
   /** Lets go of the text on offer for `restoreDraft`. */
@@ -360,6 +366,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     sendDraft: (target) => run.promise(services.drafts.send(target)),
     onDraftChangedElsewhere: (listener) => listen(services.drafts.changedElsewhere, listener),
     draftOffers: services.drafts.offers,
+    draftsSwitching: services.drafts.switching,
     restoreDraft: (target) => fire(services.drafts.restore(target)),
     dismissDraftOffer: (target) => fire(services.drafts.dismiss(target)),
     download: (attachment) =>

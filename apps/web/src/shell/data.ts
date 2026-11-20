@@ -43,8 +43,17 @@ export interface ShellData {
   readonly conversation: (target: EntryTarget) => ConversationView;
   /** What the operator has written to `target` and not sent. */
   readonly draft: (target: EntryTarget) => Draft;
-  /** Text the operator wrote to `target` was replaced in another tab, and can come back. */
-  readonly restorable: (target: EntryTarget) => boolean;
+  /**
+   * Text the operator wrote to `target` was replaced in another tab, and can
+   * come back: the revision of that offer, which changes whenever newer text
+   * is replaced. Null when nothing can come back.
+   */
+  readonly offer: (target: EntryTarget) => number | null;
+  /**
+   * The drafts of the pairing this device follows now are being read, after
+   * another pairing ended: no draft takes a change until they show.
+   */
+  readonly draftsLoading: boolean;
   /** Whether the operator's answer to a card is still on its way to the server. */
   readonly submitting: (entryId: EntryId) => boolean;
   /** A work fold's steps, or null while they load. */

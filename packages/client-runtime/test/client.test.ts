@@ -1042,7 +1042,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
             assert.deepStrictEqual(
               yield* Fiber.join(noticed),
-              Option.some({ target: first.target, whileSending: false, restorable: true }),
+              Option.some({ target: first.target, whileSending: false, displaced: true }),
             );
             assert.isUndefined(two.state.get().get(key));
             yield* whenStored(device.storage, "drafts", key, noDraft);
@@ -1092,7 +1092,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
           assert.deepStrictEqual(
             yield* Fiber.join(noticed),
-            Option.some({ target: first.target, whileSending: false, restorable: true }),
+            Option.some({ target: first.target, whileSending: false, displaced: true }),
           );
           assert.strictEqual(two.state.get().get(key)?.text, "shared, from one");
           yield* whenStored(device.storage, "drafts", key, holds("from one"));
@@ -1140,7 +1140,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           assert.strictEqual(yield* Fiber.join(sending), "changed-elsewhere");
           assert.deepStrictEqual(
             yield* Fiber.join(noticed),
-            Option.some({ target: first.target, whileSending: true, restorable: true }),
+            Option.some({ target: first.target, whileSending: true, displaced: true }),
           );
           assert.strictEqual(two.state.get().get(key)?.text, "shared, from one");
           assert.strictEqual((yield* unsent(device.storage)).length, 0);
@@ -1215,7 +1215,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           );
           assert.deepStrictEqual(
             notice,
-            Option.some({ target: first.target, whileSending: false, restorable: true }),
+            Option.some({ target: first.target, whileSending: false, displaced: true }),
           );
         }).pipe(
           Effect.scoped,
@@ -1300,7 +1300,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           assert.strictEqual(two.state.get().get(key)?.text, "shared, from one");
           assert.deepStrictEqual(
             notice,
-            Option.some({ target: first.target, whileSending: true, restorable: false }),
+            Option.some({ target: first.target, whileSending: true, displaced: false }),
           );
           assert.strictEqual((yield* unsent(device.storage)).length, 0);
         }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
@@ -1342,8 +1342,14 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
             { name: "later.txt", body: new Blob(["later"], { type: "text/plain" }) },
           ]);
 
-          const offer = { target: first.target, whileSending: false, restorable: true };
-          assert.deepStrictEqual([...(yield* Fiber.join(notices))], [offer, offer]);
+          // The second change displaced nothing new: the first offer stays.
+          assert.deepStrictEqual(
+            [...(yield* Fiber.join(notices))],
+            [
+              { target: first.target, whileSending: false, displaced: true },
+              { target: first.target, whileSending: false, displaced: false },
+            ],
+          );
           yield* two.restore(first.target);
           yield* whenStored(
             device.storage,
@@ -1376,11 +1382,15 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           yield* whenStored(device.storage, "drafts", key, holds("from one"));
           yield* two.setText(first.target, "older, from two");
           yield* waitFor(two.state, (state) => state.get(key)?.text === "from one");
+          const older = two.offers.get().get(key);
 
           yield* one.setText(first.target, "from one again");
           yield* whenStored(device.storage, "drafts", key, holds("from one again"));
           yield* two.setText(first.target, "newer, from two");
           yield* waitFor(two.state, (state) => state.get(key)?.text === "from one again");
+          // A new offer, though one was already in view, so it is announced again.
+          const newer = two.offers.get().get(key);
+          assert.isTrue(older !== undefined && newer !== undefined && newer > older);
 
           yield* two.restore(first.target);
           yield* whenStored(device.storage, "drafts", key, holds("newer, from two"));
@@ -1660,7 +1670,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
         assert.deepStrictEqual(
           yield* Fiber.join(noticed),
-          Option.some({ target, whileSending: false, restorable: true }),
+          Option.some({ target, whileSending: false, displaced: true }),
         );
         assert.isUndefined(one.state.get().get(key));
         assert.isTrue(
@@ -2191,6 +2201,61 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
     });
   });
 
+  it.effect("shows a refusal recorded offline once the outbox can be read again", () => {
+    let full = false;
+    // The read after the answer is recorded fails once.
+    let failNextRead = false;
+    let armed = false;
+    return Effect.gen(function* () {
+      const { gate, sends, refusing } = yield* Fakes;
+      const { device, target, credential } = yield* pairedDevice("Flaky disk", {
+        refuseCommits: () => {
+          if (full) return true;
+          if (armed) {
+            armed = false;
+            failNextRead = true;
+          }
+          return false;
+        },
+        refuseReads: () => {
+          if (!failNextRead) return false;
+          failNextRead = false;
+          return true;
+        },
+      });
+      refusing.add("refused, recorded offline");
+
+      yield* Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const conversation = yield* conversations.open(target);
+        yield* gate.close;
+        yield* conversations.enqueue({ target, text: "refused, recorded offline" });
+        yield* Queue.take(sends);
+        full = true;
+        yield* gate.open;
+        yield* waitFor(conversation.state, (state) =>
+          outgoingIn(state).some((message) => message.status._tag === "unrecorded"),
+        );
+
+        // Offline, nothing reads the outbox again but this window's own retries.
+        yield* goOffline;
+        armed = true;
+        full = false;
+        const recorded = yield* waitFor(conversation.state, (state) =>
+          outgoingIn(state).some((message) => message.status._tag === "not-sent"),
+        );
+        assert.deepStrictEqual(
+          outgoingIn(recorded).map((message) => messageStatus(message)._tag),
+          ["not-sent"],
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.ensuring(gate.open),
+        Effect.provide(client(credential, device)),
+      );
+    });
+  });
+
   it.effect("drops a message another tab delivered once the history loaded starts after it", () =>
     Effect.gen(function* () {
       const { sends } = yield* Fakes;
@@ -2368,6 +2433,157 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       );
     }),
   );
+
+  it.effect("keeps a pairing made while a tab signs out, with what it wrote", () =>
+    Effect.gen(function* () {
+      const { device, target, credential } = yield* pairedDevice("Signed out under");
+      const key = targetKey(target);
+      const tickets = yield* Latch.make(true);
+      const heard = yield* Latch.make(false);
+
+      // The tab that signs out: it hears other tabs late, its next socket
+      // ticket waits, and the server's answer to its revocation is lost.
+      yield* Effect.gen(function* () {
+        const leaving = yield* Connection;
+        const leavingDrafts = yield* Drafts;
+        const network = yield* TestPlatform.TestNetwork;
+        const signOut = yield* SignOut;
+        yield* waitFor(leaving.state, isConnected);
+
+        yield* Effect.gen(function* () {
+          const connection = yield* Connection;
+          yield* waitFor(connection.state, isConnected);
+          yield* tickets.close;
+          yield* network.loseReplies(true);
+          const signingOut = yield* signOut.run.pipe(Effect.forkChild({ startImmediately: true }));
+
+          // The revocation reaches this tab first, which pairs again and writes.
+          yield* waitFor(connection.state, (state) => state._tag === "unpaired");
+          yield* pairAndConnect;
+          const paired = yield* savedCredential;
+          if (Option.isNone(paired)) return assert.fail("The new pairing was not saved");
+          yield* (yield* Drafts).setText(target, "written after pairing again");
+          yield* whenStored(device.storage, "drafts", key, holds("written after pairing again"));
+
+          // The tab signing out follows the new pairing before its revocation is answered.
+          yield* heard.open;
+          yield* waitFor(leaving.pairing, (pairing) => pairing === paired.value.deviceId);
+          yield* network.loseReplies(false);
+          yield* tickets.open;
+
+          assert.strictEqual(yield* Fiber.join(signingOut), "signed-out");
+          assert.deepStrictEqual(
+            Option.map(yield* savedCredential, (stored) => stored.deviceId),
+            Option.some(paired.value.deviceId),
+          );
+          yield* whenStored(device.storage, "drafts", key, holds("written after pairing again"));
+          yield* waitFor(
+            leavingDrafts.state,
+            (drafts) => drafts.get(key)?.text === "written after pairing again",
+          );
+          assert.isTrue(isConnected(connection.state.get()));
+        }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+      }).pipe(
+        Effect.scoped,
+        Effect.ensuring(Effect.andThen(tickets.open, heard.open)),
+        Effect.provide(
+          client(
+            credential,
+            { ...device, credentials: () => device.credentials(heard) },
+            heldAt(HTTP_PATHS.socketTicket, tickets),
+          ),
+        ),
+      );
+    }),
+  );
+
+  it.effect("erases at launch the drafts and messages a pairing that ended left behind", () =>
+    Effect.gen(function* () {
+      const { device, target, credential } = yield* pairedDevice("Left over");
+      const key = targetKey(target);
+      yield* Effect.gen(function* () {
+        yield* goOffline;
+        yield* (yield* Drafts).setText(target, "from a pairing that ended");
+        yield* whenStored(device.storage, "drafts", key, present);
+        yield* (yield* Conversations).enqueue({ target, text: "never to be sent" });
+      }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+      // The pairing ends, and the browser closes before its text is erased.
+      if (Option.isNone(credential)) return assert.fail("The pairing was not saved");
+      yield* device.credentials().clear(credential.value).pipe(Effect.orDie);
+
+      yield* Effect.gen(function* () {
+        assert.strictEqual((yield* Drafts).state.get().size, 0);
+        assert.strictEqual((yield* device.storage.readAll("drafts").pipe(Effect.orDie)).size, 0);
+        assert.strictEqual((yield* device.storage.readAll("outbox").pipe(Effect.orDie)).size, 0);
+      }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
+    }),
+  );
+
+  it.effect("takes no change to a draft while the drafts of a new pairing load", () =>
+    Effect.gen(function* () {
+      const readGate = yield* Latch.make(true);
+      const { device, target, credential } = yield* pairedDevice("Switched", { readGate });
+      const key = targetKey(target);
+      const heard = yield* Latch.make(false);
+      const tickets = yield* Latch.make(true);
+
+      // A tab that hears of the new pairing only once it is made, and follows
+      // it directly: its next socket ticket waits, so the server cannot
+      // refuse the old pairing first.
+      yield* Effect.gen(function* () {
+        const drafts = yield* Drafts;
+        yield* waitFor((yield* Connection).state, isConnected);
+        yield* drafts.setText(target, "the old pairing's");
+        yield* whenStored(device.storage, "drafts", key, holds("the old pairing's"));
+
+        yield* Effect.gen(function* () {
+          yield* waitFor((yield* Connection).state, isConnected);
+          yield* tickets.close;
+          assert.strictEqual(yield* (yield* SignOut).run, "signed-out");
+          yield* pairAndConnect;
+          yield* (yield* Drafts).setText(target, "the new pairing's");
+          yield* whenStored(device.storage, "drafts", key, holds("the new pairing's"));
+
+          yield* readGate.close;
+          yield* heard.open;
+          yield* waitFor(drafts.switching, (switching) => switching);
+          yield* drafts.setText(target, "typed while it loads");
+          assert.notStrictEqual(drafts.state.get().get(key)?.text, "typed while it loads");
+          yield* readGate.open;
+
+          yield* waitFor(drafts.switching, (switching) => !switching);
+          assert.strictEqual(drafts.state.get().get(key)?.text, "the new pairing's");
+          yield* whenStored(device.storage, "drafts", key, holds("the new pairing's"));
+        }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+      }).pipe(
+        Effect.scoped,
+        Effect.ensuring(Effect.all([readGate.open, heard.open, tickets.open])),
+        Effect.provide(
+          client(
+            credential,
+            { ...device, credentials: () => device.credentials(heard) },
+            heldAt(HTTP_PATHS.socketTicket, tickets),
+          ),
+        ),
+      );
+    }),
+  );
+
+  it.effect("keeps no message for a pairing this tab no longer follows", () => {
+    const device = TestPlatform.makeDevice();
+    return Effect.gen(function* () {
+      yield* pairAndConnect;
+      const target: EntryTarget = { _tag: "conversation", botId: yield* createBot("Moved on") };
+      const failed = yield* (yield* Conversations)
+        .enqueue(
+          { target, text: "for the pairing before" },
+          { pairing: DeviceId.make("a-pairing-that-ended"), alongside: [], expected: [] },
+        )
+        .pipe(Effect.flip);
+      assert.strictEqual(failed._tag, "NotPaired");
+      assert.deepStrictEqual(yield* unsent(device.storage), []);
+    }).pipe(Effect.provide(client(Option.none(), device)));
+  });
 
   it.effect("answers Send again with what became of its own attempt, not of a later one", () =>
     Effect.gen(function* () {

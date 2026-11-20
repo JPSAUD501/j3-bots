@@ -403,8 +403,9 @@ function toData(state: State): ShellData {
       loadingOlder: false,
     }),
     draft: (target) => state.drafts[keyOf(target)] ?? blankDraft,
-    // The sample is one tab: nothing else replaces its drafts.
-    restorable: () => false,
+    // The sample is one tab: nothing else replaces its drafts, or pairs anew.
+    offer: () => null,
+    draftsLoading: false,
     submitting: (entryId) => state.inFlight.has(entryId),
     workSteps: (entryId) => state.workSteps[entryId] ?? null,
     routines: (botId) => state.routines[botId] ?? [],

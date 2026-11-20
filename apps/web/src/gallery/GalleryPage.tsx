@@ -588,6 +588,7 @@ function ComposerDemo({
         ? {}
         : {
             replaced: {
+              revision: 1,
               onRestore: () => {
                 setValue(replaced);
                 setReplaced(null);

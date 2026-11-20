@@ -207,14 +207,20 @@ export class Connection extends Context.Service<
      */
     readonly pairing: Readable<DeviceId | null>;
     /**
-     * Deletes this device's credential from storage, then lets go of it, so a
-     * failure leaves the device as it was. It revokes nothing: `reason` says
-     * whether the server still lists the device. A pairing another window
-     * made since is left in storage, and this window follows it.
+     * Deletes the credential of `pairing` from storage, then lets go of it, so
+     * a failure leaves the device as it was. It revokes nothing: `reason` says
+     * whether the server still lists the device. A pairing made since, here
+     * or in another window, is left in storage, and this window follows it.
      */
     readonly forget: (
       reason: Exclude<UnpairedReason, "new">,
+      pairing: DeviceId | null,
     ) => Effect.Effect<void, CredentialStorageError>;
+    /**
+     * The pairing the device's credential storage holds now, read afresh:
+     * another window may have changed it since this one last heard.
+     */
+    readonly storedPairing: Effect.Effect<DeviceId | null, CredentialStorageError>;
     /** Skips the wait before the next attempt, and leaves `incompatible` and `storage-failed`. */
     readonly reconnectNow: Effect.Effect<void>;
     /**
@@ -532,10 +538,15 @@ export const layer = Layer.effect(
 
     const forget = Effect.fn("Connection.forget")(function* (
       reason: Exclude<UnpairedReason, "new">,
+      pairing: DeviceId | null,
     ) {
       const current = yield* SubscriptionRef.get(credential);
-      if (current._tag === "paired") return yield* end(current.credential, reason);
-      yield* SubscriptionRef.set(credential, { _tag: "none", reason });
+      if (current._tag !== "paired") {
+        return yield* SubscriptionRef.set(credential, { _tag: "none", reason });
+      }
+      // This window already follows a pairing made since: it stays.
+      if (current.credential.deviceId !== pairing) return;
+      yield* end(current.credential, reason);
     });
 
     const awaitSession = (after: number) =>
@@ -617,6 +628,9 @@ export const layer = Layer.effect(
       pairing,
       pair,
       forget,
+      storedPairing: store.load.pipe(
+        Effect.map((stored) => Option.getOrNull(Option.map(stored, (found) => found.deviceId))),
+      ),
       reconnectNow: Queue.offer(wakes, void 0).pipe(Effect.asVoid),
       call,
       eachSession,
