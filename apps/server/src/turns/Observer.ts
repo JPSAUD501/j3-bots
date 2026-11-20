@@ -119,10 +119,11 @@ export interface Synchronized {
    */
   readonly backgroundWork: boolean;
   /**
-   * Turns the engine is starting that no event has told of yet: a Stop sent
-   * before one was created did not reach it.
+   * Turns the engine can still run: waiting in its queue, or preparing,
+   * starting or running, also ones no event has told of. A Stop sent before
+   * one was created did not reach it.
    */
-  readonly startingTurns: ReadonlyArray<TurnId>;
+  readonly runnableTurns: ReadonlyArray<TurnId>;
 }
 
 /**
@@ -192,6 +193,12 @@ interface TurnEnd {
   readonly cause: TurnCause | null;
   readonly outcome: TurnOutcome;
   readonly backgroundWork: boolean;
+  /**
+   * Whether the engine's stop counts background work in the session once the
+   * turn ended. Unknown only for a turn the server held open that the engine
+   * no longer lists.
+   */
+  readonly backgroundPending: boolean | null;
   readonly continuation: PendingContinuation | null;
   /**
    * A replacement shows the turn that continued it: the engine no longer
@@ -603,13 +610,22 @@ export const layer = Layer.effect(
 
     const finishTurn = Effect.fn("Observer.finishTurn")(function* (session: Watched, end: TurnEnd) {
       const turn = yield* turnOf(session.id, end.turnId);
+      if (Option.isSome(turn) && turn.value.finished_at !== null) return;
+      // The engine's stop counts the session's background work, whichever turn
+      // started it. Work pending when a turn ends stays the work of that
+      // turn's audience, which a room's Stop then reaches, until a turn ends
+      // with none pending: then what every earlier turn left has ended.
+      if (end.backgroundPending === false) {
+        yield* sql`
+          UPDATE turns SET background_work = 0
+          WHERE session_id = ${session.id} AND background_work = 1
+        `;
+      }
       if (Option.isSome(turn)) {
-        if (turn.value.finished_at !== null) return;
-        // Background work it leaves running stays the work of its audience.
         yield* sql`
           UPDATE turns SET finished_at = ${timeText(end.at)},
             outcome_json = ${yield* encodeOutcome(end.outcome)},
-            background_work = ${end.backgroundWork ? 1 : 0}
+            background_work = ${end.backgroundPending === true ? 1 : 0}
           WHERE session_id = ${session.id} AND engine_turn_id = ${end.turnId}
         `;
         if (turn.value.work_fold_entry_id !== null) {
@@ -967,6 +983,7 @@ export const layer = Layer.effect(
           cause: turn.cause,
           outcome: turn.outcome,
           backgroundWork: turn.backgroundWork,
+          backgroundPending: turn.backgroundPending,
           continuation: turn.continuation,
           continued: continued.has(turn.turnId),
           at: turn.finishedAt,
@@ -1000,6 +1017,7 @@ export const layer = Layer.effect(
           cause: null,
           outcome: { _tag: "interrupted" },
           backgroundWork: false,
+          backgroundPending: null,
           continuation: null,
           continued: false,
           at: event.at,
@@ -1097,6 +1115,7 @@ export const layer = Layer.effect(
             cause: event.cause,
             outcome: event.outcome,
             backgroundWork: event.backgroundWork,
+            backgroundPending: event.backgroundPending,
             continuation: event.continuation,
             continued: false,
             at: event.at,
@@ -1108,7 +1127,7 @@ export const layer = Layer.effect(
         case "synchronized": {
           // Idle, with no background work pending: what earlier turns left
           // running has ended.
-          if (!event.backgroundWork && event.startingTurns.length === 0) {
+          if (!event.backgroundWork && event.runnableTurns.length === 0) {
             yield* sql`
               UPDATE turns SET background_work = 0
               WHERE session_id = ${session.id} AND background_work = 1
@@ -1122,7 +1141,7 @@ export const layer = Layer.effect(
             yield* sql.afterCommit(
               Deferred.succeed(waiting, {
                 backgroundWork: event.backgroundWork,
-                startingTurns: event.startingTurns,
+                runnableTurns: event.runnableTurns,
               }),
             );
           }

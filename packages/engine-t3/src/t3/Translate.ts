@@ -427,32 +427,31 @@ export const toolsToResolve = (mirror: Mirror): ReadonlyArray<string> =>
       : [],
   );
 
-/**
- * Whether the session has background work the engine counts as pending: what
- * `thread.stop` interrupts in a session whose latest run has ended, an
- * interrupt that lands only after the stop answered. This is the engine's own
- * rule (**Read** at `db51b67`, `orchestrationV2PendingBackgroundWork.ts`,
- * `derivePendingBackgroundWork`, as `Orchestrator.ts`, `dispatchThreadStop`,
- * calls it): with no active run and the latest run settled, a task its
- * provider thread reports, or a live command, dynamic tool or subagent item
- * outside a rolled-back run.
- */
-export const backgroundWorkPending = (mirror: Mirror): boolean => {
-  const runs = [...mirror.runs.values()];
-  if (runs.some((run) => ACTIVE_RUN.has(run.status))) return false;
-  const latest = runs
+/** The session's latest run, as the engine's stop picks it: the last one that is not queued. */
+const latestRun = (mirror: Mirror) =>
+  runsInOrder(mirror)
     .filter((run) => run.status !== "queued")
-    .reduce<Run | undefined>(
-      (last, run) => (last === undefined || run.ordinal > last.ordinal ? run : last),
-      undefined,
-    );
+    .at(-1);
+
+/**
+ * The engine's rule for background work once `latest` is the session's latest
+ * run (**Read** at `db51b67`, `orchestrationV2PendingBackgroundWork.ts`,
+ * `derivePendingBackgroundWork`, L261-330, and `pendingBackgroundTurnItems`,
+ * L243-258): with that run settled, a task the active provider thread
+ * reports, or a live command, dynamic tool or subagent item outside a
+ * rolled-back run. The rule is the session's: it does not ask which run
+ * started the work.
+ */
+const pendingOnceLatest = (mirror: Mirror, latest: Run | undefined): boolean => {
   if (latest === undefined || !SETTLED_FOR_BACKGROUND.has(latest.status)) return false;
   const active = mirror.thread?.activeProviderThreadId ?? null;
   const tasks = [...mirror.providerThreads.values()].some(
     (thread) =>
       (active === null || thread.id === active) && (thread.pendingBackgroundTasks?.length ?? 0) > 0,
   );
-  const rolledBack = new Set(runs.flatMap((run) => (run.status === "rolled_back" ? [run.id] : [])));
+  const rolledBack = new Set(
+    [...mirror.runs.values()].flatMap((run) => (run.status === "rolled_back" ? [run.id] : [])),
+  );
   return (
     tasks ||
     [...mirror.items.values()].some(
@@ -464,6 +463,17 @@ export const backgroundWorkPending = (mirror: Mirror): boolean => {
     )
   );
 };
+
+/**
+ * Whether the session has background work the engine counts as pending: what
+ * `thread.stop` interrupts in a session whose latest run has ended, an
+ * interrupt that lands only after the stop answered. The engine's own rule
+ * (`pendingOnceLatest`), as `Orchestrator.ts`, `dispatchThreadStop`
+ * (L14141-14178), applies it: only with no run active.
+ */
+export const backgroundWorkPending = (mirror: Mirror): boolean =>
+  ![...mirror.runs.values()].some((run) => ACTIVE_RUN.has(run.status)) &&
+  pendingOnceLatest(mirror, latestRun(mirror));
 
 /** A run that executed, as the engine counts it: neither queued nor cancelled before it started. */
 const wasExecuted = (run: Run) =>
@@ -1371,6 +1381,7 @@ export const diff = (mirror: Mirror, view: View, now: DateTime.Utc): ReadonlyArr
           cause: causeOf(mirror, run),
           outcome: outcomeOf(mirror, run),
           backgroundWork: hasBackgroundWork(mirror, run),
+          backgroundPending: pendingOnceLatest(mirror, run),
           continuation,
         });
       }
@@ -1444,6 +1455,7 @@ export const replacement = (
         finishedAt: run.completedAt ?? run.startedAt ?? run.requestedAt,
         outcome: outcomeOf(mirror, run),
         backgroundWork: hasBackgroundWork(mirror, run),
+        backgroundPending: pendingOnceLatest(mirror, run),
         continuation: continuationOf(mirror, run, now),
         steps: stepsOf(mirror, run),
       });
@@ -1497,15 +1509,20 @@ export const queuedRuns = (mirror: Mirror) =>
   runsInOrder(mirror).filter((run) => run.status === "queued" || run.status === "preparing");
 
 /**
- * Turns the engine is starting, whose provider turn has not started: a run
- * the engine began at once, `starting` with no `startedAt` (**Read** at
- * `db51b67`, `Orchestrator.ts`, `dispatchMessage`, L8451-8461), also one a
- * provider notification or a background task's completion dispatched; or one
- * `preparing` its workspace. No event tells of one before it starts.
+ * The session's runs the engine can still run: those waiting in its queue,
+ * steers kept aside included, and those preparing, starting or running. These
+ * are the runs a Stop ends: the engine's stop interrupts the latest one
+ * preparing, starting or running and holds the queue (**Read** at `db51b67`,
+ * `Orchestrator.ts`, `dispatchThreadStop`, L14165-14169, and
+ * `holdStoppedThread`, L13115-13161), and the adapter cancels each waiting
+ * one. A run the engine starts, or queues, on its own (a provider
+ * notification, a background task's completion, a scheduled task) is among
+ * them as soon as the engine created it, before any event tells of it as a
+ * turn, and also when no event will.
  */
-export const startingTurns = (mirror: Mirror): ReadonlyArray<TurnId> =>
+export const runnableTurns = (mirror: Mirror): ReadonlyArray<TurnId> =>
   runsInOrder(mirror)
-    .filter((run) => (run.status === "starting" || run.status === "preparing") && !hasStarted(run))
+    .filter((run) => run.status === "queued" || ACTIVE_RUN.has(run.status))
     .map(turnIdOf);
 
 /**

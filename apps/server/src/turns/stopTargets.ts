@@ -36,10 +36,11 @@ export const stopKey = (stopId: string, sessionId: string, round: number): Idemp
  * (`docs/architecture/server.md`, Stop). It runs in the caller's transaction.
  *
  * The rule it keeps: a target settles only when the engine's own state shows
- * nothing the Stop targeted can still run, no turn running or starting and no
- * background work pending; and while a target is unsettled, something keeps
- * acting on it. Its latest round is always in a state that a durable deadline
- * or an event moves on, so nothing waits on its own:
+ * nothing the Stop targeted can still run, no run waiting, preparing,
+ * starting or running and no background work pending; and while a target is
+ * unsettled, something keeps acting on it. Its latest round is always in a
+ * state that a durable deadline or an event moves on, so nothing waits on its
+ * own:
  *
  * - not sent: the runner sends it once due (`due_at`), and resolves a send
  *   whose answer was lost by the round's key;
@@ -190,9 +191,11 @@ export const stopTargets = (sql: SqlClient.SqlClient) => {
      * whose latest round the engine acknowledged, and whose grace passed while
      * the engine still shows work the Stop targets, gets a fresh round, due at
      * once. `engineShows` is what the marker showed beyond the applied events:
-     * background work pending, or a run starting that no event told of. This
-     * covers what no event announces: an interrupt the engine could not carry
-     * out after it acknowledged the stop, a run whose provider never starts.
+     * background work pending, or a run the engine can still run, also one no
+     * event told of. This covers what no event announces: an interrupt the
+     * engine could not carry out after it acknowledged the stop, a run whose
+     * provider never starts, a run the engine queued on its own after the
+     * round's cancels.
      * Whether one was opened, and the earliest grace still running, for the
      * runner to look again then.
      */

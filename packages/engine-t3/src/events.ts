@@ -191,6 +191,8 @@ export const EndedTurn = Schema.Struct({
   outcome: TurnOutcome,
   /** As on `turn-finished`. */
   backgroundWork: Schema.Boolean,
+  /** As on `turn-finished`, as it stands now. */
+  backgroundPending: Schema.Boolean,
   /** As on `turn-finished`, as it stands now: null once it ran or was dropped. */
   continuation: Schema.NullOr(PendingContinuation),
   /** Every step, in its final state. */
@@ -393,6 +395,16 @@ export const SessionEvent = Schema.Union([
      */
     backgroundWork: Schema.Boolean,
     /**
+     * The session has background work the engine counts as pending once this
+     * turn ended, by the rule its stop applies: what a `stop` sent while no
+     * turn runs interrupts. Unlike `backgroundWork`, it is the session's
+     * (the engine does not ask which turn started the work) and counts work
+     * that never wakes the session: any live command, a dynamic tool not
+     * marked persistent, a task the provider reports, such as a background
+     * shell or a monitor on Claude Code.
+     */
+    backgroundPending: Schema.Boolean,
+    /**
      * The engine will resume this turn on its own as a `continuation` turn.
      * Until that turn starts, or `continuation-dropped` arrives, the turn's
      * work is not over: a dispatch it delivered stays open.
@@ -436,12 +448,14 @@ export const SessionEvent = Schema.Union([
      */
     backgroundWork: Schema.Boolean,
     /**
-     * Turns the engine is starting at once, whose provider turn has not
-     * started: no event has told of them yet, and each will show as
-     * `turn-started`, or end without starting. A Stop sent before one was
-     * created did not reach it.
+     * The session's turns the engine can still run: waiting in its queue, or
+     * preparing, starting or running. These are what a Stop ends, and a Stop
+     * sent before one was created did not reach it. They include turns the
+     * engine started or queued on its own that no event has told of yet, and
+     * waiting ones no event tells of at all, as a scheduled message the
+     * engine queues behind a hold.
      */
-    startingTurns: Schema.Array(TurnId),
+    runnableTurns: Schema.Array(TurnId),
   }),
 ]);
 export type SessionEvent = typeof SessionEvent.Type;

@@ -225,9 +225,9 @@ export default Effect.gen(function* () {
   // admitted with, applied once by its engine id: a replacement that repeats
   // a turn changes nothing. `work_fold_entry_id` is the fold in the bot's
   // conversation, written with the turn's first step. `background_work` says
-  // the turn ended leaving background work running, until the session's
-  // events show none pending: a Stop of its audience still has that work to
-  // end.
+  // the session had background work the engine's stop counts when the turn
+  // ended, until a later turn ends, or the session goes idle, with none
+  // pending: a Stop of the turn's audience still has that work to end.
   yield* sql`
     CREATE TABLE turns (
       session_id TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,

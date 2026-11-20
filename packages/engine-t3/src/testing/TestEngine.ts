@@ -202,7 +202,7 @@ export class TestEngineControl extends Context.Service<
     /**
      * The next turn the session starts stays starting, its provider turn not
      * started, until `release`: no `turn-started` tells of it, and the
-     * session's `synchronized` lists it in `startingTurns`. A turn that ended
+     * session's `synchronized` lists it in `runnableTurns`. A turn that ended
      * meanwhile stays ended.
      */
     readonly holdNextStartup: (
@@ -286,11 +286,17 @@ export class TestEngineControl extends Context.Service<
       readonly turnId: TurnId;
       readonly text: string;
     }) => Effect.Effect<HostSpeechId>;
-    /** The turn leaves background work running when it ends. */
+    /** The turn leaves background work of this kind running when it ends. */
     readonly startBackgroundWork: (input: {
       readonly sessionId: SessionId;
       readonly turnId: TurnId;
+      readonly kind: BackgroundKind;
     }) => Effect.Effect<void>;
+    /**
+     * The background work every turn of the session left running ends, and
+     * wakes nothing: a wake it brings is `startEngineTurn`.
+     */
+    readonly endBackgroundWork: (sessionId: SessionId) => Effect.Effect<void>;
     /** Whether background work some turn of the session started still runs. */
     readonly backgroundWorkRunning: (sessionId: SessionId) => Effect.Effect<boolean>;
     /**
@@ -340,6 +346,15 @@ export class TestEngineControl extends Context.Service<
   }
 >()("@j3-bots/engine-t3/testing/TestEngine/TestEngineControl") {}
 
+/**
+ * Background work a turn leaves running. `wakes`: work that wakes the session
+ * when it ends, as a delegated task or a command whose completion wakes it;
+ * its turn reports it as `backgroundWork`. `provider-task`: a task the
+ * provider reports and the engine's stop interrupts, which wakes nothing, as
+ * a background shell or a monitor on Claude Code.
+ */
+export type BackgroundKind = "wakes" | "provider-task";
+
 interface SteerRecord {
   readonly key: IdempotencyKey;
   /** Turns waiting when the steer was sent: a follow-up turn runs after these. */
@@ -365,7 +380,7 @@ interface TurnRecord {
     readonly turnId: TurnId;
     readonly resolution: RequestResolution;
   }>;
-  backgroundWork: boolean;
+  background: BackgroundKind | null;
   ended: {
     readonly outcome: TurnOutcome;
     readonly at: DateTime.Utc;
@@ -601,12 +616,16 @@ const make = Effect.gen(function* () {
       toolCalls: new Map(),
       hostSpeech: [],
       closedRequests: [],
-      backgroundWork: false,
+      background: null,
       ended: null,
     };
     session.turns.set(turn.turnId, turn);
     return turn;
   };
+
+  /** Whether background work some turn of the session left still runs: what the engine's stop counts. */
+  const backgroundRuns = (session: SessionRecord) =>
+    [...session.turns.values()].some((turn) => turn.background !== null);
 
   const closeRequest = (
     session: SessionRecord,
@@ -669,14 +688,24 @@ const make = Effect.gen(function* () {
 
   /**
    * A new turn, at the end of the queue; it starts at once if nothing runs and
-   * the queue is not held. The newer turn takes the place of any pending
-   * continuation, which no longer resumes the session's latest turn.
+   * the queue is not held, and is otherwise reported `turn-queued`, whatever
+   * its cause, as the adapter reports a run the engine queued. The newer turn
+   * takes the place of any pending continuation, which no longer resumes the
+   * session's latest turn.
    */
   const addTurn = (session: SessionRecord, cause: TurnCause, at: DateTime.Utc) => {
     for (const turn of session.turns.values()) dropContinuation(session, turn, at);
     const turn = newTurn(session, cause);
     session.waiting.push(turn.turnId);
     startNext(session, at);
+    if (session.waiting.includes(turn.turnId)) {
+      emit(session, at, (stamp) => ({
+        _tag: "turn-queued",
+        ...stamp,
+        turnId: turn.turnId,
+        cause: turn.cause,
+      }));
+    }
     return turn;
   };
 
@@ -750,7 +779,8 @@ const make = Effect.gen(function* () {
       turnId: turn.turnId,
       cause: turn.cause,
       outcome,
-      backgroundWork: turn.backgroundWork,
+      backgroundWork: turn.background === "wakes",
+      backgroundPending: backgroundRuns(session),
       continuation,
     }));
     for (const settlement of settlements) emit(session, at, settlement);
@@ -814,14 +844,9 @@ const make = Effect.gen(function* () {
       addTurn(session, { _tag: "background" }, at);
     }
     const turn = addTurn(session, { _tag: "dispatch", key }, at);
-    if (!session.waiting.includes(turn.turnId)) return { _tag: "started", turnId: turn.turnId };
-    emit(session, at, (stamp) => ({
-      _tag: "turn-queued",
-      ...stamp,
-      turnId: turn.turnId,
-      cause: turn.cause,
-    }));
-    return { _tag: "queued", turnId: turn.turnId };
+    return session.waiting.includes(turn.turnId)
+      ? { _tag: "queued", turnId: turn.turnId }
+      : { _tag: "started", turnId: turn.turnId };
   };
 
   /**
@@ -838,7 +863,7 @@ const make = Effect.gen(function* () {
     at: DateTime.Utc,
     cancels: ReadonlyArray<TurnId>,
   ) => {
-    for (const turn of session.turns.values()) turn.backgroundWork = false;
+    for (const turn of session.turns.values()) turn.background = null;
     holdWaiting(session, at);
     for (const turn of session.turns.values()) dropContinuation(session, turn, at);
     const cancelled = session.waiting.filter((turnId) => cancels.includes(turnId));
@@ -858,7 +883,8 @@ const make = Effect.gen(function* () {
   const stoppable = (session: SessionRecord) =>
     session.running !== null ||
     [...session.turns.values()].some(
-      (turn) => turn.backgroundWork || (turn.ended !== null && turn.ended.continuation !== null),
+      (turn) =>
+        turn.background !== null || (turn.ended !== null && turn.ended.continuation !== null),
     );
 
   const retire = (session: SessionRecord, at: DateTime.Utc) => {
@@ -899,7 +925,8 @@ const make = Effect.gen(function* () {
           startedAt: turn.startedAt,
           finishedAt: turn.ended.at,
           outcome: turn.ended.outcome,
-          backgroundWork: turn.backgroundWork,
+          backgroundWork: turn.background === "wakes",
+          backgroundPending: backgroundRuns(session),
           continuation: turn.ended.continuation,
           steps,
         });
@@ -1309,12 +1336,10 @@ const make = Effect.gen(function* () {
           if (dropped !== null) return yield* Deferred.succeed(dropped, undefined);
           // Every event is handed to the streams as it happens, so each stream
           // is already caught up: the marker follows what it was last given.
-          const backgroundWork =
-            session.running === null &&
-            [...session.turns.values()].some((turn) => turn.backgroundWork);
-          const starting =
-            session.heldStartup === null ? undefined : session.turns.get(session.heldStartup);
-          const startingTurns = starting?.ended === null ? [starting.turnId] : [];
+          const backgroundWork = session.running === null && backgroundRuns(session);
+          // The running turn, also one whose provider turn has not started, and those waiting.
+          const runnableTurns =
+            session.running === null ? [...session.waiting] : [session.running, ...session.waiting];
           for (const [subscriber, state] of session.subscribers) {
             Queue.offerUnsafe(subscriber, {
               _tag: "synchronized",
@@ -1322,7 +1347,7 @@ const make = Effect.gen(function* () {
               at,
               token,
               backgroundWork,
-              startingTurns,
+              runnableTurns,
             });
           }
           // Tool calls the engine records late appear only after this marker.
@@ -1602,17 +1627,20 @@ const make = Effect.gen(function* () {
         return speech.speechId;
       }),
 
-    startBackgroundWork: ({ sessionId, turnId }) =>
+    startBackgroundWork: ({ sessionId, turnId, kind }) =>
       Effect.gen(function* () {
         const session = yield* existingSession(sessionId);
         const turn = yield* runningTurn(session, turnId);
-        turn.backgroundWork = true;
+        turn.background = kind;
       }),
 
-    backgroundWorkRunning: (sessionId) =>
-      existingSession(sessionId).pipe(
-        Effect.map((session) => [...session.turns.values()].some((turn) => turn.backgroundWork)),
-      ),
+    endBackgroundWork: (sessionId) =>
+      Effect.gen(function* () {
+        const session = yield* existingSession(sessionId);
+        for (const turn of session.turns.values()) turn.background = null;
+      }),
+
+    backgroundWorkRunning: (sessionId) => Effect.map(existingSession(sessionId), backgroundRuns),
 
     finishTurn: ({ sessionId, turnId, outcome, continuation }) =>
       Effect.gen(function* () {

@@ -272,7 +272,7 @@ describe("TestEngine", () => {
 
       yield* engine.stop({ key: key("stop-1"), sessionId });
 
-      const events = [...(yield* take(sessionId, cursorOf(first), 5))];
+      const events = [...(yield* take(sessionId, cursorOf(first), 6))];
       assert.deepStrictEqual(
         events.map((event) =>
           event._tag === "turn-finished"
@@ -283,6 +283,7 @@ describe("TestEngine", () => {
         ),
         [
           "turn-started",
+          "turn-queued",
           "queue-held",
           [waiting, "cancelled"],
           [turnId, "interrupted"],
@@ -351,7 +352,7 @@ describe("TestEngine", () => {
       const control = yield* TestEngine.TestEngineControl;
       const sessionId = yield* openSession;
       const turnId = turnOf(yield* engine.dispatch({ ...start("dispatch-1"), sessionId }));
-      yield* control.startBackgroundWork({ sessionId, turnId });
+      yield* control.startBackgroundWork({ sessionId, turnId, kind: "wakes" });
       yield* control.finishTurn({ sessionId, turnId, outcome: { _tag: "completed" } });
       const before = yield* control.backgroundWorkRunning(sessionId);
 

@@ -21,7 +21,7 @@ import {
   isDeleted,
   nothingToStop,
   replacement,
-  startingTurns,
+  runnableTurns,
   toolsToResolve,
 } from "./Translate.ts";
 import { persistenceInItem } from "./toolPersistence.ts";
@@ -238,6 +238,33 @@ const item = (fields: Record<string, unknown>) =>
   });
 const command = (status: string) =>
   item({ id: "item-command", type: "command_execution", input: "npm run dev", status });
+/** The active provider thread, reporting these background tasks. */
+const providerThread = (taskIds: ReadonlyArray<string>) =>
+  event("provider-thread.updated", {
+    id: "provider-thread-1",
+    driver: "claudeAgent",
+    providerInstanceId: "claude",
+    providerSessionId: null,
+    appThreadId: "thread-1",
+    ownerNodeId: null,
+    nativeThreadRef: null,
+    nativeConversationHeadRef: null,
+    status: "active",
+    firstRunOrdinal: 1,
+    lastRunOrdinal: 2,
+    handoffIds: [],
+    forkedFrom: null,
+    pendingBackgroundTasks: taskIds.map((taskId) => ({ taskId, kind: "command" })),
+    createdAt: at,
+    updatedAt: at,
+  });
+/** What the turn's `turn-finished` says of background work, from the events `diff` made. */
+const backgroundAtEnd = (events: ReadonlyArray<{ readonly _tag: string }>) =>
+  events.flatMap((event) =>
+    "backgroundPending" in event && "backgroundWork" in event
+      ? [{ backgroundWork: event.backgroundWork, backgroundPending: event.backgroundPending }]
+      : [],
+  );
 
 describe("backgroundWorkPending", () => {
   // The engine's rule (**Read** at `db51b67`, `derivePendingBackgroundWork`).
@@ -268,28 +295,31 @@ describe("backgroundWorkPending", () => {
     assert.isFalse(backgroundWorkPending(mirror));
 
     // A task only the provider thread reports.
-    applyEvent(
-      mirror,
-      event("provider-thread.updated", {
-        id: "provider-thread-1",
-        driver: "codex",
-        providerInstanceId: "codex",
-        providerSessionId: null,
-        appThreadId: "thread-1",
-        ownerNodeId: null,
-        nativeThreadRef: null,
-        nativeConversationHeadRef: null,
-        status: "active",
-        firstRunOrdinal: 1,
-        lastRunOrdinal: 2,
-        handoffIds: [],
-        forkedFrom: null,
-        pendingBackgroundTasks: [{ taskId: "task-1", kind: "monitor" }],
-        createdAt: at,
-        updatedAt: at,
-      }),
-    );
+    applyEvent(mirror, providerThread(["task-1"]));
     assert.isTrue(backgroundWorkPending(mirror));
+  });
+
+  // Claude Code reports a background shell or a monitor as a task of its
+  // provider thread, which never wakes the session (**Read** at `db51b67`,
+  // `ClaudeAdapterV2.ts`, L3799-3876).
+  it("tells on a turn's end of work the engine's stop counts, also work that wakes nothing", () => {
+    const mirror = emptyMirror();
+    applyEvent(mirror, run("running", 1));
+    const { view } = replacement(mirror, false, at);
+    applyEvent(mirror, providerThread(["task-1"]));
+    applyEvent(mirror, run("completed", 1));
+    assert.deepStrictEqual(backgroundAtEnd(diff(mirror, view, at)), [
+      { backgroundWork: false, backgroundPending: true },
+    ]);
+
+    // The task ended: the next turn's end tells nothing is pending.
+    applyEvent(mirror, providerThread([]));
+    applyEvent(mirror, run("running", 2));
+    diff(mirror, view, at);
+    applyEvent(mirror, run("completed", 2));
+    assert.deepStrictEqual(backgroundAtEnd(diff(mirror, view, at)), [
+      { backgroundWork: false, backgroundPending: false },
+    ]);
   });
 
   // The stream sends a dynamic tool input above 16 KiB as `{summary, truncated}`
@@ -338,6 +368,8 @@ describe("what a Stop leaves to run", () => {
     applyEvent(mirror, run("completed", 1));
     applyEvent(mirror, run("queued", 2));
     assert.isTrue(nothingToStop(mirror, at));
+    // The engine can still run it: the Stop's cancels end it.
+    assert.deepStrictEqual(runnableTurns(mirror), [TurnId.make("run-2")]);
 
     // Work the ended turn left running keeps a refused stop from being moot.
     applyEvent(mirror, command("running"));
@@ -348,9 +380,10 @@ describe("what a Stop leaves to run", () => {
     // A turn the engine is starting, which no event has told of yet.
     applyEvent(mirror, run("starting", 3));
     assert.isFalse(nothingToStop(mirror, at));
-    assert.deepStrictEqual(startingTurns(mirror), [TurnId.make("run-3")]);
-    applyEvent(mirror, run("running", 3));
-    assert.deepStrictEqual(startingTurns(mirror), []);
+    assert.deepStrictEqual(runnableTurns(mirror), [TurnId.make("run-2"), TurnId.make("run-3")]);
+    applyEvent(mirror, run("cancelled", 2));
+    applyEvent(mirror, run("interrupted", 3));
+    assert.deepStrictEqual(runnableTurns(mirror), []);
   });
 
   it("counts a thread the engine deleted as gone, though its record stays", () => {

@@ -351,8 +351,9 @@ export const layer = Layer.effect(
      * With nothing at the marker beyond the applied events, the rounds are
      * observed, and the targets are confirmed if the events show nothing left
      * running. Background work the engine still counts as pending, or a run
-     * it is starting that no event told of, leaves them unobserved, and the
-     * session is synchronized again a few seconds later. Either way, while
+     * it can still run (waiting, preparing, starting or running), also one no
+     * event told of, leaves them unobserved, and the session is synchronized
+     * again a few seconds later. Either way, while
      * the engine still shows work the Stop targets, a target whose latest
      * round's grace passed gets a fresh round (`stopTargets.recheck`): the
      * rule holds by the runner's own deadlines, whatever the events say.
@@ -369,10 +370,10 @@ export const layer = Layer.effect(
       if (sent.length === 0) return "done" satisfies Progress;
       const synced = yield* observer.synchronize(sessionId, engineSessionId).pipe(
         Effect.map(
-          ({ backgroundWork, startingTurns }) =>
+          ({ backgroundWork, runnableTurns }) =>
             ({
               _tag: "synchronized",
-              engineShows: backgroundWork || startingTurns.length > 0,
+              engineShows: backgroundWork || runnableTurns.length > 0,
             }) as const,
         ),
         Effect.catchTags({
@@ -555,7 +556,8 @@ export const roomWorkLayer = Layer.effect(
 
     const end = Effect.fn("RoomWork.end")(function* (roomId: RoomId) {
       // Each bot that had work addressed to the room: its room Stop selects
-      // what is still in scope, and records nothing when nothing is.
+      // what is still in scope. When nothing is, it records no Stop, and still
+      // cancels the bot's pending wakes in scope and fires the Stop signal.
       const working = yield* SqlSchema.findAll({
         Request: Schema.Void,
         Result: Schema.Struct({ bot_id: BotId }),
