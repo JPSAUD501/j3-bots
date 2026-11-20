@@ -29,7 +29,7 @@ Decisions marked **Proposed** are recommendations waiting for the project owner'
 ## Prompts
 
 - [Prompt architecture](prompts/architecture.md): the layers, how each reaches the model, the tools bots get.
-- [Base prompt, v0](prompts/base-prompt.md): the first draft of the text every bot shares.
+- [Base prompt](prompts/base-prompt.md): where the text every bot shares lives, and the notes for editing it.
 
 ## Design
 

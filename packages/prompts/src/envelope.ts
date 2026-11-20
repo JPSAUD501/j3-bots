@@ -1,0 +1,554 @@
+import type { BotId, RoomId, RoutineId } from "@j3-bots/contracts";
+import { SecureRandom } from "effect/crypto";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import { defuseTags, type EnvelopeTag, escapeAttribute, foldForMatching } from "./text.ts";
+
+/**
+ * Wake envelopes: the one format in which every dispatched message reaches a
+ * bot. See `docs/prompts/architecture.md#wake-envelopes`.
+ *
+ * Who wrote a piece of text decides where it goes:
+ *
+ * - the operator's words go in `<message from="user">`;
+ * - a routine's saved instruction goes in `<instruction>`;
+ * - everything else (teammates, other bots in a room, webhook bodies, what an
+ *   earlier run said, a session digest) goes in a `<data-NONCE>` block, with a
+ *   nonce drawn for that wake.
+ *
+ * All text, whoever wrote it, has envelope tags defused, so nothing inside a
+ * block can close it or pose as another one.
+ */
+
+/** Something that starts a bot turn. */
+export type WakeKind = "user" | "room" | "bot" | "routine" | "system";
+
+/** A teammate as an envelope names it: enough to recognize them and answer with `message_bot`. */
+export interface TeammateRef {
+  readonly id: BotId;
+  readonly name: string;
+  /** Empty when the operator gave none. */
+  readonly title: string;
+}
+
+/** A file the operator attached, already copied into the bot's workspace. */
+export interface AttachmentRef {
+  readonly name: string;
+  /** Relative to the workspace. */
+  readonly path: string;
+  readonly mediaType: string;
+}
+
+export interface OperatorMessage {
+  readonly at: DateTime.Utc;
+  readonly text: string;
+  readonly attachments: ReadonlyArray<AttachmentRef>;
+}
+
+/** The operator's response to a card the bot raised with `ask`. */
+export interface AskAnswer {
+  /** The question as the bot asked it. */
+  readonly question: string;
+  readonly response:
+    | {
+        readonly type: "answered";
+        /** The options chosen, as the bot defined them. */
+        readonly chosen: ReadonlyArray<{ readonly label: string; readonly value: string | null }>;
+        /** A typed answer, when the card allowed one and the operator wrote one. */
+        readonly text: string | null;
+      }
+    /** The bot reads a dismissed card as "no". */
+    | { readonly type: "dismissed" };
+}
+
+/** A teammate's message, direct or held for this turn. */
+export interface TeammateMessage {
+  readonly from: TeammateRef;
+  readonly at: DateTime.Utc;
+  readonly text: string;
+  readonly urgent: boolean;
+}
+
+/** A profile field and its new value. */
+export interface ProfileChange {
+  readonly field: "name" | "title" | "job";
+  readonly value: string;
+}
+
+/** Something the session has not seen, reported at the top of the next wake. */
+export type CatchUpItem =
+  /** A routine run, in a side session, said this to the operator. */
+  | {
+      readonly type: "routine-delivered";
+      readonly routine: string;
+      readonly at: DateTime.Utc;
+      readonly text: string;
+    }
+  /** A non-urgent teammate message that waited for this turn. */
+  | { readonly type: "held-message"; readonly message: TeammateMessage }
+  | {
+      readonly type: "profile-changed";
+      readonly changes: readonly [ProfileChange, ...Array<ProfileChange>];
+    };
+
+interface WakeBase {
+  /** When the wake is dispatched. */
+  readonly at: DateTime.Utc;
+  /** The operator's zone. Every time in the envelope is given in it. */
+  readonly timeZone: DateTime.TimeZone.Named;
+  /** Empty when the session has seen everything. */
+  readonly sinceLastTurn: ReadonlyArray<CatchUpItem>;
+}
+
+export type UserWake = WakeBase & {
+  readonly kind: "user";
+} & (
+    | { readonly answer: AskAnswer; readonly messages: ReadonlyArray<OperatorMessage> }
+    | {
+        readonly answer: null;
+        readonly messages: readonly [OperatorMessage, ...Array<OperatorMessage>];
+      }
+  );
+
+/** Who a room entry addressed: nobody, some members by name, or everyone. */
+export type RoomMentions = ReadonlyArray<string> | "everyone";
+
+export type RoomEntry =
+  | {
+      readonly author: "user";
+      readonly at: DateTime.Utc;
+      readonly text: string;
+      readonly mentions: RoomMentions;
+      readonly attachments: ReadonlyArray<AttachmentRef>;
+    }
+  | {
+      readonly author: TeammateRef;
+      readonly at: DateTime.Utc;
+      readonly text: string;
+      readonly mentions: RoomMentions;
+    };
+
+export interface RoomWake extends WakeBase {
+  readonly kind: "room";
+  readonly room: {
+    readonly id: RoomId;
+    readonly name: string;
+    /** In member order, this bot included. */
+    readonly members: ReadonlyArray<TeammateRef>;
+    readonly hostName: string;
+  };
+  /**
+   * Why this bot is the one woken: it was mentioned, the operator addressed
+   * everyone, or the operator addressed nobody and this bot hosts the room.
+   */
+  readonly reason: "mentioned" | "everyone" | "host";
+  /** The entries this bot has not seen, oldest first. */
+  readonly entries: readonly [RoomEntry, ...Array<RoomEntry>];
+}
+
+export interface BotWake extends WakeBase {
+  readonly kind: "bot";
+  /** Oldest first. Several when wakes were coalesced. */
+  readonly messages: readonly [TeammateMessage, ...Array<TeammateMessage>];
+}
+
+export type RoutineTrigger =
+  | { readonly type: "schedule"; readonly cron: string }
+  | { readonly type: "once" }
+  | { readonly type: "webhook" };
+
+export interface RoutineRunSummary {
+  readonly at: DateTime.Utc;
+  readonly outcome:
+    | { readonly type: "delivered"; readonly text: string }
+    /** `note` is the result the run recorded instead of speaking. */
+    | { readonly type: "silent"; readonly note: string | null }
+    | { readonly type: "failed" }
+    | { readonly type: "skipped" };
+}
+
+export interface RoutineWake extends WakeBase {
+  readonly kind: "routine";
+  readonly routine: {
+    readonly id: RoutineId;
+    readonly name: string;
+    readonly trigger: RoutineTrigger;
+    readonly instruction: string;
+  };
+  /** Most recent first. */
+  readonly recentRuns: ReadonlyArray<RoutineRunSummary>;
+  /** The webhook request body, for a webhook trigger. */
+  readonly triggerData: string | null;
+}
+
+export type SystemEvent =
+  | { readonly name: "first-run" }
+  | {
+      readonly name: "profile-changed";
+      readonly changes: readonly [ProfileChange, ...Array<ProfileChange>];
+    }
+  | { readonly name: "budget-stopped"; readonly limit: "hops" | "fan-out" }
+  /** `digest` summarizes the recent conversation for the new session. */
+  | { readonly name: "session-rotated"; readonly digest: string }
+  | { readonly name: "undelivered" };
+
+export interface SystemWake extends WakeBase {
+  readonly kind: "system";
+  readonly event: SystemEvent;
+}
+
+export type Wake = UserWake | RoomWake | BotWake | RoutineWake | SystemWake;
+
+/**
+ * The line every envelope ends with, restating the speech rule for its kind.
+ * Exported so the versioning hash and the docs can name them.
+ */
+export const CLOSING_LINES: { readonly [K in WakeKind]: string } = {
+  user: "Reply with `say`; nothing else reaches them.",
+  room: "In this room, `say` reaches everyone. Speak if you were addressed or have something new; otherwise end your turn without a word.",
+  bot: "`say` reaches your user, not the sender. Answer the sender with `message_bot`, and only if you were asked something or have a result.",
+  routine: "Nobody is waiting. Speak only as the instruction's last line says.",
+  system:
+    "This is an event, not a message from your user. Respond only as your instructions say for it.",
+};
+
+const PROFILE_CHANGED_LINE = "Your profile was changed. The new values:";
+
+/** What happened, in one line. */
+const eventLine = (event: SystemEvent): string => {
+  switch (event.name) {
+    case "first-run":
+      return "You were just created, and your user has not written yet.";
+    case "profile-changed":
+      return PROFILE_CHANGED_LINE;
+    case "budget-stopped":
+      return event.limit === "hops"
+        ? "A chain of messages between bots reached its limit since your user last spoke, so it stopped."
+        : "A message tried to wake more teammates than allowed, so it was not delivered.";
+    case "session-rotated":
+      return "Your working session was replaced. A digest of the recent conversation follows.";
+    case "undelivered":
+      return "Your last turn for your user ended without delivering an answer.";
+  }
+};
+
+const NONCE_BYTES = 6;
+const NONCE_ATTEMPTS = 8;
+
+type Attributes = ReadonlyArray<readonly [string, string | null]>;
+
+const attributes = (attrs: Attributes): string =>
+  attrs
+    .filter((attr): attr is readonly [string, string] => attr[1] !== null)
+    .map(([name, value]) => ` ${name}="${escapeAttribute(value)}"`)
+    .join("");
+
+const trimEnd = (text: string): string => text.replace(/\s+$/u, "");
+
+/** Builds one envelope with a fixed nonce, counting the data blocks it opens. */
+class EnvelopeWriter {
+  readonly lines: Array<string> = [];
+  readonly nonce: string;
+  readonly wake: Wake;
+  dataBlocks = 0;
+
+  constructor(nonce: string, wake: Wake) {
+    this.nonce = nonce;
+    this.wake = wake;
+  }
+
+  line(text: string): void {
+    this.lines.push(text);
+  }
+
+  empty(tag: EnvelopeTag, attrs: Attributes = []): void {
+    this.line(`<${tag}${attributes(attrs)}/>`);
+  }
+
+  open(tag: EnvelopeTag, attrs: Attributes = []): void {
+    this.line(`<${tag}${attributes(attrs)}>`);
+  }
+
+  close(tag: EnvelopeTag): void {
+    this.line(`</${tag}>`);
+  }
+
+  inline(tag: EnvelopeTag, attrs: Attributes, text: string): void {
+    this.line(`<${tag}${attributes(attrs)}>${defuseTags(text.trim())}</${tag}>`);
+  }
+
+  block(tag: EnvelopeTag, attrs: Attributes, text: string): void {
+    this.open(tag, attrs);
+    this.line(defuseTags(trimEnd(text)));
+    this.close(tag);
+  }
+
+  data(attrs: Attributes, text: string): void {
+    const tag = `data-${this.nonce}`;
+    this.dataBlocks++;
+    this.line(`<${tag}${attributes(attrs)}>`);
+    this.line(defuseTags(trimEnd(text)));
+    this.line(`</${tag}>`);
+  }
+
+  /** A time as the operator reads it: the clock alone on the wake's day, the date as well otherwise. */
+  time(at: DateTime.Utc): string {
+    const local = DateTime.toParts(DateTime.setZone(at, this.wake.timeZone));
+    const today = DateTime.toParts(DateTime.setZone(this.wake.at, this.wake.timeZone));
+    const clock = `${pad(local.hour)}:${pad(local.minute)}`;
+    const sameDay =
+      local.year === today.year && local.month === today.month && local.day === today.day;
+    return sameDay ? clock : `${local.year}-${pad(local.month)}-${pad(local.day)} ${clock}`;
+  }
+}
+
+const pad = (n: number): string => String(n).padStart(2, "0");
+
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/** `2026-11-20T09:41:00-03:00`: the wake time in the operator's zone, to the second. */
+const isoInZone = (at: DateTime.Utc, zone: DateTime.TimeZone.Named) => {
+  const zoned = DateTime.setZone(at, zone);
+  const p = DateTime.toParts(zoned);
+  const iso = `${p.year}-${pad(p.month)}-${pad(p.day)}T${pad(p.hour)}:${pad(p.minute)}:${pad(p.second)}${DateTime.zonedOffsetIso(zoned)}`;
+  return { iso, weekday: WEEKDAYS[p.weekDay] ?? "" };
+};
+
+const titleOf = (ref: TeammateRef): string | null => (ref.title === "" ? null : ref.title);
+
+const mentionsOf = (mentions: RoomMentions): string | null =>
+  mentions === "everyone" ? "everyone" : mentions.length === 0 ? null : mentions.join(", ");
+
+const writeTeammateMessage = (w: EnvelopeWriter, message: TeammateMessage): void =>
+  w.data(
+    [
+      ["source", "bot"],
+      ["from", message.from.name],
+      ["from-id", message.from.id],
+      ["title", titleOf(message.from)],
+      ["at", w.time(message.at)],
+      ["urgent", message.urgent ? "true" : "false"],
+    ],
+    message.text,
+  );
+
+const writeAttachments = (w: EnvelopeWriter, attachments: ReadonlyArray<AttachmentRef>): void => {
+  for (const file of attachments) {
+    w.empty("attachment", [
+      ["name", file.name],
+      ["type", file.mediaType],
+      ["path", file.path],
+    ]);
+  }
+};
+
+const writeProfileChanges = (w: EnvelopeWriter, changes: ReadonlyArray<ProfileChange>): void => {
+  for (const change of changes) w.block("field", [["name", change.field]], change.value);
+};
+
+const writeSinceLastTurn = (w: EnvelopeWriter, items: ReadonlyArray<CatchUpItem>): void => {
+  if (items.length === 0) return;
+  w.open("since-last-turn");
+  for (const item of items) {
+    switch (item.type) {
+      case "routine-delivered":
+        w.line(
+          `Routine "${escapeAttribute(item.routine)}" ran at ${w.time(item.at)} and told your user:`,
+        );
+        w.data([["source", "routine-run"]], item.text);
+        break;
+      case "held-message":
+        w.line("A teammate's message, held until this turn:");
+        writeTeammateMessage(w, item.message);
+        break;
+      case "profile-changed":
+        w.line(PROFILE_CHANGED_LINE);
+        writeProfileChanges(w, item.changes);
+        break;
+    }
+  }
+  w.close("since-last-turn");
+};
+
+/** The operator's words, with what they attached. */
+const writeOperatorMessage = (
+  w: EnvelopeWriter,
+  attrs: Attributes,
+  text: string,
+  attachments: ReadonlyArray<AttachmentRef>,
+): void => {
+  w.open("message", [["from", "user"], ...attrs]);
+  w.line(defuseTags(trimEnd(text)));
+  writeAttachments(w, attachments);
+  w.close("message");
+};
+
+const writeAnswer = (w: EnvelopeWriter, answer: AskAnswer): void => {
+  const { response } = answer;
+  w.open("answer", [["dismissed", response.type === "dismissed" ? "true" : null]]);
+  w.inline("question", [], answer.question);
+  if (response.type === "answered") {
+    for (const option of response.chosen)
+      w.inline("chosen", [["value", option.value]], option.label);
+    if (response.text !== null) writeOperatorMessage(w, [], response.text, []);
+  }
+  w.close("answer");
+};
+
+const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
+  switch (wake.kind) {
+    case "user":
+      if (wake.answer !== null) writeAnswer(w, wake.answer);
+      for (const message of wake.messages) {
+        // Times tell coalesced messages apart; a single one was sent at the wake's time.
+        const at = wake.messages.length > 1 ? w.time(message.at) : null;
+        writeOperatorMessage(w, [["at", at]], message.text, message.attachments);
+      }
+      return;
+    case "room": {
+      w.open("room", [
+        ["id", wake.room.id],
+        ["name", wake.room.name],
+        ["host", wake.room.hostName],
+        ["reason", wake.reason],
+      ]);
+      for (const member of wake.room.members) {
+        w.empty("member", [
+          ["id", member.id],
+          ["name", member.name],
+          ["title", titleOf(member)],
+        ]);
+      }
+      w.close("room");
+      for (const entry of wake.entries) {
+        const to = mentionsOf(entry.mentions);
+        if (entry.author === "user") {
+          writeOperatorMessage(
+            w,
+            [
+              ["at", w.time(entry.at)],
+              ["to", to],
+            ],
+            entry.text,
+            entry.attachments,
+          );
+        } else {
+          w.data(
+            [
+              ["source", "room"],
+              ["from", entry.author.name],
+              ["from-id", entry.author.id],
+              ["at", w.time(entry.at)],
+              ["to", to],
+            ],
+            entry.text,
+          );
+        }
+      }
+      return;
+    }
+    case "bot":
+      for (const message of wake.messages) writeTeammateMessage(w, message);
+      return;
+    case "routine": {
+      const { routine } = wake;
+      const trigger = routine.trigger;
+      w.open("routine", [
+        ["id", routine.id],
+        ["name", routine.name],
+        ["trigger", trigger.type],
+        ["cron", trigger.type === "schedule" ? trigger.cron : null],
+      ]);
+      w.block("instruction", [], routine.instruction);
+      w.open("recent-runs");
+      if (wake.recentRuns.length === 0) w.line("None: this is the first run.");
+      for (const run of wake.recentRuns) {
+        const attrs: Attributes = [
+          ["at", w.time(run.at)],
+          ["outcome", run.outcome.type],
+        ];
+        const outcome = run.outcome;
+        const text =
+          outcome.type === "delivered"
+            ? outcome.text
+            : outcome.type === "silent"
+              ? outcome.note
+              : null;
+        if (text === null) {
+          w.empty("run", attrs);
+        } else {
+          w.open("run", attrs);
+          w.data([["source", "routine-run"]], text);
+          w.close("run");
+        }
+      }
+      w.close("recent-runs");
+      w.close("routine");
+      if (wake.triggerData !== null) w.data([["source", "webhook"]], wake.triggerData);
+      return;
+    }
+    case "system": {
+      const { event } = wake;
+      w.line(eventLine(event));
+      if (event.name === "profile-changed") writeProfileChanges(w, event.changes);
+      if (event.name === "session-rotated") w.data([["source", "digest"]], event.digest);
+      return;
+    }
+  }
+};
+
+/** The envelope for one nonce, and how many times that nonce must appear in it. */
+const write = (
+  wake: Wake,
+  nonce: string,
+): { readonly text: string; readonly nonceUses: number } => {
+  const w = new EnvelopeWriter(nonce, wake);
+  const { iso, weekday } = isoInZone(wake.at, wake.timeZone);
+  w.open("j3-wake", [
+    ["kind", wake.kind],
+    ["event", wake.kind === "system" ? wake.event.name : null],
+    ["at", iso],
+    ["weekday", weekday],
+    ["tz", DateTime.zoneToString(wake.timeZone)],
+  ]);
+  writeSinceLastTurn(w, wake.sinceLastTurn);
+  writeBody(w, wake);
+  w.close("j3-wake");
+  w.line(CLOSING_LINES[wake.kind]);
+  // Each data block names the nonce twice, in its opening and its closing tag.
+  return { text: `${w.lines.join("\n")}\n`, nonceUses: w.dataBlocks * 2 };
+};
+
+/**
+ * Renders a wake with a given nonce, which must be twelve lowercase hex
+ * characters. Only for fixed renders, such as the version fingerprint;
+ * dispatched envelopes come from {@link renderWake}.
+ */
+export const renderWakeWithNonce = (wake: Wake, nonce: string): string => write(wake, nonce).text;
+
+const hex = (bytes: Uint8Array): string =>
+  Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+
+/** The random source kept returning nonces that already occur in the envelope. */
+class NonceUnavailable extends Schema.TaggedError<NonceUnavailable>()("NonceUnavailable", {}) {}
+
+/**
+ * Renders a wake as the message dispatched to the bot's session.
+ *
+ * The nonce for `data-` blocks comes from {@link SecureRandom}. It is drawn
+ * again if it already occurs anywhere in the envelope, look-alikes included,
+ * so no content can quote it. A source that keeps repeating such nonces is
+ * broken, and the effect dies rather than render.
+ */
+export const renderWake = (wake: Wake): Effect.Effect<string, never, SecureRandom.SecureRandom> =>
+  Effect.gen(function* () {
+    const random = yield* SecureRandom.SecureRandom;
+    for (let attempt = 0; attempt < NONCE_ATTEMPTS; attempt++) {
+      const nonce = hex(yield* random.randomBytes(NONCE_BYTES));
+      const envelope = write(wake, nonce);
+      const uses = foldForMatching(envelope.text).split(nonce).length - 1;
+      if (uses === envelope.nonceUses) return envelope.text;
+    }
+    return yield* Effect.die(new NonceUnavailable());
+  });
