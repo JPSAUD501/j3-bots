@@ -417,6 +417,8 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       const network = yield* TestPlatform.TestNetwork;
       yield* network.set("offline");
       yield* waitFor(connection.state, (state) => state._tag === "offline");
+      // Long enough for the client to settle into waiting for the network.
+      yield* Effect.sleep("50 millis");
 
       assert.strictEqual(yield* (yield* SignOut).run, "still-listed");
 

@@ -404,8 +404,10 @@ export const layer = Layer.effect(
         }
         if ((yield* SubscriptionRef.get(networkStatus)) === "offline") {
           state.set({ _tag: "offline" });
+          // Signing out, here or in another window, needs no network.
           yield* firstChange(networkStatus, (status) => status !== "offline").pipe(
             Effect.raceFirst(wake),
+            Effect.raceFirst(firstChange(credential, (next) => next !== current)),
           );
           failures = 0;
           continue;
