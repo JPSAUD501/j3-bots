@@ -403,6 +403,9 @@ function CardsSection() {
           ))}
         </div>
       </Labeled>
+      <Labeled label="Approval becoming exact while it waits: the change arrives after the summary, and focus in the summary moves to it">
+        <ApprovalBecomingExact />
+      </Labeled>
       <Labeled label="Credential: pending with a link, provided, declined, expired">
         <div className="flex flex-col gap-3">
           {variants.secrets.map((entry) => (
@@ -469,6 +472,28 @@ function NoticesSection() {
         </div>
       </Labeled>
     </Section>
+  );
+}
+
+/** A summary approval that the button makes exact, as the engine's fetched change does. */
+function ApprovalBecomingExact() {
+  const [fetched, setFetched] = useState(false);
+  const { summary, exact } = variants.approvalBecomingExact;
+  return (
+    <div className="flex flex-col items-start gap-2">
+      <button
+        type="button"
+        data-gallery-fetch
+        disabled={fetched}
+        onClick={() => setFetched(true)}
+        className="rounded-sm bg-muted px-2.5 py-1 text-xs disabled:opacity-50"
+      >
+        Bring the fetched change
+      </button>
+      <div className="w-full">
+        <ApprovalCard entry={fetched ? exact : summary} onDecide={nothing} />
+      </div>
+    </div>
   );
 }
 

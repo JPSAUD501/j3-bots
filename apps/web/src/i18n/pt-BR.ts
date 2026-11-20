@@ -106,6 +106,7 @@ export const ptBR: Catalog = {
   "approval.operation.add": "Arquivo novo",
   "approval.operation.delete": "Arquivo excluído",
   "approval.showChange": "Mostrar a alteração",
+  "approval.showFile": "Mostrar o arquivo",
   "approval.summaryOnly.command": "O comando exato não foi informado, só um resumo",
   "approval.summaryOnly.fileChange": "A alteração exata não foi informada, só um resumo",
   "approval.summaryOnly.fileRead": "O arquivo exato não foi informado, só um resumo",

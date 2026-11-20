@@ -312,6 +312,23 @@ export function galleryVariants(now: DateTime.Utc) {
     entry,
     submitting: entry.id === id("approval-submitting"),
   }));
+  // A new file's approval as it opens, a summary, and as it stands once the change has been fetched.
+  const becoming = approval("approval-becoming-exact", {
+    kind: "file-change",
+    action: "Create the packing list for the Lisbon trip",
+    exact: false,
+    sessionGrant: null,
+  });
+  const approvalBecomingExact = {
+    summary: becoming,
+    exact: {
+      ...becoming,
+      action: "notes/trip-lisbon/packing.md",
+      detail: { operation: "add", text: "- Passport\n- Adapter for the Type F sockets" },
+      exact: true,
+      sessionGrant: { covers: "every-file-change" },
+    } satisfies ApprovalEntry,
+  };
 
   const secret = (
     name: string,
@@ -480,6 +497,7 @@ export function galleryVariants(now: DateTime.Utc) {
     bubbles,
     questions,
     approvals,
+    approvalBecomingExact,
     secrets,
     folds,
     notices,

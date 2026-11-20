@@ -13,6 +13,7 @@ import type { KeyWith } from "../i18n/i18n";
 import { cn } from "../lib/cn";
 import { touchTarget } from "../lib/touchTarget";
 import { useFocusAfterActions } from "../lib/useFocusAfterActions";
+import { useFocusReplacement } from "../lib/useFocusReplacement";
 import { CardFrame } from "./CardFrame";
 import { diffTones } from "../presentation/diff";
 import { CodeLines } from "./CodeLines";
@@ -97,6 +98,10 @@ export function ApprovalCard({
   // Answered, the buttons and the pending diff go, and focus that was in them moves to the card. The
   // command stays, and so does focus in it.
   const { target, actions } = useFocusAfterActions<HTMLElement>(pending);
+  // While it waits, the summary can give way to the exact action once the engine has it; focus in
+  // the summary moves to what replaces it.
+  const replacement = useFocusReplacement();
+  const replaceable = pending ? replacement : undefined;
   // While a decision is on its way the buttons stay focusable but take no second one.
   const decide = (decision: ApprovalDecision) => () => {
     if (!submitting) onDecide(decision);
@@ -111,18 +116,17 @@ export function ApprovalCard({
     ) : (
       <ShieldIcon />
     );
+  // A new or deleted file's text is its contents; anything else's is the change.
+  const wholeFile = detail?.operation === "add" || detail?.operation === "delete";
   // A file change's text, focusable so the keyboard can scroll it. Only an update's is a diff: a
   // new file's contents can start lines with `-` or `+` too.
   const diff = (className?: string) =>
     detail !== null && (
       <pre
         role="region"
-        aria-label={t(
-          detail.operation === "add" || detail.operation === "delete"
-            ? "approval.contents"
-            : "approval.change",
-        )}
+        aria-label={t(wholeFile ? "approval.contents" : "approval.change")}
         tabIndex={0}
+        ref={replaceable}
         className={cn(code, scrolls, "py-2", className)}
         {...(pending ? actions : {})}
       >
@@ -178,6 +182,7 @@ export function ApprovalCard({
             role="region"
             aria-label={t("approval.summary")}
             tabIndex={0}
+            ref={replaceable}
             className={cn(
               scrolls,
               "rounded-md px-2.5 py-2 text-sm whitespace-pre-wrap wrap-anywhere",
@@ -193,6 +198,7 @@ export function ApprovalCard({
           role="region"
           aria-label={t("approval.action")}
           tabIndex={0}
+          ref={replaceable}
           className={cn(code, scrolls, "rounded-md py-2")}
           {...(pending ? actions : {})}
         >
@@ -219,7 +225,7 @@ export function ApprovalCard({
                 className="size-3.5 transition-transform duration-(--duration-state) group-data-panel-open:rotate-90"
                 aria-hidden
               />
-              {t("approval.showChange")}
+              {t(wholeFile ? "approval.showFile" : "approval.showChange")}
             </Collapsible.Trigger>
             <Collapsible.Panel className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-(--duration-slow) ease-standard data-ending-style:h-0 data-starting-style:h-0">
               {diff("mt-2 rounded-md")}

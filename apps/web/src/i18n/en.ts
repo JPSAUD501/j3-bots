@@ -108,6 +108,7 @@ export const en = {
   "approval.operation.add": "New file",
   "approval.operation.delete": "Deleted file",
   "approval.showChange": "Show the change",
+  "approval.showFile": "Show the file",
   "approval.summaryOnly.command": "The exact command wasn’t shared, only a summary",
   "approval.summaryOnly.fileChange": "The exact change wasn’t shared, only a summary",
   "approval.summaryOnly.fileRead": "The exact file wasn’t shared, only a summary",
