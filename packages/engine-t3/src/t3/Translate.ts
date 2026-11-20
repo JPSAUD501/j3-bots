@@ -210,6 +210,17 @@ const openingMessageOf = (mirror: Mirror, run: Run): string | undefined => {
 };
 
 /**
+ * Whether the engine queued the message a run opened with behind another turn
+ * rather than starting it at once: it marks that message `queued_turn`.
+ */
+const wasQueued = (mirror: Mirror, run: Run) => {
+  const opening = openingMessageOf(mirror, run);
+  return userMessagesOf(mirror, run).some(
+    (item) => item.messageId === opening && item.inputIntent === "queued_turn",
+  );
+};
+
+/**
  * A run that carries a steer the engine keeps aside until its target run's
  * provider turn starts. When the target starts, the engine cancels the carrier
  * and steers its message into the target (**Read** at `db51b67`,
@@ -962,10 +973,10 @@ export const dispositionOf = (
     const opening = openingMessageOf(mirror, run);
     if (opening === steer) return Option.some({ _tag: "new-turn", turnId: turnIdOf(run) });
     if (opening !== start) continue;
-    const queued = userMessagesOf(mirror, run).some(
-      (item) => item.messageId === start && item.inputIntent === "queued_turn",
-    );
-    return Option.some({ _tag: queued ? "queued" : "started", turnId: turnIdOf(run) });
+    return Option.some({
+      _tag: wasQueued(mirror, run) ? "queued" : "started",
+      turnId: turnIdOf(run),
+    });
   }
   return Option.none();
 };
@@ -974,6 +985,8 @@ export const dispositionOf = (
 // Diffing a mirror against what the subscriber knows
 
 interface TurnView {
+  /** Whether the subscriber was told the engine queued it, before it started. */
+  queued: boolean;
   started: boolean;
   finished: boolean;
   /** Whether the subscriber was told of a continuation that has not run or been dropped. */
@@ -1130,10 +1143,20 @@ export const diff = (mirror: Mirror, view: View, now: DateTime.Utc): ReadonlyArr
 
   for (const run of runs) {
     const turnId = turnIdOf(run);
-    const turn = view.turns.get(run.id) ?? { started: false, finished: false, continuation: false };
+    const turn = view.turns.get(run.id) ?? {
+      queued: false,
+      started: false,
+      finished: false,
+      continuation: false,
+    };
     view.turns.set(run.id, turn);
     if (isSteerCarrier(mirror, run)) continue;
     if (!turn.finished) {
+      const waiting = !turn.started && !hasStarted(run) && !isEnded(run);
+      if (waiting && !turn.queued && wasQueued(mirror, run)) {
+        turn.queued = true;
+        events.push({ _tag: "turn-queued", turnId, cause: causeOf(mirror, run) });
+      }
       if (!turn.started && hasStarted(run)) {
         turn.started = true;
         events.push({ _tag: "turn-started", turnId, cause: causeOf(mirror, run) });

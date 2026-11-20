@@ -136,6 +136,7 @@ const changesWork = (event: SessionEvent): boolean => {
     case "request-opened":
     case "request-closed":
       return true;
+    case "turn-queued":
     case "request-updated":
     case "step":
     case "host-speech":
@@ -500,6 +501,30 @@ export const layer = Layer.effect(
       if (yield* stops.openRound(session.id, fencedBy)) yield* sql.afterCommit(signals.stops.fire);
     }, Effect.orDie);
 
+    /** A dispatch the engine may yet take, or may have taken unseen. */
+    const undecided = (row: DispatchRow) =>
+      row.status === "intended" || row.status === "accepted" || row.status === "failed";
+
+    /**
+     * The engine has a turn it has not started, waiting behind another: the
+     * dispatch it delivers is accepted, also one whose recovery gave up, so
+     * its message is no longer offered to send again.
+     */
+    const queuedTurn = Effect.fn("Observer.queuedTurn")(function* (
+      session: Watched,
+      turnId: TurnId,
+      cause: TurnCause,
+    ) {
+      if (cause._tag !== "dispatch") return;
+      const dispatch = yield* keyed(session.id, cause.key);
+      if (Option.isNone(dispatch) || !undecided(dispatch.value)) return;
+      yield* ledger.accept(dispatch.value.id, null);
+      yield* sql`
+        UPDATE dispatches SET engine_turn_id = COALESCE(engine_turn_id, ${turnId})
+        WHERE id = ${dispatch.value.id}
+      `;
+    }, Effect.orDie);
+
     /** The dispatch that owned a turn is over, with its last outcome. */
     const settle = Effect.fn("Observer.settle")(function* (
       session: Watched,
@@ -623,9 +648,6 @@ export const layer = Layer.effect(
     }, Effect.orDie);
 
     // ---- Steers -------------------------------------------------------------------
-
-    const undecided = (row: DispatchRow) =>
-      row.status === "intended" || row.status === "accepted" || row.status === "failed";
 
     const steered = Effect.fn("Observer.steered")(function* (
       session: Watched,
@@ -922,16 +944,8 @@ export const layer = Layer.effect(
       for (const turn of event.openTurns) {
         if (turn.startedAt !== null) {
           yield* startTurn(session, turn.turnId, turn.cause, turn.startedAt);
-        } else if (turn.cause._tag === "dispatch") {
-          // Waiting behind another turn: the engine has it.
-          const dispatch = yield* keyed(session.id, turn.cause.key);
-          if (Option.isSome(dispatch) && undecided(dispatch.value)) {
-            yield* ledger.accept(dispatch.value.id, null);
-            yield* sql`
-              UPDATE dispatches SET engine_turn_id = COALESCE(engine_turn_id, ${turn.turnId})
-              WHERE id = ${dispatch.value.id}
-            `;
-          }
+        } else {
+          yield* queuedTurn(session, turn.turnId, turn.cause);
         }
         for (const work of turn.steps) yield* step(session, turn.turnId, work, event.at);
         for (const call of turn.toolCalls)
@@ -1020,6 +1034,8 @@ export const layer = Layer.effect(
           return yield* replaced(session, event);
         case "turn-started":
           return yield* startTurn(session, event.turnId, event.cause, event.at);
+        case "turn-queued":
+          return yield* queuedTurn(session, event.turnId, event.cause);
         case "steered":
           return yield* steered(session, event.key, event.turnId);
         case "steer-dropped":

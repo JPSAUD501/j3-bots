@@ -276,6 +276,14 @@ export const SessionEvent = Schema.Union([
    */
   Schema.TaggedStruct("turn-started", { ...at, turnId: TurnId, cause: TurnCause }),
   /**
+   * The engine queued a start behind another turn: it has the turn, which has
+   * not started. Sent once, before the turn's `turn-started` or
+   * `turn-finished`, for a turn whose opening message the engine marked as
+   * queued, as a `queued` disposition does. A dispatch it delivers is accepted
+   * here, also when the reply that would have said so was lost.
+   */
+  Schema.TaggedStruct("turn-queued", { ...at, turnId: TurnId, cause: TurnCause }),
+  /**
    * How a `steered` dispatch settled is known only once the turn it steered has
    * ended, so each of these three follows that turn's `turn-finished`, one per
    * steer, and nothing about the steer comes before. Until then the dispatch

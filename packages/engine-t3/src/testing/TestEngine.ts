@@ -777,9 +777,14 @@ const make = Effect.gen(function* () {
       addTurn(session, { _tag: "background" }, at);
     }
     const turn = addTurn(session, { _tag: "dispatch", key }, at);
-    return session.waiting.includes(turn.turnId)
-      ? { _tag: "queued", turnId: turn.turnId }
-      : { _tag: "started", turnId: turn.turnId };
+    if (!session.waiting.includes(turn.turnId)) return { _tag: "started", turnId: turn.turnId };
+    emit(session, at, (stamp) => ({
+      _tag: "turn-queued",
+      ...stamp,
+      turnId: turn.turnId,
+      cause: turn.cause,
+    }));
+    return { _tag: "queued", turnId: turn.turnId };
   };
 
   /**

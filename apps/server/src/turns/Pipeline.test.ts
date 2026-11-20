@@ -235,6 +235,30 @@ it.effect("refuses to send a message again once the engine accepted it late", ()
   }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
 );
 
+it.effect("refuses to send a message again once the engine queued it late", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    const deferred = yield* control.deferNextDispatch;
+    const message = yield* sendToBot(bot.id, "Ship the report.");
+    yield* flushed(bot.id);
+    yield* recoverTimes(MAX_INDETERMINATE_ANSWERS - 1);
+    yield* deliveryIs(message, "failed");
+
+    // The engine applies it after all, behind a turn of its own: its events
+    // show it queued, accepted.
+    yield* control.startEngineTurn(session);
+    yield* deferred.land;
+    yield* deliveryIs(message, "pending");
+    const refused = yield* (yield* Pipeline)
+      .retryMessage({ commandId: command(), entryId: message })
+      .pipe(Effect.flip);
+    assert.strictEqual(refused._tag, "Conflict");
+    assert.strictEqual(yield* timesSent(session, "Ship the report."), 1);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("holds an answer until the turn that asked ends, then starts a turn with it", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;
