@@ -89,6 +89,8 @@ The turn's final reply text is never published: the base prompt tells the bot it
 
 When the turn ends, the wake records how: completed, failed (with the engine's error class), interrupted, or waiting on the operator. A failed routine wake is retried according to its routine's policy; a failed operator wake is shown in the conversation with a retry action.
 
+The adapter knows which run answers a wake because every run names the message that started it. The engine also starts runs of its own: after it restarts with background work in progress, and when a command the bot left running in the background finishes ([Engine](engine.md#behaviors-j3-bots-designs-around)). Such a run closes no wake. The server shows the bot as working while it runs, and anything the bot says in it arrives through `say` like any other turn.
+
 ## Sessions
 
 Each bot has one **main session**: an engine thread in the bot's project, where operator turns, room turns and teammate messages all land. One working context means a bot in a room can use what the operator told it privately, which is what makes it the same teammate everywhere.
@@ -101,9 +103,11 @@ Because the main session does not see what a side session did, the server keeps 
 
 ## Bot tools
 
-Bots act on J3 Bots through a small MCP server named `j3`. The harness starts it as a local stdio process; that process forwards each call to the J3 Bots server over loopback.
+Bots act on J3 Bots through a small MCP server named `j3`. The harness starts it as a local stdio process, one per loaded session; that process forwards each call to the J3 Bots server over loopback. It holds no state and does no work of its own, because a host with many recently active bots runs many of them (see [Engine](engine.md#footprint)).
 
-The bridge identifies its caller from `T3CODE_THREAD_ID`, an environment variable the engine sets for the Claude Code process and for each stdio MCP server Codex starts. The server maps that thread id to a session and a bot. A call from an unknown thread is refused. **Read** in the engine source; to be verified end to end.
+The bridge identifies its caller from `T3CODE_THREAD_ID`, an environment variable the engine sets for each stdio MCP server the harness starts, with the session's thread id. The server maps that thread id to a session and a bot. A call from an unknown thread is refused. **Verified** on Claude Code on releases `4941` and `4969`, and on Codex from `4969`, the release the engine pin has to reach ([Engine](engine.md#version-pinning)).
+
+The `j3` tools are pre-approved in every permission mode, so they never raise an approval card. How each harness is told so is in [Engine](engine.md#provisioning).
 
 | Tool | Purpose |
 | --- | --- |
@@ -177,7 +181,7 @@ When a limit stops something, the place where it stopped says so in one quiet li
 The server sends a notification when an entry is added to a conversation or room and no connected client currently has it in view, and when a bot starts waiting on the operator.
 
 - **Web and desktop**: over the open connection, shown by the client.
-- **Mobile**: a push through the platform's service. The payload carries the bot's name and, if the operator allows it, the first line of the message. See [open question 5](../open-questions.md).
+- **Mobile**: a push through the platform's service. The payload carries the bot's name and, if the operator allows it, the first line of the message. See [open question 4](../open-questions.md).
 
 Routines that end silently and non-urgent teammate messages never notify.
 
@@ -195,7 +199,7 @@ A client that reconnects resumes each subscription from its last sequence number
 
 | Failure | What the server does |
 | --- | --- |
-| The engine process exits | Restarts it, reconnects, resumes subscriptions, resumes held queues, re-dispatches wakes that were recorded but not acknowledged |
+| The engine process exits | Restarts it, reconnects, resumes subscriptions, sends `queue.resume` to every thread with a held queue, re-dispatches wakes that were recorded but not acknowledged. The engine cancels the run that was in progress: its wake is recorded as interrupted and handled like a failed wake, and any open card for it closes |
 | The engine socket drops | Reconnects with backoff and resumes each subscription by sequence |
 | A turn fails | Records the engine's error class on the wake and shows it; retries only routine wakes, with a cap |
 | A provider hits its limit | Marks the provider's bots blocked with the reset time; holds automated wakes until then |

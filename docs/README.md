@@ -2,12 +2,12 @@
 
 ## How to read these documents
 
-J3 Bots depends on the behavior of another project's server. Each claim about that server carries one of three labels:
+J3 Bots depends on the behavior of another project's server, pinned to one T3 Code release ([Engine: version pinning](architecture/engine.md#version-pinning)). Each claim about that server carries one of three labels:
 
 | Label | Meaning |
 | --- | --- |
-| **Verified** | Observed on a running T3 Code server. The probe and its date are in [research/t3-code.md](research/t3-code.md). |
-| **Read** | Read in T3 Code source at commit `9bb92a4` (2026-11-19), not yet exercised. |
+| **Verified** | Observed on a running T3 Code server. The probe, the release and the date are in [research/t3-code.md](research/t3-code.md). |
+| **Read** | Read in T3 Code source, not yet exercised. The commit is named with each fact in [research/t3-code.md](research/t3-code.md). |
 | **Assumed** | Reasoned, not checked. Each one is listed in [open-questions.md](open-questions.md). |
 
 Decisions marked **Proposed** are recommendations waiting for the project owner's confirmation. Decisions marked **Accepted** are settled.

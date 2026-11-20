@@ -16,5 +16,5 @@ T3 Code, which J3 Bots runs but does not include or modify, is MIT licensed. Run
 
 - Companies that avoid AGPL software will not adopt or contribute to J3 Bots. Accepted.
 - Every source file will carry an SPDX identifier once code exists.
-- How outside contributions are licensed, and how that interacts with distributing the mobile app through app stores, is [open question 6](../open-questions.md).
+- How outside contributions are licensed, and how that interacts with distributing the mobile app through app stores, is [open question 5](../open-questions.md).
 - The project must not use T3 Code's or any other product's name or marks as its own.

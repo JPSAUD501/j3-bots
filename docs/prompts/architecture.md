@@ -26,20 +26,20 @@ Design rules for the layers:
 
 ## How each layer reaches each harness
 
-J3 Bots does not control the harness's own system prompt. It adds to it through the mechanisms T3 Code exposes on a provider instance. All of the following is **Read** in T3 Code source and not yet exercised, except where noted.
+J3 Bots does not control the harness's own system prompt. It adds to it through the mechanisms T3 Code exposes on a provider instance. The base prompt, per-bot and tool mechanisms below were verified on release `4969` with a canary instruction in each, except where marked. Skill discovery through linked folders has not been exercised.
 
-**Claude Code.** T3 Code always sends Claude Code's own preset system prompt with an addition. A provider instance's launch argument `--append-system-prompt-file <path>` is merged into that addition, and a relative path is resolved inside each thread's project folder. J3 Bots configures one Claude instance with `--append-system-prompt-file .j3/system.md`, and every bot gets its own file from its own workspace. The file is read when the Claude process starts or resumes, which happens at least every time a bot wakes after 30 idle minutes. A system prompt addition survives compaction.
+**Claude Code.** T3 Code always sends Claude Code's own preset system prompt with an addition. A provider instance's launch argument `--append-system-prompt-file <path>` is merged into that addition, and a relative path is resolved inside each thread's project folder. J3 Bots configures one Claude instance with `--append-system-prompt-file .j3/system.md`, and every bot gets its own file from its own workspace. The file is read when the Claude process starts or resumes, which happens at least every time a bot wakes after 30 idle minutes (**Read**). A system prompt addition survives compaction (**Read**).
 
-**Codex.** One Codex process serves many threads, so anything set on the instance is shared by all bots. J3 Bots puts the base prompt in the instance's own Codex home, and the per-bot layers in the workspace's `AGENTS.md`, which Codex reads from the thread's working folder. T3 Code delivers its own orchestration text to Codex as developer messages and injects them again after compaction (`CodexAdapterV2.ts`), so they rank above `AGENTS.md`. The base prompt cannot claim precedence over them; it routes around them by naming a replacement for each conflicting instruction. Whether that is enough on Codex is part of open question 1. The exact configuration keys are **Assumed**.
+**Codex.** One Codex process serves many threads, so anything set on the instance is shared by all bots. J3 Bots puts the base prompt in `developer_instructions` in the instance's own `config.toml`, and the per-bot layers in the workspace's `AGENTS.md`, which Codex reads from the thread's working folder. T3 Code sends its own text separately, as `additionalContext` with each turn, and injects it again after a compaction because Codex drops it then (**Read**). Where the two conflicted directly, J3 Bots' instruction won, from `developer_instructions` and from `AGENTS.md` alike, in a small sample (see [research](../research/t3-code.md#provider-instances)). Whether that still holds after a compaction, when T3 Code's text has just been injected again, is part of open question 1.
 
-**Other harnesses.** Agents connected through ACP have no system-prompt field at all; instructions can only ride in instruction files or in the first message. J3 Bots supports Claude Code and Codex first and treats the rest as best effort through `AGENTS.md`.
+**Other harnesses.** Agents connected through ACP have no system-prompt field at all. T3 Code sends them each turn as one prompt: its own text inside `<t3_code_instructions>`, then the dispatched message inside `<user_request>`. J3 Bots' instructions can only ride in instruction files or in the envelope. J3 Bots supports Claude Code and Codex first and treats the rest as best effort through `AGENTS.md`.
 
 | Layer | Claude Code | Codex |
 | --- | --- | --- |
-| Base prompt | `.j3/system.md` via launch argument | Instance-level instructions in a J3-owned `CODEX_HOME` |
+| Base prompt | `.j3/system.md` via launch argument | `developer_instructions` in the J3-owned `CODEX_HOME` |
 | Profile, pinned memory | Same file | `AGENTS.md` in the workspace |
 | Envelope | The dispatched message | The dispatched message |
-| Tools | MCP server in a J3-owned config directory | MCP server in the J3-owned `CODEX_HOME` |
+| Tools | `mcpServers` in the J3-owned config directory's `.claude.json` | `[mcp_servers.j3]` in the J3-owned `CODEX_HOME` |
 | Skills | `skills/` in the workspace, linked to `.claude/skills` | `skills/` in the workspace, linked to the folder Codex discovers |
 
 ## Coexisting with the host
@@ -48,7 +48,7 @@ Two texts J3 Bots does not write are always in front of the model.
 
 **The harness's own prompt** is written for coding work in a terminal. It is much larger than anything else here. Long answers are acceptable there, Markdown structure is encouraged, and the final assistant message is the answer. This is the text J3 Bots' base prompt pushes against hardest.
 
-**T3 Code's instructions** are appended to the system prompt whenever T3 Code's MCP server is attached, which is every session. At commit `9bb92a4`, a little after the pinned engine, they measure 6,245 bytes for Claude Code and 7,639 for Codex, about 1,500 to 2,000 tokens, cached with the rest of the system prompt. They open with "Ordinary coding tasks need no T3 tools", so most of the text is conditional guidance, and most of it does not conflict with anything. Read in `packages/provider-core/src/server/orchestrationInstructions.ts`, `runtimeInstructions.ts` and `ClaudeAdapterV2.ts`.
+**T3 Code's instructions** are sent whenever T3 Code's MCP server is attached, which is every session: appended to the system prompt on Claude Code (6,245 bytes at `9bb92a4`, **Read**), and as `additionalContext` with every turn on Codex (6,001 bytes, **Verified**). That is about 1,500 tokens, cached with the rest of the prompt. With T3 Code's tool list, the engine adds about 22,000 input tokens to every Claude Code model call (**Verified**, [Engine: footprint](../architecture/engine.md#footprint)). The text opens with "Ordinary coding tasks need no T3 tools", so most of it is conditional guidance, and most of it does not conflict with anything. Sources: `packages/provider-core/src/server/orchestrationInstructions.ts`, `runtimeInstructions.ts`, `ClaudeAdapterV2.ts` and `CodexDeveloperInstructions.ts`.
 
 Neither can be removed without modifying T3 Code. The base prompt deals with T3 Code's text part by part:
 
@@ -71,7 +71,7 @@ The harness adds tools of its own that reach a person or vanish with the session
 
 Three rules keep the base prompt from fighting the host:
 
-- It states precedence once, at the top, by topic rather than by tool: the host's guidance on reading, editing, running things and permissions stands; anything about talking to, asking or showing a person, scheduling, remembering and contacting other agents is replaced. On Claude Code the file is appended after T3 Code's text, so it has the last word; on Codex it does not (see above).
+- It states precedence once, at the top, by topic rather than by tool: the host's guidance on reading, editing, running things and permissions stands; anything about talking to, asking or showing a person, scheduling, remembering and contacting other agents is replaced. On Claude Code the file is appended after T3 Code's text. On Codex, T3 Code's text arrives with each turn, after the base prompt; in a direct conflict the base prompt still won (see above).
 - It reassigns the final message: reply text reaches nobody, `say` does.
 - It names each replaced host tool next to its replacement, and repeats nothing the harness already does well.
 
@@ -116,7 +116,7 @@ Envelope shapes by kind:
 | `routine` | Routine name, schedule, the saved instruction, a summary of recent runs and what each delivered, trigger data if any | Do exactly what the instruction names; speak only if the instruction's delivery line says so |
 | `system` | What happened, in one line; for `profile-changed`, the changed fields | Usually nothing. For `first-run`, open the conversation |
 
-The `system` kind covers a small fixed set: `first-run`, `profile-changed`, `budget-stopped`, `session-rotated`, `undelivered`. A rotated session's first envelope carries a digest of the recent conversation. `undelivered` re-wakes a bot whose operator turn ended without a delivery. A finished background task is not a J3 Bots event: T3 Code wakes the session itself, without an envelope, and the base prompt covers that case.
+The `system` kind covers a small fixed set: `first-run`, `profile-changed`, `budget-stopped`, `session-rotated`, `undelivered`. A rotated session's first envelope carries a digest of the recent conversation. `undelivered` re-wakes a bot whose operator turn ended without a delivery. A finished background task is not a J3 Bots event: the engine or the harness wakes the session itself, without an envelope, and the base prompt covers that case (**Verified** on Claude Code for a background command).
 
 ## Tools
 

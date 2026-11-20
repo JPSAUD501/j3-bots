@@ -11,18 +11,21 @@ The engine is a separate T3 Code instance that belongs to J3 Bots. It shares not
 - **Own data directory.** The engine runs with `--base-dir <J3_HOME>/engine`. A fresh directory gets its own database, settings, secrets and environment identity. **Verified**: an instance started this way came up with a different environment id and no projects or threads from the main instance.
 - **Loopback only.** `--host 127.0.0.1` and an explicit `--port`. Without an explicit port, a second instance picks any free one. **Read**.
 - **Supervised by J3 Bots.** The J3 Bots server starts the engine as a child process (`t3 serve --no-browser`) and restarts it if it exits. T3 Code's own service installer allows one service per user and refuses a second data directory, so J3 Bots cannot use it. **Read**.
+- **Provider processes are not the engine's children.** On Linux the engine launches each provider CLI through `systemd-run --user --scope`, so a process tree under the engine's pid misses them. Stopping the engine stops them all. Memory accounting and leak checks go by the engine's systemd slice, not by parent pid. **Verified**.
 - **Not inside a Git checkout.** `J3_HOME` must not sit under a repository: T3 Code treats any folder inside one as part of it, which would turn on checkpointing for bot workspaces. **Read**.
 
 What is still shared with the machine:
 
-- **Provider homes.** By default Claude Code uses `~/.claude` and Codex uses `~/.codex`. J3 Bots gives each engine provider instance its own home directory, so bots do not inherit the operator's coding instructions, hooks, skills or MCP servers. See [open question 3](../open-questions.md).
+- **Provider homes.** By default Claude Code uses `~/.claude` and Codex uses `~/.codex`. J3 Bots gives each engine provider instance its own home directory, so bots do not inherit the operator's coding instructions, hooks, skills or MCP servers. See [open question 2](../open-questions.md).
 - **Managed policy.** `/etc/t3code/policy.json` on Linux applies to every T3 Code instance on the machine, including the engine. **Read**.
 
 ## Version pinning
 
-J3 Bots names one exact T3 Code version, in `engine.json` at the repository root: the release version and the commit its tag points at. The pin is `0.1.11-nightly.20261119.4941`, commit `ff9efe89`, the release both M0 probes ran against. **Verified**: the tag `v0.1.11-nightly.20261119.4941` points at that commit.
+J3 Bots names one exact T3 Code version, in `engine.json` at the repository root: the release version and the commit its tag points at. The pin is `0.1.11-nightly.20261119.4941`, commit `ff9efe89`, the release the first M0 probes ran against. **Verified**: the tag `v0.1.11-nightly.20261119.4941` points at that commit.
 
-The source claims labelled **Read** were made at commit `9bb92a4`, 155 commits after the pin. Each one still holds only until it is checked at the pin, by the adapter's code or its conformance suite.
+**The pin must move to `0.1.11-nightly.20261120.4969`, commit `db51b671`, or later.** On `4941` the engine does not give a stdio MCP server that Codex starts the `T3CODE_THREAD_ID` variable, so the [bot tool bridge](server.md#bot-tools) cannot identify a Codex bot. Upstream pull request 39414 added it; `4969` is the oldest release that contains it. **Verified** on both releases. The move follows [Upgrading the engine](#upgrading-the-engine) and is due before the adapter's Codex path is built.
+
+The source claims labelled **Read** were made at commit `9bb92a4`, unless the research notes name `db51b67`. `db51b67` is `9bb92a4` plus ten commits, so once the pin moves, every Read claim is at or before it. Each one still holds only until it is checked at the pin, by the adapter's code or its conformance suite. A release's commit is in its title on GitHub, and it is often older than `main` on the same day: a fact read in source counts for a release only if that commit contains it.
 
 The engine binary is the standalone release archive for the platform, downloaded once, checked against the release's `SHA256SUMS`, and stored under `<J3_HOME>/engine/runtime/<version>/`.
 
@@ -47,17 +50,20 @@ The engine exposes two interfaces. J3 Bots uses the one T3 Code's own clients us
 
 The connection sequence:
 
-1. **Mint a token.** `t3 auth session issue --base-dir <engine dir> --scope orchestration:read --scope orchestration:operate --json`. This works without a sign-in because the CLI opens the engine's database directly. The token lasts 30 days and does not renew, so the server mints a new one at every start and before expiry. **Verified** (minting), **Read** (lifetime).
-2. **Open the socket.** `ws://127.0.0.1:<port>/ws?orchestrationProtocol=2`, authenticated either with an `Authorization: Bearer` header on the upgrade or with a five-minute ticket from `POST /api/auth/websocket-ticket/rpc`. **Verified** with the ticket flow from a plain Node process with no T3 Code dependency.
-3. **Subscribe.** `orchestration.subscribeShell` streams every thread's status, pending requests and last message. `orchestration.subscribeThread` streams one thread's events. **Verified** for the shell snapshot.
+1. **Mint a token.** `t3 auth session issue --base-dir <engine dir> --scope orchestration:read --scope orchestration:operate --token-only`, run with the pinned binary. This works without a sign-in because the CLI opens the engine's database directly. The token lasts 30 days and does not renew, so the server mints a new one at every start and before expiry. **Verified** (minting), **Read** (lifetime).
+2. **Open the socket.** `ws://127.0.0.1:<port>/ws?orchestrationProtocol=2`, authenticated either with an `Authorization: Bearer` header on the upgrade or with a five-minute ticket from `POST /api/auth/websocket-ticket/rpc` passed as `&wsTicket=`. **Verified**, both, from a plain Node process with no T3 Code dependency.
+3. **Subscribe.** `orchestration.subscribeShell` streams every thread's status, pending requests and last message. `orchestration.subscribeThread` with `{threadId, afterSequence?}` streams one thread: a `snapshot` item when no `afterSequence` is given, then `event` items. **Verified**.
+
+A whole turn has been driven this way from outside: create a project and a thread, dispatch, stream, answer an approval, answer a question, interrupt, and resume after a dropped socket and after an engine restart. **Verified** on Claude Code and Codex. The command and event shapes the adapter needs are in [research/t3-code.md](../research/t3-code.md#the-turn-protocol).
 
 Protocol facts the adapter depends on:
 
-- Each WebSocket message is one JSON object: `Request`, `Ack`, `Interrupt`, `Ping` from the client; `Chunk`, `Exit`, `Defect`, `Pong` from the server. **Read**; `Request` and `Chunk` **Verified**.
-- **Every stream chunk must be acknowledged.** The server lets a subscription run at most eight chunks ahead of the client's acks, then stalls. **Read**.
-- **Events replace whole entities.** A streaming assistant message arrives as its full text so far, at most every 50 ms. The client upserts by id and never applies deltas. **Read**.
-- **Resume by sequence.** The client remembers the last sequence it applied and resubscribes with `afterSequence`. If that point was pruned, the server sends a fresh snapshot. Events may overlap; the client drops anything at or below what it has. **Read**.
-- **Commands are idempotent by `commandId`.** Replaying the same id is safe. J3 Bots uses the wake id, so a retry after a crash cannot start a second turn. **Read**.
+- Each WebSocket message is one JSON object: `Request`, `Ack`, `Interrupt`, `Ping` from the client; `Chunk`, `Exit`, `Defect`, `Pong` from the server. **Verified** for all but `Defect`.
+- **Every stream chunk must be acknowledged.** A subscription whose chunks are not acked stops after a few chunks and continues once they are. **Verified**; the window of eight is **Read**.
+- **Events replace whole entities.** A streaming assistant message arrives as its full text so far. The client upserts by id and never applies deltas. **Verified**.
+- **Resume by sequence.** The client remembers the last sequence it applied and resubscribes with `afterSequence`. The stream continues from the next event, with nothing lost, across a dropped socket and across an engine restart. If that point was pruned, the server sends a fresh snapshot (**Read**). Events may overlap; the client drops anything at or below what it has. **Verified**.
+- **Sequences belong to the environment, not the thread.** One counter serves every thread and project, so a thread's stream has gaps. A gap is not loss. **Verified**.
+- **Commands are idempotent by `commandId`.** A replayed `message.dispatch` returns the first one's sequence and starts no second run, even with a different message id. J3 Bots uses the wake id, so a retry after a crash cannot start a second turn. **Verified**.
 - **Revoking the session closes the socket.** The adapter must reconnect and resume at any time. **Read**.
 
 A token with `orchestration:operate` can start a full-access agent. It is equivalent to a shell as the server's user and is handled as such.
@@ -68,7 +74,7 @@ J3 Bots keeps the engine surface it touches small, because every part it touches
 
 | Engine capability | Used | How |
 | --- | --- | --- |
-| Projects | Yes | One project per bot, on the bot's workspace folder |
+| Projects | Yes | One project per bot, on the bot's workspace folder. A folder belongs to at most one project: `project.create` on a folder that has one fails with a conflict, so J3 Bots stores the project id and never re-creates it (**Verified**) |
 | Threads | Yes | The bot's main session and its side sessions |
 | `message.dispatch` with queue and steer | Yes | Every wake |
 | Run interrupt and thread stop | Yes | "Stop" |
@@ -85,7 +91,7 @@ J3 Bots keeps the engine surface it touches small, because every part it touches
 
 ## Provisioning
 
-Before first start, J3 Bots writes `<engine dir>/userdata/settings.json`. The engine reads it at startup and watches it afterwards. **Read**.
+Before first start, J3 Bots writes `<engine dir>/userdata/settings.json`. The engine reads it at startup and watches it afterwards: a changed provider instance applies to sessions started after the change, with no restart. **Verified**.
 
 | Setting | Value | Why |
 | --- | --- | --- |
@@ -96,24 +102,42 @@ Before first start, J3 Bots writes `<engine dir>/userdata/settings.json`. The en
 | `enableAgentDeviceAccess` | `false` | Bots do not drive phone simulators, and turning this off removes T3 Code's device instructions from every session. |
 | `providerInstances` | Generated | One instance per provider the operator enabled, each with its own home, launch arguments and environment. |
 
-Provider instances are where J3 Bots attaches its prompt and its tools. For Claude Code:
+An environment variable marked `sensitive` is not stored in `settings.json`. The entry carries `"value": "", "sensitive": true, "valueRedacted": true`, and the value lives in the engine's secret store, one file per variable named after the instance id and the variable name. **Verified**: an instance provisioned this way authenticated against its provider.
 
-- `homePath` points at a J3-owned config directory.
-- `launchArgs` includes `--append-system-prompt-file .j3/system.md`. T3 Code merges this into the system prompt it sends and resolves a relative path inside each thread's project folder, so one instance serves every bot and each gets its own file. **Read**.
-- The J3 Bots tools are registered as an MCP server in that config directory.
-- `launchArgs` also disallows the harness tools that reach a person or vanish with the session: the question tool, plan mode, the cron, wake-up and loop tools, and push notifications. The config directory turns auto-memory off. **Assumed**: that a provider instance can pass `--disallowedTools` this way is to be verified in M0.
+Provider instances are where J3 Bots attaches its prompt and its tools. Every item below is **Verified** on release `4969` unless marked.
 
-For Codex, the base prompt goes into the instance's own `CODEX_HOME` configuration, and per-bot text into the workspace's `AGENTS.md`, because Codex instance settings are shared by all threads. **Read** for the constraint; the exact Codex keys are **Assumed**.
+For Claude Code:
 
-Until J3 Bots has its own provider settings screen, the operator signs in to providers and inspects the engine through T3 Code's own web interface, reached with a pairing link J3 Bots prints on request.
+- `homePath` points at a J3-owned config directory, which the engine passes as `CLAUDE_CONFIG_DIR`.
+- That directory's `.claude.json` holds `hasCompletedOnboarding: true` and the `j3` MCP server under `mcpServers` (stdio: `command`, `args`, `env`). Claude Code rewrites this file with its own state, so J3 Bots merges its keys into it and never replaces it.
+- That directory's `settings.json` is applied to every session. It is where auto-memory is turned off; the setting's key is **Assumed**.
+- `launchArgs` is `--append-system-prompt-file .j3/system.md --allowedTools mcp__j3__* --disallowedTools <tools>`:
+  - The prompt file path is resolved inside each thread's project folder, so one instance serves every bot and each gets its own file.
+  - `--allowedTools mcp__j3__*` lets J3 Bots' own tools run without an approval in every permission mode. Without it, a supervised bot's every `say` waits on an approval card.
+  - `--disallowedTools` removes the harness tools that reach a person or vanish with the session: the question tool, plan mode, the cron, wake-up and loop tools, and push notifications. A removed tool is absent from the model's tool list.
+
+For Codex:
+
+- `homePath` points at a J3-owned directory, which the engine passes as `CODEX_HOME`. Its `config.toml` carries:
+  - `developer_instructions`: the base prompt. It is read at every thread start, so a changed prompt applies to sessions started after the change.
+  - `[mcp_servers.j3]` with `command` and `args`, and `default_tools_approval_mode = "approve"`, the Codex counterpart of `--allowedTools`. The server's name must not contain a dot: T3 Code skips such names when it tags servers with the thread id (**Read**).
+- Per-bot text goes into the workspace's `AGENTS.md`, because one Codex process serves every thread on the instance and the instance's settings are shared by all bots.
+
+A J3-owned home needs nothing from the operator's own provider home when the provider is reached through an API endpoint: Claude Code takes `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` from the instance environment; Codex takes a `model_provider` entry in `config.toml` whose `env_key` names a variable in the instance environment. The engine has no sign-in flow for Claude Code or Codex instances: its `provider.auth.subscribe` answers "This provider does not support sign-in in T3 Code". A subscription sign-in into a J3-owned home is still open; see [open question 2](../open-questions.md).
+
+The operator can inspect the engine through T3 Code's own web interface, reached with a pairing link J3 Bots prints on request.
 
 ## Behaviors J3 Bots designs around
 
-Each of these was found by reading the engine and would break a naive design.
+Each of these was found by reading or running the engine and would break a naive design.
 
-**A held queue is not released by automated sends.** A server restart, a stop, a provider error or a usage limit puts a thread's queue on hold. Only a message stamped as coming from a user on a web or mobile client releases it, or an explicit `queue.resume`. J3 Bots dispatches over the client RPC, where every message is stamped that way, and sends `queue.resume` when it reconnects after an engine restart.
+**An engine restart cancels what was running and holds what was queued.** The running run ends `cancelled`. A pending approval or question ends `cancelled` with `responseCapability: {type: "not_resumable"}`, so its card must close. Runs that were queued stay queued with `queueHeld: true`, and `queue.resume` starts them. **Verified**. A stop, a provider error or a usage limit holds a queue the same way, and a message stamped as coming from a user on a web or mobile client also releases it (**Read**). J3 Bots sends `queue.resume` for each of its threads when it reconnects after an engine restart.
 
-**Provider sessions are unloaded after 30 minutes idle.** The next wake starts a new provider process and resumes the conversation natively. This is the normal state for a bot, not an error. It is also when a changed system-prompt file takes effect.
+**The engine starts runs nobody dispatched.** Two cases were observed. If background work was running when the engine restarted, the engine sends the session its own continuation message (`createdBy: "agent"`, `creationSource: "server"`, beginning "Note: the T3 server restarted") and a new run starts. If a command the harness ran in the background finishes after its turn ended, the harness's notice arrives as a new run (`createdBy: "agent"`, `creationSource: "provider"`). **Verified** on Claude Code. Every run names the message that started it (`userMessageId`); the adapter matches runs to wakes by that id and treats any other run as an engine-initiated turn of the session. Such a turn closes no wake, and anything the bot says in it still comes through `say`.
+
+**Provider sessions are unloaded after 30 minutes idle.** The next wake starts a new provider process and resumes the conversation natively. This is the normal state for a bot, not an error. It is also when a changed system-prompt file takes effect. **Read**. `provider-session.detach` unloads one on demand, and the next turn resumes natively. **Verified**.
+
+**Supervised Codex cannot write.** T3 Code runs a Codex thread in `approval-required` mode with approval policy `untrusted` and a read-only sandbox (**Read**). An approval lets the command run, but still inside that sandbox: an approved write failed with "Read-only file system" (**Verified**). `auto-accept-edits` gives a workspace-write sandbox (**Read**). See [Security](security.md#permission-modes).
 
 **Claude Code deletes its own transcripts after 30 days.** A bot that was silent for a month cannot resume natively; the engine falls back to a new session with a summary. J3 Bots does not depend on a session living that long: it can rebuild a session from memory and the recent conversation at any time.
 
@@ -125,13 +149,42 @@ Each of these was found by reading the engine and would break a naive design.
 
 **Messages sent through `/mcp` get a note prepended** saying they did not come from the user. Messages sent through the client RPC do not. J3 Bots uses the client RPC and writes its own wake envelope.
 
-**The engine always adds its own instructions.** Whenever its MCP server is attached to a session, which is always, T3 Code appends its own text to the system prompt: 6,245 bytes for Claude Code and 7,639 for Codex at commit `9bb92a4`. It covers delegation and subagents, thread tools, secret requests, charts and the preview browser, pull request linking, and, for Claude, a tool for showing text mid-turn. There is no setting that removes it; only the device section can be turned off. J3 Bots' base prompt names the parts it replaces. See [Prompt architecture](../prompts/architecture.md#coexisting-with-the-host).
+**The engine always adds its own instructions and tools.** Whenever its MCP server is attached to a session, which is always, T3 Code adds its own text: on Claude Code appended to the system prompt (6,245 bytes at `9bb92a4`, **Read**); on Codex sent as five `additionalContext` entries with every `turn/start` (6,001 bytes with device access off, **Verified**). It covers delegation and subagents, thread tools, secret requests, charts and the preview browser, pull request linking, and, for Claude, a tool for showing text mid-turn. Its tool list comes with it. There is no setting that removes either; only the device section can be turned off. J3 Bots' base prompt names the parts it replaces. See [Prompt architecture](../prompts/architecture.md#coexisting-with-the-host).
+
+## Footprint
+
+Measured on 2026-11-20 on release `4969`, on an x86-64 Linux laptop, with providers reached through an API proxy. The target host is a Raspberry Pi; these numbers bound the design until they are repeated there. **Verified**.
+
+| What | Resident memory |
+| --- | --- |
+| Engine, idle, no session loaded | 450 to 490 MB |
+| Claude Code, per loaded session | about 230 MB, one CLI process per session |
+| Codex, per instance | about 150 MB, one app-server shared by all its sessions |
+| `j3` bridge, per loaded session, both harnesses | one process each; 50 MB when written as a plain Node script |
+
+A turn adds no measurable memory beyond its loaded session. Codex keeps a session's bridge process until the session unloads, so a host with many recently active bots holds many bridges: the bridge must be a thin relay, and its runtime is chosen for size.
+
+| Trivial turn ("reply ok"), input tokens per model call | Claude Code (Haiku 4.5) | Codex (gpt-5.6-luna) |
+| --- | --- | --- |
+| Under the engine | 59,100 to 59,800 | 14,800 |
+| Of which cache reads when the session is warm | 59,100 to 59,700 | 12,900 to 14,600 |
+| The same harness alone, same home, same prompt file | 37,400 | not measured |
+
+About 22,000 of Claude Code's tokens per call are the engine's text and tool list. A turn that calls a tool pays the whole context once per model call. On a turn that resumes a session, the engine reports the resumed transcript's earlier usage as `otherUsage`; it is not new spend and is not counted.
+
+Latency was dominated by the provider: about 4 seconds from dispatch to a one-word answer, with the provider session loaded or not. Starting the run took 0.1 to 0.3 seconds on Claude Code and up to 0.9 on a cold Codex instance.
 
 ## Upgrading the engine
 
 1. Change the version and commit in `engine.json`, run `pnpm vendor:t3-contracts`, and move the catalog's Effect packages to the versions T3 Code pins at that commit. The protocol changes show up as type errors in `packages/engine-t3`.
-2. Run the adapter conformance suite against the new version: start an isolated engine, create a project and a thread, dispatch a message with a replay provider, receive the stream, answer an approval, interrupt a run, resume a subscription after a dropped socket.
+2. Run the adapter conformance suite against the new version: start an isolated engine, create a project and a thread, dispatch messages to the scripted agent, receive the stream, answer an approval and a question, interrupt a run, replay a command id, resume a subscription after a dropped socket and after an engine restart.
 3. If it passes, release. On the operator's machine the upgrade stops the engine, copies its database files, starts the new version and checks the descriptor.
 4. If the new engine fails to start, restore the copied files and the previous binary.
 
 The conformance suite is the adapter's main test. It exercises the real protocol against the real server, which is the only thing that can tell us an upgrade is safe.
+
+**The scripted agent.** The suite spends no allowance. Its turns run on a small Agent Client Protocol agent that J3 Bots owns, registered in the engine as a provider instance with driver `acpRegistry` and `{source: "local", commandPath, commandArgs}`. It needs no model and no network. A keyword in the request chooses what it does: answer at once, ask for a permission (`session/request_permission`, which the engine shows as an approval), ask a question (`elicitation/create`, shown as a question whose answers are keyed by the form's field names), or stream until it receives `session/cancel`. The engine sends it the request wrapped as `<t3_code_instructions>…</t3_code_instructions>` followed by `<user_request>…</user_request>`. **Verified** on release `4969` for all four, plus resuming after a dropped socket.
+
+T3 Code's own replay provider is the same mechanism, an ACP agent the engine seeds only on a development server. Its fake CLI is a helper for its own tests, not a provider. Neither is usable from a release build, and the scripted agent replaces both.
+
+The behavior evals, and one short turn on each real harness before a release, still need a model.
