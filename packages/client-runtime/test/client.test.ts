@@ -1967,4 +1967,45 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
     }),
   );
+
+  it.effect("shows the settings the server holds after a save whose answer was lost", () =>
+    Effect.gen(function* () {
+      yield* pairAndConnect;
+      const settings = yield* Settings;
+      const network = yield* TestPlatform.TestNetwork;
+      const loaded = yield* waitFor(settings.state, (state) => state._tag === "ready");
+      if (loaded._tag !== "ready") return assert.fail("No settings");
+      const before = loaded.value.notifications.previews;
+
+      yield* network.loseReplies(true);
+      const saving = yield* Effect.forkChild(
+        settings.update({ notifications: { previews: !before } }),
+        { startImmediately: true },
+      );
+
+      // Another device sees the save arrive, then changes it back.
+      yield* Effect.gen(function* () {
+        yield* pairAndConnect;
+        yield* (yield* Connection)
+          .call((rpc) => rpc["settings.get"]())
+          .pipe(
+            Effect.repeat({
+              until: (current) => current.notifications.previews !== before,
+              schedule: Schedule.spaced("5 millis"),
+            }),
+          );
+        const other = yield* Settings;
+        const back = yield* other.update({ notifications: { previews: before } });
+        assert.strictEqual(back._tag, "done");
+      }).pipe(Effect.scoped, Effect.provide(client()));
+
+      // The first save is answered again, on the next socket, from its receipt.
+      yield* network.loseReplies(false);
+      yield* network.dropSockets;
+      assert.strictEqual((yield* Fiber.join(saving))._tag, "done");
+      assert.deepStrictEqual(settings.save.get(), { _tag: "saved" });
+      const shown = settings.state.get();
+      assert.strictEqual(shown._tag === "ready" && shown.value.notifications.previews, before);
+    }).pipe(Effect.scoped, Effect.provide(client())),
+  );
 });

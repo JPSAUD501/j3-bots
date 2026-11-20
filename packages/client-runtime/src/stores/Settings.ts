@@ -3,7 +3,7 @@ import type { Settings as SettingsValue } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { Connection } from "../connection/Connection.ts";
+import { Connection, type J3RpcClient } from "../connection/Connection.ts";
 import { Actions, intentResult, type IntentResult } from "../intents/Actions.ts";
 import { Cell, type Readable } from "../Store.ts";
 import { loading, markStale, ready, type Synced } from "./synced.ts";
@@ -13,17 +13,24 @@ export type SettingsChanges = Partial<
   Pick<SettingsValue, "operatorName" | "timeZone" | "budgets" | "notifications">
 >;
 
-/** A save of the settings: under way, with what it sends, or how the last one ended. */
+/**
+ * A save of the settings: under way, with what it sends, or how the last one
+ * ended. A failed one keeps what it sent, so a form that did not see it can
+ * offer it again.
+ */
 export type SettingsSave =
   | { readonly _tag: "idle" }
   | { readonly _tag: "saving"; readonly changes: SettingsChanges }
   | { readonly _tag: "saved" }
-  | { readonly _tag: "failed" };
+  | { readonly _tag: "failed"; readonly changes: SettingsChanges };
 
 /**
- * The operator's preferences. The contract has no subscription for them, so
- * they are read when each socket opens and replaced by what an update returns.
- * A change made on another device shows here after the next reconnect.
+ * The operator's preferences. The contract has no subscription for them and
+ * no revision, so they are read when each socket opens and again after each
+ * save the server accepts, and the read started last is the one shown. What
+ * a save returns is not shown: answered again from its receipt after a
+ * reconnection, it can be older than what the reconnection read. A change
+ * made on another device shows here after the next reconnect or save.
  */
 export class Settings extends Context.Service<
   Settings,
@@ -46,10 +53,27 @@ export const layer = Layer.effect(
     const state = new Cell<Synced<SettingsValue>>(loading);
     const save = new Cell<SettingsSave>({ _tag: "idle" });
 
+    // Reads started, and the latest whose answer is shown.
+    let started = 0;
+    let shown = 0;
+    /** Reads the settings, and shows them unless a read started later already has. */
+    const read = (client: J3RpcClient) =>
+      Effect.suspend(() => {
+        const ticket = ++started;
+        return client["settings.get"]().pipe(
+          Effect.flatMap((settings) =>
+            Effect.sync(() => {
+              if (ticket < shown) return;
+              shown = ticket;
+              state.set(ready(settings));
+            }),
+          ),
+        );
+      });
+
     yield* connection
       .eachSession((client) =>
-        client["settings.get"]().pipe(
-          Effect.flatMap((settings) => Effect.sync(() => state.set(ready(settings)))),
+        read(client).pipe(
           Effect.andThen(Effect.never),
           Effect.ensuring(Effect.sync(() => state.update(markStale))),
         ),
@@ -64,9 +88,11 @@ export const layer = Layer.effect(
         .call((client) => client["settings.update"]({ commandId, ...changes }))
         .pipe(Effect.exit);
       const result = intentResult(exit);
-      if (result._tag === "done") state.set(ready(result.value));
+      if (result._tag === "done") yield* connection.call(read).pipe(Effect.ignore);
       // A later save speaks for itself.
-      if (save.get() === saving) save.set({ _tag: result._tag === "done" ? "saved" : "failed" });
+      if (save.get() === saving) {
+        save.set(result._tag === "done" ? { _tag: "saved" } : { _tag: "failed", changes });
+      }
       return result;
     });
 

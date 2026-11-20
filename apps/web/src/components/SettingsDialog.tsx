@@ -5,14 +5,10 @@ import {
   type Device,
   type DeviceId,
   type EngineStatus,
-  Label,
   type PairingCode,
   type Settings,
-  TimeZone,
 } from "@j3-bots/contracts";
 import type * as DateTime from "effect/DateTime";
-import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 import { SettingsIcon, XIcon } from "lucide-react";
 import { useId, useState, type ReactNode } from "react";
 import { useI18n, usePresentation } from "../app/context";
@@ -23,6 +19,7 @@ import {
   type Appearance,
   type Language,
 } from "../preferences/preferences";
+import { editsAfterFailedSave, noEdits, settingsPatch } from "../presentation/settings";
 import type { ShellData, ShellIntents } from "../shell/data";
 import { cn } from "../lib/cn";
 import { activityTime, clockTime } from "../lib/time";
@@ -165,9 +162,6 @@ function EngineSection({ engine, stale }: { engine: EngineStatus | null; stale: 
   );
 }
 
-const decodeName = Schema.decodeUnknownOption(Label);
-const decodeTimeZone = Schema.decodeUnknownOption(TimeZone);
-
 const timeZones = (current: string): ReadonlyArray<string> => {
   const known = Intl.supportedValuesOf("timeZone");
   return known.includes(current) ? known : [current, ...known];
@@ -197,20 +191,14 @@ function YouSection({
   );
 }
 
-/** What the operator changed and has not saved: null for a field they left alone. */
-interface Edits {
-  readonly name: string | null;
-  readonly zone: string | null;
-}
-
-const noEdits: Edits = { name: null, zone: null };
-
 /**
- * Saving needs the server: offline, Save says why it is unavailable. While a
- * save is under way, even one started before Settings last closed, the form
- * shows what it sends and takes no edit. A field the operator left alone
- * shows the saved value as it arrives; one they changed keeps their edit
- * until it is saved.
+ * Saving needs the server: offline, Save says why it is unavailable. A save
+ * sends only the fields the operator changed. While one is under way, even
+ * one started before Settings last closed, the form shows what it sends and
+ * takes no edit. A field the operator left alone shows the saved value as it
+ * arrives; one they changed keeps their edit until it is saved. A save that
+ * failed leaves what it sent as the form's edits, so reopening Settings
+ * never loses it.
  */
 function YouForm({
   settings,
@@ -227,33 +215,32 @@ function YouForm({
   const nameId = useId();
   const zoneId = useId();
   const offlineId = useId();
-  const [edits, setEdits] = useState(noEdits);
+  const [edits, setEdits] = useState(() =>
+    save._tag === "failed" ? editsAfterFailedSave(noEdits, save.changes) : noEdits,
+  );
   // How a save ended shows only for one this form saw under way, until the next edit.
   const [watching, setWatching] = useState(save._tag === "saving");
-  // A save that ends saved leaves nothing unsaved.
   const [lastSave, setLastSave] = useState(save);
   if (lastSave !== save) {
     setLastSave(save);
+    // A save that ends saved leaves nothing unsaved; one that failed leaves what it sent.
     if (save._tag === "saved") setEdits(noEdits);
+    if (save._tag === "failed") setEdits((current) => editsAfterFailedSave(current, save.changes));
   }
   const saving = save._tag === "saving";
   const shown = saving ? { ...settings, ...save.changes } : settings;
   const name = edits.name ?? shown.operatorName ?? "";
   const zone = edits.zone ?? shown.timeZone;
-  const trimmed = name.trim();
-  const operatorName = trimmed === "" ? Option.some(null) : decodeName(trimmed);
-  const timeZone = decodeTimeZone(zone);
-  const changed = trimmed !== (settings.operatorName ?? "") || zone !== settings.timeZone;
+  const patch = settingsPatch(settings, edits);
   const status = watching && !saving ? save._tag : null;
   return (
     <form
       className="flex flex-col gap-3"
       onSubmit={(event) => {
         event.preventDefault();
-        if (!changed || saving || !connected) return;
-        if (Option.isNone(operatorName) || Option.isNone(timeZone)) return;
+        if (patch._tag !== "changes" || saving || !connected) return;
         setWatching(true);
-        onSave({ operatorName: operatorName.value, timeZone: timeZone.value });
+        onSave(patch.changes);
       }}
     >
       <div className="flex flex-col gap-1">
@@ -303,7 +290,7 @@ function YouForm({
         <Button
           type="submit"
           size="sm"
-          aria-disabled={!changed || saving || !connected}
+          aria-disabled={patch._tag !== "changes" || saving || !connected}
           aria-describedby={connected ? undefined : offlineId}
         >
           {t("settings.save")}
