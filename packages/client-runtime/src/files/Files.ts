@@ -111,6 +111,10 @@ export const layer = Layer.effect(
             Effect.mapError(() => new UploadRefused({ problem: "refused" })),
           );
         case 400:
+        // `Conflict("private-location")`: the server's attachments folder is
+        // linked out of its private data, and stays refused until the
+        // operator removes the link.
+        case 409:
           return yield* new UploadRefused({ problem: "refused" });
         case 401:
           return yield* new NotPaired();

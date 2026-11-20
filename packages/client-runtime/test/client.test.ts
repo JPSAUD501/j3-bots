@@ -214,6 +214,29 @@ const neverAnswers = (path: string, times = Number.POSITIVE_INFINITY) =>
     }),
   ).pipe(Layer.provide(FetchHttpClient.layer));
 
+/**
+ * A server whose attachments folder was linked out of its private data: it
+ * answers every upload with `Conflict("private-location")`. Counts the
+ * uploads it refused.
+ */
+const uploadsInPrivateLocation = (refused: { count: number }) =>
+  Layer.effect(
+    HttpClient.HttpClient,
+    Effect.gen(function* () {
+      const server = yield* HttpClient.HttpClient;
+      return HttpClient.make((request, url) => {
+        if (url.pathname !== HTTP_PATHS.attachments) return server.execute(request);
+        refused.count += 1;
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json({ _tag: "Conflict", reason: "private-location" }, { status: 409 }),
+          ),
+        );
+      });
+    }),
+  ).pipe(Layer.provide(FetchHttpClient.layer));
+
 /** The credential the client saved, for the same device's next launch. */
 const savedCredential = Effect.gen(function* () {
   return yield* (yield* CredentialStore).load;
@@ -1126,6 +1149,33 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
     }),
   );
+
+  it.effect("marks a file refused, once, when the server cannot store it privately", () => {
+    const refused = { count: 0 };
+    return Effect.gen(function* () {
+      yield* pairAndConnect;
+      const target: EntryTarget = { _tag: "conversation", botId: yield* createBot("Careful") };
+      const drafts = yield* Drafts;
+      yield* drafts.attach(target, [
+        { name: "notes.txt", body: new Blob(["notes"], { type: "text/plain" }) },
+      ]);
+      const settled = yield* waitFor(drafts.state, (state) =>
+        (state.get(targetKey(target))?.files ?? []).some((file) => file._tag !== "uploading"),
+      );
+      assert.deepStrictEqual(
+        settled
+          .get(targetKey(target))
+          ?.files.map((file) => [file._tag, file._tag === "failed" ? file.problem : null]),
+        [["failed", "refused"]],
+      );
+      assert.strictEqual(refused.count, 1);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        client(Option.none(), TestPlatform.makeDevice(), uploadsInPrivateLocation(refused)),
+      ),
+    );
+  });
 
   it.effect("refuses a file over the limits without uploading it, and holds the draft", () =>
     Effect.gen(function* () {
