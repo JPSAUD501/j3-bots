@@ -46,7 +46,7 @@ export const layer = Layer.effect(
     const first = yield* Stream.runHead(engine.status);
     const status = yield* SubscriptionRef.make<EngineStatus>(
       Option.getOrElse(first, () => ({
-        state: { _tag: "unavailable" },
+        state: { _tag: "unavailable", reason: "down" },
         pinnedVersion: "unknown",
         providers: [],
       })),
