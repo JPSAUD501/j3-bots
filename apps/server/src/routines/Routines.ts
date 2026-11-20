@@ -16,6 +16,7 @@ import {
 } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -26,15 +27,14 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as NetAddress from "effect/net/NetAddress";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
-import { ServerConfig } from "../config.ts";
 import { Entries } from "../entries/Entries.ts";
 import { Ids } from "../Ids.ts";
+import { Listener } from "../listener.ts";
 import { ChangeLog, scopeKey } from "../persistence/ChangeLog.ts";
 import { Flag, json, Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
-import { EVERY_IPV4_INTERFACE, Network, reachableHosts } from "../system/Network.ts";
-import * as Tls from "../system/Tls.ts";
+import { CERTIFICATE_NAME, Network, reachableHosts } from "../system/Network.ts";
 import { Ledger } from "../turns/Ledger.ts";
 import { RoutineRuns } from "./RoutineRuns.ts";
 import { plannedRun } from "./schedule.ts";
@@ -150,7 +150,6 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const transaction = transactional(sql);
-    const config = yield* ServerConfig;
     const changes = yield* ChangeLog;
     const entries = yield* Entries;
     const receipts = yield* CommandReceipts;
@@ -160,31 +159,27 @@ export const layer = Layer.effect(
     const routineRuns = yield* RoutineRuns;
     const scheduler = yield* Scheduler;
     const network = yield* Network;
+    const listener = yield* Listener;
 
     /** A new webhook secret, which goes in the address after the routine's id. */
     const newSecret = Effect.map(random.randomBytes(SECRET_BYTES), Base64Url.encode);
 
-    // Where the server listens, as `j3-bots pair` reads it from the running
-    // listener. The configuration was checked as the server started, the
-    // certificate included.
-    const listener = {
-      scheme: Option.isSome(config.tls) ? ("https" as const) : ("http" as const),
-      address: config.host,
-      names: Option.isSome(config.tls)
-        ? yield* Tls.certificateNames(config.tls.value.certPath).pipe(Effect.orDie)
-        : [],
-    };
-
     /**
-     * Where another device calls a webhook: the first address it reaches the
-     * server at, as `j3-bots pair` offers them, read when asked since
-     * interfaces come and go. With none, the address bound, or loopback when
-     * that is every interface.
+     * Where another device calls a webhook: the first address `j3-bots pair`
+     * offers for the listener as bound, read when asked since interfaces come
+     * and go. With none, as `pair` says it: over HTTPS, a placeholder for a
+     * name on the certificate; over HTTP on every interface, loopback.
      */
     const origin = Effect.gen(function* () {
-      const [host] = yield* reachableHosts(listener).pipe(Effect.provideService(Network, network));
-      const fallback = config.host === EVERY_IPV4_INTERFACE ? "127.0.0.1" : config.host;
-      return `${listener.scheme}://${NetAddress.formatUrlHostString(host ?? fallback)}:${config.port}`;
+      const bound = yield* Deferred.await(listener);
+      const [host] = yield* reachableHosts(bound).pipe(Effect.provideService(Network, network));
+      const shown =
+        host !== undefined
+          ? NetAddress.formatUrlHostString(host)
+          : bound.scheme === "https"
+            ? CERTIFICATE_NAME
+            : "127.0.0.1";
+      return `${bound.scheme}://${shown}:${bound.port}`;
     });
 
     const SELECT = sql.literal(`

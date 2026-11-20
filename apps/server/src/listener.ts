@@ -4,6 +4,7 @@ import * as NodeHttp from "node:http";
 import * as NodeHttps from "node:https";
 import type * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -34,18 +35,47 @@ const WEBSOCKET_CLOSE_MILLIS = 2_000;
 
 const websocket: WebSocketOptions = { closeTimeout: WEBSOCKET_CLOSE_MILLIS };
 
-/** Where the server listens for clients, as bound: what `j3-bots pair` prints. */
-export class Listener extends Context.Service<Listener, ListenerStatus>()(
+/**
+ * Where the server listens for clients, as bound: what `j3-bots pair` prints
+ * and a webhook's address names. The domain is built before the listener
+ * binds (`Ports.serve`), so this is made beneath both and completed once the
+ * listener has bound; a reader waits for it. Clients only ever reach the
+ * server once it has.
+ */
+export class Listener extends Context.Service<Listener, Deferred.Deferred<ListenerStatus>>()(
   "@j3-bots/server/listener",
 ) {}
 
+/** `Listener`, before the client listener binds. */
+export const unbound = Layer.effect(Listener, Deferred.make<ListenerStatus>());
+
 /**
- * The HTTP server clients reach, and what it bound. When the configuration
- * serves private addresses only (`privateOnly`), every connection is checked
- * as it is accepted, over HTTP and HTTPS alike: one that reached an address
- * that is not loopback or private is closed unread. Start already refused such
- * an address; this keeps one that appears later (a new interface, a lease on a
- * modem's public network) from ever being served.
+ * Completes `Listener` with where the HTTP server beneath bound, served over
+ * `scheme` with a certificate for `names`.
+ */
+const report = (scheme: ListenerStatus["scheme"], names: ReadonlyArray<string>) =>
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const { address } = yield* HttpServer.HttpServer;
+      if (!NetAddress.isInetAddress(address)) {
+        return yield* Effect.die(new Error("The client listener is not on an IP address"));
+      }
+      yield* Deferred.succeed(yield* Listener, {
+        scheme,
+        address: NetAddress.formatIp(address.address),
+        port: address.port,
+        names,
+      });
+    }),
+  );
+
+/**
+ * The HTTP server clients reach, reporting where it bound. When the
+ * configuration serves private addresses only (`privateOnly`), every
+ * connection is checked as it is accepted, over HTTP and HTTPS alike: one that
+ * reached an address that is not loopback or private is closed unread. Start
+ * already refused such an address; this keeps one that appears later (a new
+ * interface, a lease on a modem's public network) from ever being served.
  */
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
@@ -61,22 +91,10 @@ export const layer = Layer.unwrap(
       if (privateOnly) guardConnections(server, isPrivateAddress);
       return server;
     };
-    const status = Layer.effect(
-      Listener,
-      Effect.gen(function* () {
-        const { address } = yield* HttpServer.HttpServer;
-        if (!NetAddress.isInetAddress(address)) {
-          return yield* Effect.die(new Error("The client listener is not on an IP address"));
-        }
-        return Listener.of({
-          scheme: Option.isSome(credentials) ? "https" : "http",
-          address: NetAddress.formatIp(address.address),
-          port: address.port,
-          names: Option.match(credentials, { onNone: () => [], onSome: ({ names }) => names }),
-        });
-      }),
-    );
-    return status.pipe(
+    return report(
+      Option.isSome(credentials) ? "https" : "http",
+      Option.match(credentials, { onNone: () => [], onSome: ({ names }) => names }),
+    ).pipe(
       Layer.provideMerge(
         Ports.listen(
           createServer,

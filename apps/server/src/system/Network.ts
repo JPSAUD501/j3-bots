@@ -108,6 +108,12 @@ export const reachableHosts = Effect.fn("Network.reachableHosts")(function* (lis
 });
 
 /**
+ * What stands for the host of an HTTPS listener whose certificate names none
+ * `reachableHosts` offers: the operator puts in the name they reach it at.
+ */
+export const CERTIFICATE_NAME = "<a name the server's certificate covers>";
+
+/**
  * Destroys, as it is accepted and before any of its bytes is read, every
  * connection whose local address `allows` refuses. A listener on every
  * interface checks the address each connection actually reached, so an

@@ -9,7 +9,7 @@ import * as NetAddress from "effect/net/NetAddress";
 import { AdminClient } from "../admin/AdminClient.ts";
 import type { ListenerStatus } from "../admin/protocol.ts";
 import * as ServerConfig from "../config.ts";
-import { reachableHosts } from "../system/Network.ts";
+import { CERTIFICATE_NAME, reachableHosts } from "../system/Network.ts";
 import { refuse, userFacing } from "./errors.ts";
 
 const NOT_RUNNING =
@@ -35,7 +35,7 @@ const whereToOpen = Effect.fn("pair.whereToOpen")(function* (listener: ListenerS
   const hosts = yield* reachableHosts(listener);
   if (listener.scheme === "https" && hosts.length === 0) {
     return [
-      `The server listens at https://<a name the server's certificate covers>:${listener.port}.`,
+      `The server listens at https://${CERTIFICATE_NAME}:${listener.port}.`,
       "On the new device, open J3 Bots there and enter the code.",
     ];
   }
