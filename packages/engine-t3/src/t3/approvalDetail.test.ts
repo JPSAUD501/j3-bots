@@ -145,6 +145,47 @@ describe("approvalOf", () => {
     assert.strictEqual(shown.detail, "@@ -1,2 +1,2 @@\n context\n-old line\n+    new line");
     assert.strictEqual(shown.reason, "Writes outside the workspace");
     assert.strictEqual(shown.exact, true);
+
+    // A file with CRLF line endings has them in its diff too, and they only end its lines.
+    const crlf = item("patch-2", {
+      type: "file_change",
+      fileName: "../shared/config.json",
+      diffStr: diff.replaceAll("\n", "\r\n"),
+      changes: [{ operation: "update", path: "../shared/config.json" }],
+    });
+    assert.strictEqual(approvalOf(asked, asks, [crlf, asked]).exact, true);
+  });
+
+  it("shows a new file's contents exactly only when the card leaves none of them out", () => {
+    // Codex records an added file's contents, not a unified diff, as `diffStr`.
+    const shownFor = (contents: string) => {
+      const asks = request("add-1");
+      const asked = approval("add-1", { requestKind: "file-change", prompt: "Adds a file" });
+      const held = item("add-1", {
+        type: "file_change",
+        fileName: "probe.txt",
+        diffStr: contents,
+        changes: [{ operation: "add", path: "probe.txt" }],
+      });
+      return approvalOf(asked, asks, [asked, held]);
+    };
+    // CRLF line endings inside it show as the line breaks they are.
+    for (const contents of [
+      "codex app-server approval fixture.",
+      "codex app-server approval fixture.\r\nsecond line",
+    ]) {
+      const shown = shownFor(contents);
+      assert.strictEqual(shown.detail, contents);
+      assert.strictEqual(shown.exact, true);
+      assert.deepStrictEqual(shown.sessionGrant, { covers: "every-file-change" });
+    }
+    // Each of these endings would show as the first one does.
+    for (const ending of ["\n", "\n\n", "\r\n"]) {
+      const shown = shownFor(`codex app-server approval fixture.${ending}`);
+      assert.strictEqual(shown.exact, false);
+      assert.strictEqual(shown.action, "Adds a file");
+      assert.strictEqual(shown.sessionGrant, null);
+    }
   });
 
   it("calls a summary what asks about only part of a held command", () => {
@@ -240,15 +281,16 @@ describe("approvalOf", () => {
     assert.strictEqual(approvalOf(asked, asks, [asked, held]).exact, false);
   });
 
-  it("calls a command a summary when a dropped carriage return may be part of it", () => {
+  it("calls a command a summary when it holds text the card cannot draw as it runs", () => {
     const shownFor = (input: string) => {
       const asks = request("cmd-6");
       const asked = approval("cmd-6", { requestKind: "command", prompt: "Print a" });
       const held = item("cmd-6", { type: "command_execution", input });
       return approvalOf(asked, asks, [asked, held]);
     };
-    // A carriage return the command ends with is the last character of its last argument.
-    for (const input of ["printf a\r", "printf a\r\n"]) {
+    // A carriage return is a character of the command wherever it is, and a bidi override
+    // reorders the text after it on screen.
+    for (const input of ["printf a\r", "printf a\r\n", "cd build\r\nmake", "echo \u202Etxt.exe"]) {
       const shown = shownFor(input);
       assert.strictEqual(shown.exact, false);
       assert.strictEqual(shown.action, "Print a");

@@ -56,8 +56,6 @@ const MAX_REASON = 2_000;
  * they show nothing. `undefined` when it is blank. `whole` is false when it was
  * longer than an approval carries, or when a dropped line break followed a
  * backslash, which would join it to the line instead of ending it.
- * `droppedReturn` is true when what was dropped held a carriage return, which
- * can be a character of the text rather than part of a line break.
  */
 const verbatim = (text: string | null | undefined) => {
   const given = text ?? "";
@@ -67,15 +65,23 @@ const verbatim = (text: string | null | undefined) => {
     return {
       text: kept.slice(0, APPROVAL_TEXT_LENGTH).replace(/[\r\n]+$/, ""),
       whole: false,
-      droppedReturn: false,
     };
   }
   return {
     text: kept,
     whole: kept === given || !kept.endsWith("\\"),
-    droppedReturn: given.slice(kept.length).includes("\r"),
   };
 };
+
+/**
+ * Characters the card cannot draw as they act: a carriage return, drawn like a
+ * space or a line break though it is neither, and the bidi embedding, override
+ * and isolate controls, which reorder the text around them on screen.
+ */
+const UNSHOWABLE = /[\r\u202A-\u202E\u2066-\u2069]/;
+
+/** As `UNSHOWABLE`, except a carriage return that, with the line feed after it, ends a line. */
+const UNSHOWABLE_BUT_CRLF = /\r(?!\n)|[\u202A-\u202E\u2066-\u2069]/;
 
 const trimmed = (text: string | null | undefined) => {
   const kept = text?.trim() ?? "";
@@ -150,6 +156,21 @@ const commandOf = (approval: ApprovalItem, gated: GatedItem & { type: "command_e
       : undefined
     : { text: gated.input, fromPrompt: false };
 
+/**
+ * Whether the card, showing `kept` of a file change's `given` diff, shows all
+ * of it. Codex records an update's unified diff, whose trailing line breaks end
+ * its last line and whose lines may end in CRLF, as a file with CRLF line
+ * endings has them. For any other change it records the file's contents as
+ * they are (Read at db51b67, `CodexAdapterV2` and the `tool_call_restricted_granular`
+ * fixture), and Claude Code records its tool's output, so there a dropped
+ * trailing line break is content the card leaves out: a file that ends in
+ * none, one or two line breaks would look the same.
+ */
+const diffShown = (operation: string | undefined, given: string, kept: string) =>
+  operation === "update"
+    ? !UNSHOWABLE_BUT_CRLF.test(given)
+    : kept === given && !UNSHOWABLE_BUT_CRLF.test(given);
+
 /** What the held item says exactly, or `undefined` when it does not say what was asked. */
 const exactOf = (
   kind: Approval["kind"],
@@ -164,9 +185,8 @@ const exactOf = (
       command && {
         action: command.text,
         detail: null,
-        // A dropped carriage return may be the last character of an argument, which the card
-        // cannot show; a diff's, in a file with CRLF line endings, is only the line's ending.
-        exact: command.whole && !command.droppedReturn,
+        // A carriage return is part of the command wherever it is, even before a line feed.
+        exact: command.whole && !UNSHOWABLE.test(given.text ?? ""),
         fromPrompt: given.fromPrompt,
       }
     );
@@ -188,7 +208,12 @@ const exactOf = (
     return {
       action: paths.text,
       detail: diff?.text ?? null,
-      exact: diff !== undefined && diff.whole && paths.whole,
+      exact:
+        diff !== undefined &&
+        diff.whole &&
+        paths.whole &&
+        !UNSHOWABLE.test(paths.text) &&
+        diffShown(changes[0]?.operation, gated.diffStr ?? "", diff.text),
       fromPrompt: false,
     };
   }

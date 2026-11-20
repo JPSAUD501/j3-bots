@@ -205,7 +205,7 @@ J3 Bots has **its own** avatar system. Existing products use friendly blob chara
 | Notice | One quiet line where something stopped: a failed turn (with Try again), a reply that did not arrive, a chain of bots that hit its budget (a pause mark), a bot waiting in its own conversation. Notices are not announced; the conversation header's live region is |
 | Routine change | A card in the timeline when a routine is created, changed, paused, resumed or deleted |
 
-Question, approval and credential cards take a submitting state: while the operator's answer is on its way, their controls take no second answer but stay focusable (`aria-disabled` buttons, read-only fields), so focus stays where it was. Once answered, focus that was in the controls moves to the card.
+Question, approval and credential cards take a submitting state: while the operator's answer is on its way, their controls take no second answer but stay focusable (`aria-disabled` buttons, read-only fields), so focus stays where it was. Once answered, focus that was in the controls moves to the card, and the card is described by the line that says how it closed, so a screen reader announces the outcome with it.
 
 ## Words
 

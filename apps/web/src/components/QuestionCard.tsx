@@ -39,6 +39,7 @@ export function QuestionCard({
   const { status } = entry;
   const pending = status._tag === "pending";
   const [first] = entry.questions;
+  const outcomeId = useId();
   // Answered, the controls go; focus that was in them moves to the card.
   const { target, actions } = useFocusAfterActions<HTMLElement>(pending);
   // While an answer is on its way the controls stay focusable but take no second one.
@@ -58,6 +59,7 @@ export function QuestionCard({
       title={pending ? t("question.pending") : t("question.title")}
       attention={pending}
       entryId={entry.id}
+      describedBy={pending ? undefined : outcomeId}
     >
       {!pending ? (
         <>
@@ -68,7 +70,7 @@ export function QuestionCard({
               answer={status._tag === "answered" ? (status.answers[q.id] ?? null) : null}
             />
           ))}
-          <p className="text-xs text-muted-foreground">
+          <p id={outcomeId} className="text-xs text-muted-foreground">
             {status._tag === "answered"
               ? t("question.answered")
               : status._tag === "dismissed"

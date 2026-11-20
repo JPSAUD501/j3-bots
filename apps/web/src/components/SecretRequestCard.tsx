@@ -5,7 +5,9 @@ import { ExternalLinkIcon, KeyRoundIcon } from "lucide-react";
 import { useId, useState } from "react";
 import { useI18n } from "../app/context";
 import type { KeyWith } from "../i18n/i18n";
+import { cn } from "../lib/cn";
 import { webAddress } from "../lib/links";
+import { touchTarget } from "../lib/touchTarget";
 import { type FocusWatch, useFocusAfterActions } from "../lib/useFocusAfterActions";
 import { CardFrame } from "./CardFrame";
 import { Button } from "./ui/button";
@@ -39,6 +41,7 @@ export function SecretRequestCard({
 }: SecretRequestCardProps) {
   const { t } = useI18n();
   const fieldId = useId();
+  const outcomeId = useId();
   const pending = entry.status === "pending";
   // Answered, the field and its actions go; focus that was in them moves to the card.
   const { target, actions } = useFocusAfterActions<HTMLElement>(pending);
@@ -50,6 +53,7 @@ export function SecretRequestCard({
       title={pending ? t("secret.pending") : t("secret.title")}
       attention={pending}
       entryId={entry.id}
+      describedBy={pending ? undefined : outcomeId}
     >
       <div className="flex flex-col gap-1">
         {pending ? (
@@ -71,7 +75,9 @@ export function SecretRequestCard({
           focusWatch={actions}
         />
       ) : (
-        <p className="text-xs text-muted-foreground">{t(closedText[entry.status])}</p>
+        <p id={outcomeId} className="text-xs text-muted-foreground">
+          {t(closedText[entry.status])}
+        </p>
       )}
     </CardFrame>
   );
@@ -125,7 +131,10 @@ function SecretForm({
             href={link}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            className={cn(
+              "inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline",
+              touchTarget,
+            )}
           >
             {t("secret.getOne")}
             <ExternalLinkIcon aria-hidden className="size-3" />

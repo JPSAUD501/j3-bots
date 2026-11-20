@@ -62,7 +62,8 @@ const scrolls =
  * When the provider shared only a summary, the card says so in words and sets
  * the summary as prose, not code; it can still be allowed once, so a bot never
  * stalls on such a provider, but never for the whole session. A grant for the
- * session says, next to its button, what it will allow from then on.
+ * session says, under the buttons and naming its button, what it will allow
+ * from then on.
  */
 export function ApprovalCard({
   entry,
