@@ -15,7 +15,7 @@ J3 Bots has three clients: a web app, a desktop app and a mobile app. All three 
 
 **`packages/design-tokens`** holds colors, the bot palette, the avatar shapes, type sizes, spacing, radii, motion timings and layout sizes as data, so the web stylesheet and the mobile theme are generated from one source. The web stylesheet is generated today; the mobile theme will be generated from the same data.
 
-`client-runtime` imports nothing from a platform. Each app provides it, as services: the server's origin; a credential store over the platform's secure storage (keychain or keystore on mobile, the OS vault on desktop); a source of network status; an HTTP client and a WebSocket constructor (`fetch` and the global `WebSocket` on all three); and a secure random source. The runtime exposes state as values a UI reads synchronously and watches with a listener, so any renderer can use it; React hooks over them live in `@j3-bots/client-runtime/react`.
+`client-runtime` imports nothing from a platform. Each app provides it, as services: the server's origin; a credential store (IndexedDB in the browser, the keychain or keystore on mobile, the OS vault on desktop); a small local store that keeps drafts and unsent messages across restarts; locks shared by the app's windows (the Web Locks API in a browser); a file uploader that reports progress; a source of network status; an HTTP client and a WebSocket constructor (`fetch` and the global `WebSocket` on all three); and a secure random source. The runtime exposes state as values a UI reads synchronously and watches with a listener, so any renderer can use it; React hooks over them live in `@j3-bots/client-runtime/react`.
 
 The rule from T3 Code that J3 Bots adopts as is: **the UI stays dumb.** A component receives state and emits intent. If two clients need the same decision, the decision lives in `client-runtime`. The web client still keeps the decisions it has made so far (roster order, status lines, timeline grouping, schedules in words) in `apps/web/src/presentation` and `apps/web/src/lib`, free of React, so they can move there unchanged.
 
@@ -63,17 +63,18 @@ Plain HTTP is accepted only on loopback and private address ranges. Everything e
 
 A new client is paired with a one-time code.
 
-1. The operator runs `j3-bots pair` on the host, or opens Devices in an already paired client. Either shows a code that expires in five minutes; `j3-bots pair` also prints the addresses the server listens on. A QR code that carries the address and the code is planned. The code is ten characters of Crockford base32 (no `I`, `L`, `O` or `U`); clients accept it in lower case and with spaces or dashes.
+1. The operator runs `j3-bots pair` on the host, which prints the code and the addresses the server listens on, or opens Devices in an already paired client, which shows the code as text with the time it expires. A code expires in five minutes. Making one in Devices needs a connection to the server; offline, Devices says so. A QR code that carries the address and the code is planned. The code is ten characters of Crockford base32 (no `I`, `L`, `O` or `U`); clients accept it in lower case and with spaces or dashes.
 2. The new client sends the code to `POST /api/pair` and receives a device token. The server stores only a hash. A code works once.
-3. Devices are listed in settings with their last activity, and can be revoked. Revoking closes that device's connections immediately.
+3. Devices are listed in settings with their last activity, and can be revoked. Revoking closes that device's connections immediately. A client waits ten seconds at most for the server to confirm a revocation; without that answer it says the revocation is not confirmed, offers to try again, and reads the list again once connected, which shows whether the device is still there.
 
 A device token grants everything the operator can do in J3 Bots. There are no narrower roles in the first versions.
 
-Signing out a device from its own settings ends its access:
+Signing out a device ends its access. It is offered in settings and, while there is no roster yet (connecting, or before the first bot), as a quiet button on that screen. It takes four steps, each attempted whatever the others did, and each failure is logged on its own:
 
-1. It deletes its drafts and unsent messages, which hold conversation text.
+1. It stops sending the outbox.
 2. If it is connected, it revokes its own credential on the server, waiting up to ten seconds for the answer.
-3. It deletes the credential, and only then returns to pairing. If a deletion fails, the device stays signed in and settings say so.
+3. It deletes its drafts and unsent messages, which hold conversation text.
+4. It deletes the credential, and only then returns to pairing. If that deletion fails, the device stays signed in, and settings say that sign-out did not finish.
 
 When the server cannot be reached, the device still signs out here, and the pairing screen says the other devices list it until one of them revokes it. A device keeps no conversation text without a credential: whenever it loses its credential (signed out, revoked, or signed out in another tab), its drafts and unsent messages are discarded. In a browser, every change to the stored credential is announced to the origin's other tabs with `BroadcastChannel`, and each loads it again, so pairing or signing out in one tab takes effect in all of them.
 
@@ -85,14 +86,16 @@ All three clients use the ticket. A browser cannot set a header on a WebSocket, 
 
 - Before its first ticket, the client checks `GET /api/server`. A server that speaks another protocol version is shown as incompatible and not retried until the operator asks.
 - Every socket is opened with a fresh ticket, since a ticket works once.
-- A 401 from the ticket route means the device is not paired or was revoked: the client forgets its credential, stops reconnecting and asks to pair again.
-- Anything else (no answer, a refused upgrade, a socket that closes after it opened) means try again, after a pause that doubles from half a second up to thirty seconds, jittered so clients do not return together. While the platform reports no network the client waits, and it tries at once when the network returns.
+- A 401 from the ticket route whose body is the server's own `NotAuthenticated` means the device is not paired or was revoked: the client forgets its credential, stops reconnecting and asks to pair again. Any other 401 comes from something in between, such as a reverse proxy whose own login expired, and counts as the server being out of reach: the client keeps its credential, drafts and unsent messages, and tries again.
+- Anything else (no answer, a refused upgrade, a socket that closes after it opened) means try again, after a pause that doubles from half a second up to thirty seconds, jittered so clients do not return together. When the platform reports the network gone, the client closes its socket at once rather than wait for it to fail, which can take a long time; it then waits, and tries at once when the network returns.
 
 A request in flight when its socket closes is sent again on the next socket. That is safe because every command carries its command id, and the rest are reads. Files go over HTTP with the same bearer: `POST /attachments` before sending a message that carries them, and `GET /attachments/:id` to open one.
 
 ## Behavior every client must get right
 
-- **Offline and reconnect.** A message typed while disconnected is kept and sent on reconnect, exactly once, and the messages of one conversation reach the server in the order they were written. Sending moves the message from its draft to the outbox in one storage transaction, so a crash leaves it in exactly one of them; if the device cannot keep it, it stays in the draft and the operator is told.
+- **Offline and reconnect.** A message typed while disconnected is kept and sent on reconnect, exactly once, and the messages of one conversation reach the server in the order they were written. Sending moves the message from its draft to the outbox in one storage transaction, so a crash leaves it in exactly one of them; if the device cannot keep it, it stays in the draft and the operator is told. While that transaction runs, a few milliseconds, the composer is read-only and takes no files, so nothing typed meanwhile is lost.
+- **Several windows.** Each draft is stored with a revision. The transaction that sends it claims the revision this window read; if another window sent or changed the draft since, it writes nothing, and this window shows the draft as stored and tells the operator. One window at a time sends a conversation's messages, holding a lock named for that conversation, and sends everything the device keeps for it, oldest first. A window that sends a message another window already delivered sends it by the same command id, which the server applies once. A page served over plain HTTP on a local network has no Web Locks API, so there each tab sends on its own: no message is recorded twice, but two tabs can interleave their messages to one conversation.
+- **A message sent again after a reload** leaves the conversation once the server accepts it; its entry may be older than the history loaded, and shows where it belongs when the history is read.
 - **One conversation everywhere.** An entry sent or answered on one device appears on the others without a reload.
 - **Cards resolve once.** Answering a question or an approval on any device resolves it on all.
 - **State is the server's.** A client never infers "the bot is working" from its own timers. It shows what the server reports and marks its view as stale when disconnected.
