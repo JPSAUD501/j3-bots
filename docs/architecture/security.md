@@ -100,6 +100,8 @@ This is a deployment recommendation, not something J3 Bots enforces. See [open q
 - When a bot needs a credential, it uses the engine's secret request, which shows the operator a masked input and gives the value to the command that needs it without placing it in the model's context.
 - J3 Bots carries the value from the client to the engine and keeps nothing of it: not in the card, the change log, a command receipt or a log line. The card records only that a value was provided. In code the value travels as a redacted type, so printing it shows nothing.
 - Memory files are not a place for secrets. The `remember` tool refuses text that looks like a credential.
+- **The provider connection's key** is typed on the host into `j3-bots provider connect`, without echo, or piped on standard input, never on the command line. The command hands it to the running server over the admin socket, and the server to the engine's secret store, one file per instance (mode 0600, inside the private home); the server keeps no copy and logs nothing of it. Bots never see it: the engine gives it only to the harness process, in its environment.
+- **The operator's own provider setup stays out.** The harnesses run with homes of their own, and the engine starts without the server's harness variables (`ANTHROPIC_*`, `CLAUDE*`, `OPENAI_*`, `CODEX_*`) or T3 Code's (`T3CODE_*`, `T3_*`), so a server started from the operator's shell does not hand bots the operator's sign-ins or keys ([Engine: isolation](engine.md#isolation)).
 
 ## What is logged
 

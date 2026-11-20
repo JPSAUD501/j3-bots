@@ -15,7 +15,7 @@ J3 Bots keeps two kinds of state, in two places, for two different readers.
 | Conversation | One per bot. A sequence of entries, and how far the operator has read |
 | Room | Name, members, host, status (active or archived) and when it was archived. A sequence of entries |
 | Entry | A message or a card, with its author, its time, its delivery state and its fixed place (`order`) in its conversation or room |
-| Session | J3 Bots' own id, its bot, its purpose (main or side), the engine thread id once the engine has one, the prompt version it was created with, its run count, the cursor of the engine events applied so far, the turn it has admitted with that turn's audience, the engine queue's current hold and the hold it last resumed, and when the engine answered that it has no such session |
+| Session | J3 Bots' own id, its bot, its purpose (main or side), the engine thread id once the engine has one, the prompt version it was created with, the provider it runs on, the rotation it is due for and why, when the engine took it out of use after it was retired, the cursor of the engine events applied so far, the turn it has admitted with that turn's audience, the engine queue's current hold and the hold it last resumed, and when the engine answered that it has no such session |
 | Wake | Kind, priority, target bot, audience, payload, hop count, status (pending, dispatched, finished, cancelled or failed), and the dispatch that delivered it |
 | Dispatch | One delivery to the engine: its sequence number, the order it was written in, the target session, the audience, start or steer, the rendered envelope and its files, how many times it was sent, how many times staging its files failed, the disposition the engine reported first if it reported one, the turn that delivers it, its status and, when it failed, why, a pending continuation of its turn, the Stop that fenced it, the outcome. Several coalesced wakes share one |
 | Stop | The operator's Stop of one bot (scope `bot`), or of a room's work when the room is archived (scope `room`): its command id, the highest dispatch sequence number when it was recorded, and per target session and round the engine key, when the engine acknowledged it or refused it, when the events were observed past that acknowledgment, and whether they confirmed it stopped |
@@ -48,6 +48,9 @@ shared/
     user.md          facts about the operator every bot can read
     log/2026-11.md   shared dated history
   skills/            skills available to every bot
+providers/
+  claude-code/       Claude Code's home for every bot (`CLAUDE_CONFIG_DIR`)
+  codex/             Codex's home for every bot (`CODEX_HOME`)
 ```
 
 Generated files are written by the server from the database and the memory files. A bot never edits them by hand, and the server rewrites them whenever their inputs change.
@@ -220,9 +223,18 @@ A session's id is J3 Bots' own, written before the engine is asked for a thread 
 
 Because the main session does not see what a side session did, the server keeps a **catch-up note** per bot, in the database. When the bot next wakes in its main session, the envelope begins with what happened since: "Routine 'Morning repo check' ran at 08:03 and told the user: …". The note is consumed in the same transaction that writes that dispatch, so it is neither lost nor shown twice.
 
-**Rotation.** The server replaces a bot's main session when any of these is true: it passed a threshold of runs, the engine reports a provider-side failure to resume, the operator changed the bot's provider, or the operator asked for a fresh start. The new session's first envelope carries a digest of the recent conversation. The conversation itself is untouched. The old session is retired, not deleted. A dispatch to it still waiting for an answer fails as `unresolved`.
+**Rotation.** The server replaces a bot's main session when any of these is true:
 
-**A lost session.** When the engine answers that it has no such session (`SessionNotFound`), to a send, a Stop round, a resume, an answer or the event stream, the session is recorded **lost**, once, and everything open in it is settled in the same transaction, since nothing runs there any more: its Stop targets settle, each round keeping what the engine answered for it, a refusal included; a dispatch the engine had accepted, also one it queued, fails as `unresolved` and keeps the engine's first answer, its wakes failed and retryable, or cancelled when a Stop covers them ([What a Stop covers](#stop)); a delivered one, every open turn and its work fold end interrupted; its open requests close as expired. A dispatch whose answer is not known is due at once and the sender settles it in the gate, as `unresolved` when it was sent. Nothing is planned into the session or watched in it again, and it counts toward no budget. Its loss only holds back its own work: every other bot goes on. A lost main session shows a `session-lost` notice in the bot's conversation; the bot's wakes wait until it has a new main session, which part 2b creates.
+- it ran 200 turns, a provisional threshold ([open question 8](../open-questions.md));
+- the engine ran a turn on recovered context because the provider could not resume its own conversation (the turn ends with `contextRecovered`, [Engine](engine.md#the-adapters-interface));
+- the operator moved the bot to another provider (another model on the same provider stays in the session, through `configureSession`);
+- the operator asked for a fresh start (`bot.freshStart`).
+
+Each records the reason on the session, once, in the transaction of what caused it. From then on nothing new is planned into the session: wakes for the bot wait, as they wait for any busy session. The rotator replaces the session once it is quiet, with no admitted or open turn, no continuation pending, no dispatch on its way and no Stop unsettled, as far as the session's events say once they are known. In one transaction it retires the session and writes a catch-up note with a digest of the conversation. The bot's new main session is then opened as any is, and its first envelope brings the note in `since-last-turn`, ahead of whatever woke it, so a rotation costs no turn of its own. The old engine thread is archived (`retireSession`), retried until the engine answers, and never deleted. The conversation itself is untouched.
+
+The digest is the delivered messages of the bot's conversation, the operator's and the bot's own, newest kept: at most the last 60, each cut to 1,000 characters, 6,000 characters in all, oldest first. Notices and messages that never reached the bot are left out. Memory, not the digest, is what a bot relies on across rotations ([decision 0003](../decisions/0003-conversation-is-not-session.md)).
+
+**A lost session.** When the engine answers that it has no such session (`SessionNotFound`), to a send, a Stop round, a resume, an answer or the event stream, the session is recorded **lost**, once, and everything open in it is settled in the same transaction, since nothing runs there any more: its Stop targets settle, each round keeping what the engine answered for it, a refusal included; a dispatch the engine had accepted, also one it queued, fails as `unresolved` and keeps the engine's first answer, its wakes failed and retryable, or cancelled when a Stop covers them ([What a Stop covers](#stop)); a delivered one, every open turn and its work fold end interrupted; its open requests close as expired. A dispatch whose answer is not known is due at once and the sender settles it in the gate, as `unresolved` when it was sent. Nothing is planned into the session or watched in it again, and it counts toward no budget. Its loss only holds back its own work: every other bot goes on. A lost main session shows a `session-lost` notice in the bot's conversation; the bot's wakes wait until it has a new main session, which the rotator opens at once, with the same digest a rotation brings ([Rotation](#sessions)).
 
 ## Bot tools
 
@@ -413,6 +425,7 @@ The server reads its settings from `<J3_HOME>/config.json`. On first start, once
 | `tls` | `J3_TLS_CERT`, `J3_TLS_KEY` | none | A certificate and key (`{ "cert", "key" }` in the file), which serve HTTPS. With them, `host` may be any address, public ones included; `lan` still serves private addresses only. The two variables are set together and replace the file's pair |
 | `enginePort` | `J3_ENGINE_PORT` | `3738` | The engine's loopback port |
 | | `J3_ENGINE_BINARY` | the pinned release | For testing an engine build. Not in the file, and a service never uses it |
+| | `J3_SCRIPTED_AGENT` | none | The engine's scripted ACP agent, offered as a provider named `scripted` and listed first, so new bots run on it: an end-to-end run with no model. For development. Not in the file, and a service never uses it |
 | `toolPort` | `J3_TOOL_PORT` | `3739` | The bot tool endpoint's loopback port, which the `j3` bridges call |
 | `webClient` | `J3_WEB_CLIENT` | this checkout's `apps/web/dist` | The built web client, served on the API's origin. A folder named here must hold an `index.html`. Everything in it is public, so it may not overlap private state in either direction, symbolic links resolved: it may not hold the home, the TLS certificate or key, or anything the home keeps private, nor lie inside any of them. The one place inside the home it may be is `<J3_HOME>/web`. The default is served once it is built |
 
@@ -436,4 +449,4 @@ Relative paths in the file resolve against `J3_HOME`.
 | A turn fails | Records the engine's error class on the dispatch and shows it; retries only routine wakes, with a cap |
 | A provider hits its limit | Marks the provider's bots blocked with the reset time; holds automated wakes until then. The turn that hit it stays open as a pending continuation, and a dispatch already waiting in the engine starts at the reset |
 | The server process exits | On start, runs the sequence above, which also sends a dispatch written and never sent, whether or not its bot has a wake pending, and recovers every dispatch that was sent but has no recorded answer. No turn starts twice, because a dispatch keeps its key and its envelope |
-| A session cannot be resumed | Rotates to a new session seeded from memory and the recent conversation, after its dispatches in flight have an answer or fail as `unresolved` |
+| A session cannot be resumed | The engine runs the turn on its own summary of the old conversation; the server then rotates the session once it is quiet, and the new one starts from memory and the digest ([Sessions](#sessions)) |
