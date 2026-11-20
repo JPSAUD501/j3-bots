@@ -86,10 +86,19 @@ export const layer = Layer.effect(
       execute: (id) => sql`SELECT id, revoked_at FROM devices WHERE id = ${id}`,
     });
 
-    const activeDevice = (row: Option.Option<typeof DeviceRow.Type>) =>
-      Option.isSome(row) && row.value.revoked_at === null
-        ? Effect.succeed(row.value.id)
-        : Effect.fail(new NotAuthenticated());
+    /** The device, if it is still paired, marked as seen now. */
+    const activeDevice = Effect.fn("DeviceAuth.activeDevice")(function* (
+      row: Option.Option<typeof DeviceRow.Type>,
+    ) {
+      if (Option.isNone(row) || row.value.revoked_at !== null) {
+        return yield* new NotAuthenticated();
+      }
+      const at = DateTime.formatIso(yield* DateTime.now);
+      yield* sql`UPDATE devices SET last_seen_at = ${at} WHERE id = ${row.value.id}`.pipe(
+        Effect.orDie,
+      );
+      return row.value.id;
+    });
 
     const authenticate = Effect.fn("DeviceAuth.authenticate")(function* (
       credential: SocketCredential,
