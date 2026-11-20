@@ -27,7 +27,7 @@ export type SettingsSave =
 /**
  * The operator's preferences. The contract has no subscription for them and
  * no revision, so they are read when each socket opens and again after each
- * save the server accepts, and the read started last is the one shown. What
+ * save the server accepts, and only the read started last is shown. What
  * a save returns is not shown: answered again from its receipt after a
  * reconnection, it can be older than what the reconnection read. A change
  * made on another device shows here after the next reconnect or save.
@@ -45,6 +45,26 @@ export class Settings extends Context.Service<
   }
 >()("@j3-bots/client-runtime/stores/Settings") {}
 
+/**
+ * Runs reads of one value and passes on only the answer of the read started
+ * last: an older read that answers while a newer one is on its way, or after
+ * it, would show what the newer one replaces.
+ */
+export const latestRead = <A>(show: (value: A) => void) => {
+  let started = 0;
+  return <E, R>(read: Effect.Effect<A, E, R>): Effect.Effect<void, E, R> =>
+    Effect.suspend(() => {
+      const ticket = ++started;
+      return read.pipe(
+        Effect.flatMap((value) =>
+          Effect.sync(() => {
+            if (ticket === started) show(value);
+          }),
+        ),
+      );
+    });
+};
+
 export const layer = Layer.effect(
   Settings,
   Effect.gen(function* () {
@@ -53,23 +73,9 @@ export const layer = Layer.effect(
     const state = new Cell<Synced<SettingsValue>>(loading);
     const save = new Cell<SettingsSave>({ _tag: "idle" });
 
-    // Reads started, and the latest whose answer is shown.
-    let started = 0;
-    let shown = 0;
-    /** Reads the settings, and shows them unless a read started later already has. */
-    const read = (client: J3RpcClient) =>
-      Effect.suspend(() => {
-        const ticket = ++started;
-        return client["settings.get"]().pipe(
-          Effect.flatMap((settings) =>
-            Effect.sync(() => {
-              if (ticket < shown) return;
-              shown = ticket;
-              state.set(ready(settings));
-            }),
-          ),
-        );
-      });
+    const latest = latestRead((settings: SettingsValue) => state.set(ready(settings)));
+    /** Reads the settings, and shows them unless a read started later is under way or done. */
+    const read = (client: J3RpcClient) => latest(client["settings.get"]());
 
     yield* connection
       .eachSession((client) =>
