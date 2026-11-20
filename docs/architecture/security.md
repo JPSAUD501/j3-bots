@@ -79,7 +79,10 @@ This is a deployment recommendation, not something J3 Bots enforces. See [open q
 
 ## J3 Bots' own surface
 
-- **Client connections** require a device token. Tokens are stored hashed, listed, and revocable.
+- **Client connections** require a device token. Tokens are stored hashed, listed, and revocable. The socket checks the token, or a single-use ticket bought with it, once at the upgrade; each socket belongs to one device, and revoking the device closes its sockets at once. File routes take the same bearer on every request.
+- **Pairing codes** carry 50 bits (ten Crockford base32 characters), expire after five minutes and work once. Failed attempts are limited across all sources: after five failures in fifteen minutes, pairing is locked for fifteen minutes and every attempt is answered with the time it opens again. A locked-out attacker gets a handful of guesses per quarter hour against a space of 2^50.
+- **Plain HTTP** is refused at start on any address that is not loopback or private. A public address needs `J3_TLS_CERT` and `J3_TLS_KEY`.
+- **A failing request** fails alone, with a generic error; the cause stays in the server log, and the socket's other subscriptions carry on.
 - **Webhook endpoints** authenticate with a secret in the path, compared in constant time, and optionally an HMAC over the body. Bodies are size-limited and rate-limited per routine.
 - **The bot tool endpoint** listens on loopback and accepts calls only from sessions the server created. It identifies the bot from the session, never from an argument the model supplies.
 - **Bot scope.** A bot's tools reach its own conversation, memory and routines, the shared memory, and the rooms it belongs to. Nothing in the tool surface returns another bot's conversation or memory. This is isolation of the product surface, not of the filesystem.
@@ -88,6 +91,7 @@ This is a deployment recommendation, not something J3 Bots enforces. See [open q
 
 - J3 Bots never asks the operator to paste a secret into a conversation, and the base prompt tells bots not to either.
 - When a bot needs a credential, it uses the engine's secret request, which shows the operator a masked input and gives the value to the command that needs it without placing it in the model's context.
+- J3 Bots carries the value from the client to the engine and keeps nothing of it: not in the card, the change log, a command receipt or a log line. The card records only that a value was provided. In code the value travels as a redacted type, so printing it shows nothing.
 - Memory files are not a place for secrets. The `remember` tool refuses text that looks like a credential.
 
 ## What is logged

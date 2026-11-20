@@ -84,7 +84,7 @@ Requirements:
 
 - Recognizable at 24 px in a list and expressive at 96 px in a profile.
 - Built from two choices the operator makes, a **shape** and a **color**, so that a roster of ten bots has ten distinct silhouettes.
-- Carries the six states (idle, thinking, working, waiting, blocked, done) through its own form or motion.
+- Carries the six states (idle, thinking, working, waiting, blocked, done) through its own form or motion. Done is an idle bot with something unread.
 - Works as a still image for notifications and for reduced-motion settings; state is then shown by a small mark.
 - An operator may replace it with an image; state then falls back to the small mark.
 

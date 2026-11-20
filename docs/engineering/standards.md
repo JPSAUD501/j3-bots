@@ -62,12 +62,13 @@ Rules:
 
 Two suites matter more than the rest:
 
-- **Engine conformance.** `packages/engine-t3` is tested against a real, isolated T3 Code server at the pinned version. This suite is what makes an engine upgrade safe. See [Engine](../architecture/engine.md#upgrading-the-engine).
+- **Engine conformance.** `packages/engine-t3` is tested against a real, isolated T3 Code server at the pinned version. This suite is what makes an engine upgrade safe. See [Engine](../architecture/engine.md#upgrading-the-engine). Everything above the adapter is tested against `@j3-bots/engine-t3/testing`, an in-memory engine that keeps the adapter's contract and has tests of its own for the parts callers rely on.
 - **Prompt evals.** Prompt changes are behavior changes. See [Prompt architecture](../prompts/architecture.md#evaluation).
 
 ## Changes
 
 - **One problem per pull request**, including everything that problem needs across layers.
+- **License identifiers.** Every first-party source file starts with `SPDX-License-Identifier: AGPL-3.0-or-later` ([decision 0008](../decisions/0008-license.md)). `pnpm lint` checks it; vendored upstream source keeps its own license.
 - **Title:** a conventional-commit prefix and plain language that says what changed for the person using it: `fix(mobile): a held message is sent once after reconnect`.
 - **Body:** the problem in a sentence or two, then how it was fixed, then how it was verified. "Tests pass" is not verification.
 - **Interface changes** include before-and-after images; motion includes a short capture.
@@ -91,7 +92,7 @@ Two suites matter more than the rest:
 T3 Code runs machinery that is right for its size and too much for a new project. J3 Bots starts without it and adds each piece when its absence starts to cost something:
 
 - a full event-sourced core with projections and replay; J3 Bots uses plain tables plus a durable queue for the few things that need it;
-- dozens of custom lint rules; J3 Bots starts with a handful (suppression reasons, wall-clock use in tests, restyling of `ui` components, untranslated text);
+- dozens of custom lint rules; J3 Bots starts with a handful (only `packages/engine-t3` may import T3 Code, which is in place; suppression reasons, wall-clock use in tests, restyling of `ui` components, untranslated text);
 - a compiler-coverage gate, a remote task cache, multiple release channels;
 - contribution automation (size labels, limits, vouching).
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { BotId, RoomId, RoutineId } from "@j3-bots/contracts";
 import { SecureRandom } from "effect/crypto";
 import * as DateTime from "effect/DateTime";
@@ -51,6 +52,7 @@ const wakesWith = (s: string): ReadonlyArray<Wake> => {
       kind: "user",
       answer: {
         question: s,
+        room: s,
         response: { type: "answered", chosen: [{ label: s, value: s }], text: s },
       },
       messages: [
@@ -183,7 +185,7 @@ describe("renderWake", () => {
     `);
   });
 
-  it("renders the answer to an ask card, answered or dismissed", () => {
+  it("renders the answer to an ask card, answered in a room or dismissed", () => {
     const question = "Which environment should I deploy to?";
     expect(
       render({
@@ -193,6 +195,7 @@ describe("renderWake", () => {
         sinceLastTurn: [],
         answer: {
           question,
+          room: "Launch",
           response: {
             type: "answered",
             chosen: [{ label: "Staging", value: "stg" }],
@@ -203,7 +206,7 @@ describe("renderWake", () => {
       }),
     ).toMatchInlineSnapshot(`
       "<j3-wake kind="user" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
-      <answer>
+      <answer room="Launch">
       <question>Which environment should I deploy to?</question>
       <chosen value="stg">Staging</chosen>
       <message from="user">
@@ -220,7 +223,7 @@ describe("renderWake", () => {
         at: now,
         timeZone,
         sinceLastTurn: [],
-        answer: { question, response: { type: "dismissed" } },
+        answer: { question, room: null, response: { type: "dismissed" } },
         messages: [
           { at: now, text: "actually, wait for Monday", attachments: [] },
           { at: at("2026-11-20T12:42:00Z"), text: "and tell Ana", attachments: [] },

@@ -4,3 +4,5 @@ dist/
 *.log
 .vite-plus/
 *.tsbuildinfo
+.env*
+!.env.example

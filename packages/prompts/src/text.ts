@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 /**
  * Making text safe to place inside a wake envelope or a bot's instructions.
  *

@@ -21,11 +21,11 @@ What is still shared with the machine:
 
 ## Version pinning
 
-J3 Bots names one exact T3 Code version, in `engine.json` at the repository root: the release version and the commit its tag points at. The pin is `0.1.11-nightly.20261119.4941`, commit `ff9efe89`, the release the first M0 probes ran against. **Verified**: the tag `v0.1.11-nightly.20261119.4941` points at that commit.
+J3 Bots names one exact T3 Code version, in `engine.json` at the repository root: the release version and the commit its tag points at. The pin is `0.1.11-nightly.20261120.4969`, commit `db51b6719f116de156401ed264b5d732f35b2c93`. **Verified**: the tag `v0.1.11-nightly.20261120.4969` points at that commit.
 
-**The pin must move to `0.1.11-nightly.20261120.4969`, commit `db51b671`, or later.** On `4941` the engine does not give a stdio MCP server that Codex starts the `T3CODE_THREAD_ID` variable, so the [bot tool bridge](server.md#bot-tools) cannot identify a Codex bot. Upstream pull request 39414 added it; `4969` is the oldest release that contains it. **Verified** on both releases. The move follows [Upgrading the engine](#upgrading-the-engine) and is due before the adapter's Codex path is built.
+It is the oldest release on which the engine gives a stdio MCP server that Codex starts the `T3CODE_THREAD_ID` variable, which the [bot tool bridge](server.md#bot-tools) needs to identify a Codex bot. Upstream pull request 39414 added it. **Verified**: absent on `4941`, present on `4969`.
 
-The source claims labelled **Read** were made at commit `9bb92a4`, unless the research notes name `db51b67`. `db51b67` is `9bb92a4` plus ten commits, so once the pin moves, every Read claim is at or before it. Each one still holds only until it is checked at the pin, by the adapter's code or its conformance suite. A release's commit is in its title on GitHub, and it is often older than `main` on the same day: a fact read in source counts for a release only if that commit contains it.
+The source claims labelled **Read** were made at commit `9bb92a4`, unless the research notes name `db51b67`. `db51b67` is `9bb92a4` plus ten commits, so every Read claim is at or before the pin. Each one still holds only until it is checked at the pin, by the adapter's code or its conformance suite. A release's commit is in its title on GitHub, and it is often older than `main` on the same day: a fact read in source counts for a release only if that commit contains it.
 
 The engine binary is the standalone release archive for the platform, downloaded once, checked against the release's `SHA256SUMS`, and stored under `<J3_HOME>/engine/runtime/<version>/`.
 
@@ -35,9 +35,9 @@ At startup the adapter reads the engine's public descriptor and refuses to conti
 
 The adapter decodes the protocol with T3 Code's own schemas ([decision 0007](../decisions/0007-client-and-server-stack.md)). Their package, `@t3tools/contracts`, is not published to a registry, so J3 Bots vendors it.
 
-- `packages/engine-t3/vendor/t3-contracts/` holds the package's source at the pinned commit, unmodified, with T3 Code's MIT license. It is a workspace package under its upstream name. Only `packages/engine-t3` may depend on it; the adapter will be its first user.
-- `pnpm vendor:t3-contracts` regenerates it from `engine.json`. The script refuses to run if the release tag no longer points at the pinned commit, and leaves out upstream's tests.
-- The package depends only on `effect`. J3 Bots' version catalog pins exactly the Effect version T3 Code pins at the commit (4.1.3), so the vendored schemas and J3 Bots' code share one copy of Effect. **Verified**: the vendored source typechecks in J3 Bots' build with T3 Code's compiler settings.
+- `packages/engine-t3/vendor/t3-contracts/` holds the package's source at the pinned commit, unmodified, with T3 Code's MIT license. It is a workspace package under its upstream name. Only `packages/engine-t3` may import it: a lint rule refuses an `@t3tools/*` import anywhere else.
+- `pnpm vendor:t3-contracts` regenerates it from `engine.json`. The script refuses to run if the release tag no longer points at the pinned commit, and leaves out upstream's tests. A weekly CI job re-runs it and fails if the result differs from what is committed.
+- The package depends only on `effect`. J3 Bots' version catalog pins exactly the Effect versions T3 Code pins at the commit (`effect` 4.1.3, `@effect/platform-node` 4.1.2, unchanged from `4941`; **Read** in `pnpm-workspace.yaml` at `db51b67`), so the vendored schemas and J3 Bots' code share one copy of Effect. **Verified**: the vendored source typechecks in J3 Bots' build with T3 Code's compiler settings.
 
 ## Connecting
 
@@ -63,10 +63,26 @@ Protocol facts the adapter depends on:
 - **Events replace whole entities.** A streaming assistant message arrives as its full text so far. The client upserts by id and never applies deltas. **Verified**.
 - **Resume by sequence.** The client remembers the last sequence it applied and resubscribes with `afterSequence`. The stream continues from the next event, with nothing lost, across a dropped socket and across an engine restart. If that point was pruned, the server sends a fresh snapshot (**Read**). Events may overlap; the client drops anything at or below what it has. **Verified**.
 - **Sequences belong to the environment, not the thread.** One counter serves every thread and project, so a thread's stream has gaps. A gap is not loss. **Verified**.
-- **Commands are idempotent by `commandId`.** A replayed `message.dispatch` returns the first one's sequence and starts no second run, even with a different message id. J3 Bots uses the wake id, so a retry after a crash cannot start a second turn. **Verified**.
+- **Commands are idempotent by `commandId`.** A replayed `message.dispatch` returns the first one's sequence and starts no second run, even with a different message id. **Verified**. The adapter derives every command id, and a dispatch's message id, from a key the server stored before the call, so a retry after a crash cannot start a second turn.
 - **Revoking the session closes the socket.** The adapter must reconnect and resume at any time. **Read**.
 
 A token with `orchestration:operate` can start a full-access agent. It is equivalent to a shell as the server's user and is handled as such.
+
+## The adapter's interface
+
+The rest of J3 Bots sees the engine only through the `Engine` service exported by `packages/engine-t3`. It speaks of sessions, turns and requests; nothing in it names a T3 Code type, and nothing outside the package imports one.
+
+- **Durable keys.** Every call that changes engine state (open a session, dispatch, interrupt, stop, answer a request) takes a key the server has already stored. The adapter derives the engine's command id from it and, for a dispatch, the message id and the ids of any follow-up commands. A retry with the same key is the same command.
+- **Delivery is start or steer.** `start` runs a message in an idle session. It is refused with `SessionBusy`, and nothing is sent, if the session has a running or waiting turn: an engine-started turn, for example. `steer` adds a message to one named running turn. The adapter never asks the engine to queue a message. Waiting and priority belong to the server ([Server: the wake pipeline](server.md#the-wake-pipeline)).
+- **A dispatch reports what happened.** The result is `started`, `steered` or `new-turn`, each with the engine turn. A steer becomes a new turn when the target turn finished before the steer arrived, when the provider cannot steer, or when the target turn is a compaction. A `new-turn` may wait in the engine's queue behind the running turn: it is the only message the engine ever holds for J3 Bots. **Read** at `db51b67`.
+- **A lookup has three answers.** `lookupDispatch(key)` answers `applied` with the disposition, `not-applied`, or `unknown` when the engine cannot tell (its session is gone). Only `not-applied` lets the server send the dispatch again, and only `applied` or `not-applied` lets it move on to a replacement session.
+- **Events resume by replay or by replacement, never both.** `events(session, after)` replays every event after the cursor while the engine still has them. When it no longer does, the stream starts with one `replaced` event carrying a new cursor and the state that matters: the open turns with their work steps, the open requests (approvals, questions and secret requests), and the outcome of every turn that ended since the old cursor. Live events follow. The server applies each event and stores its cursor in one transaction. A cursor of `null` is only for a session that was never dispatched to.
+- **Host speech.** A call to the engine's `send_to_user` tool arrives as `host-speech` with its turn and text, so the server can deliver it instead of losing it.
+- **Requests.** Approvals and questions are answered with `respond`. Secret requests are answered with `respondSecret`, which carries the value as a redacted string to the engine's own secret path; the value never enters an event, a log or a stored record. A request closes as answered or expired, and every request open on a turn expires when the turn ends.
+- **Interrupt and stop.** `interrupt` ends one running turn. `stop` ends the running turn, its background work and every turn waiting in the engine. The server uses them for the operator's Stop, never to end a turn after its delivery.
+- **Session ids.** A session's id is the engine thread id. The bot tool bridge receives the same id as its caller identity, and `sessionOfToolCaller(environment)` decodes it, so the server never names the engine's variable.
+
+`@j3-bots/engine-t3/testing` provides an in-memory engine that honors these rules, with tests for the ones a caller relies on: a key applied once, a refused start that sends nothing, a late steer that becomes a new turn, replay and replacement, requests that expire with their turn, a secret handed over once, and nothing applied while the engine is unreachable. Server tests run against it. Only the conformance suite runs a real engine.
 
 ## What J3 Bots uses, and what it leaves alone
 
@@ -76,11 +92,13 @@ J3 Bots keeps the engine surface it touches small, because every part it touches
 | --- | --- | --- |
 | Projects | Yes | One project per bot, on the bot's workspace folder. A folder belongs to at most one project: `project.create` on a folder that has one fails with a conflict, so J3 Bots stores the project id and never re-creates it (**Verified**) |
 | Threads | Yes | The bot's main session and its side sessions |
-| `message.dispatch` with queue and steer | Yes | Every wake |
-| Run interrupt and thread stop | Yes | "Stop" |
+| `message.dispatch` with `start_immediately` and `steer_active` | Yes | Every wake. Never `queue_after_active`: the server holds waiting wakes itself |
+| `queue.resume` | After an engine restart | Releases a steer that became a new turn and was held by the restart |
+| Run interrupt and thread stop | Yes | The operator's Stop |
 | Runtime requests (approvals, questions) | Yes | Shown as cards; answered with `runtime-request.respond` |
+| Secret requests | Yes | A bot's `request_secret` call is shown as a card; the operator's value goes to `secrets.answerRequest` and nowhere else |
 | Model selection and runtime mode per thread | Yes | Per-bot model and permission mode |
-| Attachment upload | Yes | Files the operator sends |
+| Attachment upload | Yes | Files the operator sends with a message |
 | Provider status and usage limits | Yes | Engine health, usage view, blocked state |
 | Fresh context on a dispatch | Yes | Fresh start, session rotation |
 | Scheduled tasks and webhooks | No | J3 Bots schedules its own wakes. See [decision 0005](../decisions/0005-j3-bots-owns-wakes.md) |
@@ -131,7 +149,15 @@ The operator can inspect the engine through T3 Code's own web interface, reached
 
 Each of these was found by reading or running the engine and would break a naive design.
 
-**An engine restart cancels what was running and holds what was queued.** The running run ends `cancelled`. A pending approval or question ends `cancelled` with `responseCapability: {type: "not_resumable"}`, so its card must close. Runs that were queued stay queued with `queueHeld: true`, and `queue.resume` starts them. **Verified**. A stop, a provider error or a usage limit holds a queue the same way, and a message stamped as coming from a user on a web or mobile client also releases it (**Read**). J3 Bots sends `queue.resume` for each of its threads when it reconnects after an engine restart.
+**An engine restart cancels what was running and holds what was queued.** The running run ends `cancelled`. A pending approval or question ends `cancelled` with `responseCapability: {type: "not_resumable"}`, so its card must close. Runs that were queued stay queued with `queueHeld: true`, and `queue.resume` starts them. **Verified**. A stop, a provider error or a usage limit holds a queue the same way, and a message stamped as coming from a user on a web or mobile client also releases it (**Read**). The only queued run J3 Bots can have is a steer that became a new turn; after an engine restart the server sends `queue.resume` to each thread that holds one.
+
+**A steer does not always steer.** The engine turns a steer into a new turn when the target run or its provider turn has already completed, and queues it behind the running turn when the provider cannot steer or the target is a compaction or a sign-out (**Read** at `db51b67`: `Orchestrator.ts`, `CommandPolicy.ts` `resolveMessageDispatchIntent`). A steer the agent had not read when Stop reached its run is requeued by the engine as a follow-up run (**Read** at `db51b67`, `Orchestrator.ts`, unread steers). The adapter reports the disposition it observed; whether a stop also ends that follow-up is checked by the conformance suite (**Assumed** until then).
+
+**Interrupting a run can lose a delegated task's result.** A delegated task's completion is delivered to the parent run that started it. J3 Bots treats an interrupt as able to drop that delivery (**Assumed**: reported from the source at the pin, not yet traced in these notes), so it never interrupts a run to end it after its delivery. Only the operator's Stop interrupts.
+
+**`send_to_user` only echoes.** The engine's tool returns its input with "Shown to the user" and does nothing else; its text exists only as the tool call in the turn's items (**Read** at `db51b67`, `apps/server/src/mcp/toolkits/message/handlers.ts`). The adapter reads it from there as host speech.
+
+**Secret requests have their own answer path.** A `request_secret` call becomes a `secret_request` turn item with a label, a reason, an optional URL and placeholder, and a status (pending, saved, declined, cancelled). It is answered by the `secrets.answerRequest` RPC with the thread, the item and `save`, `decline` or `reference`, not by `runtime-request.respond`; a second answer fails as already answered (**Read** at `db51b67`, `packages/contracts/src/secretRequest.ts`, `orchestrationV2.ts`, `rpc.ts`, and `apps/server/src/ws.ts`).
 
 **The engine starts runs nobody dispatched.** Two cases were observed. If background work was running when the engine restarted, the engine sends the session its own continuation message (`createdBy: "agent"`, `creationSource: "server"`, beginning "Note: the T3 server restarted") and a new run starts. If a command the harness ran in the background finishes after its turn ended, the harness's notice arrives as a new run (`createdBy: "agent"`, `creationSource: "provider"`). **Verified** on Claude Code. Every run names the message that started it (`userMessageId`); the adapter matches runs to wakes by that id and treats any other run as an engine-initiated turn of the session. Such a turn closes no wake, and anything the bot says in it still comes through `say`.
 

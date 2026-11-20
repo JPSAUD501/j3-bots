@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Schema from "effect/Schema";
 
 export const NonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
@@ -33,6 +34,12 @@ export type DeviceId = typeof DeviceId.Type;
 export const ProviderId = id.pipe(Schema.brand("ProviderId"));
 export type ProviderId = typeof ProviderId.Type;
 
+/** One step of a turn's work: a command, an edit, a search, a delegated task. */
+export const WorkStepId = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)).pipe(
+  Schema.brand("WorkStepId"),
+);
+export type WorkStepId = typeof WorkStepId.Type;
+
 /** A model slug within one provider. */
 export const ModelId = id.pipe(Schema.brand("ModelId"));
 export type ModelId = typeof ModelId.Type;
@@ -45,8 +52,17 @@ export const CommandId = id.pipe(Schema.brand("CommandId"));
 export type CommandId = typeof CommandId.Type;
 
 /**
- * A position in one subscription's change history. Only comparable within the
- * subscription that produced it.
+ * Where an entry sits in its conversation or room. Assigned once, when the entry
+ * is created, and never changed: entries sort by it, and an entry that is
+ * updated later keeps its place. Only comparable within one target.
+ */
+export const EntryOrder = NonNegativeInt.pipe(Schema.brand("EntryOrder"));
+export type EntryOrder = typeof EntryOrder.Type;
+
+/**
+ * A position in the server's change history. Says how far a subscriber has
+ * applied changes, never where an entry sorts (that is `EntryOrder`). Only
+ * comparable within the subscription that produced it.
  */
 export const Sequence = NonNegativeInt.pipe(Schema.brand("Sequence"));
 export type Sequence = typeof Sequence.Type;

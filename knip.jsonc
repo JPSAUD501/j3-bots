@@ -1,7 +1,8 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  // Exported types are part of the contracts even before they have consumers.
-  "rules": { "types": "off", "nsTypes": "off" },
+  // Exports of a workspace package's entry points are its public API, so the
+  // contract packages may export types before anything consumes them. Every
+  // other export, type or not, must be used.
   // T3 Code's contracts, vendored as is: typechecked here, not ours to prune.
   "ignoreWorkspaces": ["packages/engine-t3/vendor/t3-contracts"],
 }

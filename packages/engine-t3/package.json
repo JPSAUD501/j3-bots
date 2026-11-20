@@ -8,13 +8,22 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
+    },
+    "./testing": {
+      "types": "./src/testing/index.ts",
+      "import": "./src/testing/index.ts"
     }
   },
   "scripts": {
-    "typecheck": "effect-tsgo tsrs --noEmit"
+    "typecheck": "effect-tsgo tsrs --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "dependencies": {
     "@j3-bots/contracts": "workspace:*",
     "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "vite-plus": "catalog:"
   }
 }

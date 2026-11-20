@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Schema from "effect/Schema";
 import { BotId, NonNegativeInt } from "./base.ts";
 
@@ -10,12 +11,14 @@ export type MemoryScope = typeof MemoryScope.Type;
 
 /**
  * A Markdown file relative to the scope's memory folder, such as `profile.md` or
- * `log/2026-11.md`. The server refuses paths that leave the folder.
+ * `log/2026-11.md`. Every segment starts with a letter, digit or underscore, so
+ * `.` and `..` cannot appear and no path can leave the folder or name a hidden
+ * file. The server still checks that the resolved path is inside the folder.
  */
 export const MemoryPath = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(256),
-  Schema.isPattern(/^[\w.-]+(?:\/[\w.-]+)*\.md$/),
+  Schema.isPattern(/^\w[\w.-]*(?:\/\w[\w.-]*)*\.md$/),
 ).pipe(Schema.brand("MemoryPath"));
 export type MemoryPath = typeof MemoryPath.Type;
 

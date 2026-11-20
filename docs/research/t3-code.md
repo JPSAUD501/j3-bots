@@ -6,8 +6,8 @@ What J3 Bots knows about T3 Code, how it knows it, and where to look. Paths are 
 
 | Release | Commit | Note |
 | --- | --- | --- |
-| `0.1.11-nightly.20261119.4941` | `ff9efe8` | Pinned in `engine.json`. The engine does not give MCP servers that Codex starts `T3CODE_THREAD_ID`. |
-| `0.1.11-nightly.20261120.4969` | `db51b67` | The oldest release the bot tool bridge works on with Codex. `9bb92a4` plus ten commits, including pull request 39414, which adds that variable. |
+| `0.1.11-nightly.20261119.4941` | `ff9efe8` | The first M0 probes. The engine does not give MCP servers that Codex starts `T3CODE_THREAD_ID`. |
+| `0.1.11-nightly.20261120.4969` | `db51b67` | Pinned in `engine.json`. The oldest release the bot tool bridge works on with Codex. `9bb92a4` plus ten commits, including pull request 39414, which adds that variable. |
 
 A nightly's title names its commit. A fact read at one commit applies to a release only if the release's commit contains it.
 
@@ -112,7 +112,13 @@ Token counts are the `turnTokenUsage` the engine reported for a turn asking for 
 | Live events coalesced in 50 ms windows | `apps/server/src/orchestration-v2/ThreadLiveEventCoalescer.ts` |
 | Client messages are stamped `createdBy: "user"`, `creationSource: "web"` by default | `apps/server/src/ws.ts` |
 | Attachment upload: `attachments.createUploadUrl`, then POST the bytes | `packages/contracts/src/assets.ts`, `apps/server/src/http.ts` |
-| `packages/contracts` depends only on `effect`, pinned to 4.1.3, and ships TypeScript source | `packages/contracts/package.json`, `pnpm-workspace.yaml` |
+| `packages/contracts` depends only on `effect`, pinned to 4.1.3, and ships TypeScript source; the platform packages are pinned to 4.1.2 (`db51b67`) | `packages/contracts/package.json`, `pnpm-workspace.yaml` |
+| A requested steer becomes `queue_after_active` when the provider can neither steer nor restart its turn, or when the target is a compaction or sign-out (`db51b67`) | `apps/server/src/orchestration-v2/CommandPolicy.ts` (`resolveMessageDispatchIntent`) |
+| A steer whose target run or provider turn already completed is started as a new run (`start_immediately`) (`db51b67`) | `apps/server/src/orchestration-v2/Orchestrator.ts` |
+| A steer the agent had not read when Stop reached its run is requeued as a follow-up run (`db51b67`) | `Orchestrator.ts` (unread steers) |
+| Secret requests: a `secret_request` turn item (label, reason, optional URL, placeholder and file delivery, status pending, saved, declined or cancelled), answered by the `secrets.answerRequest` RPC with `save`, `decline` or `reference`; a second answer fails as `already_answered` (`db51b67`) | `packages/contracts/src/secretRequest.ts`, `orchestrationV2.ts`, `rpc.ts`, `apps/server/src/ws.ts` |
+| `send_to_user` returns its input and does nothing else (`db51b67`) | `apps/server/src/mcp/toolkits/message/handlers.ts` |
+| The WebSocket server authenticates once at the upgrade and builds one RPC server per connection, with fatal defects disabled (`db51b67`) | `apps/server/src/ws.ts` |
 
 ### Prompt levers
 

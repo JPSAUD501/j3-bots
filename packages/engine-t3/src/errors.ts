@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { ModelId, ProviderId } from "@j3-bots/contracts";
 import * as Schema from "effect/Schema";
 import { EngineProjectId, RequestId, SessionId, TurnId } from "./ids.ts";
@@ -34,6 +35,7 @@ export class ProjectNotFound extends Schema.TaggedError<ProjectNotFound>()("Proj
   }
 }
 
+/** The session does not exist, or it was retired. */
 export class SessionNotFound extends Schema.TaggedError<SessionNotFound>()("SessionNotFound", {
   sessionId: SessionId,
 }) {
@@ -42,7 +44,11 @@ export class SessionNotFound extends Schema.TaggedError<SessionNotFound>()("Sess
   }
 }
 
-/** A `start` delivery reached a session that is running or has queued turns. */
+/**
+ * A `start` reached a session that has a turn running or waiting to start:
+ * usually one the engine started itself. Nothing was sent. The server
+ * dispatches again once the session is idle.
+ */
 export class SessionBusy extends Schema.TaggedError<SessionBusy>()("SessionBusy", {
   sessionId: SessionId,
   turnId: TurnId,
@@ -52,16 +58,7 @@ export class SessionBusy extends Schema.TaggedError<SessionBusy>()("SessionBusy"
   }
 }
 
-/** A `steer` delivery named a turn that has already ended. Nothing was sent. */
-export class TurnNotRunning extends Schema.TaggedError<TurnNotRunning>()("TurnNotRunning", {
-  turnId: TurnId,
-}) {
-  override get message(): string {
-    return `The turn ${this.turnId} is not running.`;
-  }
-}
-
-/** The approval or question was already answered, or expired with its turn. */
+/** The request was already answered, or expired with its turn. */
 export class RequestClosed extends Schema.TaggedError<RequestClosed>()("RequestClosed", {
   requestId: RequestId,
 }) {

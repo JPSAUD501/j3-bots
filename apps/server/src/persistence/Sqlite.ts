@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";

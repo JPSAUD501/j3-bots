@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Replaces packages/engine-t3/vendor/t3-contracts with T3 Code's packages/contracts
 # at the engine commit recorded in engine.json.
 #

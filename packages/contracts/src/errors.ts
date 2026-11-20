@@ -1,12 +1,26 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Schema from "effect/Schema";
 
-/** The request carried no device token, or one that is unknown or revoked. */
+/**
+ * The request carried no device credential, or one that is unknown, expired or
+ * revoked. Sent by the HTTP routes; a socket with a bad credential is refused at
+ * the upgrade and a revoked device's sockets are closed.
+ */
 export class NotAuthenticated extends Schema.TaggedError<NotAuthenticated>()(
   "NotAuthenticated",
   {},
 ) {
   override get message(): string {
     return "This device is not paired, or its pairing was revoked.";
+  }
+}
+
+/** Too many failed attempts. Nothing is accepted until `retryAt`. */
+export class RateLimited extends Schema.TaggedError<RateLimited>()("RateLimited", {
+  retryAt: Schema.DateTimeUtc,
+}) {
+  override get message(): string {
+    return "Too many attempts. Try again later.";
   }
 }
 
@@ -18,6 +32,7 @@ export const Resource = Schema.Literals([
   "routine-run",
   "memory-file",
   "device",
+  "attachment",
 ]);
 export type Resource = typeof Resource.Type;
 
@@ -40,6 +55,8 @@ export class Conflict extends Schema.TaggedError<Conflict>()("Conflict", {
     "stale-revision",
     /** The notice can no longer be retried. */
     "not-retryable",
+    /** The engine cannot take the command right now; retry once it is ready. */
+    "engine-unavailable",
   ]),
 }) {
   override get message(): string {
@@ -53,6 +70,8 @@ export class Invalid extends Schema.TaggedError<Invalid>()("Invalid", {
     "pairing-code",
     "answer",
     "room-members",
+    "mentions",
+    "attachment",
     "schedule",
     "time-zone",
     "model",
@@ -64,6 +83,6 @@ export class Invalid extends Schema.TaggedError<Invalid>()("Invalid", {
   }
 }
 
-/** What a command can fail with, besides authentication. */
+/** What a command can fail with. */
 export const CommandError = Schema.Union([NotFound, Conflict, Invalid]);
 export type CommandError = typeof CommandError.Type;

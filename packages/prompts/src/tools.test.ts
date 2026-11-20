@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 import { DECODE_OPTIONS, type ToolName, toolList, tools } from "./tools.ts";
