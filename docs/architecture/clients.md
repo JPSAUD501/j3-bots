@@ -14,7 +14,7 @@ J3 Bots has three clients: a web app, a desktop app and a mobile app. All three 
 - commands: sending a message, answering a card, stopping a bot, each with its own idempotency key and optimistic entry;
 - drafts and unsent messages.
 
-**`packages/design-tokens`** holds colors, the bot palette, the avatar shapes, type sizes, spacing, radii, motion timings and layout sizes as data, so the web stylesheet and the mobile theme are generated from one source. One script writes both: `@j3-bots/design-tokens/web.css` for Tailwind on the web and `@j3-bots/design-tokens/uniwind.css` for Uniwind on mobile, with the same utility names and values, and a test fails when either file is stale.
+**`packages/design-tokens`** holds colors, the bot palette, the avatar shapes, type sizes, spacing, radii, motion timings and layout sizes as data, so the web stylesheet and the mobile theme are generated from one source. One script writes both: `@j3-bots/design-tokens/web.css` for Tailwind on the web and `@j3-bots/design-tokens/uniwind.css` for Uniwind on mobile. Both name their utilities from the same tokens (`bg-background`, `text-sm`, `rounded-bubble`, `tablet:`), except fonts, which the mobile app sets itself. On mobile the colors are converted to 8-bit sRGB, so a color outside sRGB renders clipped there. A test fails when either file is stale.
 
 **`packages/i18n`** is the translation catalog: every interface sentence in each language the contract lists (English and Brazilian Portuguese), where a sentence missing from a language, or a placeholder dropped from one, fails the typecheck. It also words notifications, so the server can write a push as the clients show one.
 
@@ -52,7 +52,7 @@ On Linux, Chromium's OS sandbox needs unprivileged user namespaces or its `chrom
 An Expo app for iOS and Android.
 
 - React Native with React Navigation's native stack. The three regions (roster, conversation, details) are a stack on phones and columns on tablets.
-- Uniwind for styling, with the theme generated from the tokens: light and dark colors as Uniwind theme variants, the type scale, radii and spacing in px, and the touch target and touch row height.
+- Uniwind for styling, with the theme generated from the tokens: light and dark colors as Uniwind theme variants, the type scale, radii, spacing and breakpoints in px, and the touch target and touch row height. The app's `global.css` imports `tailwindcss`, then `uniwind`, then `@j3-bots/design-tokens/uniwind.css`; in another order Tailwind's default palette and sizes come back.
 - LegendList for the conversation, with keyboard-aware scrolling.
 - Push notifications, dictation in the composer, and the share sheet as a way to send something to a bot.
 

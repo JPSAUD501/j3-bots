@@ -1,27 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
-  botPalette,
-  colors,
-  fonts,
-  layout,
-  motion,
-  radii,
-  spacingUnit,
-  typeScale,
-  type Themed,
-} from "./tokens.ts";
+  colorEntries,
+  declarations,
+  radiusEntries,
+  typeEntries,
+  type Entry,
+} from "./themeEntries.ts";
+import { fonts, layout, motion, spacingUnit } from "./tokens.ts";
 
 const rem = (px: number) => `${px / 16}rem`;
 
-const lines = (entries: ReadonlyArray<readonly [string, string]>, indent = "  ") =>
-  entries.map(([name, value]) => `${indent}--${name}: ${value};`).join("\n");
-
-function themeVariables(mode: keyof Themed) {
-  return [
-    ...Object.entries(colors).map(([role, value]) => [role, value[mode]] as const),
-    ...Object.entries(botPalette).map(([color, value]) => [`bot-${color}`, value[mode]] as const),
-  ];
-}
+const lines = (entries: ReadonlyArray<Entry>) => declarations(entries, "  ");
 
 /**
  * The web stylesheet for the tokens: each theme's values as custom properties
@@ -33,29 +22,22 @@ function themeVariables(mode: keyof Themed) {
  * theme.
  */
 export function renderWebCss(): string {
-  const colorUtilities = [
-    ...Object.keys(colors).map((role) => [`color-${role}`, `var(--${role})`] as const),
-    ...Object.keys(botPalette).map((c) => [`color-bot-${c}`, `var(--bot-${c})`] as const),
-  ];
-  const typeEntries = Object.entries(typeScale).flatMap(([name, { size, lineHeight }]) => [
-    [`text-${name}`, rem(size)] as const,
-    [`text-${name}--line-height`, rem(lineHeight)] as const,
+  const colorUtilities = colorEntries("light", "").map(([name]): Entry => [
+    `color-${name}`,
+    `var(--${name})`,
   ]);
-  const radiusEntries = Object.entries(radii).map(
-    ([name, px]) => [`radius-${name}`, px >= 9999 ? "9999px" : rem(px)] as const,
-  );
 
   return `/* Generated from packages/design-tokens/src by \`pnpm --filter @j3-bots/design-tokens generate\`. Do not edit. */
 
 :root,
 .light {
   color-scheme: light;
-${lines(themeVariables("light"))}
+${lines(colorEntries("light", ""))}
 }
 
 .dark {
   color-scheme: dark;
-${lines(themeVariables("dark"))}
+${lines(colorEntries("dark", ""))}
 }
 
 :root {
@@ -103,8 +85,8 @@ ${lines([
   // The app shell lays out by its own width, so a frame can show any layout.
   ["container-tablet", rem(layout.breakpoints.tablet)],
   ["container-wide", rem(layout.breakpoints.wide)],
-  ...typeEntries,
-  ...radiusEntries,
+  ...typeEntries(rem),
+  ...radiusEntries(rem),
 ])}
 }
 

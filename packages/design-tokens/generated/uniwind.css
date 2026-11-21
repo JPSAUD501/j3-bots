@@ -80,6 +80,7 @@
   --color-*: initial;
   --text-*: initial;
   --radius-*: initial;
+  --font-*: initial;
   --color-background: unset;
   --color-surface: unset;
   --color-sidebar: unset;
@@ -114,6 +115,8 @@
   --color-bot-pink: unset;
   --color-bot-gray: unset;
   --spacing: 4px;
+  --breakpoint-tablet: 768px;
+  --breakpoint-wide: 1200px;
   --text-2xs: 11px;
   --text-2xs--line-height: 16px;
   --text-xs: 12px;

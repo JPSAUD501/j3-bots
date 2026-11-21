@@ -1,71 +1,52 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
-  botPalette,
-  colors,
-  layout,
-  radii,
-  spacingUnit,
-  typeScale,
-  type Themed,
-} from "./tokens.ts";
+  colorEntries,
+  declarations,
+  radiusEntries,
+  typeEntries,
+  type Entry,
+} from "./themeEntries.ts";
+import { layout, spacingUnit } from "./tokens.ts";
 
 const px = (value: number) => `${value}px`;
-
-const lines = (entries: ReadonlyArray<readonly [string, string]>, indent: string) =>
-  entries.map(([name, value]) => `${indent}--${name}: ${value};`).join("\n");
-
-const colorNames = [
-  ...Object.keys(colors).map((role) => `color-${role}`),
-  ...Object.keys(botPalette).map((color) => `color-bot-${color}`),
-];
-
-function themeVariables(mode: keyof Themed) {
-  return [
-    ...Object.entries(colors).map(([role, value]) => [`color-${role}`, value[mode]] as const),
-    ...Object.entries(botPalette).map(
-      ([color, value]) => [`color-bot-${color}`, value[mode]] as const,
-    ),
-  ];
-}
 
 /**
  * The mobile app's theme for Uniwind (Tailwind v4 for React Native): each
  * theme's colors in a `@variant light` and a `@variant dark` block of the
  * theme layer, which Uniwind switches with the system or a stored choice, and
- * the type scale, radii, spacing and touch sizes.
+ * the type scale, radii, spacing, breakpoints and touch sizes.
  *
  * Utilities are named as on the web (`bg-background`, `text-sm`,
  * `rounded-bubble`), with the same values. Lengths are in px: React Native has
  * no root font size, and Uniwind only multiplies rem by a configurable base.
- * Colors stay in the tokens' notation; Uniwind converts them to sRGB at build
- * time.
+ * Colors stay in the tokens' notation; Uniwind converts them to 8-bit sRGB at
+ * build time, so a color outside sRGB renders clipped where the web shows it
+ * whole.
  *
- * Tailwind's default palette, type scale and radii are removed, as on the web.
+ * Tailwind's default palette, type scale, radii and font families are removed.
+ * The fonts are left to the app: React Native takes one family name, which
+ * differs by platform.
  * Removing the palette also drops the names Uniwind registers for the theme's
  * variables, so the color names are registered again after it, the way Uniwind
  * does, and the file works wherever it is imported relative to Uniwind's own.
  *
- * Written for Uniwind 1.13.2 and Tailwind 4.3.3.
+ * The resets only hold when this file is imported after `tailwindcss` and
+ * `uniwind`. Written for Uniwind 1.13.2 and Tailwind 4.3.3.
  */
 export function renderUniwindCss(): string {
-  const typeEntries = Object.entries(typeScale).flatMap(([name, { size, lineHeight }]) => [
-    [`text-${name}`, px(size)] as const,
-    [`text-${name}--line-height`, px(lineHeight)] as const,
-  ]);
-  const radiusEntries = Object.entries(radii).map(
-    ([name, value]) => [`radius-${name}`, px(value)] as const,
-  );
+  const light = colorEntries("light", "color-");
+  const dark = colorEntries("dark", "color-");
 
   return `/* Generated from packages/design-tokens/src by \`pnpm --filter @j3-bots/design-tokens generate\`. Do not edit. */
 
 @layer theme {
   :root {
     @variant light {
-${lines(themeVariables("light"), "      ")}
+${declarations(light, "      ")}
     }
 
     @variant dark {
-${lines(themeVariables("dark"), "      ")}
+${declarations(dark, "      ")}
     }
   }
 }
@@ -74,19 +55,22 @@ ${lines(themeVariables("dark"), "      ")}
   --color-*: initial;
   --text-*: initial;
   --radius-*: initial;
-${lines(
+  --font-*: initial;
+${declarations(
   [
-    ...colorNames.map((name) => [name, "unset"] as const),
+    ...light.map(([name]): Entry => [name, "unset"]),
     ["spacing", px(spacingUnit)],
-    ...typeEntries,
-    ...radiusEntries,
+    ["breakpoint-tablet", px(layout.breakpoints.tablet)],
+    ["breakpoint-wide", px(layout.breakpoints.wide)],
+    ...typeEntries(px),
+    ...radiusEntries(px),
   ],
   "  ",
 )}
 }
 
 @theme static {
-${lines(
+${declarations(
   [
     ["layout-touch-target", px(layout.touchTarget)],
     ["layout-row-touch", px(layout.rowHeight.touch)],
