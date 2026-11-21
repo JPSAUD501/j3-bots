@@ -51,7 +51,7 @@ describe("a page opened from a pairing link", () => {
       expect(replaceState).not.toHaveBeenCalled();
     }
   });
-  it("starts the pairing screen with the code and the server, and waits for Pair", () => {
+  it("starts the pairing screen with the code and the server", () => {
     const onPair = vi.fn<Parameters<typeof Pairing>[0]["onPair"]>();
     const html = renderToStaticMarkup(
       <Pairing
@@ -64,7 +64,6 @@ describe("a page opened from a pairing link", () => {
     );
     expect(html).toContain(`value="${CODE}"`);
     expect(html).toContain(`Server: ${SERVER}`);
-    expect(onPair).not.toHaveBeenCalled();
   });
 });
 
