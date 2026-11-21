@@ -72,6 +72,21 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         "expo-image-picker",
         { photosPermission: false, cameraPermission: false, microphonePermission: false },
       ],
+      // Other apps' share sheets list J3 Bots on Android for text, links and
+      // files of any type, one or several. iOS would need a share extension,
+      // which reaches the app through an App Group, and signing one takes a
+      // paid Apple developer account.
+      [
+        "expo-sharing",
+        {
+          ios: { enabled: false },
+          android: {
+            enabled: true,
+            singleShareMimeTypes: ["*/*"],
+            multipleShareMimeTypes: ["*/*"],
+          },
+        },
+      ],
       "./plugins/cleartextToPrivateHosts.js",
     ],
   };
