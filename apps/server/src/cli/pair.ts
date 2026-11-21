@@ -167,7 +167,7 @@ export const pairCommand = Command.make("pair", {
       );
       yield* Console.log(
         [
-          ...(unlock ? ["Pairing is unlocked.", ""] : []),
+          ...(unlock ? ["Pairing is open.", ""] : []),
           `Pairing code: ${formatCode(grant.code)}`,
           "",
           `It works once, for the next ${minutes} minute${minutes === 1 ? "" : "s"}.`,
