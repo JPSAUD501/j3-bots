@@ -135,6 +135,10 @@ export const installedUnit = Effect.gen(function* () {
   return yield* fs.readFileString(yield* unitPath).pipe(Effect.option);
 });
 
+/** The `PATH` the installed service runs with, which the engine starts harnesses with. */
+export const servicePathOf = (unitText: Option.Option<string>) =>
+  Option.flatMapNullishOr(unitText, (text) => environmentOf(text).get("PATH"));
+
 /**
  * The configuration a command describes or acts on: with the service
  * installed, the service's own (its home and `PATH`, none of this shell's

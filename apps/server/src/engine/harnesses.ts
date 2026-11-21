@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import type { PROVIDER_HOMES } from "../home/entries.ts";
+import { Host } from "../system/Host.ts";
 
 /** A harness the engine runs bots on, with a home of its own in `<J3_HOME>/providers`. */
 export type Harness = (typeof PROVIDER_HOMES)[number];
@@ -22,6 +25,12 @@ export interface HarnessFacts {
    * when it has such a sign-in.
    */
   readonly deviceAuth: string | undefined;
+  /**
+   * Its sign-in first revokes the sign-in already stored in its configuration
+   * folder, even when it is then cancelled, so `provider login` runs it in a
+   * new, empty folder and moves the credential file in only once it succeeded.
+   */
+  readonly revokesStoredSignIn: boolean;
 }
 
 export const HARNESSES: Readonly<Record<Harness, HarnessFacts>> = {
@@ -34,6 +43,9 @@ export const HARNESSES: Readonly<Record<Harness, HarnessFacts>> = {
     // The command the engine names for a signed-out Claude Code instance.
     signIn: ["auth", "login"],
     deviceAuth: undefined,
+    // Claude Code 2.1.328 replaces its stored sign-in only once the new one's
+    // tokens arrived, without revoking it first.
+    revokesStoredSignIn: false,
   },
   codex: {
     name: "Codex",
@@ -43,5 +55,23 @@ export const HARNESSES: Readonly<Record<Harness, HarnessFacts>> = {
     credentialFile: "auth.json",
     signIn: ["login"],
     deviceAuth: "--device-auth",
+    // Codex 0.170.0: `clear_existing_auth_before_login` in `codex-rs/cli/src/login.rs`.
+    revokesStoredSignIn: true,
   },
 };
+
+/**
+ * Where `harness` is, looked up as the engine finds it: on the installed
+ * service's `PATH` (`servicePath`), else on this shell's, which `j3-bots
+ * serve` passes on. Also the `PATH` it was looked up on, which a harness
+ * started for J3 Bots gets.
+ */
+export const findHarness = Effect.fn("findHarness")(function* (
+  harness: Harness,
+  servicePath: Option.Option<string>,
+) {
+  const host = yield* Host;
+  const searchPath = Option.getOrElse(servicePath, () => host.searchPath);
+  const executable = yield* host.findExecutable(HARNESSES[harness].executable, searchPath);
+  return { searchPath, executable };
+});

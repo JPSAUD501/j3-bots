@@ -10,7 +10,7 @@ import rootPackage from "../../../../package.json" with { type: "json" };
 import { AdminClient } from "../admin/AdminClient.ts";
 import type { AdminStatus } from "../admin/protocol.ts";
 import * as ServerConfig from "../config.ts";
-import { type Harness, HARNESSES } from "../engine/harnesses.ts";
+import { findHarness, type Harness, HARNESSES } from "../engine/harnesses.ts";
 import { PROVIDER_HOMES } from "../home/entries.ts";
 import * as Home from "../home/Home.ts";
 import * as Installation from "../installation.ts";
@@ -279,12 +279,8 @@ const providerCheck = Effect.fn("doctor.provider")(function* (
   status: Option.Option<AdminStatus>,
   servicePath: Option.Option<string>,
 ) {
-  const host = yield* Host;
   const harness = HARNESSES[id];
-  const found = yield* host.findExecutable(
-    harness.executable,
-    Option.getOrElse(servicePath, () => host.searchPath),
-  );
+  const found = (yield* findHarness(id, servicePath)).executable;
   if (Option.isNone(found)) return yield* missingHarnessCheck(id, servicePath);
   if (Option.isNone(status)) {
     return check(
@@ -691,9 +687,7 @@ export const diagnose = Effect.gen(function* () {
       checks.push(yield* freePortsCheck(config));
   }
   checks.push(yield* engineCheck(config, status, live._tag === "none"));
-  const servicePath = Option.flatMapNullishOr(unitText, (text) =>
-    Unit.environmentOf(text).get("PATH"),
-  );
+  const servicePath = Unit.servicePathOf(unitText);
   for (const harness of PROVIDER_HOMES) {
     checks.push(yield* providerCheck(harness, status, servicePath));
   }

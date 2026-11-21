@@ -120,12 +120,12 @@ Without such an endpoint, sign each harness in with its own account instead, as 
 
 ```sh
 j3-bots provider login claude-code
-j3-bots provider login codex
+j3-bots provider login codex --device-auth
 ```
 
-Each runs the harness's own sign-in in your terminal, with the harness's home in the data directory the service uses (`~/.j3-bots/providers` unless you set `J3_HOME`) as its configuration folder, so the sign-in is stored there and your own `~/.claude` and `~/.codex` stay as they are. It prints where. Start the server once first: the command refuses while that data directory does not exist. The sign-in gets the environment the engine gives harnesses, plus your terminal, language and browser variables, so other settings of your shell for the harnesses, such as `ANTHROPIC_*` or `OPENAI_*`, do not apply to it. It refuses when the harness's credential file in that home, or the home itself, is a symbolic link.
+Each runs the harness's own sign-in in your terminal, with the harness's home in the data directory the service uses (`~/.j3-bots/providers` unless you set `J3_HOME`) as its configuration folder, so the sign-in is stored there and your own `~/.claude` and `~/.codex` stay as they are. It prints where. Start the server once first: the command refuses while that data directory does not exist. The sign-in gets the environment the engine gives harnesses, plus your terminal, language and browser variables, so other settings of your shell for the harnesses, such as `ANTHROPIC_*` or `OPENAI_*`, do not apply to it. It finds the harness on the `PATH` the service runs with, as the engine does. It refuses when the home, or Claude Code's credential file in it, is a symbolic link. Codex revokes the sign-in it finds before it starts a new one, so Codex signs in in a new, empty folder, and its sign-in replaces the one in that home only once it succeeded: a failed or cancelled sign-in leaves the one there as it was.
 
-Over SSH, sign Codex in with `j3-bots provider login codex --device-auth`. Codex's usual sign-in opens a page in a browser and waits for it to come back to the Pi, which a browser on your laptop cannot do; with `--device-auth` Codex shows a page and a code to enter on any device instead. The flag is Codex's only.
+`--device-auth` makes Codex show a page and a code to enter in a browser on any device. Without it Codex opens a page in a browser and waits for it to come back to the Pi, which a browser on your laptop cannot do over SSH. The flag is Codex's only.
 
 While a provider connection is stored, J3 Bots sets the harnesses up to use it, so a sign-in is not expected to be used then; the command says so. Signing in this way has not been tested yet ([open question 2](../open-questions.md#2-does-a-subscription-sign-in-work-inside-a-j3-owned-provider-home)).
 

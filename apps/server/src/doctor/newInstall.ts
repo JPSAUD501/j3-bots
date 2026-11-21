@@ -130,12 +130,18 @@ export const missingHarnessCheck = Effect.fn("doctor.missingHarness")(function* 
  * nor a sign-in in its J3-owned home: the two ways to reach its models.
  */
 export const noWayToModels = (harness: Harness, connectCommand: string): Check => {
-  const { name } = HARNESSES[harness];
+  const { name, deviceAuth } = HARNESSES[harness];
+  // A code works over SSH and on a machine with no browser, where a browser
+  // sign-in waits for a callback that never comes.
+  const login =
+    deviceAuth === undefined
+      ? `\`j3-bots provider login ${harness}\``
+      : `\`j3-bots provider login ${harness} --device-auth\`, which shows a code to enter in a browser on any device`;
   return check(
     name,
     "problem",
     `${name} has no way to reach its models yet: no provider connection is stored, and it is not signed in inside its J3 Bots home.`,
-    `Either connect an endpoint that serves its models, such as a proxy in front of your subscriptions, with \`${connectCommand}\`, which restarts the engine; or sign ${name} in with its own account with \`j3-bots provider login ${harness}\`.`,
+    `Either connect an endpoint that serves its models, such as a proxy in front of your subscriptions, with \`${connectCommand}\`, which restarts the engine; or sign ${name} in with its own account with ${login}.`,
   );
 };
 

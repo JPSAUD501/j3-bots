@@ -469,6 +469,23 @@ it.layer(NodeServices.layer)("doctor", (it) => {
       assert.include(ways, "`j3-bots provider login claude-code`");
       // Found, but the server runs no Codex provider at all.
       assertFlagged(named(signedOut.checks, "Codex"), "warning", "no Codex provider");
+
+      // Codex's sign-in with a code, which also works over SSH, where its browser sign-in waits forever.
+      const codexSignedOut = yield* diagnoseIn({
+        server: Option.some(
+          running({
+            engine: {
+              state: { _tag: "ready" },
+              pinnedVersion: "0.1.11",
+              providers: [provider("codex", "sign-in-required")],
+            },
+          }),
+        ),
+      });
+      assert.include(
+        Option.getOrElse(named(codexSignedOut.checks, "Codex").fix, () => ""),
+        "`j3-bots provider login codex --device-auth`",
+      );
     }),
   );
 

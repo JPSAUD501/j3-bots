@@ -14,12 +14,22 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { AdminClient } from "../admin/AdminClient.ts";
 import { baseUrlForm, CONNECT_RESTARTS, providerBaseUrlProblem } from "../admin/protocol.ts";
 import * as ServerConfig from "../config.ts";
-import { type Harness, HARNESSES } from "../engine/harnesses.ts";
+import { missingHarnessCheck } from "../doctor/newInstall.ts";
+import { findHarness, type Harness, HARNESSES } from "../engine/harnesses.ts";
 import { homeLayout, PROVIDER_HOMES } from "../home/entries.ts";
 import * as Home from "../home/Home.ts";
 import * as Unit from "../service/unit.ts";
-import { Host } from "../system/Host.ts";
 import { refuse, userFacing } from "./errors.ts";
+
+/**
+ * The configuration of the server the provider commands act on: the
+ * installed service's (its home and `PATH`), else this shell's, which
+ * `j3-bots serve` runs with. `doctor` describes the same server.
+ */
+const servedConfiguration = Effect.gen(function* () {
+  const unitText = yield* Unit.installedUnit;
+  return { unitText, layer: yield* userFacing(Unit.describedConfiguration(unitText)) };
+});
 
 const NOT_RUNNING =
   "The server is not running, and it is the running server that hands the connection to the engine. Start it with `systemctl --user start j3-bots` (or `j3-bots serve`), then run this again.";
@@ -134,7 +144,10 @@ const connect = Command.make("connect", { baseUrl: baseUrlFlag, yes: yesFlag }).
   Command.withHandler(({ baseUrl, yes }) =>
     Effect.gen(function* () {
       const url = yield* readBaseUrl(baseUrl);
-      const socket = yield* userFacing(ServerConfig.resolveAdminSocket);
+      const served = yield* servedConfiguration;
+      const socket = yield* userFacing(
+        ServerConfig.resolveAdminSocket.pipe(Effect.provide(served.layer)),
+      );
       const admin = yield* AdminClient;
       if (Option.isNone(yield* userFacing(admin.status(socket)))) return yield* refuse(NOT_RUNNING);
       const key = yield* readKey.pipe(
@@ -236,6 +249,63 @@ export const signInCommand = (
   };
 };
 
+/**
+ * Runs `harness`'s own sign-in for its J3-owned home, `home`, in this
+ * terminal. A harness whose sign-in first revokes the one already stored
+ * (`revokesStoredSignIn`) signs in in a new folder instead, private to this
+ * user and on the home's file system, and its credential file is renamed
+ * into the home only once the sign-in succeeded: one stored there, such as a
+ * copy of the operator's own, is neither revoked nor changed by a sign-in that
+ * fails or is cancelled. The folder is removed however the sign-in ends.
+ */
+export const signIn = Effect.fn("provider.signIn")(function* (input: {
+  readonly harness: Harness;
+  readonly executable: string;
+  readonly home: string;
+  readonly environment: Readonly<Record<string, string | undefined>>;
+  readonly deviceAuth: boolean;
+}) {
+  const { harness, home } = input;
+  const facts = HARNESSES[harness];
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const folder = facts.revokesStoredSignIn
+    ? yield* userFacing(fs.makeTempDirectoryScoped({ directory: home, prefix: ".sign-in-" }))
+    : home;
+  const command = signInCommand(
+    harness,
+    input.executable,
+    folder,
+    input.environment,
+    input.deviceAuth,
+  );
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const exitCode = yield* userFacing(
+    spawner.exitCode(
+      ChildProcess.make(command.command, command.args, {
+        env: command.env,
+        extendEnv: false,
+        stdin: "inherit",
+        stdout: "inherit",
+        stderr: "inherit",
+      }),
+    ),
+  );
+  const unchanged = folder === home ? "" : ` The sign-in in ${home} is as it was.`;
+  if (exitCode !== 0) {
+    return yield* refuse(`${facts.name}'s sign-in ended with status ${exitCode}.${unchanged}`);
+  }
+  if (folder === home) return;
+  const signedIn = path.join(folder, facts.credentialFile);
+  if (!(yield* userFacing(fs.exists(signedIn)))) {
+    return yield* refuse(
+      `${facts.name}'s sign-in finished without writing ${facts.credentialFile}, the file the engine's ${facts.name} reads its sign-in from.${unchanged}`,
+    );
+  }
+  // A rename replaces a link at the destination, never what it points to.
+  yield* userFacing(fs.rename(signedIn, path.join(home, facts.credentialFile)));
+}, Effect.scoped);
+
 /** Whether `target` is a symbolic link. */
 const isLink = Effect.fn("provider.isLink")(function* (target: string) {
   const fs = yield* FileSystem.FileSystem;
@@ -259,35 +329,37 @@ const login = Command.make("login", {
   deviceAuth: deviceAuthFlag,
 }).pipe(
   Command.withDescription(
-    "Sign Claude Code or Codex in with its own account, so bots on it reach its models without a provider connection. Runs the harness's own interactive sign-in in the data directory the installed service uses (this shell's when the service is not installed), which the server must have created first. The sign-in gets the environment the engine gives harnesses, plus the terminal, language and browser variables, so this shell's other settings for the harness (such as `ANTHROPIC_*`, `OPENAI_*` or its own configuration folder) do not apply. Your own sign-in and setup for that harness are neither read nor changed.",
+    "Sign Claude Code or Codex in with its own account, so bots on it reach its models without a provider connection. Runs the harness's own interactive sign-in in the data directory the installed service uses (this shell's when the service is not installed), which the server must have created first, with the harness found on the PATH the service runs with. The sign-in gets the environment the engine gives harnesses, plus the terminal, language and browser variables, so this shell's other settings for the harness (such as `ANTHROPIC_*`, `OPENAI_*` or its own configuration folder) do not apply. Codex signs in in a new, empty folder, and its sign-in replaces the one in J3 Bots' home only once it succeeded. Your own sign-in and setup for that harness are neither read nor changed.",
   ),
   Command.withHandler(({ harness, deviceAuth }) =>
     Effect.gen(function* () {
       const facts = HARNESSES[harness];
-      const { name, executable, installPage } = facts;
+      const { name } = facts;
       if (deviceAuth && facts.deviceAuth === undefined) {
         return yield* refuse(
           `\`--device-auth\` is for Codex: ${name}'s sign-in takes no such option.`,
         );
       }
-      const host = yield* Host;
-      const found = yield* host.findExecutable(executable, host.searchPath);
-      if (Option.isNone(found)) {
-        return yield* refuse(
-          `\`${executable}\` is not on PATH. Install ${name} as this user first: ${installPage}.`,
-        );
+      // The home and the PATH the server runs with: the installed service's, else this shell's.
+      const served = yield* servedConfiguration;
+      const servicePath = Unit.servicePathOf(served.unitText);
+      const harnessFound = yield* findHarness(harness, servicePath);
+      if (Option.isNone(harnessFound.executable)) {
+        const missing = yield* missingHarnessCheck(harness, servicePath);
+        return yield* refuse([missing.summary, ...Option.toArray(missing.fix)].join(" "));
       }
-      // The home the server runs with: the installed service's, else this shell's.
-      const unitText = yield* Unit.installedUnit;
-      const described = yield* userFacing(Unit.describedConfiguration(unitText));
-      const config = yield* userFacing(ServerConfig.load.pipe(Effect.provide(described)));
-      const whose = Option.isSome(unitText)
+      const config = yield* userFacing(ServerConfig.load.pipe(Effect.provide(served.layer)));
+      const whose = Option.isSome(served.unitText)
         ? "the installed service's data directory"
         : "the data directory `j3-bots serve` uses from this shell";
       const fs = yield* FileSystem.FileSystem;
       if (!(yield* userFacing(fs.exists(config.home)))) {
         return yield* refuse(
-          `${config.home}, ${whose}, does not exist yet. Start the server once first, with \`j3-bots service install\` or \`j3-bots serve\`, then run this again.`,
+          `${config.home}, ${whose}, does not exist yet. ${
+            Option.isSome(served.unitText)
+              ? "Start the service once first, with `systemctl --user start j3-bots`"
+              : "Start the server once first, with `j3-bots service install` or `j3-bots serve`"
+          }, then run this again.`,
         );
       }
       // Only into a home the server would accept, which stays private.
@@ -295,8 +367,14 @@ const login = Command.make("login", {
       yield* userFacing(Home.checkWritable(config.home));
       const path = yield* Path.Path;
       const home = homeLayout(path, config.home).providerHome(harness);
-      // A link could make the sign-in act on another one, such as the operator's own.
-      for (const target of [path.dirname(home), home, path.join(home, facts.credentialFile)]) {
+      // A link could make the sign-in act on another one, such as the
+      // operator's own. A sign-in in a new folder (`signIn`) does not open
+      // the credential file in the home, so only one signing in in place does.
+      for (const target of [
+        path.dirname(home),
+        home,
+        ...(facts.revokesStoredSignIn ? [] : [path.join(home, facts.credentialFile)]),
+      ]) {
         if (yield* isLink(target)) {
           return yield* refuse(
             `${target} is a symbolic link, so ${name}'s sign-in could act on what it points to, such as your own sign-in. Remove the link, then run this again.`,
@@ -312,28 +390,13 @@ const login = Command.make("login", {
         );
       }
       yield* Console.log(`Signing ${name} in for J3 Bots in ${home}, inside ${whose}.`);
-      const command = signInCommand(
+      yield* signIn({
         harness,
-        found.value,
+        executable: harnessFound.executable.value,
         home,
-        yield* Effect.sync(() => process.env),
+        environment: { ...(yield* Effect.sync(() => process.env)), PATH: harnessFound.searchPath },
         deviceAuth,
-      );
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const exitCode = yield* userFacing(
-        spawner.exitCode(
-          ChildProcess.make(command.command, command.args, {
-            env: command.env,
-            extendEnv: false,
-            stdin: "inherit",
-            stdout: "inherit",
-            stderr: "inherit",
-          }),
-        ),
-      );
-      if (exitCode !== 0) {
-        return yield* refuse(`${name}'s sign-in ended with status ${exitCode}.`);
-      }
+      });
       return yield* Console.log(
         [
           `${name}'s sign-in finished, in J3 Bots' home for it.`,
