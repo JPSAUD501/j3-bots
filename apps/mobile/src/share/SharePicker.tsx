@@ -14,7 +14,7 @@ import { useSideBySide } from "../layout.ts";
 import type { Screens } from "../navigation.tsx";
 import { useSay } from "../toast.tsx";
 import { Body, Centered, Title } from "../ui.tsx";
-import { useWaitingShare, type WaitingShare } from "./incoming.ts";
+import { type Put, useWaitingShare, type WaitingShare } from "./incoming.ts";
 
 /** What is being shared, above the list: its text, and how many files come with it. */
 function Summary({ waiting }: { readonly waiting: Extract<WaitingShare, { _tag: "shared" }> }) {
@@ -60,21 +60,30 @@ export function ShareScreen({ navigation }: NativeStackScreenProps<Screens, "sha
 
   if (waiting?._tag !== "shared") return <View className="flex-1 bg-background" />;
 
-  const pick = (key: RosterItemKey) => {
-    const leftOut = waiting.putInDraft(rosterTarget(key));
-    if (leftOut === "not-taken") {
-      say(t("share.wait"));
-      return;
+  const opened = (key: RosterItemKey, put: Put) => {
+    switch (put._tag) {
+      case "gone":
+        return;
+      case "busy":
+        say(t("share.wait"));
+        return;
+      case "unread":
+        say(t("share.unread"));
+        return;
+      case "put": {
+        if (sideBySide) navigation.popTo("roster", { item: key });
+        else navigation.replace("conversation", { item: key });
+        const said = put.leftOut
+          .map(({ file, problem }) =>
+            t("composer.file.failed", { name: file.name, reason: fileProblemText(problem, i18n) }),
+          )
+          .join(" ");
+        if (said !== "") say(said);
+      }
     }
-    if (sideBySide) navigation.popTo("roster", { item: key });
-    else navigation.replace("conversation", { item: key });
-    const said = leftOut
-      .map(({ file, problem }) =>
-        t("composer.file.failed", { name: file.name, reason: fileProblemText(problem, i18n) }),
-      )
-      .join(" ");
-    if (said !== "") say(said);
   };
+  const pick = (key: RosterItemKey) =>
+    void waiting.putInDraft(rosterTarget(key)).then((put) => opened(key, put));
 
   return (
     <View className="flex-1 bg-background">

@@ -431,6 +431,7 @@ export const en = {
   "share.files.one": "{count} file",
   "share.files.other": "{count} files",
   "share.wait": "Your drafts aren’t ready yet. Pick again in a moment.",
+  "share.unread": "Couldn’t load your drafts. Pick again to try once more.",
   "share.unreadable": "Couldn’t read what was shared.",
 
   "file.gone": "{name} is no longer on the server.",

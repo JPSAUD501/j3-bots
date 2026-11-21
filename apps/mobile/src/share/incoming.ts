@@ -77,6 +77,21 @@ export const receiveShares = (): void => {
   });
 };
 
+/** How putting the share in a draft went. */
+export type Put =
+  /** In the draft, but for the files it left out, each with why. */
+  | { readonly _tag: "put"; readonly leftOut: SharedDraft["leftOut"] }
+  /** The draft takes no change now: it is being sent, or the drafts are loading. The share keeps waiting. */
+  | { readonly _tag: "busy" }
+  /** The drafts could not be read, again. The share keeps waiting. */
+  | { readonly _tag: "unread" }
+  /** The share no longer waits: an earlier pick put it in a draft, or it was let go. */
+  | { readonly _tag: "gone" };
+
+const BUSY: Put = { _tag: "busy" };
+const UNREAD: Put = { _tag: "unread" };
+const GONE: Put = { _tag: "gone" };
+
 /** What the operator can do with the share waiting for them. */
 export type WaitingShare =
   | {
@@ -85,14 +100,13 @@ export type WaitingShare =
       /**
        * Puts the share in the draft of `target`, the bot or room the operator
        * picked, by the runtime's rule (`sharedDraft`), and stops waiting.
-       * Each file is read from its copy as it uploads, with the media type and
-       * size it was admitted with. Nothing is sent: the composer shows the
-       * draft with its files uploading. Returns the files left out, each with
-       * why, or `not-taken` when the draft takes no change now, as the
-       * composer's does not while it is sent or while the drafts load or
-       * could not be read: the share then keeps waiting.
+       * Drafts that could not be read are read again first, as the composer's
+       * Try again does, since nothing else reads them again. Each file is read
+       * from its copy as it uploads, with the media type and size it was
+       * admitted with. Nothing is sent: the composer shows the draft with its
+       * files uploading.
        */
-      readonly putInDraft: (target: EntryTarget) => SharedDraft["leftOut"] | "not-taken";
+      readonly putInDraft: (target: EntryTarget) => Promise<Put>;
       readonly dismiss: () => void;
     }
   | { readonly _tag: "unreadable"; readonly dismiss: () => void };
@@ -104,22 +118,22 @@ export function useWaitingShare(): WaitingShare | null {
   return useMemo((): WaitingShare | null => {
     if (received === null) return null;
     // A newer share that arrived meanwhile keeps waiting.
+    const stillWaiting = () => waiting.get() === received;
     const done = () => {
-      if (waiting.get() === received) waiting.set(null);
+      if (stillWaiting()) waiting.set(null);
     };
     if (received._tag === "unreadable") return { _tag: "unreadable", dismiss: done };
     return {
       _tag: "shared",
       shared: received.shared,
-      putInDraft: (target) => {
+      putInDraft: async (target) => {
+        // A second tap on the list must not put the share in twice.
+        if (!stillWaiting()) return GONE;
+        if (client.draftsReadFailed.get() && !(await client.retryDrafts())) return UNREAD;
+        if (!stillWaiting()) return GONE;
+        if (client.draftsReadFailed.get()) return UNREAD;
         const current = client.drafts.get().get(targetKey(target));
-        if (
-          current?.sending === true ||
-          client.draftsSwitching.get() ||
-          client.draftsReadFailed.get()
-        ) {
-          return "not-taken";
-        }
+        if (current?.sending === true || client.draftsSwitching.get()) return BUSY;
         const draft = sharedDraft(current, received.shared);
         client.setDraftText(target, draft.text, draft.mentions);
         if (draft.uploads.length > 0) {
@@ -132,7 +146,7 @@ export function useWaitingShare(): WaitingShare | null {
           );
         }
         done();
-        return draft.leftOut;
+        return { _tag: "put", leftOut: draft.leftOut };
       },
       dismiss: done,
     };

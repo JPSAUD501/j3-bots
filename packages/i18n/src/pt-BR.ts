@@ -437,6 +437,8 @@ const sentences = {
   "share.files.one": "{count} arquivo",
   "share.files.other": "{count} arquivos",
   "share.wait": "Seus rascunhos ainda não estão prontos. Escolha de novo em instantes.",
+  "share.unread":
+    "Não foi possível carregar seus rascunhos. Escolha de novo para tentar mais uma vez.",
   "share.unreadable": "Não foi possível ler o que foi compartilhado.",
 
   "file.gone": "{name} não está mais no servidor.",
