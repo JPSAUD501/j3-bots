@@ -227,6 +227,21 @@ describe("followInput", () => {
     expect(followInput(unchanged("historyUndo", null), mentions, null)).toEqual(mentions);
   });
 
+  it("keeps a pick through an undo made with all the text selected", () => {
+    const draft = picked("@an", bot(ana));
+    const typed = `${draft.text}hello`;
+    const edit: FieldEdit = {
+      before: typed,
+      after: draft.text,
+      inputType: "historyUndo",
+      data: null,
+      // Everything was selected before the undo, but the undo did not replace it.
+      selection: [0, typed.length],
+      now: [draft.text.length, draft.text.length],
+    };
+    expect(followInput(edit, draft.mentions, null)).toEqual(draft.mentions);
+  });
+
   describe("text dragged within the field", () => {
     const first = picked("@an", bot(ana));
     const draft = picked(`${first.text}hi @sc`, bot(scout), first.mentions);
@@ -267,6 +282,30 @@ describe("followInput", () => {
       expect(followInput(drag(moved, moved, "insertFromDrop", [0, 7]), first, dragged)).toEqual(
         first,
       );
+    });
+
+    it("moves two picks of the same name when WebKit tells a move that reads the same", () => {
+      const otherAna = member("ana-2", "Ana");
+      const first = picked("@an", bot(ana));
+      const both = picked(`${first.text}@an`, bot(otherAna), first.mentions);
+      expect(both.text).toBe("@Ana @Ana ");
+      // The first "@Ana " dragged to the end: the field reads the same, the order is not.
+      const source = [0, 5] as const;
+      const moving = draggedText(both.text, source, both.mentions);
+      const edit: FieldEdit = {
+        before: both.text,
+        after: both.text,
+        inputType: "deleteByDrag",
+        data: null,
+        selection: source,
+        now: [5, 10],
+      };
+      const moved = followInput(edit, both.mentions, moving);
+      const routed = [otherAna.id, ana.id];
+      expect(addressedTo(both.text, moved, routed)).toEqual({ _tag: "bots", ids: routed });
+      // WebKit's second edit finds nothing left to follow.
+      const second = followInput({ ...edit, inputType: "insertFromDrop" }, moved, moving);
+      expect(second).toEqual(moved);
     });
 
     it("drops a mention the text was cut out of, already moved, and keeps the others", () => {

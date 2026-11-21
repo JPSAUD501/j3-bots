@@ -355,7 +355,8 @@ function movedTo(taken: string, after: string, text: string, hint: number): numb
  * `dropEnd`. A move within the field comes as two edits: the text taken out,
  * then dropped in. Chromium tells each as it is made; WebKit tells both once
  * the whole move is made, so the first already sees the text moved, which
- * moves the mentions in it, and the second finds nothing left to follow.
+ * moves the mentions in it, even when the field reads the same after it, as
+ * when "@Ana " is moved past another "@Ana ".
  */
 function followDrag(
   before: string,
@@ -364,7 +365,6 @@ function followDrag(
   mentions: ReadonlyArray<DraftMention>,
   dragged: DraggedText,
 ): ReadonlyArray<DraftMention> {
-  if (after === before) return mentions;
   const source = [dragged.from, dragged.from + dragged.text.length] as const;
   if (before.slice(...source) === dragged.text) {
     const taken = before.slice(0, source[0]) + before.slice(source[1]);
@@ -396,10 +396,11 @@ export interface FieldEdit {
 /**
  * The mentions that still stand after `edit`. Text dragged within the field
  * moves with the mentions in it (`followDrag`); text dropped from elsewhere
- * moves those after it. An edit that leaves the text as it was, as text
- * pasted or typed over the same text, still replaced the selection, so a
- * pick in it is gone; one whose text is not the selection's did not replace
- * it, and changes nothing. Any other edit is followed as `followEdit` does.
+ * moves those after it. Only an edit that inserts text replaces the selection
+ * the operator left: one that leaves the text as it was, as text pasted or
+ * typed over the same text, still replaced it, so a pick in it is gone,
+ * unless its text is not the selection's. Any other edit, an undo among
+ * them, is followed as `followEdit` finds it, whatever was selected.
  * A drop leaves the caret, or the text it selects, ending where the text
  * dropped does, which places it. Where a browser leaves it elsewhere, the
  * text before and after that place no longer reads as it did, and
@@ -412,19 +413,25 @@ export function followInput(
 ): ReadonlyArray<DraftMention> {
   const { before, after, inputType, data, now } = edit;
   const [, dropEnd] = now;
-  if (dragged !== null && (inputType === "deleteByDrag" || inputType === "insertFromDrop")) {
+  if (dragged !== null && inputType === "deleteByDrag") {
+    return followDrag(before, after, dropEnd, mentions, dragged);
+  }
+  if (dragged !== null && inputType === "insertFromDrop") {
+    // WebKit's second edit of a move it already told: nothing is left to follow.
+    if (after === before) return mentions;
     return followDrag(before, after, dropEnd, mentions, dragged);
   }
   if (inputType === "insertFromDrop") {
     return followDrop(before, after, dropEnd - (after.length - before.length), mentions, null);
   }
+  const inserts = inputType?.startsWith("insert") === true;
   const selection =
-    edit.selection !== null && edit.selection[0] < edit.selection[1] ? edit.selection : null;
+    inserts && edit.selection !== null && edit.selection[0] < edit.selection[1]
+      ? edit.selection
+      : null;
   if (before === after) {
     const overSelection =
-      selection !== null &&
-      inputType?.startsWith("insert") === true &&
-      (data === null || data === before.slice(...selection));
+      selection !== null && (data === null || data === before.slice(...selection));
     return overSelection
       ? followEdit(before, after, { replaced: selection, caret: null }, mentions)
       : mentions;

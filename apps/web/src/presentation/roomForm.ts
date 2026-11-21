@@ -105,10 +105,11 @@ export function withoutDeleted(
 
 /**
  * The form moved onto `room` as the server has it now, from `start`, the room
- * as the form last had it: what the operator left alone follows the server,
- * the host among it, and what they changed stays as they changed it. Changed
- * means what `roomChanges` would send: a name that differs only in spaces
- * around it, or a hop limit typed another way, is left alone. The form then
+ * as the form last had it. A field takes the room's value only where the
+ * server changed it and the operator did not: a name or hop limit that reads
+ * the same as before, only typed another way, stays as typed until the server
+ * changes it. The host follows unless the operator picked one, so a host the
+ * form fell back to gives way to the one the server chose. The form then
  * compares with the room as it is, so it sends only what differs from it.
  */
 export function followRoom(
@@ -118,14 +119,15 @@ export function followRoom(
   context: RoomFormContext,
 ): { readonly start: RoomFormValues; readonly values: RoomFormValues } {
   const live = roomFormOf(room);
-  const changed = changedFields(start, values, context);
+  const follows = (field: RoomField) =>
+    !sameField(field, start, live, context) && sameField(field, start, values, context);
   return {
     start: live,
     values: {
-      name: changed.has("name") ? values.name : live.name,
-      members: changed.has("members") ? values.members : live.members,
-      hostPick: changed.has("host") ? values.hostPick : live.hostPick,
-      hopLimit: changed.has("hop-limit") ? values.hopLimit : live.hopLimit,
+      name: follows("name") ? live.name : values.name,
+      members: follows("members") ? live.members : values.members,
+      hostPick: follows("host") ? live.hostPick : values.hostPick,
+      hopLimit: follows("hop-limit") ? live.hopLimit : values.hopLimit,
     },
   };
 }
@@ -221,24 +223,56 @@ const resolvedHopLimit = (values: RoomFormValues, defaultHopLimit: number | null
 type RoomField = "name" | "members" | "host" | "hop-limit";
 
 /**
- * The fields where `values` say something else than `from`, as the server
- * reads them: the name without the spaces around it, the bots in their
- * order, the host the form gives, and the hop limit as a number, an empty
- * one as the default.
+ * Whether `a` and `b` say the same of `field`, as the server reads it: the
+ * name without the spaces around it, the bots in their order, the host picked,
+ * and the hop limit as a number, an empty one as the default.
  */
+function sameField(
+  field: RoomField,
+  a: RoomFormValues,
+  b: RoomFormValues,
+  context: RoomFormContext,
+): boolean {
+  switch (field) {
+    case "name":
+      return a.name.trim() === b.name.trim();
+    case "members":
+      return sameOrder(a.members, b.members);
+    case "host":
+      return a.hostPick === b.hostPick;
+    case "hop-limit":
+      return (
+        resolvedHopLimit(a, context.defaultHopLimit) ===
+        resolvedHopLimit(b, context.defaultHopLimit)
+      );
+  }
+}
+
+/**
+ * Whether `values` give the room another host than `from`: one the operator
+ * picked, or, when `from`'s host is not among the members, the one the form
+ * shows instead. A host the form falls back to while `from`'s stays a member
+ * is not a change, so it never overrides a host set elsewhere.
+ */
+function hostChanged(from: RoomFormValues, values: RoomFormValues, context: RoomFormContext) {
+  const host = hostOf(values, context);
+  const fromHost = hostOf(from, context);
+  if (host === fromHost) return false;
+  const picked = values.hostPick === host;
+  return picked || fromHost === null || !values.members.includes(fromHost);
+}
+
+/** The fields where `values` say something else than `from`, as the server reads them. */
 function changedFields(
   from: RoomFormValues,
   values: RoomFormValues,
   context: RoomFormContext,
 ): ReadonlySet<RoomField> {
   const changed = new Set<RoomField>();
-  if (values.name.trim() !== from.name.trim()) changed.add("name");
-  if (!sameOrder(values.members, from.members)) changed.add("members");
-  if (hostOf(values, context) !== hostOf(from, context)) changed.add("host");
-  const { defaultHopLimit } = context;
-  if (resolvedHopLimit(values, defaultHopLimit) !== resolvedHopLimit(from, defaultHopLimit)) {
-    changed.add("hop-limit");
+  for (const field of ["name", "members", "hop-limit"] as const) {
+    if (!sameField(field, from, values, context)) changed.add(field);
   }
+  if (hostChanged(from, values, context)) changed.add("host");
   return changed;
 }
 
@@ -256,9 +290,9 @@ export const sameRoomForm = (
 /**
  * What the form changes from `room`, the room as the server has it now, and
  * only that: a field changed elsewhere and left alone here follows the room
- * (`followRoom`), so it is not sent back. The host the form gives is sent
- * whenever the server's is not that one, as when the bot hosting it leaves
- * the room in this change. An empty hop limit sets it back to the default.
+ * (`followRoom`), so it is not sent back. The host is sent when the operator
+ * picked another, or when the server's host leaves the room in this change.
+ * An empty hop limit sets it back to the default.
  */
 export function roomChanges(
   room: RoomFormValues,

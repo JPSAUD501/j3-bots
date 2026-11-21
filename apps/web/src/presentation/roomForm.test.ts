@@ -170,6 +170,32 @@ describe("roomChanges", () => {
     });
   });
 
+  it("leaves a host the form fell back to unsent, so a host set elsewhere stands", () => {
+    const opened = roomFormOf({ ...room, members: [hal, ana, scout], hostId: hal });
+    // The operator takes Hal out, and the form falls back to Ana.
+    const values = withMember(opened, hal, false);
+    expect(hostOf(values, hosted())).toBe(ana);
+    // Another tab makes Scout the host before Save.
+    const elsewhere: Room = { ...room, members: [hal, ana, scout], hostId: scout };
+    const followed = followRoom(opened, values, elsewhere, hosted());
+    expect(hostOf(followed.values, hosted())).toBe(scout);
+    expect(roomChanges(followed.start, followed.values, hosted())).toEqual({
+      _tag: "ready",
+      value: { members: [ana, scout] },
+    });
+  });
+
+  it("sends a host the operator picked, over one set elsewhere", () => {
+    const opened = roomFormOf({ ...room, members: [hal, ana, scout], hostId: hal });
+    const values = { ...opened, hostPick: ana };
+    const elsewhere: Room = { ...room, members: [hal, ana, scout], hostId: scout };
+    const followed = followRoom(opened, values, elsewhere, hosted());
+    expect(roomChanges(followed.start, followed.values, hosted())).toEqual({
+      _tag: "ready",
+      value: { hostId: ana },
+    });
+  });
+
   it("gives a host picked and then deleted back to the server's", () => {
     const opened = roomFormOf({ ...room, members: [hal, ana, bo], hostId: hal });
     const values = { ...opened, hostPick: bo };
@@ -190,6 +216,15 @@ describe("followRoom", () => {
       _tag: "ready",
       value: { name: "Liftoff" },
     });
+  });
+
+  it("keeps what is being typed when the server changes nothing the form shows", () => {
+    const opened = roomFormOf(room);
+    // Halfway through typing "Launch plan", and the hop limit cleared to the default.
+    const values = { ...opened, name: "Launch ", hopLimit: "" };
+    // A new message: the room is another object, its fields the same.
+    const followed = followRoom(opened, values, { ...room }, hosted());
+    expect(followed.values).toEqual(values);
   });
 
   it("follows a field typed back to what it says, so Save does not undo a change made elsewhere", () => {
