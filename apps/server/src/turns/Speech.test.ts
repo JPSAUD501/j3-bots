@@ -9,6 +9,7 @@ import {
 import type { SessionId, TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import { NO_TURN_REFUSAL } from "@j3-bots/prompts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -51,8 +52,10 @@ import { BotTools } from "../tools/BotTools.ts";
 import type { ToolCallResponse } from "../tools/protocol.ts";
 import { BotStates } from "./BotStates.ts";
 import { Cards } from "./Cards.ts";
+import { Ledger } from "./Ledger.ts";
 import { MAX_INDETERMINATE_ANSWERS } from "./model.ts";
 import { Pipeline } from "./Pipeline.ts";
+import { SendPause } from "./SendPause.ts";
 import { Stops } from "./Stops.ts";
 
 /** What the bot said in its conversation, oldest first. */
@@ -1118,6 +1121,61 @@ it.effect("sends no Retry that waited while the original landed", () =>
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+/** Holds every first send until `resume`, as a pause for an engine restart does. */
+const pauseSends = Effect.gen(function* () {
+  const paused = yield* Deferred.make<void>();
+  const resume = yield* Deferred.make<void>();
+  yield* (yield* SendPause)
+    .paused(Deferred.succeed(paused, undefined).pipe(Effect.andThen(Deferred.await(resume))))
+    .pipe(Effect.forkChild({ startImmediately: true }));
+  yield* Deferred.await(paused);
+  return { resume: Deferred.succeed(resume, undefined).pipe(Effect.asVoid) };
+});
+
+/** Whether an operator's Retry of a teammate message is in an envelope written and never sent. */
+const retryWritten = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql`
+    SELECT 1 FROM wakes w JOIN dispatches d ON d.id = w.dispatch_id
+    WHERE w.kind = 'bot' AND w.retry_of IS NOT NULL AND d.status = 'intended' AND d.attempts = 0
+  `.pipe(Effect.orDie);
+  return rows.length > 0;
+});
+
+it.effect("sends no Retry whose envelope waited to be sent while the original landed", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const { bot: ana, session, turnId } = yield* working("Ask Bo for the date.");
+    const bo = yield* createBot("Bo");
+    const boSession = yield* engineSession(bo.id);
+    // Whether the engine took Bo's envelope cannot be learned, and the recovery gives up.
+    const original = yield* control.deferNextDispatch;
+    yield* messageTeammate(session, turnId, { to: bo.id, text: "The date?", urgent: true });
+    yield* flushed(bo.id);
+    yield* recoverTimes(MAX_INDETERMINATE_ANSWERS - 1);
+    yield* statesBecome(bo.id, ["not-delivered"]);
+    const notice = yield* awaitEntry(bo.id, "notice");
+
+    // The operator's Retry is written into an envelope whose send is held.
+    const sends = yield* pauseSends;
+    yield* (yield* Pipeline).retryNotice({ commandId: command(), entryId: notice.id });
+    yield* until(retryWritten);
+
+    // The original lands: Bo reads it, and both turns end before the send goes on.
+    yield* original.land;
+    const boTurn = yield* nextTurn(bo.id);
+    yield* finished(bo.id, boSession, boTurn);
+    yield* finished(ana.id, session, turnId);
+    yield* sends.resume;
+
+    yield* flushed(bo.id);
+    assert.strictEqual(yield* timesSent(boSession, "The date?"), 1);
+    assert.deepStrictEqual(yield* teammateMessagesFor(bo.id), { wakes: 1, held: 0 });
+    assert.deepStrictEqual(yield* handoffStates(bo.id), ["sent"]);
+    assert.deepStrictEqual(yield* handoffStates(ana.id), ["sent"]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("offers no Retry on any notice of a message once its original lands", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;
@@ -1224,6 +1282,49 @@ it.effect("keeps what teammates sent through a Stop of the recipient, for its ne
     const carried = (yield* received(boSession)).find(({ text }) => text.includes("Deploy now."));
     const envelope = carried?.text ?? "";
     assert.isAbove(envelope.indexOf("Staging is down."), envelope.indexOf("Deploy now."));
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "keeps a message held through the recipient's Stop not delivered once it is too long",
+  () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const { ana, bo, boTurn } = yield* toldWhileBusy;
+      yield* (yield* Stops).stopBot({ commandId: command(), botId: bo.id });
+      yield* turnEnded(bo.id);
+      // Every writer refuses such a message; the envelope's defence meets one all the same.
+      yield* sql`
+      UPDATE held_messages SET text = ${`Deploy now. ${"a".repeat(130_000)}`}
+      WHERE text = 'Deploy now.'
+    `;
+
+      yield* sendToBot(bo.id, "Anything else?");
+      yield* nextTurn(bo.id, boTurn);
+      yield* statesBecome(bo.id, ["not-delivered", "sent"]);
+
+      // Its cancelled wake does not make a later refresh show it stopped.
+      const received = (yield* conversation(bo.id)).flatMap((entry) =>
+        entry._tag === "handoff" ? [entry.id] : [],
+      );
+      yield* (yield* Ledger).refreshMessages(received);
+      assert.deepStrictEqual(yield* handoffStates(bo.id), ["not-delivered", "sent"]);
+      assert.deepStrictEqual(yield* handoffStates(ana.id), ["not-delivered", "sent"]);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("shows what a deleted teammate never read as not delivered", () =>
+  Effect.gen(function* () {
+    const { bot: ana, session, turnId } = yield* working("Keep Bo posted.");
+    const bo = yield* createBot("Bo");
+    yield* engineSession(bo.id);
+    yield* messageTeammate(session, turnId, { to: bo.id, text: "Deploy now.", urgent: true });
+    yield* nextTurn(bo.id);
+    yield* messageTeammate(session, turnId, { to: bo.id, text: "Staging is up.", urgent: false });
+
+    yield* (yield* Bots).remove({ commandId: command(), botId: bo.id, deleteFiles: true });
+    // Bo read the first; the second never reached it.
+    assert.deepStrictEqual(yield* handoffStates(ana.id), ["sent", "not-delivered"]);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

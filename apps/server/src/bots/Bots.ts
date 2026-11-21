@@ -28,6 +28,7 @@ import { Ids } from "../Ids.ts";
 import { Layout } from "../Layout.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { Rooms } from "../rooms/Rooms.ts";
+import { Ledger } from "../turns/Ledger.ts";
 import { rotationRequests } from "../turns/rotationRequests.ts";
 import { Signals } from "../turns/Signals.ts";
 import { Stops } from "../turns/Stops.ts";
@@ -119,6 +120,7 @@ export const layer = Layer.effect(
     const signals = yield* Signals;
     const stops = yield* Stops;
     const wakes = yield* Wakes;
+    const ledger = yield* Ledger;
     const { requestBotRotation, providerRestored, forgetConversation } = rotationRequests(
       sql,
       signals,
@@ -311,6 +313,9 @@ export const layer = Layer.effect(
             apply: Effect.gen(function* () {
               yield* require(input.botId);
               yield* rooms.releaseBot(input.botId);
+              // What teammates sent it and it never read will not reach it:
+              // their cards say so before its wakes and inbox go.
+              yield* ledger.recipientRemoved(input.botId);
               const carried = yield* attachments.ofTarget({
                 _tag: "conversation",
                 botId: input.botId,

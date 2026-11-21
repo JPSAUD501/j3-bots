@@ -13,6 +13,8 @@ export default Effect.gen(function* () {
   // ran: what the message has not delivered yet is cancelled then, and
   // wherever it would wait again. It is only a mark, so that the sender's
   // deletion, which takes its call and its Stops with it, never undoes it.
+  // `too_long`: its held copy was removed because no envelope could carry
+  // it, so it stays `not-delivered` whatever its cancelled wakes say.
   // The recipient's id outlives the recipient, as a sender's does.
   yield* sql`
     CREATE TABLE handoffs (
@@ -20,7 +22,8 @@ export default Effect.gen(function* () {
       tool_call_id TEXT UNIQUE REFERENCES tool_calls (id) ON DELETE SET NULL,
       recipient_bot_id TEXT NOT NULL,
       sent_entry_id TEXT REFERENCES entries (id) ON DELETE SET NULL,
-      stop_id TEXT
+      stop_id TEXT,
+      too_long INTEGER NOT NULL DEFAULT 0
     )
   `;
   yield* sql`CREATE INDEX handoffs_stopped ON handoffs (stop_id) WHERE stop_id IS NOT NULL`;
