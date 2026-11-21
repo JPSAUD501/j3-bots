@@ -431,14 +431,16 @@ it.layer(NodeServices.layer)("doctor", (it) => {
       const shellOnly = yield* diagnoseIn({
         executables: ["/usr/bin/codex", "/run/user/1000/fnm_multishells/1_2/bin/claude"],
         searchPath: "/run/user/1000/fnm_multishells/1_2/bin:/usr/bin",
+        environment: { J3_HOME: "/elsewhere/j3" },
       });
       const shellOnlyClaude = named(shellOnly.checks, "Claude Code");
       assertFlagged(shellOnlyClaude, "warning", "service's PATH");
-      // It is installed: the service only needs this shell's PATH.
-      assert.include(
-        Option.getOrElse(shellOnlyClaude.fix, () => ""),
-        "`j3-bots service install`",
-      );
+      // It is installed: the service only needs this shell's PATH, and
+      // installing it again keeps the service's own data directory, not this
+      // shell's.
+      const reinstall = Option.getOrElse(shellOnlyClaude.fix, () => "");
+      assert.match(reinstall, /`J3_HOME=\S+ j3-bots service install`/);
+      assert.notInclude(reinstall, "/elsewhere/j3");
       assert.notInclude(
         Option.getOrElse(shellOnlyClaude.fix, () => ""),
         "https://",

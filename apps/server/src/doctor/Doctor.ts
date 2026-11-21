@@ -278,10 +278,11 @@ const providerCheck = Effect.fn("doctor.provider")(function* (
   id: Harness,
   status: Option.Option<AdminStatus>,
   servicePath: Option.Option<string>,
+  serviceHome: Option.Option<string>,
 ) {
   const harness = HARNESSES[id];
   const found = (yield* findHarness(id, servicePath)).executable;
-  if (Option.isNone(found)) return yield* missingHarnessCheck(id, servicePath);
+  if (Option.isNone(found)) return yield* missingHarnessCheck(id, servicePath, serviceHome);
   if (Option.isNone(status)) {
     return check(
       harness.name,
@@ -689,7 +690,7 @@ export const diagnose = Effect.gen(function* () {
   checks.push(yield* engineCheck(config, status, live._tag === "none"));
   const servicePath = Unit.servicePathOf(unitText);
   for (const harness of PROVIDER_HOMES) {
-    checks.push(yield* providerCheck(harness, status, servicePath));
+    checks.push(yield* providerCheck(harness, status, servicePath, Unit.serviceHomeOf(unitText)));
   }
   checks.push(yield* webClientCheck(config, live, installation));
   checks.push(pairingCheck(status, live._tag === "outside"));

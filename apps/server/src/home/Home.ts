@@ -20,7 +20,7 @@ import { HOME_ENTRIES } from "./entries.ts";
 // time may use it.
 
 /** A path as one shell word. */
-const shellWord = (value: string) =>
+export const shellWord = (value: string) =>
   /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", `'"'"'`)}'`;
 
 /** The home is not a folder only this user can open. */

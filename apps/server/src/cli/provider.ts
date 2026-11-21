@@ -345,7 +345,11 @@ const login = Command.make("login", {
       const servicePath = Unit.servicePathOf(served.unitText);
       const harnessFound = yield* findHarness(harness, servicePath);
       if (Option.isNone(harnessFound.executable)) {
-        const missing = yield* missingHarnessCheck(harness, servicePath);
+        const missing = yield* missingHarnessCheck(
+          harness,
+          servicePath,
+          Unit.serviceHomeOf(served.unitText),
+        );
         return yield* refuse([missing.summary, ...Option.toArray(missing.fix)].join(" "));
       }
       const config = yield* userFacing(ServerConfig.load.pipe(Effect.provide(served.layer)));

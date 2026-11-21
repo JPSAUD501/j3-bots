@@ -2,6 +2,7 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { type Harness, HARNESSES } from "../engine/harnesses.ts";
+import { shellWord } from "../home/Home.ts";
 import { Host } from "../system/Host.ts";
 import { Systemd } from "../system/Systemd.ts";
 import { type Check, check } from "./check.ts";
@@ -98,14 +99,21 @@ export const runningUserCheck = Effect.gen(function* () {
 /**
  * A harness that is not on the `PATH` the report describes: on this shell's
  * only, which the service gets when it is installed again, or nowhere, with
- * where its maker says how to install it.
+ * where its maker says how to install it. Installing the service again names
+ * its home, `serviceHome`: from a shell with another `J3_HOME`, or none, a bare
+ * `service install` would point the service at that shell's data directory.
  */
 export const missingHarnessCheck = Effect.fn("doctor.missingHarness")(function* (
   harness: Harness,
   servicePath: Option.Option<string>,
+  serviceHome: Option.Option<string>,
 ) {
   const host = yield* Host;
   const { name, executable, installPage } = HARNESSES[harness];
+  const reinstall = Option.match(serviceHome, {
+    onNone: () => "`j3-bots service install`",
+    onSome: (home) => `\`J3_HOME=${shellWord(home)} j3-bots service install\``,
+  });
   if (Option.isSome(servicePath)) {
     const inShell = yield* host.findExecutable(executable, host.searchPath);
     if (Option.isSome(inShell)) {
@@ -113,7 +121,7 @@ export const missingHarnessCheck = Effect.fn("doctor.missingHarness")(function* 
         name,
         "warning",
         `\`${executable}\` is at ${inShell.value}, which is not on the service's PATH, so bots cannot run on ${name}.`,
-        "Run `j3-bots service install` again from this shell, so the service gets its PATH.",
+        `Run ${reinstall} again from this shell, so the service gets its PATH.`,
       );
     }
   }
@@ -121,7 +129,7 @@ export const missingHarnessCheck = Effect.fn("doctor.missingHarness")(function* 
     name,
     "warning",
     `\`${executable}\` is not on ${Option.isSome(servicePath) ? "the service's PATH or this shell's" : "PATH"}, so bots cannot run on ${name}.`,
-    `Install ${name} as this user: ${installPage}. Then ${Option.isSome(servicePath) ? "run `j3-bots service install` again, so the service gets a PATH that has it" : "run this again from a shell whose PATH has it"}.`,
+    `Install ${name} as this user: ${installPage}. Then ${Option.isSome(servicePath) ? `run ${reinstall} again, so the service gets a PATH that has it` : "run this again from a shell whose PATH has it"}.`,
   );
 });
 

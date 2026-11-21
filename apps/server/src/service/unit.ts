@@ -139,6 +139,10 @@ export const installedUnit = Effect.gen(function* () {
 export const servicePathOf = (unitText: Option.Option<string>) =>
   Option.flatMapNullishOr(unitText, (text) => environmentOf(text).get("PATH"));
 
+/** The `J3_HOME` the installed service runs with, whatever this shell's is. */
+export const serviceHomeOf = (unitText: Option.Option<string>) =>
+  Option.flatMapNullishOr(unitText, (text) => environmentOf(text).get("J3_HOME"));
+
 /**
  * The configuration a command describes or acts on: with the service
  * installed, the service's own (its home and `PATH`, none of this shell's
