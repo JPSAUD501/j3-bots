@@ -228,9 +228,9 @@ function YouSection({
  * Saving needs the server: offline, Save says why it is unavailable. A save
  * sends only the fields the operator changed. While one of the form's is
  * under way, even one started before Settings last closed, the form shows
- * what it sends and takes no edit. A field the operator left alone shows the saved value as it
- * arrives; one they changed keeps their edit until the form saves it, so
- * a notification switch saved meanwhile leaves the edits alone. A save of the
+ * what it sends and takes no edit. A field the operator left alone shows the
+ * saved value as it arrives; one they changed keeps their edit until the form
+ * saves it, so a notification switch saved meanwhile leaves the edits alone. A save of the
  * form that failed leaves what it sent as the form's edits, so reopening
  * Settings never loses it.
  */
