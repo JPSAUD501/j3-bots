@@ -148,8 +148,8 @@ export class Ledger extends Context.Service<
     ) => Effect.Effect<void>;
     /**
      * Its turn started (or, for a steer, it was taken): also after it failed,
-     * which a late delivery undoes, and after its wakes were cancelled, since
-     * the bot read them all the same.
+     * which a late delivery undoes, and, when no Stop fenced it, after its
+     * wakes were cancelled, since the bot read them all the same.
      */
     readonly deliver: (dispatchId: DispatchRowId, turnId: TurnId) => Effect.Effect<void>;
     /** Its work is over, with the turn's outcome; its wakes finish. */
@@ -613,11 +613,19 @@ export const layer = Layer.effect(
           next_attempt_at = NULL, updated_at = ${at}
         WHERE id = ${dispatchId} AND status IN ('intended', 'accepted', 'failed')
       `;
-      // A late delivery: the wakes it failed with, or that were cancelled
-      // while it was undecided, were delivered after all.
+      // A late delivery: the wakes it failed with were delivered after all.
+      // So were those cancelled while it was undecided when no Stop fenced
+      // it: only the Stop of a teammate's work cancelled them, and their turn
+      // runs. A Stop that fenced it ends that turn, and its wakes stay cancelled.
       yield* sql`
         UPDATE wakes SET status = 'dispatched', failure_reason = NULL, updated_at = ${at}
-        WHERE dispatch_id = ${dispatchId} AND status IN ('failed', 'cancelled')
+        WHERE dispatch_id = ${dispatchId} AND (
+          status = 'failed' OR (
+            status = 'cancelled' AND EXISTS (
+              SELECT 1 FROM dispatches WHERE id = ${dispatchId} AND fenced_by_stop_id IS NULL
+            )
+          )
+        )
       `;
       yield* refreshNotices(dispatchId);
       yield* refreshMessages(yield* sourcesOf(dispatchId));
