@@ -409,7 +409,7 @@ The server sends a notification when a bot adds an entry to a conversation or ro
 
 **Who is told.** Every connected socket, on its `notifications.subscribe` stream, which is live only: a notification sent while a device was disconnected is not replayed, since the roster shows the entry unread when it returns. A notification names the target, the entry, the bot and the kind of entry, and, when the operator allows previews, the entry's first line, at most 200 characters (`PREVIEW_LENGTH`): the message, the question or the action.
 
-**The operator's preferences** are in the settings row (`settings.get`, `settings.update`): whether the server notifies at all (on by default; a browser still shows nothing until the operator lets it) and whether a notification carries a preview (off by default, because a notification can show where others see it, such as on a locked screen). Each notification reads them as it is sent.
+**The operator's preferences** are in the settings row (`settings.get`, `settings.update`): whether the server notifies at all (on by default; a browser still shows nothing until the operator lets it) and whether a notification carries a preview (off by default, because a notification can show where others see it, such as on a locked screen). A change names only the switch it turns, and the server merges it field by field in the transaction that saves it, so a device holding a stale copy never turns the other one back. Each notification reads them as it is sent.
 
 - **Web and desktop**: over the open connection, shown by the client.
 - **Mobile**: a push through the platform's service. The payload carries the bot's name and, if the operator allows it, the first line of the message. See [open question 4](../open-questions.md).

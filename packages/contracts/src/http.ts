@@ -12,7 +12,7 @@ import { DeviceToken, PairingCode, SocketTicket } from "./device.ts";
  * Bumped when a change to the contract would break a client built against the
  * previous version. Clients compare it with `GET /api/server` before anything else.
  */
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 export const HTTP_PATHS = {
   /** `GET`, no credential. Answers `ServerInfo`. */

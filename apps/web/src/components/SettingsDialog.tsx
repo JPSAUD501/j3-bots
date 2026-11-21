@@ -5,6 +5,7 @@ import {
   type Device,
   type DeviceId,
   type EngineStatus,
+  type NotificationSettingsChange,
   type PairingCode,
   type Settings,
 } from "@j3-bots/contracts";
@@ -25,7 +26,12 @@ import {
   useNotificationAccess,
   type NotificationAccess,
 } from "../preferences/notifications";
-import { editsAfterFailedSave, noEdits, settingsPatch } from "../presentation/settings";
+import {
+  editsAfterFailedSave,
+  noEdits,
+  savesProfile,
+  settingsPatch,
+} from "../presentation/settings";
 import type { ShellData, ShellIntents } from "../shell/data";
 import { cn } from "../lib/cn";
 import { activityTime, clockTime } from "../lib/time";
@@ -210,9 +216,10 @@ function YouSection({
  * sends only the fields the operator changed. While one is under way, even
  * one started before Settings last closed, the form shows what it sends and
  * takes no edit. A field the operator left alone shows the saved value as it
- * arrives; one they changed keeps their edit until it is saved. A save that
- * failed leaves what it sent as the form's edits, so reopening Settings
- * never loses it.
+ * arrives; one they changed keeps their edit until the form saves it, so
+ * a notification switch saved meanwhile leaves the edits alone. A save of the
+ * form that failed leaves what it sent as the form's edits, so reopening
+ * Settings never loses it.
  */
 function YouForm({
   settings,
@@ -235,18 +242,21 @@ function YouForm({
   // How a save ended shows only for one this form saw under way, until the next edit.
   const [watching, setWatching] = useState(save._tag === "saving");
   const [lastSave, setLastSave] = useState(save);
+  const mine = save._tag !== "idle" && savesProfile(save.changes);
   if (lastSave !== save) {
     setLastSave(save);
-    // A save that ends saved leaves nothing unsaved; one that failed leaves what it sent.
-    if (save._tag === "saved") setEdits(noEdits);
-    if (save._tag === "failed") setEdits((current) => editsAfterFailedSave(current, save.changes));
+    // A save of the form that ends saved leaves nothing unsaved; one that failed leaves what it sent.
+    if (mine && save._tag === "saved") setEdits(noEdits);
+    if (mine && save._tag === "failed") {
+      setEdits((current) => editsAfterFailedSave(current, save.changes));
+    }
   }
   const saving = save._tag === "saving";
   const shown = saving ? { ...settings, ...save.changes } : settings;
   const name = edits.name ?? shown.operatorName ?? "";
   const zone = edits.zone ?? shown.timeZone;
   const patch = settingsPatch(settings, edits);
-  const status = watching && !saving ? save._tag : null;
+  const status = watching && mine && !saving ? save._tag : null;
   return (
     <form
       className="flex flex-col gap-3"
@@ -359,11 +369,13 @@ function NotificationsSection({
     );
   }
   const saving = save._tag === "saving";
-  const shown = (saving ? save.changes.notifications : undefined) ?? settings.notifications;
-  const failed = save._tag === "failed" && save.changes.notifications !== undefined;
-  const change = (changes: Partial<Settings["notifications"]>) => {
+  const sent = save._tag === "idle" ? undefined : save.changes.notifications;
+  const shown = { ...settings.notifications, ...(saving ? sent : undefined) };
+  const failed = save._tag === "failed" && sent !== undefined;
+  // Only the switch that changed: another device may have changed the other one.
+  const change = (changes: NotificationSettingsChange) => {
     if (saving || !connected) return;
-    onSave({ notifications: { ...settings.notifications, ...changes } });
+    onSave({ notifications: changes });
   };
   return (
     <Section title={t("settings.notifications")}>
@@ -398,7 +410,7 @@ function NotificationsSection({
         </>
       )}
       <p role="status" className="text-xs text-blocked empty:hidden">
-        {failed && !saving && t("settings.saveFailed")}
+        {failed && t("settings.saveFailed")}
       </p>
       {!connected && <p className="text-xs text-muted-foreground">{t("settings.save.offline")}</p>}
     </Section>

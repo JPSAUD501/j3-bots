@@ -748,7 +748,10 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
       yield* network.set("online");
       assert.strictEqual((yield* Fiber.join(saving))._tag, "done");
-      assert.deepStrictEqual(settings.save.get(), { _tag: "saved" });
+      assert.deepStrictEqual(settings.save.get(), {
+        _tag: "saved",
+        changes: { operatorName: "Ana" },
+      });
       const saved = settings.state.get();
       assert.strictEqual(saved._tag === "ready" && saved.value.operatorName, "Ana");
     }).pipe(Effect.scoped, Effect.provide(client())),
@@ -3245,9 +3248,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
       yield* network.loseReplies(true);
       const saving = yield* Effect.forkChild(
-        settings.update({
-          notifications: { ...loaded.value.notifications, previews: !before },
-        }),
+        settings.update({ notifications: { previews: !before } }),
         { startImmediately: true },
       );
 
@@ -3263,9 +3264,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
             }),
           );
         const other = yield* Settings;
-        const back = yield* other.update({
-          notifications: { ...loaded.value.notifications, previews: before },
-        });
+        const back = yield* other.update({ notifications: { previews: before } });
         assert.strictEqual(back._tag, "done");
       }).pipe(Effect.scoped, Effect.provide(client()));
 
@@ -3273,7 +3272,10 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       yield* network.loseReplies(false);
       yield* network.dropSockets;
       assert.strictEqual((yield* Fiber.join(saving))._tag, "done");
-      assert.deepStrictEqual(settings.save.get(), { _tag: "saved" });
+      assert.deepStrictEqual(settings.save.get(), {
+        _tag: "saved",
+        changes: { notifications: { previews: !before } },
+      });
       const shown = settings.state.get();
       assert.strictEqual(shown._tag === "ready" && shown.value.notifications.previews, before);
     }).pipe(Effect.scoped, Effect.provide(client())),

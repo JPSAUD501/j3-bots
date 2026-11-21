@@ -40,7 +40,7 @@ import {
 } from "./memory.ts";
 import { Room, RoomHopLimit, RoomMembers, RoomName } from "./room.ts";
 import { Routine, RoutineInstruction, RoutineRun, RoutineTrigger } from "./routine.ts";
-import { Budgets, NotificationSettings, Settings, TimeZone } from "./settings.ts";
+import { Budgets, NotificationSettingsChange, Settings, TimeZone } from "./settings.ts";
 
 // ---------------------------------------------------------------------------
 // Conventions
@@ -462,7 +462,7 @@ export const SettingsRpcs = RpcGroup.make(
       operatorName: Schema.optionalKey(Settings.fields.operatorName),
       timeZone: Schema.optionalKey(TimeZone),
       budgets: Schema.optionalKey(Budgets),
-      notifications: Schema.optionalKey(NotificationSettings),
+      notifications: Schema.optionalKey(NotificationSettingsChange),
     },
     success: Settings,
     error: CommandError,

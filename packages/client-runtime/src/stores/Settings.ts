@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Settings as SettingsValue } from "@j3-bots/contracts";
+import type { NotificationSettingsChange, Settings as SettingsValue } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -10,19 +10,22 @@ import { loading, markStale, ready, type Synced } from "./synced.ts";
 
 /** What `settings.update` changes. Fields left out keep their value. */
 export type SettingsChanges = Partial<
-  Pick<SettingsValue, "operatorName" | "timeZone" | "budgets" | "notifications">
->;
+  Pick<SettingsValue, "operatorName" | "timeZone" | "budgets">
+> & {
+  readonly notifications?: NotificationSettingsChange;
+};
 
 /**
- * A save of the settings: under way, with what it sends, or how the last one
- * ended. A failed one keeps what it sent, so a form that did not see it can
- * offer it again.
+ * A save of the settings: under way, or how the last one ended, each with what
+ * it sends, so a form can tell its own saves from another's. A failed one
+ * keeps what it sent, so a form that did not see it can offer it again.
  */
 export type SettingsSave =
   | { readonly _tag: "idle" }
-  | { readonly _tag: "saving"; readonly changes: SettingsChanges }
-  | { readonly _tag: "saved" }
-  | { readonly _tag: "failed"; readonly changes: SettingsChanges };
+  | {
+      readonly _tag: "saving" | "saved" | "failed";
+      readonly changes: SettingsChanges;
+    };
 
 /**
  * The operator's preferences. The contract has no subscription for them and
@@ -97,7 +100,7 @@ export const layer = Layer.effect(
       if (result._tag === "done") yield* connection.call(read).pipe(Effect.ignore);
       // A later save speaks for itself.
       if (save.get() === saving) {
-        save.set(result._tag === "done" ? { _tag: "saved" } : { _tag: "failed", changes });
+        save.set({ _tag: result._tag === "done" ? "saved" : "failed", changes });
       }
       return result;
     });

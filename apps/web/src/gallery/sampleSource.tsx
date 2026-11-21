@@ -359,8 +359,12 @@ function sampleIntents({ get, update }: Store): ShellIntents {
     updateSettings: (changes) =>
       update((s) => ({
         ...s,
-        settings: { ...s.settings, ...changes },
-        settingsSave: { _tag: "saved" },
+        settings: {
+          ...s.settings,
+          ...changes,
+          notifications: { ...s.settings.notifications, ...changes.notifications },
+        },
+        settingsSave: { _tag: "saved", changes },
       })),
     startPairing: () =>
       Promise.resolve({

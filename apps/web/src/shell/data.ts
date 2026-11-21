@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { ConversationItem, Draft, SettingsSave } from "@j3-bots/client-runtime";
+import type {
+  ConversationItem,
+  Draft,
+  SettingsChanges,
+  SettingsSave,
+} from "@j3-bots/client-runtime";
 import type {
   BotFile,
   BotId,
@@ -120,7 +125,7 @@ export interface ShellIntents extends TimelineIntents {
 
   /** Saves the change; `settingsSave` follows it. */
   readonly updateSettings: (
-    changes: Partial<Pick<Settings, "operatorName" | "timeZone" | "notifications">>,
+    changes: Pick<SettingsChanges, "operatorName" | "timeZone" | "notifications">,
   ) => void;
   readonly startPairing: () => Promise<PairingStart>;
   /**

@@ -45,6 +45,10 @@ export function settingsPatch(settings: Settings, edits: SettingsEdits): Setting
   return Object.keys(changes).length === 0 ? { _tag: "unchanged" } : { _tag: "changes", changes };
 }
 
+/** Whether a save sends the form's fields, which makes how it ends the form's to show. */
+export const savesProfile = (changes: SettingsChanges): boolean =>
+  changes.operatorName !== undefined || changes.timeZone !== undefined;
+
 /**
  * The edits after a save of `changes` failed: a field the form holds no edit
  * for takes the value the save sent, so the operator's text is never lost,

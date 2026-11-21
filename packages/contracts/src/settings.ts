@@ -33,6 +33,16 @@ export const NotificationSettings = Schema.Struct({
 });
 export type NotificationSettings = typeof NotificationSettings.Type;
 
+/**
+ * A change to the notification settings. A field left out keeps its value, so
+ * a device that changes one never writes back a stale copy of the other.
+ */
+export const NotificationSettingsChange = Schema.Struct({
+  enabled: Schema.optionalKey(NotificationSettings.fields.enabled),
+  previews: Schema.optionalKey(NotificationSettings.fields.previews),
+});
+export type NotificationSettingsChange = typeof NotificationSettingsChange.Type;
+
 /** The operator's preferences. One per server; every field always has a value. */
 export const Settings = Schema.Struct({
   /**
