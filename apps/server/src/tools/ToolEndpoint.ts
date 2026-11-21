@@ -29,7 +29,7 @@ const decodeToolCall = Schema.decodeUnknownEffect(Schema.fromJsonString(ToolCall
  * `Origin`. A web page in a browser on this machine can reach loopback too,
  * and a browser sends a POST's `Origin`, a page on a name rebound to loopback
  * sends that name as `Host`, and a JSON content type from another origin
- * needs a preflight the endpoint never answers.
+ * needs a preflight the endpoint never grants.
  */
 const fromBridge = (request: HttpServerRequest.HttpServerRequest) => {
   const port = NodeHttpServerRequest.toIncomingMessage(request).socket.localPort;
