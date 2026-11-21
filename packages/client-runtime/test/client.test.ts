@@ -50,6 +50,8 @@ import { Actions, cardAction } from "../src/intents/Actions.ts";
 import { type ClientStorage, CredentialStore, type DeviceCredential } from "../src/ports.ts";
 import { waitFor } from "../src/Store.ts";
 import {
+  type CardAnswer,
+  type ConversationItem,
   type ConversationState,
   Conversations,
   messageStatus,
@@ -84,6 +86,8 @@ class Fakes extends Context.Service<
     readonly sends: Queue.Queue<CommandId>;
     /** Every `card.answer` the server received. */
     readonly answers: Queue.Queue<CommandId>;
+    /** The `card.answer` commands applied, on any socket. */
+    readonly answered: Set<CommandId>;
     /** The entry each `message.send` command made, on any socket. */
     readonly applied: Map<CommandId, EntryId>;
     /** Texts `message.send` refuses, as the server refuses a message to a bot it no longer has. */
@@ -106,6 +110,7 @@ const fakes = Layer.effect(
       gate: yield* Latch.make(true),
       sends: yield* Queue.unbounded<CommandId>(),
       answers: yield* Queue.unbounded<CommandId>(),
+      answered: new Set(),
       applied: new Map(),
       refusing: new Set(),
       views: yield* Queue.unbounded<ReportedView>(),
@@ -161,23 +166,34 @@ const unserved = Layer.mergeAll(
   J3Rpcs.toLayerHandler(
     "card.answer",
     Effect.gen(function* () {
-      const { gate, answers } = yield* Fakes;
+      const { gate, answers, answered } = yield* Fakes;
       const entries = yield* Server.Entries;
+      const once = Semaphore.makeUnsafe(1);
       return ({ commandId, entryId, answer }) =>
         Effect.gen(function* () {
           yield* Queue.offer(answers, commandId);
           yield* gate.await;
-          const found = yield* entries.find(entryId);
-          if (Option.isNone(found) || found.value.entry._tag !== "question") {
-            return yield* new NotFound({ resource: "entry" });
-          }
-          yield* entries.update({
-            ...found.value.entry,
-            status:
-              answer._tag === "question"
-                ? { _tag: "answered", answers: answer.answers }
-                : { _tag: "dismissed" },
-          });
+          return yield* once.withPermits(1)(
+            Effect.gen(function* () {
+              if (answered.has(commandId)) return;
+              const found = yield* entries.find(entryId);
+              if (Option.isNone(found) || found.value.entry._tag !== "question") {
+                return yield* new NotFound({ resource: "entry" });
+              }
+              // Resolved by another answer, here or on another device.
+              if (found.value.entry.status._tag !== "pending") {
+                return yield* new Conflict({ reason: "card-closed" });
+              }
+              yield* entries.update({
+                ...found.value.entry,
+                status:
+                  answer._tag === "question"
+                    ? { _tag: "answered", answers: answer.answers }
+                    : { _tag: "dismissed" },
+              });
+              answered.add(commandId);
+            }),
+          );
         });
     }),
   ),
@@ -541,6 +557,93 @@ const atOneInstant = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       sleep: (duration) => live.sleep(duration),
     };
     return yield* effect.pipe(Effect.provideService(Clock.Clock, stopped));
+  });
+
+/** A question card the bot raises, with one pick between two options. */
+const botAsks = (botId: BotId) =>
+  Effect.gen(function* () {
+    const entries = yield* Server.Entries;
+    return yield* entries.append({
+      target: { _tag: "conversation", botId },
+      entry: {
+        _tag: "question",
+        author: { _tag: "bot", botId },
+        origin: "ask",
+        questions: [
+          {
+            id: "pick",
+            prompt: "Which one?",
+            options: [
+              { id: "a", label: "A", description: null, style: "default" },
+              { id: "b", label: "B", description: null, style: "default" },
+            ],
+            acceptsText: false,
+            multiple: false,
+          },
+        ],
+        status: { _tag: "pending" },
+      },
+    });
+  });
+
+/** The answer that picks `option` on a card of `botAsks`. */
+const picking = (option: string): CardAnswer => ({
+  _tag: "question",
+  answers: { pick: { optionIds: [option], text: null } },
+});
+
+/** What a test drives of one device's open client. */
+const deviceClient = Effect.gen(function* () {
+  const connection = yield* Connection;
+  yield* waitFor(connection.state, isConnected);
+  return {
+    connection,
+    deviceId: yield* connection.deviceId,
+    conversations: yield* Conversations,
+    drafts: yield* Drafts,
+    devices: yield* Devices,
+    network: yield* TestPlatform.TestNetwork,
+  };
+});
+
+interface OnDevice extends Effect.Success<typeof deviceClient> {
+  readonly storage: TestPlatform.TestDevice["storage"];
+}
+
+/**
+ * Runs `use` with two devices, A and B, each paired on its own and each with
+ * a client open and connected, and a bot both talk to. B's client closes
+ * first, while A's is still open. Once both have closed, what the fakes
+ * received from them is not left for the next test.
+ */
+const acrossDevices = <A, E, R>(
+  use: (a: OnDevice, b: OnDevice, botId: BotId) => Effect.Effect<A, E, R>,
+) =>
+  Effect.gen(function* () {
+    const first = yield* pairedDevice("Shared");
+    const second = TestPlatform.makeDevice();
+    const secondCredential = yield* Effect.gen(function* () {
+      yield* pairAndConnect;
+      return yield* savedCredential;
+    }).pipe(Effect.scoped, Effect.provide(client(Option.none(), second)));
+
+    return yield* Effect.gen(function* () {
+      const a: OnDevice = { ...(yield* deviceClient), storage: first.device.storage };
+      return yield* Effect.gen(function* () {
+        const b: OnDevice = { ...(yield* deviceClient), storage: second.storage };
+        return yield* use(a, b, first.botId);
+      }).pipe(Effect.scoped, Effect.provide(client(secondCredential, second)));
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(client(first.credential, first.device)),
+      Effect.ensuring(
+        Effect.gen(function* () {
+          const { sends, answers } = yield* Fakes;
+          yield* Queue.clear(sends);
+          yield* Queue.clear(answers);
+        }),
+      ),
+    );
   });
 
 it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
@@ -1131,37 +1234,12 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       const conversations = yield* Conversations;
       const actions = yield* Actions;
       const botId = yield* createBot("Asker");
-      const entries = yield* Server.Entries;
-      const card = yield* entries.append({
-        target: { _tag: "conversation", botId },
-        entry: {
-          _tag: "question",
-          author: { _tag: "bot", botId },
-          origin: "ask",
-          questions: [
-            {
-              id: "pick",
-              prompt: "Which one?",
-              options: [
-                { id: "a", label: "A", description: null, style: "default" },
-                { id: "b", label: "B", description: null, style: "default" },
-              ],
-              acceptsText: false,
-              multiple: false,
-            },
-          ],
-          status: { _tag: "pending" },
-        },
-      });
+      const card = yield* botAsks(botId);
       const conversation = yield* conversations.open({ _tag: "conversation", botId });
       yield* waitFor(conversation.state, (state) => entryIds(state).includes(card.id));
 
       yield* gate.close;
-      const pick = (option: string) =>
-        conversations.answerCard(card.id, {
-          _tag: "question",
-          answers: { pick: { optionIds: [option], text: null } },
-        });
+      const pick = (option: string) => conversations.answerCard(card.id, picking(option));
       const first = yield* Effect.forkChild(pick("a"));
       yield* waitFor(
         actions.state,
@@ -1190,6 +1268,132 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       // Once the resolved card has arrived, nothing is held for it any more.
       yield* waitFor(actions.state, (state) => !state.has(cardAction(card.id)));
     }).pipe(Effect.scoped, Effect.provide(client())),
+  );
+
+  // One conversation across devices: two devices, each paired on its own.
+
+  it.effect("shows a message sent on one device on the other", () =>
+    acrossDevices((a, b, botId) =>
+      Effect.gen(function* () {
+        const target: EntryTarget = { _tag: "conversation", botId };
+        const onB = yield* b.conversations.open(target);
+        yield* waitFor(onB.state, (state) => state.phase === "ready");
+
+        const sent = yield* a.conversations.send({ target, text: "sent from the laptop" });
+        if (sent._tag !== "done") return assert.fail(`The message was not sent: ${sent._tag}`);
+
+        const shown = yield* waitFor(onB.state, (state) => entryIds(state).includes(sent.value));
+        const message = shown.items.find(
+          (item) => item._tag !== "outgoing" && item.id === sent.value,
+        );
+        assert.strictEqual(message?._tag === "message" && message.text, "sent from the laptop");
+      }),
+    ),
+  );
+
+  it.effect(
+    "resolves on one device a question answered on the other, and refuses a late answer",
+    () =>
+      acrossDevices((a, b, botId) =>
+        Effect.gen(function* () {
+          const target: EntryTarget = { _tag: "conversation", botId };
+          const card = yield* botAsks(botId);
+          const onA = yield* a.conversations.open(target);
+          const onB = yield* b.conversations.open(target);
+          yield* waitFor(onA.state, (state) => entryIds(state).includes(card.id));
+          yield* waitFor(onB.state, (state) => entryIds(state).includes(card.id));
+
+          assert.deepStrictEqual(yield* b.conversations.answerCard(card.id, picking("b")), {
+            _tag: "done",
+            value: undefined,
+          });
+          const statusOn = (state: ConversationState) => {
+            const item = state.items.find(
+              (candidate) => candidate._tag !== "outgoing" && candidate.id === card.id,
+            );
+            return item?._tag === "question" ? item.status : null;
+          };
+          const resolved = yield* waitFor(
+            onA.state,
+            (state) => statusOn(state)?._tag !== "pending",
+          );
+          const answeredOnB: ReturnType<typeof statusOn> = {
+            _tag: "answered",
+            answers: { pick: { optionIds: ["b"], text: null } },
+          };
+          assert.deepStrictEqual(statusOn(resolved), answeredOnB);
+
+          const late = yield* a.conversations.answerCard(card.id, picking("a"));
+          if (late._tag !== "failed" || late.failure._tag !== "refused") {
+            return assert.fail(`A resolved question took another answer: ${late._tag}`);
+          }
+          const refusal = late.failure.error;
+          assert.strictEqual(refusal._tag === "Conflict" && refusal.reason, "card-closed");
+          assert.deepStrictEqual(statusOn(onA.state.get()), answeredOnB);
+        }),
+      ),
+  );
+
+  it.effect(
+    "sends a message written offline once it reconnects, once, as another device watches",
+    () =>
+      acrossDevices((a, b, botId) =>
+        Effect.gen(function* () {
+          const target: EntryTarget = { _tag: "conversation", botId };
+          const onA = yield* a.conversations.open(target);
+          const onB = yield* b.conversations.open(target);
+          yield* waitFor(onA.state, (state) => state.phase === "ready");
+          yield* waitFor(onB.state, (state) => state.phase === "ready");
+
+          yield* a.network.set("offline");
+          yield* waitFor(a.connection.state, (state) => state._tag === "offline");
+          yield* a.drafts.setText(target, "written on the train");
+          assert.strictEqual(yield* a.drafts.send(target), "sent");
+          const [outgoing] = outgoingIn(onA.state.get());
+          if (outgoing === undefined) return assert.fail("The message is not shown as on its way");
+          const isIt = (item: ConversationItem) =>
+            item._tag === "message" && item.commandId === outgoing.commandId;
+
+          yield* a.network.set("online");
+          const onBNow = yield* waitFor(onB.state, (state) => state.items.some(isIt));
+          assert.strictEqual(onBNow.items.filter(isIt).length, 1);
+          const onANow = yield* waitFor(
+            onA.state,
+            (state) => outgoingIn(state).length === 0 && state.items.some(isIt),
+          );
+          assert.strictEqual(onANow.items.filter(isIt).length, 1);
+          yield* whenStored(a.storage, "outbox", outgoing.commandId, sent);
+        }),
+      ),
+  );
+
+  it.effect("keeps one device's drafts when another device is revoked", () =>
+    acrossDevices((a, b, botId) =>
+      Effect.gen(function* () {
+        const target: EntryTarget = { _tag: "conversation", botId };
+        const key = targetKey(target);
+        yield* a.drafts.setText(target, "half a reply on A");
+        yield* b.drafts.setText(target, "a note on B");
+        yield* whenStored(a.storage, "drafts", key, holds("half a reply on A"));
+        yield* whenStored(b.storage, "drafts", key, holds("a note on B"));
+
+        assert.deepStrictEqual(yield* a.devices.revoke(b.deviceId), {
+          _tag: "done",
+          value: undefined,
+        });
+        // B's pairing ended, and its drafts went with it.
+        yield* waitFor(b.connection.state, (state) => state._tag === "unpaired");
+        yield* waitFor(b.drafts.state, (drafts) => drafts.size === 0);
+
+        assert.strictEqual(a.drafts.state.get().get(key)?.text, "half a reply on A");
+        assert.isTrue(
+          holds("half a reply on A")(
+            (yield* a.storage.readAll("drafts").pipe(Effect.orDie)).get(key),
+          ),
+        );
+        assert.isTrue(isConnected(a.connection.state.get()));
+      }),
+    ),
   );
 
   it.effect("sends a message an earlier launch left unsent, once", () =>
