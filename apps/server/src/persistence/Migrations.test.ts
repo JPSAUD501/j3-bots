@@ -3,15 +3,18 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import * as SqliteMigrator from "@effect/sql-sqlite-node/SqliteMigrator";
 import { assert, it } from "@effect/vitest";
+import { Bot } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import { ServerConfig } from "../config.ts";
 import * as TestDatabase from "../testing/database.ts";
 import Migration0001 from "./migrations/0001_initial.ts";
 import Migration0002 from "./migrations/0002_operator_name.ts";
+import { json } from "./columns.ts";
 import * as Sqlite from "./Sqlite.ts";
 
 const now = "2026-11-20T09:00:00.000Z";
@@ -24,7 +27,8 @@ it.effect("upgrades a database the last release wrote, keeping its rows and thei
     const config = TestDatabase.configFor(path, home);
 
     // What the last release wrote: a bot with its session, a message in its
-    // conversation and the file the message carries.
+    // conversation and the file the message carries, and the receipt of the
+    // command that created the bot.
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* sql`PRAGMA foreign_keys = ON`;
@@ -61,6 +65,21 @@ it.effect("upgrades a database the last release wrote, keeping its rows and thei
         INSERT INTO attachments (id, sha256, name, media_type, source, entry_id, created_at)
         VALUES ('file-1', 'abc', 'notes.txt', 'text/plain', 'operator', 'entry-1', ${now})
       `;
+      const created = JSON.stringify({
+        id: "scout",
+        profile: { name: "scout", title: "", avatar: { shape: "circle", color: "blue" }, job: "" },
+        model: { providerId: "claude", modelId: "haiku" },
+        permissionMode: "auto",
+        primary: false,
+        pinned: false,
+        hidden: false,
+        state: { _tag: "idle" },
+        createdAt: now,
+      });
+      yield* sql`
+        INSERT INTO command_receipts (command_id, method, payload_hash, result_json, created_at)
+        VALUES ('command-1', 'bot.create', 'hash', ${created}, ${now})
+      `;
     }).pipe(Effect.provide(SqliteClient.layer({ filename: config.databasePath })));
 
     // This release opens it.
@@ -75,6 +94,12 @@ it.effect("upgrades a database the last release wrote, keeping its rows and thei
         SELECT entry_id FROM attachments WHERE id = 'file-1'
       `;
       assert.deepStrictEqual(files, [{ entry_id: "entry-1" }]);
+      // The command retried answers as it did, a bot with no settings change held.
+      const [receipt] = yield* sql<{ readonly result_json: string }>`
+        SELECT result_json FROM command_receipts WHERE command_id = 'command-1'
+      `;
+      const bot = yield* Schema.decodeUnknownEffect(json(Bot))(receipt?.result_json);
+      assert.isFalse(bot.settingsHeld);
       const [foreignKeys] = yield* sql<{ readonly foreign_keys: number }>`PRAGMA foreign_keys`;
       assert.strictEqual(foreignKeys?.foreign_keys, 1);
       assert.deepStrictEqual(yield* sql`PRAGMA foreign_key_check`, []);

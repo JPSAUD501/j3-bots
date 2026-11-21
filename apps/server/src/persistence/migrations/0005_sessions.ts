@@ -39,6 +39,15 @@ export default Effect.gen(function* () {
   // conversation is told; while it is set, clients offer the Stop that ends
   // the work.
   yield* sql`ALTER TABLE sessions ADD COLUMN settings_held INTEGER NOT NULL DEFAULT 0`;
+  // A bot now says whether such a change is held. The bots a receipt answered
+  // with before had none held, so a command retried after the upgrade gets
+  // the answer it was given then.
+  yield* sql`
+    UPDATE command_receipts
+    SET result_json = json_set(result_json, '$.settingsHeld', json('false'))
+    WHERE method IN ('bot.create', 'bot.update')
+      AND json_type(result_json, '$.settingsHeld') IS NULL
+  `;
 
   // Where a bot's conversation starts for a digest: the position of its first
   // entry after the operator's latest fresh start. Earlier entries are never
