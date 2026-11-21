@@ -18,7 +18,7 @@ const TRAILING = /[.,;:!?'"]+$/;
  * Splits message text into what the bubble renders: paragraphs with inline
  * code, links and mentions, and fenced code blocks. Everything else is plain
  * text. Only http and https addresses become links. `@Name` is a mention only
- * when the name is in `mentionable`.
+ * when the name is in `mentionable`, `@everyone` too.
  */
 export function parseMessageText(text: string, mentionable: ReadonlyArray<string> = []): Block[] {
   const blocks: Block[] = [];
@@ -60,7 +60,7 @@ function inlines(text: string, mentionable: ReadonlyArray<string>): Inline[] {
       while (href.endsWith(")") && count(href, "(") < count(href, ")")) href = href.slice(0, -1);
       out.push({ kind: "link", href, text: href });
       cursor -= url.length - href.length;
-    } else if (name !== undefined && (name === "everyone" || mentionable.includes(name))) {
+    } else if (name !== undefined && mentionable.includes(name)) {
       out.push({ kind: "mention", name });
     } else pushText(whole);
   }

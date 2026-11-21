@@ -19,6 +19,7 @@ import {
   type RoomFormValues,
   sameRoomForm,
   withMember,
+  withoutDeleted,
 } from "../presentation/roomForm";
 import { AvatarShape } from "./BotAvatar";
 import { Button } from "./ui/button";
@@ -102,8 +103,10 @@ export function RoomForm({
   };
   const room = mode._tag === "create" ? null : mode.room;
   const gone = mode._tag !== "create" && mode.gone;
-  // Where the form started: the room as it was when the form opened, or nothing.
-  const [start] = useState(() => initial ?? (room === null ? blankRoomForm : roomFormOf(room)));
+  // Where the form started: the room as the server had it when the form opened, or nothing.
+  const [start, setStart] = useState(
+    () => initial ?? (room === null ? blankRoomForm : roomFormOf(room)),
+  );
   const [values, setValues] = useState(start);
   // Bots picked and then deleted elsewhere, by name, which leave the selection and are named under it.
   const [dropped, setDropped] = useState<ReadonlyArray<string>>([]);
@@ -111,9 +114,11 @@ export function RoomForm({
   if (botsSeen !== bots) {
     setBotsSeen(bots);
     const present = new Set<BotId>(bots.map((bot) => bot.id));
+    // The server dropped them from the room too, so what it has is what the form compares with.
+    setStart(withoutDeleted(start, present));
     const deleted = values.members.filter((id) => !present.has(id));
     if (deleted.length > 0) {
-      setValues({ ...values, members: values.members.filter((id) => present.has(id)) });
+      setValues(withoutDeleted(values, present));
       const names = new Map(botsSeen.map((bot) => [bot.id, bot.profile.name]));
       setDropped([...dropped, ...deleted.flatMap((id) => names.get(id) ?? [])]);
     }

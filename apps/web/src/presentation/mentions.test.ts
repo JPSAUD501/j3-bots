@@ -2,16 +2,21 @@
 import type { DraftMention } from "@j3-bots/client-runtime";
 import { BotId, Invalid, NotFound } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import { createI18n } from "../i18n/i18n";
 import {
   addressed,
+  addresseeOf,
+  addresseeLine,
   followEdit,
   insertMention,
   type Mentionable,
   type MentionOption,
+  mentionedNames,
   mentionedWhoLeft,
   mentionOptions,
   mentionQuery,
   movedOption,
+  resendLabel,
 } from "./mentions";
 
 const member = (id: string, name: string): Mentionable => ({ id: BotId.make(id), name });
@@ -56,11 +61,20 @@ describe("addressed", () => {
     expect(addressed(`${fenced.text}\n\`\`\``, fenced.mentions, ids)).toBeUndefined();
   });
 
+  it("judges code on the text as sent, trimmed", () => {
+    // Indented, the fence is none in the draft; trimmed as it is sent, it is one.
+    const indented = picked("    ```\n@an", bot(ana));
+    expect(addressed(`${indented.text}\n\`\`\``, indented.mentions, ids)).toBeUndefined();
+    const spaced = picked("  @an", bot(ana));
+    expect(addressed(spaced.text, spaced.mentions, ids)).toEqual({ _tag: "bots", ids: [ana.id] });
+  });
+
   it("stops counting a mention once its token is edited", () => {
     const { text, mentions } = picked("@an", bot(anaLima));
     expect(text).toBe("@Ana Lima ");
     const edited = "@Ana Lma ";
-    expect(addressed(edited, followEdit(text, edited, 7, mentions), ids)).toBeUndefined();
+    const place = { replaced: null, caret: 7 };
+    expect(addressed(edited, followEdit(text, edited, place, mentions), ids)).toBeUndefined();
     // A name run on into another word is not the name picked either.
     expect(addressed("@Ana Limas", mentions, ids)).toBeUndefined();
   });
@@ -114,7 +128,12 @@ describe("followEdit", () => {
 
   it("moves a mention with text written or pasted before it", () => {
     const pasted = `Hi. @Scout said so. ${text}`;
-    const moved = followEdit(text, pasted, pasted.length - text.length, mentions);
+    const moved = followEdit(
+      text,
+      pasted,
+      { replaced: null, caret: pasted.length - text.length },
+      mentions,
+    );
     expect(moved).toEqual([{ ...mentions[0], position: 24 }]);
     // Pasted text that only reads like a mention addresses nobody.
     expect(addressed(pasted, moved, ids)).toEqual({ _tag: "bots", ids: [ana.id] });
@@ -123,13 +142,24 @@ describe("followEdit", () => {
   it("moves a mention when an @ is typed right before its own", () => {
     const at = picked("@an", bot(ana));
     const typed = `@${at.text}`;
-    expect(followEdit(at.text, typed, 1, at.mentions)).toEqual([
+    expect(followEdit(at.text, typed, { replaced: null, caret: 1 }, at.mentions)).toEqual([
       { ...at.mentions[0], position: 1 },
     ]);
   });
 
   it("drops a mention the edit cut through", () => {
-    expect(followEdit(text, "ask @A", 6, mentions)).toEqual([]);
+    expect(followEdit(text, "ask @A", { replaced: null, caret: 6 }, mentions)).toEqual([]);
+  });
+
+  it("drops a mention pasted over, though the text pasted starts with the same name", () => {
+    // "@Ana " selected and "@Ana, hi " pasted in its place.
+    const pasted = "ask @Ana, hi ";
+    expect(followEdit(text, pasted, { replaced: [4, 9], caret: 13 }, mentions)).toEqual([]);
+    // Text pasted over a selection after the mention leaves it standing.
+    const after = "ask @Ana and you";
+    expect(followEdit(`${text}me`, after, { replaced: [9, 11], caret: 16 }, mentions)).toEqual(
+      mentions,
+    );
   });
 });
 
@@ -183,6 +213,31 @@ describe("insertMention", () => {
     expect(insertMention(text, 4, [], query, bot(anaLima))).toMatchObject({ text, caret: 9 });
   });
 
+  it("puts the caret past a space after the name, and before a new line", () => {
+    const spaced = "@an next";
+    const query = mentionQuery(spaced, 3, []);
+    if (query === null) throw new Error("No query");
+    expect(insertMention(spaced, 3, [], query, bot(ana))).toMatchObject({
+      text: "@Ana next",
+      caret: 5,
+    });
+    const lines = "@an\nnext";
+    expect(insertMention(lines, 3, [], query, bot(ana))).toMatchObject({
+      text: "@Ana\nnext",
+      caret: 4,
+    });
+  });
+
+  it("picks quickly at the start of a very long pasted line", () => {
+    const line = `@${"a".repeat(100_000)}`;
+    const query = mentionQuery(line, 1, []);
+    if (query === null) throw new Error("No query");
+    const started = performance.now();
+    const { caret } = insertMention(line, 1, [], query, bot(ana));
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(caret).toBe(5);
+  });
+
   it("moves the mentions after it", () => {
     const later = picked("x @sc", bot(scout));
     const query = mentionQuery(`@an${later.text}`, 3, later.mentions);
@@ -209,6 +264,36 @@ describe("mentionedWhoLeft", () => {
     const gone = { _tag: "refused", error: new NotFound({ resource: "room" }) } as const;
     expect(mentionedWhoLeft(gone, mentions, [scout.id])).toBeNull();
     expect(mentionedWhoLeft(refused, mentions, [ana.id, scout.id])).toBeNull();
+  });
+});
+
+describe("addressee", () => {
+  const en = createI18n("en");
+  const nameOf = (botId: BotId) => members.find((one) => one.id === botId)?.name;
+
+  it("says a message for nobody goes to the host, named as it is now", () => {
+    expect(addresseeLine(addresseeOf(null, scout.id, nameOf, en), en)).toBe(
+      "To the host (now Scout)",
+    );
+  });
+
+  it("says Send again goes to the host once every member mentioned has left", () => {
+    const without = { _tag: "bots", ids: [] } as const;
+    expect(resendLabel(addresseeOf(without, scout.id, nameOf, en), en)).toBe(
+      "Send to the host (Scout)",
+    );
+    const someStay = { _tag: "bots", ids: [ana.id] } as const;
+    expect(resendLabel(addresseeOf(someStay, scout.id, nameOf, en), en)).toBe("Send to Ana");
+  });
+});
+
+describe("mentionedNames", () => {
+  const nameOf = (botId: BotId) => members.find((one) => one.id === botId)?.name;
+
+  it("highlights whom the message addressed, and no one else", () => {
+    expect(mentionedNames({ _tag: "bots", ids: [ana.id] }, nameOf)).toEqual(["Ana"]);
+    expect(mentionedNames({ _tag: "everyone" }, nameOf)).toEqual(["everyone"]);
+    expect(mentionedNames(null, nameOf)).toEqual([]);
   });
 });
 

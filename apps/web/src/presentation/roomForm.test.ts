@@ -11,9 +11,11 @@ import {
   type RoomFormValues,
   sameRoomForm,
   withMember,
+  withoutDeleted,
 } from "./roomForm";
 
 const hal = BotId.make("hal");
+const scout = BotId.make("scout");
 const ana = BotId.make("ana");
 const bo = BotId.make("bo");
 const cy = BotId.make("cy");
@@ -99,5 +101,34 @@ describe("roomChanges", () => {
     expect(roomChanges(opened, values, null, 6)).toEqual({ _tag: "ready", value: { hopLimit: 6 } });
     const checked = roomChanges(opened, values, null, null);
     expect(checked._tag === "invalid" && [...checked.problems]).toEqual(["hop-limit"]);
+  });
+
+  it("sends the host it shows when the server has none: an archived room whose host was deleted", () => {
+    const archived: Room = {
+      ...room,
+      status: "archived",
+      members: [hal],
+      hostId: null,
+      archivedAt: at("2026-11-02T00:00:00Z"),
+    };
+    const opened = roomFormOf(archived);
+    const values = withMember(opened, scout, true);
+    expect(hostOf(values, null)).toBe(hal);
+    expect(roomChanges(opened, values, null, 4)).toEqual({
+      _tag: "ready",
+      value: { members: [hal, scout], hostId: hal },
+    });
+  });
+
+  it("compares with the room less a bot deleted meanwhile, and sends the host it shows for a deleted host", () => {
+    const opened = roomFormOf({ ...room, members: [hal, ana, bo], hostId: ana });
+    const present = new Set([hal, bo]);
+    const start = withoutDeleted(opened, present);
+    const values = withoutDeleted(opened, present);
+    expect(start).toEqual({ ...opened, members: [hal, bo], hostPick: null });
+    expect(roomChanges(start, values, null, 4)).toEqual({
+      _tag: "ready",
+      value: { hostId: hal },
+    });
   });
 });

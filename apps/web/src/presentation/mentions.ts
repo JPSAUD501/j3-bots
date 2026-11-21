@@ -55,19 +55,24 @@ const stands = (
 
 /**
  * Who a room message addresses, as `message.send` takes it: only mentions the
- * operator picked count, and only while they stand. `@everyone` asks every
- * member; otherwise each member mentioned, by the id picked, in the order they
- * appear. A member no longer in the room is left out. `undefined` when it
- * addresses nobody, which goes to the host.
+ * operator picked count, and only while they stand in the text as it is sent,
+ * trimmed as `Drafts.send` trims it. `@everyone` asks every member; otherwise
+ * each member mentioned, by the id picked, in the order they appear. A member
+ * no longer in the room is left out. `undefined` when it addresses nobody,
+ * which goes to the host.
  */
 export function addressed(
   text: string,
   mentions: ReadonlyArray<DraftMention>,
   members: ReadonlyArray<BotId>,
 ): Mentions | undefined {
-  const code = codeRanges(text);
+  const sent = text.trim();
+  // Where the text sent starts in the draft: mentions are placed in the draft.
+  const offset = text.length - text.trimStart().length;
+  const code = codeRanges(sent);
   const standing = mentions
-    .filter((mention) => stands(text, mention, code))
+    .map((mention) => ({ ...mention, position: mention.position - offset }))
+    .filter((mention) => mention.position >= 0 && stands(sent, mention, code))
     .toSorted((a, b) => a.position - b.position);
   if (standing.some((mention) => mention._tag === "everyone")) return { _tag: "everyone" };
   const ids: Array<BotId> = [];
@@ -79,27 +84,77 @@ export function addressed(
   return ids.length === 0 ? undefined : { _tag: "bots", ids };
 }
 
+/** Who a room message wakes, as the server routes it, by the names to show. */
+export type Addressee =
+  | { readonly _tag: "host"; readonly name: string }
+  | { readonly _tag: "everyone" }
+  | { readonly _tag: "bots"; readonly names: string }
+  | null;
+
 /**
- * Who a room message wakes, as the server routes it, in a line: each member
- * mentioned, in turn; every member; or, mentioning nobody, the host. Null
- * while a name to show is not known.
+ * Who a room message wakes: each member mentioned, in turn; every member; or,
+ * mentioning nobody, the room's host, named as it is now. Null while a name
+ * to show is not known.
  */
-export function addresseeLine(
-  mentions: Mentions | undefined,
+export function addresseeOf(
+  mentions: Mentions | null,
   hostId: BotId | null,
   nameOf: (botId: BotId) => string | undefined,
-  { t, locale }: I18n,
-): string | null {
-  if (mentions === undefined || (mentions._tag === "bots" && mentions.ids.length === 0)) {
+  { locale }: I18n,
+): Addressee {
+  if (mentions === null || (mentions._tag === "bots" && mentions.ids.length === 0)) {
     const host = hostId === null ? undefined : nameOf(hostId);
-    return host === undefined ? null : t("composer.to.host", { name: host });
+    return host === undefined ? null : { _tag: "host", name: host };
   }
-  if (mentions._tag === "everyone") return t("composer.to.everyone");
+  if (mentions._tag === "everyone") return { _tag: "everyone" };
   const names = mentions.ids.flatMap((id) => nameOf(id) ?? []);
   if (names.length === 0) return null;
-  return t("composer.to", {
+  return {
+    _tag: "bots",
     names: new Intl.ListFormat(locale, { type: "conjunction" }).format(names),
-  });
+  };
+}
+
+/**
+ * Who a room message wakes, in the quiet line under the composer. A message
+ * for nobody goes to whoever hosts when it arrives, so the line says the
+ * host, and who that is now.
+ */
+export function addresseeLine(to: Addressee, { t }: I18n): string | null {
+  if (to === null) return null;
+  switch (to._tag) {
+    case "host":
+      return t("composer.to.host", { name: to.name });
+    case "everyone":
+      return t("composer.to.everyone");
+    case "bots":
+      return t("composer.to", { names: to.names });
+  }
+}
+
+/**
+ * What Send again says for a room message that goes again to `to`, without
+ * the members who left: to the host when none of those it mentioned is left.
+ */
+export function resendLabel(to: Addressee, { t }: I18n): string {
+  if (to === null || to._tag === "everyone") return t("message.retry");
+  return to._tag === "host"
+    ? t("message.retry.host", { name: to.name })
+    : t("message.retry.to", { names: to.names });
+}
+
+/**
+ * The names a room message highlights: those it addressed, as the server
+ * took them, or `@everyone`. A name that merely reads like a mention is not
+ * highlighted.
+ */
+export function mentionedNames(
+  mentions: Mentions | null,
+  nameOf: (botId: BotId) => string | undefined,
+): ReadonlyArray<string> {
+  if (mentions === null) return [];
+  if (mentions._tag === "everyone") return [EVERYONE];
+  return mentions.ids.flatMap((id) => nameOf(id) ?? []);
 }
 
 /**
@@ -141,20 +196,56 @@ const commonSuffix = (a: string, b: string) => {
   return length;
 };
 
+/** Where the field's selection was before an edit, and where its caret is after it. */
+export interface EditPlace {
+  /** The selection the edit replaced, as `[start, end)` of the text before it, when it held text. */
+  readonly replaced: readonly [number, number] | null;
+  /** The caret after the edit, when the selection is collapsed. */
+  readonly caret: number | null;
+}
+
+/**
+ * The run `[from, to)` of `before` that an edit replacing the selection
+ * `[start, end)` changed into `after`, or null when `after` is not such an
+ * edit, as for an undo.
+ */
+function replacedSelection(
+  before: string,
+  after: string,
+  [start, end]: readonly [number, number],
+): readonly [number, number] | null {
+  const kept = before.length - end;
+  return start < end &&
+    end <= before.length &&
+    after.length - kept >= start &&
+    after.startsWith(before.slice(0, start)) &&
+    after.endsWith(before.slice(end))
+    ? [start, end]
+    : null;
+}
+
 /**
  * The mentions of `before` that still stand once the operator edited it into
- * `after`. The edit is the one run of text that changed; the caret after it,
- * when known, places that run where the operator typed, so a character typed
- * just before an `@` moves the mention rather than breaking it. Editing a
- * mention's token, even one character of it, ends that mention.
+ * `after`. An edit over a selection replaced exactly that selection, so a
+ * pick in it is gone whatever was pasted or typed over it. Otherwise the edit
+ * is the one run of text that changed; the caret after it, when known, places
+ * that run where the operator typed, so a character typed just before an `@`
+ * moves the mention rather than breaking it. Editing a mention's token, even
+ * one character of it, ends that mention.
  */
 export function followEdit(
   before: string,
   after: string,
-  caret: number | null,
+  { replaced: selection, caret }: EditPlace,
   mentions: ReadonlyArray<DraftMention>,
 ): ReadonlyArray<DraftMention> {
   if (mentions.length === 0 || before === after) return mentions;
+  const run = selection === null ? null : replacedSelection(before, after, selection);
+  if (run !== null) {
+    const [from, to] = run;
+    const moved = replaced(mentions, from, to, after.length - before.length + (to - from));
+    return moved.filter((mention) => after.startsWith(mentionToken(mention), mention.position));
+  }
   // The text after the caret is untouched, so the changed run ends at the caret at the latest.
   const suffix = Math.min(
     commonSuffix(before, after),
@@ -228,11 +319,13 @@ export function mentionQuery(
 /**
  * How far the name `option` writes already runs on from `start`'s `@`, folded,
  * so picking an option the operator finished typing replaces what they typed
- * rather than writing it twice.
+ * rather than writing it twice. Typed in full, the name is at most as long as
+ * it is decomposed, so only that much of the line is looked at.
  */
 function typedEnd(text: string, start: number, caret: number, name: string): number {
   const lineEnd = text.indexOf("\n", start);
-  const limit = lineEnd === -1 ? text.length : lineEnd;
+  const longest = start + 1 + name.normalize("NFD").length;
+  const limit = Math.min(lineEnd === -1 ? text.length : lineEnd, longest);
   const wanted = folded(name);
   for (let end = limit; end > caret; end -= 1) {
     if (folded(text.slice(start + 1, end)) === wanted && endsAt(text, end)) return end;
@@ -244,8 +337,8 @@ function typedEnd(text: string, start: number, caret: number, name: string): num
  * `text` with the mention being typed replaced by `option`'s token, the
  * mentions it then holds, the new one among them, and where the caret goes:
  * past the token and the space after it. A space is added unless the text
- * goes on with one, or with punctuation. A name typed in full already is
- * replaced, not written again.
+ * goes on with one, or with punctuation or a new line, which the caret stays
+ * before. A name typed in full already is replaced, not written again.
  */
 export function insertMention(
   text: string,
@@ -269,7 +362,7 @@ export function insertMention(
   return {
     text: `${text.slice(0, start)}${spaced}${after}`,
     mentions: [...replaced(mentions, start, end, spaced.length), mention],
-    caret: start + token.length + (spaced !== token || /^\s/u.test(after) ? 1 : 0),
+    caret: start + token.length + (spaced !== token || after.startsWith(" ") ? 1 : 0),
   };
 }
 

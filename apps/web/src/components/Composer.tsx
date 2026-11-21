@@ -214,6 +214,11 @@ export function Composer({
   const send = () => {
     if (ready) onSend();
   };
+  // The field's selection as the operator last left it: what an edit replaces.
+  const selection = useRef<readonly [number, number] | null>(null);
+  const remember = (element: HTMLTextAreaElement) => {
+    selection.current = [element.selectionStart, element.selectionEnd];
+  };
   const mention = useMentionPicker({
     draftKey,
     value,
@@ -376,13 +381,26 @@ export function Composer({
             const field = event.currentTarget;
             setNotTaken(false);
             const caret = field.selectionStart === field.selectionEnd ? field.selectionStart : null;
-            onValueChange(field.value, followEdit(value, field.value, caret, mentions));
+            const [start, end] = selection.current ?? [0, 0];
+            const over: readonly [number, number] | null = start < end ? [start, end] : null;
+            const place = { replaced: over, caret };
+            onValueChange(field.value, followEdit(value, field.value, place, mentions));
+            remember(field);
             mention.follow(field);
           }}
-          onSelect={(event) => mention.follow(event.currentTarget)}
-          onFocus={(event) => mention.follow(event.currentTarget)}
+          onSelect={(event) => {
+            remember(event.currentTarget);
+            mention.follow(event.currentTarget);
+          }}
+          onFocus={(event) => {
+            remember(event.currentTarget);
+            mention.follow(event.currentTarget);
+          }}
           onBlur={mention.leave}
+          onCut={(event) => remember(event.currentTarget)}
+          onDrop={(event) => remember(event.currentTarget)}
           onKeyDown={(event) => {
+            remember(event.currentTarget);
             if (mention.onKeyDown(event)) return;
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
               event.preventDefault();
@@ -390,6 +408,7 @@ export function Composer({
             }
           }}
           onPaste={(event) => {
+            remember(event.currentTarget);
             if (!onAttachFiles || event.clipboardData.files.length === 0) return;
             event.preventDefault();
             attach(event.clipboardData.files);
@@ -545,6 +564,8 @@ function useMentionPicker({
   // The `@` the operator closed the list on, which reopens only at another one.
   const [dismissed, setDismissed] = useState<number | null>(null);
   const [active, setActive] = useState(0);
+  // Where the caret goes once a pick has reached the field.
+  const placeCaret = useRef<number | null>(null);
   // Another draft's caret says nothing about this one: it is followed again from the next edit.
   const [caretFor, setCaretFor] = useState(draftKey);
   if (caretFor !== draftKey) {
@@ -552,8 +573,6 @@ function useMentionPicker({
     setCaret(null);
     setDismissed(null);
   }
-  // Where the caret goes once a pick has reached the field.
-  const placeCaret = useRef<number | null>(null);
 
   const query =
     members === undefined || caret === null ? null : mentionQuery(value, caret, mentions);
@@ -582,7 +601,14 @@ function useMentionPicker({
   const pick = (option: MentionOption) => {
     if (query === null || caret === null) return;
     const next = insertMention(value, caret, mentions, query, option);
-    placeCaret.current = next.caret;
+    const element = field.current;
+    // A pick that leaves the text as it was changes nothing in the field: the caret moves now.
+    if (next.text === value && element !== null) {
+      element.setSelectionRange(next.caret, next.caret);
+      setCaret(next.caret);
+    } else {
+      placeCaret.current = next.caret;
+    }
     onValueChange(next.text, next.mentions);
   };
 

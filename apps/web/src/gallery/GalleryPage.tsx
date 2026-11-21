@@ -56,7 +56,7 @@ import { UsageSection } from "../components/UsageSection";
 import { WorkFold } from "../components/WorkFold";
 import { locales, type Locale } from "../i18n/i18n";
 import { cn } from "../lib/cn";
-import { addressed, addresseeLine, mentionOptions } from "../presentation/mentions";
+import { addressed, addresseeOf, addresseeLine, mentionOptions } from "../presentation/mentions";
 import { Shell } from "../shell/Shell";
 import { shellShortcuts } from "../shell/shortcuts";
 import { SAMPLE_NOW, ids, sampleTeam } from "./sample";
@@ -346,6 +346,7 @@ const notSubmitting = () => false;
 
 function BubblesSection() {
   const { bubbles } = variants;
+  const { t } = useI18n();
   return (
     <Section title="Bubbles">
       <Labeled label="Single bubbles, with no tightened corner: the operator, queued, cancelled, refused, perhaps delivered, being sent again, on its way from this device, not sent from it, answered with no record on this device, a bot with code, a bot with files">
@@ -400,7 +401,7 @@ function BubblesSection() {
             onRetry={nothing}
             onDiscard={nothing}
           />
-          {/* In a room, refused because a member it mentions left: Send again sends it without them. */}
+          {/* In a room, refused because the member it mentions left: Send again sends it to the host. */}
           <MessageBubble
             message={bubbles.notSent}
             position="single"
@@ -408,6 +409,7 @@ function BubblesSection() {
             onRetry={nothing}
             onDiscard={nothing}
             leftRoom={["Wren"]}
+            retryLabel={t("message.retry.host", { name: "Scout" })}
           />
           <MessageBubble
             message={bubbles.unrecorded}
@@ -433,7 +435,7 @@ function BubblesSection() {
         <div className="max-w-(--layout-text-column)">
           <Timeline
             entries={team.entries[`bot:${ids.scout}`] ?? []}
-            roomMembers={null}
+            room={null}
             workSteps={workSteps}
             submitting={notSubmitting}
             intents={timelineIntents}
@@ -444,7 +446,7 @@ function BubblesSection() {
         <div className="max-w-(--layout-text-column)">
           <Timeline
             entries={team.entries[`room:${ids.newsletter}`] ?? []}
-            roomMembers={team.room.members}
+            room={team.room}
             workSteps={workSteps}
             submitting={notSubmitting}
             intents={timelineIntents}
@@ -624,13 +626,16 @@ function ComposerDemo({
     mentionable === undefined
       ? null
       : addresseeLine(
-          addressed(
-            value,
-            mentions,
-            mentionable.members.map((member) => member.id),
+          addresseeOf(
+            addressed(
+              value,
+              mentions,
+              mentionable.members.map((member) => member.id),
+            ) ?? null,
+            mentionable.hostId,
+            (botId) => mentionable.members.find((member) => member.id === botId)?.name,
+            i18n,
           ),
-          mentionable.hostId,
-          (botId) => mentionable.members.find((member) => member.id === botId)?.name,
           i18n,
         );
   const [files, setFiles] = useState(initialFiles);

@@ -77,6 +77,8 @@ export const ptBR: Catalog = {
   "message.failed.unresolved": "Pode ter sido entregue. Enviar de novo pode repetir o trabalho.",
   "message.failed.stopped": "Não entregue: o trabalho foi interrompido",
   "message.retry": "Enviar de novo",
+  "message.retry.host": "Enviar ao anfitrião ({name})",
+  "message.retry.to": "Enviar para {names}",
 
   "file.open": "Abrir {name}",
   "file.kindAndSize": "{kind} · {size}",
@@ -410,7 +412,7 @@ export const ptBR: Catalog = {
   "composer.dismiss": "Dispensar",
   "composer.unread": "Não foi possível carregar seu rascunho.",
   "composer.unread.retry": "Tentar de novo",
-  "composer.to.host": "Para {name} (anfitrião)",
+  "composer.to.host": "Para o anfitrião (agora {name})",
   "composer.to": "Para {names}",
   "composer.to.everyone": "Para todos",
   "composer.notSaved": "Ainda não salvo",

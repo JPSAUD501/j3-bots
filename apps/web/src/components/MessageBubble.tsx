@@ -73,7 +73,7 @@ interface MessageBubbleProps {
    * name and shape only. What the bot is doing now is not part of an old message.
    */
   readonly speaker?: Bot | null;
-  /** Names that `@Name` may mention. */
+  /** The names the message addressed, which `@Name` highlights; `everyone` for every member. */
   readonly mentionable?: ReadonlyArray<string>;
   readonly onOpenAttachment: (attachment: Attachment) => void;
   /** Sends again a message that failed, or that this device could not send. */
@@ -88,6 +88,8 @@ interface MessageBubbleProps {
    * again then sends it without them.
    */
   readonly leftRoom?: ReadonlyArray<string>;
+  /** What Send again says when it sends somewhere else than the message did, as without them. */
+  readonly retryLabel?: string;
 }
 
 /** One message: the operator's on the right and dark, a bot's on the left and light. */
@@ -101,6 +103,7 @@ export function MessageBubble({
   onDiscard,
   submitting = false,
   leftRoom,
+  retryLabel,
 }: MessageBubbleProps) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
@@ -190,7 +193,7 @@ export function MessageBubble({
               }}
               {...actions}
             >
-              {t("message.retry")}
+              {retryLabel ?? t("message.retry")}
             </Button>
           )}
           {status._tag === "not-sent" && onDiscard && (

@@ -2,6 +2,7 @@
 import {
   type ApprovalDecision,
   Attachment,
+  BotId,
   CommandError,
   CommandId,
   DeviceId,
@@ -54,6 +55,10 @@ const HISTORY_PAGE = 50;
 export const targetKey = (target: EntryTarget) =>
   target._tag === "conversation" ? `conversation:${target.botId}` : `room:${target.roomId}`;
 
+/** The name a member had where the operator mentioned it, by picking it. */
+export const MentionLabel = Schema.Struct({ botId: BotId, label: Schema.String });
+export type MentionLabel = typeof MentionLabel.Type;
+
 /**
  * A message the operator sent from this client that the conversation does not
  * show yet. It disappears when the server's entry for it arrives, matched by
@@ -70,6 +75,11 @@ export interface OutgoingMessage {
   readonly text: string;
   readonly attachments: ReadonlyArray<Attachment>;
   readonly mentions: Mentions | null;
+  /**
+   * The name each member it mentions had when the operator picked it, so
+   * the message can say who it meant after that member left or was renamed.
+   */
+  readonly labels: ReadonlyArray<MentionLabel>;
   readonly createdAt: DateTime.Utc;
   /**
    * `sending` until the server accepts it, waiting through disconnections;
@@ -143,6 +153,8 @@ const StoredMessage = Schema.TaggedStruct("message", {
   text: MessageText,
   attachments: Schema.Array(Attachment),
   mentions: Schema.NullOr(Mentions),
+  /** Missing from a message kept before messages kept them: it names none. */
+  labels: Schema.optionalKey(Schema.Array(MentionLabel)),
   createdAt: Schema.DateTimeUtc,
   /** Its place in the device's queue, given in the transaction that kept it. */
   sequence: NonNegativeInt,
@@ -345,6 +357,8 @@ export class Conversations extends Context.Service<
       readonly text: string;
       readonly attachments?: ReadonlyArray<Attachment>;
       readonly mentions?: Mentions;
+      /** The names the members mentioned had when picked. */
+      readonly labels?: ReadonlyArray<MentionLabel>;
     }) => Effect.Effect<IntentResult<EntryId>, InvalidMessage>;
     /**
      * Keeps the message on the device, with the `claim`'s `alongside` in the
@@ -362,6 +376,7 @@ export class Conversations extends Context.Service<
         readonly text: string;
         readonly attachments?: ReadonlyArray<Attachment>;
         readonly mentions?: Mentions;
+        readonly labels?: ReadonlyArray<MentionLabel>;
       },
       claim?: {
         /** The pairing `alongside` belongs to: with another, it fails with `NotPaired`. */
@@ -748,6 +763,7 @@ export const layer = Layer.effect(
         text: record.text,
         attachments: record.attachments,
         mentions: record.mentions,
+        labels: record.labels ?? [],
         createdAt: record.createdAt,
         status:
           record.status._tag === "sending" &&
@@ -1306,6 +1322,7 @@ export const layer = Layer.effect(
       readonly text: string;
       readonly attachments?: ReadonlyArray<Attachment>;
       readonly mentions?: Mentions;
+      readonly labels?: ReadonlyArray<MentionLabel>;
     }) {
       const attachments = input.attachments ?? [];
       const problem = messageProblem(input.text, attachments);
@@ -1317,6 +1334,7 @@ export const layer = Layer.effect(
         text: input.text,
         attachments,
         mentions: input.mentions ?? null,
+        labels: input.labels ?? [],
         createdAt: yield* DateTime.now,
         status: { _tag: "sending" },
       } satisfies KeptMessage;

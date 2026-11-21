@@ -48,10 +48,13 @@ describe("parseMessageText", () => {
     }
   });
 
-  it("marks a mention only for a name that can be mentioned", () => {
+  it("marks a mention only for a name the message addressed", () => {
     expect(inlinesOf("@Wren and @Nobody, also @everyone", ["Wren"])).toEqual([
       { kind: "mention", name: "Wren" },
-      { kind: "text", text: " and @Nobody, also " },
+      { kind: "text", text: " and @Nobody, also @everyone" },
+    ]);
+    expect(inlinesOf("@Wren, @everyone", ["everyone"])).toEqual([
+      { kind: "text", text: "@Wren, " },
       { kind: "mention", name: "everyone" },
     ]);
   });

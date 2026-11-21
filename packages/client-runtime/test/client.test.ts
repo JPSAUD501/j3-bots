@@ -2295,6 +2295,34 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
     }),
   );
 
+  it.effect(
+    "keeps the name each mention was picked by with a message not sent, through a reload",
+    () =>
+      Effect.gen(function* () {
+        const { sends, refusing } = yield* Fakes;
+        const { device, target, botId, credential } = yield* pairedDevice("Wren");
+        const text = "@Wren, have a look";
+        refusing.add(text);
+        const notSent = (state: ConversationState) =>
+          outgoingIn(state).find((message) => message.status._tag === "not-sent");
+
+        yield* Effect.gen(function* () {
+          const conversation = yield* (yield* Conversations).open(target);
+          const drafts = yield* Drafts;
+          yield* drafts.setText(target, text, [{ _tag: "bot", botId, label: "Wren", position: 0 }]);
+          assert.strictEqual(yield* drafts.send(target, { _tag: "bots", ids: [botId] }), "sent");
+          yield* Queue.take(sends);
+          yield* waitFor(conversation.state, (state) => notSent(state) !== undefined);
+        }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+
+        yield* Effect.gen(function* () {
+          const conversation = yield* (yield* Conversations).open(target);
+          const state = yield* waitFor(conversation.state, (shown) => notSent(shown) !== undefined);
+          assert.deepStrictEqual(notSent(state)?.labels, [{ botId, label: "Wren" }]);
+        }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+      }),
+  );
+
   it.effect("does nothing when Retry finds the message discarded in another tab", () =>
     Effect.gen(function* () {
       const { sends, refusing } = yield* Fakes;

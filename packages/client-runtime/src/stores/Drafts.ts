@@ -32,7 +32,7 @@ import {
 } from "../files/limits.ts";
 import { ClientStorage, type LocalRecord, type LocalStorageError } from "../ports.ts";
 import { Cell, type Readable, waitFor } from "../Store.ts";
-import { Conversations, targetKey } from "./Conversations.ts";
+import { Conversations, type MentionLabel, targetKey } from "./Conversations.ts";
 
 /** A file in the composer, from the moment the operator picks it. */
 export type DraftFile =
@@ -135,6 +135,17 @@ const localFileOf = (file: DraftFile): LocalFile =>
         size: file.attachment.size,
       }
     : file;
+
+/** The name each member `mentions` names had where the operator picked it in `draft`. */
+const labelsOf = (draft: Draft, mentions: Mentions): ReadonlyArray<MentionLabel> =>
+  mentions._tag === "everyone"
+    ? []
+    : mentions.ids.flatMap((botId) => {
+        const picked = draft.mentions.find(
+          (mention) => mention._tag === "bot" && mention.botId === botId,
+        );
+        return picked?._tag === "bot" ? [{ botId, label: picked.label }] : [];
+      });
 
 const isEmpty = (draft: Draft) => draft.text === "" && draft.files.length === 0;
 
@@ -844,7 +855,12 @@ export const layer = Layer.effect(
           // The outbox holds the message from here; its delivery outlives the caller.
           const kept = yield* conversations
             .enqueue(
-              { target, text, attachments, ...(mentions === undefined ? {} : { mentions }) },
+              {
+                target,
+                text,
+                attachments,
+                ...(mentions === undefined ? {} : { mentions, labels: labelsOf(draft, mentions) }),
+              },
               {
                 pairing,
                 alongside: [{ table: "drafts", key, value: handedOver }],

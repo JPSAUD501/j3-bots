@@ -27,13 +27,32 @@ export const blankRoomForm: RoomFormValues = {
   hopLimit: "",
 };
 
-/** The form filled from a room, to change it. */
+/**
+ * The form filled from a room, to change it: what the server has, so an
+ * archived room without a host opens without one picked.
+ */
 export const roomFormOf = (room: Room): RoomFormValues => ({
   name: room.name,
   members: room.members,
   hostPick: room.hostId,
   hopLimit: String(room.hopLimit),
 });
+
+/**
+ * `values` without the bots that are no longer `present`. A host deleted
+ * leaves no pick: the server has moved the room to another host, or to none.
+ */
+export function withoutDeleted(
+  values: RoomFormValues,
+  present: ReadonlySet<BotId>,
+): RoomFormValues {
+  if (values.members.every((id) => present.has(id))) return values;
+  return {
+    ...values,
+    members: values.members.filter((id) => present.has(id)),
+    hostPick: values.hostPick !== null && present.has(values.hostPick) ? values.hostPick : null,
+  };
+}
 
 /**
  * Who hosts: the bot the operator picked while it is a member, else the
@@ -140,9 +159,12 @@ export function sameRoomForm(
 }
 
 /**
- * What the form changes from `opened`, the room as the form opened with it,
- * and only that: a field changed elsewhere meanwhile and left alone here is
- * not sent back. An empty hop limit sets it back to the default.
+ * What the form changes from `opened`, the room as the server had it when
+ * the form opened, less the bots deleted since, and only that: a field
+ * changed elsewhere meanwhile and left alone here is not sent back. The host
+ * the form shows is sent whenever the server's is not that one, as when it
+ * has none or its host was deleted. An empty hop limit sets it back to the
+ * default.
  */
 export function roomChanges(
   opened: RoomFormValues,
@@ -162,7 +184,7 @@ export function roomChanges(
     value: {
       ...(name === opened.name.trim() ? {} : { name }),
       ...(sameOrder(values.members, opened.members) ? {} : { members: values.members }),
-      ...(hostId === hostOf(opened, primaryId) ? {} : { hostId }),
+      ...(hostId === opened.hostPick ? {} : { hostId }),
       ...(hopLimit === resolvedHopLimit(opened, defaultHopLimit) ? {} : { hopLimit }),
     },
   };

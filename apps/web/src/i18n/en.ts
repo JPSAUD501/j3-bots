@@ -79,6 +79,8 @@ export const en = {
   "message.failed.unresolved": "May have been delivered. Sending again may repeat the work.",
   "message.failed.stopped": "Not delivered: the work was stopped",
   "message.retry": "Send again",
+  "message.retry.host": "Send to the host ({name})",
+  "message.retry.to": "Send to {names}",
 
   "file.open": "Open {name}",
   "file.kindAndSize": "{kind} · {size}",
@@ -404,7 +406,7 @@ export const en = {
   "composer.dismiss": "Dismiss",
   "composer.unread": "Couldn’t load your draft.",
   "composer.unread.retry": "Try again",
-  "composer.to.host": "To {name} (host)",
+  "composer.to.host": "To the host (now {name})",
   "composer.to": "To {names}",
   "composer.to.everyone": "To everyone",
   "composer.notSaved": "Not saved yet",

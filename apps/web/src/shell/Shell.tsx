@@ -35,7 +35,7 @@ import {
 import type { ShellData, ShellIntents } from "./data";
 import { isCovered, useCovered } from "../lib/covered";
 import { useNewestSeen } from "../lib/useNewestSeen";
-import { addressed, addresseeLine } from "../presentation/mentions";
+import { addressed, addresseeOf, addresseeLine } from "../presentation/mentions";
 import { useShellLayout } from "./layout";
 import { isEditable, shellShortcuts } from "./shortcuts";
 
@@ -281,9 +281,12 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
     const addressee =
       item._tag === "room"
         ? addresseeLine(
-            mentions,
-            item.room.hostId,
-            (botId) => bots.find((candidate) => candidate.id === botId)?.profile.name,
+            addresseeOf(
+              mentions ?? null,
+              item.room.hostId,
+              (botId) => bots.find((candidate) => candidate.id === botId)?.profile.name,
+              i18n,
+            ),
             i18n,
           )
         : null;
@@ -347,7 +350,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
               )}
               <Timeline
                 entries={view.items}
-                roomMembers={item._tag === "room" ? item.room.members : null}
+                room={item._tag === "room" ? item.room : null}
                 workSteps={data.workSteps}
                 submitting={data.submitting}
                 intents={intents}

@@ -9,13 +9,19 @@ import type {
   EntryId,
   MessageEntry,
   QuestionAnswers,
+  Room,
   RoutineId,
   WorkStep,
 } from "@j3-bots/contracts";
 import type { ConversationItem } from "@j3-bots/client-runtime";
 import type * as Redacted from "effect/Redacted";
 import { useBots, useI18n } from "../app/context";
-import { mentionedWhoLeft } from "../presentation/mentions";
+import {
+  addresseeOf,
+  mentionedNames,
+  mentionedWhoLeft,
+  resendLabel,
+} from "../presentation/mentions";
 import { buildTimeline } from "../presentation/timeline";
 import { ApprovalCard } from "./ApprovalCard";
 import { HandoffCard } from "./HandoffCard";
@@ -56,11 +62,12 @@ interface TimelineProps {
   /** Entries oldest first, then the operator's messages still on their way. */
   readonly entries: ReadonlyArray<ConversationItem>;
   /**
-   * In a room, the members it has now: rooms show who said each message, and
-   * a message refused for mentioning a member who left says so. Null in a
-   * bot's conversation, which has one speaker.
+   * In a room, its members and host now: rooms show who said each message and
+   * whom it addressed, and a message refused for mentioning a member who left
+   * says so, and where Send again sends it. Null in a bot's conversation,
+   * which has one speaker.
    */
-  readonly roomMembers: ReadonlyArray<BotId> | null;
+  readonly room: Pick<Room, "members" | "hostId"> | null;
   readonly workSteps: (entryId: EntryId) => ReadonlyArray<WorkStep> | null;
   /** Whether the operator's answer to a card is still on its way. */
   readonly submitting: (entryId: EntryId) => boolean;
@@ -68,11 +75,14 @@ interface TimelineProps {
 }
 
 /** Every entry of a conversation or room, oldest first: bubbles, cards, folds and notices. */
-export function Timeline({ entries, roomMembers, workSteps, submitting, intents }: TimelineProps) {
+export function Timeline({ entries, room, workSteps, submitting, intents }: TimelineProps) {
   const bots = useBots();
-  const { t } = useI18n();
-  const inRoom = roomMembers !== null;
-  const mentionable = inRoom ? [...bots.values()].map((bot) => bot.profile.name) : [];
+  const i18n = useI18n();
+  const { t } = i18n;
+  const nameOf = (botId: BotId) => bots.get(botId)?.profile.name;
+  // In a room, a message highlights only whom it addressed.
+  const highlighted = (mentions: Mentions | null) =>
+    room === null ? [] : mentionedNames(mentions, nameOf);
   return (
     <div className="flex flex-col">
       {buildTimeline(entries).map((item) => {
@@ -84,15 +94,20 @@ export function Timeline({ entries, roomMembers, workSteps, submitting, intents 
           // id it gains then makes it count toward the read mark.
           if (message._tag === "outgoing") {
             const left =
-              roomMembers === null || message.status._tag !== "not-sent"
+              room === null || message.status._tag !== "not-sent"
                 ? null
-                : mentionedWhoLeft(message.status.failure, message.mentions, roomMembers);
+                : mentionedWhoLeft(message.status.failure, message.mentions, room.members);
+            // A member who left is named as the operator picked it, which the message keeps.
+            const labelOf = (botId: BotId) =>
+              message.labels.find((label) => label.botId === botId)?.label ??
+              nameOf(botId) ??
+              t("bot.unknown");
             return (
               <div key={item.key}>
                 <MessageBubble
                   message={message}
                   position={item.position}
-                  mentionable={mentionable}
+                  mentionable={highlighted(message.mentions)}
                   onOpenAttachment={intents.openAttachment}
                   onRetry={() =>
                     left === null
@@ -100,11 +115,13 @@ export function Timeline({ entries, roomMembers, workSteps, submitting, intents 
                       : intents.resendMessage(message.commandId, left.without)
                   }
                   onDiscard={() => intents.discardMessage(message.commandId)}
-                  {...(left === null
+                  {...(left === null || room === null
                     ? {}
                     : {
-                        leftRoom: left.left.map(
-                          (id) => bots.get(id)?.profile.name ?? t("bot.unknown"),
+                        leftRoom: left.left.map(labelOf),
+                        retryLabel: resendLabel(
+                          addresseeOf(left.without, room.hostId, nameOf, i18n),
+                          i18n,
                         ),
                       })}
                 />
@@ -117,8 +134,10 @@ export function Timeline({ entries, roomMembers, workSteps, submitting, intents 
               <MessageBubble
                 message={message}
                 position={item.position}
-                speaker={inRoom && author._tag === "bot" ? (bots.get(author.botId) ?? null) : null}
-                mentionable={mentionable}
+                speaker={
+                  room !== null && author._tag === "bot" ? (bots.get(author.botId) ?? null) : null
+                }
+                mentionable={highlighted(message.mentions)}
                 onOpenAttachment={intents.openAttachment}
                 onRetry={() => intents.retryMessage(message.id)}
                 submitting={submitting(message.id)}
