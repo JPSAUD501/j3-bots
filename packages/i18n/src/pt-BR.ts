@@ -432,6 +432,16 @@ const sentences = {
   "composer.to.everyone": "Para todos",
   "composer.notSaved": "Ainda não salvo",
   "composer.waitToAttach": "Espere um instante e adicione os arquivos de novo.",
+  "composer.dictation.stop": "Parar o ditado",
+  "composer.dictation.listening": "Ouvindo…",
+  "composer.dictation.listeningOnline":
+    "Ouvindo… O serviço de voz do celular reconhece isto online.",
+  "composer.dictation.denied": "O ditado precisa do microfone.",
+  "composer.dictation.settings": "Configurações",
+  "composer.dictation.noSpeech": "Nada foi ouvido. Tente de novo.",
+  "composer.dictation.network": "O ditado precisa de conexão neste celular.",
+  "composer.dictation.language": "O ditado não está disponível no idioma deste celular.",
+  "composer.dictation.failed": "O ditado parou. Tente de novo.",
 
   "share.title": "Enviar para",
   "share.files.one": "{count} arquivo",
