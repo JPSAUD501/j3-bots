@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { crc32, inflateSync } from "node:zlib";
 import { describe, expect, it } from "vite-plus/test";
-import { avatarShapes } from "./avatarShapes.ts";
-import { Canvas, coverage, flattenPath } from "./raster.ts";
+import { avatarShapes } from "../avatarShapes.ts";
+import { Canvas, coverage, flattenPath } from "./canvas.ts";
 
 const sum = (values: Float32Array) => values.reduce((total, v) => total + v, 0);
 
@@ -56,5 +56,43 @@ describe("png", () => {
     const expected = [0, 200, 100, 50, 255, ...background, ...background, 0];
     expected.push(...background, ...background, ...background);
     expect(Array.from(rows)).toEqual(expected);
+  });
+});
+
+describe("Canvas", () => {
+  it.each([
+    [0, 4],
+    [4, -1],
+    [2.5, 4],
+    [4, Number.NaN],
+  ])("refuses sides of %s × %s px", (width, height) => {
+    expect(() => new Canvas(width, height)).toThrow(RangeError);
+  });
+
+  const line = flattenPath("M2 5L18 5");
+  const stroked = (dash?: readonly [number, number]) => {
+    const canvas = new Canvas(20, 10);
+    canvas.stroke(line, 2, [0, 0, 0], dash === undefined ? {} : { dash });
+    return Array.from(canvas.pixels);
+  };
+
+  it("strokes a line solid when every length of its dash pattern is zero, as SVG does", () => {
+    expect(stroked([0, 0])).toEqual(stroked());
+  });
+
+  it("draws a dash of length zero as a dot, the last one at the line's end", () => {
+    const dotted = stroked([0, 8]);
+    const alpha = (x: number) => dotted[(5 * 20 + x) * 4 + 3];
+    // Dots at 2, 10 and 18 along the line, and nothing halfway between them.
+    for (const x of [2, 10, 17]) expect(alpha(x)).toBeGreaterThan(0);
+    expect([alpha(6), alpha(14)]).toEqual([0, 0]);
+  });
+
+  it.each([
+    [-1, 2],
+    [2, Number.POSITIVE_INFINITY],
+    [Number.NaN, 1],
+  ])("refuses a dash pattern of %s and %s", (on, off) => {
+    expect(() => stroked([on, off])).toThrow(RangeError);
   });
 });

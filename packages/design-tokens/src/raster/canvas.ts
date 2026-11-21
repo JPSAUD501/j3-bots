@@ -177,7 +177,11 @@ export function coverage(
       return { a, b };
     }),
   );
-  for (let row = 0; row < height; row++) {
+  // Only the rows the path spans can be covered.
+  const ys = edges.map(({ a }) => a.y);
+  const firstRow = Math.max(0, Math.floor(Math.min(...ys)));
+  const endRow = Math.min(height, Math.ceil(Math.max(...ys)));
+  for (let row = firstRow; row < endRow; row++) {
     for (let sample = 0; sample < SAMPLES; sample++) {
       const y = row + (sample + 0.5) / SAMPLES;
       const crossings: Array<{ readonly x: number; readonly winding: number }> = [];
@@ -197,7 +201,9 @@ export function coverage(
       }
     }
   }
-  for (let i = 0; i < result.length; i++) result[i] = Math.min(1, (result[i] ?? 0) / SAMPLES);
+  for (let i = firstRow * width; i < endRow * width; i++) {
+    result[i] = Math.min(1, (result[i] ?? 0) / SAMPLES);
+  }
   return result;
 }
 
@@ -218,7 +224,7 @@ function addSpan(target: Float32Array, offset: number, width: number, from: numb
  * How much of each pixel of a `width` × `height` image the subpaths' outlines
  * cover, from 0 to 1, for an outline `lineWidth` wide with round caps and
  * joins. With `dash`, one dash and one gap, the outline is dashed from each
- * subpath's start.
+ * subpath's start; a pattern of zeros leaves it solid, as in SVG.
  */
 function strokeCoverage(
   subpaths: ReadonlyArray<Subpath>,
@@ -235,7 +241,7 @@ function strokeCoverage(
     const line = subpath.closed
       ? [...subpath.points, ...subpath.points.slice(0, 1)]
       : subpath.points;
-    for (const piece of dash === undefined ? [line] : dashes(line, dash)) {
+    for (const piece of dash === undefined || solid(dash) ? [line] : dashes(line, dash)) {
       piece.forEach((a, i) => {
         const b = piece[i + 1] ?? a;
         if (i > 0 && b === a) return;
@@ -265,7 +271,20 @@ function distanceToSegment(p: Point, a: Point, b: Point): number {
   return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
 }
 
-/** The dashes of a line, alternating `on` long and `off` apart, starting with a dash. */
+/** Whether a dash pattern draws a solid line: all its lengths are zero. Throws on a length that cannot be one. */
+function solid(dash: readonly [number, number]): boolean {
+  if (!dash.every((length) => Number.isFinite(length) && length >= 0)) {
+    throw new RangeError(
+      `A dash pattern needs finite lengths of at least 0, not ${dash.join(", ")}.`,
+    );
+  }
+  return dash[0] + dash[1] === 0;
+}
+
+/**
+ * The dashes of a line, alternating `on` long and `off` apart, starting with a
+ * dash. A dash of length 0 is a single point, which round caps draw as a dot.
+ */
 function dashes(
   line: ReadonlyArray<Point>,
   [on, off]: readonly [number, number],
@@ -280,7 +299,7 @@ function dashes(
     let from = line[i] ?? end;
     let rest = Math.hypot(end.x - from.x, end.y - from.y);
     while (rest >= left) {
-      const t = left / rest;
+      const t = rest === 0 ? 0 : left / rest;
       const turn = { x: from.x + (end.x - from.x) * t, y: from.y + (end.y - from.y) * t };
       if (drawing) pieces.push([...piece, turn]);
       piece = [turn];
@@ -298,6 +317,9 @@ function dashes(
 
 export type Rgb = readonly [number, number, number];
 
+/** Whether `n` can be a side of an image: a whole number of px, at least 1. */
+export const isPixelCount = (n: number): boolean => Number.isInteger(n) && n >= 1;
+
 /** An image, painted layer by layer over a background color, or over nothing. */
 export class Canvas {
   readonly width: number;
@@ -305,8 +327,16 @@ export class Canvas {
   /** Straight (not premultiplied) RGBA, as PNG stores it. */
   readonly pixels: Uint8Array<ArrayBuffer>;
 
-  /** A canvas of `background`, or a clear one without it. */
+  /**
+   * A canvas of `background`, or a clear one without it. Its sides are whole
+   * px, at least 1; a `RangeError` says when they are not.
+   */
   constructor(width: number, height: number, background?: Rgb) {
+    if (!isPixelCount(width) || !isPixelCount(height)) {
+      throw new RangeError(
+        `A canvas needs sides of a whole number of px, at least 1, not ${width} × ${height}.`,
+      );
+    }
     this.width = width;
     this.height = height;
     this.pixels = new Uint8Array(width * height * 4);

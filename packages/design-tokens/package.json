@@ -9,6 +9,10 @@
       "types": "./src/index.ts",
       "import": "./src/index.ts"
     },
+    "./raster": {
+      "types": "./src/raster/index.ts",
+      "import": "./src/raster/index.ts"
+    },
     "./web.css": "./generated/web.css",
     "./uniwind.css": "./generated/uniwind.css"
   },

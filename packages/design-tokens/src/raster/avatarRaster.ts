@@ -11,11 +11,19 @@ import {
   resolveAvatar,
   type AvatarLook,
   type AvatarMarkPart,
-} from "./avatar.ts";
-import { avatarShapes } from "./avatarShapes.ts";
-import { parseColor, toSrgb8 } from "./color.ts";
-import { Canvas, circlePath, flattenPath, mapSubpaths, type Point, type Rgb } from "./raster.ts";
-import { botPalette, colors, type Themed } from "./tokens.ts";
+} from "../avatar.ts";
+import { avatarShapes } from "../avatarShapes.ts";
+import { parseColor, toSrgb8 } from "../color.ts";
+import {
+  Canvas,
+  circlePath,
+  flattenPath,
+  isPixelCount,
+  mapSubpaths,
+  type Point,
+  type Rgb,
+} from "./canvas.ts";
+import { botPalette, colors, type Themed } from "../tokens.ts";
 
 const srgb = (value: string): Rgb => toSrgb8(parseColor(value));
 
@@ -86,6 +94,7 @@ export function drawAvatar(
 /**
  * A still avatar as a PNG `size` px square on a clear background, in
  * `theme`'s colors: for a notification's image, where SVG is not accepted.
+ * `size` is a whole number of px, at least 1; anything else throws a `RangeError`.
  */
 export function renderStillAvatar(
   avatar: { readonly shape: string; readonly color: string },
@@ -93,6 +102,9 @@ export function renderStillAvatar(
   theme: keyof Themed,
   size: number,
 ): Uint8Array<ArrayBuffer> {
+  if (!isPixelCount(size)) {
+    throw new RangeError(`A still avatar's size is a whole number of px, at least 1, not ${size}.`);
+  }
   const canvas = new Canvas(size, size);
   drawAvatar(canvas, avatar, look, theme, { x: 0, y: 0, size });
   return canvas.png();

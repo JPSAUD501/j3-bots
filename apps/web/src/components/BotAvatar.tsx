@@ -89,43 +89,42 @@ const MOTION_CLASS = { none: undefined, breathe: "avatar-breathe", spin: "avatar
 
 const INK = "var(--avatar-ink)";
 
-/** The mark's parts; a mark of one part moves by itself, one of several as a group. */
+/** The mark's parts, moving as one. */
 function Mark({ mark, motion }: { mark: AvatarMarkName; motion: string | undefined }) {
   const parts: ReadonlyArray<AvatarMarkPart> = avatarMarks[mark];
-  const [only] = parts;
-  if (parts.length === 1 && only !== undefined) return <MarkPart part={only} className={motion} />;
   return (
     <g className={motion}>
-      {parts.map((part) => (
-        // A mark never repeats a part, so a part's data names it.
-        <MarkPart key={JSON.stringify(part)} part={part} />
+      {parts.map((part, i) => (
+        // oxlint-disable-next-line react/no-array-index-key -- parts are positional: a mark's data never reorders
+        <MarkPart key={i} part={part} />
       ))}
     </g>
   );
 }
 
-function MarkPart({ part, className }: { part: AvatarMarkPart; className?: string | undefined }) {
-  const stroke = {
-    fill: "none",
-    stroke: INK,
-    strokeWidth: avatarMarkStroke,
-    strokeLinecap: "round",
-  } as const;
+const STROKE = {
+  fill: "none",
+  stroke: INK,
+  strokeWidth: avatarMarkStroke,
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+} as const;
+
+function MarkPart({ part }: { part: AvatarMarkPart }) {
   switch (part.kind) {
     case "disc":
-      return <circle r={part.r} className={className} fill={INK} />;
+      return <circle r={part.r} fill={INK} />;
     case "circle":
       return (
         <circle
           r={part.r}
-          className={className}
-          {...stroke}
+          {...STROKE}
           strokeOpacity={part.opacity}
           strokeDasharray={part.dash?.join(" ")}
         />
       );
     case "path":
-      return <path d={part.d} className={className} {...stroke} strokeLinejoin={part.join} />;
+      return <path d={part.d} {...STROKE} />;
   }
 }
 

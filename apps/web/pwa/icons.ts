@@ -9,15 +9,11 @@ import {
   avatarMarks,
   avatarShapes,
   botPalette,
-  Canvas,
   colors,
-  drawAvatar,
-  parseColor,
-  toSrgb8,
   type AvatarShapeName,
   type BotColor,
-  type Rgb,
 } from "@j3-bots/design-tokens";
+import { Canvas, drawAvatar, parseColor, toSrgb8, type Rgb } from "@j3-bots/design-tokens/raster";
 
 interface Member {
   readonly shape: AvatarShapeName;

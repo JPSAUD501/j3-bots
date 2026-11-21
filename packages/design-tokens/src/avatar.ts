@@ -27,9 +27,9 @@ export type AvatarMarkPart =
       readonly dash?: readonly [number, number];
     }
   /** A path's outline. */
-  | { readonly kind: "path"; readonly d: string; readonly join?: "round" };
+  | { readonly kind: "path"; readonly d: string };
 
-/** The width of every outline in a mark. Outlines end in round caps. */
+/** The width of every outline in a mark. Every outline has round caps and round joins. */
 export const avatarMarkStroke = 7;
 
 const R = 12;
@@ -54,12 +54,17 @@ export const avatarMarks = {
     { kind: "circle", r: R },
     { kind: "path", d: "M-8.5 8.5L8.5 -8.5" },
   ],
-  check: [{ kind: "path", d: "M-10 0.5L-3.5 7L10 -6.5", join: "round" }],
+  check: [{ kind: "path", d: "M-10 0.5L-3.5 7L10 -6.5" }],
   // Six round dots around the ring: a dash too short to see, then a sixth of the circle.
   dotted: [{ kind: "circle", r: R, dash: [0.01, Math.round((2 * Math.PI * R * 100) / 6) / 100] }],
 } as const satisfies Record<string, ReadonlyArray<AvatarMarkPart>>;
 
 export type AvatarMarkName = keyof typeof avatarMarks;
+
+const isMark = (name: string): name is AvatarMarkName => Object.hasOwn(avatarMarks, name);
+
+export const avatarMarkNames: ReadonlyArray<AvatarMarkName> =
+  Object.keys(avatarMarks).filter(isMark);
 
 /** Each badge's fill. A badge sits on the avatar's lower right corner. */
 export const avatarBadges = {
