@@ -1,26 +1,31 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Notification, RoomId } from "@j3-bots/contracts";
-import type { PresentationContext } from "./roster";
+import type { BotId, Notification, RoomId } from "@j3-bots/contracts";
+import type { I18n } from "./i18n.ts";
 
 /** What a notification says: whose it is, and what they wrote or need. */
-export interface NotificationContent {
+export interface NotificationText {
   readonly title: string;
   readonly body: string;
+}
+
+/** The names a notification shows, or null for a bot or room that no longer exists. */
+export interface NotificationNames {
+  readonly botName: (id: BotId) => string | null;
+  readonly roomName: (id: RoomId) => string | null;
 }
 
 /**
  * A notification as the operator reads it: from the bot, or from the room it
  * was said in, naming the bot. Without a preview it says only what kind of
- * thing arrived. Null for a bot or room this window no longer lists, such as
- * one deleted since: there is nothing to open.
+ * thing arrived. Null for a bot or room that has no name any more, such as one
+ * deleted since: there is nothing to open.
  */
-export function notificationContent(
+export function notificationText(
   notification: Notification,
-  ctx: PresentationContext,
-  roomName: (roomId: RoomId) => string | null,
-): NotificationContent | null {
-  const { t } = ctx.i18n;
-  const name = ctx.botName(notification.botId);
+  names: NotificationNames,
+  { t }: I18n,
+): NotificationText | null {
+  const name = names.botName(notification.botId);
   if (name === null) return null;
   const { preview } = notification;
   const text = (() => {
@@ -47,6 +52,6 @@ export function notificationContent(
   })();
   const { target } = notification;
   if (target._tag === "conversation") return { title: name, body: text };
-  const room = roomName(target.roomId);
+  const room = names.roomName(target.roomId);
   return room === null ? null : { title: room, body: t("summary.fromBot", { name, text }) };
 }

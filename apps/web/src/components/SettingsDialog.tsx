@@ -20,13 +20,13 @@ import {
   type SettingsEdits,
 } from "@j3-bots/client-runtime/presentation";
 import { useI18n, usePresentation } from "../app/context";
-import type { KeyWith } from "../i18n/i18n";
+import type { KeyWith } from "@j3-bots/i18n";
 import {
   setAppearance,
   setLanguage,
   usePreferences,
   type Appearance,
-  type Language,
+  type LanguageChoice,
 } from "../preferences/preferences";
 import {
   requestNotificationAccess,
@@ -695,7 +695,7 @@ function BrowserSection({ onSignOut }: { onSignOut: SettingsIntents["signOut"] }
     { value: "dark", label: t("settings.dark") },
   ];
   // Each language is named in itself, so it can be found from any other.
-  const languages: ReadonlyArray<{ value: Language; label: string }> = [
+  const languages: ReadonlyArray<{ value: LanguageChoice; label: string }> = [
     { value: "system", label: t("settings.system") },
     { value: "en", label: "English" },
     { value: "pt-BR", label: "Português (Brasil)" },

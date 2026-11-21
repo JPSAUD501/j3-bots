@@ -10,7 +10,7 @@ import { ChevronRightIcon, ShieldCheckIcon, ShieldXIcon, ShieldIcon } from "luci
 import { useId } from "react";
 import { diffTones } from "@j3-bots/client-runtime/presentation";
 import { useI18n } from "../app/context";
-import type { KeyWith } from "../i18n/i18n";
+import type { KeyWith } from "@j3-bots/i18n";
 import { cn } from "../lib/cn";
 import { touchTarget } from "../lib/touchTarget";
 import { useFocusAfterActions } from "../lib/useFocusAfterActions";

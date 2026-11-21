@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { LANGUAGES } from "@j3-bots/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { useSyncExternalStore } from "react";
-import { locales } from "../i18n/i18n";
 
 /**
  * The operator's appearance and language choices for this browser. Both default
@@ -13,14 +13,14 @@ import { locales } from "../i18n/i18n";
 const Appearance = Schema.Literals(["system", "light", "dark"]);
 export type Appearance = typeof Appearance.Type;
 
-const Language = Schema.Literals(["system", ...locales]);
-export type Language = typeof Language.Type;
+const LanguageChoice = Schema.Literals(["system", ...LANGUAGES]);
+export type LanguageChoice = typeof LanguageChoice.Type;
 
 const KEYS = { appearance: "j3:appearance", language: "j3:language" } as const;
 
 interface Preferences {
   readonly appearance: Appearance;
-  readonly language: Language;
+  readonly language: LanguageChoice;
   /** The theme in effect once "system" is resolved. */
   readonly theme: "light" | "dark";
 }
@@ -49,7 +49,7 @@ const listeners = new Set<() => void>();
 
 function compute(): Preferences {
   const appearance = readStored(KEYS.appearance, Appearance, "system");
-  const language = readStored(KEYS.language, Language, "system");
+  const language = readStored(KEYS.language, LanguageChoice, "system");
   const theme = appearance === "system" ? (systemDark.matches ? "dark" : "light") : appearance;
   return { appearance, language, theme };
 }
@@ -74,7 +74,7 @@ export function setAppearance(appearance: Appearance) {
   refresh();
 }
 
-export function setLanguage(language: Language) {
+export function setLanguage(language: LanguageChoice) {
   writeStored(KEYS.language, language);
   refresh();
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { UsageWindow } from "@j3-bots/contracts";
 import { windowState, type WindowState } from "@j3-bots/client-runtime/presentation";
-import type { I18n, KeyWith } from "../i18n/i18n";
+import type { I18n, KeyWith } from "@j3-bots/i18n";
 import { timeInSentence, type TimeContext } from "../lib/time";
 
 /** A limit window in words, as of `ctx.now`, with where it stands. */

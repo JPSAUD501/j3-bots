@@ -8,16 +8,17 @@ import {
   type Bot,
   type BotState,
   type EntryPreview,
+  type Language,
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
-import { createI18n, type Locale } from "../i18n/i18n";
+import { createI18n } from "@j3-bots/i18n";
 import type { PresentationContext } from "../presentation/roster";
 
 export const at = (iso: string) => DateTime.makeUnsafe(iso);
 
 export function context(
   now: string,
-  locale: Locale = "en",
+  locale: Language = "en",
   names: Record<string, string> = {},
 ): PresentationContext {
   return {

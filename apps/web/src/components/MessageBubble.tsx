@@ -7,7 +7,7 @@ import {
   type TimelineMessage,
 } from "@j3-bots/client-runtime/presentation";
 import { usePresentation } from "../app/context";
-import type { KeyWith } from "../i18n/i18n";
+import type { KeyWith } from "@j3-bots/i18n";
 import { cn } from "../lib/cn";
 import { useFocusAfterActions } from "../lib/useFocusAfterActions";
 import { AvatarShape } from "./BotAvatar";

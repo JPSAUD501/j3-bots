@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Addressee } from "@j3-bots/client-runtime/presentation";
-import type { I18n } from "../i18n/i18n";
+import type { I18n } from "@j3-bots/i18n";
 
 /**
  * Who a room message wakes, in the quiet line under the composer. A message

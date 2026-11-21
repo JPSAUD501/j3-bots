@@ -2,7 +2,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { clockTime } from "@j3-bots/client-runtime/presentation";
-import { createI18n } from "../i18n/i18n";
+import { createI18n } from "@j3-bots/i18n";
 import { at } from "../test/fixtures";
 import { ClockProvider, OperatorTimeZone, useClock } from "./clock";
 

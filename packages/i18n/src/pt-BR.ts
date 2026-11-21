@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Catalog } from "./i18n";
+import type { AddingNone, Catalog } from "./i18n.ts";
 
-/** Brazilian Portuguese. Every key of `en.ts`, with every placeholder kept. */
-export const ptBR: Catalog = {
+/** Brazilian Portuguese. Every key of `en.ts`, with its placeholders and no others. */
+const sentences = {
   "bot.unknown": "Um bot excluído",
 
   "roster.usageLimitUntil": "Limite renova {when}",
@@ -657,4 +657,6 @@ export const ptBR: Catalog = {
   "settings.signOut.body":
     "Este navegador perde o acesso, e parear de novo exige um código novo. Rascunhos e mensagens não enviadas são descartados. Seus bots e conversas continuam no servidor.",
   "settings.signOut.cancel": "Continuar conectado",
-};
+} as const satisfies Catalog;
+
+export const ptBR: AddingNone<typeof sentences> = sentences;

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { DeviceId, EntryTarget } from "@j3-bots/contracts";
+import type { NotificationText } from "@j3-bots/i18n";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { NOTIFICATION_CLICK } from "../../pwa/notificationClick";
-import type { NotificationContent } from "../presentation/notification";
 
 /** A click on a notification: what it was about, and the pairing that received it. */
 interface NotificationClick {
@@ -11,7 +11,7 @@ interface NotificationClick {
   readonly pairing: DeviceId;
 }
 
-interface ShownNotification extends NotificationContent, NotificationClick {
+interface ShownNotification extends NotificationText, NotificationClick {
   /**
    * One per entry: every window of the browser shows the notifications the
    * server sends, and the browser keeps one notification per tag.

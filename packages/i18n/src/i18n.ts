@@ -1,20 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { LANGUAGES } from "@j3-bots/contracts";
-import { en } from "./en";
-import { ptBR } from "./pt-BR";
+import { LANGUAGES, type Language } from "@j3-bots/contracts";
+import { en } from "./en.ts";
+import { ptBR } from "./pt-BR.ts";
 
 /**
  * The translation layer. English is the source: `en.ts` holds every interface
  * sentence, whole, with `{name}` placeholders. Other catalogs must have every
- * key and keep every placeholder, or they do not type-check.
+ * key, keep every placeholder and add none, or they do not type-check.
  *
  * Plural sentences are two keys, `….one` and `….other`, chosen with the
- * locale's plural rules.
+ * locale's plural rules. The languages are the contract's `LANGUAGES`, the
+ * ones a device registers for its pushes, so a catalog exists for each.
  */
-
-/** The server writes a push in the same languages (`LANGUAGES`), so the list is one. */
-export const locales = LANGUAGES;
-export type Locale = (typeof locales)[number];
 
 type Source = typeof en;
 type MessageKey = keyof Source;
@@ -35,6 +32,16 @@ type Keeping<P extends string> = [P] extends [never]
   : UnionToIntersection<P extends string ? `${string}{${P}}${string}` : never>;
 
 export type Catalog = { readonly [K in MessageKey]: Keeping<Placeholders<Source[K]>> };
+
+/**
+ * `C` as it is when no sentence of it has a placeholder the source lacks;
+ * otherwise each such sentence's type names what it adds, so `C` is refused.
+ */
+export type AddingNone<C extends Catalog> = {
+  readonly [K in MessageKey]: [Exclude<Placeholders<C[K]>, Placeholders<Source[K]>>] extends [never]
+    ? C[K]
+    : `adds {${Exclude<Placeholders<C[K]>, Placeholders<Source[K]>>}}`;
+};
 
 type Params<K extends MessageKey> = Placeholders<Source[K]>;
 
@@ -58,10 +65,10 @@ type PluralArgs<B extends PluralKey> =
       : [params: Readonly<Record<P, string | number>>]
     : never;
 
-const catalogs: Record<Locale, Catalog> = { en, "pt-BR": ptBR };
+const catalogs: Record<Language, Catalog> = { en, "pt-BR": ptBR };
 
 export interface I18n {
-  readonly locale: Locale;
+  readonly locale: Language;
   /** A sentence from the catalog, with its placeholders filled in. */
   t<K extends MessageKey>(key: K, ...args: Args<K>): string;
   /**
@@ -87,7 +94,7 @@ export interface I18n {
 
 const PLACEHOLDER = /\{(\w+)\}/g;
 
-export function createI18n(locale: Locale): I18n {
+export function createI18n(locale: Language): I18n {
   const catalog = catalogs[locale];
   const numbers = new Intl.NumberFormat(locale);
   const pluralRules = new Intl.PluralRules(locale);
@@ -133,12 +140,12 @@ export function createI18n(locale: Locale): I18n {
 }
 
 /** The first of the reader's languages that J3 Bots has, by language when no region matches. */
-export function resolveLocale(preferred: ReadonlyArray<string>): Locale {
+export function resolveLocale(preferred: ReadonlyArray<string>): Language {
   for (const tag of preferred) {
-    const exact = locales.find((l) => l.toLowerCase() === tag.toLowerCase());
+    const exact = LANGUAGES.find((l) => l.toLowerCase() === tag.toLowerCase());
     if (exact) return exact;
     const language = tag.split("-")[0]?.toLowerCase();
-    const sameLanguage = locales.find((l) => l.split("-")[0]?.toLowerCase() === language);
+    const sameLanguage = LANGUAGES.find((l) => l.split("-")[0]?.toLowerCase() === language);
     if (sameLanguage) return sameLanguage;
   }
   return "en";

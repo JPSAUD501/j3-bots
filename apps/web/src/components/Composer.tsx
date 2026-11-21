@@ -37,7 +37,7 @@ import {
   type MentionOption,
 } from "@j3-bots/client-runtime/presentation";
 import { useI18n } from "../app/context";
-import type { I18n } from "../i18n/i18n";
+import type { I18n } from "@j3-bots/i18n";
 import { cn } from "../lib/cn";
 import { type FieldInput, followFieldInput } from "../lib/fieldEdit";
 import { AvatarShape } from "./BotAvatar";
