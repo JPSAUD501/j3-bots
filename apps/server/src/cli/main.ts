@@ -2,6 +2,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { Command } from "effect/cli";
 import packageJson from "../../package.json" with { type: "json" };
 import * as AdminClient from "../admin/AdminClient.ts";
@@ -31,9 +32,12 @@ const cli = Command.make("j3-bots").pipe(
   ]),
 );
 
-const runtime = Layer.mergeAll(Host.layer, Systemd.layer, AdminClient.layer, Network.layer).pipe(
-  Layer.provideMerge(NodeServices.layer),
-);
+const runtime = Layer.mergeAll(
+  Host.layer.pipe(Layer.provide(FetchHttpClient.layer)),
+  Systemd.layer,
+  AdminClient.layer,
+  Network.layer,
+).pipe(Layer.provideMerge(NodeServices.layer));
 
 /** Runs the command line in `process.argv`. */
 export const run = Command.run(cli, { version: packageJson.version }).pipe(Effect.provide(runtime));

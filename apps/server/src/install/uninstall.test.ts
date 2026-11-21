@@ -136,6 +136,9 @@ const uninstallOn = (machine: Machine, options: { readonly deleteData: boolean }
           portState: () => Effect.succeed({ _tag: "free" }),
           findExecutable: () => Effect.succeedNone,
           holdsSocket: () => Effect.succeedSome(false),
+          sshPrivateKeys: Effect.succeed([]),
+          groups: Effect.succeed([]),
+          reachable: () => Effect.die("uninstall never downloads"),
         }),
       ),
       Layer.succeed(
@@ -150,6 +153,7 @@ const uninstallOn = (machine: Machine, options: { readonly deleteData: boolean }
         Systemd,
         Systemd.of({
           available: Effect.succeed(true),
+          booted: Effect.succeed(true),
           linger: Effect.succeed("yes"),
           unitState: () =>
             Effect.succeed({ enabled: false, active: "inactive", mainPid: Option.none() }),

@@ -6,7 +6,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { SHELL_OVERRIDES } from "../config.ts";
+import * as Layer from "effect/Layer";
+import { resolveHome, SHELL_OVERRIDES } from "../config.ts";
 
 /** The systemd user unit J3 Bots installs: `~/.config/systemd/user/j3-bots.service`. */
 export const UNIT_NAME = "j3-bots.service";
@@ -127,6 +128,38 @@ export const asTheService = (environment: {
       PATH: environment.searchPath,
     }),
   );
+
+/** The installed unit's text, if there is one. */
+export const installedUnit = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* fs.readFileString(yield* unitPath).pipe(Effect.option);
+});
+
+/** The `PATH` the installed service runs with, which the engine starts harnesses with. */
+export const servicePathOf = (unitText: Option.Option<string>) =>
+  Option.flatMapNullishOr(unitText, (text) => environmentOf(text).get("PATH"));
+
+/** The `J3_HOME` the installed service runs with, whatever this shell's is. */
+export const serviceHomeOf = (unitText: Option.Option<string>) =>
+  Option.flatMapNullishOr(unitText, (text) => environmentOf(text).get("J3_HOME"));
+
+/**
+ * The configuration a command describes or acts on: with the service
+ * installed, the service's own (its home and `PATH`, none of this shell's
+ * overrides); otherwise this shell's, which `j3-bots serve` would run with.
+ */
+export const describedConfiguration = Effect.fn("service.describedConfiguration")(function* (
+  unitText: Option.Option<string>,
+) {
+  if (Option.isNone(unitText)) return Layer.empty;
+  const environment = environmentOf(unitText.value);
+  const home = yield* Config.NonEmptyString("HOME");
+  return asTheService({
+    home,
+    j3Home: environment.get("J3_HOME") ?? (yield* resolveHome),
+    searchPath: environment.get("PATH") ?? "",
+  });
+});
 
 /** What the unit runs, and with what. */
 export interface UnitPlan {

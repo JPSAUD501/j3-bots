@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- Free space, a trial listen and the user name have no Effect API.
+// @effect-diagnostics nodeBuiltinImport:off -- Free space, a trial listen and the user's name, home and groups have no Effect API.
 import * as NodeFs from "node:fs/promises";
 import * as NodeNet from "node:net";
 import * as NodeOs from "node:os";
@@ -11,7 +11,10 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { type PortState, portStateOf } from "./Ports.ts";
+import { privateKeysIn } from "./sshKeys.ts";
 
 /** The facts about this machine that `j3-bots doctor` and `service` read. */
 export class Host extends Context.Service<
@@ -44,6 +47,23 @@ export class Host extends Context.Service<
       pid: number,
       socketPath: string,
     ) => Effect.Effect<Option.Option<boolean>>;
+    /**
+     * The files directly in this user's `~/.ssh` that hold a private key, by
+     * path (`privateKeysIn`): up to the first 64 bytes of each regular file
+     * are read, and no symbolic link is followed.
+     */
+    readonly sshPrivateKeys: Effect.Effect<ReadonlyArray<string>>;
+    /**
+     * The names of the groups this user is in, as `/etc/group` names them: a
+     * group known only to a directory service, such as LDAP through sssd, is
+     * not named.
+     */
+    readonly groups: Effect.Effect<ReadonlyArray<string>>;
+    /**
+     * Whether `url` answers a `HEAD` request with success, following
+     * redirects, within fifteen seconds. Nothing is downloaded.
+     */
+    readonly reachable: (url: string) => Effect.Effect<boolean>;
   }
 >()("@j3-bots/server/system/Host") {}
 
@@ -78,12 +98,26 @@ const listeningInodes = (table: string, socketPath: string) => {
   return inodes;
 };
 
+/** Group names by id, from the text of `/etc/group`: `name:password:gid:members`. */
+const groupNames = (table: string) => {
+  const names = new Map<number, string>();
+  for (const line of table.split("\n")) {
+    const [name = "", , gid = ""] = line.split(":");
+    if (name !== "" && /^\d+$/.test(gid)) names.set(Number(gid), name);
+  }
+  return names;
+};
+
+const REACHABLE_WITHIN = "15 seconds";
+
 export const layer = Layer.effect(
   Host,
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const searchPath = yield* Config.String("PATH").pipe(Config.withDefault(""));
+    const client = (yield* HttpClient.HttpClient).pipe(HttpClient.followRedirects(5));
+    const user = NodeOs.userInfo();
 
     const nearestExisting = Effect.fn("Host.nearestExisting")(function* (start: string) {
       let folder = path.resolve(start);
@@ -100,7 +134,7 @@ export const layer = Layer.effect(
       platform: process.platform,
       arch: process.arch,
       totalMemoryBytes: NodeOs.totalmem(),
-      userName: NodeOs.userInfo().username,
+      userName: user.username,
       searchPath,
       freeSpace: Effect.fn("Host.freeSpace")(function* (target: string) {
         const folder = yield* nearestExisting(target);
@@ -145,6 +179,22 @@ export const layer = Layer.effect(
         }
         return Option.some(false);
       }),
+      sshPrivateKeys: privateKeysIn(path.join(user.homedir, ".ssh")),
+      groups: Effect.gen(function* () {
+        const table = yield* fs.readFileString("/etc/group").pipe(Effect.orElseSucceed(() => ""));
+        const names = groupNames(table);
+        return (process.getgroups?.() ?? []).flatMap((gid) => {
+          const name = names.get(gid);
+          return name === undefined ? [] : [name];
+        });
+      }),
+      reachable: Effect.fn("Host.reachable")((url: string) =>
+        client.execute(HttpClientRequest.head(url)).pipe(
+          Effect.map((response) => response.status >= 200 && response.status < 300),
+          Effect.timeout(REACHABLE_WITHIN),
+          Effect.orElseSucceed(() => false),
+        ),
+      ),
     });
   }),
 );

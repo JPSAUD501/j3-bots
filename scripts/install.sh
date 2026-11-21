@@ -332,6 +332,6 @@ if ! "$service"; then
   step=$((step + 1))
 fi
 say "  $step. Give bots a way to their models: \`$command_name provider connect\` for an endpoint in front of your subscriptions,"
-say "     or \`$command_name provider login claude-code\` and \`$command_name provider login codex\` to sign each one in."
+say "     or \`$command_name provider login claude-code\` and \`$command_name provider login codex --device-auth\` to sign each one in."
 step=$((step + 1))
 say "  $step. Pair a browser or an app: \`$command_name pair\`."
