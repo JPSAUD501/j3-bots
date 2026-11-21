@@ -2,7 +2,7 @@
 import { canRunBots, connectCommand } from "@j3-bots/client-runtime/presentation";
 import { useEngineStatus } from "@j3-bots/client-runtime/react";
 import { engineProblem } from "@j3-bots/client-runtime/wording";
-import type { BotState } from "@j3-bots/contracts";
+import type { BotState, EngineStatus } from "@j3-bots/contracts";
 import { ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useI18n } from "../i18n.ts";
@@ -12,6 +12,7 @@ import { BotAvatar } from "./Avatar.tsx";
 import { Connecting } from "./ConnectionLine.tsx";
 import { ConnectCommand, ProviderRow } from "./Engine.tsx";
 import { NewBotForm } from "./NewBotForm.tsx";
+import { SettingsEntry } from "./SettingsEntry.tsx";
 
 const idle: BotState = { _tag: "idle" };
 
@@ -32,26 +33,38 @@ function Ensemble() {
 
 /**
  * Before the first bot: checks that the engine runs and a provider is ready,
- * then asks for a name, and opens the new bot's conversation. No settings
- * form; the bot asks the rest itself.
+ * then asks for a name, and opens the new bot's conversation. No form for
+ * the bot's settings; the bot asks the rest itself. Settings stays in reach,
+ * as the roster's header has it.
  */
 export function FirstRun() {
+  const insets = useSafeAreaInsets();
+  const status = useEngineStatus();
+  return (
+    <View className="flex-1 bg-background" style={{ paddingTop: insets.top }}>
+      {/* Settings is in reach before the first bot: devices, the server, signing out, the language. */}
+      <View className="flex-row justify-end pe-2 pt-3">
+        <SettingsEntry />
+      </View>
+      {status._tag === "ready" ? <FirstRunBody engine={status.value} /> : <Connecting />}
+    </View>
+  );
+}
+
+function FirstRunBody({ engine }: { readonly engine: EngineStatus }) {
   const i18n = useI18n();
   const { t } = i18n;
   const insets = useSafeAreaInsets();
-  const status = useEngineStatus();
   const openConversation = useOpenConversation();
-  if (status._tag !== "ready") return <Connecting />;
-  const engine = status.value;
   const problem = engineProblem(engine, i18n);
   const connect = connectCommand(engine);
   const ready = engine.providers.some(canRunBots);
   return (
     <ScrollView
-      className="flex-1 bg-background"
+      className="flex-1"
       keyboardShouldPersistTaps="handled"
       contentContainerClassName="grow justify-center gap-4 px-6 py-10"
-      contentContainerStyle={{ paddingTop: insets.top + 40, paddingBottom: insets.bottom + 40 }}
+      contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}
     >
       <View className="items-center gap-4">
         <Ensemble />
