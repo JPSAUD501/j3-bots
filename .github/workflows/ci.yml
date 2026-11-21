@@ -46,6 +46,26 @@ jobs:
       - name: Unused code
         run: vp run knip
 
+  signoff:
+    name: Sign-off
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      # The whole history, so both ends of the pull request's range are here.
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+
+      # Every commit the pull request adds is signed off by its author
+      # (CONTRIBUTING.md). Commits already on the base branch, and merge
+      # commits, are not checked. A pull request's checkout is GitHub's merge
+      # of it into its base: the first parent is the base as GitHub merged it, the
+      # second the pull request's head.
+      - name: Every commit is signed off
+        run: scripts/check-signoff.sh HEAD^1 HEAD^2
+
   desktop:
     name: Desktop smoke
     runs-on: ubuntu-24.04

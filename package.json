@@ -9,7 +9,7 @@
     "lint": "scripts/check-spdx.sh && vp lint --report-unused-disable-directives --deny-warnings",
     "fmt": "vp fmt",
     "fmt:check": "vp fmt --check",
-    "test": "vp run -r test",
+    "test": "vp run -r test && vp test run --dir scripts",
     "knip": "knip",
     "vendor:t3-contracts": "scripts/vendor-t3-contracts.sh",
     "release": "node scripts/build-release.ts"
