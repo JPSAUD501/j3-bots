@@ -179,7 +179,12 @@ export function Pairing({
             id={codeId}
             ref={codeRef}
             value={code}
-            onChange={(event) => setCode(event.currentTarget.value)}
+            onChange={(event) => {
+              setCode(event.currentTarget.value);
+              // A new code is a new attempt: the last answer, a lockout's time
+              // included, no longer describes it.
+              if (state._tag === "failed") setState({ _tag: "editing" });
+            }}
             autoComplete="one-time-code"
             autoCapitalize="characters"
             autoCorrect="off"
