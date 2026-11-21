@@ -22,13 +22,15 @@ export const EntryTarget = Schema.Union([
 ]);
 export type EntryTarget = typeof EntryTarget.Type;
 
+/**
+ * The bot's id outlives the bot: entries keep it after the bot is deleted. A
+ * client that finds no bot with this id in the roster renders a deleted bot.
+ */
+export const BotAuthor = Schema.TaggedStruct("bot", { botId: BotId });
+
 export const Author = Schema.Union([
   Schema.TaggedStruct("operator", {}),
-  /**
-   * The bot's id outlives the bot: entries keep it after the bot is deleted. A
-   * client that finds no bot with this id in the roster renders a deleted bot.
-   */
-  Schema.TaggedStruct("bot", { botId: BotId }),
+  BotAuthor,
   /** J3 Bots itself. */
   Schema.TaggedStruct("system", {}),
 ]);
@@ -305,6 +307,11 @@ export const Notice = Schema.Union([
   Schema.TaggedStruct("chain-stopped", { limit: Schema.Literals(["hops", "fan-out"]) }),
   /** A turn failed. Retryable with `notice.retry`. */
   Schema.TaggedStruct("turn-failed", { failure: FailureClass }),
+  /**
+   * Urgent teammate messages from `senders` never reached this bot: J3 Bots
+   * gave up waking it with them. Retryable with `notice.retry`.
+   */
+  Schema.TaggedStruct("handoff-failed", { senders: Schema.NonEmptyArray(BotId) }),
   /** A turn the operator started ended twice without delivering anything. Retryable. */
   Schema.TaggedStruct("undelivered", {}),
   /** In a room: this bot is waiting on the operator in its own conversation. */
@@ -346,12 +353,38 @@ export const NoticeEntry = Schema.TaggedStruct("notice", {
 });
 export type NoticeEntry = typeof NoticeEntry.Type;
 
-/** A bot sent a teammate a message. The reply arrives later, as its own turn. */
+/** Where a teammate message stands (`HandoffEntry.state`). */
+export const HandoffState = Schema.Literals(["sent", "not-delivered", "stopped", "unconfirmed"]);
+export type HandoffState = typeof HandoffState.Type;
+
+/**
+ * A bot sent a teammate a message. Both conversations show it: the sender's
+ * as `sent`, the recipient's as `received`. Its author is the sender either
+ * way. The reply arrives later, as its own turn.
+ */
 export const HandoffEntry = Schema.TaggedStruct("handoff", {
   ...entry,
+  author: BotAuthor,
   recipientId: BotId,
+  direction: Schema.Literals(["sent", "received"]),
   text: MessageText,
   urgent: Schema.Boolean,
+  /**
+   * Where the message stands, the same on both cards. `sent`: on its way or
+   * read, which the cards do not tell apart; once read, it stays `sent`.
+   * `not-delivered`: an urgent message J3 Bots gave up waking the recipient
+   * with; the recipient's conversation has a `handoff-failed` notice that
+   * sends it again, and it is `sent` again once it is, or when the engine
+   * turns out to have taken it after all. `stopped`: the operator's Stop of
+   * the sender ended it before the recipient read it, and nothing sends it
+   * again. A Stop of the recipient never does: an urgent message it cancels
+   * waits on as one the recipient reads in its next turn, and stays `sent`.
+   * `unconfirmed`: the envelope that carried it was sent, and whether the
+   * engine took it can no longer be learned; it is not carried again. Both
+   * `stopped` and `unconfirmed` become `sent` when the engine turns out to
+   * have taken it after all.
+   */
+  state: HandoffState,
 });
 export type HandoffEntry = typeof HandoffEntry.Type;
 
@@ -400,6 +433,8 @@ export const EntryPreview = Schema.Struct({
   ]),
   author: Author,
   text: Schema.String.check(Schema.isMaxLength(PREVIEW_LENGTH)),
+  /** A teammate message's recipient; `null` for every other entry. */
+  recipientId: Schema.NullOr(BotId),
   createdAt: Schema.DateTimeUtc,
 });
 export type EntryPreview = typeof EntryPreview.Type;

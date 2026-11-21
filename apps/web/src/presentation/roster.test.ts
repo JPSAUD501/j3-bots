@@ -103,6 +103,27 @@ describe("rosterLine", () => {
     });
   });
 
+  it("names the other bot of a teammate message, received or sent", () => {
+    const scout = bot("Scout").id;
+    const wren = bot("Wren").id;
+    const fromWren = preview(
+      "2026-11-20T14:50:00Z",
+      "handoff",
+      "Which bike?",
+      { _tag: "bot", botId: wren },
+      scout,
+    );
+    expect(rosterLine(row(bot("Scout"), fromWren), ctx).text).toBe("From Wren: Which bike?");
+    const toWren = preview(
+      "2026-11-20T14:50:00Z",
+      "handoff",
+      "Which bike?",
+      { _tag: "bot", botId: scout },
+      wren,
+    );
+    expect(rosterLine(row(bot("Scout"), toWren), ctx).text).toBe("To Wren: Which bike?");
+  });
+
   it("says a waiting bot needs the operator when its last entry is not what it waits on", () => {
     const waiting = bot("Scout", { _tag: "waiting", entryId: EntryId.make("elsewhere") });
     expect(rosterLine(row(waiting, preview("2026-11-20T14:50:00Z")), ctx)).toEqual({

@@ -52,7 +52,8 @@ const kindOf = (
     case "secret-request":
       return { kind: entry._tag, botId };
     case "handoff":
-      return entry.urgent ? { kind: entry._tag, botId } : null;
+      // One notification for an urgent message: the sender's card.
+      return entry.urgent && entry.direction === "sent" ? { kind: entry._tag, botId } : null;
     case "work-fold":
     case "notice":
     case "routine-change":

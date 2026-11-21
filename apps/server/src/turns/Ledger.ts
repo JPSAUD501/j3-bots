@@ -4,6 +4,8 @@ import {
   type Entry,
   EntryId,
   type FailureClass,
+  type HandoffEntry,
+  type HandoffState,
   type MessageDelivery,
   type Notice,
   RoomId,
@@ -17,7 +19,9 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
+import type * as Statement from "effect/sql/Statement";
 import { Entries } from "../entries/Entries.ts";
+import { Ids } from "../Ids.ts";
 import { json, Time, timeText } from "../persistence/columns.ts";
 import { notices, operatorWroteSql } from "./notices.ts";
 import { fromBeforeFreshStartSql } from "./rotationRequests.ts";
@@ -105,10 +109,12 @@ const unshownFailure: Record<WakeFailure, FailureClass> = {
 };
 
 const FailedWake = Schema.Struct({
+  id: Schema.String,
   bot_id: BotId,
   audience: AudienceColumn,
   audience_room_id: Schema.NullOr(RoomId),
   payload_json: json(WakePayload),
+  source_entry_id: Schema.NullOr(EntryId),
 });
 
 const encodeOutcome = Schema.encodeEffect(json(TurnOutcome));
@@ -121,6 +127,40 @@ const encodeOutcome = Schema.encodeEffect(json(TurnOutcome));
  * cancelled.
  */
 export const UNDELIVERED: ReadonlyArray<DispatchStatus> = ["failed", "dropped"];
+
+/**
+ * Whether the teammate message whose received card is `entry` reached its
+ * recipient: a turn started with an envelope that carried it, as a wake of
+ * the urgent message or its Retry, or as a held message. Such a message is
+ * `sent` whatever else became of it, and never offered again. `entry` is
+ * often a caller's column, so the tables here have aliases no caller uses:
+ * one shared would make `entry` name the inner row.
+ */
+const handoffReadSql = (sql: SqlClient.SqlClient, entry: Statement.Fragment) => sql`(
+  EXISTS (
+    SELECT 1 FROM wakes hr_wake LEFT JOIN dispatches hr_wake_dispatch
+      ON hr_wake_dispatch.id = hr_wake.dispatch_id
+    WHERE hr_wake.source_entry_id = ${entry}
+      AND (
+        hr_wake.status = 'finished' OR hr_wake_dispatch.status IN ('delivered', 'finished')
+      )
+  )
+  OR EXISTS (
+    SELECT 1 FROM held_messages hr_held JOIN dispatches hr_held_dispatch
+      ON hr_held_dispatch.id = hr_held.consumed_dispatch_id
+    WHERE hr_held.handoff_entry_id = ${entry}
+      AND hr_held_dispatch.status IN ('delivered', 'finished')
+  )
+)`;
+
+/** A dispatch whose recovery gave up: it may have landed, and nothing will tell. */
+const mayHaveLandedSql = (sql: SqlClient.SqlClient, dispatch: Statement.Fragment) => sql`
+  EXISTS (
+    SELECT 1 FROM dispatches ml_dispatch
+    WHERE ml_dispatch.id = ${dispatch} AND ml_dispatch.status = 'failed'
+      AND ml_dispatch.failure_reason = 'unresolved'
+  )
+`;
 
 const sameDelivery = (a: MessageDelivery, b: MessageDelivery): boolean =>
   a._tag === "failed" ? b._tag === "failed" && a.reason === b.reason : a._tag === b._tag;
@@ -144,7 +184,13 @@ export class Ledger extends Context.Service<
       dispatchId: DispatchRowId,
       disposition: DispatchDisposition | null,
     ) => Effect.Effect<void>;
-    /** Its turn started (or, for a steer, it was taken): also after it failed, which a late delivery undoes. */
+    /**
+     * Its turn started (or, for a steer, it was taken): also after it failed,
+     * which a late delivery undoes, and, when no Stop fenced it, after its
+     * wakes were cancelled, since the bot read them all the same. The
+     * teammate messages it carried were read, so what is left of them goes
+     * no more (`settleRead`).
+     */
     readonly deliver: (dispatchId: DispatchRowId, turnId: TurnId) => Effect.Effect<void>;
     /** Its work is over, with the turn's outcome; its wakes finish. */
     readonly finish: (dispatchId: DispatchRowId, outcome: TurnOutcome) => Effect.Effect<void>;
@@ -209,10 +255,56 @@ export class Ledger extends Context.Service<
      * is not sent again once the operator has written.
      */
     readonly undeliveredRetryable: (dispatchId: DispatchRowId) => Effect.Effect<boolean>;
-    /** Pending wakes stop waiting: a Stop or an archival ended what they asked for. */
+    /**
+     * Pending wakes stop waiting: a Stop or an archival ended what they asked
+     * for. A teammate's urgent message the recipient's Stop cancelled waits
+     * on as a held message (`holdUnread`).
+     */
     readonly cancelWakes: (wakeIds: ReadonlyArray<string>) => Effect.Effect<void>;
-    /** Shows the delivery of each message the wakes came from, as their wakes now stand. */
+    /**
+     * Shows the delivery of each message the wakes came from, as their wakes
+     * now stand: an operator's message, or a teammate's, on both its cards
+     * (`handoffStateOf`).
+     */
     readonly refreshMessages: (entryIds: ReadonlyArray<EntryId>) => Effect.Effect<void>;
+    /**
+     * The dispatch's wakes of teammate messages that reached the recipient
+     * otherwise, as by another wake that landed late: never sent again.
+     */
+    readonly readHandoffWakes: (dispatchId: DispatchRowId) => Effect.Effect<ReadonlySet<string>>;
+    /**
+     * Whether the dispatch carries a teammate message the recipient read
+     * otherwise, as a wake or a held copy: one never sent is released and
+     * planned again without it, so it never goes twice.
+     */
+    readonly carriesRead: (dispatchId: DispatchRowId) => Effect.Effect<boolean>;
+    /**
+     * Held teammate messages, by their received cards, that were removed
+     * before the recipient read them: both cards of each show `state`, as a
+     * Stop's `stopped`, or `not-delivered` for one no envelope could carry,
+     * which is recorded so that no later refresh shows it otherwise.
+     */
+    readonly heldRemoved: (
+      entryIds: ReadonlyArray<EntryId>,
+      state: "stopped" | "not-delivered",
+    ) => Effect.Effect<void>;
+    /**
+     * The bot's teammate messages it already read wait no more: a pending
+     * wake of one, as an operator's Retry queued before the original landed,
+     * is cancelled, and a held copy no envelope took is removed. No notice of
+     * one offers a Retry, and both its cards show `sent`. Whether it
+     * cancelled a wake.
+     */
+    readonly settleRead: (botId: BotId) => Effect.Effect<boolean>;
+    /**
+     * The bot is being deleted: each teammate message sent to it that it
+     * never read, and that still shows `sent`, shows `not-delivered` on the
+     * sender's card, or `unconfirmed` while a dispatch that carried it may
+     * still have reached the bot with nothing to tell: sent with no answer,
+     * taken by the engine with no turn seen, or given up on by its recovery.
+     * The bot's own card goes with its conversation.
+     */
+    readonly recipientRemoved: (botId: BotId) => Effect.Effect<void>;
   }
 >()("@j3-bots/server/turns/Ledger") {}
 
@@ -221,6 +313,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const entries = yield* Entries;
+    const ids = yield* Ids;
     const { notify } = notices(sql, entries);
 
     const findRow = SqlSchema.findOneOption({
@@ -297,18 +390,193 @@ export const layer = Layer.effect(
       return { _tag: "pending" };
     };
 
+    const sentCardRow = SqlSchema.findOneOption({
+      Request: EntryId,
+      Result: Schema.Struct({ sent_entry_id: Schema.NullOr(EntryId) }),
+      execute: (received) => sql`
+        SELECT sent_entry_id FROM handoffs WHERE received_entry_id = ${received}
+      `,
+    });
+
+    /** The sender's card of the teammate message whose received card this is. */
+    const sentCardOf = Effect.fn("Ledger.sentCardOf")(function* (received: EntryId) {
+      const row = yield* sentCardRow(received);
+      if (Option.isNone(row) || row.value.sent_entry_id === null) return null;
+      const found = yield* entries.find(row.value.sent_entry_id);
+      return Option.isSome(found) && found.value.entry._tag === "handoff"
+        ? found.value.entry
+        : null;
+    }, Effect.orDie);
+
+    /** Both cards of the teammate message whose received card this is show `state`. */
+    const showHandoff = Effect.fn("Ledger.showHandoff")(function* (
+      received: HandoffEntry,
+      state: HandoffState,
+    ) {
+      for (const card of [received, yield* sentCardOf(received.id)]) {
+        if (card !== null && card.state !== state) yield* entries.update({ ...card, state });
+      }
+    });
+
+    const HandoffFacts = Schema.Struct({
+      read: Schema.BooleanFromBit,
+      held: Schema.BooleanFromBit,
+      held_unconfirmed: Schema.BooleanFromBit,
+      stopped: Schema.BooleanFromBit,
+      too_long: Schema.BooleanFromBit,
+      cancelled_unconfirmed: Schema.BooleanFromBit,
+    });
+    const handoffFacts = SqlSchema.findAll({
+      Request: EntryId,
+      Result: HandoffFacts,
+      execute: (received) => sql`
+        SELECT
+          ${handoffReadSql(sql, sql`${received}`)} AS read,
+          EXISTS (SELECT 1 FROM held_messages WHERE handoff_entry_id = ${received}) AS held,
+          EXISTS (
+            SELECT 1 FROM held_messages m
+            WHERE m.handoff_entry_id = ${received}
+              AND ${mayHaveLandedSql(sql, sql.literal("m.consumed_dispatch_id"))}
+          ) AS held_unconfirmed,
+          EXISTS (
+            SELECT 1 FROM handoffs WHERE received_entry_id = ${received} AND stop_id IS NOT NULL
+          ) AS stopped,
+          EXISTS (
+            SELECT 1 FROM handoffs WHERE received_entry_id = ${received} AND too_long = 1
+          ) AS too_long,
+          EXISTS (
+            SELECT 1 FROM wakes c
+            WHERE c.source_entry_id = ${received} AND c.status = 'cancelled'
+              AND ${mayHaveLandedSql(sql, sql.literal("c.dispatch_id"))}
+          ) AS cancelled_unconfirmed
+      `,
+    });
+
+    /**
+     * Where a teammate message stands, the same on both its cards; `null`
+     * when nothing of it is left to tell, as for a held message a Stop
+     * removed (`heldRemoved`). Read: `sent`. Held, and so not lost: `sent`,
+     * or `unconfirmed` once the dispatch that carried it ended with nothing
+     * to tell whether the engine took it; it is not carried again. A held
+     * copy no envelope could carry was removed: `not-delivered`. Otherwise
+     * from the wakes of the urgent message no Retry replaced: failed
+     * undelivered is `not-delivered`; all cancelled is `stopped` when the
+     * sender's Stop ended it, `unconfirmed` when one went in such a dispatch.
+     */
+    const handoffStateOf = Effect.fn("Ledger.handoffStateOf")(function* (received: EntryId) {
+      const [facts] = yield* handoffFacts(received);
+      if (facts === undefined) return null;
+      if (facts.read) return "sent";
+      if (facts.held) return facts.held_unconfirmed ? "unconfirmed" : "sent";
+      if (facts.too_long) return "not-delivered";
+      const delivery = deliveryOf(yield* deliveryRows(received));
+      if (delivery === undefined) return null;
+      switch (delivery._tag) {
+        case "pending":
+        case "delivered":
+          return "sent";
+        case "failed":
+          return "not-delivered";
+        case "cancelled":
+          return !facts.stopped && facts.cancelled_unconfirmed ? "unconfirmed" : "stopped";
+      }
+    }, Effect.orDie);
+
     const refreshMessages = Effect.fn("Ledger.refreshMessages")(function* (
       entryIds: ReadonlyArray<EntryId>,
     ) {
       for (const entryId of new Set(entryIds)) {
         const found = yield* entries.find(entryId);
-        if (Option.isNone(found) || found.value.entry._tag !== "message") continue;
-        const message = found.value.entry;
+        if (Option.isNone(found)) continue;
+        const shown = found.value.entry;
+        if (shown._tag === "handoff") {
+          const state = yield* handoffStateOf(entryId);
+          if (state !== null) yield* showHandoff(shown, state);
+          continue;
+        }
+        if (shown._tag !== "message") continue;
         const delivery = deliveryOf(yield* deliveryRows(entryId).pipe(Effect.orDie));
-        if (delivery === undefined || sameDelivery(delivery, message.delivery)) continue;
-        yield* entries.update({ ...message, delivery });
+        if (delivery !== undefined && !sameDelivery(delivery, shown.delivery)) {
+          yield* entries.update({ ...shown, delivery });
+        }
       }
     });
+
+    /** The received cards of the held messages the dispatch's envelope carried. */
+    const heldCarried = Effect.fn("Ledger.heldCarried")(function* (dispatchId: DispatchRowId) {
+      const rows = yield* sql<{ readonly handoff_entry_id: string }>`
+        SELECT handoff_entry_id FROM held_messages
+        WHERE consumed_dispatch_id = ${dispatchId} AND handoff_entry_id IS NOT NULL
+      `;
+      return rows.map((row) => EntryId.make(row.handoff_entry_id));
+    }, Effect.orDie);
+
+    /** Shows where each held message the dispatch's envelope carried stands. */
+    const refreshHeld = Effect.fn("Ledger.refreshHeld")(function* (dispatchId: DispatchRowId) {
+      yield* refreshMessages(yield* heldCarried(dispatchId));
+    });
+
+    /**
+     * A teammate's urgent message whose wake was cancelled before the engine
+     * had it, by the recipient's Stop and not the sender's, waits on as a
+     * held message: the recipient's next envelope carries it, once, and its
+     * cards stay `sent`. So does the operator's Retry of one, whatever Stop
+     * of the sender came before, and its held copy stays through any that
+     * comes after (`retried`). Not one a turn read already, nor one held
+     * already.
+     */
+    const holdUnread = Effect.fn("Ledger.holdUnread")(function* (wakes: Statement.Fragment) {
+      const rows = yield* SqlSchema.findAll({
+        Request: Schema.Void,
+        Result: Schema.Struct({
+          bot_id: BotId,
+          hops: Schema.Int,
+          received_entry_id: EntryId,
+          retried: Schema.BooleanFromBit,
+        }),
+        execute: () => sql`
+          SELECT w.bot_id, MAX(w.hops) AS hops, h.received_entry_id,
+            MAX(w.retry_of IS NOT NULL) AS retried
+          FROM wakes w JOIN handoffs h ON h.received_entry_id = w.source_entry_id
+          WHERE ${wakes} AND w.status = 'cancelled' AND w.kind = 'bot'
+            AND json_extract(w.payload_json, '$._tag') = 'teammate'
+            AND (h.stop_id IS NULL OR w.retry_of IS NOT NULL)
+            AND NOT EXISTS (SELECT 1 FROM held_messages m WHERE m.handoff_entry_id = h.received_entry_id)
+            AND NOT ${handoffReadSql(sql, sql.literal("h.received_entry_id"))}
+          GROUP BY w.bot_id, h.received_entry_id
+        `,
+      })(undefined);
+      for (const row of rows) {
+        const found = yield* entries.find(row.received_entry_id);
+        if (Option.isNone(found) || found.value.entry._tag !== "handoff") continue;
+        const card = found.value.entry;
+        yield* sql`
+          INSERT INTO held_messages (
+            id, recipient_bot_id, sender_bot_id, handoff_entry_id, text, hops, created_at, retried
+          ) VALUES (
+            ${yield* ids.make("held")}, ${row.bot_id}, ${card.author.botId}, ${card.id},
+            ${card.text}, ${row.hops}, ${timeText(card.createdAt)}, ${row.retried ? 1 : 0}
+          )
+        `;
+      }
+    }, Effect.orDie);
+
+    const heldRemoved = Effect.fn("Ledger.heldRemoved")(function* (
+      entryIds: ReadonlyArray<EntryId>,
+      state: "stopped" | "not-delivered",
+    ) {
+      const unique = [...new Set(entryIds)];
+      if (unique.length === 0) return;
+      if (state === "not-delivered") {
+        yield* sql`UPDATE handoffs SET too_long = 1 WHERE ${sql.in("received_entry_id", unique)}`;
+      }
+      for (const entryId of unique) {
+        const found = yield* entries.find(entryId);
+        if (Option.isSome(found) && found.value.entry._tag === "handoff") {
+          yield* showHandoff(found.value.entry, state);
+        }
+      }
+    }, Effect.orDie);
 
     const undeliveredRetryable = Effect.fn("Ledger.undeliveredRetryable")(function* (
       dispatchId: DispatchRowId,
@@ -321,6 +589,10 @@ export const layer = Layer.effect(
             WHERE w.dispatch_id = d.id AND w.status = 'failed'
               AND (
                 json_extract(w.payload_json, '$._tag') = 'answer'
+                OR (
+                  json_extract(w.payload_json, '$._tag') = 'teammate'
+                  AND NOT ${handoffReadSql(sql, sql.literal("w.source_entry_id"))}
+                )
                 OR (
                   json_extract(w.payload_json, '$._tag') = 'first-run'
                   AND NOT ${operatorWroteSql(sql, sql.literal("w.bot_id"))}
@@ -368,22 +640,116 @@ export const layer = Layer.effect(
       }
     }, Effect.orDie);
 
+    /**
+     * Every notice that offers a retry of the messages' wakes, the original's
+     * and each Retry's, reads `undeliveredRetryable` again, and their cards
+     * show where they stand.
+     */
+    const refreshRead = Effect.fn("Ledger.refreshRead")(function* (
+      entryIds: ReadonlyArray<EntryId>,
+    ) {
+      const unique = [...new Set(entryIds)];
+      if (unique.length === 0) return;
+      const rows = yield* sql<{ readonly dispatch_id: string }>`
+        SELECT DISTINCT n.dispatch_id FROM notice_retries n JOIN wakes w ON w.dispatch_id = n.dispatch_id
+        WHERE n.reason = 'undelivered' AND ${sql.in("w.source_entry_id", unique)}
+      `;
+      for (const row of rows) yield* refreshNotices(DispatchRowId.make(row.dispatch_id));
+      yield* refreshMessages(unique);
+    }, Effect.orDie);
+
+    /**
+     * Cancels and removes what is left of the bot's read teammate messages:
+     * the received cards of the wakes it cancelled and of the held copies it
+     * removed.
+     */
+    const dropRead = Effect.fn("Ledger.dropRead")(function* (botId: BotId) {
+      const cancelled = yield* sql<{ readonly source_entry_id: string }>`
+        UPDATE wakes SET status = 'cancelled', failure_reason = NULL, updated_at = ${yield* now}
+        WHERE bot_id = ${botId} AND status = 'pending' AND kind = 'bot'
+          AND json_extract(payload_json, '$._tag') = 'teammate'
+          AND ${handoffReadSql(sql, sql.literal("wakes.source_entry_id"))}
+        RETURNING source_entry_id
+      `;
+      const removed = yield* sql<{ readonly handoff_entry_id: string }>`
+        DELETE FROM held_messages
+        WHERE recipient_bot_id = ${botId} AND consumed_dispatch_id IS NULL
+          AND handoff_entry_id IS NOT NULL
+          AND ${handoffReadSql(sql, sql.literal("held_messages.handoff_entry_id"))}
+        RETURNING handoff_entry_id
+      `;
+      return {
+        cancelled: cancelled.map((row) => EntryId.make(row.source_entry_id)),
+        removed: removed.map((row) => EntryId.make(row.handoff_entry_id)),
+      };
+    }, Effect.orDie);
+
+    const settleRead = Effect.fn("Ledger.settleRead")(function* (botId: BotId) {
+      const { cancelled, removed } = yield* dropRead(botId);
+      yield* refreshRead([...cancelled, ...removed]);
+      return cancelled.length > 0;
+    });
+
     const failedWakes = SqlSchema.findAll({
       Request: Schema.Struct({ dispatchId: DispatchRowId, reason: WakeFailure, at: Schema.String }),
       Result: FailedWake,
       execute: ({ dispatchId, reason, at }) => sql`
         UPDATE wakes SET status = 'failed', failure_reason = ${reason}, updated_at = ${at}
         WHERE dispatch_id = ${dispatchId} AND status IN ('dispatched', 'failed')
-        RETURNING bot_id, audience, audience_room_id, payload_json
+        RETURNING id, bot_id, audience, audience_room_id, payload_json, source_entry_id
       `,
     });
 
+    /**
+     * The failure notice of a teammate's urgent messages, in the recipient's
+     * conversation, naming each sender: `null` when the wakes carry none.
+     */
+    const handoffNotice = Effect.fn("Ledger.handoffNotice")(function* (
+      wakes: ReadonlyArray<typeof FailedWake.Type>,
+    ) {
+      const senders: Array<BotId> = [];
+      for (const wake of wakes) {
+        if (wake.payload_json._tag !== "teammate") continue;
+        const card = yield* entries.find(wake.payload_json.entryId);
+        if (Option.isNone(card) || card.value.entry._tag !== "handoff") continue;
+        const sender = card.value.entry.author.botId;
+        if (!senders.includes(sender)) senders.push(sender);
+      }
+      const [first, ...rest] = senders;
+      return first === undefined
+        ? null
+        : ({ _tag: "handoff-failed", senders: [first, ...rest] } satisfies Notice);
+    });
+
+    /**
+     * Wakes of the dispatch that a teammate's Stopped work caused are
+     * cancelled instead of waiting again or failing: the Stop that covered
+     * the sender's work covers what it sent (`Stops.record`). The operator's
+     * Retry of one is the operator's own word, which no Stop of the sender
+     * cancels.
+     */
+    const cancelStoppedHandoffs = (dispatchId: DispatchRowId, at: string) =>
+      sql`
+        UPDATE wakes SET status = 'cancelled', failure_reason = NULL, updated_at = ${at}
+        WHERE dispatch_id = ${dispatchId} AND status IN ('dispatched', 'failed')
+          AND retry_of IS NULL AND source_entry_id IN (
+            SELECT received_entry_id FROM handoffs WHERE stop_id IS NOT NULL
+          )
+      `;
+
+    /**
+     * Wakes of a dispatch that will not run to its end, as `after` says.
+     * `unread`: the engine certainly never applied it, so a teammate's urgent
+     * message it cancels waits on as a held one (`holdUnread`).
+     */
     const setWakes = Effect.fn("Ledger.setWakes")(function* (
       dispatchId: DispatchRowId,
       after: WakesAfter,
+      unread: boolean,
     ) {
       const at = yield* now;
       const sources = yield* sourcesOf(dispatchId);
+      if (after._tag !== "cancelled") yield* cancelStoppedHandoffs(dispatchId, at);
       switch (after._tag) {
         case "pending":
           yield* sql`
@@ -397,20 +763,31 @@ export const layer = Layer.effect(
             UPDATE wakes SET status = 'cancelled', failure_reason = NULL, updated_at = ${at}
             WHERE dispatch_id = ${dispatchId} AND status IN ('dispatched', 'failed')
           `;
+          if (unread) yield* holdUnread(sql`w.dispatch_id = ${dispatchId}`);
           break;
         case "failed": {
           // Wakes the dispatch failed with before, when the engine took it
           // late, fail again with this reason.
-          const failed = yield* failedWakes({ dispatchId, reason: after.reason, at });
-          // An answer, or a new bot's opening, has no message of its own to
-          // show its failure on: a retryable notice does, where it was for.
-          // One that failed before keeps the notice it has, which now shows
-          // this failure.
+          const all = yield* failedWakes({ dispatchId, reason: after.reason, at });
+          // A teammate's message another wake or its held copy brought to the
+          // recipient is not shown as failed, nor offered again.
+          const read = yield* readHandoffWakes(dispatchId);
+          const failed = all.filter((wake) => !read.has(wake.id));
+          // An answer, a new bot's opening, or a teammate's urgent message
+          // has no message of the operator's to show its failure on: a
+          // retryable notice does, where it was for. One that failed before
+          // keeps the notice it has, which now shows this failure.
           const unshown = failed.find(
-            (wake) => wake.payload_json._tag === "answer" || wake.payload_json._tag === "first-run",
+            (wake) =>
+              wake.payload_json._tag === "answer" ||
+              wake.payload_json._tag === "first-run" ||
+              wake.payload_json._tag === "teammate",
           );
           if (unshown !== undefined) {
-            const notice: Notice = { _tag: "turn-failed", failure: unshownFailure[after.reason] };
+            const notice: Notice = (yield* handoffNotice(failed)) ?? {
+              _tag: "turn-failed",
+              failure: unshownFailure[after.reason],
+            };
             const shown = yield* undeliveredNotices(dispatchId);
             if (shown.length === 0) {
               yield* notify(unshown.bot_id, audienceOf(unshown), notice, {
@@ -425,6 +802,71 @@ export const layer = Layer.effect(
       }
       yield* refreshNotices(dispatchId);
       yield* refreshMessages(sources);
+      yield* refreshHeld(dispatchId);
+    }, Effect.orDie);
+
+    const carriesRead = Effect.fn("Ledger.carriesRead")(function* (dispatchId: DispatchRowId) {
+      const rows = yield* sql`
+        SELECT 1 FROM wakes w
+        WHERE w.dispatch_id = ${dispatchId}
+          AND json_extract(w.payload_json, '$._tag') = 'teammate'
+          AND ${handoffReadSql(sql, sql.literal("w.source_entry_id"))}
+        UNION ALL
+        SELECT 1 FROM held_messages m
+        WHERE m.consumed_dispatch_id = ${dispatchId} AND m.handoff_entry_id IS NOT NULL
+          AND ${handoffReadSql(sql, sql.literal("m.handoff_entry_id"))}
+        LIMIT 1
+      `;
+      return rows.length > 0;
+    }, Effect.orDie);
+
+    const recipientRemoved = Effect.fn("Ledger.recipientRemoved")(function* (botId: BotId) {
+      const unread = yield* SqlSchema.findAll({
+        Request: Schema.Void,
+        Result: Schema.Struct({ sent_entry_id: EntryId, undecided: Schema.BooleanFromBit }),
+        execute: () => sql`
+          SELECT h.sent_entry_id, EXISTS (
+            SELECT 1 FROM dispatches d
+            WHERE d.id IN (
+              SELECT w.dispatch_id FROM wakes w WHERE w.source_entry_id = h.received_entry_id
+              UNION ALL
+              SELECT m.consumed_dispatch_id FROM held_messages m
+              WHERE m.handoff_entry_id = h.received_entry_id
+            )
+              AND (
+                d.status = 'accepted'
+                OR (d.status = 'intended' AND d.attempts > 0)
+                OR (d.status = 'failed' AND d.failure_reason = 'unresolved')
+              )
+          ) AS undecided
+          FROM handoffs h
+          WHERE h.recipient_bot_id = ${botId} AND h.sent_entry_id IS NOT NULL
+            AND NOT ${handoffReadSql(sql, sql.literal("h.received_entry_id"))}
+        `,
+      })(undefined);
+      for (const row of unread) {
+        const found = yield* entries.find(row.sent_entry_id);
+        if (Option.isNone(found)) continue;
+        const card = found.value.entry;
+        if (card._tag === "handoff" && card.state === "sent") {
+          yield* entries.update({
+            ...card,
+            state: row.undecided ? "unconfirmed" : "not-delivered",
+          });
+        }
+      }
+    }, Effect.orDie);
+
+    const readHandoffWakes = Effect.fn("Ledger.readHandoffWakes")(function* (
+      dispatchId: DispatchRowId,
+    ) {
+      const rows = yield* sql<{ readonly id: string }>`
+        SELECT w.id FROM wakes w
+        WHERE w.dispatch_id = ${dispatchId}
+          AND json_extract(w.payload_json, '$._tag') = 'teammate'
+          AND ${handoffReadSql(sql, sql.literal("w.source_entry_id"))}
+      `;
+      return new Set(rows.map((row) => row.id));
     }, Effect.orDie);
 
     /**
@@ -453,7 +895,28 @@ export const layer = Layer.effect(
         WHERE consumed_dispatch_id = ${dispatchId} AND ${fromBeforeFreshStartSql(sql)}
       `;
       yield* sql`UPDATE catch_up_notes SET consumed_dispatch_id = NULL WHERE consumed_dispatch_id = ${dispatchId}`;
-      yield* sql`UPDATE held_messages SET consumed_dispatch_id = NULL WHERE consumed_dispatch_id = ${dispatchId}`;
+      // A message whose sender's work a Stop covered since waits no more,
+      // unless the operator's Retry sent it.
+      const stopped = yield* sql<{ readonly handoff_entry_id: string }>`
+        DELETE FROM held_messages
+        WHERE consumed_dispatch_id = ${dispatchId} AND retried = 0 AND handoff_entry_id IN (
+          SELECT received_entry_id FROM handoffs WHERE stop_id IS NOT NULL
+        )
+        RETURNING handoff_entry_id
+      `;
+      yield* heldRemoved(
+        stopped.map((row) => EntryId.make(row.handoff_entry_id)),
+        "stopped",
+      );
+      const returned = yield* sql<{ readonly handoff_entry_id: string | null }>`
+        UPDATE held_messages SET consumed_dispatch_id = NULL WHERE consumed_dispatch_id = ${dispatchId}
+        RETURNING handoff_entry_id
+      `;
+      yield* refreshMessages(
+        returned.flatMap((row) =>
+          row.handoff_entry_id === null ? [] : [EntryId.make(row.handoff_entry_id)],
+        ),
+      );
     }, Effect.orDie);
 
     const accept = Effect.fn("Ledger.accept")(function* (
@@ -468,6 +931,7 @@ export const layer = Layer.effect(
       `;
       yield* refreshNotices(dispatchId);
       yield* refreshMessages(yield* sourcesOf(dispatchId));
+      yield* refreshHeld(dispatchId);
       if (disposition !== null) {
         // The first answer only, and only on a dispatch the engine has: the
         // events may already have moved the turn on, or a Stop ended it.
@@ -492,12 +956,36 @@ export const layer = Layer.effect(
         WHERE id = ${dispatchId} AND status IN ('intended', 'accepted', 'failed')
       `;
       // A late delivery: the wakes it failed with were delivered after all.
+      // So were those cancelled while it was undecided, when no Stop fenced
+      // it: the engine started its turn, so its wakes were read, and nothing
+      // ends that turn. A Stop that fenced it ends that turn, and its wakes
+      // stay cancelled; a teammate's message among them was read all the
+      // same, and shows `sent` (`handoffReadSql`).
       yield* sql`
         UPDATE wakes SET status = 'dispatched', failure_reason = NULL, updated_at = ${at}
-        WHERE dispatch_id = ${dispatchId} AND status = 'failed'
+        WHERE dispatch_id = ${dispatchId} AND (
+          status = 'failed' OR (
+            status = 'cancelled' AND EXISTS (
+              SELECT 1 FROM dispatches WHERE id = ${dispatchId} AND fenced_by_stop_id IS NULL
+            )
+          )
+        )
       `;
       yield* refreshNotices(dispatchId);
-      yield* refreshMessages(yield* sourcesOf(dispatchId));
+      // The teammate messages it carried were read: what is left of them, as
+      // a Retry queued before this landing, goes no more, and no notice of
+      // them offers a Retry.
+      const dispatch = yield* find(dispatchId);
+      const settled =
+        Option.isSome(dispatch) && dispatch.value.status === "delivered"
+          ? yield* dropRead(dispatch.value.bot_id)
+          : { cancelled: [], removed: [] };
+      yield* refreshRead([
+        ...(yield* sourcesOf(dispatchId)),
+        ...(yield* heldCarried(dispatchId)),
+        ...settled.cancelled,
+        ...settled.removed,
+      ]);
     }, Effect.orDie);
 
     const finish = Effect.fn("Ledger.finish")(function* (
@@ -576,7 +1064,7 @@ export const layer = Layer.effect(
       `;
       if (dropped.length === 0) return false;
       yield* returnConsumed(dispatchId);
-      yield* setWakes(dispatchId, wakes);
+      yield* setWakes(dispatchId, wakes, true);
       return true;
     }, Effect.orDie);
 
@@ -591,7 +1079,7 @@ export const layer = Layer.effect(
       `;
       if (released.length === 0) return false;
       yield* returnConsumed(dispatchId);
-      yield* setWakes(dispatchId, wakes);
+      yield* setWakes(dispatchId, wakes, true);
       return true;
     }, Effect.orDie);
 
@@ -610,7 +1098,7 @@ export const layer = Layer.effect(
       // A rejected dispatch was never applied, so what it carried was never
       // seen; an unresolved one may have been.
       if (reason === "rejected") yield* returnConsumed(dispatchId);
-      yield* setWakes(dispatchId, wakes);
+      yield* setWakes(dispatchId, wakes, reason === "rejected");
       return true;
     }, Effect.orDie);
 
@@ -625,17 +1113,25 @@ export const layer = Layer.effect(
         RETURNING id
       `;
       if (failed.length === 0) return false;
-      yield* setWakes(dispatchId, wakes);
+      yield* setWakes(dispatchId, wakes, false);
       return true;
     }, Effect.orDie);
 
     const cancelWakes = Effect.fn("Ledger.cancelWakes")(function* (wakeIds: ReadonlyArray<string>) {
       if (wakeIds.length === 0) return;
-      const sources = yield* sql<{ readonly source_entry_id: string | null }>`
+      const sources = yield* sql<{ readonly id: string; readonly source_entry_id: string | null }>`
         UPDATE wakes SET status = 'cancelled', updated_at = ${yield* now}
         WHERE ${sql.in("id", wakeIds)} AND status = 'pending'
-        RETURNING source_entry_id
+        RETURNING id, source_entry_id
       `;
+      if (sources.length > 0) {
+        yield* holdUnread(
+          sql.in(
+            "w.id",
+            sources.map((row) => row.id),
+          ),
+        );
+      }
       yield* refreshMessages(
         sources.flatMap((row) =>
           row.source_entry_id === null ? [] : [EntryId.make(row.source_entry_id)],
@@ -659,6 +1155,11 @@ export const layer = Layer.effect(
       undeliveredRetryable,
       cancelWakes,
       refreshMessages,
+      readHandoffWakes,
+      carriesRead,
+      heldRemoved,
+      settleRead,
+      recipientRemoved,
     });
   }),
 );

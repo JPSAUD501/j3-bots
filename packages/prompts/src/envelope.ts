@@ -207,7 +207,6 @@ export type SystemEvent =
       readonly name: "profile-changed";
       readonly changes: readonly [ProfileChange, ...Array<ProfileChange>];
     }
-  | { readonly name: "budget-stopped"; readonly limit: "hops" | "fan-out" }
   | { readonly name: "undelivered" };
 
 export interface SystemWake extends WakeBase {
@@ -239,10 +238,6 @@ const eventLine = (event: SystemEvent): string => {
       return "You were just created, and your user has not written yet.";
     case "profile-changed":
       return PROFILE_CHANGED_LINE;
-    case "budget-stopped":
-      return event.limit === "hops"
-        ? "A chain of messages between bots reached its limit since your user last spoke, so it stopped."
-        : "A message tried to wake more teammates than allowed, so it was not delivered.";
     case "undelivered":
       return "Your last turn for your user ended without delivering an answer.";
   }

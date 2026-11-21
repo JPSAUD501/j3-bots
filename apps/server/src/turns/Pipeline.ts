@@ -22,6 +22,7 @@ import type {
   OperatorMessage,
   SystemEvent,
   TeammateMessage,
+  TeammateRef,
   Wake,
 } from "@j3-bots/prompts";
 import { renderWake } from "@j3-bots/prompts";
@@ -131,10 +132,11 @@ const longestFitting = (max: number, fits: (count: number) => boolean): number =
   return low;
 };
 
-/** A planned wake's part of a user envelope; `null` when its message or card is gone. */
+/** A planned wake's part of a user or bot envelope; `null` when its message or card is gone. */
 type WakePart =
   | { readonly _tag: "message"; readonly message: OperatorMessage }
   | { readonly _tag: "answer"; readonly answer: AskAnswer }
+  | { readonly _tag: "teammate"; readonly message: TeammateMessage }
   | null;
 
 /** Something the session has not seen, with the row the dispatch consumes for it. */
@@ -162,6 +164,19 @@ const userWake = (
   return { ...wake, answer: null, messages: [first, ...rest] } satisfies Wake;
 };
 
+/** A bot envelope of the teammates' messages; `null` when none of them is left to deliver. */
+const botWake = (
+  base: { readonly at: DateTime.Utc; readonly timeZone: DateTime.TimeZone.Named },
+  since: ReadonlyArray<CatchUpItem>,
+  parts: ReadonlyArray<WakePart>,
+): Wake | null => {
+  const [first, ...rest] = parts.flatMap((part) =>
+    part?._tag === "teammate" ? [part.message] : [],
+  );
+  if (first === undefined) return null;
+  return { ...base, sinceLastTurn: since, kind: "bot", messages: [first, ...rest] };
+};
+
 /** The event a system wake reports; any other payload on one is a bug. */
 const systemEventOf = (payload: WakePayload): Effect.Effect<SystemEvent> => {
   switch (payload._tag) {
@@ -172,6 +187,7 @@ const systemEventOf = (payload: WakePayload): Effect.Effect<SystemEvent> => {
     case "message":
     case "answer":
     case "routine":
+    case "teammate":
       return Effect.die(
         new TurnsInvariant({ invariant: `A system wake carries no ${payload._tag} payload` }),
       );
@@ -544,14 +560,24 @@ export const layer = Layer.effect(
             `.pipe(Effect.orDie);
             for (const row of rows) retried.add(row.retry_of);
           }
+          // A teammate's message that reached the bot otherwise, by its
+          // original wake landing late, say, does not go again.
+          for (const id of yield* ledger.readHandoffWakes(link.dispatch_id)) retried.add(id);
           // A failed wake is retried as such, so its message shows the retry;
           // one a message retry already sent again is not sent a third time.
-          // A failed opening is the operator's to retry too: it has no message.
+          // A failed opening, or a teammate's urgent message, is the
+          // operator's to retry too: neither has a message of theirs. A
+          // teammate's message goes again only while it failed: one a Stop
+          // cancelled stays cancelled. It goes as it was, its kind and hops
+          // kept; the Retry is the operator's, so no Stop of its sender
+          // cancels it (`Stops.record`).
           yield* wakes.record(
             sent
               .filter(
                 (wake) =>
-                  (wake.kind === "user" || wake.payload_json._tag === "first-run") &&
+                  (wake.kind === "user" ||
+                    wake.payload_json._tag === "first-run" ||
+                    (wake.payload_json._tag === "teammate" && wake.status === "failed")) &&
                   !retried.has(wake.id),
               )
               .map((wake) => ({
@@ -842,6 +868,31 @@ export const layer = Layer.effect(
       });
     });
 
+    /** A teammate as an envelope names them, also once they were deleted. */
+    const teammateRef = Effect.fn("Pipeline.teammateRef")(function* (botId: BotId) {
+      return Option.match(yield* bots.find(botId), {
+        onNone: (): TeammateRef => ({ id: botId, name: "A former teammate", title: "" }),
+        onSome: ({ bot }): TeammateRef => ({
+          id: bot.id,
+          name: bot.profile.name,
+          title: bot.profile.title,
+        }),
+      });
+    });
+
+    /** An urgent message, from the handoff card it put in the recipient's conversation. */
+    const teammateMessageOf = Effect.fn("Pipeline.teammateMessageOf")(function* (entryId: EntryId) {
+      const found = yield* entries.find(entryId);
+      if (Option.isNone(found) || found.value.entry._tag !== "handoff") return null;
+      const card = found.value.entry;
+      return {
+        from: yield* teammateRef(card.author.botId),
+        at: card.createdAt,
+        text: card.text,
+        urgent: card.urgent,
+      } satisfies TeammateMessage;
+    });
+
     const notesOf = (botId: BotId) =>
       SqlSchema.findAll({
         Request: Schema.String,
@@ -852,13 +903,20 @@ export const layer = Layer.effect(
         `,
       })(botId).pipe(Effect.orDie);
 
+    /**
+     * The bot's held messages in the order they were sent, also a copy of an
+     * urgent one its Stop held later: by when its card was written, then by
+     * the card's place.
+     */
     const heldOf = (botId: BotId) =>
       SqlSchema.findAll({
         Request: Schema.String,
         Result: HeldRow,
         execute: (id) => sql`
-          SELECT id, sender_bot_id, text, created_at FROM held_messages
-          WHERE recipient_bot_id = ${id} AND consumed_dispatch_id IS NULL ORDER BY rowid
+          SELECT m.id, m.sender_bot_id, m.text, m.created_at
+          FROM held_messages m LEFT JOIN entries e ON e.id = m.handoff_entry_id
+          WHERE m.recipient_bot_id = ${id} AND m.consumed_dispatch_id IS NULL
+          ORDER BY m.created_at, e.seq, m.rowid
         `,
       })(botId).pipe(Effect.orDie);
 
@@ -873,13 +931,8 @@ export const layer = Layer.effect(
         });
       }
       for (const message of yield* heldOf(botId)) {
-        const sender = yield* bots.find(message.sender_bot_id);
-        const from = Option.match(sender, {
-          onNone: () => ({ id: message.sender_bot_id, name: "A former teammate", title: "" }),
-          onSome: ({ bot }) => ({ id: bot.id, name: bot.profile.name, title: bot.profile.title }),
-        });
         const teammate: TeammateMessage = {
-          from,
+          from: yield* teammateRef(message.sender_bot_id),
           at: message.created_at,
           text: message.text,
           urgent: false,
@@ -901,6 +954,10 @@ export const layer = Layer.effect(
       if (payload._tag === "answer") {
         const answer = yield* answerOf(payload.cardId);
         return answer === null ? null : ({ _tag: "answer", answer } satisfies WakePart);
+      }
+      if (payload._tag === "teammate") {
+        const message = yield* teammateMessageOf(payload.entryId);
+        return message === null ? null : ({ _tag: "teammate", message } satisfies WakePart);
       }
       return null;
     });
@@ -927,10 +984,10 @@ export const layer = Layer.effect(
       if (head === undefined) {
         return yield* Effect.die(new TurnsInvariant({ invariant: "A plan carries a wake" }));
       }
-      if (head.kind !== "system" && head.kind !== "user") {
-        // Routine envelopes come with their wakes in M2, room and teammate ones in M3.
+      if (head.kind === "room" || head.kind === "routine") {
+        // A routine's envelope is the routine runner's; room envelopes come with room routing.
         return yield* Effect.die(
-          new TurnsInvariant({ invariant: `No envelope for ${head.kind} wakes yet` }),
+          new TurnsInvariant({ invariant: `No envelope for ${head.kind} wakes here` }),
         );
       }
       const system = (event: SystemEvent, since: ReadonlyArray<CatchUpItem>): Wake => ({
@@ -950,10 +1007,13 @@ export const layer = Layer.effect(
         } else dropped.push(one.source);
       }
       const event = head.kind === "system" ? yield* systemEventOf(head.payload_json) : null;
-      const parts = head.kind === "user" ? yield* Effect.forEach(plan.wakes, partOf) : [];
+      const parts = head.kind === "system" ? [] : yield* Effect.forEach(plan.wakes, partOf);
       const render = (wakes: number, seen: number): Wake | null => {
         const since = carried.slice(0, seen).flatMap(({ item }) => (item === null ? [] : [item]));
-        return event !== null ? system(event, since) : userWake(base, since, parts.slice(0, wakes));
+        if (event !== null) return system(event, since);
+        return head.kind === "bot"
+          ? botWake(base, since, parts.slice(0, wakes))
+          : userWake(base, since, parts.slice(0, wakes));
       };
       // Nothing left to render takes no room.
       const fits = (wake: Wake | null) => wake === null || fitsEngine(wake);
@@ -994,7 +1054,17 @@ export const layer = Layer.effect(
       const notes = dropped.flatMap((row) => (row._tag === "note" ? [row.id] : []));
       const held = dropped.flatMap((row) => (row._tag === "held" ? [row.id] : []));
       if (notes.length > 0) yield* sql`DELETE FROM catch_up_notes WHERE ${sql.in("id", notes)}`;
-      if (held.length > 0) yield* sql`DELETE FROM held_messages WHERE ${sql.in("id", held)}`;
+      if (held.length > 0) {
+        const removed = yield* sql<{ readonly handoff_entry_id: string | null }>`
+          DELETE FROM held_messages WHERE ${sql.in("id", held)} RETURNING handoff_entry_id
+        `;
+        yield* ledger.heldRemoved(
+          removed.flatMap((row) =>
+            row.handoff_entry_id === null ? [] : [EntryId.make(row.handoff_entry_id)],
+          ),
+          "not-delivered",
+        );
+      }
       yield* notify(botId, conversation, { _tag: "too-long" }, null);
     });
 
@@ -1003,13 +1073,17 @@ export const layer = Layer.effect(
      * files in order, its wakes linked, and the notes and held messages the
      * envelope consumed. Nothing changes if the plan no longer holds: its
      * session was retired, lost, became due for a rotation that takes no new
-     * work, or its bot's settings changed since it was chosen (`stale`,
-     * planned again), or its wakes are no longer pending.
+     * work, or its bot's settings changed since it was chosen, or a teammate's
+     * message it waits on turned out read, whose wake is cancelled then
+     * (`stale`, planned again), or its wakes are no longer pending.
      */
     const writeDispatch = Effect.fn("Pipeline.writeDispatch")(function* (plan: Plan) {
       return yield* transaction(
         Effect.gen(function* () {
           if (Option.isNone(yield* plannedSession(plan.sessionId))) return "stale" as const;
+          // A teammate's message the bot read meanwhile goes no more, as a
+          // wake or held; the plan is made again without such a wake.
+          if (yield* ledger.settleRead(plan.botId)) return "stale" as const;
           const still = yield* pendingWakes(plan.wakes.map((wake) => wake.id));
           if (still.length !== plan.wakes.length) return null;
           const fitted = yield* envelopeOf(plan, yield* sinceLastTurn(plan.botId));

@@ -124,14 +124,14 @@ const AskInput = toolInput({
 });
 
 const MessageBotInput = toolInput({
-  to: described(Id, "The teammate's bot id, or the id of a room you are in."),
+  to: described(Id, "The teammate's bot id, from `list_teammates`."),
   text: described(
     text(1, MAX_SPOKEN_TEXT),
     `The actionable point, in at most ${MAX_SPOKEN_TEXT} characters.`,
   ),
   urgent: described(
     Schema.Boolean,
-    "True when they must act now or someone is waiting. Otherwise it waits for their next turn.",
+    "True when they must act now or someone is waiting: it wakes them. Otherwise it waits for their next turn.",
   ),
 });
 
@@ -293,10 +293,11 @@ export const tools = {
   message_bot: define(
     "message_bot",
     [
-      "Send a message to a teammate, or to a room you are in, by an id from `list_teammates`.",
-      "It is also how you answer a teammate: in a `bot` turn, `say` reaches your user, not the sender.",
+      "Send a message to one teammate, by a bot id from `list_teammates`. Your user sees it in both conversations.",
+      "Only an `urgent` message wakes the teammate now. Any other waits: they read it at the start of their next turn, whenever that comes.",
+      "It is also how you answer a teammate: in a `bot` turn, `say` reaches your user, not the sender. Answer a question once; an FYI or a thanks needs no answer.",
       "Returns an acknowledgement only. A reply, if any, arrives later as its own turn.",
-      "Every message wakes another bot and spends your user's allowance: send it only when it serves what your user wants, and never to answer a thanks or an FYI.",
+      "Every message spends your user's allowance: send it only when it serves what your user wants. Your user limits how long a chain of messages between bots may run since they last spoke, and how many teammates a turn may bring in besides those it answers; past either, nothing is sent.",
       BOT_ONLY,
     ],
     MessageBotInput,

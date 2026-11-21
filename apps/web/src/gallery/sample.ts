@@ -275,8 +275,10 @@ export function sampleTeam(now: DateTime.Utc) {
       author: by(ids.scout),
       createdAt: ago(8),
       recipientId: ids.wren,
+      direction: "sent",
       text: "Could you write to the bike shop and ask for a test ride on Saturday morning? Friendly, three lines at most.",
       urgent: false,
+      state: "sent",
     },
     message(
       by(ids.scout),

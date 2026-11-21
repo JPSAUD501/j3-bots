@@ -32,8 +32,9 @@ export const operatorWroteSql = (
   botId: BotId | Statement.Fragment,
 ) => sql`
   EXISTS (
-    SELECT 1 FROM entries e
-    WHERE e.conversation_bot_id = ${botId} AND e.kind = 'message' AND e.author_kind = 'operator'
+    SELECT 1 FROM entries ow_entry
+    WHERE ow_entry.conversation_bot_id = ${botId} AND ow_entry.kind = 'message'
+      AND ow_entry.author_kind = 'operator'
   )
 `;
 

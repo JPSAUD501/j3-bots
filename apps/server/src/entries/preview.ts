@@ -43,6 +43,7 @@ export const previewOf = (entry: Entry): EntryPreview => {
     kind: entry._tag,
     author: entry.author,
     text: cut(text, PREVIEW_LENGTH),
+    recipientId: entry._tag === "handoff" ? entry.recipientId : null,
     createdAt: entry.createdAt,
   };
 };

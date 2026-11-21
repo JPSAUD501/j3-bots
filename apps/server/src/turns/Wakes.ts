@@ -34,14 +34,22 @@ export interface NewWake {
   /**
    * What led to it: the operator, whose word a Stop never cancels ahead of
    * time; a routine's trigger, which carries the operator's saved word the
-   * same way; or the bot's own work that began with the dispatch written at
+   * same way; the bot's own work that began with the dispatch written at
    * `seq`, which a Stop covering it ended (`stopTargets.covers`) and an
-   * archived or deleted room left with nowhere to go.
+   * archived or deleted room left with nowhere to go; or a teammate's work
+   * for `audience`, held to the same rule as the teammate's own: `seq` is the
+   * dispatch that began it, `null` for a turn no dispatch began.
    */
   readonly cause:
     | { readonly _tag: "operator" }
     | { readonly _tag: "routine" }
-    | { readonly _tag: "work"; readonly seq: DispatchSeq };
+    | { readonly _tag: "work"; readonly seq: DispatchSeq }
+    | {
+        readonly _tag: "teammate";
+        readonly senderId: BotId;
+        readonly audience: Audience;
+        readonly seq: DispatchSeq | null;
+      };
 }
 
 const encodePayload = Schema.encodeEffect(json(WakePayload));
@@ -68,17 +76,32 @@ export const layer = Layer.effect(
     const stops = stopTargets(sql);
     const live = liveTarget(sql);
 
+    /** Whether the work `cause` continues was stopped, or has nowhere left to speak. */
+    const ended = Effect.fn("Wakes.ended")(function* (wake: NewWake) {
+      const { cause } = wake;
+      switch (cause._tag) {
+        case "operator":
+        case "routine":
+          return false;
+        case "work":
+          return (
+            (yield* stops.covers(wake.botId, wake.audience, cause.seq)) ||
+            (yield* live(wake.botId, wake.audience)) === null
+          );
+        case "teammate":
+          return (
+            (cause.seq !== null &&
+              (yield* stops.covers(cause.senderId, cause.audience, cause.seq))) ||
+            (yield* live(cause.senderId, cause.audience)) === null
+          );
+      }
+    });
+
     const record = Effect.fn("Wakes.record")(function* (wakes: ReadonlyArray<NewWake>) {
       const at = timeText(yield* DateTime.now);
       const written: Array<string> = [];
       for (const wake of wakes) {
-        if (
-          wake.cause._tag === "work" &&
-          ((yield* stops.covers(wake.botId, wake.audience, wake.cause.seq)) ||
-            (yield* live(wake.botId, wake.audience)) === null)
-        ) {
-          continue;
-        }
+        if (yield* ended(wake)) continue;
         const id = yield* ids.make("wake");
         const { audience, roomId } = audienceColumns(wake.audience);
         yield* sql`

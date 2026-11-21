@@ -42,8 +42,10 @@ describe("buildTimeline", () => {
         author: scout,
         createdAt: at("2026-11-20T10:00:30Z"),
         recipientId: BotId.make("wren"),
+        direction: "sent",
         text: "Over to you",
         urgent: false,
+        state: "sent",
       },
       message("2026-11-20T10:01:00Z", scout),
     ]);

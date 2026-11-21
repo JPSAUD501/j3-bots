@@ -42,7 +42,7 @@ export function notificationContent(
       case "handoff":
         return preview === null
           ? t("notification.handoff")
-          : t("summary.handoff", { text: preview });
+          : t("summary.handoffSent", { text: preview });
     }
   })();
   const { target } = notification;

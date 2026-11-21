@@ -204,6 +204,45 @@ export const layer = Layer.effect(
             VALUES (${stopId}, ${sessionId}, 0, ${stopKey(stopId, sessionId, 0)})
           `;
         }
+        // The turns it reaches: their work is covered, also a turn no
+        // dispatch began, which the dispatch mark cannot tell. So is what
+        // those turns sent their teammates, and only that: a message from
+        // work that had ended was that work's result, and one an earlier
+        // Stop covered stays that Stop's. What such a message has not
+        // delivered yet is cancelled here, and wherever it would wait again
+        // (`Ledger`); the operator's Retry of one is the operator's word,
+        // also once the recipient's Stop held it.
+        if (sessionIds.length > 0) {
+          yield* sql`
+            UPDATE turns SET stop_id = ${stopId}
+            WHERE finished_at IS NULL AND ${sql.in("session_id", sessionIds)} AND ${inScope(scope)}
+          `;
+          yield* sql`
+            UPDATE handoffs SET stop_id = ${stopId}
+            WHERE stop_id IS NULL AND tool_call_id IN (
+              SELECT c.id FROM tool_calls c JOIN turns t
+                ON t.session_id = c.session_id AND t.engine_turn_id = c.engine_turn_id
+              WHERE t.stop_id = ${stopId}
+            )
+          `;
+          const unsent = yield* sql<{ readonly id: string }>`
+            SELECT w.id FROM wakes w JOIN handoffs h ON h.received_entry_id = w.source_entry_id
+            WHERE w.status = 'pending' AND w.kind = 'bot' AND w.retry_of IS NULL
+              AND h.stop_id = ${stopId}
+          `;
+          yield* ledger.cancelWakes(unsent.map((wake) => wake.id));
+          const held = yield* sql<{ readonly handoff_entry_id: string }>`
+            DELETE FROM held_messages
+            WHERE consumed_dispatch_id IS NULL AND retried = 0 AND handoff_entry_id IN (
+              SELECT received_entry_id FROM handoffs WHERE stop_id = ${stopId}
+            )
+            RETURNING handoff_entry_id
+          `;
+          yield* ledger.heldRemoved(
+            held.map((row) => EntryId.make(row.handoff_entry_id)),
+            "stopped",
+          );
+        }
         const fenced = yield* SqlSchema.findAll({
           Request: Schema.Void,
           Result: Fenced,
@@ -239,6 +278,8 @@ export const layer = Layer.effect(
           }
         }
       }
+      // A teammate's urgent message among them waits on as a held one: the
+      // Stop ends this bot's work, not what its teammates told it (`Ledger`).
       const pending = yield* sql<{ readonly id: string; readonly kind: string }>`
         SELECT id, kind FROM wakes
         WHERE bot_id = ${botId} AND status = 'pending' AND ${inScope(scope)}

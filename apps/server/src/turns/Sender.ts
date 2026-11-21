@@ -467,22 +467,33 @@ export const layer = Layer.effect(
      * A first steer needs the turn it was planned for to be still the
      * admitted one: if that turn ended while the files staged, the engine
      * would start a turn with it, outside the budget, so it is released and
-     * its wakes go through a start's admission.
+     * its wakes go through a start's admission. A first send that carries a
+     * teammate message the recipient read meanwhile, as an operator's Retry
+     * written before the original landed, is released too: what is left of
+     * the read message goes no more (`Ledger.settleRead`), and the rest is
+     * planned again without it.
      */
     const claim = (row: DispatchRow) =>
       transaction(
         Effect.gen(function* () {
+          /** Back to planning: its wakes wait again, unless a Stop holds them. */
+          const releaseFirst = Effect.gen(function* () {
+            const current = yield* ledger.find(row.id);
+            if (Option.isNone(current) || current.value.attempts > 0) return "refused" as const;
+            const released = yield* ledger.release(row.id, yield* unsentWakes(current.value));
+            return released ? ("released" as const) : ("refused" as const);
+          });
+          if (row.attempts === 0 && (yield* ledger.carriesRead(row.id))) {
+            const released = yield* releaseFirst;
+            if (released === "released") yield* ledger.settleRead(row.bot_id);
+            return released;
+          }
           if (row.attempts === 0 && row.delivery === "start") {
             if (!(yield* admitsStart(row.session_id))) return "refused" as const;
           }
           if (row.attempts === 0 && row.delivery === "steer") {
             const session = yield* sessionState(row.session_id).pipe(Effect.orDie);
-            if (session.admitted_turn_id !== row.steer_turn_id) {
-              const current = yield* ledger.find(row.id);
-              if (Option.isNone(current) || current.value.attempts > 0) return "refused" as const;
-              const released = yield* ledger.release(row.id, yield* unsentWakes(current.value));
-              return released ? ("released" as const) : ("refused" as const);
-            }
+            if (session.admitted_turn_id !== row.steer_turn_id) return yield* releaseFirst;
           }
           const at = timeText(yield* DateTime.now);
           const claimed = yield* sql<{ readonly attempts: number }>`

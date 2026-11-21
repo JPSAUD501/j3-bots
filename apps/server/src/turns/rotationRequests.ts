@@ -45,7 +45,8 @@ export const takesNewWorkSql = (sql: SqlClient.SqlClient) =>
  */
 export const fromBeforeFreshStartSql = (sql: SqlClient.SqlClient) => sql`(
   catch_up_notes.source_position < (
-    SELECT c.digest_from_position FROM conversations c WHERE c.bot_id = catch_up_notes.bot_id
+    SELECT fs_conversation.digest_from_position FROM conversations fs_conversation
+    WHERE fs_conversation.bot_id = catch_up_notes.bot_id
   )
 )`;
 

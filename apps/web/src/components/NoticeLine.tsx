@@ -28,7 +28,10 @@ export function NoticeLine({
   const ctx = usePresentation();
   const { t } = ctx.i18n;
   const { notice } = entry;
-  const failed = notice._tag === "turn-failed" || notice._tag === "undelivered";
+  const failed =
+    notice._tag === "turn-failed" ||
+    notice._tag === "handoff-failed" ||
+    notice._tag === "undelivered";
   const Icon =
     notice._tag === "chain-stopped"
       ? OctagonPauseIcon

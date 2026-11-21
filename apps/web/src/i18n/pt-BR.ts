@@ -43,7 +43,9 @@ export const ptBR: Catalog = {
   "summary.askedSecret": "Pediu uma credencial: {label}",
   "summary.workFold": "Trabalhou um pouco",
   "summary.notice": "Deixou um aviso",
-  "summary.handoff": "Passou a um colega: {text}",
+  "summary.handoffTo": "Para {name}: {text}",
+  "summary.handoffSent": "Para um colega: {text}",
+  "summary.handoffFrom": "De {name}: {text}",
   "summary.routine": "Rotina: {name}",
   "summary.routineChanged": "Alterou uma rotina",
 
@@ -156,14 +158,20 @@ export const ptBR: Catalog = {
     "As novas configurações valem quando o trabalho em segundo plano terminar, e as mensagens esperam até lá. Pare o bot para aplicá-las agora.",
   "notice.observationFailed":
     "Não deu para acompanhar o trabalho deste bot. O que aparece aqui pode estar atrasado.",
+  "notice.handoffFailed": "A mensagem de {name} não chegou",
+  "notice.handoffsFailed": "Mensagens de {names} não chegaram",
   "notice.tooLong": "Algo destinado a este bot era longo demais para repassar e ficou de fora.",
   "notice.routinePaused":
     "A rotina {name} foi pausada: não deu para ler a programação dela. Edite a rotina para ligá-la de novo.",
   "notice.retry": "Tentar de novo",
   "notice.openConversation": "Abrir",
 
-  "handoff.asked": "Perguntou a {name}",
+  "handoff.to": "Para {name}",
+  "handoff.from": "De {name}",
   "handoff.urgent": "Urgente",
+  "handoff.notDelivered": "Não entregue",
+  "handoff.stopped": "Interrompida",
+  "handoff.unconfirmed": "Não confirmada",
 
   "routine.change.created": "Rotina criada",
   "routine.change.updated": "Rotina alterada",

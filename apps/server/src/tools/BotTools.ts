@@ -80,7 +80,6 @@ export const layer = Layer.effect(
     const admit = (call: TurnToolCall) =>
       turnTools.call(call).pipe(
         Effect.catchTags({
-          TurnToolUnavailable: (error) => new Refused({ reason: error.message }),
           TurnEnded: (error) => new Refused({ reason: error.message }),
           TurnToolRefused: (error) => new Refused({ reason: error.message }),
           Conflict: (error) => new Refused({ reason: error.message }),
