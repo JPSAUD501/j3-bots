@@ -1,11 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { createI18n, type I18n, resolveLocale } from "@j3-bots/i18n";
-import { getLocales } from "expo-localization";
+import type { I18n } from "@j3-bots/i18n";
 import { createContext, useContext } from "react";
-
-/** The catalog in the first of the device's languages J3 Bots has. */
-export const deviceI18n = (): I18n =>
-  createI18n(resolveLocale(getLocales().map((locale) => locale.languageTag)));
 
 export const I18nContext = createContext<I18n | null>(null);
 

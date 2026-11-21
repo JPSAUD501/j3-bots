@@ -25,6 +25,7 @@ import { EditBotScreen } from "./screens/EditBot.tsx";
 import { MemoryFileScreen } from "./screens/MemoryFile.tsx";
 import { NewBotScreen } from "./screens/NewBot.tsx";
 import { RoomFormScreen } from "./screens/RoomForm.tsx";
+import { SettingsScreen } from "./settings/Settings.tsx";
 import { RosterScreen } from "./screens/Roster.tsx";
 import { ShareOpener, ShareScreen } from "./share/SharePicker.tsx";
 import { useColor } from "./theme.ts";
@@ -32,11 +33,11 @@ import { Toasts } from "./toast.tsx";
 
 /**
  * One route per screen. On a phone they stack: the roster, a bot's or room's
- * conversation, its details, and over those the forms and a memory file.
- * From the tablet width up the roster's route shows the conversation `item`
- * names beside the roster, and the conversation's route is not used. Each
- * route after the roster names the bot or room by its roster key, so it shows
- * the roster's current name.
+ * conversation, its details, and over those the forms and a memory file;
+ * Settings opens from the roster. From the tablet width up the roster's route
+ * shows the conversation `item` names beside the roster, and the
+ * conversation's route is not used. Each route after the roster names the
+ * bot or room by its roster key, so it shows the roster's current name.
  * `share` picks where something another app shared goes, over the rest.
  */
 export type Screens = {
@@ -48,6 +49,7 @@ export type Screens = {
   memoryFile: { readonly botId: BotId; readonly path: MemoryPath };
   roomForm: { readonly form: RoomFormFor };
   newBot: undefined;
+  settings: undefined;
 };
 
 /**
@@ -154,6 +156,11 @@ export function Main() {
                 name="newBot"
                 component={NewBotScreen}
                 options={{ title: t("newBot.title") }}
+              />
+              <Stack.Screen
+                name="settings"
+                component={SettingsScreen}
+                options={{ title: t("settings.title") }}
               />
             </Stack.Navigator>
           </NavigationContainer>

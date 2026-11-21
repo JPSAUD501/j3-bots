@@ -2,16 +2,17 @@
 import type { ConnectionState, J3Client, Readable, UnpairedReason } from "@j3-bots/client-runtime";
 import { J3ClientProvider, useReadable } from "@j3-bots/client-runtime/react";
 import { StatusBar } from "expo-status-bar";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useMemo } from "react";
 import { View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 // The tokens' theme and the utilities every className names.
 import "../global.css";
-import { deviceI18n, I18nContext, useI18n } from "./i18n.ts";
+import { I18nContext, useI18n } from "./i18n.ts";
 import { ChangeServer, ForgetSignIn } from "./Leave.tsx";
 import { Main } from "./navigation.tsx";
 import { PairingScreen } from "./screens/Pairing.tsx";
 import { session } from "./platform/platform.ts";
+import { i18nFor, usePreferences } from "./preferences.ts";
 import type { SessionState } from "./session.ts";
 import { Body, Button, Centered, Title } from "./ui.tsx";
 
@@ -121,9 +122,10 @@ function Root() {
   }
 }
 
-/** Light and dark follow the system; the language is the device's. */
+/** Light and dark, and the language, as chosen in Settings: the system's unless the operator picks one. */
 export function App() {
-  const [i18n] = useState(deviceI18n);
+  const { language } = usePreferences();
+  const i18n = useMemo(() => i18nFor(language), [language]);
   return (
     <I18nContext value={i18n}>
       <SafeAreaProvider>

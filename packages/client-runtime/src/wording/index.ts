@@ -42,3 +42,4 @@ export {
   timeInSentence,
   upcomingTime,
 } from "./time.ts";
+export { windowText, type WindowText } from "./usage.ts";

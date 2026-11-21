@@ -284,7 +284,7 @@ export function DeleteButton(props: {
  * Asks before something that cannot be undone, naming what goes and what
  * stays; `onConfirm` runs only once the operator agrees.
  */
-const confirm = (question: {
+export const confirm = (question: {
   readonly title: string;
   readonly body: string;
   readonly cancel: string;

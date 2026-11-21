@@ -477,6 +477,13 @@ const sentences = {
   "pairing.deviceName": "Nome deste dispositivo",
   "pairing.submit": "Parear",
   "pairing.pairing": "Pareando…",
+  "pairing.scan": "Ler o QR code",
+  "pairing.scan.title": "Aponte a câmera para o QR code no outro dispositivo",
+  "pairing.scan.notPairing": "Esse QR code não pareia um dispositivo com o J3 Bots.",
+  "pairing.scan.denied":
+    "O J3 Bots não pode usar a câmera. Permita nos ajustes do celular, ou digite o endereço e o código.",
+  "pairing.scan.openSettings": "Abrir os ajustes do celular",
+  "pairing.scan.close": "Fechar",
   "pairing.invalid":
     "Esse código está errado, expirou ou já foi usado. Um código vale uma vez, até cinco minutos depois de criado.",
   "pairing.rateLimited": "Códigos errados demais. O pareamento abre de novo às {time}.",
@@ -669,6 +676,9 @@ const sentences = {
   "settings.name.placeholder": "Seu nome",
   "settings.timeZone": "Fuso horário",
   "settings.timeZone.hint": "As rotinas seguem este relógio, e os bots dizem as horas por ele.",
+  "settings.timeZone.usePhone": "Usar o deste celular, {zone}",
+  "settings.timeZone.invalid":
+    "O J3 Bots não conhece esse fuso horário. Escreva como Região/Cidade, por exemplo America/Sao_Paulo.",
   "settings.save": "Salvar",
   "settings.saved": "Salvo",
   "settings.saveFailed": "Não foi salvo. Tente de novo.",
@@ -682,6 +692,7 @@ const sentences = {
   "settings.notifications.previews.hint":
     "As notificações trazem a primeira linha da mensagem. Quem vir a sua tela consegue ler.",
   "settings.notifications.allow": "Permitir notificações neste navegador",
+  "settings.notifications.allowPhone": "Permitir notificações neste celular",
   "settings.notifications.browser.default": "Este navegador não mostra nenhuma até você permitir.",
   "settings.notifications.browser.granted": "Este navegador mostra notificações.",
   "settings.notifications.browser.denied":

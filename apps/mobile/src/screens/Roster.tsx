@@ -12,7 +12,7 @@ import type { RosterItemKey } from "@j3-bots/contracts";
 import { layout } from "@j3-bots/design-tokens";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { Plus, Search } from "lucide-react-native";
+import { Plus, Search, Settings } from "lucide-react-native";
 import { useEffect, useState } from "react";
 import { Alert, FlatList, Pressable, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -127,6 +127,14 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
           className="size-11 items-center justify-center rounded-md active:bg-muted"
         >
           <Icon icon={Plus} size={20} color="accent-foreground" />
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={t("settings.title")}
+          onPress={() => navigation.navigate("settings")}
+          className="size-11 items-center justify-center rounded-md active:bg-muted"
+        >
+          <Icon icon={Settings} size={20} color="accent-foreground" />
         </Pressable>
       </View>
       <View className="mx-4 my-2 min-h-11 flex-row items-center gap-2 rounded-md bg-muted px-3">

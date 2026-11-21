@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { canRunBots, connectCommand } from "@j3-bots/client-runtime/presentation";
 import { useEngineStatus } from "@j3-bots/client-runtime/react";
-import { engineProblem, providerLine, type ProviderTone } from "@j3-bots/client-runtime/wording";
-import type { BotState, ProviderStatus } from "@j3-bots/contracts";
-import { ScrollView, Text, View } from "react-native";
+import { engineProblem } from "@j3-bots/client-runtime/wording";
+import type { BotState } from "@j3-bots/contracts";
+import { ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useI18n } from "../i18n.ts";
 import { useOpenConversation } from "../navigation.tsx";
-import { usePresentation } from "../presentation.tsx";
 import { Body, Title } from "../ui.tsx";
 import { BotAvatar } from "./Avatar.tsx";
 import { Connecting } from "./ConnectionLine.tsx";
+import { ConnectCommand, ProviderRow } from "./Engine.tsx";
 import { NewBotForm } from "./NewBotForm.tsx";
 
 const idle: BotState = { _tag: "idle" };
@@ -81,15 +81,7 @@ export function FirstRun() {
       </View>
       {problem === null && !ready && (
         <View className="gap-2">
-          {connect !== null && (
-            // Run on the computer, not here: it is shown to read or select, wrapped to any width.
-            <Text
-              selectable
-              className="rounded-md bg-code-background px-2.5 py-1.5 font-mono text-xs text-foreground"
-            >
-              {connect}
-            </Text>
-          )}
+          {connect !== null && <ConnectCommand command={connect} />}
           {engine.providers.map((provider) => (
             <ProviderRow key={provider.id} provider={provider} />
           ))}
@@ -102,23 +94,5 @@ export function FirstRun() {
         />
       )}
     </ScrollView>
-  );
-}
-
-const toneClass = {
-  ready: "text-success",
-  waiting: "text-waiting",
-  blocked: "text-blocked",
-  muted: "text-muted-foreground",
-} as const satisfies Record<ProviderTone, string>;
-
-/** One provider: its name, and its state in words. */
-function ProviderRow({ provider }: { readonly provider: ProviderStatus }) {
-  const line = providerLine(provider, usePresentation());
-  return (
-    <View className="flex-row flex-wrap items-baseline justify-between gap-x-3 rounded-md border border-border px-3 py-2">
-      <Text className="text-sm text-foreground">{provider.name}</Text>
-      <Text className={`text-xs ${toneClass[line.tone]}`}>{line.text}</Text>
-    </View>
   );
 }
