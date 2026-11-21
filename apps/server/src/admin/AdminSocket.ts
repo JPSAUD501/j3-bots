@@ -8,6 +8,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServer from "effect/http/HttpServer";
@@ -41,7 +42,7 @@ const routes = Layer.mergeAll(
   Layer.unwrap(
     Effect.gen(function* () {
       const startedAt = yield* DateTime.now;
-      const { toolPort, enginePort } = yield* ServerConfig;
+      const { toolPort, enginePort, publicOrigin } = yield* ServerConfig;
       const listener = yield* Deferred.await(yield* Listener);
       const webClient = yield* WebClientStatus;
       return HttpRouter.add(
@@ -60,6 +61,10 @@ const routes = Layer.mergeAll(
             engine: yield* engine.current,
             pairedDevices: yield* devices.pairedCount,
             webClient,
+            ...Option.match(publicOrigin, {
+              onNone: () => ({}),
+              onSome: (origin) => ({ publicOrigin: origin }),
+            }),
           };
           return yield* HttpServerResponse.schemaJson(AdminStatus)(status).pipe(Effect.orDie);
         }),

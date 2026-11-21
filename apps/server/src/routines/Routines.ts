@@ -33,6 +33,7 @@ import { ChangeLog, scopeKey } from "../persistence/ChangeLog.ts";
 import { Flag, json, Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
+import { ServerConfig } from "../config.ts";
 import { CERTIFICATE_NAME, Network, reachableOrigins } from "../system/Network.ts";
 import { Ledger } from "../turns/Ledger.ts";
 import { DispatchRowId } from "../turns/model.ts";
@@ -180,6 +181,7 @@ export const layer = Layer.effect(
     const scheduler = yield* Scheduler;
     const network = yield* Network;
     const listener = yield* Listener;
+    const { publicOrigin } = yield* ServerConfig;
 
     /** A command applied once under its id, or, with none, in a transaction of its caller's. */
     const receipted = <A, I, E, R>(input: {
@@ -198,8 +200,8 @@ export const layer = Layer.effect(
 
     /**
      * Where another device calls a webhook: the first address `j3-bots pair`
-     * offers for the listener as bound, read when asked since interfaces come
-     * and go. With none, as `pair` says it: over HTTPS, a placeholder for a
+     * offers, the public origin when one is set, else one for the listener
+     * as bound, read when asked since interfaces come and go. With none, as `pair` says it: over HTTPS, a placeholder for a
      * name on the certificate; over HTTP on every interface, loopback. The
      * listener is read, not awaited: a routine is often read in a
      * transaction, and only clients, which come through the bound listener,
@@ -211,7 +213,7 @@ export const layer = Layer.effect(
         return yield* Effect.die("A webhook's address was asked for before the listener bound");
       }
       const bound = yield* polled.value;
-      const [reached] = yield* reachableOrigins(bound).pipe(
+      const [reached] = yield* reachableOrigins(bound, publicOrigin).pipe(
         Effect.provideService(Network, network),
       );
       if (reached !== undefined) return reached;

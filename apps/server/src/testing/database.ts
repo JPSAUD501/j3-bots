@@ -29,6 +29,7 @@ export const configFor = (path: Path.Path, home: string): ServerConfigShape => (
   // No client is built there, so a test server serves none.
   webClient: { _tag: "bundled", directory: path.join(home, "web") },
   adminSocket: path.join(home, "admin.sock"),
+  publicOrigin: Option.none(),
 });
 
 /**

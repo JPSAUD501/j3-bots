@@ -10,6 +10,7 @@ import { BotStore } from "../bots/BotStore.ts";
 import { Bots } from "../bots/Bots.ts";
 import { Devices } from "../devices/Devices.ts";
 import { Entries } from "../entries/Entries.ts";
+import { ServerConfig } from "../config.ts";
 import { Listener } from "../listener.ts";
 import { Memory } from "../memory/Memory.ts";
 import { Rooms } from "../rooms/Rooms.ts";
@@ -53,6 +54,7 @@ export const handlers = ServedRpcs.toLayer(
     const viewer = yield* (yield* Presence).connect(device.id);
     const listener = yield* Listener;
     const network = yield* Network;
+    const { publicOrigin } = yield* ServerConfig;
 
     /**
      * A code, and the origins `j3-bots pair` lists, read when asked since
@@ -61,7 +63,7 @@ export const handlers = ServedRpcs.toLayer(
      */
     const startPairing = Effect.gen(function* () {
       const grant = yield* devices.startPairing;
-      const origins = yield* reachableOrigins(yield* Deferred.await(listener)).pipe(
+      const origins = yield* reachableOrigins(yield* Deferred.await(listener), publicOrigin).pipe(
         Effect.provideService(Network, network),
       );
       return { ...grant, origins };
