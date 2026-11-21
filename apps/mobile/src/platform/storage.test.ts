@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- the app's SQLite code runs here over Node's own SQLite, in place of expo-sqlite.
-import * as NodeSqlite from "node:sqlite";
 import type { DeviceCredential } from "@j3-bots/client-runtime";
 import { DeviceId, DeviceToken } from "@j3-bots/contracts";
 import { assert, describe, it } from "@effect/vitest";
@@ -8,54 +6,10 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import {
-  makeDeviceStorage,
-  type SecureValue,
-  type SqlDatabase,
-  type SqlTransaction,
-} from "./storage.ts";
+import { memoryDatabase, memorySecure } from "./memoryStorage.ts";
+import { makeDeviceStorage, type SqlDatabase, storedServer } from "./storage.ts";
 
 const SERVER = "http://192.168.1.20:3737";
-
-/** A database in memory, over Node's SQLite, with the transactions expo-sqlite gives the app. */
-const memoryDatabase = (): SqlDatabase => {
-  const db = new NodeSqlite.DatabaseSync(":memory:");
-  const sql: SqlTransaction = {
-    all: async (text, params = []) => db.prepare(text).all(...params),
-    run: async (text, params = []) => {
-      db.prepare(text).run(...params);
-    },
-  };
-  return {
-    transaction: async (work) => {
-      db.exec("BEGIN");
-      try {
-        const result = await work(sql);
-        db.exec("COMMIT");
-        return result;
-      } catch (error) {
-        db.exec("ROLLBACK");
-        throw error;
-      }
-    },
-  };
-};
-
-/** Secure storage in memory, which fails to write while `failing` says so. */
-const memorySecure = (failing: () => boolean = () => false) => {
-  let held: string | null = null;
-  const secure: SecureValue = {
-    get: async () => held,
-    set: async (value) => {
-      if (failing()) throw new Error("the keystore refused");
-      held = value;
-    },
-    remove: async () => {
-      held = null;
-    },
-  };
-  return secure;
-};
 
 const credential = (id: string): DeviceCredential => ({
   deviceId: Schema.decodeSync(DeviceId)(id),
@@ -67,7 +21,7 @@ const deviceId = (id: string) => Schema.decodeSync(DeviceId)(id);
 describe("the app's storage", () => {
   it.effect("moves a record in one transaction, only while what it expects still holds", () =>
     Effect.gen(function* () {
-      const { storage } = yield* makeDeviceStorage(memoryDatabase(), memorySecure(), SERVER);
+      const { storage } = makeDeviceStorage(memoryDatabase(), memorySecure(), SERVER);
       yield* storage.write("drafts", "bot:a", "hello");
       const move = [
         { table: "drafts" as const, key: "bot:a", value: null },
@@ -94,7 +48,7 @@ describe("the app's storage", () => {
     "writes a pairing's records only while the device holds that pairing's credential",
     () =>
       Effect.gen(function* () {
-        const { credentials, storage } = yield* makeDeviceStorage(
+        const { credentials, storage } = makeDeviceStorage(
           memoryDatabase(),
           memorySecure(),
           SERVER,
@@ -116,9 +70,9 @@ describe("the app's storage", () => {
   it.effect("keeps following the stored credential when saving a new one fails", () =>
     Effect.gen(function* () {
       let refusing = false;
-      const { credentials, storage } = yield* makeDeviceStorage(
+      const { credentials, storage } = makeDeviceStorage(
         memoryDatabase(),
-        memorySecure(() => refusing),
+        memorySecure({ failing: () => refusing }),
         SERVER,
       );
       const write = [{ table: "drafts" as const, key: "k", value: "text" }];
@@ -136,11 +90,7 @@ describe("the app's storage", () => {
 
   it.effect("clears a credential only if it is still the stored one", () =>
     Effect.gen(function* () {
-      const { credentials, storage } = yield* makeDeviceStorage(
-        memoryDatabase(),
-        memorySecure(),
-        SERVER,
-      );
+      const { credentials, storage } = makeDeviceStorage(memoryDatabase(), memorySecure(), SERVER);
       const first = credential("device-1");
       const second = credential("device-2");
       yield* credentials.save(first);
@@ -159,8 +109,8 @@ describe("the app's storage", () => {
       // app that was removed and installed again.
       const secure = memorySecure();
       const first = credential("device-1");
-      yield* (yield* makeDeviceStorage(memoryDatabase(), secure, SERVER)).credentials.save(first);
-      const { credentials, storage } = yield* makeDeviceStorage(memoryDatabase(), secure, SERVER);
+      yield* makeDeviceStorage(memoryDatabase(), secure, SERVER).credentials.save(first);
+      const { credentials, storage } = makeDeviceStorage(memoryDatabase(), secure, SERVER);
 
       const loaded = yield* credentials.load;
       assert.strictEqual(Option.getOrNull(loaded)?.deviceId, first.deviceId);
@@ -173,11 +123,59 @@ describe("the app's storage", () => {
     Effect.gen(function* () {
       const secure = memorySecure();
       const database = memoryDatabase();
-      yield* (yield* makeDeviceStorage(database, secure, SERVER)).credentials.save(
-        credential("device-1"),
-      );
-      const elsewhere = yield* makeDeviceStorage(database, secure, "http://10.0.0.5:3737");
+      yield* makeDeviceStorage(database, secure, SERVER).credentials.save(credential("device-1"));
+      const elsewhere = makeDeviceStorage(database, secure, "http://10.0.0.5:3737");
       assert.isTrue(Option.isNone(yield* elsewhere.credentials.load));
+    }),
+  );
+
+  it.effect(
+    "takes a stored credential that does not decode for damaged storage, not for none",
+    () =>
+      Effect.gen(function* () {
+        const secure = memorySecure({ held: "{not a credential" });
+        const { credentials } = makeDeviceStorage(memoryDatabase(), secure, SERVER);
+
+        assert.strictEqual((yield* Effect.flip(storedServer(secure))).operation, "load");
+        assert.strictEqual((yield* Effect.flip(credentials.load)).operation, "load");
+      }),
+  );
+
+  it.effect("runs the writes of two storages one after the other", () =>
+    Effect.gen(function* () {
+      // Counts the transactions open at once, each held open across a turn
+      // of the event loop, where another could start.
+      const inner = memoryDatabase();
+      let open = 0;
+      let most = 0;
+      const database: SqlDatabase = {
+        transaction: async (work) => {
+          open += 1;
+          most = Math.max(most, open);
+          try {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            return await inner.transaction(work);
+          } finally {
+            open -= 1;
+          }
+        },
+      };
+      const secure = memorySecure();
+      const leaving = makeDeviceStorage(database, secure, SERVER);
+      const starting = makeDeviceStorage(database, secure, SERVER);
+
+      yield* Effect.all(
+        [leaving.storage.write("drafts", "a", "one"), starting.storage.write("drafts", "b", "two")],
+        { concurrency: "unbounded" },
+      );
+      assert.strictEqual(most, 1);
+      assert.deepStrictEqual(
+        [...(yield* starting.storage.readAll("drafts"))],
+        [
+          ["a", "one"],
+          ["b", "two"],
+        ],
+      );
     }),
   );
 });

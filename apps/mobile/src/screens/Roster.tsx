@@ -5,7 +5,7 @@ import type { RosterItem } from "@j3-bots/contracts";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { FlatList, Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { ChangeServer } from "../ChangeServer.tsx";
+import { ChangeServer } from "../Leave.tsx";
 import { useI18n } from "../i18n.ts";
 import type { Screens } from "../navigation.tsx";
 import { Body, Button, Centered, Title } from "../ui.tsx";

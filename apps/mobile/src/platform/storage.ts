@@ -100,12 +100,36 @@ const StoredCredential = Schema.fromJsonString(
   Schema.Struct({ deviceId: DeviceId, token: DeviceToken, server: Schema.String }),
 );
 type StoredCredential = typeof StoredCredential.Type;
-const decodeStored = Schema.decodeUnknownOption(StoredCredential);
+const decodeStored = Schema.decodeUnknownEffect(StoredCredential);
 const encodeStored = Schema.encodeSync(StoredCredential);
 
-/** The server whose credential the device holds, if any: where the app connects at launch. */
-export const storedServer = async (secure: SecureValue): Promise<string | null> =>
-  Option.getOrNull(Option.map(decodeStored(await secure.get()), ({ server }) => server));
+/**
+ * The credential secure storage holds, if any. A value that does not decode
+ * is damaged storage, never a missing credential: taken for none, it would
+ * open pairing, and pairing again would overwrite it while its device stays
+ * listed on the server.
+ */
+const readStored = (secure: SecureValue) =>
+  Effect.tryPromise({
+    try: () => secure.get(),
+    catch: () => new CredentialStorageError({ operation: "load" }),
+  }).pipe(
+    Effect.flatMap((value) =>
+      value === null
+        ? Effect.succeedNone
+        : decodeStored(value).pipe(
+            Effect.asSome,
+            Effect.mapError(() => new CredentialStorageError({ operation: "load" })),
+          ),
+    ),
+  );
+
+/**
+ * The server whose credential the device holds, if any: where the app
+ * connects at launch. Fails when the credential cannot be read or decoded.
+ */
+export const storedServer = (secure: SecureValue) =>
+  readStored(secure).pipe(Effect.map(Option.map(({ server }) => server)));
 
 const credentialOf = (stored: StoredCredential): DeviceCredential => ({
   deviceId: stored.deviceId,
@@ -115,6 +139,45 @@ const credentialOf = (stored: StoredCredential): DeviceCredential => ({
 const sameCredential = (stored: StoredCredential, credential: DeviceCredential) =>
   stored.deviceId === credential.deviceId && stored.token === Redacted.value(credential.token);
 
+/**
+ * Every operation on the device's storage runs one at a time, across every
+ * storage the app makes: a client being replaced can still write while the
+ * next one starts, and they share one database connection, where a statement
+ * of one must never run inside the other's transaction. A commit must also
+ * never read the pairing copy while a save or a clear has written only one of
+ * the two stores.
+ */
+const oneAtATime = Semaphore.makeUnsafe(1);
+const serial = <A, E>(effect: Effect.Effect<A, E>) => oneAtATime.withPermits(1)(effect);
+
+/**
+ * Deletes the pairing the device holds: the copy of its device id, then the
+ * credential, as the copy leads. Given `records: "deleted"`, the copy's
+ * transaction deletes every record too, all of that pairing or of one that
+ * ended before it; a client erases its pairing's records itself.
+ */
+const erase = async (database: SqlDatabase, secure: SecureValue, records: "kept" | "deleted") => {
+  await database.transaction(async (sql) => {
+    await migrate(sql);
+    await setPairingCopy(sql, null);
+    if (records === "deleted") await sql.run("DELETE FROM records");
+  });
+  await secure.remove();
+};
+
+/**
+ * Forgets the pairing the device holds, whether its credential can be read
+ * or not, with its drafts and unsent messages: the way on from a credential
+ * that cannot be read, and from one for a server the app no longer accepts.
+ */
+export const forgetPairing = (database: SqlDatabase, secure: SecureValue) =>
+  serial(
+    Effect.tryPromise({
+      try: () => erase(database, secure, "deleted"),
+      catch: () => new CredentialStorageError({ operation: "clear" }),
+    }),
+  );
+
 interface DeviceStorage {
   readonly credentials: CredentialStore["Service"];
   readonly storage: ClientStorage["Service"];
@@ -122,18 +185,14 @@ interface DeviceStorage {
 
 /**
  * The credential store and the client storage of the app, for the server at
- * `server` (an origin). Every operation runs one at a time: the app has one
- * window, and a commit must never read the pairing copy while a save or a
- * clear has written only one of the two stores.
+ * `server` (an origin). Every operation runs one at a time with those of
+ * every other storage (see `serial`).
  */
-export const makeDeviceStorage = Effect.fn("makeDeviceStorage")(function* (
+export const makeDeviceStorage = (
   database: SqlDatabase,
   secure: SecureValue,
   server: string,
-) {
-  const oneAtATime = yield* Semaphore.make(1);
-  const serial = <A, E>(effect: Effect.Effect<A, E>) => oneAtATime.withPermits(1)(effect);
-
+): DeviceStorage => {
   // The tables are made by the first transaction that commits, so a failure
   // to make them is tried again by the next one rather than kept.
   let migrated = false;
@@ -146,14 +205,10 @@ export const makeDeviceStorage = Effect.fn("makeDeviceStorage")(function* (
     return result;
   };
 
-  const readStored = Effect.tryPromise({
-    try: () => secure.get(),
-    catch: () => new CredentialStorageError({ operation: "load" }),
-  }).pipe(Effect.map(decodeStored));
-
   /** The credential secure storage holds, with the pairing copy set to it. */
   const loadAndMend = (operation: CredentialStorageError["operation"]) =>
-    readStored.pipe(
+    readStored(secure).pipe(
+      Effect.mapError(() => new CredentialStorageError({ operation })),
       Effect.tap((stored) =>
         Effect.tryPromise({
           try: () =>
@@ -197,15 +252,12 @@ export const makeDeviceStorage = Effect.fn("makeDeviceStorage")(function* (
     // heard it; the app has one window, so no other ever needs to read it.
     clear: Effect.fn("CredentialStore.clear")((credential: DeviceCredential) =>
       serial(
-        readStored.pipe(
+        readStored(secure).pipe(
           Effect.mapError(() => new CredentialStorageError({ operation: "clear" })),
           Effect.flatMap((stored) =>
             Option.exists(stored, (found) => sameCredential(found, credential))
               ? Effect.tryPromise({
-                  try: async () => {
-                    await transaction((sql) => setPairingCopy(sql, null));
-                    await secure.remove();
-                  },
+                  try: () => erase(database, secure, "kept"),
                   catch: () => new CredentialStorageError({ operation: "clear" }),
                 })
               : Effect.void,
@@ -282,5 +334,5 @@ export const makeDeviceStorage = Effect.fn("makeDeviceStorage")(function* (
     changes: Stream.never,
   });
 
-  return { credentials, storage } satisfies DeviceStorage;
-});
+  return { credentials, storage };
+};

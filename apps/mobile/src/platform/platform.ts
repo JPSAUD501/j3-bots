@@ -26,11 +26,14 @@ import * as ExpoCrypto from "expo-crypto";
 import * as ExpoNetwork from "expo-network";
 import * as SecureStore from "expo-secure-store";
 import * as SQLite from "expo-sqlite";
+import { makeSession } from "../session.ts";
 import {
+  forgetPairing,
   makeDeviceStorage,
   type SecureValue,
   type SqlDatabase,
   type SqlTransaction,
+  storedServer,
 } from "./storage.ts";
 
 const CREDENTIAL_KEY = "device-credential";
@@ -45,7 +48,7 @@ const SECURE_OPTIONS: SecureStore.SecureStoreOptions = {
 };
 
 /** The device credential in the keychain (iOS) or the keystore (Android). */
-export const secureCredential: SecureValue = {
+const secureCredential: SecureValue = {
   get: () => SecureStore.getItemAsync(CREDENTIAL_KEY, SECURE_OPTIONS),
   set: (value) => SecureStore.setItemAsync(CREDENTIAL_KEY, value, SECURE_OPTIONS),
   remove: () => SecureStore.deleteItemAsync(CREDENTIAL_KEY, SECURE_OPTIONS),
@@ -62,23 +65,23 @@ const database = (): Promise<SQLite.SQLiteDatabase> => {
 };
 
 /**
- * Transactions on the app's database. Each is exclusive, on a connection of
- * its own, and only its own statements run in it: a client being replaced can
- * still write while the new one starts, and neither can run a statement inside
- * the other's transaction.
+ * Transactions on the app's one database connection. Nothing else runs on it
+ * while one is open: every statement the app runs is in a transaction, and
+ * the storage runs them one at a time (see `serial` in `storage.ts`), so a
+ * transaction's statements are its own.
  */
 const sqlite: SqlDatabase = {
   transaction: async <A>(work: (sql: SqlTransaction) => Promise<A>): Promise<A> => {
     const db = await database();
-    // `withExclusiveTransactionAsync` resolves with nothing: the result comes out through `box`.
+    const sql: SqlTransaction = {
+      all: (text, params = []) => db.getAllAsync<unknown>(text, [...params]),
+      run: async (text, params = []) => {
+        await db.runAsync(text, [...params]);
+      },
+    };
+    // `withTransactionAsync` resolves with nothing: the result comes out through `box`.
     const box: { done: { readonly value: A } | null } = { done: null };
-    await db.withExclusiveTransactionAsync(async (txn) => {
-      const sql: SqlTransaction = {
-        all: (text, params = []) => txn.getAllAsync<unknown>(text, [...params]),
-        run: async (text, params = []) => {
-          await txn.runAsync(text, [...params]);
-        },
-      };
+    await db.withTransactionAsync(async () => {
       box.done = { value: await work(sql) };
     });
     if (box.done === null) throw new Error("The transaction ended without running.");
@@ -152,15 +155,14 @@ const nativeFetch: typeof globalThis.fetch = (input, init) => expoFetch(input, i
  * The phone's platform for the server at `origin`. The credential is kept
  * with the origin of the server that issued it, and is absent for any other.
  */
-export const makePlatform = (origin: URL): Layer.Layer<Platform> =>
+const makePlatform = (origin: URL): Layer.Layer<Platform> =>
   Layer.mergeAll(
     Layer.succeed(ServerAddress, { origin }),
     Layer.effectContext(
-      makeDeviceStorage(sqlite, secureCredential, origin.origin).pipe(
-        Effect.map(({ credentials, storage }) =>
-          Context.make(CredentialStore, credentials).pipe(Context.add(ClientStorage, storage)),
-        ),
-      ),
+      Effect.sync(() => {
+        const { credentials, storage } = makeDeviceStorage(sqlite, secureCredential, origin.origin);
+        return Context.make(CredentialStore, credentials).pipe(Context.add(ClientStorage, storage));
+      }),
     ),
     Layer.sync(WindowLocks, makeInProcessLocks),
     transfer,
@@ -169,3 +171,10 @@ export const makePlatform = (origin: URL): Layer.Layer<Platform> =>
     Socket.layerWebSocketConstructorGlobal,
     secureRandom,
   );
+
+/** The app's one session, over this phone's storage. */
+export const session = makeSession({
+  storedServer: storedServer(secureCredential),
+  forget: forgetPairing(sqlite, secureCredential),
+  makePlatform,
+});

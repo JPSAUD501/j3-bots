@@ -493,9 +493,16 @@ export const en = {
   "gate.storage.desktopTitle": "This device’s sign-in can’t be read",
   "gate.storage.desktopBody":
     "J3 Bots couldn’t read the sign-in it keeps on this device for {address}. If your system’s keychain or keyring is locked, unlock it, then restart J3 Bots. Changing to another server, or to this one again, signs this device out here.",
-  "gate.storage.mobileTitle": "This device can’t read its sign-in",
+  "gate.storage.mobileTitle": "This device’s sign-in can’t be read",
   "gate.storage.mobileBody":
-    "J3 Bots keeps this device’s sign-in in its secure storage, and reading it failed. Try again, or restart the app.",
+    "J3 Bots couldn’t read the sign-in it keeps in this device’s secure storage. Try again, or restart the app. Forgetting the sign-in signs this device out here, so you can pair it again.",
+  "gate.forget": "Forget this sign-in",
+  "gate.forget.pending": "Forgetting…",
+  "gate.forget.failed": "This app couldn’t forget the sign-in. Try again.",
+  "gate.forget.title": "Forget this sign-in?",
+  "gate.forget.body":
+    "This app forgets this device’s sign-in, with its drafts and unsent messages, and asks for a server to pair with. The device may still show under Devices on its server, and another device can remove it there.",
+  "gate.forget.cancel": "Keep this sign-in",
   "gate.reload": "Reload",
   "gate.retry": "Try again",
   "gate.restart": "Restart J3 Bots",

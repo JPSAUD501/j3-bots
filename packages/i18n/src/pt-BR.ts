@@ -500,9 +500,16 @@ const sentences = {
   "gate.storage.desktopTitle": "Não deu para ler o acesso deste dispositivo",
   "gate.storage.desktopBody":
     "O J3 Bots não conseguiu ler o acesso que guarda neste dispositivo para {address}. Se o chaveiro do sistema estiver bloqueado, desbloqueie-o e reinicie o J3 Bots. Trocar para outro servidor, ou para este de novo, desconecta este dispositivo aqui.",
-  "gate.storage.mobileTitle": "Este dispositivo não consegue ler o acesso",
+  "gate.storage.mobileTitle": "Não deu para ler o acesso deste dispositivo",
   "gate.storage.mobileBody":
-    "O J3 Bots guarda o acesso deste dispositivo no armazenamento seguro, e a leitura falhou. Tente de novo ou reinicie o app.",
+    "O J3 Bots não conseguiu ler o acesso que guarda no armazenamento seguro deste dispositivo. Tente de novo ou reinicie o app. Esquecer o acesso desconecta este dispositivo aqui, para que você possa pareá-lo de novo.",
+  "gate.forget": "Esquecer este acesso",
+  "gate.forget.pending": "Esquecendo…",
+  "gate.forget.failed": "O app não conseguiu esquecer o acesso. Tente de novo.",
+  "gate.forget.title": "Esquecer este acesso?",
+  "gate.forget.body":
+    "O app esquece o acesso deste dispositivo, com os rascunhos e as mensagens não enviadas, e pede um servidor para parear. O dispositivo pode continuar em Dispositivos no servidor dele, e outro dispositivo pode removê-lo de lá.",
+  "gate.forget.cancel": "Manter este acesso",
   "gate.reload": "Recarregar",
   "gate.retry": "Tentar de novo",
   "gate.restart": "Reiniciar o J3 Bots",

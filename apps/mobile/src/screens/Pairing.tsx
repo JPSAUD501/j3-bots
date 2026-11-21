@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 import { KeyboardAvoidingView, Platform, ScrollView, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useI18n } from "../i18n.ts";
-import { session } from "../session.ts";
+import { session } from "../platform/platform.ts";
 import { Body, Button, Title } from "../ui.tsx";
 
 type Problem =

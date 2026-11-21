@@ -3,7 +3,7 @@
 import "./src/polyfills.ts";
 import { registerRootComponent } from "expo";
 import { App } from "./src/App.tsx";
-import { session } from "./src/session.ts";
+import { session } from "./src/platform/platform.ts";
 
 void session.start();
 registerRootComponent(App);

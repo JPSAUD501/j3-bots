@@ -7,11 +7,12 @@ import { View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 // The tokens' theme and the utilities every className names.
 import "../global.css";
-import { ChangeServer } from "./ChangeServer.tsx";
 import { deviceI18n, I18nContext, useI18n } from "./i18n.ts";
+import { ChangeServer, ForgetSignIn } from "./Leave.tsx";
 import { Main } from "./navigation.tsx";
 import { PairingScreen } from "./screens/Pairing.tsx";
-import { session, type SessionState } from "./session.ts";
+import { session } from "./platform/platform.ts";
+import type { SessionState } from "./session.ts";
 import { Body, Button, Centered, Title } from "./ui.tsx";
 
 /** What the app shows, from the session and its client's connection. */
@@ -107,7 +108,9 @@ function Root() {
           title={t("gate.storage.mobileTitle")}
           body={t("gate.storage.mobileBody")}
           retry={shown.retry}
-        />
+        >
+          <ForgetSignIn />
+        </Gate>
       );
     case "main":
       return (
