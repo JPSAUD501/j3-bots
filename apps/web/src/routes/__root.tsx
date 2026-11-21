@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Outlet, createRootRoute } from "@tanstack/react-router";
 import { Suspense } from "react";
-import { ClockProvider, I18nProvider } from "../app/context";
+import { ClockProvider } from "../app/clock";
+import { I18nProvider } from "../app/context";
 
 export const Route = createRootRoute({
   component: () => (

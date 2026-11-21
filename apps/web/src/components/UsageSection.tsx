@@ -1,25 +1,28 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { type RecentTurns, USAGE_PERIOD } from "@j3-bots/client-runtime";
+import { type RecentTurnsState, USAGE_PERIOD } from "@j3-bots/client-runtime";
 import type { Bot, BotId, EngineStatus, RosterItem, UsageWindow } from "@j3-bots/contracts";
 import * as Duration from "effect/Duration";
 import { useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
-import { sinceTime, timeInSentence } from "../lib/time";
-import { counted, providerUsage, type BotSpend, type ProviderUsage } from "../presentation/usage";
+import { timeInSentence } from "../lib/time";
+import { coverage, providerUsage, type BotSpend, type ProviderUsage } from "../presentation/usage";
 import { AvatarShape } from "./BotAvatar";
 import { Loading, Section } from "./SettingsSection";
 import { Button } from "./ui/button";
+
+/** The turns as a read answered them, stale or not. */
+type RecentTurnsRead = Extract<RecentTurnsState["read"], { readonly _tag: "ready" }>;
 
 interface UsageSectionProps {
   /** Null until the server has reported the engine's status. */
   readonly engine: EngineStatus | null;
   /** `engine` is what the server last reported, before this device lost the connection. */
-  readonly stale: boolean;
-  /** Null while the turns load. */
-  readonly recent: RecentTurns | null;
+  readonly engineStale: boolean;
+  readonly recent: RecentTurnsState;
   /** The whole roster, hidden bots included, for the bots' names and shapes. */
   readonly roster: ReadonlyArray<RosterItem> | null;
   readonly onLoadMore: () => void;
+  readonly onRetry: () => void;
 }
 
 /**
@@ -28,9 +31,15 @@ interface UsageSectionProps {
  * its turns recently, with their routines' share. The windows come live with
  * the engine's status; the turns are read when Settings opens.
  */
-export function UsageSection({ engine, stale, recent, roster, onLoadMore }: UsageSectionProps) {
-  const ctx = usePresentation();
-  const { t } = ctx.i18n;
+export function UsageSection({
+  engine,
+  engineStale,
+  recent,
+  roster,
+  onLoadMore,
+  onRetry,
+}: UsageSectionProps) {
+  const { t } = useI18n();
   if (engine === null) {
     return (
       <Section title={t("settings.usage")}>
@@ -38,18 +47,21 @@ export function UsageSection({ engine, stale, recent, roster, onLoadMore }: Usag
       </Section>
     );
   }
+  // Only a running engine reports its providers; the Engine section says why it is not.
+  if (engine.state._tag !== "ready") {
+    return (
+      <Section title={t("settings.usage")}>
+        <p className="text-xs text-muted-foreground">{t("usage.engineNotRunning")}</p>
+      </Section>
+    );
+  }
   const bots = new Map<BotId, Bot>(
     (roster ?? []).flatMap((item) => (item._tag === "bot" ? [[item.bot.id, item.bot]] : [])),
   );
-  const providers = providerUsage(engine.providers, recent?.turns ?? [], bots);
-  const covered = recent === null ? null : counted(recent);
+  const read: RecentTurnsRead | null = recent.read._tag === "ready" ? recent.read : null;
+  const providers = providerUsage(engine.providers, read?.value.turns ?? [], bots);
   return (
     <Section title={t("settings.usage")}>
-      <p className="text-xs text-muted-foreground">
-        {covered?._tag === "since"
-          ? t("usage.introSince", { since: sinceTime(covered.at, ctx) })
-          : ctx.i18n.plural("usage.intro", Duration.toHours(USAGE_PERIOD))}
-      </p>
       {providers.length === 0 ? (
         <p className="text-sm text-muted-foreground">{t("usage.noProviders")}</p>
       ) : (
@@ -58,38 +70,85 @@ export function UsageSection({ engine, stale, recent, roster, onLoadMore }: Usag
             <ProviderCard
               key={provider.id}
               provider={provider}
-              stale={stale}
-              turnsRead={recent !== null}
+              windowsStale={engineStale}
+              turns={read === null ? (recent.failed ? "failed" : "loading") : read}
             />
           ))}
         </ul>
       )}
-      {recent?.canLoadMore && (
-        <Button
-          size="sm"
-          className="self-start"
-          aria-disabled={recent.loadingMore}
-          onClick={() => {
-            if (!recent.loadingMore) onLoadMore();
-          }}
-        >
-          {recent.loadingMore ? t("usage.loadingMore") : t("usage.loadMore")}
-        </Button>
-      )}
+      <TurnsFooter recent={recent} read={read} onLoadMore={onLoadMore} onRetry={onRetry} />
     </Section>
+  );
+}
+
+/**
+ * What the counts cover and when they were read, in one line, then what reads
+ * more: "Load earlier turns", or "Try again" after a read failed.
+ */
+function TurnsFooter({
+  recent,
+  read,
+  onLoadMore,
+  onRetry,
+}: {
+  recent: RecentTurnsState;
+  read: RecentTurnsRead | null;
+  onLoadMore: () => void;
+  onRetry: () => void;
+}) {
+  const ctx = usePresentation();
+  const { t, plural } = ctx.i18n;
+  const covered = read === null ? null : coverage(read.value);
+  const when = read === null ? null : timeInSentence(read.value.readAt, ctx);
+  return (
+    <>
+      {covered !== null && when !== null && (
+        <p className="text-xs text-muted-foreground">
+          {covered._tag === "period"
+            ? plural("usage.read.period", Duration.toHours(USAGE_PERIOD), { when })
+            : t(covered.capped ? "usage.read.capped" : "usage.read.latest", {
+                count: covered.count,
+                when,
+                oldest: timeInSentence(covered.oldest, ctx),
+              })}
+        </p>
+      )}
+      {recent.failed ? (
+        <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+          <span className="text-blocked">{t("usage.readFailed")}</span>
+          <Button size="sm" onClick={onRetry}>
+            {t("usage.retry")}
+          </Button>
+        </p>
+      ) : (
+        read?.value.canLoadMore && (
+          <Button
+            size="sm"
+            className="self-start"
+            aria-disabled={recent.loadingMore}
+            onClick={() => {
+              if (!recent.loadingMore) onLoadMore();
+            }}
+          >
+            {recent.loadingMore ? t("usage.loadingMore") : t("usage.loadMore")}
+          </Button>
+        )
+      )}
+    </>
   );
 }
 
 function ProviderCard({
   provider,
-  stale,
-  turnsRead,
+  windowsStale,
+  turns,
 }: {
   provider: ProviderUsage;
-  stale: boolean;
-  turnsRead: boolean;
+  windowsStale: boolean;
+  turns: RecentTurnsRead | "loading" | "failed";
 }) {
   const { t } = useI18n();
+  const turnsStale = typeof turns !== "string" && turns.stale;
   return (
     <li className="flex flex-col gap-3 rounded-md border border-border px-3 py-2.5">
       <h4 className="text-sm">{provider.name}</h4>
@@ -98,23 +157,26 @@ function ProviderCard({
       ) : (
         <ul className="flex flex-col gap-2.5">
           {provider.windows.map((usageWindow) => (
-            <WindowMeter key={usageWindow.label} usageWindow={usageWindow} stale={stale} />
+            <WindowMeter key={usageWindow.label} usageWindow={usageWindow} stale={windowsStale} />
           ))}
         </ul>
       )}
-      <div className="border-t border-border pt-2.5">
-        {!turnsRead ? (
-          <Loading />
-        ) : provider.bots.length === 0 ? (
-          <p className="text-xs text-muted-foreground">{t("usage.noTurns")}</p>
-        ) : (
-          <ul className="flex flex-col gap-1.5">
-            {provider.bots.map((spend) => (
-              <BotTurns key={spend.botId} spend={spend} />
-            ))}
-          </ul>
-        )}
-      </div>
+      {/* After a failed first read the footer says so once, for every provider. */}
+      {turns !== "failed" && (
+        <div className="border-t border-border pt-2.5">
+          {turns === "loading" ? (
+            <Loading />
+          ) : provider.bots.length === 0 ? (
+            <p className="text-xs text-muted-foreground">{t("usage.noTurns")}</p>
+          ) : (
+            <ul className="flex flex-col gap-1.5">
+              {provider.bots.map((spend) => (
+                <BotTurns key={spend.botId} spend={spend} stale={turnsStale} />
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
     </li>
   );
 }
@@ -156,35 +218,45 @@ function WindowMeter({ usageWindow, stale }: { usageWindow: UsageWindow; stale: 
   );
 }
 
-/** A bot and the turns it spent, with its routines' share under it. */
-function BotTurns({ spend }: { spend: BotSpend }) {
+/**
+ * A bot and the turns it spent, with its routines' share under it. A long
+ * name wraps; the counts keep to the first line, at the end.
+ */
+function BotTurns({ spend, stale }: { spend: BotSpend; stale: boolean }) {
   const { t, plural } = useI18n();
   return (
-    <li className="flex flex-col gap-1">
-      <span className="flex items-center gap-2 text-sm">
+    <li className={cn("flex flex-col gap-1", stale && "text-muted-foreground")}>
+      <span className="flex items-start gap-2 text-sm">
         {spend.bot === null ? (
-          <span aria-hidden className="size-4 shrink-0" />
+          <span aria-hidden className="mt-0.5 size-4 shrink-0" />
         ) : (
-          <AvatarShape avatar={spend.bot.profile.avatar} size={16} />
+          <span className={cn("mt-0.5 shrink-0", stale && "grayscale")}>
+            <AvatarShape avatar={spend.bot.profile.avatar} size={16} />
+          </span>
         )}
-        <span className={cn("min-w-0 flex-1 truncate", spend.bot === null && "italic")}>
+        <span className={cn("min-w-0 flex-1 wrap-break-word", spend.bot === null && "italic")}>
           {spend.bot?.profile.name ?? t("usage.deletedBot")}
         </span>
-        <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+        <span className="mt-0.5 shrink-0 text-xs text-muted-foreground tabular-nums">
           {plural("usage.turns", spend.turns)}
         </span>
       </span>
       {spend.routines.length > 0 && (
         <ul className="flex flex-col gap-0.5 ps-6">
-          {spend.routines.map((routine) => (
+          {spend.routines.map(({ routine, turns }) => (
             <li
-              key={routine.key}
+              key={routine._tag === "routine" ? `routine:${routine.id}` : "deleted"}
               className="flex items-baseline gap-2 text-xs text-muted-foreground"
             >
-              <span className={cn("min-w-0 flex-1 truncate", routine.name === null && "italic")}>
-                {routine.name ?? t("usage.deletedRoutines")}
+              <span
+                className={cn(
+                  "min-w-0 flex-1 wrap-break-word",
+                  routine._tag === "deleted" && "italic",
+                )}
+              >
+                {routine._tag === "routine" ? routine.name : t("usage.deletedRoutines")}
               </span>
-              <span className="shrink-0 tabular-nums">{plural("usage.turns", routine.turns)}</span>
+              <span className="shrink-0 tabular-nums">{plural("usage.turns", turns)}</span>
             </li>
           ))}
         </ul>

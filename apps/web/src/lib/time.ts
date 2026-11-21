@@ -112,20 +112,6 @@ export function timeInSentence(at: DateTime.Utc, ctx: TimeContext): string {
   return t("time.inSentence.date", { date: fullTime(at, ctx) });
 }
 
-/**
- * Since a past moment, inside a sentence: "since 9:40 AM", "since yesterday
- * at 3:12 PM", "since Monday at 8:47 AM", "since Nov 13, 2026, 4:12 PM".
- */
-export function sinceTime(at: DateTime.Utc, ctx: TimeContext): string {
-  const days = calendarDaysAgo(at, ctx);
-  const time = clockTime(at, ctx);
-  const { t } = ctx.i18n;
-  if (days <= 0) return t("time.since.today", { time });
-  if (days === 1) return t("time.since.yesterday", { time });
-  if (days < 7) return t("time.since.day", { day: format(at, ctx, { weekday: "long" }), time });
-  return t("time.since.date", { date: fullTime(at, ctx) });
-}
-
 /** A moment in full, for when the day matters whatever today is: "Nov 23, 2026, 8:47 AM". */
 export const fullTime = (at: DateTime.Utc, ctx: TimeContext) =>
   format(at, ctx, { dateStyle: "medium", timeStyle: "short" });

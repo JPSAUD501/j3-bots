@@ -5,15 +5,16 @@ import type {
   BotId,
   ProviderId,
   ProviderStatus,
+  RoutineId,
+  UsageRoutine,
   UsageTurn,
   UsageWindow,
 } from "@j3-bots/contracts";
 import type * as DateTime from "effect/DateTime";
 
-/** The turns of one routine, or of every routine deleted since (`name` null). */
+/** The turns of one routine, or of every routine deleted since. */
 interface RoutineSpend {
-  readonly key: string;
-  readonly name: string | null;
+  readonly routine: UsageRoutine;
   readonly turns: number;
 }
 
@@ -35,8 +36,6 @@ export interface ProviderUsage {
   readonly bots: ReadonlyArray<BotSpend>;
 }
 
-const DELETED_ROUTINES = "deleted";
-
 /** Counts by key, most first; a tie keeps the order of first appearance. */
 const byMost = <A extends { readonly turns: number }>(counts: Iterable<A>): Array<A> =>
   [...counts].sort((a, b) => b.turns - a.turns);
@@ -50,19 +49,21 @@ function botSpends(
   turns: ReadonlyArray<UsageTurn>,
   bots: ReadonlyMap<BotId, Bot>,
 ): ReadonlyArray<BotSpend> {
-  const spent = new Map<
-    BotId,
-    { readonly botId: BotId; turns: number; routines: Map<string, RoutineSpend> }
-  >();
+  interface Spent {
+    readonly botId: BotId;
+    turns: number;
+    /** Each routine's share, and that of the routines deleted since under `null`. */
+    readonly routines: Map<RoutineId | null, RoutineSpend>;
+  }
+  const spent = new Map<BotId, Spent>();
   for (const turn of turns) {
     const bot = spent.get(turn.botId) ?? { botId: turn.botId, turns: 0, routines: new Map() };
     spent.set(turn.botId, bot);
     bot.turns += 1;
     if (turn.routine === null) continue;
-    const key = turn.routine._tag === "routine" ? turn.routine.id : DELETED_ROUTINES;
-    const name = turn.routine._tag === "routine" ? turn.routine.name : null;
+    const key = turn.routine._tag === "routine" ? turn.routine.id : null;
     const routine = bot.routines.get(key);
-    bot.routines.set(key, { key, name, turns: (routine?.turns ?? 0) + 1 });
+    bot.routines.set(key, { routine: turn.routine, turns: (routine?.turns ?? 0) + 1 });
   }
   return byMost(spent.values()).map((bot) => ({
     botId: bot.botId,
@@ -104,18 +105,30 @@ export function providerUsage(
   ];
 }
 
-/** What the counts cover: the whole period, or its turns since a moment. */
-export type Counted =
+/** What the counts cover. */
+export type Coverage =
+  /** Every turn of the period. */
   | { readonly _tag: "period" }
-  | { readonly _tag: "since"; readonly at: DateTime.Utc };
+  /**
+   * The latest `count` turns of the period, the oldest started at `oldest`;
+   * the period holds earlier ones. `capped` when no read takes more.
+   */
+  | {
+      readonly _tag: "latest";
+      readonly count: number;
+      readonly oldest: DateTime.Utc;
+      readonly capped: boolean;
+    };
 
-/**
- * What the counts cover: the whole period when every turn in it is read,
- * else the turns since the start of the oldest one read.
- */
-export function counted(recent: RecentTurns): Counted {
+/** What the counts of `recent` cover. */
+export function coverage(recent: RecentTurns): Coverage {
   const oldest = recent.turns.at(-1);
   return recent.hasMore && oldest !== undefined
-    ? { _tag: "since", at: oldest.startedAt }
+    ? {
+        _tag: "latest",
+        count: recent.turns.length,
+        oldest: oldest.startedAt,
+        capped: !recent.canLoadMore,
+      }
     : { _tag: "period" };
 }

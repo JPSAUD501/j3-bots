@@ -51,6 +51,7 @@ type SettingsIntents = Pick<
   | "refreshSettings"
   | "refreshDevices"
   | "loadMoreTurns"
+  | "retryTurns"
   | "signOut"
 >;
 
@@ -145,10 +146,11 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
               <EngineSection engine={data.engine} stale={data.engineStale} />
               <UsageSection
                 engine={data.engine}
-                stale={data.engineStale}
+                engineStale={data.engineStale}
                 recent={data.recentTurns}
                 roster={data.roster}
                 onLoadMore={intents.loadMoreTurns}
+                onRetry={intents.retryTurns}
               />
               <YouSection
                 settings={data.settings}

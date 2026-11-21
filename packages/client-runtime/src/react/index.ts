@@ -26,8 +26,7 @@ import type { Readable } from "../Store.ts";
 import { type ConversationState, targetKey } from "../stores/Conversations.ts";
 import type { Draft } from "../stores/Drafts.ts";
 import type { Loaded } from "../stores/reads.ts";
-import type { Synced } from "../stores/synced.ts";
-import type { RecentTurns } from "../stores/Usage.ts";
+import { type RecentTurnsState, turnsNotRead } from "../stores/Usage.ts";
 import { rosterRows } from "../stores/Roster.ts";
 import type { WorkStepsState } from "../stores/WorkSteps.ts";
 
@@ -174,15 +173,25 @@ export const useWorkSteps = (foldId: EntryId): WorkStepsState | null => {
   return useHeldState(handle);
 };
 
+const doNothing = () => {};
+
 /**
  * The turns bots spent recently while `held`, read again each time it
- * becomes true; `null` for the first render or while not held.
+ * becomes true; not read yet for the first render or while not held.
  */
 export const useRecentTurns = (
   held: boolean,
-): { readonly state: Synced<RecentTurns> | null; readonly loadMore: () => void } => {
+): {
+  readonly state: RecentTurnsState;
+  readonly loadMore: () => void;
+  readonly retry: () => void;
+} => {
   const handle: UsageHandle | null = useHeld(held ? "usage" : null, same, (client) =>
     client.openUsage(),
   );
-  return { state: useHeldState(handle), loadMore: handle?.loadMore ?? (() => {}) };
+  return {
+    state: useHeldState(handle) ?? turnsNotRead,
+    loadMore: handle?.loadMore ?? doNothing,
+    retry: handle?.retry ?? doNothing,
+  };
 };

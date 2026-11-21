@@ -62,10 +62,6 @@ export const ptBR: Catalog = {
   "time.inSentence.tomorrow": "amanhã às {time}",
   "time.inSentence.day": "{day} às {time}",
   "time.inSentence.date": "em {date}",
-  "time.since.today": "desde as {time}",
-  "time.since.yesterday": "desde ontem às {time}",
-  "time.since.day": "desde {day} às {time}",
-  "time.since.date": "desde {date}",
 
   "conversation.back": "Voltar para os bots",
   "conversation.openDetails": "Mostrar detalhes de {name}",
@@ -470,12 +466,7 @@ export const ptBR: Catalog = {
   "settings.engine.lastKnown":
     "Último estado conhecido. Este dispositivo não está conectado ao J3 Bots agora.",
   "settings.usage": "Uso",
-  "usage.intro.one":
-    "Os limites como cada provedor os informa, e os turnos que os bots usaram na última hora.",
-  "usage.intro.other":
-    "Os limites como cada provedor os informa, e os turnos que os bots usaram nas últimas {count} horas.",
-  "usage.introSince":
-    "Os limites como cada provedor os informa, e os turnos que os bots usaram {since}.",
+  "usage.engineNotRunning": "O uso aparece enquanto o motor está rodando.",
   "usage.noProviders": "Nenhum provedor pode rodar bots ainda.",
   "usage.noWindows": "Nenhum limite de uso informado.",
   "usage.used": "{percent} usado",
@@ -488,6 +479,13 @@ export const ptBR: Catalog = {
   "usage.deletedRoutines": "Rotinas excluídas",
   "usage.loadMore": "Carregar turnos anteriores",
   "usage.loadingMore": "Carregando…",
+  "usage.read.period.one": "Turnos da última hora, lidos {when}.",
+  "usage.read.period.other": "Turnos das últimas {count} horas, lidos {when}.",
+  "usage.read.latest": "Últimos {count} turnos, lidos {when}; o mais antigo {oldest}.",
+  "usage.read.capped":
+    "Últimos {count} turnos, o máximo exibido, lidos {when}; o mais antigo {oldest}.",
+  "usage.readFailed": "Não foi possível ler os turnos.",
+  "usage.retry": "Tentar de novo",
   "settings.you": "Você",
   "settings.name": "Como os bots chamam você",
   "settings.name.placeholder": "Seu nome",

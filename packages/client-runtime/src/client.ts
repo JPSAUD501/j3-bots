@@ -111,9 +111,11 @@ export interface WorkStepsHandle {
 }
 
 export interface UsageHandle {
-  readonly state: Readable<Synced<Usage.RecentTurns>>;
+  readonly state: Readable<Usage.RecentTurnsState>;
   /** Reads more of the period's turns; see `Usage.RecentTurnsView`. */
   readonly loadMore: () => void;
+  /** Reads the turns again after a read failed. */
+  readonly retry: () => void;
   readonly release: () => void;
 }
 
@@ -386,7 +388,12 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     devices: services.devices.state,
     openUsage: () => {
       const { value, release } = hold(services.usage.open);
-      return { state: value.state, loadMore: () => fire(value.loadMore), release };
+      return {
+        state: value.state,
+        loadMore: () => fire(value.loadMore),
+        retry: () => fire(value.retry),
+        release,
+      };
     },
     actions: services.actions.state,
 

@@ -690,10 +690,9 @@ export function sampleTeam(now: DateTime.Utc) {
       spent(720, ids.atlas, migrations),
       spent(1_300, ids.scout, priceWatch),
     ],
-    since: ago(24 * 60),
+    readAt: now,
     hasMore: false,
     canLoadMore: false,
-    loadingMore: false,
   };
 
   const settings: Settings = {

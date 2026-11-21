@@ -11,7 +11,7 @@ import {
 } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { at, bot } from "../test/fixtures";
-import { counted, providerUsage } from "./usage";
+import { coverage, providerUsage } from "./usage";
 
 const claude = ProviderId.make("claude");
 const codex = ProviderId.make("codex");
@@ -25,14 +25,14 @@ const bots = new Map<BotId, Bot>([
 
 const digest: UsageRoutine = { _tag: "routine", id: RoutineId.make("digest"), name: "Digest" };
 
-let minute = 59;
-/** A turn, each one older than the one before, as the server lists them. */
+/** A turn that started at `time` on the sample's morning. */
 const turn = (
+  time: string,
   botId: BotId,
   routine: UsageRoutine | null = null,
   providerId = claude,
 ): UsageTurn => {
-  const startedAt = at(`2026-11-20T10:${String(minute--).padStart(2, "0")}:00Z`);
+  const startedAt = at(`2026-11-20T${time}:00Z`);
   return { botId, routine, providerId, startedAt, finishedAt: startedAt };
 };
 
@@ -45,12 +45,12 @@ const provider = (
 describe("providerUsage", () => {
   it("counts each provider's turns by bot, most first, with each routine's share", () => {
     const turns = [
-      turn(bia.id),
-      turn(ana.id, digest),
-      turn(ana.id),
-      turn(ana.id, { _tag: "deleted" }),
-      turn(ana.id, digest),
-      turn(bia.id, null, codex),
+      turn("10:59", bia.id),
+      turn("10:58", ana.id, digest),
+      turn("10:57", ana.id),
+      turn("10:56", ana.id, { _tag: "deleted" }),
+      turn("10:55", ana.id, digest),
+      turn("10:54", bia.id, null, codex),
     ];
     const [onClaude, onCodex] = providerUsage(
       [provider(claude, { _tag: "ready" }), provider(codex, { _tag: "ready" })],
@@ -64,9 +64,9 @@ describe("providerUsage", () => {
         "Ana",
         4,
         [
-          { key: "digest", name: "Digest", turns: 2 },
+          { routine: digest, turns: 2 },
           // Routines deleted since are one share: nothing tells them apart.
-          { key: "deleted", name: null, turns: 1 },
+          { routine: { _tag: "deleted" }, turns: 1 },
         ],
       ],
       ["Bia", 1, []],
@@ -86,7 +86,7 @@ describe("providerUsage", () => {
         ]),
         provider(ProviderId.make("idle"), { _tag: "unavailable" }),
       ],
-      [turn(ana.id, null, codex), turn(ana.id, null, gone)],
+      [turn("10:59", ana.id, null, codex), turn("10:58", ana.id, null, gone)],
       new Map(),
     );
     expect(listed.map((p) => [p.id, p.bots.map((spend) => spend.bot)])).toEqual([
@@ -99,18 +99,23 @@ describe("providerUsage", () => {
   });
 });
 
-describe("counted", () => {
-  const recent = (hasMore: boolean): RecentTurns => ({
-    turns: [turn(ana.id), turn(ana.id)],
-    since: at("2026-11-19T11:00:00Z"),
+describe("coverage", () => {
+  const recent = (hasMore: boolean, canLoadMore = hasMore): RecentTurns => ({
+    turns: [turn("10:42", ana.id), turn("10:41", ana.id), turn("10:41", bia.id)],
+    readAt: at("2026-11-20T11:00:00Z"),
     hasMore,
-    canLoadMore: hasMore,
-    loadingMore: false,
+    canLoadMore,
   });
 
-  it("covers the period when every turn in it is read, else the turns since the oldest read", () => {
-    expect(counted(recent(false))).toEqual({ _tag: "period" });
-    const partial = recent(true);
-    expect(counted(partial)).toEqual({ _tag: "since", at: partial.turns[1]?.startedAt });
+  it("covers the period when every turn in it is read, else the latest turns read", () => {
+    expect(coverage(recent(false))).toEqual({ _tag: "period" });
+    expect(coverage(recent(true))).toEqual({
+      _tag: "latest",
+      count: 3,
+      oldest: at("2026-11-20T10:41:00Z"),
+      capped: false,
+    });
+    // More in the period than one read takes.
+    expect(coverage(recent(true, false))).toMatchObject({ _tag: "latest", capped: true });
   });
 });

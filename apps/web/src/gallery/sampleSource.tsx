@@ -21,9 +21,9 @@ import {
 import { avatarShapeNames, botColors } from "@j3-bots/design-tokens";
 import * as DateTime from "effect/DateTime";
 import { useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
-import { ClockProvider } from "../app/context";
+import { ClockProvider } from "../app/clock";
 import type { ShellData, ShellIntents } from "../shell/data";
-import { ShellSourceContext, type ShellSource } from "../shell/source";
+import { ShellSourceProvider, type ShellSource } from "../shell/source";
 import { ordered, previewOf, type DraftEntry } from "./entries";
 import { SAMPLE_NOW, sampleTeam, type SampleTeam } from "./sample";
 
@@ -411,6 +411,7 @@ function sampleIntents({ get, update }: Store): ShellIntents {
     refreshSettings: nothing,
     refreshDevices: nothing,
     loadMoreTurns: nothing,
+    retryTurns: nothing,
     signOut: () => Promise.resolve(true),
   };
 }
@@ -441,7 +442,11 @@ function toData(state: State): ShellData {
     settingsSaves: state.settingsSaves,
     settingsOpen: state.settingsOpen,
     devices: state.devices,
-    recentTurns: state.recentTurns,
+    recentTurns: {
+      read: { _tag: "ready", value: state.recentTurns, stale: false },
+      loadingMore: false,
+      failed: false,
+    },
     connected: true,
   };
 }
@@ -474,7 +479,7 @@ export function SampleSourceProvider({ children }: { children: ReactNode }) {
   const source = useSampleSource();
   return (
     <ClockProvider now={SAMPLE_NOW}>
-      <ShellSourceContext value={source}>{children}</ShellSourceContext>
+      <ShellSourceProvider source={source}>{children}</ShellSourceProvider>
     </ClockProvider>
   );
 }

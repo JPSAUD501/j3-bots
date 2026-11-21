@@ -105,7 +105,9 @@ export {
 export type { Synced } from "./stores/synced.ts";
 export {
   type RecentTurns,
+  type RecentTurnsState,
   type RecentTurnsView,
+  turnsNotRead,
   Usage,
   USAGE_PERIOD,
 } from "./stores/Usage.ts";
