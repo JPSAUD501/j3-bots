@@ -518,7 +518,8 @@ export const layer = Layer.effect(
 
     /**
      * A message's failed wakes that no retry has sent again yet, and that the
-     * engine certainly does not have, as its delivery counts them.
+     * engine certainly does not have, as its delivery counts them: a wake of
+     * a member that has left the room since is counted no more.
      */
     const failedWakes = (entryId: EntryId) =>
       SqlSchema.findAll({
@@ -526,7 +527,7 @@ export const layer = Layer.effect(
         Result: WakeRow,
         execute: (id) => sql`
           SELECT ${sql.literal(WAKE_COLUMNS)} FROM wakes w
-          WHERE source_entry_id = ${id} AND status = 'failed'
+          WHERE source_entry_id = ${id} AND status = 'failed' AND recipient_left = 0
             AND EXISTS (
               SELECT 1 FROM dispatches d
               WHERE d.id = w.dispatch_id AND ${sql.in("d.status", UNDELIVERED)}
@@ -1631,8 +1632,9 @@ export const layer = Layer.effect(
      * Sends the dispatches written and not yet sent: a start is admitted when
      * it is sent, like a new one. A room start that cannot be sent now, for
      * want of a turn slot or held by a usage limit, goes to its send all the
-     * same, which releases it rather than let it hold the room (`Sender`).
-     * Whether the engine refused a command.
+     * same, which releases it rather than let it hold the room, and so does a
+     * main session's start the limit holds, rather than hold back the
+     * operator's word (`Sender`). Whether the engine refused a command.
      */
     const sendUnsent = Effect.fn("Pipeline.sendUnsent")(function* (
       rows: ReadonlyArray<typeof Unsent.Type>,
@@ -1646,10 +1648,10 @@ export const layer = Layer.effect(
         const heldStart = row.delivery === "start" && !row.room;
         if (heldStart && !(yield* admitsStart(row.session_id))) continue;
         if (row.opening_bot_id !== null && (yield* openingHeld(row.opening_bot_id))) continue;
-        // Automated work, a routine's start or a teammate's: a provider that
-        // reached its usage limit since it was written holds it until the
-        // reset, as planning would.
-        if (heldStart && row.automated) {
+        // A routine's start, in its side session: a provider that reached its
+        // usage limit since it was written holds it until the reset, as
+        // planning would.
+        if (heldStart && row.automated && row.routine) {
           const limit = yield* limitOf(row.provider_id);
           if (Option.isSome(limit)) {
             if (limit.value.resetsAt !== null) outcome.until(limit.value.resetsAt);

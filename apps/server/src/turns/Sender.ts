@@ -515,14 +515,18 @@ export const layer = Layer.effect(
 
     /**
      * Whether the dispatch is automated work its provider's usage limit holds
-     * now (`automatedSql`).
+     * now (`automatedSql`), and whether it goes into its bot's main session.
      */
     const automatedStart = SqlSchema.findOne({
       Request: DispatchRowId,
-      Result: Schema.Struct({ automated: Schema.BooleanFromBit, provider_id: ProviderId }),
+      Result: Schema.Struct({
+        automated: Schema.BooleanFromBit,
+        provider_id: ProviderId,
+        main: Schema.BooleanFromBit,
+      }),
       execute: (id) => sql`
         SELECT ${automatedSql(sql, sql.literal("ls_dispatch.id"))} AS automated,
-          ls_session.provider_id
+          ls_session.provider_id, ls_session.purpose = 'main' AS main
         FROM dispatches ls_dispatch
         JOIN sessions ls_session ON ls_session.id = ls_dispatch.session_id
         WHERE ls_dispatch.id = ${id}
@@ -530,13 +534,26 @@ export const layer = Layer.effect(
     });
 
     /**
-     * Whether a first start cannot be sent now: no turn slot is free for its
-     * session, or it is automated work its provider's usage limit holds.
+     * What becomes of a first start that cannot be sent now, because no turn
+     * slot is free for its session or because it is automated work its
+     * provider's usage limit holds: it is sent (`send`), stays unsent for the
+     * dispatcher's next pass (`wait`), or is released (`release`). A room
+     * start is released either way: unsent, it would hold the room for
+     * nothing. So is one in the bot's main session the limit holds: unsent,
+     * it would keep the session busy, and the operator's word, which the
+     * limit never holds, would wait behind it until the reset. Its wakes
+     * wait as pending wakes, which the planner holds until then. A routine's
+     * start, in a side session, holds nothing else, and waits.
      */
-    const startHeld = Effect.fn("Sender.startHeld")(function* (row: DispatchRow) {
-      if (!(yield* admitsStart(row.session_id))) return true;
+    const startHold = Effect.fn("Sender.startHold")(function* (row: DispatchRow) {
+      if (!(yield* admitsStart(row.session_id))) {
+        return row.audience_room_id === null ? ("wait" as const) : ("release" as const);
+      }
       const start = yield* automatedStart(row.id).pipe(Effect.orDie);
-      return start.automated && Option.isSome(yield* limitOf(start.provider_id));
+      if (!start.automated || Option.isNone(yield* limitOf(start.provider_id))) {
+        return "send" as const;
+      }
+      return start.main ? ("release" as const) : ("wait" as const);
     });
 
     /**
@@ -547,9 +564,10 @@ export const layer = Layer.effect(
      * budget as it stands now: it may have changed while the files staged.
      * A first start of automated work its provider's usage limit holds now,
      * which may have been reached while the files staged, is held too. A held
-     * start stays unsent, for the dispatcher's next pass, unless it is a room
-     * start: that one would hold the room for nothing, so it is released, and
-     * the room's order is read again.
+     * start stays unsent, for the dispatcher's next pass, or is released
+     * (`startHold`): a room start's wakes are planned again in the room's
+     * order, and those of a main session's start the limit holds wait for the
+     * reset without holding back the operator's word.
      * A first room start needs its bot still a member and nothing else of the
      * room live (`roomLiveSql`), as planning did: another member's turn the
      * engine resumed after a usage limit's reset may have started since. One
@@ -580,9 +598,9 @@ export const layer = Layer.effect(
             return released;
           }
           if (row.attempts === 0 && row.delivery === "start") {
-            if (yield* startHeld(row)) {
-              return row.audience_room_id === null ? ("refused" as const) : yield* releaseFirst;
-            }
+            const hold = yield* startHold(row);
+            if (hold === "release") return yield* releaseFirst;
+            if (hold === "wait") return "refused" as const;
             if (row.audience_room_id !== null) {
               const room = yield* roomStart({
                 dispatchId: row.id,
@@ -733,16 +751,12 @@ export const layer = Layer.effect(
       }
 
       // A room start that cannot be sent when it is due, for want of a turn
-      // slot or held by a usage limit, holds the room for nothing: it is
-      // released before anything is staged, so the room's order is read
-      // again and the operator's word to a member that holds a slot may go
-      // first. Its wakes wait, as pending wakes, for what held it.
-      if (
-        firstSend &&
-        row.delivery === "start" &&
-        row.audience_room_id !== null &&
-        (yield* startHeld(row))
-      ) {
+      // slot or held by a usage limit, holds the room for nothing, and a main
+      // session's start the limit holds keeps the operator's word waiting:
+      // it is released before anything is staged (`startHold`), so the
+      // room's order is read again and the operator's word may go first. Its
+      // wakes wait, as pending wakes, for what held it.
+      if (firstSend && row.delivery === "start" && (yield* startHold(row)) === "release") {
         yield* releaseUnsent(row.id);
         return "settled" as const;
       }

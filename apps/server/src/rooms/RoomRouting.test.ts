@@ -1286,6 +1286,49 @@ it.effect(
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect(
+  "retries the operator's room message only to the members still in the room when one whose dispatch failed left",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const pipeline = yield* Pipeline;
+      const [hal, ana, bo] = [yield* member("Hal"), yield* member("Ana"), yield* member("Bo")];
+      const members = [hal, ana, bo];
+      const room = yield* roomWith(hal, [ana, bo]);
+
+      // The engine refuses Ana's dispatch, and then Bo's, whose send waits
+      // until Ana's has failed.
+      yield* control.rejectNextDispatch;
+      const gate = yield* holdGate(bo.bot.id);
+      const both = yield* pipeline.sendMessage({
+        commandId: command(),
+        target: { _tag: "room", roomId: room.id },
+        text: "Ana and Bo, pick a date.",
+        attachments: [],
+        mentions: to(ana, bo),
+      });
+      yield* until(
+        Effect.map(roomWakeStatuses(ana.bot.id, room.id), (all) => all.includes("failed")),
+      );
+      yield* control.rejectNextDispatch;
+      yield* gate.release;
+      yield* settle(members);
+      yield* deliveryIs(both, "failed");
+
+      yield* (yield* Rooms).update({
+        commandId: command(),
+        roomId: room.id,
+        changes: { members: [hal.bot.id, bo.bot.id] },
+      });
+      yield* pipeline.retryMessage({ commandId: command(), entryId: both });
+      assert.strictEqual(yield* roomWakesOf(ana.bot.id, room.id), 1);
+      yield* settle(members);
+      const boTurn = yield* nextTurn(bo.bot.id);
+      yield* finish(bo, boTurn, members);
+      yield* deliveryIs(both, "delivered");
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("plans the room's next member as soon as the member its wake waited behind leaves", () =>
   Effect.gen(function* () {
     const [hal, ana, bo] = [yield* member("Hal"), yield* member("Ana"), yield* member("Bo")];
