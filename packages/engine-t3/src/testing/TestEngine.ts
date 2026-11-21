@@ -214,9 +214,13 @@ export class TestEngineControl extends Context.Service<
     /**
      * Background work wakes the session while the next `start` dispatch is on
      * its way: the adapter's busy check passes, and the engine then queues the
-     * start behind that turn.
+     * start behind that turn. `origin` is the turn the engine names as the one
+     * whose work woke it, as for `startEngineTurn`.
      */
-    readonly startEngineTurnDuringNextDispatch: (sessionId: SessionId) => Effect.Effect<void>;
+    readonly startEngineTurnDuringNextDispatch: (
+      sessionId: SessionId,
+      origin?: TurnId | null,
+    ) => Effect.Effect<void>;
     /**
      * The next `synchronize` is answered, and its marker never reaches the
      * session's streams, as when the stream stalls. `requested` succeeds once
@@ -484,8 +488,8 @@ interface SessionRecord {
   readonly secretAnswers: Array<{ readonly requestId: RequestId; readonly answer: SecretAnswer }>;
   /** Each open stream, with the cursor of the last event it was given. */
   readonly subscribers: Map<Subscriber, { lastCursor: EventCursor }>;
-  /** Set by `startEngineTurnDuringNextDispatch`. */
-  raceNextStart: boolean;
+  /** Set by `startEngineTurnDuringNextDispatch`: the turn it names, if any. */
+  raceNextStart: { readonly origin: TurnId | null } | null;
   /** Set by `failNextStart`. */
   failNextStart: FailureClass | null;
   /** Set by `holdNextStartup`, until the next turn starts. */
@@ -916,9 +920,10 @@ const make = Effect.gen(function* () {
     key: IdempotencyKey,
     at: DateTime.Utc,
   ): DispatchDisposition => {
-    if (session.raceNextStart) {
-      session.raceNextStart = false;
-      addTurn(session, { _tag: "background", origin: null }, at);
+    if (session.raceNextStart !== null) {
+      const { origin } = session.raceNextStart;
+      session.raceNextStart = null;
+      addTurn(session, { _tag: "background", origin }, at);
     }
     const turn = addTurn(session, { _tag: "dispatch", key }, at);
     return session.waiting.includes(turn.turnId)
@@ -1181,7 +1186,7 @@ const make = Effect.gen(function* () {
             responses: [],
             secretAnswers: [],
             subscribers: new Map(),
-            raceNextStart: false,
+            raceNextStart: null,
             failNextStart: null,
             holdStartup: false,
             heldStartup: null,
@@ -1635,10 +1640,10 @@ const make = Effect.gen(function* () {
         };
       }),
 
-    startEngineTurnDuringNextDispatch: (sessionId) =>
+    startEngineTurnDuringNextDispatch: (sessionId, origin = null) =>
       Effect.gen(function* () {
         const session = yield* existingSession(sessionId);
-        session.raceNextStart = true;
+        session.raceNextStart = { origin };
       }),
 
     dropNextMarker: Effect.gen(function* () {

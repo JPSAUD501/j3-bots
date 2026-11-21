@@ -913,11 +913,14 @@ it.effect("cancels what a stopped bot's work sent a teammate that has not reache
 it.effect("sends nothing from a turn the engine started once a Stop is recorded during it", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;
-    const ana = yield* createBot("Ana");
-    const session = yield* engineSession(ana.id);
+    const { bot: ana, session, turnId: watching } = yield* working("Watch the build.");
     const bo = yield* createBot("Bo");
+    // The build the operator asked for finishes, and wakes the session with
+    // a turn that names no turn of its own.
+    yield* control.startBackgroundWork({ sessionId: session, turnId: watching });
+    yield* finished(ana.id, session, watching);
     const turnId = yield* control.startEngineTurn(session);
-    yield* nextTurn(ana.id);
+    yield* nextTurn(ana.id, watching);
     const sent = yield* messageTeammate(session, turnId, {
       to: bo.id,
       text: "The build passed.",
@@ -987,6 +990,7 @@ it.effect("keeps what a finished turn sent a teammate through a later Stop of th
     const asked = yield* nextTurn(ana.id);
     yield* messageTeammate(session, asked, { to: bo.id, text: "Deploy now.", urgent: true });
     yield* messageTeammate(session, asked, { to: bo.id, text: "Staging is down.", urgent: false });
+    yield* control.startBackgroundWork({ sessionId: session, turnId: asked });
     yield* finished(ana.id, session, asked);
     const own = yield* control.startEngineTurn(session);
     yield* nextTurn(ana.id, asked);

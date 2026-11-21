@@ -37,6 +37,7 @@ import { transactional } from "../persistence/transaction.ts";
 import { askAnswer, fitsAlone, operatorZone, WIDEST_ROOM_NAME } from "./envelopes.ts";
 import { keyedLock } from "./keyedLock.ts";
 import { Ledger } from "./Ledger.ts";
+import { liveTarget } from "./liveTarget.ts";
 import {
   AudienceColumn,
   audienceOf,
@@ -187,6 +188,7 @@ export const layer = Layer.effect(
     const observer = yield* Observer;
     const signals = yield* Signals;
     const wakes = yield* Wakes;
+    const targetOf = liveTarget(sql);
     const readiness = yield* Readiness;
     const settings = yield* SettingsStore;
     const transaction = transactional(sql);
@@ -229,6 +231,17 @@ export const layer = Layer.effect(
       if (answer._tag === "question" && !fits(card.questions, answer.answers, card.origin)) {
         return yield* new Invalid({ reason: "answer" });
       }
+      if (card.author._tag !== "bot") {
+        return yield* Effect.die(new TurnsInvariant({ invariant: "An ask card is a bot's" }));
+      }
+      // A room's question is answered only while the room takes messages and
+      // its bot is still a member: the answer wakes it for the room.
+      // Archiving the room or removing the member expires the card in its
+      // own transaction; this keeps the rule where the answer is taken.
+      const audience = audienceOf(row.value);
+      if (audience._tag === "room" && (yield* targetOf(card.author.botId, audience)) === null) {
+        return yield* new Conflict({ reason: "room-archived" });
+      }
       const status: QuestionEntry["status"] =
         answer._tag === "question"
           ? { _tag: "answered", answers: answer.answers }
@@ -251,14 +264,11 @@ export const layer = Layer.effect(
       };
       if (!fitsAlone(alone)) return yield* new Invalid({ reason: "answer-length" });
       yield* entries.update({ ...card, status });
-      if (card.author._tag !== "bot") {
-        return yield* Effect.die(new TurnsInvariant({ invariant: "An ask card is a bot's" }));
-      }
       const [wakeId] = yield* wakes.record([
         {
           botId: card.author.botId,
           kind: "user",
-          audience: audienceOf(row.value),
+          audience,
           payload: { _tag: "answer", cardId: card.id },
           sourceEntryId: card.id,
           hops: 0,

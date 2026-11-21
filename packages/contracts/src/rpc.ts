@@ -352,6 +352,16 @@ export const RoomRpcs = RpcGroup.make(
     error: CommandError,
   }),
   Rpc.make("room.delete", { payload: { ...command, roomId: RoomId }, error: CommandError }),
+  /**
+   * Stops the work addressed to the room, as `bot.stop` stops a bot's: each
+   * member's running or waiting turn for it, and background work those turns
+   * left running, end, and its waiting wakes are cancelled. It never ends a
+   * member's turn for another audience: it waits for that turn to end. The
+   * room stays active and its cards stay open. Fails with
+   * `Conflict("room-archived")` in an archived room, whose work its archiving
+   * already stopped.
+   */
+  Rpc.make("room.stop", { payload: { ...command, roomId: RoomId }, error: CommandError }),
 );
 
 export const RoutineRpcs = RpcGroup.make(

@@ -51,6 +51,8 @@ interface StopOptions {
 
 const Round = Schema.Struct({
   stop_id: Schema.String,
+  /** The room a `room` Stop is for; null for a `bot` Stop. */
+  room_id: Schema.NullOr(RoomId),
   session_id: SessionRowId,
   round: Schema.Int,
   engine_key: IdempotencyKey,
@@ -154,18 +156,23 @@ export const layer = Layer.effect(
       const at = timeText(yield* DateTime.now);
       const landing = mayLand(sql);
       // Every session of the bot with work in scope that may be in the engine:
-      // a turn running, or a dispatch the engine has or may yet take. A bot
-      // Stop reaches every live session too, for background work the server
-      // does not see. A session the engine retired has nothing left in it to
-      // stop: its retirement ended what ran there. A room's Stop reaches no
-      // background work its turns left: room turns, and the Stop of their
-      // work, arrive with M3 (`docs/architecture/server.md`, Rooms).
+      // a turn running, a turn whose background work the engine last
+      // reported still pending, or a dispatch the engine has or may yet take.
+      // So a room's Stop reaches the background work its turns started, by
+      // the turn that started it, never by the session's work as a whole. A
+      // bot Stop reaches every live session too, for background work the
+      // server does not see. A session the engine retired has nothing left in
+      // it to stop: its retirement ended what ran there.
       const sessions = yield* sql<{ readonly id: string }>`
         SELECT s.id FROM sessions s
         WHERE s.bot_id = ${botId} AND s.lost_at IS NULL AND s.engine_retired_at IS NULL AND (
           ${scope._tag === "bot" ? sql`(s.retired_at IS NULL AND s.engine_session_id IS NOT NULL) OR` : sql``}
           EXISTS (
             SELECT 1 FROM turns WHERE session_id = s.id AND finished_at IS NULL AND ${inScope(scope)}
+          )
+          OR EXISTS (
+            SELECT 1 FROM turns
+            WHERE session_id = s.id AND background_pending = 1 AND ${inScope(scope)}
           )
           OR EXISTS (
             SELECT 1 FROM dispatches WHERE session_id = s.id AND ${inScope(scope)} AND (
@@ -319,9 +326,10 @@ export const layer = Layer.effect(
       Request: Schema.Void,
       Result: Round,
       execute: () => sql`
-        SELECT t.stop_id, t.session_id, t.round, t.engine_key, t.sent_at IS NOT NULL AS sent,
-          s.engine_session_id, t.due_at, t.retry_at
+        SELECT t.stop_id, p.room_id, t.session_id, t.round, t.engine_key,
+          t.sent_at IS NOT NULL AS sent, s.engine_session_id, t.due_at, t.retry_at
         FROM stop_targets t JOIN sessions s ON s.id = t.session_id
+        JOIN stops p ON p.id = t.stop_id
         WHERE t.stopped_at IS NULL AND s.lost_at IS NULL
           AND t.round = (
             SELECT MAX(u.round) FROM stop_targets u
@@ -342,6 +350,22 @@ export const layer = Layer.effect(
       `.pipe(
         Effect.orDie,
         Effect.map(([row]) => (row?.n ?? 0) > 0),
+      );
+
+    /**
+     * Whether the session runs a turn for an audience other than the room: a
+     * room's Stop sends no round then, since the engine's stop would end that
+     * turn too. The turn's end nudges the runner.
+     */
+    const runsOtherAudience = (sessionId: SessionRowId, roomId: RoomId) =>
+      sql<{ readonly n: number }>`
+        SELECT 1 AS n FROM turns oa_turn
+        WHERE oa_turn.session_id = ${sessionId} AND oa_turn.finished_at IS NULL
+          AND NOT (oa_turn.audience = 'room' AND oa_turn.audience_room_id = ${roomId})
+        LIMIT 1
+      `.pipe(
+        Effect.orDie,
+        Effect.map((rows) => rows.length > 0),
       );
 
     /**
@@ -534,6 +558,11 @@ export const layer = Layer.effect(
           outcome.until(round.due_at);
           continue;
         }
+        // A room's Stop waits rather than end another audience's turn: the
+        // engine's stop ends the whole session.
+        if (round.room_id !== null && (yield* runsOtherAudience(round.session_id, round.room_id))) {
+          continue;
+        }
         const progress = yield* sendRound(round, engineSessionId);
         if (progress === "unavailable") return progress;
         if (progress === "deferred") sending = progress;
@@ -644,10 +673,14 @@ export const roomWorkLayer = Layer.effect(
     const ledger = yield* Ledger;
     const signals = yield* Signals;
 
-    const end = Effect.fn("RoomWork.end")(function* (roomId: RoomId) {
-      // Each bot that had work addressed to the room: its room Stop selects
-      // what is still in scope. When nothing is, it records no Stop, and still
-      // cancels the bot's pending wakes in scope and fires the Stop signal.
+    /**
+     * Each bot that had work addressed to the room gets a room Stop, which
+     * selects what is still in scope: its turns and dispatches, and the
+     * background work its turns started. When nothing is, it records no
+     * Stop, and still cancels the bot's pending wakes in scope and fires the
+     * Stop signal. Every wake still held for the room is cancelled.
+     */
+    const stop = Effect.fn("RoomWork.stop")(function* (roomId: RoomId) {
       const working = yield* SqlSchema.findAll({
         Request: Schema.Void,
         Result: Schema.Struct({ bot_id: BotId }),
@@ -665,13 +698,22 @@ export const roomWorkLayer = Layer.effect(
         WHERE status = 'pending' AND audience = 'room' AND audience_room_id = ${roomId}
       `;
       yield* ledger.cancelWakes(pending.map((wake) => wake.id));
+    }, Effect.orDie);
 
+    /** Expires the open `ask` cards of the room, of the given bots or of all: no answer can reach them. */
+    const expireAsks = Effect.fn("RoomWork.expireAsks")(function* (
+      roomId: RoomId,
+      botIds: ReadonlyArray<BotId> | null,
+    ) {
       const open = yield* SqlSchema.findAll({
         Request: Schema.Void,
         Result: Schema.Struct({ entry_id: EntryId }),
         execute: () => sql`
-          SELECT entry_id FROM ask_cards
-          WHERE closed_at IS NULL AND audience = 'room' AND audience_room_id = ${roomId}
+          SELECT ea_card.entry_id FROM ask_cards ea_card
+          JOIN entries ea_entry ON ea_entry.id = ea_card.entry_id
+          WHERE ea_card.closed_at IS NULL AND ea_card.audience = 'room'
+            AND ea_card.audience_room_id = ${roomId}
+            ${botIds === null ? sql`` : sql`AND ${sql.in("ea_entry.author_bot_id", botIds)}`}
         `,
       })(undefined);
       for (const { entry_id } of open) {
@@ -682,6 +724,11 @@ export const roomWorkLayer = Layer.effect(
         }
       }
     }, Effect.orDie);
+
+    const end = Effect.fn("RoomWork.end")(function* (roomId: RoomId) {
+      yield* stop(roomId);
+      yield* expireAsks(roomId, null);
+    });
 
     const leave = Effect.fn("RoomWork.leave")(function* (
       roomId: RoomId,
@@ -731,6 +778,31 @@ export const roomWorkLayer = Layer.effect(
       yield* ledger.refreshMessages(
         marked.flatMap((row) => (row.source_entry_id === null ? [] : [row.source_entry_id])),
       );
+      // The room's notices of their turns offer no Retry: they have nothing
+      // there to run again. Their questions for the room can no longer be
+      // answered there.
+      const offered = yield* SqlSchema.findAll({
+        Request: Schema.Void,
+        Result: Schema.Struct({ entry_id: EntryId }),
+        execute: () => sql`
+          SELECT lv_retry.entry_id FROM notice_retries lv_retry
+          JOIN dispatches lv_dispatch ON lv_dispatch.id = lv_retry.dispatch_id
+          WHERE lv_dispatch.audience_room_id = ${roomId} AND ${sql.in("lv_dispatch.bot_id", botIds)}
+        `,
+      })(undefined);
+      for (const { entry_id } of offered) {
+        const found = yield* entries.find(entry_id);
+        if (Option.isSome(found) && found.value.entry._tag === "notice") {
+          const notice = found.value.entry;
+          if (notice.retryable) yield* entries.update({ ...notice, retryable: false });
+        }
+      }
+      yield* expireAsks(roomId, botIds);
+      // What they still run for the room is stopped, as the room's Stop
+      // stops it: a turn running there, and the background work their room
+      // turns started. Their speech there is refused meanwhile
+      // (`liveTarget`).
+      for (const botId of botIds) yield* stops.record(botId, { _tag: "room", roomId });
       // The room is free for its next member's wake, which may have waited
       // behind theirs.
       if (unsentIds.length > 0 || pending.length > 0) {
@@ -738,6 +810,6 @@ export const roomWorkLayer = Layer.effect(
       }
     }, Effect.orDie);
 
-    return RoomWork.of({ end, leave });
+    return RoomWork.of({ end, stop, leave });
   }),
 );

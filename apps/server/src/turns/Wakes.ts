@@ -59,8 +59,10 @@ const encodePayload = Schema.encodeEffect(json(WakePayload));
  * anything happens): in the caller's transaction, the one that writes their
  * cause, so a wake exists exactly when its cause does. A wake that follows
  * from work a Stop covers is not written: the operator stopped what it would
- * continue. Nor is one that follows from work for a room no longer active:
- * nobody is there to see it. The dispatcher looks once it commits.
+ * continue. Nor is one that follows from work for a room no longer active,
+ * or a room wake, whatever caused it, for a room no longer active or a bot no
+ * longer its member: nobody is there to see it. The dispatcher looks once it
+ * commits.
  */
 export class Wakes extends Context.Service<
   Wakes,
@@ -76,8 +78,17 @@ export const layer = Layer.effect(
     const stops = stopTargets(sql);
     const live = liveTarget(sql);
 
-    /** Whether the work `cause` continues was stopped, or has nowhere left to speak. */
+    /**
+     * Whether the wake has nowhere to go, or the work `cause` continues was
+     * stopped or has nowhere left to speak. A room wake goes only to a member
+     * of an active room, whatever caused it: the operator's own action is
+     * checked by its command before it gets here, and a room deleted
+     * meanwhile leaves no id behind for a new row to carry.
+     */
     const ended = Effect.fn("Wakes.ended")(function* (wake: NewWake) {
+      if (wake.audience._tag === "room" && (yield* live(wake.botId, wake.audience)) === null) {
+        return true;
+      }
       const { cause } = wake;
       switch (cause._tag) {
         case "operator":

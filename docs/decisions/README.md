@@ -18,6 +18,7 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0010](0010-workers-reconcile-durable-state.md) | The turn machinery's workers reconcile durable state | Accepted |
 | [0011](0011-a-room-runs-one-turn-at-a-time.md) | A room runs one turn at a time | Accepted |
 | [0012](0012-desktop-reaches-the-server-directly.md) | The desktop renders the bundled web build and calls the server from its own origin | Proposed |
+| [0013](0013-background-work-belongs-to-the-turn-that-started-it.md) | Background work belongs to the turn that started it | Accepted |
 | [0014](0014-push-goes-through-a-push-sender.md) | Push goes through a push sender, and Expo's service is the first | Proposed |
 
 When a decision is replaced, its record is rewritten to say what now holds and why the earlier choice was dropped.

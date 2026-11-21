@@ -554,6 +554,12 @@ export const layer = Layer.effect(
           if (found.value.entry.delivery._tag !== "failed") {
             return yield* new Conflict({ reason: "not-retryable" });
           }
+          // A failed wake survives its room's archival, but goes again only
+          // into a room that takes messages.
+          const { target } = found.value;
+          if (target._tag === "room" && Option.isNone(yield* roomOf(target.roomId))) {
+            return yield* new Conflict({ reason: "room-archived" });
+          }
           const failed = yield* failedWakes(input.entryId);
           yield* wakes.record(
             failed.map((wake) => ({
@@ -631,31 +637,42 @@ export const layer = Layer.effect(
           for (const id of yield* ledger.readHandoffWakes(link.dispatch_id)) retried.add(id);
           // A failed wake is retried as such, so its message shows the retry;
           // one a message retry already sent again is not sent a third time.
-          // A failed opening, or a teammate's urgent message, is the
-          // operator's to retry too: neither has a message of theirs. A
-          // teammate's message goes again only while it failed: one a Stop
-          // cancelled stays cancelled. It goes as it was, its kind and hops
-          // kept; the Retry is the operator's, so no Stop of its sender
-          // cancels it (`Stops.record`).
+          // A failed opening, a teammate's urgent message, or a member's room
+          // turn, is the operator's to retry too: none has a message of
+          // theirs. A teammate's message goes again only while it failed:
+          // one a Stop cancelled stays cancelled. It goes as it was, its kind
+          // and hops kept; the Retry is the operator's, so no Stop of its
+          // sender cancels it (`Stops.record`).
+          const again = sent.filter(
+            (wake) =>
+              (wake.kind === "user" ||
+                wake.kind === "room" ||
+                wake.payload_json._tag === "first-run" ||
+                (wake.payload_json._tag === "teammate" && wake.status === "failed")) &&
+              !retried.has(wake.id),
+          );
+          // A room's wakes go again only into a room that takes messages, and
+          // only to a member: one who left has nothing there to retry.
+          for (const wake of again) {
+            if (wake.audience !== "room") continue;
+            const room =
+              wake.audience_room_id === null ? Option.none() : yield* roomOf(wake.audience_room_id);
+            if (Option.isNone(room)) return yield* new Conflict({ reason: "room-archived" });
+            if (!room.value.members.includes(wake.bot_id)) {
+              return yield* new Conflict({ reason: "not-retryable" });
+            }
+          }
           yield* wakes.record(
-            sent
-              .filter(
-                (wake) =>
-                  (wake.kind === "user" ||
-                    wake.payload_json._tag === "first-run" ||
-                    (wake.payload_json._tag === "teammate" && wake.status === "failed")) &&
-                  !retried.has(wake.id),
-              )
-              .map((wake) => ({
-                botId: wake.bot_id,
-                kind: wake.kind,
-                audience: audienceOf(wake),
-                payload: wake.payload_json,
-                sourceEntryId: wake.source_entry_id,
-                hops: wake.hops,
-                retryOf: wake.status === "failed" ? wake.id : null,
-                cause: { _tag: "operator" },
-              })),
+            again.map((wake) => ({
+              botId: wake.bot_id,
+              kind: wake.kind,
+              audience: audienceOf(wake),
+              payload: wake.payload_json,
+              sourceEntryId: wake.source_entry_id,
+              hops: wake.hops,
+              retryOf: wake.status === "failed" ? wake.id : null,
+              cause: { _tag: "operator" },
+            })),
           );
           yield* ledger.refreshMessages(
             sent.flatMap((wake) => (wake.source_entry_id === null ? [] : [wake.source_entry_id])),
