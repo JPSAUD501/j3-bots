@@ -23,7 +23,7 @@ describe("the desktop bridge", () => {
       "https://j3.example.test",
       "http://[::1]:3737",
     ]) {
-      assert.isTrue(decodes(DesktopState, { server, tokenProtection: "encrypted" }), server);
+      assert.isTrue(decodes(DesktopState, { server }), server);
     }
     for (const server of [
       "http://192.0.2.10:3737/",
@@ -36,10 +36,9 @@ describe("the desktop bridge", () => {
       "192.0.2.10:3737",
       "",
     ]) {
-      assert.isFalse(decodes(DesktopState, { server, tokenProtection: "encrypted" }), server);
+      assert.isFalse(decodes(DesktopState, { server }), server);
     }
-    assert.isTrue(decodes(DesktopState, { server: null, tokenProtection: "unencrypted" }));
-    assert.isFalse(decodes(DesktopState, { server: null, tokenProtection: "obscured" }));
+    assert.isTrue(decodes(DesktopState, { server: null }));
     assert.isFalse(decodes(DesktopState, {}));
   });
 
@@ -76,7 +75,7 @@ describe("the desktop bridge", () => {
       onResumed: call,
       upload: call,
     };
-    const state = { server: null, tokenProtection: "encrypted" };
+    const state = { server: null };
     assert.isTrue(decodes(HostedBridge, { state, ...calls }));
     assert.isFalse(decodes(HostedBridge, undefined));
     assert.isFalse(decodes(HostedBridge, { state: { ...state, server: "nowhere" }, ...calls }));

@@ -92,6 +92,11 @@ export interface ShellData {
   readonly recentTurns: RecentTurnsState;
   /** A connection to the server is open now. Pairing another device needs one. */
   readonly connected: boolean;
+  /**
+   * In the desktop app, this device's sign-in is stored only obscured, not
+   * encrypted, as Linux had no keyring the app could use when it was stored.
+   */
+  readonly signInUnencrypted: boolean;
 }
 
 /** A pairing code for another device, or why there is none. */
@@ -185,11 +190,6 @@ export interface ShellIntents extends TimelineIntents {
 export interface DesktopServer {
   /** Its origin, as shown to the operator. */
   readonly address: string;
-  /**
-   * Whether this device's sign-in is stored encrypted with a key the system
-   * keeps. `false` where Linux has no keyring the app can use.
-   */
-  readonly signInEncrypted: boolean;
   /**
    * Forgets it, with this device's sign-in there and everything kept for it,
    * and opens the app's first page, the server address screen. Resolves `false`

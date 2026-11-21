@@ -479,6 +479,9 @@ export const en = {
   "gate.storage.title": "This browser won’t keep the sign-in",
   "gate.storage.body":
     "J3 Bots keeps this device’s sign-in in the browser’s site data, and the browser refused. Allow site data for this page, then try again.",
+  "gate.storage.desktopTitle": "This device’s sign-in can’t be read",
+  "gate.storage.desktopBody":
+    "The system wouldn’t open the sign-in J3 Bots keeps for {address}. If your keyring is locked, unlock it, then try again. Changing to another server, or this one again, signs this device out here.",
   "gate.reload": "Reload",
   "gate.retry": "Try again",
 

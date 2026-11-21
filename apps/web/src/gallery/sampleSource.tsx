@@ -503,6 +503,7 @@ function toData(state: State): ShellData {
       failed: false,
     },
     connected: true,
+    signInUnencrypted: false,
   };
 }
 

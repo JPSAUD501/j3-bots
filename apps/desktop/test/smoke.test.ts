@@ -3,7 +3,7 @@
 import * as NodeHttp from "node:http";
 import * as NodeModule from "node:module";
 import { CommandId } from "@j3-bots/contracts";
-import { OpenResult } from "@j3-bots/desktop-bridge";
+import { BRIDGE_KEY, OpenResult, TokenProtection } from "@j3-bots/desktop-bridge";
 import * as Server from "@j3-bots/server/testing";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -20,8 +20,9 @@ import { _electron, type ElectronApplication, type Page } from "playwright-core"
 // server's testing layer (its real routes and socket over the in-memory
 // engine) on loopback: refuse an address that redirects, name the server,
 // pair, open a bot from the roster, send it a message with a file, find the
-// token nowhere on disk in the clear, launch again still paired, read a
-// damaged credential as not paired, and change server from Settings. Needs
+// token nowhere on disk in the clear, launch again still paired, keep a
+// credential the system will not open, read a damaged one as not paired, and
+// change server from Settings. Needs
 // the web client built and a display (`xvfb-run`).
 
 /** How long one step may take before the smoke fails, a cold Electron start included. */
@@ -92,7 +93,12 @@ const storeCredential = (page: Page, value: string) =>
   );
 
 const SealedRecord = Schema.fromJsonString(
-  Schema.Struct({ deviceId: Schema.String, server: Schema.String, sealed: Schema.String }),
+  Schema.Struct({
+    deviceId: Schema.String,
+    server: Schema.String,
+    sealed: Schema.String,
+    protection: TokenProtection,
+  }),
 );
 
 /** Whether any file under `directory` holds `secret`, as UTF-8 or UTF-16. Never prints it. */
@@ -228,14 +234,17 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
         );
         assert.strictEqual(record.server, origin.origin);
         const token = yield* Effect.promise(() =>
-          page.evaluate((sealed) => {
-            const bridge: unknown = Reflect.get(window, "j3Desktop");
-            const open: unknown =
-              typeof bridge === "object" && bridge !== null
-                ? Reflect.get(bridge, "openToken")
-                : null;
-            return typeof open === "function" ? Promise.resolve(open(sealed)) : null;
-          }, record.sealed),
+          page.evaluate(
+            ({ key, sealed }) => {
+              const bridge: unknown = Reflect.get(window, key);
+              const open: unknown =
+                typeof bridge === "object" && bridge !== null
+                  ? Reflect.get(bridge, "openToken")
+                  : null;
+              return typeof open === "function" ? Promise.resolve(open(sealed)) : null;
+            },
+            { key: BRIDGE_KEY, sealed: record.sealed },
+          ),
         );
         const opened = Schema.decodeUnknownOption(OpenResult)(token).pipe(
           Option.flatMap((answer) =>
@@ -259,7 +268,8 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
         yield* onPage(second, () =>
           second.getByText(bot.profile.name).first().waitFor({ state: "visible", timeout: STEP }),
         );
-        // A credential whose token does not open reads as not paired: the pairing screen, then pairing again.
+        // A credential the system refuses to open (here, not sealed by it) may open later, as
+        // once a keyring is unlocked: the pairing stays, and the app says it cannot read it.
         yield* Effect.promise(() =>
           storeCredential(
             second,
@@ -271,13 +281,40 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
         );
         yield* onPage(second, async () => {
           await second.reload();
+          await second
+            .getByText("This device’s sign-in can’t be read")
+            .waitFor({ state: "visible", timeout: STEP });
+        });
+        // One that opens to something the app did not seal reads as not paired: the pairing
+        // screen, then pairing again. A byte changed in the first block of the ciphertext
+        // (after Chromium's three-byte version) garbles what it decrypts to and keeps its padding.
+        const damaged = Buffer.from(record.sealed, "base64");
+        damaged.writeUInt8(damaged.readUInt8(3) ^ 0xff, 3);
+        yield* Effect.promise(() =>
+          storeCredential(
+            second,
+            JSON.stringify({ ...record, sealed: damaged.toString("base64") }),
+          ),
+        );
+        yield* onPage(second, async () => {
+          await second.reload();
           await second.getByLabel("Pairing code").waitFor({ state: "visible", timeout: STEP });
         });
         yield* pair(second);
 
+        // Settings says the sign-in is stored without encryption exactly when the record does.
+        const paired = yield* Schema.decodeUnknownEffect(SealedRecord)(
+          yield* Effect.promise(() => storedCredential(second)),
+        );
         // Changing server from Settings forgets this device's pairing here.
         const stored = yield* onPage(second, async () => {
           await second.getByRole("button", { name: "Settings" }).click();
+          await second
+            .getByText("this device’s sign-in is stored without encryption", { exact: false })
+            .waitFor({
+              state: paired.protection === "unencrypted" ? "visible" : "hidden",
+              timeout: STEP,
+            });
           await second.getByRole("button", { name: "Change server" }).click();
           await second
             .getByRole("alertdialog")

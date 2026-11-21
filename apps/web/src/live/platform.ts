@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
+  Cell,
   ClientStorage,
   CredentialStore,
   FileTransfer,
@@ -30,7 +31,7 @@ import { type CredentialCell, type CredentialCodec, makeCredentialStore } from "
 import { type Desktop, desktop } from "./desktop";
 import { desktopTransfer } from "./desktopTransfer";
 import * as Idb from "./idb";
-import { sealedCredential } from "./sealedCredential";
+import { sealedCredential, storedProtection } from "./sealedCredential";
 import { credentialRecord, plainCredential } from "./storedCredential";
 
 const CREDENTIAL_KEY = "device";
@@ -41,18 +42,35 @@ const CREDENTIAL_KEY = "device";
  */
 const CREDENTIAL_CHANNEL = "j3-bots-credential";
 
-/** The credential's one record in IndexedDB, beside the drafts and the outbox. */
-const credentialCell: CredentialCell = {
-  get: () => Idb.get("credentials", CREDENTIAL_KEY),
-  put: (value) => Idb.put("credentials", CREDENTIAL_KEY, value),
+/**
+ * The credential's one record in IndexedDB, beside the drafts and the
+ * outbox. `observe` is given each value read from it or stored in it.
+ */
+const credentialCell = (observe: (stored: unknown) => void): CredentialCell => ({
+  get: () =>
+    Idb.get("credentials", CREDENTIAL_KEY).then((stored) => {
+      observe(stored);
+      return stored;
+    }),
+  put: (value) => Idb.put("credentials", CREDENTIAL_KEY, value).then(() => observe(value)),
   swap: (expected, next) =>
     Idb.commit(
       [{ store: "credentials", key: CREDENTIAL_KEY, value: next }],
       [Idb.holding({ store: "credentials", key: CREDENTIAL_KEY, value: expected })],
-    ),
-};
+    ).then((stored) => {
+      if (stored) observe(next);
+      return stored;
+    }),
+});
 
-const credentials = (codec: CredentialCodec) =>
+/**
+ * In the desktop app, whether the credential on disk keeps its token only
+ * obscured, as this page last read or stored it. Another window's change is
+ * read here as the client follows it.
+ */
+export const signInUnencrypted = new Cell(false);
+
+const credentials = (codec: CredentialCodec, cell: CredentialCell) =>
   Layer.effect(
     CredentialStore,
     Effect.gen(function* () {
@@ -62,7 +80,7 @@ const credentials = (codec: CredentialCodec) =>
       );
       return makeCredentialStore({
         codec,
-        cell: credentialCell,
+        cell,
         // oxlint-disable-next-line unicorn/require-post-message-target-origin -- a BroadcastChannel stays within its origin and takes no target
         announce: Effect.sync(() => channel.postMessage(null)),
         changes: Stream.fromEventListener(channel, "message").pipe(Stream.as(undefined)),
@@ -293,9 +311,14 @@ export const makePlatform = (server: URL): Layer.Layer<Platform> => {
     desktop === null
       ? plainCredential(credentialRecord(server, window.location.origin))
       : sealedCredential(server, desktop);
+  const cell = credentialCell((stored) =>
+    signInUnencrypted.set(
+      desktop !== null && Option.contains(storedProtection(server, stored), "unencrypted"),
+    ),
+  );
   return Layer.mergeAll(
     Layer.succeed(ServerAddress, { origin: server }),
-    credentials(codec),
+    credentials(codec, cell),
     storage(codec),
     locks,
     Layer.succeed(

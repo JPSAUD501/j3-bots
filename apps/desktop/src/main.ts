@@ -256,10 +256,7 @@ const program = Effect.gen(function* () {
     Effect.sync(() => {
       ipcMain.on(IPC_CHANNELS.state, (event) => {
         event.returnValue = fromApp(event)
-          ? encodeState({
-              server: runSync(settings.get).server,
-              tokenProtection: tokens.protection,
-            })
+          ? encodeState({ server: runSync(settings.get).server })
           : null;
       });
       ipcMain.handle(IPC_CHANNELS.connect, (event, request: unknown) =>

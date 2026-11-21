@@ -19,13 +19,14 @@ export interface CredentialCodec {
   readonly pairingOf: (stored: unknown) => Option.Option<DeviceId>;
   /**
    * The credential `stored` holds, if it is this server's and can be read.
-   * `stale` when it should be stored again: it was kept less safely than the
-   * device can keep it now.
+   * `stale` when it should be stored again, as whatever keeps it says. Fails
+   * when it cannot be read now but may be later.
    */
   readonly open: (
     stored: unknown,
   ) => Effect.Effect<
-    Option.Option<{ readonly credential: DeviceCredential; readonly stale: boolean }>
+    Option.Option<{ readonly credential: DeviceCredential; readonly stale: boolean }>,
+    CredentialStorageError
   >;
   /** What is stored for `credential`. */
   readonly write: (credential: DeviceCredential) => Effect.Effect<string, CredentialStorageError>;
@@ -38,6 +39,9 @@ export interface CredentialCell {
   /** Stores `next` (`null`: nothing) in one transaction, only if what is stored is still `expected`. */
   readonly swap: (expected: string, next: string | null) => Promise<boolean>;
 }
+
+/** How many times clearing reads and deletes the credential, while another window keeps sealing it again. */
+const CLEAR_ATTEMPTS = 3;
 
 const same = (a: DeviceCredential, b: DeviceCredential) =>
   a.deviceId === b.deviceId && Redacted.value(a.token) === Redacted.value(b.token);
@@ -69,9 +73,40 @@ export const makeCredentialStore = (options: {
               catch: () => new CredentialStorageError({ operation: "save" }),
             }),
           ),
+          Effect.flatMap((stored) => (stored ? announce : Effect.void)),
           Effect.ignore,
         )
       : Effect.void;
+  /**
+   * Deletes what is stored while it is still `credential`, and says whether
+   * it did. A delete is refused when the value changed since it was read;
+   * another window sealing the same credential again changes the value, so
+   * the read and the delete are tried again, a few times.
+   */
+  const remove = (
+    credential: DeviceCredential,
+    attempts: number,
+  ): Effect.Effect<boolean, CredentialStorageError> =>
+    stored("clear").pipe(
+      Effect.flatMap((found) =>
+        codec.open(found).pipe(
+          Effect.flatMap((opened) =>
+            typeof found === "string" &&
+            Option.exists(opened, (current) => same(current.credential, credential))
+              ? Effect.tryPromise({
+                  try: () => cell.swap(found, null),
+                  catch: () => new CredentialStorageError({ operation: "clear" }),
+                }).pipe(
+                  Effect.filterOrElse(
+                    (cleared) => cleared || attempts <= 1,
+                    () => remove(credential, attempts - 1),
+                  ),
+                )
+              : Effect.succeed(false),
+          ),
+        ),
+      ),
+    );
   const load = stored("load").pipe(
     Effect.flatMap((found) =>
       codec.open(found).pipe(
@@ -97,23 +132,10 @@ export const makeCredentialStore = (options: {
         Effect.andThen(announce),
       ),
     ),
-    // Deletes exactly the value that was read and found to be `credential`:
-    // if another window stored a pairing since, the value differs and stays.
+    // Deletes only a value that holds `credential`: if another window stored
+    // a pairing since, it stays.
     clear: Effect.fn("CredentialStore.clear")((credential: DeviceCredential) =>
-      stored("clear").pipe(
-        Effect.flatMap((found) =>
-          codec.open(found).pipe(
-            Effect.flatMap((opened) =>
-              typeof found === "string" &&
-              Option.exists(opened, (current) => same(current.credential, credential))
-                ? Effect.tryPromise({
-                    try: () => cell.swap(found, null),
-                    catch: () => new CredentialStorageError({ operation: "clear" }),
-                  })
-                : Effect.succeed(false),
-            ),
-          ),
-        ),
+      remove(credential, CLEAR_ATTEMPTS).pipe(
         Effect.tap((cleared) => (cleared ? announce : Effect.void)),
         Effect.andThen(load),
       ),

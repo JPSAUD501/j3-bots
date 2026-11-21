@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { HTTP_PATHS, MAX_ATTACHMENT_SIZE } from "@j3-bots/contracts";
 import {
   type ServerOrigin,
   UPLOAD_TAGS,
@@ -11,19 +10,9 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { type ClientRequest, type MessagePortMain, net } from "electron";
 import { BODY_LIMIT, bodyCollector } from "./answer.ts";
+import { mayUpload } from "./uploadTarget.ts";
 
 const decodeBody = Schema.decodeUnknownOption(UploadBody);
-
-/** Whether `url` is the attachments route of `server`, the one place the page uploads to. */
-const isUploadUrl = (url: string, server: ServerOrigin | null): boolean => {
-  const parsed = URL.parse(url);
-  return (
-    server !== null &&
-    parsed !== null &&
-    parsed.origin === server &&
-    parsed.pathname === HTTP_PATHS.attachments
-  );
-};
 
 /** Ends an upload that cannot start. */
 export const refuseUpload = (port: MessagePortMain): void => {
@@ -47,7 +36,7 @@ export const runUpload = (
   port: MessagePortMain,
 ) => {
   const { url, headers } = start.request;
-  if (!isUploadUrl(url, server) || start.size > MAX_ATTACHMENT_SIZE) return refuseUpload(port);
+  if (!mayUpload(start, server)) return refuseUpload(port);
   let request: ClientRequest;
   try {
     request = net.request({ method: "POST", url, redirect: "manual", credentials: "omit" });

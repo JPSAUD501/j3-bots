@@ -241,9 +241,36 @@ export function Incompatible({ server }: { server?: DesktopServer | undefined })
   );
 }
 
-/** The browser would not let the page keep this device's sign-in. */
-export function StorageFailed({ onRetry }: { onRetry: () => void }) {
+/**
+ * The browser would not let the page keep this device's sign-in. In the
+ * desktop app, whose server is `server`, the system would not open it, as
+ * while a keyring is locked; if its key is gone for good, changing servers
+ * leaves the sign-in behind.
+ */
+export function StorageFailed({
+  onRetry,
+  server,
+}: {
+  onRetry: () => void;
+  server?: DesktopServer | undefined;
+}) {
   const { t } = useI18n();
+  if (server !== undefined) {
+    return (
+      <Centered>
+        <Heading
+          title={t("gate.storage.desktopTitle")}
+          body={t("gate.storage.desktopBody", { address: server.address })}
+        />
+        <div className="flex flex-wrap items-start justify-center gap-2">
+          <Button variant="primary" onClick={onRetry}>
+            {t("gate.retry")}
+          </Button>
+          <ChangeServer address={server.address} onChange={server.forget} paired />
+        </div>
+      </Centered>
+    );
+  }
   return (
     <Centered>
       <Heading title={t("gate.storage.title")} body={t("gate.storage.body")} />

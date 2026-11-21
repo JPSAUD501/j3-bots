@@ -38,8 +38,6 @@ interface DesktopUpload {
 export interface Desktop {
   /** The server the operator named, or `null` until they have. */
   readonly server: URL | null;
-  /** How a token the app seals now is kept on disk. */
-  readonly tokenProtection: TokenProtection;
   /**
    * Checks the address the operator typed and keeps it if a J3 Bots server
    * answers there. `null` when the app gave no answer the page understands.
@@ -52,8 +50,11 @@ export interface Desktop {
   readonly forgetServer: () => Promise<boolean>;
   /** Encrypts a device token for this profile; `null` when it could not. */
   readonly sealToken: (token: string) => Promise<SealedToken | null>;
-  /** The token `sealed` holds; `null` when it is not one this profile can open. */
-  readonly openToken: (sealed: string) => Promise<string | null>;
+  /**
+   * The token `sealed` holds, `failed` when it is not one this profile
+   * sealed, or `unavailable` when the app could not open it now, nor say.
+   */
+  readonly openToken: (sealed: string) => Promise<OpenResult>;
   /** Whether the system has a network; `null` when the app did not say. */
   readonly online: () => Promise<boolean | null>;
   /** Calls `listener` each time the system wakes from sleep; answers a function that stops it. */
@@ -94,7 +95,6 @@ export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
   onNone: () => null,
   onSome: (bridge) => ({
     server: bridge.state.server === null ? null : new URL(bridge.state.server),
-    tokenProtection: bridge.state.tokenProtection,
     connect: (address) => ask(() => bridge.connect(address), decodeResult),
     forgetServer: () =>
       ask(() => bridge.forgetServer(), decodeForget).then((answer) => answer === "forgotten"),
@@ -103,8 +103,8 @@ export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
         answer?._tag === "sealed" ? { sealed: answer.sealed, protection: answer.protection } : null,
       ),
     openToken: (sealed) =>
-      ask(() => bridge.openToken(sealed), decodeOpen).then((answer) =>
-        answer?._tag === "opened" ? answer.token : null,
+      ask(() => bridge.openToken(sealed), decodeOpen).then(
+        (answer): OpenResult => answer ?? { _tag: "unavailable" },
       ),
     online: () =>
       ask(() => bridge.networkStatus(), decodeNetwork).then((answer) => answer?.online ?? null),

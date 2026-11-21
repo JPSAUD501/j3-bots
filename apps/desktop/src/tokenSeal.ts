@@ -17,43 +17,61 @@ const encodePayload = Schema.encodeSync(Payload);
 const decodePayload = Schema.decodeUnknownOption(Payload);
 
 /**
+ * The version Chromium writes before what it sealed on Linux with the key
+ * built into it, used where no secret service gives it one. Such a token is
+ * only obscured.
+ */
+const BUILT_IN_KEY = Buffer.from("v10");
+
+/** How `sealed`, as `safeStorage` just sealed it, is kept. */
+const protectionOf = (sealed: Buffer): TokenProtection =>
+  process.platform === "linux" && sealed.subarray(0, BUILT_IN_KEY.length).equals(BUILT_IN_KEY)
+    ? "unencrypted"
+    : "encrypted";
+
+/** Whether the system's encryption, the one the calls below use, can be used now. */
+const available = () => safeStorage.isAsyncEncryptionAvailable().catch(() => false);
+
+/**
  * Seals and opens the device token with Electron's `safeStorage`, which
  * encrypts with a key the system keeps: the Keychain on macOS, DPAPI on
  * Windows, a secret service on Linux. The page stores what is sealed; only
- * this profile, on this machine, opens it.
+ * this profile, on this machine, opens it. Called after the app is ready.
  *
  * On Linux with no secret service the app can use, `safeStorage` encrypts
  * with a key built into Chromium, which only obscures the token. The app
- * still pairs there rather than refuse, and says so: `protection` is then
- * `unencrypted`. Decided once, after the app is ready.
+ * still pairs there rather than refuse, and says so: what it sealed that way
+ * is `unencrypted`. Where the system will not encrypt at all, sealing fails,
+ * and so does the save.
  */
 export const makeTokenSeal = () => {
-  const protection: TokenProtection =
-    process.platform !== "linux" || safeStorage.isEncryptionAvailable()
-      ? "encrypted"
-      : "unencrypted";
-
-  // Either call rejects when the system will not encrypt, or what is given
-  // was not sealed with this profile's key.
   const seal = (token: string): Effect.Effect<SealResult> =>
-    Effect.promise(() =>
-      safeStorage.encryptStringAsync(encodePayload({ token })).then(
-        (sealed): SealResult => ({ _tag: "sealed", sealed: sealed.toString("base64"), protection }),
+    Effect.promise(async (): Promise<SealResult> => {
+      if (!(await available())) return { _tag: "failed" };
+      return safeStorage.encryptStringAsync(encodePayload({ token })).then(
+        (sealed): SealResult => ({
+          _tag: "sealed",
+          sealed: sealed.toString("base64"),
+          protection: protectionOf(sealed),
+        }),
         (): SealResult => ({ _tag: "failed" }),
-      ),
-    );
+      );
+    });
 
+  // A rejection says the system would not decrypt it now, not that it is not
+  // the app's: a locked keyring rejects as a key that is gone does.
   const open = (sealed: string): Effect.Effect<OpenResult> =>
-    Effect.promise(() =>
-      safeStorage.decryptStringAsync(Buffer.from(sealed, "base64")).then(
-        ({ result }) =>
+    Effect.promise(async (): Promise<OpenResult> => {
+      if (!(await available())) return { _tag: "unavailable" };
+      return safeStorage.decryptStringAsync(Buffer.from(sealed, "base64")).then(
+        ({ result, shouldReEncrypt }) =>
           Option.match(decodePayload(result), {
             onNone: (): OpenResult => ({ _tag: "failed" }),
-            onSome: ({ token }): OpenResult => ({ _tag: "opened", token }),
+            onSome: ({ token }): OpenResult => ({ _tag: "opened", token, stale: shouldReEncrypt }),
           }),
-        (): OpenResult => ({ _tag: "failed" }),
-      ),
-    );
+        (): OpenResult => ({ _tag: "unavailable" }),
+      );
+    });
 
-  return { protection, seal, open } as const;
+  return { seal, open } as const;
 };

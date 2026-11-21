@@ -31,10 +31,11 @@ export const ServerOrigin = Schema.String.check(
 export type ServerOrigin = typeof ServerOrigin.Type;
 
 /**
- * How the device token is kept on disk: `encrypted` with a key the system
- * keeps (the macOS Keychain, Windows DPAPI, a Linux secret service), or
- * `unencrypted`, where Linux has no secret service the app can use: then it
- * is only obscured, and anyone who can read the profile can recover it.
+ * How a sealed device token is kept on disk: `encrypted` with a key the
+ * system keeps (the macOS Keychain, Windows DPAPI, a Linux secret service),
+ * or `unencrypted`, sealed where Linux had no secret service the app could
+ * use: then it is only obscured, and anyone who can read the profile can
+ * recover it.
  */
 export const TokenProtection = Schema.Literals(["encrypted", "unencrypted"]);
 export type TokenProtection = typeof TokenProtection.Type;
@@ -43,8 +44,6 @@ export type TokenProtection = typeof TokenProtection.Type;
 export const DesktopState = Schema.Struct({
   /** The server the operator named, or `null` until they have. */
   server: Schema.NullOr(ServerOrigin),
-  /** How a token sealed now is kept. */
-  tokenProtection: TokenProtection,
 });
 export type DesktopState = typeof DesktopState.Type;
 
@@ -110,9 +109,19 @@ export const OpenRequest = Schema.Struct({ sealed: Sealed });
 export type OpenRequest = typeof OpenRequest.Type;
 
 export const OpenResult = Schema.Union([
-  Schema.TaggedStruct("opened", { token: Token }),
-  /** What was stored is not a token this profile sealed, or the key that sealed it is gone. */
+  /**
+   * The token, and whether to seal it again (`stale`): the system says it
+   * was sealed under a key it no longer encrypts with.
+   */
+  Schema.TaggedStruct("opened", { token: Token, stale: Schema.Boolean }),
+  /** It decrypted, but not to a token this profile sealed: the record is damaged or not the app's. */
   Schema.TaggedStruct("failed", {}),
+  /**
+   * The system did not open it now: its encryption is not available, or it
+   * refused, as while a keyring is locked or for a key it no longer has.
+   * Trying again later may open it.
+   */
+  Schema.TaggedStruct("unavailable", {}),
 ]);
 export type OpenResult = typeof OpenResult.Type;
 
