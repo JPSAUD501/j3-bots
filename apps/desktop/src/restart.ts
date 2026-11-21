@@ -49,7 +49,7 @@ const START_ONCE_GONE = [
  */
 const restartArgs = (): Array<string> => {
   const scheme = schemeOf(appOrigin(app.isPackaged));
-  return process.argv.slice(1).filter((arg) => !arg.startsWith(`${scheme}:`));
+  return process.argv.slice(1).filter((arg) => !arg.toLowerCase().startsWith(`${scheme}:`));
 };
 
 /**

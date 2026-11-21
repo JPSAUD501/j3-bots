@@ -229,13 +229,13 @@ function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
   useEffect(() => linked.follow(connection), [linked, connection]);
   // In the desktop app, a pairing link fills in the pairing screen with its
   // code, for this server only; the operator still presses Pair. A device
-  // already paired here keeps its pairing.
+  // that holds a pairing here keeps it and is told so, whether it is
+  // connected yet or not; one whose pairing the server refused is unpaired.
   const takePairingLink = useEffectEvent((link: AppLink) => {
     if (link._tag !== "pair") return false;
     if (link.server !== origin.origin) say(t("links.otherServer", { address: link.server }));
-    else if (connection._tag === "connected") {
-      say(t("links.alreadyPaired", { address: origin.origin }));
-    } else linked.offer(link.code);
+    else if (connection._tag === "unpaired" || pairing === null) linked.offer(link.code);
+    else say(t("links.alreadyPaired", { address: origin.origin }));
     return true;
   });
   useEffect(() => onAppLink(takePairingLink), []);
