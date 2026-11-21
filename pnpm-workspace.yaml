@@ -1,6 +1,8 @@
 packages:
   - apps/*
   - packages/*
+  # The end-to-end evals against real models, run on demand.
+  - evals
   # T3 Code's contracts at the engine pin, as their own package: @t3tools/contracts.
   - packages/engine-t3/vendor/*
 

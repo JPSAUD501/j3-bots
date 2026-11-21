@@ -24,6 +24,7 @@ import {
   engineSession,
   flushed,
   received,
+  stopSettled,
   turnEnded,
 } from "./turns.ts";
 
@@ -50,6 +51,19 @@ export const roomWith = (host: Member, others: ReadonlyArray<Member>, hopLimit?:
       hostId: host.bot.id,
       ...(hopLimit === undefined ? {} : { hopLimit }),
     });
+  });
+
+/** The operator archives the room, or takes it out of the archive. */
+export const archive = (roomId: RoomId, archived: boolean) =>
+  Effect.gen(function* () {
+    yield* (yield* Rooms).update({ commandId: command(), roomId, changes: { archived } });
+  });
+
+/** The operator stops the room's work, and the Stop has settled in the engine. */
+export const stopRoom = (roomId: RoomId) =>
+  Effect.gen(function* () {
+    yield* (yield* Rooms).stop({ commandId: command(), roomId });
+    yield* stopSettled;
   });
 
 /** The operator writes in the room, and every member's wakes that can go have gone. */
@@ -81,6 +95,7 @@ let calls = 0;
 interface SayArgs {
   readonly text: string;
   readonly mention?: ReadonlyArray<string>;
+  readonly attachments?: ReadonlyArray<string>;
   readonly to?: "dm";
   readonly done?: boolean;
 }

@@ -1,0 +1,19 @@
+{
+  "name": "@j3-bots/evals",
+  "version": "0.0.0",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "scripts": {
+    "typecheck": "effect-tsgo tsrs --noEmit",
+    "room": "node src/room.ts"
+  },
+  "dependencies": {
+    "@effect/platform-node": "catalog:",
+    "@j3-bots/contracts": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:"
+  }
+}

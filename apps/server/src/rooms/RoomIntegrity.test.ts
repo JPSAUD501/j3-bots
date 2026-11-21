@@ -13,6 +13,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Domain from "../domain.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
+  archive,
   finish,
   lastEnvelope,
   type Member,
@@ -27,6 +28,7 @@ import {
   running,
   say,
   settle,
+  stopRoom,
   to,
 } from "../testing/rooms.ts";
 import {
@@ -52,17 +54,6 @@ import { RETRY_TICK } from "../turns/reconciler.ts";
 import { Stops } from "../turns/Stops.ts";
 import { Wakes } from "../turns/Wakes.ts";
 import { Rooms } from "./Rooms.ts";
-
-const archive = (roomId: RoomId, archived: boolean) =>
-  Effect.gen(function* () {
-    yield* (yield* Rooms).update({ commandId: command(), roomId, changes: { archived } });
-  });
-
-const stopRoom = (roomId: RoomId) =>
-  Effect.gen(function* () {
-    yield* (yield* Rooms).stop({ commandId: command(), roomId });
-    yield* stopSettled;
-  });
 
 const isConflict = Schema.is(Conflict);
 
