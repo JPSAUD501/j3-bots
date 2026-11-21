@@ -1499,6 +1499,40 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
     }).pipe(Effect.scoped, Effect.provide(client())),
   );
 
+  it.effect("is saving a draft until the device keeps the file it shows uploaded", () =>
+    Effect.gen(function* () {
+      const commitGate = yield* Latch.make(true);
+      const device = TestPlatform.makeDevice({ commitGate });
+      yield* Effect.gen(function* () {
+        yield* pairAndConnect;
+        const drafts = yield* Drafts;
+        const target: EntryTarget = { _tag: "conversation", botId: yield* createBot("Careful") };
+        const key = targetKey(target);
+        yield* commitGate.close;
+        yield* drafts.attach(target, [
+          { name: "notes.txt", body: new Blob(["notes"], { type: "text/plain" }) },
+        ]);
+
+        // Uploaded, but the device does not keep it in the draft yet.
+        yield* waitFor(drafts.state, (state) =>
+          (state.get(key)?.files ?? []).some((file) => file._tag === "ready"),
+        );
+        assert.isTrue(drafts.saving.get());
+        const before = yield* device.storage.readAll("drafts").pipe(Effect.orDie);
+        assert.isFalse(before.has(key));
+
+        yield* commitGate.open;
+        yield* waitFor(drafts.saving, (saving) => !saving);
+        const after = yield* device.storage.readAll("drafts").pipe(Effect.orDie);
+        assert.isTrue(holds("notes.txt")(after.get(key)));
+      }).pipe(
+        Effect.scoped,
+        Effect.ensuring(commitGate.open),
+        Effect.provide(client(Option.none(), device)),
+      );
+    }),
+  );
+
   it.effect("takes no edits while the draft moves to the outbox, then clears it", () =>
     Effect.gen(function* () {
       const commitGate = yield* Latch.make(true);

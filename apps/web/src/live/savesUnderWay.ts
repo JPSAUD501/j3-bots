@@ -14,8 +14,8 @@ interface Writes {
   readonly memory: ReadonlyMap<unknown, Save<unknown>>;
   readonly actions: ReadonlyMap<string, ActionState>;
   readonly drafts: ReadonlyMap<string, Draft>;
-  /** Drafts the device has not kept yet. */
-  readonly draftsNotSaved: ReadonlySet<string>;
+  /** Whether a change to a draft is not kept on the device yet. */
+  readonly draftsSaving: boolean;
 }
 
 /**
@@ -29,7 +29,7 @@ export const savesUnderWay = (writes: Writes): boolean =>
   Object.values(writes.settings).some((save) => save._tag === "saving") ||
   [...writes.bots.values(), ...writes.memory.values()].some((save) => save._tag === "saving") ||
   [...writes.actions.values()].some((action) => action._tag === "submitting") ||
-  writes.draftsNotSaved.size > 0 ||
+  writes.draftsSaving ||
   [...writes.drafts.values()].some(
     (draft) => draft.sending || draft.files.some((file) => file._tag === "uploading"),
   );

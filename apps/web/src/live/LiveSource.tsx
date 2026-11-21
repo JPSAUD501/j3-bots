@@ -28,7 +28,6 @@ import type {
   RoomId,
   WorkStep,
 } from "@j3-bots/contracts";
-import { PROTOCOL_VERSION } from "@j3-bots/contracts";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import {
   createContext,
@@ -85,7 +84,7 @@ import {
 } from "./notify";
 import { loadRasterizer, notificationIcon, systemTheme } from "./notificationIcon";
 import { deliverFile, reserveWindow } from "./openFile";
-import { useDesktopUpdate, useReportSaving } from "./appUpdate";
+import { updatable, useDesktopUpdate, useReportSaving } from "./appUpdate";
 import { desktop } from "./desktop";
 import { LinkedPairingCode, linkedCodeAfter } from "./pairingLink";
 import { makePlatform, signInUnencrypted } from "./platform";
@@ -186,7 +185,8 @@ function Screen({ children }: { children: ReactNode }) {
 function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
   const j3 = useJ3Client();
   const connection = useConnection();
-  const update = useDesktopUpdate();
+  // An update offered beside what the app cannot do with this server.
+  const update = updatable(useDesktopUpdate());
   const pairing = useReadable(j3.pairing);
   const [linkedCode, setLinkedCode] = useState(use(LinkedPairingCode));
   const keptCode = linkedCodeAfter(linkedCode, connection);
@@ -226,17 +226,14 @@ function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
             onPair={j3.pair}
             server={desktopServer}
             restart={desktop?.relaunch}
+            update={update}
           />
         </Screen>
       );
     case "incompatible":
       return (
         <Screen>
-          <Incompatible
-            server={desktopServer}
-            serverNewer={connection.serverProtocol > PROTOCOL_VERSION}
-            update={update}
-          />
+          <Incompatible server={desktopServer} update={update} />
         </Screen>
       );
     case "storage-failed":
@@ -361,6 +358,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   const draftsLoading = useReadable(j3.draftsSwitching);
   const draftsFailed = useReadable(j3.draftsReadFailed);
   const draftsNotSaved = useReadable(j3.draftsNotSaved);
+  const draftsSaving = useReadable(j3.draftsSaving);
   const conversation = useConversation(target);
   const files = useBotFiles(detailsBotId);
   const memory = useMemory(detailsBotId === null ? null : { _tag: "bot", botId: detailsBotId });
@@ -397,7 +395,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
       memory: memorySaves,
       actions,
       drafts,
-      draftsNotSaved,
+      draftsSaving,
     }),
   );
   const openMemoryKey =

@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- One synchronous existence check of the development feed, before the updater is configured, and a detached process started as the app quits, after its runtime is gone.
-import * as NodeChildProcess from "node:child_process";
+// @effect-diagnostics nodeBuiltinImport:off -- One synchronous existence check of the development feed, before the updater is configured.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import { IPC_CHANNELS, SavingReport, UpdateStatus } from "@j3-bots/desktop-bridge";
@@ -10,14 +9,21 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import {
   app,
-  autoUpdater as nativeUpdater,
   type BrowserWindow,
   ipcMain,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
 } from "electron";
-import { autoUpdater } from "electron-updater";
-import { initial, mayCheck, step, type UpdateEvent, type Updates } from "./updates.ts";
+import { AppImageUpdater, autoUpdater } from "electron-updater";
+import { restartApp, runningAppImage } from "./restart.ts";
+import {
+  initial,
+  mayCheck,
+  step,
+  type UpdateEvent,
+  type UpdateMode,
+  type Updates,
+} from "./updates.ts";
 
 // Updating the app from its release feed: electron-updater checks at launch
 // and every six hours and downloads in the background; the operator restarts
@@ -32,48 +38,23 @@ const encodeStatus = Schema.encodeSync(UpdateStatus);
 const decodeSaving = Schema.decodeUnknownOption(SavingReport);
 
 /**
- * Whether this build updates itself. A packaged build does where
- * electron-updater can replace it (an AppImage, a deb, an NSIS install). A
- * development build does only against a `dev-app-update.yml` of its own. On
- * macOS, Squirrel.Mac installs only a signed app, and builds are unsigned for
- * now, so a Mac build does not try.
+ * How this build updates. An NSIS install and an AppImage install a newer
+ * version themselves: each replaces files the operator's user owns. Any other
+ * packaged build only says one is out. A deb would need root to install it,
+ * and the app never asks for that; Squirrel.Mac installs only a signed app,
+ * and builds are unsigned for now. A development build checks only against a
+ * `dev-app-update.yml` of its own.
  */
-const updatable = (): boolean => {
-  if (process.platform === "darwin") return false;
+const updateMode = (): UpdateMode => {
   if (!app.isPackaged) {
-    if (!NodeFS.existsSync(NodePath.join(app.getAppPath(), DEV_FEED))) return false;
+    if (!NodeFS.existsSync(NodePath.join(app.getAppPath(), DEV_FEED))) return "off";
     autoUpdater.forceDevUpdateConfig = true;
   }
-  return autoUpdater.isUpdaterActive();
-};
-
-/**
- * Closes every descriptor above standard error, waits until the process `$1`
- * is gone, then runs the rest of the arguments in its place.
- */
-const START_ONCE_GONE = [
-  'for fd in /proc/$$/fd/*; do n="${fd##*/}"; if [ "$n" -gt 2 ]; then eval "exec $n>&-"; fi; done',
-  'while kill -0 "$1" 2>/dev/null; do sleep 0.1; done',
-  "shift",
-  'exec "$@"',
-].join("\n");
-
-/**
- * Starts the AppImage at `appImage` once this process has exited, detached
- * from it. Neither Electron's relaunch nor electron-updater's will do: the
- * first runs its relauncher from the old AppImage's mount, which goes as this
- * process exits, and the new version never starts; the second starts it at
- * once, holding the old AppImage runtime's descriptors, so that runtime and
- * its mount never exit (as T3 Code found), and racing this instance for the
- * profile. Bash, which the AppImage's own launcher needs, closes what it
- * inherited, with `-p` so that no `BASH_ENV` runs first.
- */
-const startOnceGone = (appImage: string) => {
-  NodeChildProcess.spawn(
-    "bash",
-    ["-p", "-c", START_ONCE_GONE, "j3-bots-update", String(process.pid), appImage],
-    { detached: true, stdio: "ignore" },
-  ).unref();
+  if (!autoUpdater.isUpdaterActive()) return "off";
+  const installs =
+    process.platform === "win32" ||
+    (runningAppImage !== null && autoUpdater instanceof AppImageUpdater);
+  return installs ? "install" : "notify";
 };
 
 /**
@@ -87,11 +68,13 @@ export const serve = Effect.fn("desktop.updates")(function* (
 ) {
   const check = yield* Effect.acquireRelease(
     Effect.sync(() => {
-      // Downloaded in the background; installed only when the operator asks,
-      // never as the app quits.
-      autoUpdater.autoDownload = true;
+      let state: Updates = initial(updateMode());
+      // Where the build installs, downloaded in the background and installed
+      // only when the operator asks, never as the app quits.
+      autoUpdater.autoDownload = state.installs;
       autoUpdater.autoInstallOnAppQuit = false;
-      let state: Updates = initial(updatable());
+      // The AppImage an update was installed to, when not the one the app runs from.
+      let installedTo: string | null = null;
 
       const status = () => encodeStatus({ current: app.getVersion(), phase: state.phase });
       const dispatch = (event: UpdateEvent) => {
@@ -104,23 +87,18 @@ export const serve = Effect.fn("desktop.updates")(function* (
         if (taken.install) install();
       };
       /**
-       * Installs silently and starts the new version once this one has quit.
-       * An AppImage is replaced in place by electron-updater and started by
-       * `startOnceGone`. A failure arrives as an `error`.
+       * Installs silently and starts the new version once this one has quit:
+       * the NSIS installer starts it on Windows, and `restartApp` starts an
+       * AppImage, which electron-updater replaced. A failure is dispatched as
+       * an `error` before `quitAndInstall` returns, and the app stays.
        */
       const install = () => {
-        const appImage = process.env["APPIMAGE"];
-        try {
-          if (appImage === undefined) {
-            autoUpdater.quitAndInstall(true, true);
-            return;
-          }
-          // Emitted only once the file is replaced, right before quitting.
-          nativeUpdater.once("before-quit-for-update", () => startOnceGone(appImage));
-          autoUpdater.quitAndInstall(true, false);
-        } catch {
-          dispatch({ _tag: "failed" });
+        if (runningAppImage === null) {
+          autoUpdater.quitAndInstall(true, true);
+          return;
         }
+        autoUpdater.quitAndInstall(true, false);
+        if (state.phase._tag === "installing") restartApp(installedTo ?? runningAppImage);
       };
       const check = () => {
         if (!mayCheck(state)) return;
@@ -143,6 +121,9 @@ export const serve = Effect.fn("desktop.updates")(function* (
           dispatch({ _tag: "downloaded", version: info.version }),
         "update-cancelled": () => dispatch({ _tag: "failed" }),
         error: () => dispatch({ _tag: "failed" }),
+        "appimage-filename-updated": (path: string) => {
+          installedTo = path;
+        },
       } as const;
       autoUpdater.on("update-not-available", updater["update-not-available"]);
       autoUpdater.on("update-available", updater["update-available"]);
@@ -150,6 +131,7 @@ export const serve = Effect.fn("desktop.updates")(function* (
       autoUpdater.on("update-downloaded", updater["update-downloaded"]);
       autoUpdater.on("update-cancelled", updater["update-cancelled"]);
       autoUpdater.on("error", updater.error);
+      autoUpdater.on("appimage-filename-updated", updater["appimage-filename-updated"]);
 
       ipcMain.handle(IPC_CHANNELS.update, (event) => (fromApp(event) ? status() : null));
       ipcMain.on(IPC_CHANNELS.checkForUpdates, (event) => {
@@ -179,6 +161,7 @@ export const serve = Effect.fn("desktop.updates")(function* (
         autoUpdater.off("update-downloaded", updater["update-downloaded"]);
         autoUpdater.off("update-cancelled", updater["update-cancelled"]);
         autoUpdater.off("error", updater.error);
+        autoUpdater.off("appimage-filename-updated", updater["appimage-filename-updated"]);
         ipcMain.removeHandler(IPC_CHANNELS.update);
         ipcMain.removeAllListeners(IPC_CHANNELS.checkForUpdates);
         ipcMain.removeAllListeners(IPC_CHANNELS.restartToUpdate);

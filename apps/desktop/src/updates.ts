@@ -8,17 +8,26 @@ import type { UpdatePhase } from "@j3-bots/desktop-bridge";
 // restarts by itself, only once the operator asked; and never while the page
 // reports a save under way.
 
+/**
+ * How a build updates: it downloads and installs a newer version itself
+ * (`install`), it only says one is out and where to get it (`notify`), or it
+ * does neither (`off`).
+ */
+export type UpdateMode = "install" | "notify" | "off";
+
 export interface Updates {
   readonly phase: UpdatePhase;
   /** Whether the page reports a save under way. */
   readonly saving: boolean;
+  /** Whether this build installs a newer version itself, rather than only saying it is out. */
+  readonly installs: boolean;
 }
 
 export type UpdateEvent =
   /** A check starts: at launch, on the schedule, or when the operator asks. */
   | { readonly _tag: "check-started" }
   | { readonly _tag: "not-available" }
-  /** A newer version was found; its download starts at once. */
+  /** A newer version was found; where the build installs, its download starts at once. */
   | { readonly _tag: "available"; readonly version: string }
   | { readonly _tag: "progress"; readonly percent: number }
   | { readonly _tag: "downloaded"; readonly version: string }
@@ -35,15 +44,16 @@ export interface Step {
   readonly install: boolean;
 }
 
-/** Where a build starts: `active` when it can update itself. */
-export const initial = (active: boolean): Updates => ({
-  phase: active ? { _tag: "idle", checked: false } : { _tag: "unavailable" },
+/** Where a build starts. */
+export const initial = (mode: UpdateMode): Updates => ({
+  phase: mode === "off" ? { _tag: "unavailable" } : { _tag: "idle", checked: false },
   saving: false,
+  installs: mode === "install",
 });
 
 /** Whether a check may start: none is under way, and nothing is downloading or ready. */
 export const mayCheck = ({ phase }: Updates): boolean =>
-  phase._tag === "idle" || phase._tag === "failed";
+  phase._tag === "idle" || phase._tag === "failed" || phase._tag === "released";
 
 const stay = (current: Updates): Step => ({ next: current, install: false });
 const go = (current: Updates, phase: UpdatePhase): Step => ({
@@ -75,9 +85,13 @@ export const step = (current: Updates, event: UpdateEvent): Step => {
         ? go(current, { _tag: "idle", checked: true })
         : stay(current);
     case "available":
-      return inFlight(phase)
-        ? go(current, { _tag: "available", version: event.version })
-        : stay(current);
+      if (!inFlight(phase)) return stay(current);
+      return go(
+        current,
+        current.installs
+          ? { _tag: "available", version: event.version }
+          : { _tag: "released", version: event.version },
+      );
     case "progress":
       return phase._tag === "available" || phase._tag === "downloading"
         ? go(current, {
@@ -92,10 +106,9 @@ export const step = (current: Updates, event: UpdateEvent): Step => {
         : stay(current);
     case "failed":
       // A stray error once a version is ready leaves it ready; one while
-      // installing means the app did not quit, so it says so.
-      return inFlight(phase) || phase._tag === "installing"
-        ? go(current, { _tag: "failed" })
-        : stay(current);
+      // installing means the install failed and the app did not quit.
+      if (phase._tag === "installing") return go(current, { _tag: "failed", stage: "install" });
+      return inFlight(phase) ? go(current, { _tag: "failed", stage: "check" }) : stay(current);
     case "restart-requested":
       if (phase._tag !== "downloaded" || phase.restart !== "offered") return stay(current);
       return current.saving

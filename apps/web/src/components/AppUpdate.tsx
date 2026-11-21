@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { releasePage } from "@j3-bots/desktop-bridge";
 import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
 import type { DesktopUpdate } from "../shell/data";
@@ -7,7 +8,9 @@ import { Button } from "./ui/button";
 /**
  * The desktop app's version and where updating it stands: a check or a
  * download under way, "Restart to update" once a newer version is ready, a
- * way to check again otherwise. The app never restarts by itself.
+ * way to check again otherwise. A build that does not install updates says
+ * a newer version is out and links to its release. The app never restarts
+ * by itself.
  */
 export function AppUpdate({ update, className }: { update: DesktopUpdate; className?: string }) {
   const { t, locale } = useI18n();
@@ -20,6 +23,8 @@ export function AppUpdate({ update, className }: { update: DesktopUpdate; classN
         return phase.checked ? t("update.upToDate") : null;
       case "checking":
         return t("update.checking");
+      case "released":
+        return t("update.released", { version: phase.version });
       case "available":
       case "downloading":
         return t("update.downloading", {
@@ -35,7 +40,7 @@ export function AppUpdate({ update, className }: { update: DesktopUpdate; classN
       case "installing":
         return t("update.installing");
       case "failed":
-        return t("update.failed");
+        return phase.stage === "check" ? t("update.failed") : t("update.installFailed");
     }
   })();
   return (
@@ -47,6 +52,15 @@ export function AppUpdate({ update, className }: { update: DesktopUpdate; classN
       {phase._tag === "downloaded" && phase.restart === "offered" && (
         <Button size="sm" variant="primary" onClick={update.restart}>
           {t("update.restart")}
+        </Button>
+      )}
+      {phase._tag === "released" && (
+        <Button
+          size="sm"
+          variant="primary"
+          render={<a href={releasePage(phase.version)} target="_blank" rel="noreferrer" />}
+        >
+          {t("update.download")}
         </Button>
       )}
       {(phase._tag === "idle" || phase._tag === "failed") && (

@@ -63,6 +63,8 @@ interface PairingProps {
   readonly server?: DesktopServer | undefined;
   /** In the desktop app, restarts it, as once the system's keyring is unlocked. */
   readonly restart?: (() => void) | undefined;
+  /** In the desktop app, updating it, when it can: offered when the server speaks another protocol. */
+  readonly update?: DesktopUpdate | undefined;
 }
 
 /**
@@ -78,6 +80,7 @@ export function Pairing({
   address,
   server,
   restart,
+  update,
 }: PairingProps) {
   const ctx = usePresentation();
   const { t, parts } = ctx.i18n;
@@ -223,6 +226,11 @@ export function Pairing({
           state.reason._tag === "incompatible-server" && (
             <Button onClick={() => window.location.reload()}>{t("gate.reload")}</Button>
           )}
+        {update !== undefined &&
+          state._tag === "failed" &&
+          state.reason._tag === "incompatible-server" && (
+            <AppUpdate update={update} className="items-center text-center" />
+          )}
         {restart !== undefined &&
           state._tag === "failed" &&
           state.reason._tag === "storage-failed" && (
@@ -237,37 +245,16 @@ export function Pairing({
  * The server speaks another version of the protocol: this page is older or
  * newer than it. A browser reloads to get the server's own page; the desktop
  * app carries its page, so the app or the server needs updating, or the app
- * another server. When the server is the newer one and the app updates
- * itself, the update takes the place of trying again: only it can help.
+ * another server; its `update`, when it can update itself, shows beneath.
  */
 export function Incompatible({
   server,
-  serverNewer = false,
   update,
 }: {
   server?: DesktopServer | undefined;
-  /** The server speaks a newer version than this page. */
-  serverNewer?: boolean;
   update?: DesktopUpdate | undefined;
 }) {
   const { t } = useI18n();
-  if (
-    server !== undefined &&
-    serverNewer &&
-    update !== undefined &&
-    update.status.phase._tag !== "unavailable"
-  ) {
-    return (
-      <Centered>
-        <Heading
-          title={t("gate.incompatible.updateTitle")}
-          body={t("gate.incompatible.updateBody", { address: server.address })}
-        />
-        <AppUpdate update={update} className="items-center text-center" />
-        <ChangeServer address={server.address} onChange={server.forget} paired />
-      </Centered>
-    );
-  }
   if (server !== undefined) {
     return (
       <Centered>
@@ -281,6 +268,7 @@ export function Incompatible({
           </Button>
           <ChangeServer address={server.address} onChange={server.forget} paired />
         </div>
+        {update !== undefined && <AppUpdate update={update} className="items-center text-center" />}
       </Centered>
     );
   }

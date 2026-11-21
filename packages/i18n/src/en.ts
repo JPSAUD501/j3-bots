@@ -485,9 +485,6 @@ export const en = {
   "gate.incompatible.desktopTitle": "This app doesn’t match the server",
   "gate.incompatible.desktopBody":
     "The J3 Bots server at {address} speaks a different version than this app. Update the app or the server so they match, or change to another server.",
-  "gate.incompatible.updateTitle": "This app needs an update",
-  "gate.incompatible.updateBody":
-    "The J3 Bots server at {address} is newer than this app. Update the app to use it, or change to another server.",
   "gate.storage.title": "This browser won’t keep the sign-in",
   "gate.storage.body":
     "J3 Bots keeps this device’s sign-in in the browser’s site data, and the browser refused. Allow site data for this page, then try again.",
@@ -659,11 +656,14 @@ export const en = {
   "update.unavailable": "This build doesn’t update itself.",
   "update.upToDate": "Up to date.",
   "update.checking": "Checking for updates…",
+  "update.released": "Version {version} is available. Download it and install it to update.",
+  "update.download": "Download",
   "update.downloading": "Downloading version {version}… {percent}",
   "update.ready": "Version {version} is ready.",
   "update.waiting": "Restarting once your changes are saved…",
   "update.installing": "Restarting…",
   "update.failed": "Couldn’t get the latest version. J3 Bots tries again later.",
+  "update.installFailed": "Couldn’t install the update. This version keeps running.",
   "update.check": "Check for updates",
   "update.retry": "Try again",
   "update.restart": "Restart to update",

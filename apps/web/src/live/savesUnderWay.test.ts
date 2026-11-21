@@ -9,7 +9,7 @@ const idle: Parameters<typeof savesUnderWay>[0] = {
   memory: new Map(),
   actions: new Map(),
   drafts: new Map(),
-  draftsNotSaved: new Set(),
+  draftsSaving: false,
 };
 
 const draft = (change: Partial<Draft>): Draft => ({
@@ -49,7 +49,7 @@ describe("a save under way, which a restart into an update waits for", () => {
   });
 
   it("is what the device has not kept: a draft, a send to the outbox, a file uploading", () => {
-    expect(savesUnderWay({ ...idle, draftsNotSaved: new Set(["bot:b1"]) })).toBe(true);
+    expect(savesUnderWay({ ...idle, draftsSaving: true })).toBe(true);
     expect(
       savesUnderWay({ ...idle, drafts: new Map([["bot:b1", draft({ sending: true })]]) }),
     ).toBe(true);

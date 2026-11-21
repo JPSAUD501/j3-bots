@@ -44,6 +44,10 @@ export function useDesktopUpdate(): DesktopUpdate | undefined {
   return { status, check: desktop.checkForUpdates, restart: desktop.restartToUpdate };
 }
 
+/** `update` when the app can update itself, or nothing. */
+export const updatable = (update: DesktopUpdate | undefined): DesktopUpdate | undefined =>
+  update?.status.phase._tag === "unavailable" ? undefined : update;
+
 /** Tells the desktop app whether a save is under way, and that none is once the page stops tracking. */
 export function useReportSaving(saving: boolean): void {
   useEffect(() => {
