@@ -103,6 +103,8 @@ const Unsent = Schema.Struct({
   routine: Schema.BooleanFromBit,
   /** The provider its session runs on. */
   provider_id: ProviderId,
+  /** The bot whose opening the dispatch carries, if it carries one. */
+  opening_bot_id: Schema.NullOr(BotId),
 });
 const Due = Schema.Struct({ id: DispatchRowId, next_attempt_at: Schema.NullOr(Time) });
 
@@ -262,7 +264,7 @@ export const layer = Layer.effect(
     const random = yield* SecureRandom.SecureRandom;
     const { admitsStart } = admission(sql, settings);
     const limitOf = providerLimit(sql, engineState);
-    const { notify } = notices(sql, entries);
+    const { notify, openingOvertaken, closeOpeningRetries } = notices(sql, entries);
 
     const zoneOf = operatorZone(settings);
 
@@ -329,7 +331,8 @@ export const layer = Layer.effect(
      * it waits, and also once written into a dispatch the engine certainly
      * does not have (never sent; the send's claim needs it still `intended`
      * with no attempt). One the engine may have runs, and the base prompt has
-     * the bot answer the operator's message instead of greeting.
+     * the bot answer the operator's message instead of greeting. A failed
+     * opening is no longer offered again either.
      */
     const withdrawOpening = Effect.fn("Pipeline.withdrawOpening")(function* (botId: BotId) {
       const unsent = yield* SqlSchema.findAll({
@@ -348,6 +351,7 @@ export const layer = Layer.effect(
           AND json_extract(payload_json, '$._tag') = 'first-run'
       `;
       yield* ledger.cancelWakes(pending.map((row) => row.id));
+      yield* closeOpeningRetries(botId);
     }, Effect.orDie);
 
     const sendMessage = Effect.fn("Pipeline.sendMessage")(function* (input: {
@@ -511,7 +515,13 @@ export const layer = Layer.effect(
               SELECT dispatch_id, reason FROM notice_retries WHERE entry_id = ${entryId}
             `,
           })(notice.id).pipe(Effect.orDie);
-          if (!notice.retryable || link === undefined) {
+          // An opening the operator has overtaken goes no more, also from a
+          // notice a client still shows as retryable.
+          if (
+            !notice.retryable ||
+            link === undefined ||
+            (yield* openingOvertaken(link.dispatch_id))
+          ) {
             return yield* new Conflict({ reason: "not-retryable" });
           }
           // A delivery that failed counts only while it still did not reach
@@ -665,15 +675,21 @@ export const layer = Layer.effect(
      * Written and never sent, not fenced, and in a session no Stop holds (as
      * the send's claim requires): sent before anything new is written, whether
      * or not its bot has a wake pending. One whose files failed to stage waits
-     * for its deadline. Every first send is the dispatcher's, under the
-     * budget.
+     * for its deadline, and an opening, also one written before a restart,
+     * for its provider (`openingHeld`). Every first send is the dispatcher's,
+     * under the budget.
      */
     const unsentRows = sql`
       SELECT id, session_id, delivery, next_attempt_at,
         EXISTS (
           SELECT 1 FROM wakes w WHERE w.dispatch_id = d.id AND w.kind = 'routine'
         ) AS routine,
-        (SELECT s.provider_id FROM sessions s WHERE s.id = d.session_id) AS provider_id
+        (SELECT s.provider_id FROM sessions s WHERE s.id = d.session_id) AS provider_id,
+        (
+          SELECT w.bot_id FROM wakes w
+          WHERE w.dispatch_id = d.id AND json_extract(w.payload_json, '$._tag') = 'first-run'
+          LIMIT 1
+        ) AS opening_bot_id
       FROM dispatches d
       WHERE status = 'intended' AND attempts = 0 AND fenced_by_stop_id IS NULL
         AND NOT EXISTS (
@@ -691,15 +707,18 @@ export const layer = Layer.effect(
     });
 
     /**
-     * How the engine last reported the bot's provider, or null when it did
-     * not report it: any state but ready holds the bot's opening.
+     * The hello waits for a provider that can run it rather than fail before
+     * it starts: nobody asked for it, so nobody waits on it either. It is held
+     * while the engine reports the bot's provider as anything but ready (one
+     * the engine does not report holds nothing). Written or not, it is sent
+     * once the provider is ready, which wakes the dispatcher.
      */
-    const providerState = Effect.fn("Pipeline.providerState")(function* (botId: BotId) {
+    const openingHeld = Effect.fn("Pipeline.openingHeld")(function* (botId: BotId) {
       const bot = yield* bots.find(botId);
-      if (Option.isNone(bot)) return null;
+      if (Option.isNone(bot)) return false;
       const status = yield* engineState.current;
       const provider = status.providers.find((p) => p.id === bot.value.bot.model.providerId);
-      return provider?.status._tag ?? null;
+      return provider !== undefined && provider.status._tag !== "ready";
     });
 
     /** The files a wake's message carries, as the engine's limits count them. */
@@ -758,14 +777,10 @@ export const layer = Layer.effect(
       if (!(yield* observer.ready(session.value.id))) return "not-ready" as const;
       const work = yield* workOf(session.value.id);
       if (work.stopUnsettled) return null;
-      if ((head.kind === "routine" || head.kind === "bot") && (yield* providerLimited(botId))) {
-        return null;
-      }
-      // The hello waits for a provider that can run it rather than fail
-      // before it starts: nobody asked for it, so nobody waits on it either.
       if (head.payload_json._tag === "first-run") {
-        const provider = yield* providerState(botId);
-        if (provider !== null && provider !== "ready") return null;
+        if (yield* openingHeld(botId)) return null;
+      } else if (head.kind === "routine" || head.kind === "bot") {
+        if (yield* providerLimited(botId)) return null;
       }
       const audience = audienceOf(head);
       let delivery: Plan["delivery"];
@@ -1110,6 +1125,7 @@ export const layer = Layer.effect(
           continue;
         }
         if (row.delivery === "start" && !(yield* admitsStart(row.session_id))) continue;
+        if (row.opening_bot_id !== null && (yield* openingHeld(row.opening_bot_id))) continue;
         // A routine's start is automated work: a provider that reached its
         // usage limit since it was written holds it until the reset.
         if (row.routine) {

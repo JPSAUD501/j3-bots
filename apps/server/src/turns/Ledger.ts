@@ -19,7 +19,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Entries } from "../entries/Entries.ts";
 import { json, Time, timeText } from "../persistence/columns.ts";
-import { notices } from "./notices.ts";
+import { notices, operatorWroteSql } from "./notices.ts";
 import { fromBeforeFreshStartSql } from "./rotationRequests.ts";
 import {
   AudienceColumn,
@@ -205,7 +205,8 @@ export class Ledger extends Context.Service<
      * Whether a notice that the dispatch was not delivered may send its answer,
      * or the bot's opening, again: the engine has not got the dispatch and
      * never delivered it (it failed, or the engine dropped it before its turn
-     * started), and that wake failed and was not sent again yet.
+     * started), and that wake failed and was not sent again yet. An opening
+     * is not sent again once the operator has written.
      */
     readonly undeliveredRetryable: (dispatchId: DispatchRowId) => Effect.Effect<boolean>;
     /** Pending wakes stop waiting: a Stop or an archival ended what they asked for. */
@@ -318,7 +319,13 @@ export const layer = Layer.effect(
           AND EXISTS (
             SELECT 1 FROM wakes w
             WHERE w.dispatch_id = d.id AND w.status = 'failed'
-              AND json_extract(w.payload_json, '$._tag') IN ('answer', 'first-run')
+              AND (
+                json_extract(w.payload_json, '$._tag') = 'answer'
+                OR (
+                  json_extract(w.payload_json, '$._tag') = 'first-run'
+                  AND NOT ${operatorWroteSql(sql, sql.literal("w.bot_id"))}
+                )
+              )
               AND NOT EXISTS (SELECT 1 FROM wakes r WHERE r.retry_of = w.id)
           )
       `;

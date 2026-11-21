@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import { type BotId, type EntryId, type EntryTarget, Invalid } from "@j3-bots/contracts";
+import { type BotId, Conflict, type EntryId, type EntryTarget, Invalid } from "@j3-bots/contracts";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -255,6 +255,85 @@ it.effect("drops a written opening the engine never got when the operator writes
       [yield* timesSent(session, "Book the venue."), yield* timesSent(session, FIRST_RUN)],
       [1, 0],
     );
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("offers a failed opening no more once the operator has written", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    yield* control.rejectNextDispatch;
+    const bot = yield* createNewBot("Ana");
+    const session = yield* engineSession(bot.id);
+    const failed = yield* awaitEntry(bot.id, "notice");
+    assert.isTrue(failed.retryable);
+
+    // The operator writes instead, and the bot takes it up.
+    const message = yield* sendToBot(bot.id, "Book the venue.");
+    yield* nextTurn(bot.id);
+    yield* deliveryIs(message, "delivered");
+    const shown = (yield* conversation(bot.id)).find((entry) => entry.id === failed.id);
+    assert.strictEqual(shown?._tag === "notice" ? shown.retryable : null, false);
+
+    // A client that still shows the old retry is refused.
+    const refused = yield* (yield* Pipeline)
+      .retryNotice({ commandId: command(), entryId: failed.id })
+      .pipe(Effect.flip);
+    assert.deepStrictEqual(refused, new Conflict({ reason: "not-retryable" }));
+    yield* flushed(bot.id);
+    assert.strictEqual(yield* timesSent(session, FIRST_RUN), 0);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("holds an opening written before a restart until its provider is ready", () =>
+  Effect.gen(function* () {
+    const { providerId } = TestDomain.OTHER_PROVIDER_MODEL;
+    // The opening is written, the provider signs out, and the server stops
+    // before the opening is sent.
+    const { bot, session } = yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* providerIs(providerId, { _tag: "sign-in-required", command: "connect" });
+      const bot = yield* createNewBot("Ana", TestDomain.OTHER_PROVIDER_MODEL);
+      const session = yield* engineSession(bot.id);
+      yield* flushed(bot.id);
+      yield* holdGate(bot.id);
+      yield* providerIs(providerId, { _tag: "ready" });
+      yield* until(
+        sql<{ readonly n: number }>`SELECT COUNT(*) AS n FROM dispatches`.pipe(
+          Effect.orDie,
+          Effect.map(([row]) => (row?.n ?? 0) > 0),
+        ),
+      );
+      yield* providerIs(providerId, { _tag: "sign-in-required", command: "connect" });
+      return { bot, session };
+    }).pipe(Effect.provide(Domain.layer));
+
+    yield* Effect.gen(function* () {
+      yield* flushed(bot.id);
+      assert.strictEqual(yield* timesSent(session, FIRST_RUN), 0);
+      yield* providerIs(providerId, { _tag: "ready" });
+      yield* nextTurn(bot.id);
+      assert.strictEqual(yield* timesSent(session, FIRST_RUN), 1);
+    }).pipe(Effect.provide(Domain.layer));
+  }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
+);
+
+it.effect("offers a retry of an opening whose session was lost before it ended", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createNewBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* nextTurn(bot.id);
+    yield* control.loseSession(session);
+
+    yield* until(noticesOf(bot.id).pipe(Effect.map((kinds) => kinds.length === 2)));
+    assert.deepStrictEqual(yield* noticesOf(bot.id), ["session-lost", "turn-failed"]);
+    const failed = yield* awaitEntry(bot.id, "notice");
+    assert.isTrue(failed.retryable);
+
+    yield* (yield* Pipeline).retryNotice({ commandId: command(), entryId: failed.id });
+    const replaced = yield* sessionAfter(bot.id, session);
+    yield* nextTurn(bot.id);
+    assert.strictEqual(yield* timesSent(replaced, FIRST_RUN), 1);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

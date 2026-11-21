@@ -10,7 +10,7 @@ import * as SqlSchema from "effect/sql/SqlSchema";
 import type { Entries } from "../entries/Entries.ts";
 import { json, timeText } from "../persistence/columns.ts";
 import { DISPATCH_COLUMNS, DispatchRow, type Ledger } from "./Ledger.ts";
-import { conversation, type SessionRowId, StoredResponse } from "./model.ts";
+import { audienceOf, conversation, type SessionRowId, StoredResponse } from "./model.ts";
 import { notices } from "./notices.ts";
 import type { Signals } from "./Signals.ts";
 import { stopTargets } from "./stopTargets.ts";
@@ -123,9 +123,10 @@ export const sessionRecords = (
  * work fold end interrupted, and its open requests close. A dispatch not yet
  * answered is the sender's, which settles it in the session's gate: it is due
  * at once, whatever its backoff, and the workers are nudged once the loss
- * commits. A live main session's loss shows in the bot's conversation, and
- * the rotator gives the bot a new one; one J3 Bots had retired was replaced
- * already, so its loss is not told. Runs in the caller's transaction.
+ * commits. A live main session's loss shows in the bot's conversation, with a
+ * retry of the bot's opening if its turn was cut short, and the rotator gives
+ * the bot a new one; one J3 Bots had retired was replaced already, so its
+ * loss is not told. Runs in the caller's transaction.
  *
  * A session J3 Bots retired and the engine then archived (`sessionArchived`)
  * is settled the same way, untold: the server follows its events no more, so
@@ -180,7 +181,10 @@ export const sessionLoss = (
     `,
   });
 
-  /** Everything open in a session nothing runs in any more, settled at `now`. */
+  /**
+   * Everything open in a session nothing runs in any more, settled at `now`.
+   * Returns the dispatches whose turn it interrupted.
+   */
   const settleOpen = Effect.fnUntraced(function* (sessionId: SessionRowId, now: DateTime.Utc) {
     const at = timeText(now);
     yield* sql`
@@ -194,9 +198,11 @@ export const sessionLoss = (
       WHERE session_id = ${sessionId} AND stopped_at IS NULL
     `;
     const interrupted: TurnOutcome = { _tag: "interrupted" };
+    const ran: Array<DispatchRow> = [];
     for (const dispatch of yield* inEngine(sessionId)) {
       if (dispatch.status === "delivered") {
         yield* ledger.finish(dispatch.id, interrupted);
+        ran.push(dispatch);
       } else {
         yield* ledger.abandon(
           dispatch.id,
@@ -235,6 +241,24 @@ export const sessionLoss = (
         { discard: true },
       ),
     );
+    return ran;
+  });
+
+  /**
+   * A bot's opening whose turn the loss interrupted is offered again, as an
+   * interrupted turn's is (`Observer`), unless a Stop covers it.
+   */
+  const openingInterrupted = Effect.fnUntraced(function* (dispatch: DispatchRow) {
+    const carried = yield* ledger.wakesOf(dispatch.id);
+    if (!carried.some((wake) => wake.payload_json._tag === "first-run")) return;
+    const audience = audienceOf(dispatch);
+    if (yield* targets.covers(dispatch.bot_id, audience, dispatch.seq)) return;
+    yield* notify(
+      dispatch.bot_id,
+      audience,
+      { _tag: "turn-failed", failure: "unknown" },
+      { dispatchId: dispatch.id, reason: "turn" },
+    );
   });
 
   /** Whether the session was recorded lost by this call. */
@@ -242,10 +266,11 @@ export const sessionLoss = (
     const now = yield* DateTime.now;
     const [lost] = yield* markLost({ sessionId, at: timeText(now) });
     if (lost === undefined) return false;
-    yield* settleOpen(sessionId, now);
+    const ran = yield* settleOpen(sessionId, now);
     // A session J3 Bots retired was already replaced: its going is no loss to tell.
     if (lost.purpose === "main" && lost.retired_at === null) {
       yield* notify(lost.bot_id, conversation, { _tag: "session-lost" }, null);
+      for (const dispatch of ran) yield* openingInterrupted(dispatch);
     }
     return true;
   }, Effect.orDie);
