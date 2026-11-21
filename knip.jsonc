@@ -8,6 +8,11 @@
   // A system tool a test runs: Node cannot make a FIFO itself.
   "ignoreBinaries": ["mkfifo"],
   "workspaces": {
+    "apps/desktop": {
+      // The main process, and the preload script Electron loads by the path
+      // the window names: built into dist, which knip does not map back.
+      "entry": ["src/main.ts", "src/preload.ts"],
+    },
     "apps/server": {
       // The `j3` bridge: the engine starts it as a process, by a path
       // `src/installation.ts` names, and the production build bundles it.

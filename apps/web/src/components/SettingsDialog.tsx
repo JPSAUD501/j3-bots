@@ -32,10 +32,11 @@ import {
   settingsPatch,
   type SettingsEdits,
 } from "../presentation/settings";
-import type { ShellData, ShellIntents } from "../shell/data";
+import type { DesktopServer, ShellData, ShellIntents } from "../shell/data";
 import { cn } from "../lib/cn";
 import { activityTime, clockTime } from "../lib/time";
 import { ConnectProviders, engineProblem, ProviderRow } from "./EmptyStates";
+import { ChangeServer } from "./ServerAddress";
 import { Loading, Section } from "./SettingsSection";
 import { UsageSection } from "./UsageSection";
 import { Button } from "./ui/button";
@@ -53,6 +54,7 @@ type SettingsIntents = Pick<
   | "loadMoreTurns"
   | "retryTurns"
   | "signOut"
+  | "server"
 >;
 
 interface SettingsButtonProps {
@@ -172,6 +174,7 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
                 onStartPairing={intents.startPairing}
                 onRevoke={intents.revokeDevice}
               />
+              {intents.server !== undefined && <ServerSection server={intents.server} />}
               <BrowserSection onSignOut={intents.signOut} />
             </div>
           </Dialog.Popup>
@@ -659,6 +662,22 @@ export function SignOutDevice({
         {signOut === "failed" && t("settings.signOut.failed")}
       </p>
     </div>
+  );
+}
+
+/** In the desktop app, the server it talks to, and leaving it for another. */
+function ServerSection({ server }: { server: DesktopServer }) {
+  const { t } = useI18n();
+  return (
+    <Section title={t("settings.server")}>
+      <p className="font-mono text-sm break-all">{server.address}</p>
+      <ChangeServer
+        address={server.address}
+        onChange={server.forget}
+        paired
+        className="items-start"
+      />
+    </Section>
   );
 }
 

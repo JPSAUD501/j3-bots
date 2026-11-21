@@ -17,7 +17,7 @@ import { TEST_TLS } from "./testing/tls.ts";
 const LAN_ONLY: ReadonlyArray<InterfaceAddress> = [
   { interface: "lo", address: "127.0.0.1", internal: true },
   { interface: "wlan0", address: "192.168.1.20", internal: false },
-  { interface: "tailscale0", address: "100.101.102.103", internal: false },
+  { interface: "tailscale0", address: "100.72.9.41", internal: false },
 ];
 
 const withEnvironment = <A, E, R>(
