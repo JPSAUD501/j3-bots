@@ -28,6 +28,7 @@ import type {
   RoomId,
   WorkStep,
 } from "@j3-bots/contracts";
+import { PROTOCOL_VERSION } from "@j3-bots/contracts";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import {
   createContext,
@@ -84,9 +85,11 @@ import {
 } from "./notify";
 import { loadRasterizer, notificationIcon, systemTheme } from "./notificationIcon";
 import { deliverFile, reserveWindow } from "./openFile";
+import { useDesktopUpdate, useReportSaving } from "./appUpdate";
 import { desktop } from "./desktop";
 import { LinkedPairingCode, linkedCodeAfter } from "./pairingLink";
 import { makePlatform, signInUnencrypted } from "./platform";
+import { savesUnderWay } from "./savesUnderWay";
 
 let started: Promise<J3Client> | null = null;
 
@@ -183,6 +186,7 @@ function Screen({ children }: { children: ReactNode }) {
 function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
   const j3 = useJ3Client();
   const connection = useConnection();
+  const update = useDesktopUpdate();
   const pairing = useReadable(j3.pairing);
   const [linkedCode, setLinkedCode] = useState(use(LinkedPairingCode));
   const keptCode = linkedCodeAfter(linkedCode, connection);
@@ -228,7 +232,11 @@ function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
     case "incompatible":
       return (
         <Screen>
-          <Incompatible server={desktopServer} />
+          <Incompatible
+            server={desktopServer}
+            serverNewer={connection.serverProtocol > PROTOCOL_VERSION}
+            update={update}
+          />
         </Screen>
       );
     case "storage-failed":
@@ -380,6 +388,18 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   const [shown, setShown] = useState<EntryTarget | null>(null);
   const botSaves = useReadable(j3.botSaves);
   const memorySaves = useReadable(j3.memorySaves);
+  // In the desktop app, a restart into an update waits until no save is under way.
+  const update = useDesktopUpdate();
+  useReportSaving(
+    savesUnderWay({
+      settings: { profile: profileSave, notifications: notificationsSave },
+      bots: botSaves,
+      memory: memorySaves,
+      actions,
+      drafts,
+      draftsNotSaved,
+    }),
+  );
   const openMemoryKey =
     memoryView === null ? null : memorySaveKey(memoryScopeOf(memoryView), memoryView.path);
   // What is open now, for a save that ends after its form closed.
@@ -853,6 +873,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
         return result._tag !== "failed";
       }),
     ...(desktopServer === undefined ? {} : { server: desktopServer }),
+    ...(update === undefined ? {} : { update }),
   };
 
   return (

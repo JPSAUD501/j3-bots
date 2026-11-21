@@ -1,0 +1,106 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: Release desktop
+
+# Builds the desktop app's packages when a version tag is pushed, and uploads
+# them with electron-updater's feed files to a draft GitHub release for that
+# tag. A maintainer reads the draft and publishes it: installed apps are
+# offered only a published release. See
+# docs/operations/releasing-the-desktop-app.md.
+#
+# Only a pushed `v*` tag runs it, never a pull request, so no code from a fork
+# runs with the write permission below. It uses the run's own GITHUB_TOKEN and
+# no other secret: the builds are unsigned.
+on:
+  push:
+    tags: ["v*"]
+
+# Creating the draft release and uploading to it. This workflow only; every
+# other one reads.
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  draft:
+    name: Draft release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      # The tag names the version the packages carry: v1.2.3 or v1.2.3-beta.1.
+      - name: Version from the tag
+        id: version
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::$GITHUB_REF_NAME is not v followed by a semver version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # Made once, before the package jobs, so they all upload to the same
+      # draft; electron-builder uploads to a draft whose tag matches.
+      - name: Create the draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            echo "A release for $GITHUB_REF_NAME exists already; the packages are uploaded to it if it is a draft."
+          else
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
+              --title "J3 Bots ${GITHUB_REF_NAME#v}" \
+              --notes "Unsigned builds. macOS and Windows warn before opening an unsigned app, and a Mac does not update itself until builds are signed. Linux packages need no signature."
+          fi
+
+  package:
+    name: Package (${{ matrix.os }})
+    needs: draft
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            targets: --linux --x64
+          - os: macos-15
+            targets: --mac --x64 --arm64
+          - os: windows-2025
+            targets: --win --x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
+        with:
+          node-version-file: package.json
+          run-install: true
+
+      - name: Build the web client and the app
+        run: |
+          vp run --filter @j3-bots/web build
+          vp run --filter @j3-bots/desktop build
+
+      # electron-builder signs nothing: no certificate is given, and on macOS
+      # it would otherwise look for one in the keychain.
+      - name: Package and upload to the draft
+        working-directory: apps/desktop
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          VERSION: ${{ needs.draft.outputs.version }}
+          TARGETS: ${{ matrix.targets }}
+        run: vp exec -- electron-builder $TARGETS --publish always -c.extraMetadata.version="$VERSION"

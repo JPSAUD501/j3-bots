@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The desktop app's packages: AppImage and deb on Linux, dmg and zip on macOS,
+# an NSIS installer on Windows (the targets T3 Code builds). The app is
+# unsigned for now, and the macOS and Windows artifacts say so in their names;
+# see docs/operations/releasing-the-desktop-app.md.
+#
+# Names and ids are development placeholders until open question 6 settles
+# them; `appId` matches `APP_ID` in src/identity.ts.
+
+appId: dev.j3bots.desktop
+productName: J3 Bots
+copyright: Copyright © J3 Bots contributors
+# The workspace's package name, `@j3-bots/desktop`, would name the deb and
+# the updater's cache.
+extraMetadata:
+  name: j3-bots
+
+directories:
+  output: release
+
+# Everything the app runs is bundled into dist (`vp pack`), so it carries no
+# node_modules.
+files:
+  - dist/**
+  - package.json
+# The web client's build, which the main process reads beside the app's asar.
+extraResources:
+  - from: ../web/dist
+    to: web/dist
+npmRebuild: false
+
+# The update feed: draft releases on GitHub, which a maintainer publishes.
+publish:
+  provider: github
+  owner: JPSAUD501
+  repo: j3-bots
+  releaseType: draft
+
+# The static AppImage runtime, so a system with only FUSE 3 (Ubuntu 24.04 and
+# later) needs no libfuse2, as T3 Code pins it.
+toolsets:
+  appimage: "1.0.3"
+linux:
+  target: [AppImage, deb]
+  executableName: j3-bots
+  category: Utility
+  synopsis: Persistent AI teammates on your own machine
+  maintainer: J3 Bots contributors
+# electron-updater replaces an AppImage in place only when its name has no
+# x.y.z version; with one, it leaves a second file beside the first.
+appImage:
+  artifactName: J3-Bots-${arch}.${ext}
+deb:
+  artifactName: j3-bots_${version}_${arch}.${ext}
+
+mac:
+  target: [dmg, zip]
+  category: public.app-category.productivity
+  # Ad hoc: no Developer ID, which Apple Silicon still needs to run the app at all.
+  identity: "-"
+  artifactName: J3-Bots-${version}-${arch}-unsigned.${ext}
+
+win:
+  target: nsis
+  artifactName: J3-Bots-Setup-${version}-unsigned.${ext}

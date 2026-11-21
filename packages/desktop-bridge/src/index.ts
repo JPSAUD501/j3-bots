@@ -116,6 +116,47 @@ export type OpenResult = typeof OpenResult.Type;
 /** Whether the system has a network (Electron's `net.isOnline`). */
 export const NetworkState = Schema.Struct({ online: Schema.Boolean });
 export type NetworkState = typeof NetworkState.Type;
+/** A version of the app, as electron-builder stamps it: semver. */
+export const AppVersion = Schema.String.check(
+  Schema.isMaxLength(64),
+  Schema.isPattern(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/),
+);
+
+/**
+ * Where updating the app stands. `unavailable`: this build does not update
+ * itself (a development build, or one the platform would not let replace
+ * itself). `idle`: no check is under way; `checked` once one found nothing
+ * newer. `available` and `downloading`: a newer version is on its way, in the
+ * background. `downloaded`: it is ready, and restarting into it is `offered`,
+ * or was asked for and waits until no save is under way (`waiting-for-save`).
+ * `installing`: the app is restarting into it. `failed`: the last check or
+ * download failed; the next check tries again.
+ */
+export const UpdatePhase = Schema.Union([
+  Schema.TaggedStruct("unavailable", {}),
+  Schema.TaggedStruct("idle", { checked: Schema.Boolean }),
+  Schema.TaggedStruct("checking", {}),
+  Schema.TaggedStruct("available", { version: AppVersion }),
+  Schema.TaggedStruct("downloading", {
+    version: AppVersion,
+    percent: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
+  }),
+  Schema.TaggedStruct("downloaded", {
+    version: AppVersion,
+    restart: Schema.Literals(["offered", "waiting-for-save"]),
+  }),
+  Schema.TaggedStruct("installing", { version: AppVersion }),
+  Schema.TaggedStruct("failed", {}),
+]);
+export type UpdatePhase = typeof UpdatePhase.Type;
+
+/** The app's own version, and where updating it stands. */
+export const UpdateStatus = Schema.Struct({ current: AppVersion, phase: UpdatePhase });
+export type UpdateStatus = typeof UpdateStatus.Type;
+
+/** Whether a save is under way in the page, as it reports each change. */
+export const SavingReport = Schema.Struct({ saving: Schema.Boolean });
+export type SavingReport = typeof SavingReport.Type;
 
 /** A function, called only to have its answer decoded. */
 const Callable = Schema.declare(
@@ -136,5 +177,10 @@ export const HostedBridge = Schema.Struct({
   networkStatus: Callable,
   onResumed: Callable,
   relaunch: Callable,
+  updateStatus: Callable,
+  onUpdate: Callable,
+  checkForUpdates: Callable,
+  restartToUpdate: Callable,
+  reportSaving: Callable,
 });
 export type HostedBridge = typeof HostedBridge.Type;

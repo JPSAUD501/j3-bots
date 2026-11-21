@@ -492,6 +492,9 @@ const sentences = {
   "gate.incompatible.desktopTitle": "Este app não combina com o servidor",
   "gate.incompatible.desktopBody":
     "O servidor do J3 Bots em {address} fala uma versão diferente da deste app. Atualize o app ou o servidor para que combinem, ou troque para outro servidor.",
+  "gate.incompatible.updateTitle": "Este app precisa de uma atualização",
+  "gate.incompatible.updateBody":
+    "O servidor do J3 Bots em {address} é mais novo que este app. Atualize o app para usá-lo, ou troque para outro servidor.",
   "gate.storage.title": "Este navegador não guarda o acesso",
   "gate.storage.body":
     "O J3 Bots guarda o acesso deste dispositivo nos dados de site do navegador, e o navegador recusou. Permita dados de site para esta página e tente de novo.",
@@ -665,6 +668,18 @@ const sentences = {
   "settings.thisDevice": "Este dispositivo",
   "settings.thisDevice.unencrypted":
     "Este computador não tinha um chaveiro que o J3 Bots pudesse usar quando foi pareado, então o acesso deste dispositivo fica guardado sem criptografia. Quem puder ler seus arquivos aqui pode usá-lo. Pareie este dispositivo de novo depois de desbloquear o chaveiro do sistema para guardá-lo com criptografia.",
+  "update.version": "J3 Bots {version}",
+  "update.unavailable": "Esta versão não se atualiza sozinha.",
+  "update.upToDate": "Está na versão mais recente.",
+  "update.checking": "Procurando atualizações…",
+  "update.downloading": "Baixando a versão {version}… {percent}",
+  "update.ready": "A versão {version} está pronta.",
+  "update.waiting": "Reiniciando assim que suas alterações forem salvas…",
+  "update.installing": "Reiniciando…",
+  "update.failed": "Não deu para obter a versão mais recente. O J3 Bots tenta de novo mais tarde.",
+  "update.check": "Procurar atualizações",
+  "update.retry": "Tentar de novo",
+  "update.restart": "Reiniciar para atualizar",
   "settings.signOut": "Sair neste dispositivo",
   "settings.signOut.hint": "Sair encerra o acesso deste dispositivo e apaga o que ele guarda aqui.",
   "settings.signOut.pending": "Saindo…",

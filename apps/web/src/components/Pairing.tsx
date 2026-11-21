@@ -5,7 +5,8 @@ import type { PairingFailure, PairResult, UnpairedReason } from "@j3-bots/client
 import type { PairingCode } from "@j3-bots/contracts";
 import { clockTime } from "@j3-bots/client-runtime/presentation";
 import { useI18n, usePresentation } from "../app/context";
-import type { DesktopServer } from "../shell/data";
+import type { DesktopServer, DesktopUpdate } from "../shell/data";
+import { AppUpdate } from "./AppUpdate";
 import { Centered, Ensemble, Heading } from "./EmptyStates";
 import { ChangeServer } from "./ServerAddress";
 import { Button } from "./ui/button";
@@ -236,10 +237,37 @@ export function Pairing({
  * The server speaks another version of the protocol: this page is older or
  * newer than it. A browser reloads to get the server's own page; the desktop
  * app carries its page, so the app or the server needs updating, or the app
- * another server.
+ * another server. When the server is the newer one and the app updates
+ * itself, the update takes the place of trying again: only it can help.
  */
-export function Incompatible({ server }: { server?: DesktopServer | undefined }) {
+export function Incompatible({
+  server,
+  serverNewer = false,
+  update,
+}: {
+  server?: DesktopServer | undefined;
+  /** The server speaks a newer version than this page. */
+  serverNewer?: boolean;
+  update?: DesktopUpdate | undefined;
+}) {
   const { t } = useI18n();
+  if (
+    server !== undefined &&
+    serverNewer &&
+    update !== undefined &&
+    update.status.phase._tag !== "unavailable"
+  ) {
+    return (
+      <Centered>
+        <Heading
+          title={t("gate.incompatible.updateTitle")}
+          body={t("gate.incompatible.updateBody", { address: server.address })}
+        />
+        <AppUpdate update={update} className="items-center text-center" />
+        <ChangeServer address={server.address} onChange={server.forget} paired />
+      </Centered>
+    );
+  }
   if (server !== undefined) {
     return (
       <Centered>

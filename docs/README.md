@@ -38,6 +38,7 @@ Decisions marked **Proposed** are recommendations waiting for the project owner'
 ## Operations
 
 - [Running on a Raspberry Pi](operations/running-on-a-pi.md): install, pairing, updates, logs and backups for the server as a user service.
+- [Releasing the desktop app](operations/releasing-the-desktop-app.md): cutting a release, what the release workflow may do, signing, and trying an update locally.
 
 ## Engineering
 
