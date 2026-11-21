@@ -45,8 +45,8 @@ import {
   cardAction,
   createJ3Client,
   memorySaveKey,
+  refusedWith,
   retryAction,
-  roomStopAction,
   targetKey,
   type ActionState,
   type BotChanges,
@@ -57,7 +57,11 @@ import {
   type Loaded,
   type MemoryEdit,
 } from "@j3-bots/client-runtime";
-import { handoffPeer, type RoomFormMode } from "@j3-bots/client-runtime/presentation";
+import {
+  handoffPeer,
+  type RoomFormMode,
+  roomStopFailed,
+} from "@j3-bots/client-runtime/presentation";
 import { notificationText } from "@j3-bots/i18n";
 import { useI18n } from "../app/context";
 import { ConnectionBanner } from "../components/ConnectionBanner";
@@ -508,7 +512,6 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
     draftNotSaved: (asked) => draftsNotSaved.has(targetKey(asked)),
     submitting: (entryId) =>
       submitting(actions.get(cardAction(entryId))) || submitting(actions.get(retryAction(entryId))),
-    stoppingRoom: (roomId) => submitting(actions.get(roomStopAction(roomId))),
     workSteps: (entryId) => steps.get(entryId) ?? null,
     routines: (botId) => (botId === detailsBotId ? loadedList(routines) : null),
     files: (botId) => (botId === detailsBotId ? loadedList(files) : null),
@@ -691,12 +694,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
     }
     return j3.updateRoom(roomId, { archived: false }).then((result) => {
       if (result._tag === "done" || !stillPaired()) return;
-      const { failure } = result;
-      if (
-        failure._tag === "refused" &&
-        failure.error._tag === "Invalid" &&
-        failure.error.reason === "room-members"
-      ) {
+      if (refusedWith(result, "room-members")) {
         askForMembers();
       } else {
         say(t("room.unarchiveFailed", { name: room.name }));
@@ -708,14 +706,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
     // An answer too long to reach the bot leaves the card open, with what was typed, to shorten.
     answerQuestion: (entryId, answers) =>
       void j3.answerCard(entryId, { _tag: "question", answers }).then((result) => {
-        if (
-          result._tag === "failed" &&
-          result.failure._tag === "refused" &&
-          result.failure.error._tag === "Invalid" &&
-          result.failure.error.reason === "answer-length"
-        ) {
-          say(t("question.tooLong"));
-        }
+        if (refusedWith(result, "answer-length")) say(t("question.tooLong"));
       }),
     dismissQuestion: (entryId) => void j3.answerCard(entryId, { _tag: "dismiss" }),
     decideApproval: (entryId, decision) =>
@@ -784,15 +775,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
     stopRoom: (roomId) => {
       const name = roomOf(roomId)?.name ?? "";
       void j3.stopRoom(roomId).then((result) => {
-        // An archived room shows so, and its archiving stopped its work.
-        const archived =
-          result._tag === "failed" &&
-          result.failure._tag === "refused" &&
-          result.failure.error._tag === "Conflict" &&
-          result.failure.error.reason === "room-archived";
-        if (result._tag === "failed" && !archived && stillPaired()) {
-          say(t("room.stopFailed", { name }));
-        }
+        if (roomStopFailed(result) && stillPaired()) say(t("room.stopFailed", { name }));
       });
     },
     createBot: (name, primary) =>

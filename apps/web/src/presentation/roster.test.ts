@@ -25,6 +25,7 @@ const room = (lastEntry: EntryPreview | null): RosterItem => ({
     hopLimit: 3,
     pinned: false,
     createdAt: at("2026-11-01T00:00:00Z"),
+    work: "none",
   },
   lastEntry,
   lastActivityAt: lastEntry?.createdAt ?? null,

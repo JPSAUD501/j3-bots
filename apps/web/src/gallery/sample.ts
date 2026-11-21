@@ -186,6 +186,8 @@ export function sampleTeam(now: DateTime.Utc) {
     hopLimit: 4,
     pinned: false,
     createdAt: ago(60 * 24 * 7),
+    // Scout is working on it.
+    work: "running",
   };
 
   const operator = { _tag: "operator" } as const;

@@ -289,7 +289,7 @@ export const en = {
   "room.stop": "Stop the work",
   "room.stop.title": "Stop the work in {name}?",
   "room.stop.body":
-    "The bots end what they are doing for {name}, and the work they left running for it. What they do in their conversations with you goes on.",
+    "The bots end what they are doing for {name}, and the work they left running for it. Anything else they’re doing goes on.",
   "room.stop.cancel": "Keep going",
   "room.stopFailed": "The work in {name} wasn’t stopped. Try again.",
   "room.composerArchived": "{name} is archived, so it takes no messages.",

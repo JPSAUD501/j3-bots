@@ -64,6 +64,7 @@ export {
   orderRoster,
   roomStop,
   type RoomStop,
+  roomStopFailed,
   rosterKeyOf,
   rosterKeyText,
 } from "./roster.ts";

@@ -40,8 +40,9 @@ export {
   cardAction,
   type IntentFailure,
   type IntentResult,
+  type RefusalReason,
+  refusedWith,
   retryAction,
-  roomStopAction,
   stopAction,
 } from "./intents/Actions.ts";
 export { type SignOutResult } from "./intents/SignOut.ts";

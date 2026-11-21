@@ -3,7 +3,12 @@ import { Dialog } from "@base-ui/react/dialog";
 import type { Bot, BotId } from "@j3-bots/contracts";
 import { CheckIcon, XIcon } from "lucide-react";
 import { useEffect, useId, useState } from "react";
-import type { IntentFailure, RoomChanges, RoomDraft } from "@j3-bots/client-runtime";
+import {
+  refusedWith,
+  type IntentFailure,
+  type RoomChanges,
+  type RoomDraft,
+} from "@j3-bots/client-runtime";
 import {
   blankRoomForm,
   followRoom,
@@ -186,10 +191,7 @@ export function RoomForm({
   const choices = bots.toSorted((a, b) => a.profile.name.localeCompare(b.profile.name));
 
   const name = room?.name ?? "";
-  const refusedMembers =
-    failure?._tag === "refused" &&
-    failure.error._tag === "Invalid" &&
-    failure.error.reason === "room-members";
+  const refusedMembers = refusedWith(failure, "room-members");
   const failureText = gone
     ? t("roomForm.gone", { name })
     : failure === null || refusedMembers

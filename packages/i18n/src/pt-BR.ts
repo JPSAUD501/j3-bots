@@ -290,7 +290,7 @@ const sentences = {
   "room.stop": "Parar o trabalho",
   "room.stop.title": "Parar o trabalho em {name}?",
   "room.stop.body":
-    "Os bots encerram o que estão fazendo para {name}, e o trabalho que deixaram rodando para ela. O que eles fazem nas conversas com você continua.",
+    "Os bots encerram o que estão fazendo para {name}, e o trabalho que deixaram rodando para ela. O resto do que estão fazendo continua.",
   "room.stop.cancel": "Deixar continuar",
   "room.stopFailed": "O trabalho em {name} não foi parado. Tente de novo.",
   "room.composerArchived": "{name} está arquivada, então não recebe mensagens.",

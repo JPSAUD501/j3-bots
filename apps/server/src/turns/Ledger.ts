@@ -22,6 +22,7 @@ import * as SqlSchema from "effect/sql/SqlSchema";
 import type * as Statement from "effect/sql/Statement";
 import { Entries } from "../entries/Entries.ts";
 import { Ids } from "../Ids.ts";
+import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { json, Time, timeText } from "../persistence/columns.ts";
 import { notices, operatorWroteSql } from "./notices.ts";
 import { fromBeforeFreshStartSql } from "./rotationRequests.ts";
@@ -319,6 +320,7 @@ export const layer = Layer.effect(
     const sql = yield* SqlClient.SqlClient;
     const entries = yield* Entries;
     const ids = yield* Ids;
+    const changes = yield* ChangeLog;
     const { notify } = notices(sql, entries);
 
     const findRow = SqlSchema.findOneOption({
@@ -328,6 +330,19 @@ export const layer = Layer.effect(
         sql`SELECT ${sql.literal(DISPATCH_COLUMNS)} FROM dispatches WHERE id = ${id}`,
     });
     const find = (dispatchId: DispatchRowId) => findRow(dispatchId).pipe(Effect.orDie);
+
+    /**
+     * The roster is told about the room a dispatch was for: its work may have
+     * ended with the dispatch's (`RoomStates`).
+     */
+    const roomWorkChanged = Effect.fn("Ledger.roomWorkChanged")(function* (
+      dispatchId: DispatchRowId,
+    ) {
+      const dispatch = yield* find(dispatchId);
+      if (Option.isSome(dispatch) && dispatch.value.audience_room_id !== null) {
+        yield* changes.touch({ _tag: "room", roomId: dispatch.value.audience_room_id });
+      }
+    });
 
     const wakeRows = SqlSchema.findAll({
       Request: DispatchRowId,
@@ -770,6 +785,7 @@ export const layer = Layer.effect(
     ) {
       const at = yield* now;
       const sources = yield* sourcesOf(dispatchId);
+      yield* roomWorkChanged(dispatchId);
       if (after._tag !== "cancelled") yield* cancelStoppedHandoffs(dispatchId, at);
       switch (after._tag) {
         case "pending":
@@ -1087,6 +1103,7 @@ export const layer = Layer.effect(
       `;
       yield* refreshNotices(dispatchId);
       yield* refreshMessages(yield* sourcesOf(dispatchId));
+      yield* roomWorkChanged(dispatchId);
     }, Effect.orDie);
 
     const closeDelivery = Effect.fn("Ledger.closeDelivery")(function* (
@@ -1201,11 +1218,20 @@ export const layer = Layer.effect(
 
     const cancelWakes = Effect.fn("Ledger.cancelWakes")(function* (wakeIds: ReadonlyArray<string>) {
       if (wakeIds.length === 0) return;
-      const sources = yield* sql<{ readonly id: string; readonly source_entry_id: string | null }>`
+      const sources = yield* sql<{
+        readonly id: string;
+        readonly source_entry_id: string | null;
+        readonly audience_room_id: string | null;
+      }>`
         UPDATE wakes SET status = 'cancelled', updated_at = ${yield* now}
         WHERE ${sql.in("id", wakeIds)} AND status = 'pending'
-        RETURNING id, source_entry_id
+        RETURNING id, source_entry_id, audience_room_id
       `;
+      // The rooms they waited for may have no work left (`RoomStates`).
+      const rooms = new Set(sources.flatMap((row) => row.audience_room_id ?? []));
+      for (const roomId of rooms) {
+        yield* changes.touch({ _tag: "room", roomId: RoomId.make(roomId) });
+      }
       if (sources.length > 0) {
         yield* holdUnread(
           sql.in(

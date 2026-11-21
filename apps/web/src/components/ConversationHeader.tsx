@@ -7,7 +7,14 @@ import {
   PanelRightIcon,
   SquareIcon,
 } from "lucide-react";
-import { useEffect, useEffectEvent, useRef, type Ref } from "react";
+import {
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+  type RefObject,
+} from "react";
 import { canStop, roomStop } from "@j3-bots/client-runtime/presentation";
 import { useBots, useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
@@ -21,12 +28,7 @@ import { Confirm } from "./ui/confirm";
 interface ConversationHeaderProps {
   readonly subject:
     | { readonly _tag: "bot"; readonly bot: Bot }
-    | {
-        readonly _tag: "room";
-        readonly room: Room;
-        /** The operator's Stop of the room's work is on its way to the server. */
-        readonly stopping: boolean;
-      };
+    | { readonly _tag: "room"; readonly room: Room };
   readonly detailsOpen: boolean;
   readonly onToggleDetails: () => void;
   /** Phones only: back to the roster. */
@@ -36,7 +38,8 @@ interface ConversationHeaderProps {
   /** Brings the card a waiting bot needs answered into view. */
   readonly onGoToWaiting: (entryId: EntryId) => void;
   readonly stopShortcut: { readonly label: string; readonly aria: string };
-  readonly titleRef?: Ref<HTMLButtonElement>;
+  /** The name's button, which opens the details. */
+  readonly titleRef?: RefObject<HTMLButtonElement | null>;
   /**
    * Told the status line at each change of state, for screen readers. The
    * region that speaks it lies outside the conversation, so a dialog over the
@@ -82,8 +85,28 @@ export function ConversationHeader({
       ? subject.bot.state.entryId
       : null;
   const stoppable = subject._tag === "bot" && canStop(subject.bot);
-  const roomStopping =
-    subject._tag === "room" ? roomStop(subject.room, bots.values(), subject.stopping) : "hidden";
+  const roomStopping = subject._tag === "room" ? roomStop(subject.room) : "hidden";
+
+  // A Stop goes away once the work it ends is over. When it held focus, focus
+  // moves to the details toggle beside it or, on a phone, where that is
+  // hidden, to the name, which opens the details there.
+  const detailsToggle = useRef<HTMLButtonElement>(null);
+  const stopLeft = useRef(false);
+  const stopRef = useCallback((element: HTMLButtonElement | null) => {
+    if (element === null) return;
+    // React runs this before it takes the button out of the page, while focus is still on it.
+    return () => {
+      if (element === document.activeElement) stopLeft.current = true;
+    };
+  }, []);
+  useLayoutEffect(() => {
+    if (!stopLeft.current) return;
+    stopLeft.current = false;
+    const active = document.activeElement;
+    if (active !== null && active !== document.body) return;
+    detailsToggle.current?.focus();
+    if (document.activeElement !== detailsToggle.current) titleRef?.current?.focus();
+  });
 
   // The announcement is fixed at each change of state; the first state is not announced.
   const state = subject._tag === "bot" ? stateOf(subject.bot) : null;
@@ -175,7 +198,7 @@ export function ConversationHeader({
           </Button>
         )}
         {stoppable && (
-          <Button size="sm" onClick={onStop} aria-keyshortcuts={stopShortcut.aria}>
+          <Button ref={stopRef} size="sm" onClick={onStop} aria-keyshortcuts={stopShortcut.aria}>
             <SquareIcon className="size-3 fill-current" aria-hidden />
             {t("conversation.stop")}
             <Kbd className="pointer-coarse:hidden">{stopShortcut.label}</Kbd>
@@ -184,7 +207,7 @@ export function ConversationHeader({
         {roomStopping !== "hidden" && (
           // One button through the whole Stop, so focus stays on it once the question closes.
           <Confirm
-            trigger={<Button size="sm" aria-disabled={roomStopping === "stopping"} />}
+            trigger={<Button ref={stopRef} size="sm" aria-disabled={roomStopping === "stopping"} />}
             title={t("room.stop.title", { name })}
             body={t("room.stop.body", { name })}
             cancel={t("room.stop.cancel")}
@@ -197,6 +220,7 @@ export function ConversationHeader({
           </Confirm>
         )}
         <Button
+          ref={detailsToggle}
           variant="ghost-muted"
           size="icon"
           onClick={onToggleDetails}

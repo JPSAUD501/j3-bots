@@ -316,9 +316,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
           // One header per conversation: moving to another announces nothing.
           key={rosterKeyText(key)}
           subject={
-            item._tag === "bot"
-              ? { _tag: "bot", bot: item.bot }
-              : { _tag: "room", room: item.room, stopping: data.stoppingRoom(item.room.id) }
+            item._tag === "bot" ? { _tag: "bot", bot: item.bot } : { _tag: "room", room: item.room }
           }
           detailsOpen={detailsOpen}
           onToggleDetails={toggleDetails}

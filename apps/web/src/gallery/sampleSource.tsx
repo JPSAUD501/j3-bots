@@ -326,8 +326,8 @@ function sampleIntents({ get, update }: Store): ShellIntents {
     // The sample's members work only for the room, so its Stop ends whatever they run.
     stopRoom: (roomId) =>
       update((s) => {
-        const room = s.roster.find((i) => i._tag === "room" && i.room.id === roomId);
-        const members = room?._tag === "room" ? room.room.members : [];
+        const found = s.roster.find((i) => i._tag === "room" && i.room.id === roomId);
+        const members = found?._tag === "room" ? found.room.members : [];
         return members.reduce(
           (next, botId) =>
             updateBot(next, botId, (bot) =>
@@ -335,7 +335,9 @@ function sampleIntents({ get, update }: Store): ShellIntents {
                 ? setState({ _tag: "idle" })(bot)
                 : bot,
             ),
-          s,
+          updateRoom(s, roomId, (room) =>
+            room.status === "active" ? { ...room, work: "none" } : room,
+          ),
         );
       }),
     setRoutineEnabled: (routineId, enabled) =>
@@ -466,6 +468,7 @@ function sampleIntents({ get, update }: Store): ShellIntents {
                 status: "active",
                 members: room.members,
                 hostId: room.hostId,
+                work: "none",
               },
         ),
       );
@@ -504,8 +507,6 @@ function toData(state: State): ShellData {
     draftsFailed: false,
     draftNotSaved: () => false,
     submitting: (entryId) => state.inFlight.has(entryId),
-    // The sample's Stop takes effect at once.
-    stoppingRoom: () => false,
     workSteps: (entryId) => state.workSteps[entryId] ?? null,
     routines: (botId) => state.routines[botId] ?? [],
     files: (botId) => state.files[botId] ?? [],

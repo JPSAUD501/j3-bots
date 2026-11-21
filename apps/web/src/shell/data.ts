@@ -72,8 +72,6 @@ export interface ShellData {
   readonly draftNotSaved: (target: EntryTarget) => boolean;
   /** Whether the operator's answer to a card is still on its way to the server. */
   readonly submitting: (entryId: EntryId) => boolean;
-  /** Whether the operator's Stop of the room's work is still on its way to the server. */
-  readonly stoppingRoom: (roomId: RoomId) => boolean;
   /** A work fold's steps, or null while they load. */
   readonly workSteps: (entryId: EntryId) => ReadonlyArray<WorkStep> | null;
   /** Null while they load. */

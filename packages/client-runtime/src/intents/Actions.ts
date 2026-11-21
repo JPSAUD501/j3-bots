@@ -31,6 +31,22 @@ export type IntentResult<A = void> =
   | { readonly _tag: "done"; readonly value: A }
   | { readonly _tag: "failed"; readonly failure: IntentFailure };
 
+/** A reason the server gives when it refuses a command as it stands (`Conflict`, `Invalid`). */
+export type RefusalReason = Extract<CommandError, { readonly reason: string }>["reason"];
+
+/** Whether the server refused the command for `reason`. */
+export const refusedWith = (
+  outcome: IntentResult<unknown> | IntentFailure | null,
+  reason: RefusalReason,
+): boolean => {
+  const failure = outcome?._tag === "failed" ? outcome.failure : outcome;
+  return (
+    failure?._tag === "refused" &&
+    failure.error._tag !== "NotFound" &&
+    failure.error.reason === reason
+  );
+};
+
 /** The result of running a command, for a UI that shows outcomes rather than causes. */
 export const intentResult = <A>(exit: Exit.Exit<A, CommandError | NotPaired>): IntentResult<A> => {
   if (Exit.isSuccess(exit)) return { _tag: "done", value: exit.value };

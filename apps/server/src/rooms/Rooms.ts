@@ -25,6 +25,7 @@ import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { Flag, Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { SettingsStore } from "../settings/SettingsStore.ts";
+import { RoomStates } from "../turns/RoomStates.ts";
 import { RoomWork } from "./RoomWork.ts";
 
 const RoomRow = Schema.Struct({
@@ -108,6 +109,7 @@ export const layer = Layer.effect(
     const receipts = yield* CommandReceipts;
     const settings = yield* SettingsStore;
     const work = yield* RoomWork;
+    const states = yield* RoomStates;
     const ids = yield* Ids;
     const attachments = yield* Attachments;
 
@@ -138,7 +140,9 @@ export const layer = Layer.effect(
       rows: ReadonlyArray<typeof RoomRow.Type>,
     ) {
       if (rows.length === 0) return [];
-      const members = yield* memberRows(rows.map((row) => row.id));
+      const roomIds = rows.map((row) => row.id);
+      const members = yield* memberRows(roomIds);
+      const working = yield* states.workOf(roomIds);
       return yield* Effect.forEach(rows, (row) =>
         decodeRoom({
           id: row.id,
@@ -149,7 +153,9 @@ export const layer = Layer.effect(
           status: row.status,
           members: members.filter((member) => member.room_id === row.id).map((m) => m.bot_id),
           hostId: row.host_bot_id,
-          ...(row.archived_at === null ? {} : { archivedAt: row.archived_at }),
+          ...(row.archived_at === null
+            ? { work: working.get(row.id) ?? "none" }
+            : { archivedAt: row.archived_at }),
         }),
       );
     }, Effect.orDie);
@@ -334,6 +340,8 @@ export const layer = Layer.effect(
           // An archived room's work was stopped when it was archived.
           if (room.status === "archived") return yield* new Conflict({ reason: "room-archived" });
           yield* work.stop(room.id);
+          // The roster shows the room's work stopping, or already ended.
+          yield* changes.touch({ _tag: "room", roomId: room.id });
         }),
       });
     });
