@@ -82,15 +82,10 @@ export const layer = Layer.mergeAll(BotTools.layer, Turns.layer).pipe(
   Layer.provideMerge(Observer.layer),
   Layer.provideMerge(Layer.mergeAll(Ledger.layer, Wakes.layer, WorkSteps.layer)),
   Layer.provideMerge(
-    Layer.mergeAll(
-      MemoryFiles.layer,
-      Entries.layer,
-      Attachments.layer,
-      Devices.layer,
-      BotStore.layer,
-    ),
+    Layer.mergeAll(MemoryFiles.layer, Entries.layer, Attachments.layer, BotStore.layer),
   ),
   Layer.provideMerge(Layer.mergeAll(BotStates.layer, Presence.layer)),
+  Layer.provideMerge(Devices.layer),
   Layer.provideMerge(
     Layer.mergeAll(
       Ids.layer,

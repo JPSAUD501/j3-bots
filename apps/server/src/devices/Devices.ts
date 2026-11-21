@@ -63,6 +63,8 @@ export class Devices extends Context.Service<
     readonly list: (current: DeviceId) => Effect.Effect<ReadonlyArray<Device>>;
     /** How many devices are paired and not revoked. */
     readonly pairedCount: Effect.Effect<number>;
+    /** The devices paired and not revoked, oldest first. */
+    readonly paired: Effect.Effect<ReadonlyArray<DeviceId>>;
   }
 >()("@j3-bots/server/devices/Devices") {}
 
@@ -148,6 +150,11 @@ export const layer = Layer.effect(
       Effect.orDie,
     );
 
-    return Devices.of({ startPairing, pair, list, pairedCount });
+    const paired = deviceRows(undefined).pipe(
+      Effect.map((rows) => rows.map((row) => row.id)),
+      Effect.orDie,
+    );
+
+    return Devices.of({ startPairing, pair, list, pairedCount, paired });
   }),
 ).pipe(Layer.provide([Digest.layerWebCrypto, SecureRandom.layerWebCrypto]));
