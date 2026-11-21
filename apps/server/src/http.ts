@@ -27,8 +27,10 @@ import { Attachments } from "./attachments/Attachments.ts";
 import { DeviceAuth } from "./auth/DeviceAuth.ts";
 import { readBody, readText } from "./body.ts";
 import { Devices } from "./devices/Devices.ts";
+import * as Webhook from "./routines/webhook.ts";
 import * as Rpc from "./rpc/handlers.ts";
 import * as RpcSocket from "./RpcSocket.ts";
+import * as Ports from "./system/Ports.ts";
 import * as WebClient from "./web/WebClient.ts";
 
 /** 200 once the server is serving, which is after the database is migrated. */
@@ -165,7 +167,15 @@ const download = HttpRouter.add(
 );
 
 /** The routes outside the RPC socket. */
-export const routes = Layer.mergeAll(health, serverInfo, socketTicket, pair, upload, download);
+export const routes = Layer.mergeAll(
+  health,
+  serverInfo,
+  socketTicket,
+  pair,
+  upload,
+  download,
+  Webhook.route,
+);
 
 /** Every route, the RPC socket and the web client: what clients are served. */
 export const app = Layer.mergeAll(
@@ -173,3 +183,12 @@ export const app = Layer.mergeAll(
   RpcSocket.layer(Rpc.ServedRpcs, Rpc.handlers),
   WebClient.layer,
 );
+
+/**
+ * `app` on `server`, with a webhook's secret left out of the request log and
+ * of any trace (`Ports.serve`).
+ */
+export const serve = <S, SE, SR>(
+  server: Layer.Layer<S, SE, SR>,
+  options: { readonly logAddress: boolean },
+) => Ports.serve(app, server, { ...options, redactPath: Webhook.redactPath });

@@ -12,20 +12,17 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { ServerConfig } from "../config.ts";
 import { Devices } from "../devices/Devices.ts";
 import * as Home from "../home/Home.ts";
-import { Listener } from "../listener.ts";
 import * as Ports from "../system/Ports.ts";
 import * as TestDomain from "../testing/domain.ts";
 import * as WebClient from "../web/WebClient.ts";
 import * as AdminClient from "./AdminClient.ts";
 import * as AdminSocket from "./AdminSocket.ts";
 
-const listener = Layer.succeed(
-  Listener,
-  Listener.of({ scheme: "http", address: "0.0.0.0", port: 3737, names: [] }),
-);
-
-/** The admin socket of a server holding the test home, with the server's web client decision. */
-const adminServer = AdminSocket.layer.pipe(Layer.provide(listener), Layer.provide(Home.layer));
+/**
+ * The admin socket of a server holding the test home, with the server's web
+ * client decision and the test domain's listener.
+ */
+const adminServer = AdminSocket.layer.pipe(Layer.provide(Home.layer));
 
 it.layer(AdminClient.layer.pipe(Layer.provideMerge(TestDomain.layer)))("admin socket", (it) => {
   it.effect("pairs a first device through the running server, and only then", () =>

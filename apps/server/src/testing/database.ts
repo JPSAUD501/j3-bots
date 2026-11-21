@@ -7,6 +7,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import { ServerConfig, type ServerConfigShape } from "../config.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
+import * as Network from "../system/Network.ts";
 
 /**
  * The server configuration of a test home: the database and the engine under
@@ -31,7 +32,8 @@ export const configFor = (path: Path.Path, home: string): ServerConfigShape => (
 
 /**
  * The production database layer on a fresh file in a temporary home (foreign
- * keys on, migrated), with the server configuration that points at that home.
+ * keys on, migrated), with the server configuration that points at that home
+ * and the machine's own network interfaces.
  */
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
@@ -42,4 +44,4 @@ export const layer = Layer.unwrap(
       Layer.provideMerge(Layer.succeed(ServerConfig, configFor(path, home))),
     );
   }),
-).pipe(Layer.provideMerge(NodeServices.layer));
+).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, Network.layer)));

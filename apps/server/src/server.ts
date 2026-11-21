@@ -16,7 +16,6 @@ import * as Layout from "./Layout.ts";
 import * as Listener from "./listener.ts";
 import * as Sqlite from "./persistence/Sqlite.ts";
 import * as Network from "./system/Network.ts";
-import * as Ports from "./system/Ports.ts";
 import * as ToolEndpoint from "./tools/ToolEndpoint.ts";
 import * as WebClient from "./web/WebClient.ts";
 
@@ -58,12 +57,13 @@ const engine = Layer.unwrap(
  * for this process (a second server for the same home stops there, before it
  * opens the database), the migrated database, the engine and the domain, then
  * the client listener, and then the tool endpoint and the admin socket, which
- * reports where the client listener bound. Each listener binds only once its
+ * reports where the client listener bound. Where it bound (`Listener`) is
+ * made beneath them all, since the domain names it in a webhook's address. Each listener binds only once its
  * routes are built (`Ports.serve`). Interrupting it (SIGINT, SIGTERM) releases
  * everything in reverse.
  */
 export const layer = Layer.mergeAll(ToolEndpoint.layer, AdminSocket.layer, logShutdown).pipe(
-  Layer.provide(Ports.serve(Http.app, Listener.layer, { logAddress: true })),
+  Layer.provide(Http.serve(Listener.layer, { logAddress: true })),
   // One decision for the client routes and the admin socket's report.
   Layer.provide(WebClient.statusLayer),
   Layer.provide(Domain.layer),
@@ -71,6 +71,8 @@ export const layer = Layer.mergeAll(ToolEndpoint.layer, AdminSocket.layer, logSh
   Layer.provide(Sqlite.layer),
   Layer.provide(Home.layer),
   Layer.provide(Home.configLayer),
-  Layer.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer, Network.layer)),
+  Layer.provide(
+    Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer, Network.layer, Listener.unbound),
+  ),
   Layer.provide(Logger.layer([Logger.consoleJson])),
 );

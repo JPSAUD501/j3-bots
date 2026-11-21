@@ -6,6 +6,8 @@ import {
   type EntryTarget,
   QuestionAnswers,
   RoomId,
+  RoutineId,
+  RoutineRunId,
 } from "@j3-bots/contracts";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
@@ -95,7 +97,7 @@ export const PRIORITY: { readonly [K in WakeKind]: number } = {
 
 /**
  * What a wake carries, read when its envelope is rendered. The kinds part 2b
- * adds (room, teammate and routine wakes) add their own variants here.
+ * adds (room and teammate wakes) add their own variants here.
  */
 export const WakePayload = Schema.Union([
   /** An operator message, read from its entry. */
@@ -104,6 +106,8 @@ export const WakePayload = Schema.Union([
   Schema.TaggedStruct("answer", { cardId: EntryId }),
   /** The `user` dispatch this one follows up, whose turn delivered nothing. */
   Schema.TaggedStruct("undelivered", { dispatchId: DispatchRowId }),
+  /** A run of a routine; for a webhook, the run holds the request's body. */
+  Schema.TaggedStruct("routine", { routineId: RoutineId, runId: RoutineRunId }),
 ]);
 export type WakePayload = typeof WakePayload.Type;
 

@@ -26,7 +26,7 @@ J3 Bots keeps two kinds of state, in two places, for two different readers.
 | Held message | A non-urgent teammate message waiting for the recipient's next envelope |
 | Blob | File bytes, stored once per digest: size and where they are stored |
 | Attachment | A file the operator sent or a bot produced: a name and a media type over a blob |
-| Routine | Bot, name, instruction, trigger, enabled, next run, recent runs |
+| Routine | Bot, name, instruction, trigger, enabled, next run, run count, webhook secret. Its runs: status, start and end, the wake that runs it, trigger data and the webhook request's idempotency key |
 | Device | A paired client: its token hash, its push token, when it was revoked |
 
 Entries are ordered by `order`, set when the entry is created and never changed. The change sequence that clients resume subscriptions with is separate: it records when an entry changed, not where it sits.
@@ -316,16 +316,44 @@ The prompt tells bots not to acknowledge acknowledgements. The hop budget enforc
 
 ## Routines
 
-A routine is a row with an instruction and a trigger. The server's scheduler owns it; the engine's scheduled tasks are not used.
+A routine is a row with an instruction and a trigger. The server's scheduler owns it; the engine's scheduled tasks are not used ([decision 0005](../decisions/0005-j3-bots-owns-wakes.md)).
 
-- **Schedule triggers** are five-field cron expressions evaluated in the operator's time zone, with a five-minute minimum spacing.
-- **One-time triggers** run once at a set time, in UTC, and then disable the routine. They are how "remind me tomorrow at nine" is kept.
-- **Webhook triggers** are an HTTP endpoint on the J3 Bots server with a secret in the path and an optional HMAC signature. The request body reaches the bot as data inside a nonce-tagged block.
-- A run that comes due while the previous run of the same routine is still going is skipped and recorded as skipped.
-- Runs missed while the server was down are not replayed, except that each routine runs once on return if it missed at least one.
-- A routine run ends in one of three ways: it said something (`say`), it finished silently with a result recorded in its history, or it failed.
+**Triggers.**
 
-Each routine keeps its recent runs with status, duration and what was delivered.
+- **Schedule triggers** are five-field cron expressions read as wall-clock time in the time zone saved with the trigger. A bot's `set_routine` saves the operator's zone; a schedule kept in another zone keeps it. A time the clocks repeat when they go back runs once, at its first occurrence. A time the clocks skip runs once that day, as much later as the clocks moved: 02:30 on the night the clocks skip 02:00 to 03:00 runs at 03:30. Two times that land on one instant run once. A schedule is refused with `Invalid("schedule")` when it does not parse, has a seconds field, names no date that exists (`0 0 31 2 *`), or runs twice within five minutes anywhere in the next eight days, and with `Invalid("time-zone")` when it names a zone the server does not know.
+- **One-time triggers** run once at a set instant, in UTC, and then pause the routine. They are how "remind me tomorrow at nine" is kept. An enabled routine's one-time trigger must lie ahead when it is saved.
+- **Webhook triggers** are an HTTP endpoint on the J3 Bots server; see [Webhooks](#webhooks). The request body reaches the bot as data inside a nonce-tagged block.
+
+**The scheduler.** Each routine stores its next run. The scheduler wakes at the earliest of them, at least once a minute, and when a command changes a routine. For each routine that came due it records the run and the next run in one transaction, so a run is never recorded twice, also across a restart. Each routine is read again in that transaction, so an edit committed meanwhile wins. A routine whose run cannot be recorded is logged and tried again 30 seconds later, unless it was edited meanwhile; the other routines carry on. A schedule that no longer has a next run, such as one in a zone the server no longer knows, runs that once and pauses its routine, with a warning in the log. A routine whose stored trigger the server cannot read, such as one written by another version, runs nothing and is paused, with one warning. Anything else that goes wrong in the scheduler is logged, and it looks again 30 seconds later.
+
+- Runs missed while the server was down are not replayed: a routine that missed at least one runs once on return, then on its schedule from then on.
+- A run that comes due while the previous run of the same routine is still going is recorded as `skipped` and does not count as a run.
+- `routine.run` runs a routine on demand, paused or not, without resuming it or moving its next run. A retried command is the same run.
+
+**Running.** A run records a `routine` wake for the routine's bot through the wake pipeline, and the run keeps that wake. The main session's dispatcher never takes a routine wake: it waits for a side session of its own ([Sessions](#sessions)). The side-session runner, which opens that session, dispatches the run's envelope, records the catch-up note and settles the run, arrives with routines part 2. Until then a run stays `running`: later runs come due as `skipped`, and a Stop of the bot or deleting the routine cancels its wake and ends it.
+
+**Run history.** Each run has its start, its end and a status:
+
+| Status | Meaning |
+| --- | --- |
+| `running` | Its wake has not ended |
+| `delivered` | Its wake finished and the bot said something with `say` |
+| `silent` | Its wake finished without a message from the bot |
+| `failed` | Its wake failed, was cancelled, or is gone |
+| `skipped` | It came due while the previous run was still going |
+
+A run settles from its wake, when the scheduler next looks or the routine next runs. A routine keeps its 100 newest settled runs and the run going, counted again as each run settles; its run count counts the runs that started.
+
+### Webhooks
+
+A webhook routine's address is `/hooks/<routine id>/<secret>` on the server's HTTP listener, given to the operator as the routine's `webhookUrl`, built when it is given: a repeated create or update names the listener as bound now. The secret is 32 random bytes, base64url-encoded, drawn when the routine is created. The `webhookUrl` names the first address `j3-bots pair` would offer, at the port the listener bound (the one the system chose, when the port set is `0`): with TLS, the first DNS name on the certificate; with `lan`, the first private address of a real interface (not loopback, a container or a virtual network), read when the URL is built; otherwise the address set. With none, it says what `pair` says: with TLS, `<a name the server's certificate covers>` in place of the host; with `lan`, `127.0.0.1`.
+
+- **Authentication.** The secret in the path is the credential, so the server keeps it out of its logs: the request log records any path under `/hooks/` as `/hooks/…`, with the method and the status and nothing else, whether or not a webhook answers it, and no trace span is made of such a request. A call that fails answers `500`, and what went wrong is logged on its own line, without the request. The server compares SHA-256 digests of the given and the stored secret in constant time, also when there is no such routine, and answers a wrong secret, an unknown routine and a routine with another trigger alike: `404`. An HMAC signature over the body is not checked: the routine contract has no field to require one, and a signature that is optional adds nothing.
+- **The body** is read up to 64 KiB (`413` past that) and must be UTF-8 text (`400` otherwise). It is stored with a `running` run as its trigger data. A `skipped` run keeps its `Idempotency-Key` but not the body.
+- **Replay.** A request with an `Idempotency-Key` header (at most 200 characters) is recorded once: the same key again answers the run it recorded, with `200`, for as long as that run is kept in the history. Without the header, every request is a new call.
+- **Rate.** A webhook call is refused while the routine has recorded ten runs in the last minute, skipped ones included: it answers `429` with `Retry-After`, the time until fewer than ten remain, and records nothing. A run the operator asks for is not limited, so it can take the count past ten.
+- A paused routine answers `409` and records nothing.
+- An accepted call answers `202` with the run's id and status, `running` or `skipped`.
 
 ## Budgets
 

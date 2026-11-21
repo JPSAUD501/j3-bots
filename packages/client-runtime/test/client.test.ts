@@ -164,7 +164,6 @@ const unserved = Layer.mergeAll(
   J3Rpcs.toLayerHandler("message.retry", notFaked),
   J3Rpcs.toLayerHandler("bot.stop", notFaked),
   J3Rpcs.toLayerHandler("bot.freshStart", notFaked),
-  J3Rpcs.toLayerHandler("routine.run", notFaked),
   J3Rpcs.toLayerHandler("usage.turns", notFaked),
 ).pipe(Layer.provide(fakes));
 

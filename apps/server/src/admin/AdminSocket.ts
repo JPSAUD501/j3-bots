@@ -3,6 +3,7 @@
 import * as NodeHttp from "node:http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -29,7 +30,7 @@ const routes = Layer.mergeAll(
     Effect.gen(function* () {
       const startedAt = yield* DateTime.now;
       const { toolPort, enginePort } = yield* ServerConfig;
-      const listener = yield* Listener;
+      const listener = yield* Deferred.await(yield* Listener);
       const webClient = yield* WebClientStatus;
       return HttpRouter.add(
         "GET",
