@@ -12,7 +12,8 @@
   },
   "scripts": {
     "typecheck": "effect-tsgo tsrs --noEmit",
-    "test": "vp test run --config ../../vite.config.ts --dir ."
+    "test": "vp test run --config ../../vite.config.ts --dir .",
+    "eval": "vp test run --config evals/vite.config.ts --dir ."
   },
   "dependencies": {
     "@j3-bots/contracts": "workspace:*",

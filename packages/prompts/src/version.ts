@@ -6,11 +6,13 @@ import * as Schema from "effect/Schema";
 import { createHash } from "node:crypto";
 import { renderWakeWithNonce, type Wake } from "./envelope.ts";
 import { BASE_TEMPLATE, BOT_TEMPLATE } from "./instructions.ts";
+import { sharedSkills } from "./skills.ts";
 import { toolList } from "./tools.ts";
 
 /**
- * The prompt version: one identifier for the base prompt, the envelope format
- * and the tool descriptions together, derived from their content. A session
+ * The prompt version: one identifier for the base prompt, the envelope format,
+ * the tool descriptions and the skills J3 Bots ships together, derived from
+ * their content. A session
  * records the version it was created with.
  *
  * The envelope format is code, so it enters the hash as rendered output: one
@@ -103,6 +105,7 @@ const fingerprint = (): string => {
     BASE_TEMPLATE,
     BOT_TEMPLATE,
     JSON.stringify(toolList),
+    ...sharedSkills.flatMap((skill) => [skill.name, skill.text]),
     ...SAMPLE_WAKES.map((wake) => renderWakeWithNonce(wake, "000000000000")),
   ]) {
     // Length-prefixed, so moving text from one part to the next changes the hash.

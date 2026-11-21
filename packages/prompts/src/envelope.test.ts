@@ -202,7 +202,7 @@ describe("renderWake", () => {
       <attachment name="notes.md" type="text/markdown" path="files/inbox/notes.md"/>
       </message>
       </j3-wake>
-      Reply with \`say\`; nothing else reaches them.
+      Reply with \`say\`; nothing else reaches them. Your last call is a \`say\` with the result and \`done: true\`, or an \`ask\`.
       "
     `);
   });
@@ -236,7 +236,7 @@ describe("renderWake", () => {
       </message>
       </answer>
       </j3-wake>
-      Reply with \`say\`; nothing else reaches them.
+      Reply with \`say\`; nothing else reaches them. Your last call is a \`say\` with the result and \`done: true\`, or an \`ask\`.
       "
     `);
     expect(
@@ -263,7 +263,7 @@ describe("renderWake", () => {
       and tell Ana
       </message>
       </j3-wake>
-      Reply with \`say\`; nothing else reaches them.
+      Reply with \`say\`; nothing else reaches them. Your last call is a \`say\` with the result and \`done: true\`, or an \`ask\`.
       "
     `);
   });
@@ -389,7 +389,7 @@ describe("renderWake", () => {
       {"action":"completed","conclusion":"failure"}
       </data-7f3a9c01b2d4>
       </j3-wake>
-      Nobody is waiting. Speak only as the instruction's last line says.
+      Nobody is waiting, so send no progress message. Only \`say\` reaches your user, never reply text: a message is one \`say\` with \`done: true\`, sent once, after the work; once it returns, never alongside it, the only calls left are the state-file update the instruction names, or one \`pause\` the instruction asks for, of this routine by the id above with no lookup, and no second \`say\`. A one-time routine is paused for you, so never pause it yourself. If the instruction asks you to pause after a message that a run in \`recent-runs\` already sent, pause once now with no \`say\`. Follow the instruction's delivery line: a reminder or a report asked for every time is sent when due; when a report's condition is not met, end with no \`say\` at all, not even to say all is well. If you could not do the work (access refused, a source gone): when a run in \`recent-runs\` already said what blocks it, end with no \`say\`; when none did, tell your user in one \`say\` of one sentence, whatever the delivery line says.
       "
     `);
     expect(
@@ -414,7 +414,7 @@ describe("renderWake", () => {
       </recent-runs>
       </routine>
       </j3-wake>
-      Nobody is waiting. Speak only as the instruction's last line says.
+      Nobody is waiting, so send no progress message. Only \`say\` reaches your user, never reply text: a message is one \`say\` with \`done: true\`, sent once, after the work; once it returns, never alongside it, the only calls left are the state-file update the instruction names, or one \`pause\` the instruction asks for, of this routine by the id above with no lookup, and no second \`say\`. A one-time routine is paused for you, so never pause it yourself. If the instruction asks you to pause after a message that a run in \`recent-runs\` already sent, pause once now with no \`say\`. Follow the instruction's delivery line: a reminder or a report asked for every time is sent when due; when a report's condition is not met, end with no \`say\` at all, not even to say all is well. If you could not do the work (access refused, a source gone): when a run in \`recent-runs\` already said what blocks it, end with no \`say\`; when none did, tell your user in one \`say\` of one sentence, whatever the delivery line says.
       "
     `);
   });

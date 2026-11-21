@@ -26,8 +26,13 @@ export default defineConfig({
     retry: 0,
   },
   fmt: {
-    // The templates' bytes are the prompt, and they set its version: no formatter rewraps them.
-    ignorePatterns: [...GENERATED_AND_VENDORED, "docs/**", "packages/prompts/src/templates/**"],
+    // The templates' and skills' bytes are the prompt, and they set its version: no formatter rewraps them.
+    ignorePatterns: [
+      ...GENERATED_AND_VENDORED,
+      "docs/**",
+      "packages/prompts/src/templates/**",
+      "packages/prompts/src/skills/**",
+    ],
     sortPackageJson: {},
   },
   lint: {

@@ -1,0 +1,536 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import { BotId, Routine, RoutineId, RoutineRunId } from "@j3-bots/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import {
+  type BotInstructionsInput,
+  DECODE_OPTIONS,
+  renderSystemFile,
+  renderWake,
+  type RoutineWake,
+  sharedSkills,
+  type ToolInput,
+  toolList,
+  tools,
+  type Wake,
+} from "../src/index.ts";
+import type { FixtureEvent, GhEvent } from "./fixtures.ts";
+import { complete, type FunctionTool, type Message } from "./model.ts";
+import { localInstant, nextScheduled, plannedRun, type Trigger } from "./schedule.ts";
+import type { Workspace } from "./shell.ts";
+
+/**
+ * One bot turn against a real model, with the bot's tools answered by stubs.
+ *
+ * The model gets what a bot's session gives it: the rendered base prompt,
+ * profile and pinned memory, one wake envelope, and the `j3` tools as MCP
+ * lists them. Two things stand in for the harness: the shipped skills, given
+ * as already read when a run includes them (the harness's own listing and
+ * reading of them is not what is measured), and `run_command`, a stand-in
+ * shell whose workspace and programs the scenario fixes (`shell.ts`,
+ * `fixtures.ts`).
+ *
+ * Every case runs with the skills and without them. Nothing links them into a
+ * harness yet, and a session that never reads one still has to behave, so a
+ * case that fails only without them shows a rule missing from the base prompt,
+ * the tool descriptions or the envelope.
+ */
+
+/** A fictional operator and bot. */
+const bot = (model: string): BotInstructionsInput => ({
+  operator: { name: "Rui", timeZone: "Europe/Lisbon" },
+  profile: {
+    name: "Juniper",
+    title: "Docs",
+    job: "Look after the Acme documentation site and its GitHub repository, acme/docs: watch its builds and pull requests, and tell Rui what needs his attention.",
+    primary: false,
+  },
+  runtime: { model, harness: model.startsWith("gpt") ? "Codex" : "Claude Code" },
+  pinned: { shared: "- Rui reads messages on his phone; keep them short.", bot: "" },
+});
+
+/** Whether a turn has the shipped skills as already read. */
+export type Skills = "with the skill" | "without the skill";
+
+const systemPrompt = (model: string, skills: Skills): string =>
+  [
+    renderSystemFile(bot(model)),
+    ...(skills === "with the skill" ? sharedSkills : []).map(
+      (skill) => `# You read the skill skills/${skill.name}/SKILL.md\n\n${skill.text}`,
+    ),
+  ].join("\n\n---\n\n");
+
+const HOST_TOOL = "run_command";
+
+/** The `j3` tools, and a `run_command` that names what the workspace has. */
+const functionTools = (commands: ReadonlyArray<string>): ReadonlyArray<FunctionTool> => [
+  ...toolList.map((tool): FunctionTool => ({
+    type: "function",
+    function: { name: tool.name, description: tool.description, parameters: tool.inputSchema },
+  })),
+  {
+    type: "function",
+    function: {
+      name: HOST_TOOL,
+      description: `Run a shell command in your workspace and return its output. The GitHub CLI, gh, is signed in. The workspace has only these commands: ${commands.join(", ")}.`,
+      parameters: {
+        type: "object",
+        properties: { command: { type: "string" } },
+        required: ["command"],
+        additionalProperties: false,
+      },
+    },
+  },
+];
+
+/** A tool the model called, with its arguments as it sent them. */
+export interface Call {
+  /** The model message it came in, counted from 1: calls with the same step were sent together. */
+  readonly step: number;
+  readonly name: string;
+  readonly input: unknown;
+  /** For a `set_routine` call the schema accepted, its arguments as decoded: what the server would save. */
+  readonly routine?: ToolInput<"set_routine">;
+  /** What the call answered. */
+  readonly output: string;
+  /** For a `set_routine` call, true when the server would have refused it. */
+  readonly refused?: boolean;
+  /** For a `run_command` call, what the command did in the workspace; empty for any other call. */
+  readonly events: ReadonlyArray<FixtureEvent>;
+}
+
+/** Reply text the model wrote beside or instead of its calls. It reaches nobody. */
+interface ReplyText {
+  readonly step: number;
+  readonly text: string;
+}
+
+/**
+ * One turn: the tools the model called, in order, the reply text it wrote,
+ * and its workspace and routines as the turn left them.
+ */
+export interface Turn {
+  readonly calls: ReadonlyArray<Call>;
+  readonly text: ReadonlyArray<ReplyText>;
+  readonly workspace: Workspace<GhEvent>;
+  readonly routines: HeldRoutines;
+}
+
+/**
+ * A turn as one line per call or reply text, each with its step, for a
+ * failure's report: it tells a call repeated in one message from one sent
+ * again after the first returned, and shows what a turn that ended without
+ * `say` wrote instead.
+ */
+export const transcript = ({ calls, text }: Turn): string =>
+  [
+    ...text.map((reply) => ({
+      step: reply.step,
+      line: `(reply text) ${JSON.stringify(reply.text)}`,
+    })),
+    ...calls.map((call) => ({
+      step: call.step,
+      line: `${call.name} ${JSON.stringify(call.input)} → ${JSON.stringify(call.output.length > 300 ? `${call.output.slice(0, 300)}…` : call.output)}`,
+    })),
+  ]
+    // A stable sort: within a message, its text comes before its calls, as the model wrote them.
+    .toSorted((a, b) => a.step - b.step)
+    .map(({ step, line }) => `#${step} ${line}`)
+    .join("\n");
+
+/** A turn that did not end on its own: the model was cut off, or ran out of steps. */
+class TurnUnfinished extends Schema.TaggedError<TurnUnfinished>()("TurnUnfinished", {
+  message: Schema.String,
+}) {}
+
+const unfinished = (reason: string, turn: Turn) =>
+  new TurnUnfinished({ message: `The turn did not finish: ${reason}.\n${transcript(turn)}` });
+
+export interface Scenario {
+  readonly wake: Wake;
+  /** A fresh workspace for each turn, so what one turn writes another never reads. */
+  readonly workspace: () => Workspace<GhEvent>;
+}
+
+/** Model calls in one turn at most; a turn that needs more is a failure in itself. */
+const MAX_STEPS = 12;
+
+const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
+const decodeSetRoutine = Schema.decodeUnknownOption(tools.set_routine.input, DECODE_OPTIONS);
+const decodeAsk = Schema.decodeUnknownOption(tools.ask.input, DECODE_OPTIONS);
+const decodeShellInput = Schema.decodeUnknownOption(Schema.Struct({ command: Schema.String }));
+
+const json = (value: unknown): string => JSON.stringify(value);
+
+/** A `set_routine` call's trigger, with its times read in `zone`, or `nonexistent` for an `at` that names no time. */
+const triggerOf = (
+  routine: ToolInput<"set_routine">,
+  zone: DateTime.TimeZone.Named,
+): Trigger | "nonexistent" | undefined => {
+  if (routine.webhook === true) return { _tag: "webhook" };
+  if (routine.schedule !== undefined) return { _tag: "schedule", cron: routine.schedule, zone };
+  if (routine.at === undefined) return undefined;
+  return Option.match(localInstant(routine.at, zone), {
+    onNone: () => "nonexistent" as const,
+    onSome: (at): Trigger => ({ _tag: "once", at }),
+  });
+};
+
+/** The fictional bot, and the run in progress, as the server's records name them. */
+const BOT_ID = Schema.decodeSync(BotId)("bot-juniper");
+const RUN_ID = Schema.decodeSync(RoutineRunId)("run-current");
+
+const encodeRoutine = Schema.encodeSync(Schema.toCodecJson(Routine));
+
+/** A trigger as the server saves it. */
+const savedTrigger = (trigger: Trigger): Routine["trigger"] =>
+  trigger._tag === "schedule"
+    ? { _tag: "schedule", cron: trigger.cron, timeZone: DateTime.zoneToString(trigger.zone) }
+    : trigger;
+
+/** Whether two triggers are the same, as the server compares a trigger an update sends with the saved one. */
+const sameTrigger = (a: Trigger, b: Trigger): boolean => {
+  switch (a._tag) {
+    case "schedule":
+      return (
+        b._tag === "schedule" &&
+        a.cron === b.cron &&
+        DateTime.zoneToString(a.zone) === DateTime.zoneToString(b.zone)
+      );
+    case "once":
+      return b._tag === "once" && DateTime.Equivalence(a.at, b.at);
+    case "webhook":
+      return b._tag === "webhook";
+  }
+};
+
+/** A routine as the server holds it, with its trigger's times as the stub checks them. */
+interface Held {
+  readonly routine: Routine;
+  readonly trigger: Trigger;
+}
+
+/**
+ * The routine that is running, as the server records it during its run: a
+ * one-time routine was paused when its run started, any other is enabled.
+ */
+const runningRoutine = (wake: RoutineWake): Held => {
+  const { routine } = wake;
+  const trigger: Trigger =
+    routine.trigger.type === "schedule"
+      ? { _tag: "schedule", cron: routine.trigger.cron, zone: wake.timeZone }
+      : routine.trigger.type === "once"
+        ? { _tag: "once", at: wake.at }
+        : { _tag: "webhook" };
+  return {
+    trigger,
+    routine: {
+      id: routine.id,
+      botId: BOT_ID,
+      name: routine.name,
+      instruction: routine.instruction,
+      trigger: savedTrigger(trigger),
+      enabled: trigger._tag !== "once",
+      // A webhook routine's address is left out: no case runs one.
+      webhookUrl: null,
+      nextRunAt:
+        trigger._tag === "schedule"
+          ? Option.getOrNull(nextScheduled(trigger.cron, trigger.zone, wake.at))
+          : null,
+      lastRun: {
+        id: RUN_ID,
+        startedAt: wake.at,
+        finishedAt: null,
+        status: "running",
+        attempts: 1,
+        delivered: [],
+        note: null,
+      },
+      runCount: wake.recentRuns.length + 1,
+    },
+  };
+};
+
+/** What the `set_routine` stub answered, and whether the server would have refused the call. */
+interface Saved {
+  readonly output: string;
+  readonly refused: boolean;
+}
+
+const refusal = (error: string): Saved => ({ output: json({ error }), refused: true });
+
+/** Why the server refuses a trigger it checked: the one the call gives, or else the routine's saved one. */
+const triggerRefusal = (trigger: Trigger, given: boolean): Saved => {
+  if (trigger._tag === "schedule") {
+    return refusal(
+      given
+        ? `The schedule "${trigger.cron}" cannot be used: it needs five cron fields that name a date that exists, and at most one run every five minutes.`
+        : `This routine's schedule "${trigger.cron}" cannot run any more. Give it a new one with update.`,
+    );
+  }
+  return refusal(
+    given
+      ? "That time has already passed. Give a time ahead."
+      : "This routine's one-time run has passed. Give it a new time, schedule or webhook with update; that starts it again.",
+  );
+};
+
+/**
+ * The routines the server holds during one turn, and the `set_routine` and
+ * `list_routines` stubs that answer from them. A conversation starts with
+ * none, and a routine run with the routine that is running, as the server
+ * records it then.
+ *
+ * `set_routine` follows the server (`apps/server/src/turns/routineTool.ts`,
+ * `Routines.update`): during a run only a `pause` of that run's routine is
+ * taken. Otherwise a trigger is checked by the server's rules (`schedule.ts`),
+ * a `create` gets an id of its own and the first run the server plans, and
+ * an `update`, `pause`, `resume` or `delete` of an id it does not hold is
+ * refused; of one it holds, it changes that routine as the server would, its
+ * next run included. Each answers with the routine as saved, so what
+ * `list_routines` shows, and what a case replays, is the routine as it stands
+ * after every call the turn made.
+ */
+export class HeldRoutines {
+  readonly #wake: Wake;
+  readonly #held: Array<Held>;
+  #created = 0;
+
+  constructor(wake: Wake) {
+    this.#wake = wake;
+    this.#held = wake.kind === "routine" ? [runningRoutine(wake)] : [];
+  }
+
+  /** The routines as they stand now. */
+  get current(): ReadonlyArray<Routine> {
+    return this.#held.map(({ routine }) => routine);
+  }
+
+  /** What `list_routines` answers. */
+  list(): Schema.Json {
+    return { routines: this.#held.map(({ routine }) => encodeRoutine(routine)) };
+  }
+
+  /** What `set_routine` answers, keeping what it saved. */
+  set(input: ToolInput<"set_routine">): Saved {
+    const wake = this.#wake;
+    if (wake.kind === "routine" && !(input.action === "pause" && input.id === wake.routine.id)) {
+      return refusal(
+        `A routine run can only pause its own routine: set_routine with action pause and id ${wake.routine.id}. Put any other change in your say message, for your user to ask for.`,
+      );
+    }
+    const trigger = triggerOf(input, wake.timeZone);
+    if (trigger === "nonexistent")
+      return refusal(`${input.at} is not a date and time that exists.`);
+    if (input.action === "create") return this.#create(input, trigger);
+    const index = this.#held.findIndex(({ routine }) => routine.id === input.id);
+    const current = this.#held[index];
+    if (current === undefined) {
+      return refusal(`You have no routine ${input.id}. list_routines shows your routines' ids.`);
+    }
+    if (input.action === "delete") {
+      this.#held.splice(index, 1);
+      return { output: json({ status: "deleted", id: current.routine.id }), refused: false };
+    }
+    const changed = this.#changed(current, input, trigger);
+    if ("refused" in changed) return changed;
+    this.#held[index] = changed;
+    return { output: json(encodeRoutine(changed.routine)), refused: false };
+  }
+
+  #create(input: ToolInput<"set_routine">, trigger: Trigger | undefined): Saved {
+    const { name, instruction } = input;
+    if (name === undefined || instruction === undefined || trigger === undefined) {
+      return refusal("A create needs a name, an instruction and a trigger.");
+    }
+    const planned = plannedRun(trigger, this.#wake.at);
+    if (Result.isFailure(planned)) return triggerRefusal(trigger, true);
+    this.#created++;
+    const id = Schema.decodeSync(RoutineId)(`routine-${this.#created}`);
+    const routine: Routine = {
+      id,
+      botId: BOT_ID,
+      name,
+      instruction,
+      trigger: savedTrigger(trigger),
+      enabled: true,
+      webhookUrl:
+        trigger._tag === "webhook"
+          ? `https://bots.example.com/hooks/${id}?key=fictional-key`
+          : null,
+      nextRunAt: Option.getOrNull(planned.success),
+      lastRun: null,
+      runCount: 0,
+    };
+    this.#held.push({ routine, trigger });
+    return { output: json(encodeRoutine(routine)), refused: false };
+  }
+
+  /**
+   * A held routine after an `update`, `pause` or `resume`, as `Routines.update`
+   * leaves it: a new trigger is checked even on a paused routine and moves the
+   * next run; a one-time routine whose time has passed starts again with a new
+   * trigger; a resume plans the saved trigger again; an edit of the name or
+   * the instruction leaves the next run where it was.
+   */
+  #changed(
+    current: Held,
+    input: ToolInput<"set_routine">,
+    given: Trigger | undefined,
+  ): Held | Saved {
+    const now = this.#wake.at;
+    const before = current.routine;
+    const retriggered = given !== undefined && !sameTrigger(given, current.trigger);
+    const trigger = given ?? current.trigger;
+    const passed =
+      current.trigger._tag === "once" && !DateTime.isGreaterThan(current.trigger.at, now);
+    const enabled =
+      input.action === "update"
+        ? before.enabled || (passed && retriggered)
+        : input.action === "resume";
+    let planned = Option.none<DateTime.Utc>();
+    if (retriggered) {
+      const checked = plannedRun(trigger, now);
+      if (Result.isFailure(checked)) return triggerRefusal(trigger, true);
+      planned = checked.success;
+    }
+    let next: DateTime.Utc | null;
+    if (!enabled) next = null;
+    else if (retriggered) next = Option.getOrNull(planned);
+    else if (enabled !== before.enabled) {
+      // A resume plans the saved trigger again.
+      const checked = plannedRun(trigger, now);
+      if (Result.isFailure(checked)) return triggerRefusal(trigger, given !== undefined);
+      next = Option.getOrNull(checked.success);
+    } else next = before.nextRunAt;
+    return {
+      trigger,
+      routine: {
+        ...before,
+        name: (input.action === "update" ? input.name : undefined) ?? before.name,
+        instruction:
+          (input.action === "update" ? input.instruction : undefined) ?? before.instruction,
+        trigger: savedTrigger(trigger),
+        enabled,
+        webhookUrl:
+          trigger._tag === "webhook"
+            ? (before.webhookUrl ?? `https://bots.example.com/hooks/${before.id}?key=fictional-key`)
+            : null,
+        nextRunAt: next,
+      },
+    };
+  }
+}
+
+type Request = Pick<Call, "step" | "name" | "input" | "routine">;
+
+type Answer = Pick<Call, "output" | "events" | "refused">;
+
+/** What the server would answer, as far as these scenarios need, and what a command did. */
+const answer = (
+  routines: HeldRoutines,
+  workspace: Workspace<GhEvent>,
+  request: Request,
+): Answer => {
+  const reply = (output: string): Answer => ({ output, events: [] });
+  switch (request.name) {
+    case "say":
+      return reply(json({ status: "recorded" }));
+    case "ask":
+      return reply(json({ asked: true }));
+    case "list_routines":
+      return reply(json(routines.list()));
+    case "set_routine": {
+      if (request.routine === undefined) {
+        return { ...reply(json({ error: "The call was refused as invalid." })), refused: true };
+      }
+      const saved = routines.set(request.routine);
+      return { ...reply(saved.output), refused: saved.refused };
+    }
+    case "recall":
+      return reply(json({ facts: [] }));
+    case "remember":
+    case "forget":
+      return reply(json({ recorded: true }));
+    case "list_teammates":
+      return reply(json({ bots: [], rooms: [] }));
+    case HOST_TOOL: {
+      const input = decodeShellInput(request.input);
+      return input._tag === "Some"
+        ? workspace.run(input.value.command)
+        : reply(json({ error: "`command` must be a string." }));
+    }
+    default:
+      return reply(json({ error: `${request.name} is not available here.` }));
+  }
+};
+
+const toRequest = (step: number, name: string, input: unknown): Request => {
+  if (name !== "set_routine") return { step, name, input };
+  const decoded = decodeSetRoutine(input);
+  return decoded._tag === "Some"
+    ? { step, name, input, routine: decoded.value }
+    : { step, name, input };
+};
+
+/**
+ * Runs one turn of `model` on `scenario` and returns every tool call it made,
+ * in order, with the reply text it wrote. Fails with {@link TurnUnfinished}
+ * when the turn did not end on its own, so a cut-off turn never passes for one
+ * that chose to say nothing.
+ */
+export const runTurn = Effect.fn("evals.runTurn")(
+  function* (model: string, skills: Skills, scenario: Scenario) {
+    const envelope = yield* renderWake(scenario.wake);
+    const workspace = scenario.workspace();
+    const routines = new HeldRoutines(scenario.wake);
+    const tools = functionTools(workspace.commands);
+    const messages: Array<Message> = [
+      { role: "system", content: systemPrompt(model, skills) },
+      { role: "user", content: envelope },
+    ];
+    const calls: Array<Call> = [];
+    const text: Array<ReplyText> = [];
+    const turn: Turn = { calls, text, workspace, routines };
+    for (let step = 1; step <= MAX_STEPS; step++) {
+      const reply = yield* complete(model, messages, tools);
+      if (reply.content !== null && reply.content.trim() !== "") {
+        text.push({ step, text: reply.content });
+      }
+      const hasCalls = reply.toolCalls.length > 0;
+      // Only a message the model ended itself counts: `stop` with no calls ends
+      // the turn, `tool_calls` with calls goes on. Anything else was cut off or
+      // malformed, and its calls are not run.
+      if (reply.finishReason === "stop" && !hasCalls) return turn;
+      if (reply.finishReason !== "tool_calls" || !hasCalls) {
+        return yield* unfinished(
+          `the model's message ended with finish_reason ${reply.finishReason ?? "(none)"} and ${reply.toolCalls.length} tool calls`,
+          turn,
+        );
+      }
+      messages.push({ role: "assistant", content: reply.content, tool_calls: reply.toolCalls });
+      for (const toolCall of reply.toolCalls) {
+        const parsed = decodeJson(toolCall.function.arguments);
+        const request = toRequest(
+          step,
+          toolCall.function.name,
+          parsed._tag === "Some" ? parsed.value : toolCall.function.arguments,
+        );
+        const call: Call = { ...request, ...answer(routines, workspace, request) };
+        calls.push(call);
+        messages.push({ role: "tool", tool_call_id: toolCall.id, content: call.output });
+      }
+      // An `ask` the server would accept ends the turn.
+      if (calls.some((call) => call.name === "ask" && decodeAsk(call.input)._tag === "Some"))
+        return turn;
+    }
+    return yield* unfinished(`it used all ${MAX_STEPS} steps`, turn);
+  },
+  Effect.provide(Layer.mergeAll(FetchHttpClient.layer, SecureRandom.layerWebCrypto)),
+);
