@@ -8,14 +8,12 @@ import { defineConfig } from "vite-plus";
 // `node_modules`. SQLite is Node's own. Tests use the root configuration.
 
 /**
- * `@j3-bots/prompts` reads its templates from `./templates/` next to its own
- * module. Bundled, that module is a chunk directly in `dist/`, so the
- * templates go to `dist/templates/`.
+ * `@j3-bots/prompts` reads its templates from `./templates/` and its skills
+ * from `./skills/`, next to its own module. Bundled, that module is a chunk
+ * directly in `dist/`, so they go to `dist/templates/` and `dist/skills/`.
  */
-const PROMPT_TEMPLATES = NodePath.join(
-  import.meta.dirname,
-  "../../packages/prompts/src/templates/*.md",
-);
+const promptFiles = (folder: string) =>
+  NodePath.join(import.meta.dirname, `../../packages/prompts/src/${folder}/*.md`);
 
 /** Native accelerators `ws` loads when they are installed, and works without. */
 const OPTIONAL_NATIVE = ["bufferutil", "utf-8-validate"];
@@ -36,7 +34,10 @@ export default defineConfig({
       neverBundle: OPTIONAL_NATIVE,
       onlyBundle: false,
     },
-    copy: [{ from: PROMPT_TEMPLATES, to: "dist/templates" }],
+    copy: [
+      { from: promptFiles("templates"), to: "dist/templates" },
+      { from: promptFiles("skills"), to: "dist/skills" },
+    ],
     banner: { js: "#!/usr/bin/env node" },
   },
 });

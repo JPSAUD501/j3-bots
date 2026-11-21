@@ -19,6 +19,7 @@ import * as Listener from "./listener.ts";
 import * as Sqlite from "./persistence/Sqlite.ts";
 import * as BasePrompt from "./settings/BasePrompt.ts";
 import * as SettingsStore from "./settings/SettingsStore.ts";
+import * as SharedSkills from "./skills/SharedSkills.ts";
 import * as Network from "./system/Network.ts";
 import * as ToolEndpoint from "./tools/ToolEndpoint.ts";
 import * as WebClient from "./web/WebClient.ts";
@@ -61,12 +62,18 @@ const engine = Layer.unwrap(
  * for this process (a second server for the same home stops there, before it
  * opens the database), the migrated database, the engine and the domain, then
  * the client listener, and then the tool endpoint and the admin socket, which
- * reports where the client listener bound. Where it bound (`Listener`) is
+ * reports where the client listener bound. The skills J3 Bots ships are
+ * installed into the home beside them. Where it bound (`Listener`) is
  * made beneath them all, since the domain names it in a webhook's address. Each listener binds only once its
  * routes are built (`Ports.serve`). Interrupting it (SIGINT, SIGTERM) releases
  * everything in reverse.
  */
-export const layer = Layer.mergeAll(ToolEndpoint.layer, AdminSocket.layer, logShutdown).pipe(
+export const layer = Layer.mergeAll(
+  ToolEndpoint.layer,
+  AdminSocket.layer,
+  SharedSkills.layer,
+  logShutdown,
+).pipe(
   Layer.provide(Http.serve(Listener.layer, { logAddress: true })),
   // One decision for the client routes and the admin socket's report.
   Layer.provide(WebClient.statusLayer),

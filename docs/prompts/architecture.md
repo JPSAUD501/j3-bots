@@ -170,11 +170,19 @@ The engine's own tools stay available inside a session. The base prompt says whi
 
 ## Skills
 
-A skill is a folder with a `SKILL.md`: when it applies, what it needs, the steps, how to verify the result, what requires approval. A bot's skills live in `skills/` in its workspace. The server links that folder to wherever each harness looks for skills, so the harness lists them and the bot reads one when a task matches its one-line description.
+A skill is a folder with a `SKILL.md`: when it applies, what it needs, the steps, how to verify the result, what requires approval. The file opens with a `name` and a one-line `description`, which is what a harness lists so the model knows when to read the rest (**Assumed** for both harnesses: not yet observed in a J3 Bots session).
 
-- **Shared skills** live in `<J3_HOME>/shared/skills` and are linked into every workspace.
-- **Bot skills** live in the bot's own workspace.
-- J3 Bots ships a small set of its own skills for procedures too long for the base prompt: creating a routine (schedule selection, the delivery line, quiet hours), working in a room, setting up a new teammate.
+- **Shared skills** live in `<J3_HOME>/shared/skills/<name>/SKILL.md`, readable by every bot.
+- **Bot skills** live in `skills/` in the bot's own workspace.
+- The server is meant to link both folders to wherever each harness looks for skills. That linking is not built yet, so no harness lists a skill today; skill discovery through linked folders has not been exercised either.
+
+J3 Bots ships its own skills for procedures too long for the base prompt. Their text lives in `packages/prompts/src/skills/<name>.md`, and the server writes each one to the shared skills as `<name>/SKILL.md` every time it starts, replacing the previous release's text. Their names start with `j3-`, so the operator's own skills, under any other name, are never touched. The text enters the [prompt version](#versioning).
+
+| Skill | What it teaches |
+| --- | --- |
+| `j3-routines` | When a request calls for a routine and when it does not; choosing a schedule (five-field cron in the operator's zone, the five-minute rule), a one-time run or a webhook; writing an instruction a fresh side session can carry out alone; silent and speaking runs; what needs the operator's approval; checking the run history after the first run |
+
+Skills for working in a room and for setting up a new teammate are planned with rooms and teammates (M3).
 
 A bot can save a skill after doing something once, when the operator asks. The path the product encourages: do it once, get it right, save it as a skill, then put it on a routine.
 
@@ -219,9 +227,20 @@ Prompts are code and are tested like code, in `packages/prompts`.
 
 Each harness and model J3 Bots supports has to pass the set before it is listed as supported.
 
+**The harness.** The evals that exist live in `packages/prompts/evals`, one file per area, and run with `pnpm --filter @j3-bots/prompts eval`. They are never part of `test` or CI. Each case is one turn: the model gets the rendered base prompt, profile and pinned memory of a fictional bot, the shipped skills as if it had already read them, one wake envelope, and the `j3` tools as MCP lists them, plus a stand-in shell whose output the case fixes. The bot's tools answer with stubs, and a case passes on the tool calls the turn made. The model is reached through any OpenAI-compatible chat completions endpoint: `J3_EVAL_BASE_URL` (the endpoint's root) and `J3_EVAL_API_KEY` come from the environment, and `J3_EVAL_MODELS` lists the models, by default one small Claude model and one small GPT model. What this leaves out: the harness's own system prompt and tools, T3 Code's instructions, and the harness listing and reading a skill. A pass here is necessary, not sufficient, for a pass in a real session.
+
+Implemented so far, in `routines.eval.ts`, for the `j3-routines` skill:
+
+| Case | Passes when |
+| --- | --- |
+| The operator asks for a weekday-morning check | One routine is created with the schedule they gave (`0 8 * * 1-5`), an instruction that names the repository, says what is worth reporting, points at nothing in the conversation and ends by saying what to do when nothing is wrong, and a `say` after it confirms the time |
+| A one-off question about the same build | No `set_routine` call; the answer is delivered with `done: true` |
+| A routine run with nothing new | The run checks the build and ends without `say`, `ask`, `message_bot` or `set_routine` |
+| A routine run with a failure | Exactly one `say`, naming what failed, and no `ask` |
+
 ## Versioning
 
-- The base prompt, envelope format and tool descriptions carry one version together, recorded in each session when it is created. It is derived from their content: a hash of the templates, the tool list as MCP receives it, and one rendered envelope of every kind. Any change to what a bot reads changes it; nothing has to be bumped by hand.
+- The base prompt, envelope format, tool descriptions and shipped skills carry one version together, recorded in each session when it is created. It is derived from their content: a hash of the templates, the tool list as MCP receives it, one rendered envelope of every kind, and the shipped skills. Any change to what a bot reads changes it; nothing has to be bumped by hand.
 - A change to any of them is a change to bot behavior and is reviewed as one, with the behavior evals re-run.
 - A running session keeps the base prompt it started with until its provider process restarts. A release that must not mix versions rotates sessions.
 

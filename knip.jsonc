@@ -11,6 +11,10 @@
       // `src/installation.ts` names, and the production build bundles it.
       "entry": ["src/bridge/main.ts"],
     },
+    "packages/prompts": {
+      // The behavior evals (`eval`), run on demand: entry points no import reaches.
+      "entry": ["evals/*.eval.ts", "evals/vite.config.ts"],
+    },
     "packages/engine-t3": {
       // The real-engine conformance run (`test:conformance`) and the scripted
       // agent the engine starts as a process: entry points no import reaches.

@@ -9,6 +9,8 @@
  *   and the schemas their arguments decode with, within
  *   {@link MAX_TOOL_INPUT_BYTES}; {@link NO_TURN_REFUSAL}: what a call that
  *   matches no running turn, such as a subagent's, reads.
+ * - {@link sharedSkills}: the skills J3 Bots ships, which the server installs
+ *   for every bot.
  * - {@link PROMPT_VERSION}: one identifier for all of the above.
  *
  * Every function here is pure. `renderWake` draws its nonce from `SecureRandom`.
@@ -55,4 +57,5 @@ export {
   toolList,
   tools,
 } from "./tools.ts";
+export { type SharedSkill, sharedSkills } from "./skills.ts";
 export { PROMPT_VERSION } from "./version.ts";
