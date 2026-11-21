@@ -57,7 +57,7 @@ export const sharedDraft = (draft: Draft | undefined, shared: Shared): SharedDra
   const written = draft?.text ?? "";
   const added = sharedText(shared);
   const kept = written.trim() !== "";
-  const text = added === "" ? written : kept ? `${written}\n\n${added}` : added;
+  const text = added === "" ? written : kept ? `${written.trimEnd()}\n\n${added}` : added;
   const mentions = added === "" || kept ? (draft?.mentions ?? []) : [];
   const problems = admitFiles(
     heldFiles(draft),

@@ -60,8 +60,9 @@ export type PushRegistration = typeof PushRegistration.Type;
 /**
  * What a push carries for the app beside its title and body: the device it
  * was sent to, which a device that paired again since no longer is, and the
- * entry it is about, in its conversation or room. A push service hands it to
- * the app as it was sent, so it is JSON and nothing else.
+ * entry it is about, in its conversation or room. Keys a push service adds
+ * beside these are ignored (**Assumed**: the service hands the rest over as it
+ * was sent; M5 checks it on a device).
  */
 export const PushData = Schema.Struct({
   deviceId: DeviceId,
