@@ -5,7 +5,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
-import { nextRun, plannedRun } from "./schedule.ts";
+import { localInstant, nextRun, plannedRun } from "./schedule.ts";
 
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 
@@ -119,4 +119,33 @@ describe("plannedRun", () => {
       );
     }),
   );
+});
+
+describe("localInstant", () => {
+  const lisbon = Option.getOrThrow(DateTime.zoneMakeNamed("Europe/Lisbon"));
+  const instant = (text: string) =>
+    Option.match(localInstant(text, lisbon), { onNone: () => null, onSome: DateTime.formatIso });
+
+  it("reads a time without an offset in the zone, and one with an offset as that instant", () => {
+    assert.strictEqual(instant("2026-07-01T09:00"), "2026-07-01T08:00:00.000Z");
+    assert.strictEqual(instant("2026-07-01T09:00:30+02:00"), "2026-07-01T07:00:30.000Z");
+    assert.strictEqual(instant("2026-07-01T09:00Z"), "2026-07-01T09:00:00.000Z");
+  });
+
+  it("moves a time the clocks skip later, as a schedule does", () => {
+    // Lisbon skips 01:00 to 02:00 on 2026-03-29.
+    assert.strictEqual(instant("2026-03-29T01:30"), "2026-03-29T01:30:00.000Z");
+  });
+
+  it("reads a time the clocks repeat as its first occurrence, unless an offset names the second", () => {
+    // Lisbon goes back from 02:00 to 01:00 on 2026-10-25: 01:30 comes at +01:00, then at +00:00.
+    assert.strictEqual(instant("2026-10-25T01:30"), "2026-10-25T00:30:00.000Z");
+    assert.strictEqual(instant("2026-10-25T01:30+00:00"), "2026-10-25T01:30:00.000Z");
+  });
+
+  it("refuses a date or a time that does not exist", () => {
+    assert.isNull(instant("2026-02-31T09:00"));
+    assert.isNull(instant("2026-07-01T24:00"));
+    assert.isNull(instant("2026-07-01T09:00+24:00"));
+  });
 });

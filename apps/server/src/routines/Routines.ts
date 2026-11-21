@@ -72,6 +72,18 @@ const RunRow = Schema.Struct({
 const decodeRoutine = Schema.decodeUnknownEffect(Routine);
 const encodeTrigger = Schema.encodeEffect(json(RoutineTrigger));
 
+/** Whether two triggers are the same: the same schedule, time or webhook. */
+const sameTrigger = (a: RoutineTrigger, b: RoutineTrigger): boolean => {
+  switch (a._tag) {
+    case "schedule":
+      return b._tag === "schedule" && a.cron === b.cron && a.timeZone === b.timeZone;
+    case "once":
+      return b._tag === "once" && DateTime.Equivalence(a.at, b.at);
+    case "webhook":
+      return b._tag === "webhook";
+  }
+};
+
 export type RoutineFrame =
   | {
       readonly _tag: "snapshot";
@@ -118,20 +130,25 @@ export class Routines extends Context.Service<
       { readonly runs: ReadonlyArray<RoutineRun>; readonly hasOlder: boolean },
       NotFound
     >;
+    /**
+     * `commandId` makes the command act once under a retried id; `null` is for
+     * a caller whose own record does that, a bot's pinned `set_routine` call,
+     * so the routine as saved is kept nowhere else.
+     */
     readonly create: (input: {
-      readonly commandId: CommandId;
+      readonly commandId: CommandId | null;
       readonly botId: BotId;
       readonly draft: RoutineDraft;
       readonly author: Author;
     }) => Effect.Effect<Routine, CommandError>;
     readonly update: (input: {
-      readonly commandId: CommandId;
+      readonly commandId: CommandId | null;
       readonly routineId: RoutineId;
       readonly changes: RoutineChanges;
       readonly author: Author;
     }) => Effect.Effect<Routine, CommandError>;
     readonly remove: (input: {
-      readonly commandId: CommandId;
+      readonly commandId: CommandId | null;
       readonly routineId: RoutineId;
       readonly author: Author;
     }) => Effect.Effect<void, CommandError>;
@@ -164,6 +181,18 @@ export const layer = Layer.effect(
     const scheduler = yield* Scheduler;
     const network = yield* Network;
     const listener = yield* Listener;
+
+    /** A command applied once under its id, or, with none, in a transaction of its caller's. */
+    const receipted = <A, I, E, R>(input: {
+      readonly commandId: CommandId | null;
+      readonly method: string;
+      readonly payload: unknown;
+      readonly result: Schema.Codec<A, I>;
+      readonly apply: Effect.Effect<A, E, R>;
+    }) =>
+      input.commandId === null
+        ? transaction(input.apply)
+        : receipts.once({ ...input, commandId: input.commandId });
 
     /** A new webhook secret, which goes in the address after the routine's id. */
     const newSecret = Effect.map(random.randomBytes(SECRET_BYTES), Base64Url.encode);
@@ -354,12 +383,12 @@ export const layer = Layer.effect(
     });
 
     const create = Effect.fn("Routines.create")(function* (input: {
-      readonly commandId: CommandId;
+      readonly commandId: CommandId | null;
       readonly botId: BotId;
       readonly draft: RoutineDraft;
       readonly author: Author;
     }) {
-      return yield* receipts.once({
+      return yield* receipted({
         commandId: input.commandId,
         method: "routine.create",
         payload: { botId: input.botId, draft: input.draft },
@@ -390,13 +419,13 @@ export const layer = Layer.effect(
     }, Effect.flatMap(readdressed));
 
     const update = Effect.fn("Routines.update")(function* (input: {
-      readonly commandId: CommandId;
+      readonly commandId: CommandId | null;
       readonly routineId: RoutineId;
       readonly changes: RoutineChanges;
       readonly author: Author;
     }) {
       const { changes: change } = input;
-      return yield* receipts.once({
+      return yield* receipted({
         commandId: input.commandId,
         method: "routine.update",
         payload: { routineId: input.routineId, changes: change },
@@ -405,17 +434,30 @@ export const layer = Layer.effect(
           const [row] = yield* routineRows({ botId: null, ids: [input.routineId] });
           if (row === undefined) return yield* new NotFound({ resource: "routine" });
           const before = yield* toRoutine(row);
+          // A change that sends the saved trigger again, as a form sending the
+          // whole draft does, gives no new one.
+          const retriggered =
+            change.trigger !== undefined && !sameTrigger(change.trigger, before.trigger);
           const trigger = change.trigger ?? before.trigger;
-          const enabled = change.enabled ?? before.enabled;
           const now = yield* DateTime.now;
-          // The next run moves only with the trigger or the switch: an edit of
-          // the name or the instruction leaves a run that is due to happen.
-          const rescheduled = change.trigger !== undefined || enabled !== before.enabled;
+          // A one-time routine whose time has passed, whether it ran or was
+          // paused before its time, starts again when given a new trigger,
+          // unless the same change pauses it.
+          const passed =
+            before.trigger._tag === "once" && !DateTime.isGreaterThan(before.trigger.at, now);
+          const enabled = change.enabled ?? (before.enabled || (passed && retriggered));
+          // A new trigger is checked also on a paused routine, so a resume
+          // never meets one that could not have been saved.
+          const planned = retriggered ? yield* plannedRun(trigger, now) : Option.none();
+          // The next run moves only with a new trigger or the switch: an edit
+          // of the name or the instruction leaves a run that is due to happen.
           const next = !enabled
             ? Option.none()
-            : rescheduled
-              ? yield* plannedRun(trigger, now)
-              : Option.fromNullishOr(row.next_run_at);
+            : retriggered
+              ? planned
+              : enabled !== before.enabled
+                ? yield* plannedRun(trigger, now)
+                : Option.fromNullishOr(row.next_run_at);
           // A webhook keeps its address while it stays a webhook.
           const secret =
             trigger._tag === "webhook" ? (row.webhook_secret ?? (yield* newSecret)) : null;
@@ -446,11 +488,11 @@ export const layer = Layer.effect(
     }, Effect.flatMap(readdressed));
 
     const remove = Effect.fn("Routines.remove")(function* (input: {
-      readonly commandId: CommandId;
+      readonly commandId: CommandId | null;
       readonly routineId: RoutineId;
       readonly author: Author;
     }) {
-      yield* receipts.once({
+      yield* receipted({
         commandId: input.commandId,
         method: "routine.delete",
         payload: { routineId: input.routineId },

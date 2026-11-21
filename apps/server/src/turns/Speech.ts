@@ -38,6 +38,7 @@ import { Ledger } from "./Ledger.ts";
 import { liveTarget } from "./liveTarget.ts";
 import { mediaTypeOf } from "./mediaTypes.ts";
 import { routineSpeech } from "./routineSpeech.ts";
+import { type Once, routineTool } from "./routineTool.ts";
 import {
   ADMISSION_DEADLINE,
   type Audience,
@@ -90,7 +91,14 @@ const CallKey = Schema.Struct({
   digest: ToolInputDigest,
 });
 
-const StoredResult = Schema.Struct({ result_json: Schema.NullOr(json(Schema.Json)) });
+const StoredResult = Schema.Struct({ result_json: json(Schema.Json) });
+
+/** A request as its stored result is looked up: under its id, for its caller and its tool. */
+const RequestKey = Schema.Struct({
+  requestId: Schema.String,
+  sessionId: SessionRowId,
+  tool: Schema.String,
+});
 
 const encodeResult = Schema.encodeEffect(json(Schema.Json));
 
@@ -101,13 +109,27 @@ interface WorkspaceFile {
   readonly bytes: Uint8Array;
 }
 
+/** The turn tools a request is pinned for. */
+type PinnedTool = "say" | "ask" | "set_routine";
+
+/** A request matched to its call, or one a forward of it already committed. */
+type Matched =
+  | { readonly _tag: "pin"; readonly pin: Pin }
+  | { readonly _tag: "stored"; readonly result: Schema.Json };
+
+const keyOf = (call: TurnToolCall) => ({
+  requestId: call.requestId,
+  sessionId: call.caller.id,
+  tool: call.tool,
+});
+
 /**
- * `say` and `ask`: the turn tools that speak (`docs/architecture/server.md`,
- * Bot tools). Each request is matched to the engine's record of its call in
- * the session's running admitted turn and pinned to it, in the transaction
- * that publishes what it says, so a request acts once, for the turn and the
- * audience that made it. `message_bot` comes with teammates in M3, and
- * `set_routine` with routines in M2 (`docs/roadmap.md`).
+ * The turn tools (`docs/architecture/server.md`, Bot tools): `say` and `ask`,
+ * which speak, and `set_routine` (`routineTool.ts`). Each request is matched
+ * to the engine's record of its call in the session's running admitted turn
+ * and pinned to it, in the transaction that applies it, so a request acts
+ * once, for the turn and the audience that made it. `message_bot` comes with
+ * teammates in M3 (`docs/roadmap.md`).
  */
 export const layer = Layer.effect(
   TurnTools,
@@ -123,6 +145,7 @@ export const layer = Layer.effect(
     const readWorkspaceFile = yield* workspaceReader;
     const targetOf = liveTarget(sql);
     const spoken = routineSpeech(sql, yield* Ids, yield* ChangeLog);
+    const setRoutine = yield* routineTool;
 
     const engineSessionOf = SqlSchema.findOneOption({
       Request: Schema.String,
@@ -138,10 +161,18 @@ export const layer = Layer.effect(
       execute: (id) => sql`SELECT purpose FROM sessions WHERE id = ${id}`,
     });
 
+    /**
+     * What a request committed already. The same id from another session, or
+     * for another tool, is not that request and gets nothing.
+     */
     const storedResult = SqlSchema.findOneOption({
-      Request: Schema.String,
+      Request: RequestKey,
       Result: StoredResult,
-      execute: (requestId) => sql`SELECT result_json FROM tool_calls WHERE id = ${requestId}`,
+      execute: ({ requestId, sessionId, tool }) => sql`
+        SELECT result_json FROM tool_calls
+        WHERE id = ${requestId} AND session_id = ${sessionId} AND tool = ${tool}
+          AND result_json IS NOT NULL
+      `,
     });
 
     /** The oldest open call in the running admitted turn that matches and no request claimed. */
@@ -167,37 +198,57 @@ export const layer = Layer.effect(
     /**
      * Brings the session's events up to the request, then looks for its call;
      * the engine records a call apart from the request, so it looks again a
-     * bounded number of times.
+     * bounded number of times. A forward of the same request that committed
+     * meanwhile claimed the call: its stored result is the answer, also when
+     * the engine no longer has the session.
      */
-    const match = Effect.fn("Speech.match")(function* (call: TurnToolCall, caller: BotSession) {
+    const match = Effect.fn("Speech.match")(function* (
+      call: TurnToolCall,
+      caller: BotSession,
+    ): Effect.fn.Return<Matched, TurnEnded | TurnToolRetry> {
       const sessionId = caller.id;
       const session = yield* engineSessionOf(sessionId).pipe(Effect.orDie);
       if (Option.isNone(session)) return yield* new TurnEnded();
       const digest = yield* toolInputDigest(call.arguments);
       const started = yield* DateTime.now;
       for (let attempt = 0; attempt <= MATCH_RETRIES; attempt++) {
-        yield* observer.synchronize(sessionId, session.value.engine_session_id).pipe(
-          Effect.catchTags({
-            SessionNotFound: () => new TurnEnded(),
-            // Nothing is pinned: the bridge forwards the request again.
-            NotObserved: () => new TurnToolRetry(),
-            EngineUnavailable: () => new TurnToolRetry(),
-            EngineIndeterminate: () => new TurnToolRetry(),
-            EngineIncompatible: () => new TurnToolRetry(),
-          }),
-        );
+        const vanished = yield* observer
+          .synchronize(sessionId, session.value.engine_session_id)
+          .pipe(
+            Effect.as(false),
+            Effect.catchTags({
+              // Archived or removed: what a forward of this request committed
+              // before that is still its answer.
+              SessionNotFound: () => Effect.succeed(true),
+              // Nothing is pinned: the bridge forwards the request again.
+              NotObserved: () => new TurnToolRetry(),
+              EngineUnavailable: () => new TurnToolRetry(),
+              EngineIndeterminate: () => new TurnToolRetry(),
+              EngineIncompatible: () => new TurnToolRetry(),
+            }),
+          );
+        if (vanished) {
+          const stored = yield* storedResult(keyOf(call)).pipe(Effect.orDie);
+          if (Option.isSome(stored)) return { _tag: "stored", result: stored.value.result_json };
+          return yield* new TurnEnded();
+        }
         const found = yield* candidate({ sessionId, tool: call.tool, digest }).pipe(Effect.orDie);
         if (Option.isSome(found)) {
           return {
-            requestId: call.requestId,
-            sessionId,
-            botId: caller.botId,
-            turnId: found.value.engine_turn_id,
-            callId: found.value.engine_call_id,
-            digest,
-            audience: audienceOf(found.value),
-          } satisfies Pin;
+            _tag: "pin",
+            pin: {
+              requestId: call.requestId,
+              sessionId,
+              botId: caller.botId,
+              turnId: found.value.engine_turn_id,
+              callId: found.value.engine_call_id,
+              digest,
+              audience: audienceOf(found.value),
+            },
+          };
         }
+        const stored = yield* storedResult(keyOf(call)).pipe(Effect.orDie);
+        if (Option.isSome(stored)) return { _tag: "stored", result: stored.value.result_json };
         const elapsed = DateTime.distance(started, yield* DateTime.now);
         if (Duration.isGreaterThan(elapsed, MATCH_WITHIN)) break;
       }
@@ -230,14 +281,21 @@ export const layer = Layer.effect(
      * for still live (also for a `say` to the operator, which a room's work
      * makes). A retry of a request already admitted gets its stored result.
      */
-    const pin = Effect.fn("Speech.pin")(function* (tool: "say" | "ask", found: Pin) {
-      const stored = yield* storedResult(found.requestId).pipe(Effect.orDie);
-      if (Option.isSome(stored) && stored.value.result_json !== null) {
+    const pin = Effect.fn("Speech.pin")(function* (tool: PinnedTool, found: Pin) {
+      const stored = yield* storedResult({
+        requestId: found.requestId,
+        sessionId: found.sessionId,
+        tool,
+      }).pipe(Effect.orDie);
+      if (Option.isSome(stored)) {
         return { _tag: "stored", result: stored.value.result_json } as const;
       }
+      // The call is another request's, or the id is: one used by another
+      // session or tool is not this request's to take.
       const claimed = yield* sql`
-        SELECT 1 FROM tool_calls WHERE session_id = ${found.sessionId}
-          AND engine_call_id = ${found.callId}
+        SELECT 1 FROM tool_calls
+        WHERE (session_id = ${found.sessionId} AND engine_call_id = ${found.callId})
+          OR id = ${found.requestId}
       `.pipe(Effect.orDie);
       if (claimed.length > 0 || !(yield* stillAdmitted(found))) return yield* new TurnEnded();
       yield* requireTarget(found.botId, found.audience);
@@ -253,6 +311,23 @@ export const layer = Layer.effect(
       `.pipe(Effect.orDie);
       return { _tag: "pinned" } as const;
     });
+
+    /**
+     * Applies a request once: in one transaction it is pinned, `apply` runs
+     * and its result is stored, or a retry gets the result stored already.
+     */
+    const once =
+      (tool: PinnedTool, found: Pin): Once =>
+      (apply) =>
+        transaction(
+          Effect.gen(function* () {
+            const pinned = yield* pin(tool, found);
+            if (pinned._tag === "stored") return pinned.result;
+            const result = yield* apply;
+            yield* store(found, result);
+            return result;
+          }),
+        );
 
     /** The dispatches the pinned turn delivers: its owner and the steers riding it. */
     const turnDispatches = SqlSchema.findAll({
@@ -363,10 +438,11 @@ export const layer = Layer.effect(
       // attachment store takes them in. Admission and publication stay one
       // transaction.
       return yield* attachments.withStore((put) =>
-        transaction(
+        once(
+          "say",
+          found,
+        )(
           Effect.gen(function* () {
-            const pinned = yield* pin("say", found);
-            if (pinned._tag === "stored") return pinned.result;
             const target = yield* requireTarget(found.botId, audience);
             const files: Array<Attachment> = [];
             for (const file of read) {
@@ -417,9 +493,7 @@ export const layer = Layer.effect(
               for (const { id } of yield* deliveredBy(found))
                 yield* ledger.closeDelivery(id, "done");
             }
-            const result = { status: "recorded" } satisfies Schema.Json;
-            yield* store(found, result);
-            return result;
+            return { status: "recorded" } satisfies Schema.Json;
           }),
         ),
       );
@@ -444,10 +518,11 @@ export const layer = Layer.effect(
       const values = Object.fromEntries(
         input.options.map((option, index) => [`option-${index + 1}`, option.value ?? null]),
       );
-      return yield* transaction(
+      return yield* once(
+        "ask",
+        found,
+      )(
         Effect.gen(function* () {
-          const pinned = yield* pin("ask", found);
-          if (pinned._tag === "stored") return pinned.result;
           const target = yield* requireTarget(found.botId, found.audience);
           const card = yield* entries.append({
             target,
@@ -483,12 +558,10 @@ export const layer = Layer.effect(
           `.pipe(Effect.orDie);
           // The bot ends its turn after asking; the answer wakes it again.
           for (const { id } of yield* deliveredBy(found)) yield* ledger.closeDelivery(id, "ask");
-          const result = {
+          return {
             status: "asked",
             note: "Your user's answer arrives as your next turn. End this turn now.",
           } satisfies Schema.Json;
-          yield* store(found, result);
-          return result;
         }),
       );
     });
@@ -505,16 +578,21 @@ export const layer = Layer.effect(
     }, Effect.orDie);
 
     const call = Effect.fn("TurnTools.call")(function* (call: TurnToolCall) {
-      if (call.tool === "message_bot" || call.tool === "set_routine") {
-        return yield* new TurnToolUnavailable({ tool: call.tool });
-      }
+      if (call.tool === "message_bot") return yield* new TurnToolUnavailable({ tool: call.tool });
       // A forward retried under the same id returns what the first one did.
-      const stored = yield* storedResult(call.requestId).pipe(Effect.orDie);
-      if (Option.isSome(stored) && stored.value.result_json !== null) {
-        return stored.value.result_json;
+      const stored = yield* storedResult(keyOf(call)).pipe(Effect.orDie);
+      if (Option.isSome(stored)) return stored.value.result_json;
+      const matched = yield* match(call, call.caller);
+      if (matched._tag === "stored") return matched.result;
+      const found = matched.pin;
+      switch (call.tool) {
+        case "say":
+          return yield* say(found, call.input);
+        case "ask":
+          return yield* ask(found, call.input);
+        case "set_routine":
+          return yield* setRoutine(found, call.input, once("set_routine", found));
       }
-      const found = yield* match(call, call.caller);
-      return call.tool === "say" ? yield* say(found, call.input) : yield* ask(found, call.input);
     });
 
     /**

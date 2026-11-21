@@ -263,6 +263,116 @@ it.effect("runs a one-time routine once and pauses it", () =>
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect(
+  "starts a one-time routine that ran again with a new trigger, and keeps an operator's pause",
+  () =>
+    Effect.gen(function* () {
+      const bot = yield* createBot("Ana");
+      const routines = yield* Routines;
+      const reminder = yield* createRoutine(bot.id, {
+        _tag: "once",
+        at: at("1970-01-01T00:10:00.000Z"),
+      });
+      const nightly = yield* createRoutine(bot.id, {
+        _tag: "schedule",
+        cron: "0 9 * * *",
+        timeZone: "UTC",
+      });
+      yield* routines.update({
+        commandId: command(),
+        routineId: nightly.id,
+        changes: { enabled: false },
+        author: operator,
+      });
+      yield* setTime("1970-01-01T00:10:05.000Z");
+      yield* pass;
+
+      const again = yield* routines.update({
+        commandId: command(),
+        routineId: reminder.id,
+        changes: { trigger: { _tag: "once", at: at("1970-01-01T01:00:00.000Z") } },
+        author: operator,
+      });
+      assert.deepStrictEqual(
+        [again.enabled, again.nextRunAt],
+        [true, at("1970-01-01T01:00:00.000Z")],
+      );
+      const moved = yield* routines.update({
+        commandId: command(),
+        routineId: nightly.id,
+        changes: { trigger: { _tag: "schedule", cron: "0 10 * * *", timeZone: "UTC" } },
+        author: operator,
+      });
+      assert.deepStrictEqual([moved.enabled, moved.nextRunAt], [false, null]);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("renames a one-time routine that ran through a change that sends its saved trigger", () =>
+  Effect.gen(function* () {
+    const bot = yield* createBot("Ana");
+    const routines = yield* Routines;
+    const reminder = yield* createRoutine(bot.id, {
+      _tag: "once",
+      at: at("1970-01-01T00:10:00.000Z"),
+    });
+    yield* setTime("1970-01-01T00:10:05.000Z");
+    yield* pass;
+
+    // A form sends the whole draft: the trigger it sends is the saved one.
+    const renamed = yield* routines.update({
+      commandId: command(),
+      routineId: reminder.id,
+      changes: { name: "Dentist", trigger: reminder.trigger },
+      author: operator,
+    });
+    assert.deepStrictEqual(
+      [renamed.name, renamed.enabled, renamed.nextRunAt],
+      ["Dentist", false, null],
+    );
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("refuses a trigger that could never run, also on a paused routine", () =>
+  Effect.gen(function* () {
+    const bot = yield* createBot("Ana");
+    const routines = yield* Routines;
+    const routine = yield* createRoutine(bot.id, {
+      _tag: "schedule",
+      cron: "0 9 * * *",
+      timeZone: "UTC",
+    });
+    yield* routines.update({
+      commandId: command(),
+      routineId: routine.id,
+      changes: { enabled: false },
+      author: operator,
+    });
+    yield* setTime("1970-01-01T00:10:00.000Z");
+
+    const refused = (trigger: RoutineTrigger) =>
+      routines
+        .update({
+          commandId: command(),
+          routineId: routine.id,
+          changes: { trigger },
+          author: operator,
+        })
+        .pipe(Effect.flip);
+    for (const trigger of [
+      { _tag: "schedule", cron: "*/2 * * * *", timeZone: "UTC" },
+      { _tag: "schedule", cron: "0 0 31 2 *", timeZone: "UTC" },
+      { _tag: "once", at: at("1970-01-01T00:05:00.000Z") },
+    ] satisfies ReadonlyArray<RoutineTrigger>) {
+      const error = yield* refused(trigger);
+      assert.deepStrictEqual(
+        [error._tag, error._tag === "Invalid" && error.reason],
+        ["Invalid", "schedule"],
+      );
+    }
+    assert.deepStrictEqual((yield* current(routine)).trigger, routine.trigger);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("runs a paused routine on demand without resuming it", () =>
   Effect.gen(function* () {
     const bot = yield* createBot("Ana");

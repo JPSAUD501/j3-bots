@@ -5,6 +5,7 @@ import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import { NO_TURN_REFUSAL } from "@j3-bots/prompts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -133,6 +134,119 @@ it.effect("matches a call the engine recorded again with its arguments", () =>
     assert.deepStrictEqual(reply, { _tag: "result", value: { status: "recorded" } });
     assert.deepStrictEqual(yield* botSaid(bot.id), ["The build is green."]);
     yield* deliveryIs(message, "delivered");
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("answers a forward that overlapped the one that committed with its stored result", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const tools = yield* BotTools;
+    const { bot, session, turnId } = yield* working("Write the summary.");
+    const args = { text: "The summary is in files/summary.md." };
+    yield* control.toolCall({
+      sessionId: session,
+      turnId,
+      tool: "say",
+      input: args,
+      recorded: "now",
+    });
+    const forward = tools.call({
+      requestId: "call-1",
+      sessionId: session,
+      tool: "say",
+      arguments: args,
+    });
+
+    // The retry finds no stored result and waits for the session's events
+    // while the first forward is matched, admitted and committed.
+    const held = yield* control.holdNext("synchronize");
+    const retry = yield* Effect.forkChild(forward);
+    yield* held.entered;
+    const first = yield* forward;
+    yield* held.release;
+
+    assert.deepStrictEqual(yield* Fiber.join(retry), first);
+    assert.deepStrictEqual(first, { _tag: "result", value: { status: "recorded" } });
+    assert.deepStrictEqual(yield* botSaid(bot.id), ["The summary is in files/summary.md."]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("answers an overlapping forward with its stored result after the session vanished", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const tools = yield* BotTools;
+    const { bot, session, turnId } = yield* working("Write the summary.");
+    const args = { text: "The summary is in files/summary.md." };
+    yield* control.toolCall({
+      sessionId: session,
+      turnId,
+      tool: "say",
+      input: args,
+      recorded: "now",
+    });
+    const forward = tools.call({
+      requestId: "call-1",
+      sessionId: session,
+      tool: "say",
+      arguments: args,
+    });
+
+    // The retry waits for the session's events while the first forward
+    // commits, and the session is archived before it hears back.
+    const held = yield* control.holdNext("synchronize");
+    const retry = yield* Effect.forkChild(forward);
+    yield* held.entered;
+    const first = yield* forward;
+    yield* control.archiveSession(session);
+    yield* held.release;
+
+    assert.deepStrictEqual(first, { _tag: "result", value: { status: "recorded" } });
+    assert.deepStrictEqual(yield* Fiber.join(retry), first);
+    assert.deepStrictEqual(yield* botSaid(bot.id), ["The summary is in files/summary.md."]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("gives a request id another session used none of that session's result", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const tools = yield* BotTools;
+    const ana = yield* working("Write the summary.");
+    const said = { text: "The summary is in files/summary.md." };
+    yield* control.toolCall({
+      sessionId: ana.session,
+      turnId: ana.turnId,
+      tool: "say",
+      input: said,
+      recorded: "now",
+    });
+    const first = yield* tools.call({
+      requestId: "call-1",
+      sessionId: ana.session,
+      tool: "say",
+      arguments: said,
+    });
+    assert.strictEqual(first._tag, "result");
+
+    const bia = yield* createBot("Bia");
+    const theirs = yield* engineSession(bia.id);
+    yield* sendToBot(bia.id, "Check the build.");
+    const turnId = yield* nextTurn(bia.id);
+    yield* control.toolCall({
+      sessionId: theirs,
+      turnId,
+      tool: "say",
+      input: said,
+      recorded: "now",
+    });
+    const reused = yield* tools.call({
+      requestId: "call-1",
+      sessionId: theirs,
+      tool: "say",
+      arguments: said,
+    });
+
+    assert.strictEqual(reused._tag, "refused");
+    assert.deepStrictEqual(yield* botSaid(bia.id), []);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

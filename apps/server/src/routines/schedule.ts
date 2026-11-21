@@ -196,3 +196,49 @@ export const plannedRun = Effect.fnUntraced(function* (
   }
   return Option.some(yield* Effect.fromResult(firstAfter(compiled, now)));
 });
+
+const WALL_FIELDS = ["year", "month", "day", "hour", "minute", "second"] as const;
+
+/** A date and time as `set_routine` takes it: no zone, or `Z`, or an offset. */
+const LOCAL_TIME =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?(?:(Z)|([+-])(\d{2}):(\d{2}))?$/;
+
+/**
+ * The instant a date and time names. Without an offset it is wall-clock time
+ * in `zone`, resolved as a schedule's times are: a time the clocks repeat is
+ * its first occurrence, and a time they skip lies as much later as they
+ * moved. `None` for a date or time that does not exist (`2026-02-31T09:00`).
+ */
+export const localInstant = (
+  text: string,
+  zone: DateTime.TimeZone.Named,
+): Option.Option<DateTime.Utc> => {
+  const match = LOCAL_TIME.exec(text);
+  if (match === null) return Option.none();
+  const part = (index: number) => Number(match[index] ?? "0");
+  const fields: Omit<DateTime.DateTime.Parts, "millisecond"> = {
+    year: part(1),
+    month: part(2),
+    day: part(3),
+    hour: part(4),
+    minute: part(5),
+    second: part(6),
+  };
+  const wall = DateTime.makeUnsafe(fields);
+  const read = DateTime.toPartsUtc(wall);
+  // A day or an hour past its end rolls over into the next one.
+  if (WALL_FIELDS.some((field) => read[field] !== fields[field])) return Option.none();
+  if (match[7] !== undefined) return Option.some(wall);
+  if (match[8] !== undefined) {
+    const [hours, minutes] = [part(9), part(10)];
+    if (hours > 23 || minutes > 59) return Option.none();
+    const offset = (match[8] === "-" ? -1 : 1) * (hours * 60 + minutes) * 60_000;
+    return Option.some(DateTime.makeUnsafe(DateTime.toEpochMillis(wall) - offset));
+  }
+  const zoned = DateTime.makeZonedUnsafe(DateTime.toEpochMillis(wall), {
+    timeZone: zone,
+    adjustForTimeZone: true,
+    disambiguation: "compatible",
+  });
+  return Option.some(DateTime.toUtc(zoned));
+};

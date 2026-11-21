@@ -395,6 +395,53 @@ it.effect("refuses a question card in a routine's turn, which nobody could answe
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect(
+  "lets a routine's turn pause its own routine, and refuses every other routine change, also to it",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const { bot, routine } = yield* ranRoutine;
+      const sibling = yield* routineOf(bot.id);
+      const side = yield* sideTurn(routine.id);
+      const setRoutine = (args: { readonly [key: string]: string }, requestId: string) =>
+        Effect.gen(function* () {
+          yield* control.toolCall({
+            sessionId: side.engine_session_id,
+            turnId: side.admitted_turn_id,
+            tool: "set_routine",
+            input: args,
+            recorded: "now",
+          });
+          return yield* (yield* BotTools).call({
+            requestId,
+            sessionId: side.engine_session_id,
+            tool: "set_routine",
+            arguments: args,
+          });
+        });
+
+      const other = yield* setRoutine({ action: "pause", id: sibling.id }, "call-1");
+      assert.strictEqual(other._tag, "refused");
+      for (const [args, requestId] of [
+        [{ action: "update", id: routine.id, name: "Reviews" }, "call-2"],
+        [{ action: "resume", id: routine.id }, "call-3"],
+        [{ action: "delete", id: routine.id }, "call-4"],
+      ] as const) {
+        assert.strictEqual((yield* setRoutine(args, requestId))._tag, "refused");
+      }
+      const paused = yield* setRoutine({ action: "pause", id: routine.id }, "call-5");
+      assert.strictEqual(paused._tag, "result");
+
+      const byId = new Map(
+        (yield* (yield* Routines).list(bot.id)).map((saved) => [saved.id, saved] as const),
+      );
+      assert.deepStrictEqual(
+        [byId.get(routine.id)?.enabled, byId.get(routine.id)?.name, byId.get(sibling.id)?.enabled],
+        [false, "Pull requests", true],
+      );
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("fails a run whose envelope the engine could never take, without another attempt", () =>
   Effect.gen(function* () {
     const bot = yield* createBot("Ana");

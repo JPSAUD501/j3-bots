@@ -188,7 +188,10 @@ const SetRoutineFields = toolInput({
     described(Cron, "Five-field cron, in your user's time zone: 3 8 * * 1-5."),
   ),
   at: Schema.optionalKey(
-    described(LocalTime, "One run at this local time in your user's zone: 2026-11-21T09:00."),
+    described(
+      LocalTime,
+      "One run at this time: local time in your user's zone (2026-11-21T09:00), or with Z or an explicit offset (2026-11-21T09:00-03:00).",
+    ),
   ),
   webhook: Schema.optionalKey(
     described(Schema.Literal(true), "Run whenever the routine's address receives a request."),
@@ -212,10 +215,13 @@ const routineCallProblem = (input: SetRoutineFields): string | undefined => {
     return undefined;
   }
   if (input.id === undefined) return `${input.action} needs the routine's id`;
-  if (input.action !== "update") {
-    const extra = input.name ?? input.instruction;
-    if (extra !== undefined || triggerCount(input) > 0) return `${input.action} takes only an id`;
+  const changes = [input.name, input.instruction].filter((field) => field !== undefined).length;
+  if (input.action === "update") {
+    return changes + triggerCount(input) === 0
+      ? "update needs a name, an instruction or a trigger to change"
+      : undefined;
   }
+  if (changes > 0 || triggerCount(input) > 0) return `${input.action} takes only an id`;
   return undefined;
 };
 
@@ -333,6 +339,9 @@ export const tools = {
       "Check `list_routines` first and change an existing routine rather than adding a second.",
       "`create` takes a name, an instruction and exactly one of `schedule`, `at` or `webhook`; the other actions take the routine's id, and `update` also takes the fields that change.",
       "Times are in your user's zone, and a schedule runs at most every five minutes.",
+      "A one-time routine is paused after it runs; giving it a new time with `update` starts it again.",
+      "During a routine run the only call allowed is `pause` of that routine, so it can stop itself once its job is done.",
+      'A webhook routine\'s address is a secret: anyone who has it can start the routine. Configure the calling system with it yourself when your user asked and you have access; otherwise give it to your user privately in your closing `say` (`to: "dm"` in a room). Never put it in a room, a teammate message, memory or another file.',
       "Each run starts in a fresh session without this conversation, so the instruction must stand alone: what to look at, what counts as worth reporting, the names, places and thresholds involved, and a last line saying what to send your user and what to do when there is nothing new.",
       "Returns the routine as saved, with its id and next run; tell your user the exact schedule.",
     ],
