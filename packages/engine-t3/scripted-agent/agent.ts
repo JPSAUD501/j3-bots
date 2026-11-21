@@ -245,11 +245,15 @@ const callHostTool = async (turn: Turn, tool: string, input: Record<string, unkn
  * - `question`: asks one multiple-choice question and repeats the answer.
  * - `speak`: sends `text` to the user through the engine's `send_to_user` tool.
  * - `secret`: asks for a secret through the engine's `request_secret` tool.
+ * - `delegate`: hands a task to a child agent through the engine's
+ *   `delegate_task` tool, then ends; the engine wakes the session when the
+ *   child's task ends. The child runs `plain`, or with `child=slow`, `slow`
+ *   for two minutes.
  *
  * No script starts work on its own after its turn: the engine offers a
  * continuation only to agents it recognizes by name (**Read**, `db51b67`,
  * `provider-acp-registry/src/server/adapter.ts`), and this agent claims no
- * other agent's name.
+ * other agent's name. Only the engine's own delegated task outlives a turn.
  */
 const SCRIPTS: Record<string, (turn: Turn) => Promise<StopReason>> = {
   plain: async (turn) => {
@@ -342,6 +346,18 @@ const SCRIPTS: Record<string, (turn: Turn) => Promise<StopReason>> = {
   speak: async (turn) => {
     await callHostTool(turn, "send_to_user", {
       message: turn.args.get("text") ?? "A message from the scripted agent.",
+    });
+    reportUsage(turn);
+    return turn.signal.aborted ? "cancelled" : "end_turn";
+  },
+  delegate: async (turn) => {
+    const child =
+      turn.args.get("child") === "slow"
+        ? "[[script:slow every=500 for=120000]]"
+        : "[[script:plain]]";
+    await callHostTool(turn, "delegate_task", {
+      task: child,
+      title: "Scripted delegate",
     });
     reportUsage(turn);
     return turn.signal.aborted ? "cancelled" : "end_turn";

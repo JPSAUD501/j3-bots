@@ -378,9 +378,14 @@ export class TestEngineControl extends Context.Service<
     }) => Effect.Effect<void>;
     /**
      * Background work the bot started wakes the session. The turn starts at
-     * once, or after the running one.
+     * once, or after the running one. `origin` is the turn the engine names
+     * as the one whose work woke it, as for its own delegated tasks; a
+     * harness's wake names none.
      */
-    readonly startEngineTurn: (sessionId: SessionId) => Effect.Effect<TurnId>;
+    readonly startEngineTurn: (
+      sessionId: SessionId,
+      origin?: TurnId | null,
+    ) => Effect.Effect<TurnId>;
     /** Forgets the session's event history, so a resume from any cursor gets a `replaced`. */
     readonly pruneHistory: (sessionId: SessionId) => Effect.Effect<void>;
     /**
@@ -905,7 +910,7 @@ const make = Effect.gen(function* () {
   ): DispatchDisposition => {
     if (session.raceNextStart) {
       session.raceNextStart = false;
-      addTurn(session, { _tag: "background" }, at);
+      addTurn(session, { _tag: "background", origin: null }, at);
     }
     const turn = addTurn(session, { _tag: "dispatch", key }, at);
     return session.waiting.includes(turn.turnId)
@@ -1321,7 +1326,7 @@ const make = Effect.gen(function* () {
               turnDuringStop = null;
               const at = yield* DateTime.now;
               stopSession(session, at, [...session.waiting]);
-              const turn = addTurn(session, { _tag: "background" }, at);
+              const turn = addTurn(session, { _tag: "background", origin: null }, at);
               yield* Deferred.succeed(during.started, turn.turnId);
               return yield* Deferred.await(during.reply);
             }
@@ -1448,8 +1453,15 @@ const make = Effect.gen(function* () {
             // Every event is handed to the streams as it happens, so each stream
             // is already caught up: the marker follows what it was last given.
             // The TestEngine knows every tool's persistence: its work is never in doubt.
-            const backgroundWork: BackgroundWork =
-              session.running === null && backgroundRuns(session) ? "pending" : "none";
+            const backgroundWork: BackgroundWork = {
+              turns:
+                session.running === null
+                  ? [...session.turns.values()]
+                      .filter((turn) => turn.background)
+                      .map((turn) => turn.turnId)
+                  : [],
+              unattributed: false,
+            };
             // The running turn, also one whose provider turn has not started, and those waiting.
             const runnableTurns =
               session.running === null
@@ -1846,10 +1858,10 @@ const make = Effect.gen(function* () {
         dropContinuation(session, turn, yield* DateTime.now);
       }),
 
-    startEngineTurn: (sessionId) =>
+    startEngineTurn: (sessionId, origin = null) =>
       Effect.gen(function* () {
         const session = yield* existingSession(sessionId);
-        return addTurn(session, { _tag: "background" }, yield* DateTime.now).turnId;
+        return addTurn(session, { _tag: "background", origin }, yield* DateTime.now).turnId;
       }),
 
     pruneHistory: (sessionId) =>

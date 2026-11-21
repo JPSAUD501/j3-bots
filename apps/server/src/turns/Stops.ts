@@ -7,7 +7,7 @@ import {
   NotFound,
   RoomId,
 } from "@j3-bots/contracts";
-import { Engine, IdempotencyKey, SessionId } from "@j3-bots/engine-t3";
+import { Engine, IdempotencyKey, isBackgroundWorkPending, SessionId } from "@j3-bots/engine-t3";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -419,7 +419,7 @@ export const layer = Layer.effect(
               _tag: "synchronized",
               // An acknowledged round proves no interrupt: the engine's state
               // after it is what counts, also for work its interrupt missed.
-              engineShows: backgroundWork === "pending" || runnableTurns.length > 0,
+              engineShows: isBackgroundWorkPending(backgroundWork) || runnableTurns.length > 0,
             }) as const,
         ),
         Effect.catchTags({

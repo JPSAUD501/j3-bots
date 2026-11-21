@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { BotId } from "@j3-bots/contracts";
-import { SessionId } from "@j3-bots/engine-t3";
+import { isBackgroundWorkPending, SessionId } from "@j3-bots/engine-t3";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -74,7 +74,7 @@ export const layer = Layer.effect(
       return yield* observer.synchronize(session.id, session.engine_session_id).pipe(
         Effect.map(
           ({ backgroundWork, runnableTurns }) =>
-            backgroundWork === "pending" || runnableTurns.length > 0,
+            isBackgroundWorkPending(backgroundWork) || runnableTurns.length > 0,
         ),
         // Only a session the engine no longer has runs nothing for certain.
         Effect.catchTags({

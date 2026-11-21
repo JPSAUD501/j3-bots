@@ -99,6 +99,12 @@ const bench = Layer.effect(
           return control
             .hostSpeech({ sessionId, turnId, text: act.text })
             .pipe(Effect.andThen(finish(sessionId, turnId)));
+        case "delegate":
+          // The engine names the delegating turn on its task's completion.
+          return finish(sessionId, turnId).pipe(
+            Effect.andThen(control.startEngineTurn(sessionId, turnId)),
+            Effect.asVoid,
+          );
       }
     };
 

@@ -449,12 +449,12 @@ export class Engine extends Context.Service<
      * turn's `turn-finished`, a `turn-finished` with `cancelled` for each
      * waiting turn, `steer-dropped` for each untaken steer,
      * `continuation-dropped` for a disarmed continuation, and a
-     * `synchronized` with no `pending` background work and no
+     * `synchronized` with no background work pending and no
      * `runnableTurns` for the background work of a turn that had already
      * ended and for a turn the engine started or queued on its own. An
      * acknowledged stop's interrupt can still fail and leave such work
      * running (**Read**, `Orchestrator.ts`, L14183-14212): the marker reports
-     * it `pending` as long as the engine's own state holds it.
+     * it pending as long as the engine's own state holds it.
      *
      * A message the engine counts as a user's releases the hold Stop put on
      * the queue, so a dispatch sent between the stop and the cancels starts a

@@ -340,7 +340,7 @@ describe("TestEngine", () => {
         ),
         [
           [{ _tag: "dispatch", key: key("dispatch-1") }, "cancelled"],
-          [{ _tag: "background" }, "interrupted"],
+          [{ _tag: "background", origin: null }, "interrupted"],
         ],
       );
     }).pipe(Effect.provide(TestEngine.layer)),

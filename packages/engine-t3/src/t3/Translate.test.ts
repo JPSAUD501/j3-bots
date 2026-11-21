@@ -27,6 +27,7 @@ import {
   isDeleted,
   nothingToStop,
   replacement,
+  reportedWorkOf,
   runnableTurns,
   toolsToResolve,
   workInShell,
@@ -283,20 +284,26 @@ const backgroundAtEnd = (events: ReadonlyArray<{ readonly _tag: string }>) =>
   events.flatMap((event) =>
     event._tag === "turn-finished" && "backgroundWork" in event ? [event.backgroundWork] : [],
   );
+/** Background work pending in these turns, and work attributed to none if `unattributed`. */
+const pendingIn = (ids: ReadonlyArray<string>, unattributed = false) => ({
+  turns: ids.map((id) => TurnId.make(id)),
+  unattributed,
+});
+const NONE = pendingIn([]);
 describe("backgroundWorkOf", () => {
   // The engine's rule (**Read** at `db51b67`, `derivePendingBackgroundWork`).
   it("counts live work left by an ended run, as the engine's stop does", () => {
     const mirror = emptyMirror();
     applyEvent(mirror, run("completed", 1));
     applyEvent(mirror, command("running"));
-    assert.strictEqual(backgroundWorkOf(mirror)._tag, "pending");
+    assert.deepStrictEqual(backgroundWorkOf(mirror).pending, pendingIn(["run-1"]));
 
     // A running run is the stop's target instead, and its turn is open.
     applyEvent(mirror, run("running", 2));
-    assert.strictEqual(backgroundWorkOf(mirror)._tag, "none");
+    assert.deepStrictEqual(backgroundWorkOf(mirror).pending, NONE);
     applyEvent(mirror, run("interrupted", 2));
     applyEvent(mirror, command("interrupted"));
-    assert.strictEqual(backgroundWorkOf(mirror)._tag, "none");
+    assert.deepStrictEqual(backgroundWorkOf(mirror).pending, NONE);
 
     // A tool the agent keeps running on purpose is never pending.
     applyEvent(
@@ -309,11 +316,36 @@ describe("backgroundWorkOf", () => {
         status: "running",
       }),
     );
-    assert.strictEqual(backgroundWorkOf(mirror)._tag, "none");
+    assert.deepStrictEqual(backgroundWorkOf(mirror).pending, NONE);
 
-    // A task only the provider thread reports.
+    // A task only the provider thread reports, in an event of no run.
     applyEvent(mirror, providerThread(["task-1"]));
-    assert.strictEqual(backgroundWorkOf(mirror)._tag, "pending");
+    assert.deepStrictEqual(backgroundWorkOf(mirror).pending, pendingIn([], true));
+  });
+
+  // Each piece goes to the run the engine gives it: a task's stamped run, an
+  // item's own (**Read** at `db51b67`, `ProjectionStore.ts`, L936-954).
+  it("attributes each piece of work to the turn that started it, in the order they ran", () => {
+    const mirror = emptyMirror();
+    applyEvent(mirror, run("running", 1));
+    applyEvent(mirror, providerThread([], [{ taskId: "task-1", kind: "subagent" }], "run-1"));
+    applyEvent(mirror, run("completed", 1));
+    applyEvent(mirror, run("running", 2));
+    // The adapter resends its whole roster: the first task keeps its run.
+    const roster = [
+      { taskId: "task-1", kind: "subagent" },
+      { taskId: "task-2", kind: "background_task" },
+    ];
+    applyEvent(mirror, providerThread([], roster, "run-2"));
+    applyEvent(mirror, run("completed", 2));
+    assert.deepStrictEqual(backgroundWorkOf(mirror).pending, pendingIn(["run-1", "run-2"]));
+
+    // The first turn's work ends; the second's still runs.
+    applyEvent(
+      mirror,
+      providerThread([], [{ taskId: "task-2", kind: "background_task" }], "run-3"),
+    );
+    assert.deepStrictEqual(backgroundWorkOf(mirror).pending, pendingIn(["run-2"]));
   });
 
   // Claude Code reports a monitor the agent awaits as a task of its provider
@@ -432,7 +464,7 @@ describe("backgroundWorkOf", () => {
         _tag: "turn-finished",
         turnId: TurnId.make("run-2"),
         finishedAt: at,
-        cause: { _tag: "background" },
+        cause: { _tag: "background", origin: null },
         outcome: { _tag: "completed" },
         backgroundWork: true,
         continuation: null,
@@ -453,8 +485,8 @@ describe("backgroundWorkOf", () => {
     applyEvent(mirror, providerThread([], [{ taskId: "task-1", kind: "monitor" }], "run-1"));
     applyEvent(mirror, run("completed", 1));
     assert.deepStrictEqual(backgroundAtEnd(diff(mirror, view, at)), [false]);
-    // The engine's stop still counts it.
-    assert.strictEqual(backgroundWorkOf(mirror)._tag, "pending");
+    // The engine's stop still counts it, as the first turn's.
+    assert.deepStrictEqual(backgroundWorkOf(mirror).pending, pendingIn(["run-1"]));
   });
 
   // The stream sends a dynamic tool input above 16 KiB as `{summary, truncated}`
@@ -475,22 +507,68 @@ describe("backgroundWorkOf", () => {
     );
     // Pending until the fetch tells: the Stop waits that long.
     assert.deepStrictEqual(toolsToResolve(mirror), ["item-tool"]);
-    assert.strictEqual(backgroundWorkOf(mirror)._tag, "pending");
+    assert.deepStrictEqual(backgroundWorkOf(mirror).pending, pendingIn(["run-1"]));
 
     mirror.toolPersistence.set("item-tool", "persistent");
     assert.deepStrictEqual(toolsToResolve(mirror), []);
-    assert.strictEqual(backgroundWorkOf(mirror)._tag, "none");
+    assert.deepStrictEqual(backgroundWorkOf(mirror), { pending: NONE, undecided: [] });
 
     mirror.toolPersistence.set("item-tool", "transient");
-    assert.strictEqual(backgroundWorkOf(mirror)._tag, "pending");
+    assert.deepStrictEqual(backgroundWorkOf(mirror).pending, pendingIn(["run-1"]));
 
     // No read of the item could tell: the engine's projection decides it, by
     // the provider's id of the item, which is the engine's task id.
     mirror.toolPersistence.set("item-tool", "undecidable");
-    assert.deepStrictEqual(backgroundWorkOf(mirror), { _tag: "undecided", taskIds: ["call-7"] });
-    // Work the engine counts outweighs it.
-    applyEvent(mirror, command("running"));
-    assert.strictEqual(backgroundWorkOf(mirror)._tag, "pending");
+    const tool = { taskId: "call-7", turnId: TurnId.make("run-1") };
+    const work = backgroundWorkOf(mirror);
+    assert.deepStrictEqual(work, { pending: NONE, undecided: [tool] });
+    // Once decided, it is its turn's.
+    assert.deepStrictEqual(reportedWorkOf(mirror, work, [tool]), pendingIn(["run-1"]));
+    assert.deepStrictEqual(reportedWorkOf(mirror, work, []), NONE);
+  });
+});
+
+// A wake's run opens with a message the engine records in the same command
+// (**Read** at `db51b67`, `Orchestrator.ts`, L8114 with L8184).
+describe("the cause of a turn the engine started on its own", () => {
+  const wakeMessage = (id: string, delegatedBy?: string) =>
+    event("message.updated", {
+      id,
+      threadId: "thread-1",
+      runId: "run-2",
+      nodeId: null,
+      role: "user",
+      text: "Background activity updated",
+      attachments: [],
+      streaming: false,
+      createdAt: at,
+      updatedAt: at,
+      createdBy: "agent",
+      creationSource: "server",
+      ...(delegatedBy === undefined
+        ? {}
+        : { delegatedCompletion: { parentRunId: delegatedBy, generation: 1, taskIds: [] } }),
+    });
+  const causeOfWake = (delegatedBy?: string) => {
+    const mirror = emptyMirror();
+    applyEvent(mirror, run("completed", 1));
+    const { view } = replacement(mirror, false, at);
+    applyEvent(mirror, wakeMessage("message-2", delegatedBy));
+    applyEvent(mirror, run("running", 2));
+    return diff(mirror, view, at).flatMap((body) =>
+      body._tag === "turn-started" ? [body.cause] : [],
+    );
+  };
+
+  it("names the turn that delegated the task whose completion woke the session", () => {
+    assert.deepStrictEqual(causeOfWake("run-1"), [
+      { _tag: "background", origin: TurnId.make("run-1") },
+    ]);
+  });
+
+  // A harness's wake names no run or task (**Read**, `ProviderContinuationService.ts`, L247-264).
+  it("names no origin for a wake that does not say", () => {
+    assert.deepStrictEqual(causeOfWake(), [{ _tag: "background", origin: null }]);
   });
 });
 
@@ -505,24 +583,26 @@ describe("workInShell", () => {
     pendingBackgroundTasks: taskIds.map((taskId) => ({ taskId, kind: "background_task" as const })),
   });
 
+  const tool = { taskId: "call-7", turnId: TurnId.make("run-1") };
+
   it("counts an undecided tool pending while the engine lists it", () => {
-    assert.strictEqual(workInShell(listing(["call-7"]), ["call-7"]), "pending");
+    assert.deepStrictEqual(workInShell(listing(["call-7"]), [tool]), [tool]);
   });
 
   it("settles an undecided tool the engine no longer lists, whatever else it lists", () => {
-    assert.strictEqual(workInShell(listing([]), ["call-7"]), "none");
-    assert.strictEqual(workInShell(listing(["pr-watch"]), ["call-7"]), "none");
+    assert.deepStrictEqual(workInShell(listing([]), [tool]), []);
+    assert.deepStrictEqual(workInShell(listing(["pr-watch"]), [tool]), []);
   });
 
   // The shell lists nothing while its own run gate holds.
   it("counts it pending when the shell cannot say", () => {
-    assert.strictEqual(workInShell(undefined, ["call-7"]), "pending");
-    assert.strictEqual(
-      workInShell({ ...listing([]), activeRunId: RunId.make("run-2") }, ["call-7"]),
-      "pending",
+    assert.deepStrictEqual(workInShell(undefined, [tool]), [tool]);
+    assert.deepStrictEqual(
+      workInShell({ ...listing([]), activeRunId: RunId.make("run-2") }, [tool]),
+      [tool],
     );
-    assert.strictEqual(workInShell({ ...listing([]), status: "queued" }, ["call-7"]), "pending");
-    assert.strictEqual(workInShell({ ...listing([]), status: "idle" }, ["call-7"]), "pending");
+    assert.deepStrictEqual(workInShell({ ...listing([]), status: "queued" }, [tool]), [tool]);
+    assert.deepStrictEqual(workInShell({ ...listing([]), status: "idle" }, [tool]), [tool]);
   });
 });
 

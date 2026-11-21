@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { BotId, type Entry } from "@j3-bots/contracts";
-import { Engine, SessionId } from "@j3-bots/engine-t3";
+import { Engine, isBackgroundWorkPending, SessionId } from "@j3-bots/engine-t3";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -316,7 +316,7 @@ export const layer = Layer.effect(
         Effect.map(({ backgroundWork, runnableTurns }) =>
           runnableTurns.length > 0
             ? ("busy" as const)
-            : backgroundWork === "pending"
+            : isBackgroundWorkPending(backgroundWork)
               ? waits === "everything"
                 ? ("background" as const)
                 : ("quiet-with-background" as const)

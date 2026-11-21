@@ -21,20 +21,21 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import type { DispatchDisposition } from "../Engine.ts";
-import type {
-  BackgroundWork,
-  EndedTurn,
-  EngineRequest,
-  HostSpeech,
-  OpenRequest,
-  OpenTurn,
-  PendingContinuation,
-  RequestResolution,
-  SessionEvent,
-  SteerSettlement,
-  ToolCall,
-  TurnCause,
-  TurnOutcome,
+import {
+  type BackgroundWork,
+  type EndedTurn,
+  type EngineRequest,
+  type HostSpeech,
+  isBackgroundWorkPending,
+  type OpenRequest,
+  type OpenTurn,
+  type PendingContinuation,
+  type RequestResolution,
+  type SessionEvent,
+  type SteerSettlement,
+  type ToolCall,
+  type TurnCause,
+  type TurnOutcome,
 } from "../events.ts";
 import {
   HostSpeechId,
@@ -81,6 +82,12 @@ export interface Mirror {
    */
   readonly providerThreads: Map<string, ProviderThread>;
   /**
+   * The run each delegated task's completion message names as the one that
+   * delegated it, by message id: the origin of the `background` turn the
+   * message starts (`causeOf`). Only messages that carry one are kept.
+   */
+  readonly delegatedOrigins: Map<string, string>;
+  /**
    * `toolInputDigest` of each `j3` tool call's input, by item id, with the
    * input it was taken of. Kept by `digestToolCalls`, which `diff` relies on.
    */
@@ -107,6 +114,7 @@ export const emptyMirror = (): Mirror => ({
   items: new Map(),
   requests: new Map(),
   providerThreads: new Map(),
+  delegatedOrigins: new Map(),
   toolDigests: new Map(),
   fetched: new Map(),
   toolPersistence: new Map(),
@@ -119,6 +127,7 @@ export const copyMirror = (mirror: Mirror): Mirror => ({
   items: new Map(mirror.items),
   requests: new Map(mirror.requests),
   providerThreads: new Map(mirror.providerThreads),
+  delegatedOrigins: new Map(mirror.delegatedOrigins),
   toolDigests: new Map(mirror.toolDigests),
   fetched: new Map(mirror.fetched),
   toolPersistence: new Map(mirror.toolPersistence),
@@ -140,6 +149,13 @@ export const mirrorOf = (
     items,
     requests: new Map(projection.runtimeRequests.map((request) => [request.id, request])),
     providerThreads: new Map(projection.providerThreads.map((thread) => [thread.id, thread])),
+    delegatedOrigins: new Map(
+      projection.messages.flatMap((message) =>
+        message.delegatedCompletion === undefined
+          ? []
+          : [[message.id, message.delegatedCompletion.parentRunId]],
+      ),
+    ),
     toolDigests: new Map(),
     fetched: new Map(before.fetched),
     toolPersistence: new Map([...before.toolPersistence].filter(([id]) => items.has(id))),
@@ -175,6 +191,14 @@ export const applyEvent = (mirror: Mirror, event: OrchestrationV2DomainEvent): b
         attributeTasks(event.payload, mirror.providerThreads.get(event.payload.id), event.runId),
       );
       return false;
+    case "message.updated":
+      // The engine records a delegated completion's message in the same
+      // command as the run it starts (**Read** at `db51b67`, `Orchestrator.ts`:
+      // the message at L8114 and L8538, emitted in the run's command at L8184
+      // and L8669), so its origin is known before the run's turn starts.
+      if (event.payload.delegatedCompletion === undefined) return false;
+      mirror.delegatedOrigins.set(event.payload.id, event.payload.delegatedCompletion.parentRunId);
+      return true;
     default:
       // Every thread event carries the whole thread record.
       if (event.type.startsWith("thread.") && isThread(event.payload)) {
@@ -340,7 +364,8 @@ const causeOf = (mirror: Mirror, run: Run): TurnCause => {
   const opening = openingMessageOf(mirror, run);
   const dispatch = opening === undefined ? Option.none() : dispatchOfMessage(opening);
   if (Option.isSome(dispatch)) return { _tag: "dispatch", key: dispatch.value.key };
-  return { _tag: "background" };
+  const origin = opening === undefined ? undefined : mirror.delegatedOrigins.get(opening);
+  return { _tag: "background", origin: origin === undefined ? null : TurnId.make(origin) };
 };
 
 const FAILURES: Record<OrchestrationV2ProviderFailureClass, FailureClass> = {
@@ -538,16 +563,26 @@ const latestRun = (mirror: Mirror) =>
     .at(-1);
 
 /**
- * The session's background work as the mirror shows it, by the rule the
- * engine's stop counts it with: work it counts as pending, none, or nothing
- * pending but live dynamic tools whose persistence no read of the item could
- * decide (`toolWork`), by the engine's task id of each, which the engine's
- * own projection decides (`workInShell`).
+ * A live dynamic tool whose persistence no read of the item could decide
+ * (`toolWork`): the engine's task id of it, and the turn that started it,
+ * if any.
  */
-export type MirroredWork =
-  | { readonly _tag: "pending" }
-  | { readonly _tag: "none" }
-  | { readonly _tag: "undecided"; readonly taskIds: ReadonlyArray<string> };
+export interface UndecidedTool {
+  readonly taskId: string;
+  readonly turnId: TurnId | null;
+}
+
+/**
+ * The session's background work as the mirror shows it, by the rule the
+ * engine's stop counts it with, by the turn that started each piece: work it
+ * counts as pending, and live dynamic tools whose persistence no read of the
+ * item could decide, which the engine's own projection decides
+ * (`workInShell`).
+ */
+export interface MirroredWork {
+  readonly pending: BackgroundWork;
+  readonly undecided: ReadonlyArray<UndecidedTool>;
+}
 
 /**
  * The engine's id of the pending task a live item is listed as (**Read** at
@@ -558,6 +593,18 @@ export type MirroredWork =
 const taskIdOf = (item: Item) => item.nativeItemRef?.nativeId ?? item.id;
 
 /**
+ * Background work by the turn that started it, the turns in the order they
+ * ran. A turn the mirror no longer has comes after those it has.
+ */
+const workBy = (mirror: Mirror, owners: ReadonlyArray<string | null>): BackgroundWork => {
+  const order = (runId: string) => mirror.runs.get(runId)?.ordinal ?? Number.POSITIVE_INFINITY;
+  const turns = [...new Set(owners.filter((owner) => owner !== null))].sort(
+    (a, b) => order(a) - order(b),
+  );
+  return { turns: turns.map((turn) => TurnId.make(turn)), unattributed: owners.includes(null) };
+};
+
+/**
  * The session's background work as the engine's stop counts it: what
  * `thread.stop` interrupts in a session whose latest run has ended, an
  * interrupt that lands only after the stop answered. The engine's own rule
@@ -566,42 +613,67 @@ const taskIdOf = (item: Item) => item.nativeItemRef?.nativeId ?? item.id;
  * L243-258), as `Orchestrator.ts`, `dispatchThreadStop` (L14141-14178),
  * applies it: with no run active and the latest run settled, a task the
  * active provider thread reports, or a live command, dynamic tool or subagent
- * item outside a rolled-back run. The rule is the session's: it does not ask
- * which run started the work.
+ * item outside a rolled-back run, one entry per task id. The rule is the
+ * session's: a stop ends all of it, whichever run started it. Each piece is
+ * attributed to the run the engine gives it: a task's `runId`, which the
+ * projection stamps (`attributeTasks`), or an item's own.
  */
 export const backgroundWorkOf = (mirror: Mirror): MirroredWork => {
-  const none = { _tag: "none" } as const;
-  const pending = { _tag: "pending" } as const;
+  const none: MirroredWork = { pending: { turns: [], unattributed: false }, undecided: [] };
   if ([...mirror.runs.values()].some((run) => ACTIVE_RUN.has(run.status))) return none;
   const latest = latestRun(mirror);
   if (latest === undefined || !SETTLED_FOR_BACKGROUND.has(latest.status)) return none;
   const active = mirror.thread?.activeProviderThreadId ?? null;
-  const tasks = [...mirror.providerThreads.values()].some(
-    (thread) =>
-      (active === null || thread.id === active) && (thread.pendingBackgroundTasks?.length ?? 0) > 0,
-  );
-  if (tasks) return pending;
+  const owners: Array<string | null> = [];
+  const listed = new Set<string>();
+  for (const thread of mirror.providerThreads.values()) {
+    if (active !== null && thread.id !== active) continue;
+    for (const task of thread.pendingBackgroundTasks ?? []) {
+      if (task.taskId.length === 0 || listed.has(task.taskId)) continue;
+      listed.add(task.taskId);
+      owners.push(task.runId ?? null);
+    }
+  }
   const rolledBack = new Set(
     [...mirror.runs.values()].flatMap((run) => (run.status === "rolled_back" ? [run.id] : [])),
   );
-  const undecided: Array<string> = [];
+  const undecided: Array<UndecidedTool> = [];
   for (const item of mirror.items.values()) {
+    const taskId = taskIdOf(item);
     if (
       !BACKGROUND_ITEM.has(item.type) ||
       !isOrchestrationV2WorkActive(item.status) ||
-      (item.runId !== null && rolledBack.has(item.runId))
+      (item.runId !== null && rolledBack.has(item.runId)) ||
+      listed.has(taskId)
     ) {
       continue;
     }
     const work = item.type === "dynamic_tool" ? toolWork(mirror, item) : "pending";
-    if (work === "pending") return pending;
-    if (work === "undecided") undecided.push(taskIdOf(item));
+    if (work === "none") continue;
+    listed.add(taskId);
+    if (work === "pending") owners.push(item.runId);
+    else undecided.push({ taskId, turnId: item.runId === null ? null : TurnId.make(item.runId) });
   }
-  return undecided.length === 0 ? none : { _tag: "undecided", taskIds: undecided };
+  return { pending: workBy(mirror, owners), undecided };
 };
 
 /**
- * Whether tools the mirror could not decide (`MirroredWork`) are pending, by
+ * The session's background work, with the tools the mirror could not decide
+ * settled: `pendingTools` are those of them still pending.
+ */
+export const reportedWorkOf = (
+  mirror: Mirror,
+  work: MirroredWork,
+  pendingTools: ReadonlyArray<UndecidedTool>,
+): BackgroundWork =>
+  workBy(mirror, [
+    ...work.pending.turns,
+    ...(work.pending.unattributed ? [null] : []),
+    ...pendingTools.map((tool) => tool.turnId),
+  ]);
+
+/**
+ * Which tools the mirror could not decide (`MirroredWork`) are pending, by
  * the engine's own projection of the thread's pending work: the shell row
  * `getThreadFamily` returns, whose `pendingBackgroundTasks` the engine derives
  * by the same rule over the stored items, inputs whole (**Read** at
@@ -619,17 +691,17 @@ export const workInShell = (
   shell:
     | Pick<OrchestrationV2ThreadShell, "activeRunId" | "status" | "pendingBackgroundTasks">
     | undefined,
-  taskIds: ReadonlyArray<string>,
-): BackgroundWork => {
+  tools: ReadonlyArray<UndecidedTool>,
+): ReadonlyArray<UndecidedTool> => {
   if (
     shell === undefined ||
     shell.activeRunId !== null ||
     !SETTLED_FOR_BACKGROUND.has(shell.status)
   ) {
-    return "pending";
+    return tools;
   }
   const listed = new Set((shell.pendingBackgroundTasks ?? []).map((task) => task.taskId));
-  return taskIds.some((taskId) => listed.has(taskId)) ? "pending" : "none";
+  return tools.filter((tool) => listed.has(tool.taskId));
 };
 
 /** A run that executed, as the engine counts it: neither queued nor cancelled before it started. */
@@ -1719,6 +1791,10 @@ export const runnableTurns = (mirror: Mirror): ReadonlyArray<TurnId> =>
     .filter((run) => run.status === "queued" || ACTIVE_RUN.has(run.status))
     .map(turnIdOf);
 
+/** No background work, nor any the adapter could not judge yet. */
+const isNothing = (work: MirroredWork) =>
+  !isBackgroundWorkPending(work.pending) && work.undecided.length === 0;
+
 /**
  * Whether nothing a Stop targets can still run in the session: no run that
  * has not ended, other than those waiting in the queue, which a Stop cancels
@@ -1734,7 +1810,7 @@ export const nothingToStop = (mirror: Mirror, now: DateTime.Utc): boolean => {
       (run) =>
         (!isEnded(run) && !waiting.has(run.id)) ||
         (isEnded(run) && continuationOf(mirror, run, now) !== null),
-    ) && backgroundWorkOf(mirror)._tag === "none"
+    ) && isNothing(backgroundWorkOf(mirror))
   );
 };
 
