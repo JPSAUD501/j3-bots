@@ -59,7 +59,7 @@ Three regions, the same on every surface.
 | --- | --- |
 | Next and previous bot or room, in roster order; with none open, the first or the last | `Alt+↓`, `Alt+↑` (`⌥↓`, `⌥↑` on macOS) |
 | Put the cursor in the composer | `/` |
-| Stop the bot that is working | `Ctrl+.` (`⌘.` on macOS) |
+| Stop the bot that is working, or whose background work holds a change of its settings | `Ctrl+.` (`⌘.` on macOS) |
 | Close the details pane, before anything else | `Escape` |
 | Move through the roster | `↓` from the search field, then `↑`, `↓`, `Home`, `End` |
 
