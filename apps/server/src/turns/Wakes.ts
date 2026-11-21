@@ -94,11 +94,9 @@ export const layer = Layer.effect(
         case "operator":
         case "routine":
           return false;
+        // Its own audience was checked above: a conversation is always live.
         case "work":
-          return (
-            (yield* stops.covers(wake.botId, wake.audience, cause.seq)) ||
-            (yield* live(wake.botId, wake.audience)) === null
-          );
+          return yield* stops.covers(wake.botId, wake.audience, cause.seq);
         case "teammate":
           return (
             (cause.seq !== null &&

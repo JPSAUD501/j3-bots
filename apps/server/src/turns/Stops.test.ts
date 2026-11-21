@@ -281,40 +281,38 @@ it.effect("ends a room's turn waiting behind a private one only once the private
       roomId: room.id,
       changes: { archived: true },
     });
-    const meanwhile = yield* sendToBot(bot.id, "What is left today?");
-
     // The engine's stop would end the whole session: the room's Stop sends
-    // nothing while the private turn runs.
+    // nothing while the private turn runs, and the operator's word reaches
+    // that turn meanwhile.
+    const meanwhile = yield* sendToBot(bot.id, "What is left today?");
+    yield* until(
+      Effect.map(deliveriesOf(session, "What is left today?"), (sent) => sent.length > 0),
+    );
+    assert.deepStrictEqual(yield* deliveriesOf(session, "What is left today?"), ["steer"]);
     yield* (yield* Stops).runPending;
-    const sent = sql<{ readonly n: number }>`
-      SELECT COUNT(*) AS n FROM stop_targets WHERE issued_at IS NOT NULL
-    `.pipe(Effect.orDie);
-    assert.deepStrictEqual(yield* sent, [{ n: 0 }]);
+    const issued = sql<{ readonly n: number }>`
+        SELECT COUNT(*) AS n FROM stop_targets WHERE issued_at IS NOT NULL
+      `.pipe(Effect.orDie);
+    assert.deepStrictEqual(yield* issued, [{ n: 0 }]);
     assert.deepStrictEqual(yield* admittedTurn(bot.id), Option.some(background));
 
-    // It ends: the room's turn the engine starts next is stopped, and the
-    // private message goes after, with nothing in the room's name to show.
+    // The turn takes it and ends: the room's turn the engine starts next is
+    // stopped, with nothing in the room's name to show.
+    yield* control.readSteers({ sessionId: session, turnId: background });
     yield* control.finishTurn({
       sessionId: session,
       turnId: background,
       outcome: { _tag: "completed" },
     });
-    yield* stopSettled;
-    const started = yield* nextTurn(bot.id, background);
     yield* deliveryIs(meanwhile, "delivered");
-    assert.deepStrictEqual(yield* deliveriesOf(session, "What is left today?"), ["start"]);
+    yield* stopSettled;
+    yield* turnEnded(bot.id);
     const roomTurns = yield* sql<{ readonly outcome: string }>`
-      SELECT json_extract(outcome_json, '$._tag') AS outcome FROM turns
-      WHERE audience_room_id = ${room.id}
-    `.pipe(Effect.orDie);
+        SELECT json_extract(outcome_json, '$._tag') AS outcome FROM turns
+        WHERE audience_room_id = ${room.id}
+      `.pipe(Effect.orDie);
     assert.deepStrictEqual(roomTurns, [{ outcome: "interrupted" }]);
     assert.notInclude(yield* noticesOf(bot.id), "turn-failed");
-    yield* control.finishTurn({
-      sessionId: session,
-      turnId: started,
-      outcome: { _tag: "completed" },
-    });
-    yield* turnEnded(bot.id);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

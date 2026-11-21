@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { type Audience, AudienceColumn, audienceOf } from "./model.ts";
+import { stopHoldsSql } from "./stopTargets.ts";
 
 const WorkRow = Schema.Struct({
   admitted_turn_id: Schema.NullOr(TurnId),
@@ -16,6 +17,7 @@ const WorkRow = Schema.Struct({
   in_engine: Schema.Int,
   continuations: Schema.Int,
   stop_unsettled: Schema.BooleanFromBit,
+  stop_holds_steers: Schema.BooleanFromBit,
 });
 
 /** What a session is doing, as far as the server knows: what readiness, Stop and the roster read. */
@@ -32,6 +34,12 @@ export interface SessionWork {
   readonly continuations: number;
   /** A Stop of the session has a target not yet confirmed stopped. */
   readonly stopUnsettled: boolean;
+  /**
+   * Such a Stop also holds the operator's steer into the admitted turn: one
+   * not a room's Stop for another room still waiting to send its first round
+   * (`stopHoldsSql`).
+   */
+  readonly stopHoldsSteers: boolean;
 }
 
 /** Nothing is running in it or on its way to it; a pending continuation may still be. */
@@ -55,7 +63,8 @@ export const sessionWork = (sql: SqlClient.SqlClient) => {
           AND d.status = 'delivered' AND d.continuation_resumes_at IS NOT NULL) AS continuations,
         EXISTS (
           SELECT 1 FROM stop_targets t WHERE t.session_id = s.id AND t.stopped_at IS NULL
-        ) AS stop_unsettled
+        ) AS stop_unsettled,
+        ${stopHoldsSql(sql, sql`s.id`, sql`s.admitted_room_id`)} AS stop_holds_steers
       FROM sessions s WHERE s.id = ${sessionId}
     `,
   });
@@ -78,6 +87,7 @@ export const sessionWork = (sql: SqlClient.SqlClient) => {
         inEngine: row.in_engine,
         continuations: row.continuations,
         stopUnsettled: row.stop_unsettled,
+        stopHoldsSteers: row.stop_holds_steers,
       })),
     );
 };

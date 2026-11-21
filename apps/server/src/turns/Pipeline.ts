@@ -87,6 +87,7 @@ import { roomLiveSql } from "./roomLive.ts";
 import { DEFECT_RETRY, type Pass, onePassAtATime, passOutcome, reconcile } from "./reconciler.ts";
 import { takesNewWorkSql } from "./rotationRequests.ts";
 import { Signals } from "./Signals.ts";
+import { stopHoldsSql } from "./stopTargets.ts";
 import { Wakes } from "./Wakes.ts";
 
 const MainSession = Schema.Struct({
@@ -781,9 +782,10 @@ export const layer = Layer.effect(
     });
 
     /**
-     * Written and never sent, not fenced, and in a session no Stop holds (as
-     * the send's claim requires): sent before anything new is written, whether
-     * or not its bot has a wake pending. One whose files failed to stage waits
+     * Written and never sent, not fenced, and in a session no Stop holds it
+     * from (`stopHoldsSql`, as the send's claim reads it): sent before
+     * anything new is written, whether or not its bot has a wake pending. One
+     * whose files failed to stage waits
      * for its deadline, and an opening, also one written before a restart,
      * for its provider (`openingHeld`). Every first send is the dispatcher's,
      * under the budget.
@@ -803,9 +805,10 @@ export const layer = Layer.effect(
         ) AS opening_bot_id
       FROM dispatches d
       WHERE status = 'intended' AND attempts = 0 AND fenced_by_stop_id IS NULL
-        AND NOT EXISTS (
-          SELECT 1 FROM stop_targets t WHERE t.session_id = d.session_id AND t.stopped_at IS NULL
-        )
+        AND NOT (CASE WHEN d.delivery = 'steer'
+          THEN ${stopHoldsSql(sql, sql`d.session_id`, sql`d.audience_room_id`)}
+          ELSE ${stopHoldsSql(sql, sql`d.session_id`, null)}
+        END)
       ORDER BY rowid
     `.pipe(Effect.orDie);
     const unsent = Effect.flatMap(unsentRows, (rows) => readEach(rows, Unsent));
@@ -975,7 +978,10 @@ export const layer = Layer.effect(
       yield* observer.watch(session.value.id);
       if (!(yield* observer.ready(session.value.id))) return "not-ready" as const;
       const work = yield* workOf(session.value.id);
-      if (work.stopUnsettled) return null;
+      // An unsettled Stop holds every new turn. A room's Stop that waits for
+      // the admitted turn of another audience to end lets the operator's word
+      // into that turn meanwhile (`stopHoldsSql`).
+      if (work.stopUnsettled && (isIdle(work) || work.stopHoldsSteers)) return null;
       if (!isIdle(work)) {
         // A running turn takes only the operator's word for its own
         // audience. A wake for another audience waits for it to end, first in

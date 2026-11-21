@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
+import type * as Statement from "effect/sql/Statement";
 import { Time, timeText } from "../persistence/columns.ts";
 import type { WakesAfter } from "./Ledger.ts";
 import {
@@ -26,6 +27,38 @@ export type Ending =
   | { readonly _tag: "dropped" }
   /** It failed: refused, or never known. */
   | { readonly _tag: "failed"; readonly reason: WakeFailure };
+
+/**
+ * Whether an unsettled Stop of the session holds a first send into it
+ * (`docs/architecture/server.md`, Stop). Every one does, except that a steer
+ * into the admitted turn passes a room's Stop for another room that has
+ * issued no round there yet: that Stop sends nothing while a turn of another
+ * audience runs (`Stops`), and what the steer adds ends with that turn.
+ * `steerRoom` is the steer's room column, NULL for the conversation, and
+ * `null` for a send that is no steer. The planner, a send and its claim read
+ * it with the same rule. `sessionId` is often a caller's column, so the tables
+ * here have aliases no caller uses.
+ */
+export const stopHoldsSql = (
+  sql: SqlClient.SqlClient,
+  sessionId: Statement.Fragment,
+  steerRoom: Statement.Fragment | null,
+) => sql`EXISTS (
+  SELECT 1 FROM stop_targets sh_target JOIN stops sh_stop ON sh_stop.id = sh_target.stop_id
+  WHERE sh_target.session_id = ${sessionId} AND sh_target.stopped_at IS NULL
+    ${
+      steerRoom === null
+        ? sql``
+        : sql`AND NOT (
+          sh_stop.room_id IS NOT NULL AND sh_stop.room_id IS NOT ${steerRoom}
+          AND NOT EXISTS (
+            SELECT 1 FROM stop_targets sh_round
+            WHERE sh_round.stop_id = sh_target.stop_id
+              AND sh_round.session_id = sh_target.session_id AND sh_round.issued_at IS NOT NULL
+          )
+        )`
+    }
+)`;
 
 /** The engine key of one round of a Stop of one session. */
 export const stopKey = (stopId: string, sessionId: string, round: number): IdempotencyKey =>

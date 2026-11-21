@@ -459,20 +459,39 @@ export const layer = Layer.effect(
      * The hop count of a wake the pinned turn causes. A turn the engine
      * started on its own for work it does not name (a harness's wake) never
      * counts as the operator's: it counts as the furthest of the session's
-     * turns whose background work may still run, any of which may be what
-     * woke it. With none of them it cannot be traced, and causes no wake
+     * turns whose background work the engine showed pending most recently
+     * (`turns.background_seen_at`), any of which may be what woke it; an
+     * older flag may have outlived its work until the engine's next report.
+     * It keeps that count on its own row (`turns.borrowed_hops`), so the
+     * turns that go on with its own work count from it once those flags have
+     * cleared. With none of them it cannot be traced, and causes no wake
      * (`null`).
      */
     const hopCount = Effect.fn("Speech.hopCount")(function* (found: Pin) {
       const carried = yield* carriedBy(found);
       if (carried.rooted) return hopsOf(carried);
+      const [borrowed] = yield* SqlSchema.findAll({
+        Request: Schema.Void,
+        Result: Schema.Struct({ hops: Schema.NullOr(Schema.Int) }),
+        execute: () => sql`
+          SELECT MAX(hb_turn.borrowed_hops) AS hops FROM turns hb_turn
+          WHERE hb_turn.session_id = ${found.sessionId}
+            AND hb_turn.engine_turn_id IN (${chainSql(found.sessionId, found.turnId)})
+        `,
+      })(undefined).pipe(Effect.orDie);
+      if (borrowed !== undefined && borrowed.hops !== null) return borrowed.hops;
+      const flagged = sql`
+        hc_turn.session_id = ${found.sessionId} AND hc_turn.background_pending = 1
+          AND hc_turn.engine_turn_id NOT IN (${chainSql(found.sessionId, found.turnId)})
+      `;
       const candidates = yield* SqlSchema.findAll({
         Request: Schema.Void,
         Result: Schema.Struct({ engine_turn_id: TurnId }),
         execute: () => sql`
           SELECT hc_turn.engine_turn_id FROM turns hc_turn
-          WHERE hc_turn.session_id = ${found.sessionId} AND hc_turn.background_pending = 1
-            AND hc_turn.engine_turn_id NOT IN (${chainSql(found.sessionId, found.turnId)})
+          WHERE ${flagged} AND hc_turn.background_seen_at = (
+            SELECT MAX(hc_turn.background_seen_at) FROM turns hc_turn WHERE ${flagged}
+          )
         `,
       })(undefined).pipe(Effect.orDie);
       let count: number | null = null;
@@ -480,8 +499,46 @@ export const layer = Layer.effect(
         const theirs = yield* carriedIn(found.sessionId, candidate.engine_turn_id);
         if (theirs.rooted) count = Math.max(count ?? 0, hopsOf(theirs));
       }
+      if (count !== null) {
+        yield* sql`
+          UPDATE turns SET borrowed_hops = ${count}
+          WHERE session_id = ${found.sessionId} AND engine_turn_id = ${found.turnId}
+        `.pipe(Effect.orDie);
+      }
       return count;
     });
+
+    /**
+     * Whether the operator spoke in the pinned turn itself: a wake of theirs
+     * started it, or a steer of theirs reached it. A continuation, or a turn
+     * the engine started for a turn's background work, inherits no such
+     * word: its chain's hops start again from the operator, but its fan-out
+     * counts.
+     */
+    const operatorSpokeIn = (found: Pin) =>
+      SqlSchema.findAll({
+        Request: Schema.Void,
+        Result: Schema.Struct({ spoke: Schema.BooleanFromBit }),
+        execute: () => sql`
+          SELECT EXISTS (
+            SELECT 1 FROM dispatches os_dispatch
+            JOIN wakes os_wake ON os_wake.dispatch_id = os_dispatch.id
+            JOIN turns os_turn ON os_turn.session_id = os_dispatch.session_id
+              AND os_turn.engine_turn_id = os_dispatch.engine_turn_id
+            WHERE os_dispatch.session_id = ${found.sessionId}
+              AND os_dispatch.engine_turn_id = ${found.turnId}
+              AND os_dispatch.status IN ('accepted', 'delivered', 'finished')
+              AND (os_dispatch.delivery = 'steer' OR os_turn.origin_turn_id IS NULL)
+              AND (os_wake.kind = 'user' OR EXISTS (
+                SELECT 1 FROM entries os_entry
+                WHERE os_entry.id = os_wake.source_entry_id AND os_entry.author_kind = 'operator'
+              ))
+          ) AS spoke
+        `,
+      })(undefined).pipe(
+        Effect.orDie,
+        Effect.map(([row]) => row?.spoke ?? false),
+      );
 
     /** The teammates whose messages the pinned turn's chain delivers: its `bot` wakes and held messages. */
     const sendersCarried = (found: Pin) =>
@@ -726,8 +783,9 @@ export const layer = Layer.effect(
       if (mention.length === 0) return null;
       const work = yield* workStopped(found);
       if (work.stopped) return null;
-      // A chain that cannot be traced wakes nobody, as one past the limit.
-      const hops = (yield* hopCount(found)) ?? room.hopLimit + 1;
+      // A chain that cannot be traced wakes nobody.
+      const hops = yield* hopCount(found);
+      if (hops === null) return { _tag: "untraced" } as const;
       const routed = yield* routing.botMessage({
         room,
         botId: found.botId,
@@ -816,6 +874,13 @@ export const layer = Layer.effect(
             if (input.done === true) {
               for (const { id } of yield* deliveredBy(found))
                 yield* ledger.closeDelivery(id, "done");
+            }
+            if (routed?._tag === "untraced") {
+              return {
+                status: "recorded",
+                stopped: "untraced",
+                note: "Your message is in the room, but nobody was woken: this turn started on its own, and what started it cannot be traced, so it may not wake members. Do not mention anyone again for it. If your user is waiting on it, say so in the room.",
+              } satisfies Schema.Json;
             }
             if (routed?._tag === "hop-limit") {
               return {
@@ -934,10 +999,10 @@ export const layer = Layer.effect(
             return yield* refuse("Your user stopped this work, so nothing was sent.");
           }
           const { budgets } = yield* settings.get;
-          const carried = yield* carriedBy(found);
-          // Fan-out counts the teammates the turn brings in: not when the
-          // operator spoke in it, and not a teammate whose message it answers.
-          if (!carried.operator) {
+          // Fan-out counts the teammates the turn's chain brings in: not when
+          // the operator spoke in this turn, and not a teammate whose message
+          // it answers.
+          if (!(yield* operatorSpokeIn(found))) {
             const answered = yield* sendersCarried(found);
             const messaged = yield* messagedBy(found);
             const added = messaged.filter((id) => !answered.includes(id));

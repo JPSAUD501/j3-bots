@@ -28,9 +28,12 @@ import {
 } from "../testing/rooms.ts";
 import {
   admittedTurn,
+  chainLimits,
   command,
   conversation,
   deliveryIs,
+  mainSessionId,
+  messageTeammate,
   nextTurn,
   noticesOf,
   sendToBot,
@@ -42,6 +45,7 @@ import { DispatchSeq } from "../turns/model.ts";
 import { BotTools } from "../tools/BotTools.ts";
 import { Pipeline } from "../turns/Pipeline.ts";
 import { RETRY_TICK } from "../turns/reconciler.ts";
+import { Stops } from "../turns/Stops.ts";
 import { Wakes } from "../turns/Wakes.ts";
 import { Rooms } from "./Rooms.ts";
 
@@ -373,5 +377,196 @@ it.effect(
         _tag: "expired",
       });
       assert.deepStrictEqual(yield* noticesIn(room.id), []);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+/** Whether the server still counts background work the member's turn started as pending. */
+const flagged = (one: Member, turnId: TurnId) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const session = yield* mainSessionId(one.bot.id);
+    const [row] = yield* sql<{ readonly pending: number }>`
+      SELECT background_pending AS pending FROM turns
+      WHERE session_id = ${session} AND engine_turn_id = ${turnId}
+    `.pipe(Effect.orDie);
+    return row?.pending === 1;
+  });
+
+/** How many Stop rounds were sent to the engine. */
+const issuedRounds = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const [row] = yield* sql<{ readonly n: number }>`
+    SELECT COUNT(*) AS n FROM stop_targets WHERE issued_at IS NOT NULL
+  `.pipe(Effect.orDie);
+  return row?.n ?? 0;
+});
+
+it.effect("clears a room turn's background flag once the engine no longer lists its work", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
+    const members = [hal, ana];
+    const room = yield* roomWith(hal, [ana]);
+    yield* operatorWrites(room.id, members, "Watch the build.", nobody);
+    const watching = yield* nextTurn(hal.bot.id);
+    yield* control.startBackgroundWork({ sessionId: hal.session, turnId: watching });
+    yield* finish(hal, watching, members);
+    assert.isTrue(yield* flagged(hal, watching));
+
+    // The build ends and wakes nothing; the next turn's end brings a report
+    // that no longer lists it.
+    yield* control.endBackgroundWork(hal.session);
+    yield* sendToBot(hal.bot.id, "What is left today?");
+    const privately = yield* nextTurn(hal.bot.id, watching);
+    yield* say(hal, privately, { text: "Only the release notes.", done: true });
+    yield* finish(hal, privately, members);
+    yield* until(Effect.map(flagged(hal, watching), (pending) => !pending));
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "settles a room's Stop without a round when its turns' background work already ended",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
+      const members = [hal, ana];
+      const room = yield* roomWith(hal, [ana]);
+      yield* operatorWrites(room.id, members, "Watch the build.", nobody);
+      const watching = yield* nextTurn(hal.bot.id);
+      yield* control.startBackgroundWork({ sessionId: hal.session, turnId: watching });
+      yield* finish(hal, watching, members);
+
+      // The build ends while Hal's private turn runs, so no report clears its
+      // flag yet. That turn starts work of its own, and is running when the
+      // room is archived: the flag of the build is all the room has there.
+      yield* sendToBot(hal.bot.id, "Watch the deploy.");
+      const deploying = yield* nextTurn(hal.bot.id, watching);
+      yield* control.endBackgroundWork(hal.session);
+      yield* control.startBackgroundWork({ sessionId: hal.session, turnId: deploying });
+      yield* archive(room.id, true);
+      assert.isTrue(yield* flagged(hal, watching));
+
+      yield* finish(hal, deploying, members);
+      yield* stopSettled;
+      assert.strictEqual(yield* issuedRounds, 0);
+      assert.isTrue(yield* backgroundRuns(hal));
+      assert.isFalse(yield* flagged(hal, watching));
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "holds a room's Stop while the engine has taken a private dispatch whose turn no event shows yet",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const sql = yield* SqlClient.SqlClient;
+      const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
+      const members = [hal, ana];
+      const room = yield* roomWith(hal, [ana]);
+      yield* operatorWrites(room.id, members, "Watch the build.", nobody);
+      const watching = yield* nextTurn(hal.bot.id);
+      yield* control.startBackgroundWork({ sessionId: hal.session, turnId: watching });
+      yield* finish(hal, watching, members);
+      yield* sendToBot(hal.bot.id, "What is left today?");
+      const privately = yield* nextTurn(hal.bot.id, watching);
+      yield* say(hal, privately, { text: "Only the release notes.", done: true });
+      yield* finish(hal, privately, members);
+
+      // The engine has taken the operator's message, and no event has shown
+      // its turn yet.
+      const session = yield* mainSessionId(hal.bot.id);
+      yield* sql`
+        UPDATE dispatches SET status = 'accepted', engine_turn_id = NULL
+        WHERE session_id = ${session} AND engine_turn_id = ${privately}
+      `.pipe(Effect.orDie);
+      yield* (yield* Rooms).stop({ commandId: command(), roomId: room.id });
+      yield* (yield* Stops).runPending;
+      assert.strictEqual(yield* issuedRounds, 0);
+      assert.isTrue(yield* backgroundRuns(hal));
+
+      // Its turn shows and ends: the room's Stop ends the build.
+      yield* sql`
+        UPDATE dispatches SET status = 'finished', engine_turn_id = ${privately}
+        WHERE session_id = ${session} AND status = 'accepted'
+      `.pipe(Effect.orDie);
+      yield* (yield* Stops).runPending;
+      yield* until(Effect.map(backgroundRuns(hal), (runs) => !runs));
+      yield* TestClock.adjust(RETRY_TICK);
+      yield* stopSettled;
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "does not refuse a harness's wake after the operator spoke because of an older room chain",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const sql = yield* SqlClient.SqlClient;
+      yield* chainLimits({ hops: 1, fanOut: 1 });
+      const [ana, bo] = [yield* member("Ana"), yield* member("Bo")];
+      const members = [ana, bo];
+      const room = yield* roomWith(ana, [bo]);
+      yield* operatorWrites(room.id, members, "Ana, get Bo to run the build.", to(ana));
+      const asking = yield* nextTurn(ana.bot.id);
+      yield* say(ana, asking, { text: "Bo, run the build.", mention: [bo.bot.id] });
+      yield* finish(ana, asking, members);
+
+      // Bo's turn, a hop of the room's chain, starts the build.
+      const building = yield* nextTurn(bo.bot.id);
+      yield* control.startBackgroundWork({ sessionId: bo.session, turnId: building });
+      yield* finish(bo, building, members);
+      const session = yield* mainSessionId(bo.bot.id);
+      yield* until(
+        Effect.map(
+          sql<{ readonly due: number }>`
+            SELECT background_check_due AS due FROM sessions WHERE id = ${session}
+          `.pipe(Effect.orDie),
+          ([row]) => row?.due === 0,
+        ),
+      );
+      yield* TestClock.adjust("1 second");
+
+      // The operator asks Bo for a check in private, which wakes Bo once it
+      // ends: a harness's wake, naming no turn.
+      yield* sendToBot(bo.bot.id, "Check the logs, and tell Ana.");
+      const checking = yield* nextTurn(bo.bot.id, building);
+      yield* control.startBackgroundWork({ sessionId: bo.session, turnId: checking });
+      yield* control.startEngineTurn(bo.session);
+      yield* finish(bo, checking, members);
+      const woken = yield* nextTurn(bo.bot.id, checking);
+
+      const reply = yield* messageTeammate(bo.session, woken, {
+        to: ana.bot.id,
+        text: "The logs are clean.",
+        urgent: false,
+      });
+      assert.strictEqual(reply._tag, "result");
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "shows a retryable notice when the operator's Retry of a bot's room mention fails again",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const pipeline = yield* Pipeline;
+      const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
+      const members = [hal, ana];
+      const room = yield* roomWith(hal, [ana]);
+      yield* operatorWrites(room.id, members, "Plan the launch.", nobody);
+      const planning = yield* nextTurn(hal.bot.id);
+      yield* say(hal, planning, { text: "Ana, the numbers?", mention: [ana.bot.id] });
+      yield* control.rejectNextDispatch;
+      yield* finish(hal, planning, members);
+      const first = yield* retryableNotice(room.id);
+
+      // The operator retries it, and it fails before Ana gets it again.
+      yield* control.rejectNextDispatch;
+      yield* pipeline.retryNotice({ commandId: command(), entryId: first.id });
+      yield* settle(members);
+      const again = yield* retryableNotice(room.id);
+      assert.notStrictEqual(again.id, first.id);
+      assert.deepStrictEqual(again.notice, { _tag: "turn-failed", failure: "unknown" });
     }).pipe(Effect.provide(TestDomain.layer)),
 );

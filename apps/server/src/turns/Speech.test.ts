@@ -38,6 +38,7 @@ import {
   engineSession,
   flushed,
   holdGate,
+  mainSessionId,
   messageTeammate,
   nextTurn,
   noticesOf,
@@ -1469,4 +1470,88 @@ it.effect(
       assert.strictEqual(reply._tag, "result");
       assert.deepStrictEqual(yield* teammateMessagesFor(ana.id), { wakes: 0, held: 1 });
     }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("counts the operator's turn's background completion against the fan-out limit", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    yield* chainLimits({ hops: 5, fanOut: 1 });
+    const { bot: ana, session, turnId } = yield* working("Get Bo and Cy started.");
+    const [bo, cy, dee] = [yield* createBot("Bo"), yield* createBot("Cy"), yield* createBot("Dee")];
+    // The operator spoke in this turn: it may bring in both.
+    for (const teammate of [bo, cy]) {
+      const sent = yield* messageTeammate(session, turnId, {
+        to: teammate.id,
+        text: "Start on the launch.",
+        urgent: false,
+      });
+      assert.strictEqual(sent._tag, "result");
+    }
+    yield* control.startBackgroundWork({ sessionId: session, turnId });
+    yield* finished(ana.id, session, turnId);
+
+    // The task it delegated reports back: the operator did not speak there.
+    const reporting = yield* control.startEngineTurn(session, turnId);
+    yield* nextTurn(ana.id, turnId);
+    const reply = yield* messageTeammate(session, reporting, {
+      to: dee.id,
+      text: "Join the launch.",
+      urgent: false,
+    });
+    assert.include(refusal(reply), "at most 1 teammate");
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("keeps the hop count a harness's wake borrowed for the work it delegates", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const sql = yield* SqlClient.SqlClient;
+    yield* chainLimits({ hops: 2, fanOut: 3 });
+    const ana = yield* createBot("Ana");
+    const anaSession = yield* engineSession(ana.id);
+    const [bo, cy, dee] = [yield* createBot("Bo"), yield* createBot("Cy"), yield* createBot("Dee")];
+    // Bo, in the operator's turn, wakes Ana, whose turn starts a build: hop 1.
+    yield* wokenBy(bo.id, ana.id, "Watch the build.", true);
+    const watching = yield* nextTurn(ana.id);
+    yield* control.startBackgroundWork({ sessionId: anaSession, turnId: watching });
+    yield* finished(ana.id, anaSession, watching);
+
+    // The build ends, and its notice wakes Ana with a turn that names none:
+    // it counts from the turn whose work was pending, and delegates a report.
+    yield* control.endBackgroundWork(anaSession);
+    const notice = yield* control.startEngineTurn(anaSession);
+    yield* nextTurn(ana.id, watching);
+    const told = yield* messageTeammate(anaSession, notice, {
+      to: cy.id,
+      text: "The build passed.",
+      urgent: false,
+    });
+    assert.strictEqual(told._tag, "result");
+    yield* control.startBackgroundWork({ sessionId: anaSession, turnId: notice });
+    yield* finished(ana.id, anaSession, notice);
+    const session = yield* mainSessionId(ana.id);
+    yield* until(
+      Effect.map(
+        sql<{ readonly pending: number }>`
+          SELECT background_pending AS pending FROM turns
+          WHERE session_id = ${session} AND engine_turn_id = ${watching}
+        `.pipe(Effect.orDie),
+        ([row]) => row?.pending === 0,
+      ),
+    );
+
+    // The report's turn goes on with the notice's work, and with its count.
+    const reporting = yield* control.startEngineTurn(anaSession, notice);
+    yield* nextTurn(ana.id, notice);
+    const reply = yield* messageTeammate(anaSession, reporting, {
+      to: dee.id,
+      text: "The report is attached.",
+      urgent: false,
+    });
+    assert.strictEqual(reply._tag, "result");
+    const held = yield* sql<{ readonly hops: number }>`
+      SELECT hops FROM held_messages WHERE recipient_bot_id = ${dee.id}
+    `.pipe(Effect.orDie);
+    assert.deepStrictEqual(held, [{ hops: 2 }]);
+  }).pipe(Effect.provide(TestDomain.layer)),
 );

@@ -575,10 +575,11 @@ export const layer = Layer.effect(
 
     /**
      * The engine reported the session's background work by the turn that
-     * started it: each listed turn's work may still run. The report lists
-     * work only while no turn runs or waits (`BackgroundWork`), so only then
-     * does a turn it leaves out have none left; otherwise what was known
-     * stands.
+     * started it: each listed turn's work may still run, as of the report.
+     * The report lists work only while no turn runs or waits
+     * (`BackgroundWork`), so only then does a turn it leaves out have none
+     * left, and the session's check is done (`Stops`); otherwise what was
+     * known stands.
      */
     const backgroundReported = Effect.fn("Observer.backgroundReported")(function* (
       session: Watched,
@@ -587,9 +588,8 @@ export const layer = Layer.effect(
       const listed = event.backgroundWork.turns;
       if (listed.length > 0) {
         yield* sql`
-          UPDATE turns SET background_pending = 1
-          WHERE session_id = ${session.id} AND background_pending = 0
-            AND ${sql.in("engine_turn_id", listed)}
+          UPDATE turns SET background_pending = 1, background_seen_at = ${timeText(event.at)}
+          WHERE session_id = ${session.id} AND ${sql.in("engine_turn_id", listed)}
         `;
       }
       if (event.runnableTurns.length > 0) return;
@@ -599,6 +599,7 @@ export const layer = Layer.effect(
         WHERE session_id = ${session.id} AND background_pending = 1
           ${listed.length === 0 ? sql`` : sql`AND NOT ${sql.in("engine_turn_id", listed)}`}
       `;
+      yield* sql`UPDATE sessions SET background_check_due = 0 WHERE id = ${session.id}`;
     }, Effect.orDie);
 
     /** A dispatch the engine may yet take, or may have taken unseen. */
@@ -711,11 +712,20 @@ export const layer = Layer.effect(
         // by this turn until the engine no longer reports the work.
         if (end.backgroundWork) {
           yield* sql`
-            UPDATE turns SET background_pending = 1
+            UPDATE turns SET background_pending = 1, background_seen_at = ${timeText(end.at)}
             WHERE session_id = ${session.id} AND engine_turn_id = ${end.turnId}
           `;
         }
       }
+      // While turns of the session have work flagged, each turn's end is
+      // followed by a report taken once nothing runs (`Stops`): a flag lasts
+      // no longer than its work.
+      yield* sql`
+        UPDATE sessions SET background_check_due = 1
+        WHERE id = ${session.id} AND EXISTS (
+          SELECT 1 FROM turns WHERE session_id = ${session.id} AND background_pending = 1
+        )
+      `;
       // The provider's conversation could not be resumed: the bot's main
       // session is replaced once it is idle, with a digest of its own. Any
       // turn's end may also have made a session due for rotation idle, or
