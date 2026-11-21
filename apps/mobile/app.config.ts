@@ -102,6 +102,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         },
       ],
       "./plugins/cleartextToPrivateHosts.js",
+      "./plugins/foldInPlace.js",
     ],
   };
 };

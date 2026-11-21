@@ -4,7 +4,7 @@ import { useNavigation } from "@react-navigation/native";
 import { ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BotAvatar } from "../components/Avatar.tsx";
-import { confirm, PendingButton, Quiet, Section } from "../components/form.tsx";
+import { DeleteButton, PendingButton, Quiet, Section } from "../components/form.tsx";
 import { useI18n } from "../i18n.ts";
 import type { Navigation } from "../navigation.tsx";
 import { useBots } from "../presentation.tsx";
@@ -99,18 +99,12 @@ export function RoomDetails({ room }: { readonly room: Room }) {
 
       {/* Last and on its own, so the one action that cannot be undone is never next to another. */}
       <View className="items-start px-4 py-4">
-        <Button
-          variant="destructive"
+        <DeleteButton
           label={t("room.delete", { name })}
-          onPress={() =>
-            confirm({
-              title: t("room.delete.title", { name }),
-              body: t("room.delete.body", { name }),
-              cancel: t("room.delete.cancel", { name }),
-              confirm: t("room.delete", { name }),
-              onConfirm: () => actions.remove(room),
-            })
-          }
+          title={t("room.delete.title", { name })}
+          body={t("room.delete.body", { name })}
+          cancel={t("room.delete.cancel", { name })}
+          onDelete={() => actions.remove(room)}
         />
       </View>
     </ScrollView>

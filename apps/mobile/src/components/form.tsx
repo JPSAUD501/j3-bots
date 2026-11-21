@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { useNavigation, usePreventRemove } from "@react-navigation/native";
 import { Check } from "lucide-react-native";
-import { type ReactNode, useRef, useState } from "react";
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Alert, Pressable, Switch, Text, TextInput, View } from "react-native";
 import { KeyboardAwareScrollView, KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -248,10 +248,43 @@ export function PendingButton(props: {
 }
 
 /**
+ * Deletes, once the operator agrees to the question it asks, and takes no
+ * press until the server has answered.
+ */
+export function DeleteButton(props: {
+  readonly label: string;
+  readonly title: string;
+  readonly body: string;
+  readonly cancel: string;
+  readonly onDelete: () => Promise<void>;
+}) {
+  const [pending, setPending] = useState(false);
+  return (
+    <Button
+      variant="destructive"
+      label={props.label}
+      disabled={pending}
+      onPress={() =>
+        confirm({
+          title: props.title,
+          body: props.body,
+          cancel: props.cancel,
+          confirm: props.label,
+          onConfirm: () => {
+            setPending(true);
+            void props.onDelete().finally(() => setPending(false));
+          },
+        })
+      }
+    />
+  );
+}
+
+/**
  * Asks before something that cannot be undone, naming what goes and what
  * stays; `onConfirm` runs only once the operator agrees.
  */
-export const confirm = (question: {
+const confirm = (question: {
   readonly title: string;
   readonly body: string;
   readonly cancel: string;
@@ -266,13 +299,29 @@ export const confirm = (question: {
 /**
  * While `unsaved`, leaving the screen, by its back button, the system's back
  * or a swipe, asks first, so what the operator typed is never thrown away by
- * a stray gesture. Returns what leaves without asking, as once a save went
- * through: `go` is the navigation that leaves.
+ * a stray gesture. A caller passes false while a save is under way: the save
+ * goes on, and says in a toast if it fails. `onLeave` runs once the screen is
+ * really left, never while it only asks. Returns what leaves without asking,
+ * as once a save went through: `go` is the navigation that leaves.
  */
-export function useDiscardGuard(unsaved: boolean): (go: () => void) => void {
+export function useDiscardGuard(unsaved: boolean, onLeave?: () => void): (go: () => void) => void {
   const { t } = useI18n();
   const navigation = useNavigation();
   const leaving = useRef(false);
+  const guarded = useRef(unsaved);
+  const left = useRef(onLeave);
+  useLayoutEffect(() => {
+    guarded.current = unsaved;
+    left.current = onLeave;
+  });
+  // Every removal passes here; one the guard holds back is left to the question below.
+  useEffect(
+    () =>
+      navigation.addListener("beforeRemove", () => {
+        if (!guarded.current || leaving.current) left.current?.();
+      }),
+    [navigation],
+  );
   usePreventRemove(unsaved, ({ data }) => {
     if (leaving.current) {
       navigation.dispatch(data.action);
@@ -283,7 +332,11 @@ export function useDiscardGuard(unsaved: boolean): (go: () => void) => void {
       body: t("form.discard.body"),
       cancel: t("form.discard.keep"),
       confirm: t("form.discard"),
-      onConfirm: () => navigation.dispatch(data.action),
+      // The action goes again past the screens it already asked, so nothing above runs for it.
+      onConfirm: () => {
+        left.current?.();
+        navigation.dispatch(data.action);
+      },
     });
   });
   return (go) => {

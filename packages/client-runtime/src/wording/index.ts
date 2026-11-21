@@ -7,6 +7,7 @@
 export { addresseeLine, resendLabel } from "./addressee.ts";
 export {
   botModelName,
+  memoryEditProblemText,
   memoryFileName,
   permissionModeText,
   type RoutineLines,

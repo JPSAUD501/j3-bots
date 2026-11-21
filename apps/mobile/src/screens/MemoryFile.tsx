@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { type MemoryEdit, memorySaveKey, type Save } from "@j3-bots/client-runtime";
-import { shownSaveProblem } from "@j3-bots/client-runtime/presentation";
-import { useConnection, useJ3Client, useReadable } from "@j3-bots/client-runtime/react";
-import { memoryFileName } from "@j3-bots/client-runtime/wording";
 import {
-  MEMORY_TEXT_LIMIT,
-  type MemoryDocument,
-  type MemoryScope,
-  MemoryText,
-} from "@j3-bots/contracts";
+  type MemoryReading,
+  useConnection,
+  useJ3Client,
+  useMemoryEdit,
+  useReadable,
+} from "@j3-bots/client-runtime/react";
+import { memoryEditProblemText, memoryFileName } from "@j3-bots/client-runtime/wording";
+import type { MemoryScope } from "@j3-bots/contracts";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import * as Schema from "effect/Schema";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ScrollView, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -21,22 +20,6 @@ import { useSay } from "../toast.tsx";
 import { Button } from "../ui.tsx";
 
 type Props = NativeStackScreenProps<Screens, "memoryFile">;
-
-/** A memory file as the screen has it: still reading, read, or not readable. */
-type MemoryReading =
-  | { readonly _tag: "reading" }
-  | { readonly _tag: "read"; readonly document: MemoryDocument }
-  | { readonly _tag: "failed" };
-
-const fits = Schema.is(MemoryText);
-
-const problemText = {
-  stale: "memory.stale",
-  "private-location": "memory.privateLocation",
-  gone: "memory.gone",
-  model: "memory.saveFailed",
-  failed: "memory.saveFailed",
-} as const;
 
 /**
  * One memory file as the bot wrote it, which the operator can correct. Save
@@ -91,77 +74,27 @@ export function MemoryFileScreen({ navigation, route }: Props) {
     void readFile();
     return () => {
       open.current = false;
-      // Leaving gives up on a failed write; one under way stays, and says if it fails.
-      client.dismissMemorySave(scope, path);
     };
-  }, [client, readFile, scope, path]);
+  }, [readFile]);
 
-  const document = reading._tag === "read" ? reading.document : null;
-  const [editing, setEditing] = useState<MemoryEdit | null>(() =>
-    save?._tag === "failed" ? save.changes : null,
-  );
-  // A failure shows until the operator edits again.
-  const [failureShown, setFailureShown] = useState(save?._tag === "failed");
-  const [lastSave, setLastSave] = useState(save);
-  if (lastSave !== save) {
-    setLastSave(save);
-    if (save?._tag === "failed") {
-      setEditing((current) => current ?? save.changes);
-      setFailureShown(true);
-    }
-  }
-  // Loading the newer version takes one read at a time, and no edit meanwhile.
-  // A read that fails keeps the edit and offers to try again.
-  const [reloading, setReloading] = useState(false);
-  const [reloadFailed, setReloadFailed] = useState(false);
-  const endEdit = () => {
-    setEditing(null);
-    setFailureShown(false);
-    setReloadFailed(false);
-  };
-  // A new version of the file, saved or read again, ends the edit. The first
-  // read does not: an edit kept from a failed save waits for it. A read that
-  // fails in between keeps the edit.
-  const [lastRead, setLastRead] = useState(document);
-  if (document !== null && lastRead !== document) {
-    setLastRead(document);
-    if (lastRead !== null) endEdit();
-  }
+  const edit = useMemoryEdit({
+    reading,
+    save,
+    connected,
+    // The operator asked for the newer version: it replaces the failed write too.
+    onLoadNewer: () =>
+      readFile().then((read) => {
+        if (read) client.dismissMemorySave(scope, path);
+        return read;
+      }),
+  });
+  const { text, saving, reloading, problem } = edit;
+  // An edit is the operator's until they save it or let it go. Leaving gives up
+  // on a failed write; one under way goes on, and says if it fails.
+  useDiscardGuard(edit.unsaved && !saving, () => client.dismissMemorySave(scope, path));
 
-  const saving = save?._tag === "saving";
-  const text = saving ? save.changes.text : editing?.text;
-  const isEditing = text !== undefined;
-  const problem = shownSaveProblem(save, !failureShown);
-  const tooLong = editing !== null && !fits(editing.text);
-  const canSave =
-    editing !== null &&
-    problem !== "stale" &&
-    !tooLong &&
-    !saving &&
-    connected &&
-    (document === null || editing.text !== document.text);
-  // An edit is the operator's until they save it or let it go.
-  useDiscardGuard(isEditing);
-
-  const loadNewer = () => {
-    if (reloading || !connected) return;
-    setReloading(true);
-    void readFile().then((done) => {
-      if (!open.current) return;
-      setReloading(false);
-      // The operator asked for the newer version: it replaces the edit, even
-      // when it is the first version this screen could read.
-      if (done) {
-        client.dismissMemorySave(scope, path);
-        endEdit();
-      } else {
-        setReloadFailed(true);
-      }
-    });
-  };
-
-  const writeFile = (edit: MemoryEdit) =>
-    void client.writeMemory(scope, path, edit).then((result) => {
+  const writeFile = (toSave: MemoryEdit) =>
+    void client.writeMemory(scope, path, toSave).then((result) => {
       if (result._tag === "done") {
         if (open.current) setReading({ _tag: "read", document: result.value });
       } else if (result._tag === "failed" && !open.current) {
@@ -173,7 +106,7 @@ export function MemoryFileScreen({ navigation, route }: Props) {
     navigation.setOptions({ title });
   }, [navigation, title]);
 
-  if (!isEditing) {
+  if (text === undefined) {
     return (
       <ScrollView
         className="flex-1 bg-background"
@@ -185,12 +118,7 @@ export function MemoryFileScreen({ navigation, route }: Props) {
           <Problem>{t("memory.readFailed")}</Problem>
         ) : (
           <View className="items-start gap-3">
-            <Button
-              label={t("memory.edit")}
-              onPress={() =>
-                setEditing({ text: reading.document.text, revision: reading.document.revision })
-              }
-            />
+            <Button label={t("memory.edit")} onPress={edit.startEdit} />
             <Text selectable className="font-mono text-sm text-foreground">
               {reading.document.text}
             </Text>
@@ -202,45 +130,37 @@ export function MemoryFileScreen({ navigation, route }: Props) {
 
   return (
     <FormScreen
-      problem={
-        tooLong
-          ? t("memory.tooLong", { max: MEMORY_TEXT_LIMIT })
-          : reloadFailed
-            ? t("memory.reloadFailed")
-            : problem === null
-              ? null
-              : t(problemText[problem])
-      }
+      problem={problem === null ? null : memoryEditProblemText(problem, i18n)}
       offline={!connected}
       actions={
         <>
-          {problem === "stale" && (
+          {edit.stale && (
             <Button
               label={
                 reloading
                   ? t("memory.loadNewer.loading")
-                  : reloadFailed
+                  : edit.reloadFailed
                     ? t("memory.loadNewer.retry")
                     : t("memory.loadNewer")
               }
               disabled={reloading || !connected}
-              onPress={loadNewer}
+              onPress={edit.loadNewer}
             />
           )}
           <Button
             label={t("memory.cancel")}
             disabled={saving}
             onPress={() => {
-              endEdit();
+              edit.endEdit();
               client.dismissMemorySave(scope, path);
             }}
           />
           <Button
             variant="primary"
             label={saving ? t("memory.saving") : t("memory.save")}
-            disabled={!canSave}
+            disabled={edit.toSave === null}
             onPress={() => {
-              if (editing !== null && canSave) writeFile(editing);
+              if (edit.toSave !== null) writeFile(edit.toSave);
             }}
           />
         </>
@@ -248,7 +168,7 @@ export function MemoryFileScreen({ navigation, route }: Props) {
     >
       <TextInput
         accessibilityLabel={t("memory.text", { file: title })}
-        aria-invalid={tooLong}
+        aria-invalid={edit.tooLong}
         value={text}
         autoFocus
         multiline
@@ -256,11 +176,8 @@ export function MemoryFileScreen({ navigation, route }: Props) {
         autoCorrect={false}
         autoCapitalize="none"
         textAlignVertical="top"
-        onChangeText={(value) => {
-          setEditing((current) => current && { ...current, text: value });
-          setFailureShown(false);
-        }}
-        className={`min-h-64 rounded-md border bg-surface p-3 font-mono text-sm ${tooLong ? "border-blocked" : "border-input"} ${saving || reloading ? "text-muted-foreground" : "text-foreground"}`}
+        onChangeText={edit.changeText}
+        className={`min-h-64 rounded-md border bg-surface p-3 font-mono text-sm ${edit.tooLong ? "border-blocked" : "border-input"} ${saving || reloading ? "text-muted-foreground" : "text-foreground"}`}
       />
     </FormScreen>
   );

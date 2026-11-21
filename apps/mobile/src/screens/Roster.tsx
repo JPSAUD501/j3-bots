@@ -6,7 +6,8 @@ import {
   rosterKeyOf,
   rosterKeyText,
 } from "@j3-bots/client-runtime/presentation";
-import { useJ3Client, useReadable, useRoster } from "@j3-bots/client-runtime/react";
+import { rosterRows } from "@j3-bots/client-runtime";
+import { useJ3Client, useReadable } from "@j3-bots/client-runtime/react";
 import type { RosterItemKey } from "@j3-bots/contracts";
 import { layout } from "@j3-bots/design-tokens";
 import { useNavigation } from "@react-navigation/native";
@@ -37,6 +38,7 @@ type Props = NativeStackScreenProps<Screens, "roster">;
  * over it stays open.
  */
 export function RosterScreen({ navigation, route }: Props) {
+  const roster = useReadable(useJ3Client().roster);
   const sideBySide = useSideBySide();
   const selected = route.params?.item ?? null;
   useEffect(() => {
@@ -53,6 +55,8 @@ export function RosterScreen({ navigation, route }: Props) {
       ],
     });
   }, [sideBySide, selected, navigation]);
+  // Before the first bot there is nothing to list or open: the first run takes the whole screen.
+  if (roster._tag === "ready" && roster.value.length === 0) return <FirstRun />;
   if (!sideBySide) return <RosterList selected={null} />;
   return (
     <View className="flex-1 flex-row bg-background">
@@ -75,15 +79,10 @@ export function RosterScreen({ navigation, route }: Props) {
   );
 }
 
-/**
- * The roster's own header, with its search and New, and its rows, under the
- * status bar. Before the first bot, the first run in their place.
- */
+/** The roster's own header, with its search and New, and its rows, under the status bar. */
 function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
   const { t } = useI18n();
-  const client = useJ3Client();
-  const items = useReadable(client.roster);
-  const roster = useRoster();
+  const roster = useReadable(useJ3Client().roster);
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<Navigation>();
   const bots = useBots();
@@ -91,11 +90,12 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
   const placeholder = useColor("accent-muted-foreground");
   const [query, setQuery] = useState("");
   const selectedText = selected === null ? null : rosterKeyText(selected);
-  if (items._tag === "loading" || roster === null) return <Connecting />;
-  if (items.value.length === 0) return <FirstRun />;
+  if (roster._tag === "loading") return <Connecting />;
   const searching = query.trim() !== "";
   // A search finds hidden bots too, in the order the web lists what it finds.
-  const rows = searching ? orderRoster(filterRoster(items.value, query)) : roster.rows;
+  const rows = searching
+    ? orderRoster(filterRoster(roster.value, query))
+    : rosterRows(roster.value);
   const offerNew = () =>
     // A room needs two bots: with fewer, New says so and offers only a bot.
     Alert.alert(

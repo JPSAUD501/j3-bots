@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Bot, EngineStatus, MemoryPath, PermissionMode, Routine } from "@j3-bots/contracts";
+import {
+  type Bot,
+  type EngineStatus,
+  MEMORY_TEXT_LIMIT,
+  type MemoryPath,
+  type PermissionMode,
+  type Routine,
+} from "@j3-bots/contracts";
 import type { I18n, KeyWith } from "@j3-bots/i18n";
+import type { MemoryEditProblem } from "../presentation/saves.ts";
 import { scheduleInWords } from "./schedule.ts";
 import { timeInSentence, type TimeContext } from "./time.ts";
 
@@ -35,6 +43,22 @@ export function memoryFileName(path: MemoryPath, { t }: I18n): string {
   if (path === "profile.md") return t("memory.profileNote");
   const log = /^log\/(.+)\.md$/.exec(path);
   return log?.[1] ? t("memory.log", { period: log[1] }) : path;
+}
+
+const MEMORY_PROBLEM_TEXT = {
+  "reload-failed": "memory.reloadFailed",
+  stale: "memory.stale",
+  "private-location": "memory.privateLocation",
+  gone: "memory.gone",
+  model: "memory.saveFailed",
+  failed: "memory.saveFailed",
+} as const;
+
+/** What a memory file's edit says is wrong. */
+export function memoryEditProblemText(problem: MemoryEditProblem, { t }: I18n): string {
+  return problem === "too-long"
+    ? t("memory.tooLong", { max: MEMORY_TEXT_LIMIT })
+    : t(MEMORY_PROBLEM_TEXT[problem]);
 }
 
 /** What a routine's last run did; a row adds the run count around it. */

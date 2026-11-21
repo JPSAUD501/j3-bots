@@ -1,18 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { BotChanges, Save } from "@j3-bots/client-runtime";
+import { type ProfileField, sameModel } from "@j3-bots/client-runtime/presentation";
 import {
-  type BotEdits,
-  botPatch,
-  editsAfterFailedBotSave,
-  modelChoices,
-  noBotEdits,
-  type ProfileField,
-  sameModel,
-  shownSaveProblem,
-  withChanges,
-  withProfileEdit,
-} from "@j3-bots/client-runtime/presentation";
-import {
+  useBotEdit,
   useConnection,
   useEngineStatus,
   useJ3Client,
@@ -21,7 +11,7 @@ import {
 import { permissionModeText } from "@j3-bots/client-runtime/wording";
 import { type Bot, PermissionMode, PROFILE_LIMITS } from "@j3-bots/contracts";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { Text, View } from "react-native";
 import { Connecting } from "../components/ConnectionLine.tsx";
 import { ChoiceRow, FormScreen, TextField, useDiscardGuard } from "../components/form.tsx";
@@ -38,7 +28,7 @@ type Props = NativeStackScreenProps<Screens, "editBot">;
  * Everything the operator changes about a bot itself, on a screen of its own.
  * Once the server has the changes the screen closes; one that closes before
  * the answer says in a toast when the changes did not save. Leaving lets go
- * of a failed save, as the operator gave up on it.
+ * of a failed save, as the operator gave up on it; a save under way goes on.
  */
 export function EditBotScreen({ navigation, route }: Props) {
   const { t } = useI18n();
@@ -56,9 +46,8 @@ export function EditBotScreen({ navigation, route }: Props) {
     open.current = true;
     return () => {
       open.current = false;
-      client.dismissBotSave(botId);
     };
-  }, [client, botId]);
+  }, []);
   if (found._tag === "loading") return <Connecting />;
   if (bot === null) {
     return (
@@ -108,60 +97,18 @@ function EditBotForm({
   const engine = engineStatus._tag === "ready" ? engineStatus.value : null;
   const connected = useConnection()._tag === "connected";
   const save: Save<BotChanges> | undefined = useReadable(client.botSaves).get(bot.id);
-  const [edits, setEdits] = useState<BotEdits>(() =>
-    save?._tag === "failed" ? editsAfterFailedBotSave(noBotEdits, save.changes) : noBotEdits,
-  );
-  // A failure shows until the operator edits again.
-  const [failureShown, setFailureShown] = useState(save?._tag === "failed");
-  const [lastSave, setLastSave] = useState(save);
-  if (lastSave !== save) {
-    setLastSave(save);
-    if (save?._tag === "failed") {
-      setEdits((current) => editsAfterFailedBotSave(current, save.changes));
-      setFailureShown(true);
-    }
-  }
-  const edit = (change: Partial<BotEdits>) => {
-    setEdits((current) => ({ ...current, ...change }));
-    setFailureShown(false);
-  };
-  // What each text field showed when its edit started: typing it back ends the edit.
-  const [startedFrom, setStartedFrom] = useState<Readonly<Record<ProfileField, string | null>>>({
-    name: null,
-    title: null,
-    job: null,
-  });
-  const editText = (field: ProfileField, value: string) => {
-    const from = startedFrom[field] ?? bot.profile[field];
-    setStartedFrom((current) => ({ ...current, [field]: value === from ? null : from }));
-    setEdits((current) => withProfileEdit(current, field, value, from));
-    setFailureShown(false);
-  };
+  const form = useBotEdit({ bot, engine, save, connected });
+  const { saving, problem, choices, model } = form;
+  const leave = useDiscardGuard(form.unsaved && !saving, () => client.dismissBotSave(bot.id));
 
-  const saving = save?._tag === "saving";
-  const shown = saving ? withChanges(bot, save.changes) : bot;
-  const name = edits.name ?? shown.profile.name;
-  const title = edits.title ?? shown.profile.title;
-  const job = edits.job ?? shown.profile.job;
-  const model = edits.model ?? shown.model;
-  const mode = edits.permissionMode ?? shown.permissionMode;
-  const patch = botPatch(bot, edits);
-  const invalid = patch._tag === "invalid" ? patch.fields : new Set<ProfileField>();
-  const problem = shownSaveProblem(save, !failureShown);
-  const choices = modelChoices(engine, bot.model, edits.model);
-  const modelMessage =
-    problem === "model" || choices.pickUnavailable ? t("editBot.model.unavailable") : null;
-  const settingsChange = !sameModel(model, bot.model) || mode !== bot.permissionMode;
-  const providerChange = model.providerId !== bot.model.providerId;
-  const canSave = patch._tag === "changes" && !choices.pickUnavailable && !saving && connected;
-  const leave = useDiscardGuard(patch._tag !== "unchanged");
-
-  const fieldError = (field: ProfileField) =>
-    !invalid.has(field)
+  const fieldError = (field: ProfileField) => {
+    const fieldProblem = form.fieldProblem(field);
+    return fieldProblem === null
       ? null
-      : field === "name" && name.trim() === ""
+      : fieldProblem === "required"
         ? t("editBot.name.required")
         : t("editBot.tooLong", { max: PROFILE_LIMITS[field] });
+  };
 
   return (
     <FormScreen
@@ -179,11 +126,9 @@ function EditBotForm({
           <Button
             variant="primary"
             label={saving ? t("editBot.saving") : t("editBot.save")}
-            disabled={!canSave}
+            disabled={form.changes === null}
             onPress={() => {
-              if (patch._tag === "changes" && canSave) {
-                onSave(patch.changes, () => leave(onClose));
-              }
+              if (form.changes !== null) onSave(form.changes, () => leave(onClose));
             }}
           />
         </>
@@ -191,30 +136,30 @@ function EditBotForm({
     >
       <TextField
         label={t("editBot.name")}
-        value={name}
+        value={form.name}
         maxLength={PROFILE_LIMITS.name}
         readOnly={saving}
         autoCapitalize="words"
-        onChange={(value) => editText("name", value)}
+        onChange={(value) => form.editText("name", value)}
         error={fieldError("name")}
       />
       <TextField
         label={t("editBot.titleField")}
-        value={title}
+        value={form.title}
         maxLength={PROFILE_LIMITS.title}
         readOnly={saving}
         placeholder={t("editBot.titleField.placeholder")}
-        onChange={(value) => editText("title", value)}
+        onChange={(value) => form.editText("title", value)}
         error={fieldError("title")}
       />
       <TextField
         label={t("editBot.job")}
-        value={job}
+        value={form.job}
         maxLength={PROFILE_LIMITS.job}
         readOnly={saving}
         multiline
         hint={t("editBot.job.hint", { name: bot.profile.name })}
-        onChange={(value) => editText("job", value)}
+        onChange={(value) => form.editText("job", value)}
         error={fieldError("job")}
       />
 
@@ -231,7 +176,7 @@ function EditBotForm({
             }
             selected={sameModel(choice, model)}
             unavailable={saving}
-            onPress={() => edit({ model: choice })}
+            onPress={() => form.edit({ model: choice })}
           />
         ))}
         {choices.groups.map((group) => (
@@ -244,14 +189,14 @@ function EditBotForm({
                 label={option.name}
                 selected={sameModel(option.choice, model)}
                 unavailable={saving}
-                onPress={() => edit({ model: option.choice })}
+                onPress={() => form.edit({ model: option.choice })}
               />
             ))}
           </View>
         ))}
-        {modelMessage !== null && (
+        {form.modelUnavailable && (
           <Text accessibilityLiveRegion="polite" role="alert" className="text-sm text-blocked">
-            {modelMessage}
+            {t("editBot.model.unavailable")}
           </Text>
         )}
         {choices.someNotReady && (
@@ -269,18 +214,19 @@ function EditBotForm({
               kind="one"
               label={text.name}
               description={text.description}
-              selected={mode === option}
+              selected={form.permissionMode === option}
               unavailable={saving}
-              onPress={() => edit({ permissionMode: option })}
+              onPress={() => form.edit({ permissionMode: option })}
             />
           );
         })}
       </View>
 
-      {settingsChange && (
+      {form.settingsChange && (
         <Text className="text-sm text-muted-foreground">
           {t("editBot.nextTurn", { name: bot.profile.name })}
-          {providerChange && ` ${t("editBot.providerChangeStops", { name: bot.profile.name })}`}
+          {form.providerChange &&
+            ` ${t("editBot.providerChangeStops", { name: bot.profile.name })}`}
         </Text>
       )}
     </FormScreen>

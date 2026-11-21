@@ -36,8 +36,9 @@ export function useBotActions() {
               : t("details.freshStart.failed"),
           ),
         ),
-    remove: (bot: Bot) =>
-      void client.deleteBot(bot.id, false).then((result) => {
+    /** Resolves once the server answered, whatever it said. */
+    remove: (bot: Bot): Promise<void> =>
+      client.deleteBot(bot.id, false).then((result) => {
         if (result._tag === "done") leaveDeleted();
         else say(t("details.deleteFailed"));
       }),
@@ -76,8 +77,9 @@ export function useRoomActions() {
         else say(t("room.unarchiveFailed", { name: room.name }));
       });
     },
-    remove: (room: Room) =>
-      void client.deleteRoom(room.id).then((result) => {
+    /** Resolves like `archive`. */
+    remove: (room: Room): Promise<void> =>
+      client.deleteRoom(room.id).then((result) => {
         if (result._tag === "done") leaveDeleted();
         else say(t("room.deleteFailed", { name: room.name }));
       }),

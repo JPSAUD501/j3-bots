@@ -186,6 +186,8 @@ export const en = {
   "routine.change.resumed": "Routine resumed",
   "routine.change.deleted": "Routine deleted",
   "routine.paused": "Paused",
+  "routine.pauseFailed": "{name} wasn’t paused. Try again.",
+  "routine.resumeFailed": "{name} wasn’t resumed. Try again.",
   "routine.next": "Next run {when}",
   "routine.lastRun.running": "Running now, started {when}",
   "routine.lastRun.delivered": "Last run reported back {when}",

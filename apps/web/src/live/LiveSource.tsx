@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   J3ClientProvider,
+  type MemoryReading,
+  type RoomSubmission,
   useActions,
   useBotFiles,
   useConnection,
@@ -70,9 +72,9 @@ import { notificationText } from "@j3-bots/i18n";
 import { useI18n } from "../app/context";
 import { ConnectionBanner } from "../components/ConnectionBanner";
 import { EditBotDialog } from "../components/EditBotDialog";
-import { MemoryViewer, type MemoryReading } from "../components/MemoryViewer";
+import { MemoryViewer } from "../components/MemoryViewer";
 import { NewBotDialog } from "../components/NewBotDialog";
-import { RoomDialog, type RoomSubmission } from "../components/RoomDialog";
+import { RoomDialog } from "../components/RoomDialog";
 import { guessDeviceName, Incompatible, Pairing, StorageFailed } from "../components/Pairing";
 import { ServerAddress } from "../components/ServerAddress";
 import { type Notice, Toast } from "../components/Toast";

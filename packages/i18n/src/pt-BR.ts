@@ -185,6 +185,8 @@ const sentences = {
   "routine.change.resumed": "Rotina retomada",
   "routine.change.deleted": "Rotina excluída",
   "routine.paused": "Pausada",
+  "routine.pauseFailed": "A rotina {name} não foi pausada. Tente de novo.",
+  "routine.resumeFailed": "A rotina {name} não foi retomada. Tente de novo.",
   "routine.next": "Próxima execução {when}",
   "routine.lastRun.running": "Em execução agora, começou {when}",
   "routine.lastRun.delivered": "A última execução trouxe novidades {when}",

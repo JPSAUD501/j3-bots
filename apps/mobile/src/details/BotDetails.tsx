@@ -29,11 +29,12 @@ import { type ReactElement, useMemo } from "react";
 import { Pressable, ScrollView, Switch, Text, useWindowDimensions, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BotAvatar } from "../components/Avatar.tsx";
-import { confirm, Quiet, Section } from "../components/form.tsx";
+import { DeleteButton, Quiet, Section } from "../components/form.tsx";
 import { Icon } from "../components/Icon.tsx";
 import type { Navigation } from "../navigation.tsx";
 import { usePresentation } from "../presentation.tsx";
 import { useColor } from "../theme.ts";
+import { useSay } from "../toast.tsx";
 import { Button } from "../ui.tsx";
 import { FileCard } from "../conversation/FileCard.tsx";
 import { EntryWidths } from "../conversation/widths.ts";
@@ -163,18 +164,12 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
 
       {/* Last and on its own, so the one action that cannot be undone is never next to another. */}
       <View className="items-start px-4 py-4">
-        <Button
-          variant="destructive"
+        <DeleteButton
           label={t("details.delete", { name })}
-          onPress={() =>
-            confirm({
-              title: t("details.delete.title", { name }),
-              body: t("details.delete.body", { name }),
-              cancel: t("details.delete.cancel", { name }),
-              confirm: t("details.delete", { name }),
-              onConfirm: () => actions.remove(bot),
-            })
-          }
+          title={t("details.delete.title", { name })}
+          body={t("details.delete.body", { name })}
+          cancel={t("details.delete.cancel", { name })}
+          onDelete={() => actions.remove(bot)}
         />
       </View>
     </ScrollView>
@@ -188,7 +183,9 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
  */
 function RoutineRow({ routine }: { readonly routine: Routine }) {
   const ctx = usePresentation();
+  const { t } = ctx.i18n;
   const client = useJ3Client();
+  const say = useSay();
   const on = useColor("accent-accent");
   const off = useColor("accent-control-off");
   const thumb = useColor("accent-background");
@@ -234,7 +231,15 @@ function RoutineRow({ routine }: { readonly routine: Routine }) {
       <Switch
         accessibilityLabel={routine.name}
         value={routine.enabled}
-        onValueChange={(enabled) => void client.setRoutineEnabled(routine.id, enabled)}
+        onValueChange={(enabled) =>
+          void client.setRoutineEnabled(routine.id, enabled).then((result) => {
+            if (result._tag === "failed") {
+              say(
+                t(enabled ? "routine.resumeFailed" : "routine.pauseFailed", { name: routine.name }),
+              );
+            }
+          })
+        }
         trackColor={{ true: on, false: off }}
         thumbColor={thumb}
       />

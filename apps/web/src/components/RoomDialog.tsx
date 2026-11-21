@@ -1,43 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Dialog } from "@base-ui/react/dialog";
-import type { Bot, BotId } from "@j3-bots/contracts";
+import type { Bot } from "@j3-bots/contracts";
 import { CheckIcon, XIcon } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId } from "react";
+import type { IntentFailure } from "@j3-bots/client-runtime";
 import {
-  refusedWith,
-  type IntentFailure,
-  type RoomChanges,
-  type RoomDraft,
-} from "@j3-bots/client-runtime";
-import {
-  blankRoomForm,
-  followRoom,
-  hostOf,
-  ROOM_MEMBERS,
   ROOM_NAME_MAX,
-  roomChanges,
-  roomDraft,
-  roomFormContext,
-  roomFormOf,
   roomFormTarget,
-  sameRoomForm,
-  withMember,
-  withoutDeleted,
   type RoomFormMode,
-  type RoomFormProblem,
   type RoomFormValues,
 } from "@j3-bots/client-runtime/presentation";
+import { type RoomSubmission, useRoomForm } from "@j3-bots/client-runtime/react";
 import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
 import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
 import { AvatarShape } from "./BotAvatar";
 import { Button } from "./ui/button";
 import { ChoiceIndicator, choiceRow } from "./ui/choice";
-
-/** What the form sends: a new room, or changes to the one it edits. */
-export type RoomSubmission =
-  | { readonly _tag: "create"; readonly draft: RoomDraft }
-  | { readonly _tag: "update"; readonly changes: RoomChanges };
 
 /** The props of the form, whatever frames it: the dialog in the app, a pane in the gallery. */
 export interface RoomFormProps {
@@ -105,120 +84,35 @@ export function RoomForm({
     hopLimitHint: useId(),
     hopLimitError: useId(),
   };
-  const room = mode._tag === "create" ? null : mode.room;
-  const gone = mode._tag !== "create" && mode.gone;
-  // Where the form starts: the room as the server has it, or nothing.
-  const [start, setStart] = useState(
-    () => initial ?? (room === null ? blankRoomForm : roomFormOf(room)),
-  );
-  const [values, setValues] = useState(start);
-  const primaryId = bots.find((bot) => bot.primary)?.id ?? null;
-  const context = roomFormContext(room, primaryId, defaultHopLimit);
-  // Bots picked and then deleted elsewhere, by name, which leave the selection and are named under it.
-  const [dropped, setDropped] = useState<ReadonlyArray<string>>([]);
-  const [botsSeen, setBotsSeen] = useState(bots);
-  const [roomSeen, setRoomSeen] = useState(room);
-  if (botsSeen !== bots || roomSeen !== room) {
-    let nextStart = start;
-    let nextValues = values;
-    if (botsSeen !== bots) {
-      setBotsSeen(bots);
-      const present = new Set<BotId>(bots.map((bot) => bot.id));
-      // The server drops them from the room too, which the form follows once the room says so.
-      nextStart = withoutDeleted(start, present);
-      nextValues = withoutDeleted(values, present, nextStart.hostPick);
-      const deleted = values.members.filter((id) => !present.has(id));
-      if (deleted.length > 0) {
-        const names = new Map(botsSeen.map((bot) => [bot.id, bot.profile.name]));
-        setDropped([...dropped, ...deleted.flatMap((id) => names.get(id) ?? [])]);
-      }
-    }
-    if (roomSeen !== room) {
-      setRoomSeen(room);
-      if (room !== null) {
-        const followed = followRoom(nextStart, nextValues, room, context);
-        nextStart = followed.start;
-        nextValues = followed.values;
-      }
-    }
-    setStart(nextStart);
-    setValues(nextValues);
-  }
-  const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<IntentFailure | null>(initialFailure ?? null);
-  // What is missing shows once the operator tried to send, and follows the form from then on.
-  const [tried, setTried] = useState(false);
-
-  const hostId = hostOf(values, context);
-  const draft = room === null ? roomDraft(values, context) : null;
-  const changes = room === null ? null : roomChanges(start, values, context);
-  // What goes to the server, once nothing is missing.
-  const submission: RoomSubmission | null =
-    draft?._tag === "ready"
-      ? { _tag: "create", draft: draft.value }
-      : changes?._tag === "ready"
-        ? {
-            _tag: "update",
-            changes:
-              mode._tag === "unarchive" ? { ...changes.value, archived: false } : changes.value,
-          }
-        : null;
-  const missing =
-    draft?._tag === "invalid"
-      ? draft.problems
-      : changes?._tag === "invalid"
-        ? changes.problems
-        : null;
-  const problems: ReadonlySet<RoomFormProblem> = tried && missing !== null ? missing : new Set();
-  const full = values.members.length >= ROOM_MEMBERS.max;
-  const unsaved = !sameRoomForm(start, values, context);
+  const form = useRoomForm({
+    mode,
+    bots,
+    defaultHopLimit,
+    connected,
+    locale,
+    initial,
+    initialFailure,
+  });
+  const { room, values, members, choices, hostId, full, problems, busy, dropped, unsaved } = form;
   useEffect(() => {
     if (!unsaved || onUnsavedChange === undefined) return;
     onUnsavedChange(true);
     return () => onUnsavedChange(false);
   }, [unsaved, onUnsavedChange]);
 
-  const change = (next: RoomFormValues) => {
-    if (busy) return;
-    setValues(next);
-    setFailure(null);
-  };
-  const byId = new Map(bots.map((bot) => [bot.id, bot]));
-  const members = values.members.flatMap((id) => {
-    const bot = byId.get(id);
-    return bot ? [bot] : [];
-  });
-  const choices = bots.toSorted((a, b) => a.profile.name.localeCompare(b.profile.name));
-
   const name = room?.name ?? "";
-  const refusedMembers = refusedWith(failure, "room-members");
-  const failureText = gone
-    ? t("roomForm.gone", { name })
-    : failure === null || refusedMembers
+  const failureText =
+    form.failure === null
       ? null
-      : failure._tag === "refused" && failure.error._tag === "Conflict"
-        ? t("roomForm.archived", { name })
-        : failure._tag === "refused" && failure.error._tag === "NotFound" && room !== null
-          ? t("roomForm.gone", { name })
-          : room === null
-            ? t("roomForm.createFailed")
-            : t("roomForm.failed");
+      : {
+          gone: t("roomForm.gone", { name }),
+          archived: t("roomForm.archived", { name }),
+          "create-failed": t("roomForm.createFailed"),
+          failed: t("roomForm.failed"),
+        }[form.failure];
 
   const submit = () => {
-    if (busy || !connected || gone) return;
-    setTried(true);
-    if (submission === null) return;
-    // Nothing changed: there is nothing to ask the server.
-    if (submission._tag === "update" && Object.keys(submission.changes).length === 0) {
-      onClose();
-      return;
-    }
-    setBusy(true);
-    setFailure(null);
-    void onSubmit(submission).then((failed) => {
-      setBusy(false);
-      setFailure(failed);
-    });
+    if (form.submit(onSubmit) === "unchanged") onClose();
   };
 
   const title =
@@ -236,7 +130,7 @@ export function RoomForm({
       : mode._tag === "edit"
         ? t("roomForm.save")
         : t("roomForm.unarchive");
-  const membersInvalid = problems.has("members") || refusedMembers;
+  const membersInvalid = problems.has("members") || form.membersRefused;
 
   return (
     <form
@@ -276,7 +170,7 @@ export function RoomForm({
             maxLength={ROOM_NAME_MAX}
             readOnly={busy}
             autoComplete="off"
-            onChange={(event) => change({ ...values, name: event.currentTarget.value })}
+            onChange={(event) => form.change({ ...values, name: event.currentTarget.value })}
             aria-invalid={problems.has("name") || undefined}
             aria-describedby={problems.has("name") ? ids.nameError : undefined}
             className={cn(fieldClass, "h-9 pointer-coarse:h-11")}
@@ -312,7 +206,7 @@ export function RoomForm({
                     aria-disabled={unavailable || undefined}
                     data-checked={picked ? "" : undefined}
                     onClick={() => {
-                      if (!unavailable) change(withMember(values, bot.id, !picked));
+                      if (!unavailable) form.toggleMember(bot.id);
                     }}
                     className={cn(
                       choiceRow,
@@ -337,7 +231,7 @@ export function RoomForm({
           </ul>
           {/* Exposed while empty, so a refusal that arrives later is announced. */}
           <p id={ids.membersError} role="alert" className="text-xs text-blocked empty:sr-only">
-            {refusedMembers
+            {form.membersRefused
               ? t("roomForm.membersRefused")
               : problems.has("members")
                 ? t("roomForm.members.invalid")
@@ -368,7 +262,7 @@ export function RoomForm({
               }
               onChange={(event) => {
                 const picked = members.find((bot) => bot.id === event.currentTarget.value);
-                if (picked) change({ ...values, hostPick: picked.id });
+                if (picked) form.pickHost(picked.id);
               }}
               className={cn(fieldClass, "h-9 pointer-coarse:h-11")}
             >
@@ -407,7 +301,7 @@ export function RoomForm({
             readOnly={busy}
             autoComplete="off"
             placeholder={defaultHopLimit === null ? undefined : String(defaultHopLimit)}
-            onChange={(event) => change({ ...values, hopLimit: event.currentTarget.value })}
+            onChange={(event) => form.change({ ...values, hopLimit: event.currentTarget.value })}
             aria-invalid={problems.has("hop-limit") || undefined}
             aria-describedby={
               problems.has("hop-limit")
@@ -438,7 +332,7 @@ export function RoomForm({
         )}
         <div className="flex flex-wrap justify-end gap-2">
           <Button onClick={onClose}>{t("roomForm.cancel")}</Button>
-          <Button type="submit" variant="primary" aria-disabled={busy || !connected || gone}>
+          <Button type="submit" variant="primary" aria-disabled={!form.canSubmit}>
             {submitText}
           </Button>
         </div>

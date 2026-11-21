@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { J3Client } from "@j3-bots/client-runtime";
-import { useJ3Client } from "@j3-bots/client-runtime/react";
 import type { BotId, MemoryPath, RoomId, RosterItemKey } from "@j3-bots/contracts";
 import {
   DarkTheme,
   DefaultTheme,
   NavigationContainer,
   type NavigationRoute,
-  type NavigationState,
   type Theme,
   useNavigation,
   useNavigationContainerRef,
@@ -35,10 +32,11 @@ import { Toasts } from "./toast.tsx";
 
 /**
  * One route per screen. On a phone they stack: the roster, a bot's or room's
- * conversation, its details, and over those the forms and a memory file. From the tablet width up the roster's route
- * shows the conversation `item` names beside the roster, and the
- * conversation's route is not used. Each route after the roster names the
- * bot or room by its roster key, so it shows the roster's current name.
+ * conversation, its details, and over those the forms and a memory file.
+ * From the tablet width up the roster's route shows the conversation `item`
+ * names beside the roster, and the conversation's route is not used. Each
+ * route after the roster names the bot or room by its roster key, so it shows
+ * the roster's current name.
  * `share` picks where something another app shared goes, over the rest.
  */
 export type Screens = {
@@ -119,37 +117,17 @@ function useNavigationTheme(): Theme {
   };
 }
 
-/**
- * Where each client's navigation stands, for as long as the app runs. Android
- * rebuilds the app's view when the window's density changes, as when a
- * foldable folds or unfolds, and the screens mount again; they pick up from
- * here rather than start over at the roster. Another server has another
- * client, so it starts at the roster.
- */
-const kept = new WeakMap<J3Client, NavigationState>();
-
 /** What a paired device shows. */
 export function Main() {
   const { t } = useI18n();
-  const client = useJ3Client();
   const theme = useNavigationTheme();
-  const resumed = kept.get(client);
   const navigation = useNavigationContainerRef<Screens>();
   const [ready, setReady] = useState(false);
   return (
     <KeyboardProvider>
       <PresentationProvider>
         <Toasts>
-          <NavigationContainer
-            ref={navigation}
-            onReady={() => setReady(true)}
-            theme={theme}
-            {...(resumed === undefined ? {} : { initialState: resumed })}
-            onStateChange={(state) => {
-              if (state === undefined) kept.delete(client);
-              else kept.set(client, state);
-            }}
-          >
+          <NavigationContainer ref={navigation} onReady={() => setReady(true)} theme={theme}>
             <Stack.Navigator>
               {/* The roster and the conversation draw their own headers, which hold more than a title. */}
               <Stack.Screen
