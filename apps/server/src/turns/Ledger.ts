@@ -132,25 +132,33 @@ export const UNDELIVERED: ReadonlyArray<DispatchStatus> = ["failed", "dropped"];
  * Whether the teammate message whose received card is `entry` reached its
  * recipient: a turn started with an envelope that carried it, as a wake of
  * the urgent message or its Retry, or as a held message. Such a message is
- * `sent` whatever else became of it, and never offered again.
+ * `sent` whatever else became of it, and never offered again. `entry` is
+ * often a caller's column, so the tables here have aliases no caller uses:
+ * one shared would make `entry` name the inner row.
  */
 const handoffReadSql = (sql: SqlClient.SqlClient, entry: Statement.Fragment) => sql`(
   EXISTS (
-    SELECT 1 FROM wakes r LEFT JOIN dispatches rd ON rd.id = r.dispatch_id
-    WHERE r.source_entry_id = ${entry}
-      AND (r.status = 'finished' OR rd.status IN ('delivered', 'finished'))
+    SELECT 1 FROM wakes hr_wake LEFT JOIN dispatches hr_wake_dispatch
+      ON hr_wake_dispatch.id = hr_wake.dispatch_id
+    WHERE hr_wake.source_entry_id = ${entry}
+      AND (
+        hr_wake.status = 'finished' OR hr_wake_dispatch.status IN ('delivered', 'finished')
+      )
   )
   OR EXISTS (
-    SELECT 1 FROM held_messages m JOIN dispatches md ON md.id = m.consumed_dispatch_id
-    WHERE m.handoff_entry_id = ${entry} AND md.status IN ('delivered', 'finished')
+    SELECT 1 FROM held_messages hr_held JOIN dispatches hr_held_dispatch
+      ON hr_held_dispatch.id = hr_held.consumed_dispatch_id
+    WHERE hr_held.handoff_entry_id = ${entry}
+      AND hr_held_dispatch.status IN ('delivered', 'finished')
   )
 )`;
 
 /** A dispatch whose recovery gave up: it may have landed, and nothing will tell. */
 const mayHaveLandedSql = (sql: SqlClient.SqlClient, dispatch: Statement.Fragment) => sql`
   EXISTS (
-    SELECT 1 FROM dispatches u
-    WHERE u.id = ${dispatch} AND u.status = 'failed' AND u.failure_reason = 'unresolved'
+    SELECT 1 FROM dispatches ml_dispatch
+    WHERE ml_dispatch.id = ${dispatch} AND ml_dispatch.status = 'failed'
+      AND ml_dispatch.failure_reason = 'unresolved'
   )
 `;
 
@@ -291,7 +299,10 @@ export class Ledger extends Context.Service<
     /**
      * The bot is being deleted: each teammate message sent to it that it
      * never read, and that still shows `sent`, shows `not-delivered` on the
-     * sender's card. The bot's own card goes with its conversation.
+     * sender's card, or `unconfirmed` while a dispatch that carried it may
+     * still have reached the bot with nothing to tell: sent with no answer,
+     * taken by the engine with no turn seen, or given up on by its recovery.
+     * The bot's own card goes with its conversation.
      */
     readonly recipientRemoved: (botId: BotId) => Effect.Effect<void>;
   }
@@ -810,15 +821,38 @@ export const layer = Layer.effect(
     }, Effect.orDie);
 
     const recipientRemoved = Effect.fn("Ledger.recipientRemoved")(function* (botId: BotId) {
-      const unread = yield* sql<{ readonly received_entry_id: string }>`
-        SELECT h.received_entry_id FROM handoffs h
-        WHERE h.recipient_bot_id = ${botId}
-          AND NOT ${handoffReadSql(sql, sql.literal("h.received_entry_id"))}
-      `;
+      const unread = yield* SqlSchema.findAll({
+        Request: Schema.Void,
+        Result: Schema.Struct({ sent_entry_id: EntryId, undecided: Schema.BooleanFromBit }),
+        execute: () => sql`
+          SELECT h.sent_entry_id, EXISTS (
+            SELECT 1 FROM dispatches d
+            WHERE d.id IN (
+              SELECT w.dispatch_id FROM wakes w WHERE w.source_entry_id = h.received_entry_id
+              UNION ALL
+              SELECT m.consumed_dispatch_id FROM held_messages m
+              WHERE m.handoff_entry_id = h.received_entry_id
+            )
+              AND (
+                d.status = 'accepted'
+                OR (d.status = 'intended' AND d.attempts > 0)
+                OR (d.status = 'failed' AND d.failure_reason = 'unresolved')
+              )
+          ) AS undecided
+          FROM handoffs h
+          WHERE h.recipient_bot_id = ${botId} AND h.sent_entry_id IS NOT NULL
+            AND NOT ${handoffReadSql(sql, sql.literal("h.received_entry_id"))}
+        `,
+      })(undefined);
       for (const row of unread) {
-        const card = yield* sentCardOf(EntryId.make(row.received_entry_id));
-        if (card !== null && card.state === "sent") {
-          yield* entries.update({ ...card, state: "not-delivered" });
+        const found = yield* entries.find(row.sent_entry_id);
+        if (Option.isNone(found)) continue;
+        const card = found.value.entry;
+        if (card._tag === "handoff" && card.state === "sent") {
+          yield* entries.update({
+            ...card,
+            state: row.undecided ? "unconfirmed" : "not-delivered",
+          });
         }
       }
     }, Effect.orDie);

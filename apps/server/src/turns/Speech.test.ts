@@ -761,6 +761,25 @@ it.effect("counts the hops of a held message the turn delivers", () =>
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("delivers a held message to a teammate that read one before", () =>
+  Effect.gen(function* () {
+    const { session, turnId } = yield* working("Keep Bo posted.");
+    const bo = yield* createBot("Bo");
+    const boSession = yield* engineSession(bo.id);
+    yield* messageTeammate(session, turnId, { to: bo.id, text: "Staging is down.", urgent: false });
+    yield* sendToBot(bo.id, "Anything new?");
+    const first = yield* nextTurn(bo.id);
+    yield* finished(bo.id, boSession, first);
+    // Bo answered nothing, and is told so in a turn of its own.
+    yield* finished(bo.id, boSession, yield* nextTurn(bo.id, first));
+
+    yield* messageTeammate(session, turnId, { to: bo.id, text: "Staging is up.", urgent: false });
+    yield* sendToBot(bo.id, "And now?");
+    yield* until(timesSent(boSession, "Staging is up.").pipe(Effect.map((n) => n === 1)));
+    assert.strictEqual(yield* timesSent(boSession, "Staging is down."), 1);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("starts the chain again once the engine took the operator's steer", () =>
   Effect.gen(function* () {
     yield* chainLimits({ hops: 1, fanOut: 1 });

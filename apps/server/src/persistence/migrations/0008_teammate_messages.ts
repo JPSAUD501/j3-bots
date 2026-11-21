@@ -37,4 +37,16 @@ export default Effect.gen(function* () {
   // recipient's Stop cancelled: the Retry is the operator's word, so no Stop
   // of the sender removes it.
   yield* sql`ALTER TABLE held_messages ADD COLUMN retried INTEGER NOT NULL DEFAULT 0`;
+
+  // Whether a held message reached its recipient is asked of every first
+  // send that carries one: by the dispatch that carried it, and by its
+  // received card.
+  yield* sql`
+    CREATE INDEX held_messages_dispatch ON held_messages (consumed_dispatch_id)
+    WHERE consumed_dispatch_id IS NOT NULL
+  `;
+  yield* sql`
+    CREATE INDEX held_messages_handoff ON held_messages (handoff_entry_id)
+    WHERE handoff_entry_id IS NOT NULL
+  `;
 });

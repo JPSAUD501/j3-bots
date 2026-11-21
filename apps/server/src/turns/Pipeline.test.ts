@@ -727,6 +727,24 @@ it.effect("keeps a held teammate message with an envelope whose fate is unknown"
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect(
+  "keeps a held teammate message unconfirmed when its recipient goes before the send is answered",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const bot = yield* createBot("Ana");
+      yield* engineSession(bot.id);
+      const sender = yield* holdMessageFor(bot.id, "The launch moved to Friday.");
+
+      // The send carrying it is never answered: it may still land.
+      yield* control.deferNextDispatch;
+      yield* sendToBot(bot.id, "Any news?");
+      yield* flushed(bot.id);
+      yield* (yield* Bots).remove({ commandId: command(), botId: bot.id, deleteFiles: true });
+      assert.deepStrictEqual(yield* handoffStates([sender]), [["unconfirmed"]]);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("shows a held teammate message no envelope can carry as not delivered", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
