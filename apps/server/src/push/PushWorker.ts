@@ -51,6 +51,15 @@ const DEFECT_DELAY = Duration.seconds(30);
  */
 const BATCH = 50;
 
+/**
+ * How long one pass may spend sending. A pass that spends it claims no more
+ * and leaves the rest to the next, a few seconds later, which first reads
+ * the receipts and ends the deliveries that came due meanwhile.
+ */
+const SEND_BUDGET = Duration.seconds(60);
+
+const PushService = Schema.Struct({ not_before: Schema.NullOr(Time) });
+
 /** A pending delivery due now, with what sending it needs. */
 const Due = Schema.Struct({
   id: PushDeliveryId,
@@ -135,9 +144,11 @@ const rowId = (row: Readonly<Record<string, unknown>>): string =>
  * its registration.
  *
  * Receipts are read before any send, so a service that does not answer sends
- * holds back no receipt; and the first send it does not answer ends the
- * pass's sends: the others wait as long as that one does, their attempts
- * unspent.
+ * holds back no receipt, and a pass sends for `SEND_BUDGET` at most, so slow
+ * sends hold back neither receipts nor deadlines for long. The first send the
+ * service does not answer ends the pass's sends and sets, durably, when the
+ * service may next be tried: no send begins before then, one written since
+ * included, so the others wait with their attempts unspent.
  */
 export class PushWorker extends Context.Service<
   PushWorker,
@@ -298,8 +309,8 @@ export const layer = Layer.effect(
 
     /**
      * One pending delivery: claimed, sent, and what came of it recorded.
-     * Returns when the service may next be tried if it did not answer, or
-     * `null`.
+     * Returns whether the service did not answer, which holds every send
+     * until it may be tried again.
      */
     const sendOne = Effect.fn("PushWorker.sendOne")(function* (delivery: Due) {
       const {
@@ -313,11 +324,11 @@ export const layer = Layer.effect(
       if (provider === null || token === null || platform === null || generation === null) {
         // Unregistered or revoked since it was written: nothing to send to.
         yield* settle(delivery.id);
-        return null;
+        return false;
       }
       if (delivery.attempts >= MAX_ATTEMPTS) {
         yield* gaveUp(delivery.id, lastAttempt(delivery), `no send succeeded in ${MAX_ATTEMPTS}`);
-        return null;
+        return false;
       }
       const target: EntryTarget | null =
         botId !== null
@@ -327,7 +338,7 @@ export const layer = Layer.effect(
             : null;
       if (target === null) return yield* Effect.die("An entry has a target");
       const claimed = yield* claim(delivery, generation);
-      if (claimed === null) return null;
+      if (claimed === null) return false;
       const attempt: Attempt = { deviceId: delivery.device_id, generation };
       const sent = yield* sender
         .send({
@@ -343,7 +354,7 @@ export const layer = Layer.effect(
       if (sent._tag === "Success") {
         if (sent.success === null) {
           yield* settle(delivery.id);
-          return null;
+          return false;
         }
         // Taken: its words are no longer needed, its receipt is.
         const accepted = yield* DateTime.now;
@@ -355,16 +366,16 @@ export const layer = Layer.effect(
             deadline_at = ${timeText(DateTime.addDuration(accepted, RECEIPT_WINDOW))}
           WHERE id = ${delivery.id}
         `.pipe(Effect.orDie);
-        return null;
+        return false;
       }
       const error = sent.failure;
       switch (error._tag) {
         case "PushUnregistered":
           yield* unregistered(delivery.id, attempt);
-          return null;
+          return false;
         case "PushRejected":
           yield* gaveUp(delivery.id, attempt, error.reason);
-          return null;
+          return false;
         case "PushThrottled":
           // Due again when the next send may begin, as recorded before this one.
           yield* Effect.logInfo("A push could not be sent; it is tried again").pipe(
@@ -374,7 +385,7 @@ export const layer = Layer.effect(
               reason: "MessageRateExceeded",
             }),
           );
-          return null;
+          return false;
         case "PushUnavailable":
           yield* Effect.logInfo("The push service did not take a push; sends wait").pipe(
             Effect.annotateLogs({
@@ -383,7 +394,12 @@ export const layer = Layer.effect(
               reason: error.reason,
             }),
           );
-          return DateTime.addDuration(yield* DateTime.now, sendBackoff(claimed.count));
+          // No send begins before this one's next may, one written since included.
+          yield* sql`
+            UPDATE push_service
+            SET not_before = ${timeText(DateTime.addDuration(yield* DateTime.now, sendBackoff(claimed.count)))}
+          `.pipe(Effect.orDie);
+          return true;
       }
     });
 
@@ -487,12 +503,25 @@ export const layer = Layer.effect(
       return rows.length === BATCH;
     });
 
+    /** When the service may next be tried, if it did not answer the last time. */
+    const notBefore = SqlSchema.findAll({
+      Request: Schema.Void,
+      Result: PushService,
+      execute: () => sql`SELECT not_before FROM push_service`,
+    })(undefined).pipe(
+      Effect.map(([service]) => service?.not_before ?? null),
+      Effect.orDie,
+    );
+
     /**
-     * The sends due now, until the service does not answer one: those left
-     * wait as long as that one, without a send begun. Whether there may be
-     * more than one pass reads.
+     * The sends due now, unless the service is not to be tried yet, until it
+     * does not answer one or the pass spent its budget. Whether there may be
+     * more than one pass reads, or than it had time for.
      */
     const sendDue = Effect.fn("PushWorker.sendDue")(function* () {
+      const started = yield* DateTime.now;
+      const until = yield* notBefore;
+      if (until !== null && DateTime.isGreaterThan(until, started)) return false;
       const rows = yield* sql`
         SELECT d.id, d.entry_id, d.device_id, d.title, d.body, d.plain_body, d.attempts,
           d.generation, e.conversation_bot_id, e.room_id, r.provider, r.token, r.platform,
@@ -500,28 +529,24 @@ export const layer = Layer.effect(
         FROM push_deliveries d
         JOIN entries e ON e.id = d.entry_id
         LEFT JOIN push_registrations r ON r.device_id = d.device_id
-        WHERE d.status = 'pending' AND d.due_at <= ${timeText(yield* DateTime.now)}
+        WHERE d.status = 'pending' AND d.due_at <= ${timeText(started)}
         ORDER BY d.due_at, d.id
         LIMIT ${BATCH}
       `.pipe(Effect.orDie);
-      const service: { unavailableUntil: DateTime.Utc | null } = { unavailableUntil: null };
+      const service = { unavailable: false };
       for (const row of rows) {
-        if (service.unavailableUntil !== null) break;
+        if (service.unavailable) return false;
+        const spent = DateTime.distance(started, yield* DateTime.now);
+        if (Duration.isGreaterThanOrEqualTo(spent, SEND_BUDGET)) return true;
         // Decoded one by one, so a row that cannot be read waits alone.
         yield* supervised(
           rowId(row),
           Effect.gen(function* () {
-            service.unavailableUntil = yield* sendOne(yield* decodeDue(row).pipe(Effect.orDie));
+            service.unavailable = yield* sendOne(yield* decodeDue(row).pipe(Effect.orDie));
           }),
         );
       }
-      const until = service.unavailableUntil;
-      if (until === null) return rows.length === BATCH;
-      yield* sql`
-        UPDATE push_deliveries SET due_at = ${timeText(until)}
-        WHERE status = 'pending' AND due_at < ${timeText(until)}
-      `.pipe(Effect.orDie);
-      return false;
+      return !service.unavailable && rows.length === BATCH;
     });
 
     const pass = yield* onePassAtATime(
@@ -533,8 +558,14 @@ export const layer = Layer.effect(
         const [next] = yield* SqlSchema.findAll({
           Request: Schema.Void,
           Result: Schema.Struct({ due: Schema.NullOr(Time), deadline: Schema.NullOr(Time) }),
-          execute: () =>
-            sql`SELECT MIN(due_at) AS due, MIN(deadline_at) AS deadline FROM push_deliveries`,
+          // A send is due no sooner than the service may be tried again.
+          execute: () => sql`
+            SELECT
+              MIN(CASE WHEN d.status = 'pending' AND d.due_at < s.not_before
+                THEN s.not_before ELSE d.due_at END) AS due,
+              MIN(d.deadline_at) AS deadline
+            FROM push_deliveries d LEFT JOIN push_service s ON s.id = 1
+          `,
         })(undefined).pipe(Effect.orDie);
         outcome.until(next?.due ?? null);
         outcome.until(next?.deadline ?? null);

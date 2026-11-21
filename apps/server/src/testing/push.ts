@@ -41,6 +41,8 @@ export class TestPushService extends Context.Service<
   {
     /** Every send that reached the service, taken or not, in order. */
     readonly sends: Effect.Effect<ReadonlyArray<PushMessage>>;
+    /** For each time receipts were asked for, how many sends had reached the service then. */
+    readonly receiptsAsked: Effect.Effect<ReadonlyArray<number>>;
     /** The next sends get these answers, in order; every later one is taken. */
     readonly answer: (answers: ReadonlyArray<TestPushAnswer>) => Effect.Effect<void>;
   }
@@ -50,6 +52,7 @@ export const layer = Layer.effectContext(
   Effect.sync(() => {
     const sends: Array<PushMessage> = [];
     const answers: Array<TestPushAnswer> = [];
+    const receiptsAsked: Array<number> = [];
 
     const send = (message: PushMessage) =>
       Effect.gen(function* () {
@@ -65,15 +68,17 @@ export const layer = Layer.effectContext(
       });
 
     const receipts = (ids: ReadonlyArray<PushReceiptId>) =>
-      Effect.sync(
-        () => new Map<PushReceiptId, PushReceipt>(ids.map((id) => [id, { _tag: "delivered" }])),
-      );
+      Effect.sync(() => {
+        receiptsAsked.push(sends.length);
+        return new Map<PushReceiptId, PushReceipt>(ids.map((id) => [id, { _tag: "delivered" }]));
+      });
 
     return Context.make(PushSender, PushSender.of({ send, receipts })).pipe(
       Context.add(
         TestPushService,
         TestPushService.of({
           sends: Effect.sync(() => [...sends]),
+          receiptsAsked: Effect.sync(() => [...receiptsAsked]),
           answer: (next) =>
             Effect.sync(() => {
               answers.push(...next);

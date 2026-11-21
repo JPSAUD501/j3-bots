@@ -48,4 +48,14 @@ export default Effect.gen(function* () {
   `;
   yield* sql`CREATE INDEX push_deliveries_due ON push_deliveries (due_at)`;
   yield* sql`CREATE INDEX push_deliveries_deadline ON push_deliveries (deadline_at)`;
+
+  // The push service as a whole, one row: no send begins before `not_before`,
+  // set when a request to the service went unanswered.
+  yield* sql`
+    CREATE TABLE push_service (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      not_before TEXT
+    )
+  `;
+  yield* sql`INSERT INTO push_service (id, not_before) VALUES (1, NULL)`;
 });

@@ -7,6 +7,7 @@ import {
   type EntryTarget,
   PushToken,
 } from "@j3-bots/contracts";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -358,6 +359,64 @@ it.effect(
       yield* TestClock.adjust(sendBackoff(1));
       yield* deliverPending;
       assert.strictEqual((yield* sends).length, 5);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "holds every send, one written since included, until the service may be tried again, across a restart",
+  () =>
+    Effect.gen(function* () {
+      const service = yield* TestPushService;
+      yield* service.answer([new PushUnavailable({ reason: "HTTP 429" })]);
+      const scoutId = yield* Effect.gen(function* () {
+        const scout = yield* createBot("Scout");
+        yield* pushDevice("Phone");
+        yield* says(scout.id, "Done");
+        yield* deliverPending;
+        return scout.id;
+      }).pipe(Effect.provide(Domain.layer));
+
+      yield* Effect.gen(function* () {
+        yield* TestClock.adjust("1 second");
+        yield* says(scoutId, "The build is green");
+        yield* deliverPending;
+        assert.strictEqual((yield* sends).length, 1);
+        yield* TestClock.adjust(sendBackoff(1));
+        yield* deliverPending;
+      }).pipe(Effect.provide(Domain.layer));
+
+      assert.strictEqual((yield* sends).length, 3);
+    }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
+);
+
+it.effect(
+  "stops sending once a pass spent its time, and the next reads a receipt come due before sending more",
+  () =>
+    Effect.gen(function* () {
+      const service = yield* TestPushService;
+      const scout = yield* createBot("Scout");
+      yield* pushDevice("Phone");
+      yield* says(scout.id, "Done");
+      yield* deliverPending;
+      assert.deepStrictEqual(yield* deliveries, [{ status: "accepted", attempts: 1 }]);
+
+      // Five sends of 29 seconds each, starting a minute before the receipt is due.
+      for (const name of ["Tablet", "Laptop", "Watch", "Television"]) yield* pushDevice(name);
+      yield* TestClock.adjust(Duration.subtract(RECEIPT_DELAY, Duration.minutes(1)));
+      yield* service.answer(
+        Array.from({ length: 5 }, () => ({
+          _tag: "after" as const,
+          before: () => TestClock.adjust("29 seconds"),
+          answer: "take" as const,
+        })),
+      );
+      yield* says(scout.id, "The build is green");
+      yield* deliverPending;
+      yield* deliverPending;
+
+      assert.strictEqual((yield* sends).length, 6);
+      // Asked once the first pass stopped, after three of the five sends.
+      assert.deepStrictEqual(yield* service.receiptsAsked, [4]);
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
