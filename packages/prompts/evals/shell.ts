@@ -4,30 +4,43 @@ import * as Schema from "effect/Schema";
 /**
  * A small shell for the evals' stand-in workspaces. It runs a command the way
  * `sh` would, against an in-memory file tree and the programs a fixture
- * supplies, and records what the command did: the files it read, wrote and
- * removed, what it could not run, and the events the fixture's programs
- * report. Graders read those records,
- * so `echo 'gh run list'` counts as nothing, and a read inside `$(…)` counts
- * as a read, however the command is spelled.
+ * supplies, and records what the command did: the files it read, what it
+ * changed in the workspace, what it could not run, and the events the
+ * fixture's programs report. Graders read those records, so
+ * `echo 'gh run list'` counts as nothing, and a read inside `$(…)` counts as a
+ * read, however the command is spelled.
+ *
+ * What a command changed is not reported operation by operation: it is the
+ * difference between the workspace before the command and after it, files with
+ * their content and folders alike. However a command goes about it (a
+ * redirection, `rm -r`, a glob, a temporary file moved into place), what it
+ * left changed is exactly what is reported, and a file written and then
+ * removed again is no change.
  *
  * It is a limited fixture, not a shell. It takes single and double quotes,
  * backslashes, `$NAME` and `${NAME}`, `$(…)` and backticks (inside double
  * quotes too), `;`, `&&`, `||`, `|`, `&` (run in order), newlines, comments,
  * the redirections `<`, `>`, `>>`, `2>`, `2>&1` and `&>`, `set -e`, here-documents
- * (their body taken literally) and here-strings, and the builtins below. A
- * word is never split or globbed. Anything else (a loop, `if`, a subshell, a
- * program the workspace lacks) fails with an error that says so, so a model
- * learns what to use instead of reading output no real shell would give.
+ * (their body taken literally) and here-strings, and the builtins below. An
+ * unquoted `*`, `?` or `[…]` is expanded against the workspace as `sh` would,
+ * and kept as written when nothing matches; a word is never split. Anything
+ * else (a loop, `if`, a subshell, a program the workspace lacks) fails with an
+ * error that says so, so a model learns what to use instead of reading output
+ * no real shell would give.
  */
 
 /** What the shell itself saw a command do, besides what its programs report. */
 export type ShellEvent =
   /** A file in the workspace was read, by its absolute path. */
   | { readonly type: "file-read"; readonly path: string }
-  /** A file was written, with its content after the write. */
-  | { readonly type: "file-write"; readonly path: string; readonly content: string }
-  /** A file was removed, by `rm` or as the source of `mv`. */
-  | { readonly type: "file-delete"; readonly path: string }
+  /** The command left this file created or changed, with its content after the command. */
+  | { readonly type: "file-written"; readonly path: string; readonly content: string }
+  /** The command left this file gone. */
+  | { readonly type: "file-removed"; readonly path: string }
+  /** The command left this folder created. */
+  | { readonly type: "directory-created"; readonly path: string }
+  /** The command left this folder gone. */
+  | { readonly type: "directory-removed"; readonly path: string }
   /**
    * Part of the command did not run: a program the workspace lacks, or syntax
    * this shell does not take. What it meant to do is unknown, so no grader can
@@ -71,10 +84,14 @@ export const HOME = "/workspace";
 
 // The syntax tree.
 
+/**
+ * A piece of a word. `quoted` says whether it was quoted (or escaped), which
+ * keeps a `*`, `?` or `[` in it from being a glob.
+ */
 type Part =
-  | { readonly type: "text"; readonly text: string }
-  | { readonly type: "variable"; readonly name: string }
-  | { readonly type: "substitution"; readonly script: Script };
+  | { readonly type: "text"; readonly text: string; readonly quoted: boolean }
+  | { readonly type: "variable"; readonly name: string; readonly quoted: boolean }
+  | { readonly type: "substitution"; readonly script: Script; readonly quoted: boolean };
 type Word = ReadonlyArray<Part>;
 
 /** A here-document's body, filled in once the line that opened it ends. */
@@ -143,13 +160,13 @@ const parse = (source: string): Script => {
     }
   };
 
-  const parseDollar = (): Part => {
+  const parseDollar = (quoted: boolean): Part => {
     // At `$`.
     if (peek(1) === "(") {
       if (peek(2) === "(")
         throw new ParseError({ message: "arithmetic expansion is not supported" });
       pos += 2;
-      return { type: "substitution", script: parseScript(")") };
+      return { type: "substitution", script: parseScript(")"), quoted };
     }
     if (peek(1) === "{") {
       const end = source.indexOf("}", pos);
@@ -158,16 +175,16 @@ const parse = (source: string): Script => {
         throw new ParseError({ message: "only ${NAME} is supported" });
       }
       pos = end + 1;
-      return { type: "variable", name };
+      return { type: "variable", name, quoted };
     }
     NAME.lastIndex = pos + 1;
     const name = NAME.exec(source)?.[0];
     if (name !== undefined) {
       pos += 1 + name.length;
-      return { type: "variable", name };
+      return { type: "variable", name, quoted };
     }
     pos++;
-    return { type: "text", text: "$" };
+    return { type: "text", text: "$", quoted };
   };
 
   const parseDoubleQuoted = (): ReadonlyArray<Part> => {
@@ -175,7 +192,7 @@ const parse = (source: string): Script => {
     const parts: Array<Part> = [];
     let text = "";
     const flush = () => {
-      if (text !== "") parts.push({ type: "text", text });
+      if (text !== "") parts.push({ type: "text", text, quoted: true });
       text = "";
     };
     for (;;) {
@@ -190,11 +207,11 @@ const parse = (source: string): Script => {
         pos += 2;
       } else if (char === "$") {
         flush();
-        parts.push(parseDollar());
+        parts.push(parseDollar(true));
       } else if (char === "`") {
         flush();
         pos++;
-        parts.push({ type: "substitution", script: parseScript("`") });
+        parts.push({ type: "substitution", script: parseScript("`"), quoted: true });
       } else {
         text += char;
         pos++;
@@ -208,10 +225,13 @@ const parse = (source: string): Script => {
   const parseWord = (closer: string | null): Word | undefined => {
     const parts: Array<Part> = [];
     let started = false;
-    let text = "";
-    const flush = () => {
-      if (text !== "") parts.push({ type: "text", text });
-      text = "";
+    /** Literal text, joined with the text before it when quoted alike. */
+    const add = (text: string, quoted: boolean) => {
+      if (text === "") return;
+      const last = parts.at(-1);
+      if (last?.type === "text" && last.quoted === quoted) {
+        parts[parts.length - 1] = { ...last, text: last.text + text };
+      } else parts.push({ type: "text", text, quoted });
     };
     for (;;) {
       const char = peek();
@@ -225,27 +245,26 @@ const parse = (source: string): Script => {
       if (char === "'") {
         const end = source.indexOf("'", pos + 1);
         if (end === -1) throw new ParseError({ message: "unterminated single quote" });
-        text += source.slice(pos + 1, end);
+        add(source.slice(pos + 1, end), true);
         pos = end + 1;
       } else if (char === '"') {
-        flush();
-        parts.push(...parseDoubleQuoted());
+        for (const part of parseDoubleQuoted()) {
+          if (part.type === "text") add(part.text, true);
+          else parts.push(part);
+        }
       } else if (char === "\\") {
-        if (peek(1) !== "\n") text += peek(1);
+        if (peek(1) !== "\n") add(peek(1), true);
         pos += 2;
       } else if (char === "$") {
-        flush();
-        parts.push(parseDollar());
+        parts.push(parseDollar(false));
       } else if (char === "`") {
-        flush();
         pos++;
-        parts.push({ type: "substitution", script: parseScript("`") });
+        parts.push({ type: "substitution", script: parseScript("`"), quoted: false });
       } else {
-        text += char;
+        add(char, false);
         pos++;
       }
     }
-    flush();
     // `''` is still a word: one with no parts.
     return started ? parts : undefined;
   };
@@ -348,6 +367,7 @@ const parse = (source: string): Script => {
         words.length === 0 &&
         word.length === 1 &&
         part?.type === "text" &&
+        !part.quoted &&
         COMPOUND.has(part.text)
       ) {
         throw new ParseError({
@@ -425,6 +445,63 @@ const normalize = (path: string): string => {
 
 const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s;
 
+/** A word once its variables and substitutions are filled in, piece by piece. */
+type Expanded = ReadonlyArray<{ readonly text: string; readonly quoted: boolean }>;
+interface Char {
+  readonly char: string;
+  readonly quoted: boolean;
+}
+
+const text = (word: Expanded): string => word.map((piece) => piece.text).join("");
+
+/** The characters that make an unquoted word a glob. */
+const GLOB = new Set(["*", "?", "["]);
+
+const escapeRegExp = (char: string) => char.replace(/[\\^$.*+?()[\]{}|/-]/g, "\\$&");
+
+/**
+ * A part of a path between `/`s as a pattern that matches whole names, or
+ * `undefined` when it has no unquoted `*`, `?` or `[…]`. A `[` with no
+ * closing `]` stands for itself, as in `sh`.
+ */
+const segmentPattern = (segment: ReadonlyArray<Char>): RegExp | undefined => {
+  let source = "";
+  let glob = false;
+  for (let index = 0; index < segment.length; index++) {
+    const { char, quoted } = segment[index] ?? { char: "", quoted: true };
+    if (quoted || !GLOB.has(char)) {
+      source += escapeRegExp(char);
+      continue;
+    }
+    if (char !== "[") {
+      glob = true;
+      source += char === "*" ? ".*" : ".";
+      continue;
+    }
+    // A bracket: `!` or `^` negates it, and a `]` right after the opening is a member.
+    let end = index + 1;
+    const negated = segment[end]?.char === "!" || segment[end]?.char === "^";
+    if (negated) end++;
+    const first = end;
+    if (segment[end]?.char === "]") end++;
+    while (end < segment.length && segment[end]?.char !== "]") end++;
+    if (end >= segment.length) {
+      source += "\\[";
+      continue;
+    }
+    const members = segment
+      .slice(first, end)
+      .map(({ char: member }, at, all) =>
+        member === "-" && at > 0 && at < all.length - 1 ? "-" : escapeRegExp(member),
+      )
+      .join("");
+    glob = true;
+    source += `[${negated ? "^" : ""}${members}]`;
+    index = end;
+  }
+  return glob ? new RegExp(`^${source}$`, "s") : undefined;
+};
+
 /** Where a descriptor's output goes. */
 type Sink =
   | { readonly type: "stdout" }
@@ -435,6 +512,7 @@ const parent = (path: string): string => normalize(`${path}/..`);
 const basename = (path: string): string => path.slice(path.lastIndexOf("/") + 1);
 
 const BUILTINS = [
+  ":",
   "cat",
   "cd",
   "cp",
@@ -476,6 +554,50 @@ const printf = (format: string, args: ReadonlyArray<string>): string => {
     });
   } while (index < args.length && /%[sd]/.test(format));
   return output;
+};
+
+/** The one-letter options long ones stand for. */
+const LONG_OPTIONS = new Map([
+  ["recursive", "r"],
+  ["force", "f"],
+  ["dir", "d"],
+  ["verbose", "v"],
+  ["archive", "a"],
+]);
+
+/**
+ * A command's options, as letters, and its operands: options may come
+ * anywhere before `--`, and `-rf` is `-r -f`. `unsupported` names the first
+ * option not among `supported`.
+ */
+const options = (
+  args: ReadonlyArray<string>,
+  supported: string,
+): {
+  readonly flags: ReadonlySet<string>;
+  readonly operands: ReadonlyArray<string>;
+  readonly unsupported?: string;
+} => {
+  const flags = new Set<string>();
+  const operands: Array<string> = [];
+  let ended = false;
+  for (const arg of args) {
+    if (ended || arg === "-" || !arg.startsWith("-")) operands.push(arg);
+    else if (arg === "--") ended = true;
+    else if (arg.startsWith("--")) {
+      const flag = LONG_OPTIONS.get(arg.slice(2));
+      if (flag === undefined || !supported.includes(flag)) {
+        return { flags, operands, unsupported: arg };
+      }
+      flags.add(flag);
+    } else {
+      for (const flag of arg.slice(1)) {
+        if (!supported.includes(flag)) return { flags, operands, unsupported: `-${flag}` };
+        flags.add(flag);
+      }
+    }
+  }
+  return { flags, operands };
 };
 
 /** The line count of `head -n 3`, `head -3` or `head -n3`; 10 by default. */
@@ -527,9 +649,12 @@ export class Workspace<E> {
     }
   }
 
-  /** The names a command can run, for an error that lists them. */
+  /** The names a command can run, for an error that lists them; not `[` and `:`, which nobody looks for. */
   get commands(): ReadonlyArray<string> {
-    return [...BUILTINS.filter((name) => name !== "["), ...this.#programs.keys()].toSorted();
+    return [
+      ...BUILTINS.filter((name) => name !== "[" && name !== ":"),
+      ...this.#programs.keys(),
+    ].toSorted();
   }
 
   /** The content of a file, by its path relative to {@link HOME} or absolute. */
@@ -537,7 +662,11 @@ export class Workspace<E> {
     return this.#files.get(normalize(path.startsWith("/") ? path : `${HOME}/${path}`));
   }
 
-  /** Runs one command in a fresh shell in {@link HOME}. */
+  /**
+   * Runs one command in a fresh shell in {@link HOME}. Its events end with
+   * what it changed: the workspace after it, compared with the workspace
+   * before it.
+   */
   run(command: string): ShellRun<E> {
     const events: Array<E | ShellEvent> = [];
     let script: Script;
@@ -548,9 +677,32 @@ export class Workspace<E> {
       events.push({ type: "unavailable", what: error.message });
       return { output: `sh: ${error.message} in this workspace\n`, events };
     }
+    const files = new Map(this.#files);
+    const directories = new Set(this.#directories);
     const shell = new Run(this.#files, this.#directories, this.#programs, this.commands, events);
     const outcome = shell.script(script, "");
+    events.push(...this.#changesSince(files, directories));
     return { output: outcome.stdout + outcome.stderr, events };
+  }
+
+  /** What differs between the workspace now and `files` and `directories`, by path. */
+  #changesSince(
+    files: ReadonlyMap<string, string>,
+    directories: ReadonlySet<string>,
+  ): ReadonlyArray<ShellEvent> {
+    const changes: Array<ShellEvent> = [];
+    for (const path of [...new Set([...files.keys(), ...this.#files.keys()])].toSorted()) {
+      const content = this.#files.get(path);
+      if (content === undefined) changes.push({ type: "file-removed", path });
+      else if (files.get(path) !== content) changes.push({ type: "file-written", path, content });
+    }
+    for (const path of [...new Set([...directories, ...this.#directories])].toSorted()) {
+      const before = directories.has(path);
+      if (before !== this.#directories.has(path)) {
+        changes.push({ type: before ? "directory-removed" : "directory-created", path });
+      }
+    }
+    return changes;
   }
 }
 
@@ -600,17 +752,46 @@ class Run<E> {
     if (absolute === "/dev/null") return undefined;
     if (this.#directories.has(absolute)) return `${path}: Is a directory`;
     if (!this.#directories.has(parent(absolute))) return `${path}: No such file or directory`;
-    const next = (append ? (this.#files.get(absolute) ?? "") : "") + content;
-    this.#files.set(absolute, next);
-    this.#events.push({ type: "file-write", path: absolute, content: next });
+    this.#files.set(absolute, (append ? (this.#files.get(absolute) ?? "") : "") + content);
     return undefined;
   }
 
-  /** Removes a file by its absolute path; false when there was none. */
-  #delete(absolute: string): boolean {
-    if (!this.#files.delete(absolute)) return false;
-    this.#events.push({ type: "file-delete", path: absolute });
-    return true;
+  /** The names directly in a folder, by its absolute path, sorted. */
+  #children(directory: string): ReadonlyArray<string> {
+    const prefix = directory === "/" ? "/" : `${directory}/`;
+    return [
+      ...new Set(
+        [...this.#files.keys(), ...this.#directories]
+          .filter((entry) => entry.startsWith(prefix) && entry !== directory)
+          .map((entry) => entry.slice(prefix.length).split("/")[0] ?? ""),
+      ),
+    ].toSorted();
+  }
+
+  /** The files and folders under a folder, by its absolute path, the folder itself left out. */
+  #under(directory: string): { files: ReadonlyArray<string>; directories: ReadonlyArray<string> } {
+    const prefix = directory === "/" ? "/" : `${directory}/`;
+    return {
+      files: [...this.#files.keys()].filter((path) => path.startsWith(prefix)),
+      directories: [...this.#directories].filter((path) => path.startsWith(prefix)),
+    };
+  }
+
+  /** Moves or copies a folder and everything under it to `to`, an absolute path. */
+  #transplant(from: string, to: string, move: boolean): void {
+    const { files, directories } = this.#under(from);
+    const moved = (path: string) => `${to}${path.slice(from.length)}`;
+    for (const path of files) {
+      const content = this.#files.get(path) ?? "";
+      if (move) this.#files.delete(path);
+      this.#files.set(moved(path), content);
+    }
+    for (const path of directories) {
+      if (move) this.#directories.delete(path);
+      this.#directories.add(moved(path));
+    }
+    if (move) this.#directories.delete(from);
+    this.#directories.add(to);
   }
 
   script(script: Script, stdin: string): Outcome {
@@ -633,36 +814,100 @@ class Run<E> {
     return { stdout, stderr, status };
   }
 
-  #expand(word: Word): string {
-    return word
-      .map((part) => {
-        switch (part.type) {
-          case "text":
-            return part.text;
-          case "variable":
-            return this.#variables.get(part.name) ?? "";
-          case "substitution": {
-            const outcome = this.script(part.script, "");
-            this.#substitutionErrors += outcome.stderr;
-            return outcome.stdout.replace(/\n+$/, "");
-          }
+  /** A word's text, with which of its characters were quoted, and so are no glob. */
+  #pieces(word: Word): Expanded {
+    return word.map((part) => {
+      switch (part.type) {
+        case "text":
+          return { text: part.text, quoted: part.quoted };
+        case "variable":
+          return { text: this.#variables.get(part.name) ?? "", quoted: part.quoted };
+        case "substitution": {
+          const outcome = this.script(part.script, "");
+          this.#substitutionErrors += outcome.stderr;
+          return { text: outcome.stdout.replace(/\n+$/, ""), quoted: part.quoted };
         }
-      })
-      .join("");
+      }
+    });
+  }
+
+  /** A word's text, never globbed: a here-string, an assignment. */
+  #expand(word: Word): string {
+    return text(this.#pieces(word));
+  }
+
+  /**
+   * The paths a word's unquoted `*`, `?` and `[…]` match in the workspace,
+   * sorted, as `sh` expands them; the word as written when it has none of them
+   * or nothing matches. Each `/`-separated part is matched against the names
+   * in its folder, and a name starting with `.` only by a part that does too.
+   */
+  #glob(word: Expanded): ReadonlyArray<string> {
+    const written = text(word);
+    let chars = word.flatMap(({ text, quoted }) => [...text].map((char) => ({ char, quoted })));
+    if (!chars.some(({ char, quoted }) => !quoted && GLOB.has(char))) return [written];
+    if (chars[0]?.char === "~" && !chars[0].quoted && (chars[1]?.char ?? "/") === "/") {
+      chars = [...[...HOME].map((char) => ({ char, quoted: true })), ...chars.slice(1)];
+    }
+    const absolute = chars[0]?.char === "/";
+    const segments: Array<Array<Char>> = [[]];
+    for (const char of chars) {
+      if (char.char === "/") segments.push([]);
+      else segments.at(-1)?.push(char);
+    }
+    let matches: ReadonlyArray<{ path: string; shown: string }> = [
+      { path: absolute ? "/" : this.#cwd, shown: absolute ? "/" : "" },
+    ];
+    const join = (shown: string, name: string) =>
+      shown === "" || shown.endsWith("/") ? `${shown}${name}` : `${shown}/${name}`;
+    for (const [index, segment] of segments.entries()) {
+      const last = index === segments.length - 1;
+      if (segment.length === 0) {
+        // A trailing `/` keeps only folders; any other empty part is a doubled `/`.
+        if (last && index > 0) {
+          matches = matches
+            .filter(({ path }) => this.#directories.has(path))
+            .map(({ path, shown }) => ({ path, shown: shown.endsWith("/") ? shown : `${shown}/` }));
+        }
+        continue;
+      }
+      const pattern = segmentPattern(segment);
+      matches = matches.flatMap(({ path, shown }) => {
+        const names =
+          pattern === undefined
+            ? [segment.map(({ char }) => char).join("")]
+            : this.#children(path).filter(
+                (name) => pattern.test(name) && (!name.startsWith(".") || segment[0]?.char === "."),
+              );
+        return names.flatMap((name) => {
+          const child = normalize(`${path}/${name}`);
+          const exists = last
+            ? this.#files.has(child) || this.#directories.has(child)
+            : this.#directories.has(child);
+          return exists ? [{ path: child, shown: join(shown, name) }] : [];
+        });
+      });
+    }
+    return matches.length === 0 ? [written] : matches.map(({ shown }) => shown).toSorted();
   }
 
   #command(command: SimpleCommand, pipeInput: string): Outcome {
-    const words = command.words.map((word) => this.#expand(word));
+    const pieces = command.words.map((word) => this.#pieces(word));
     // What a substitution printed to stderr reaches the output, as it would a terminal.
     const substitutionErrors = this.#substitutionErrors;
     this.#substitutionErrors = "";
     const env = new Map(this.#variables);
     let start = 0;
-    for (; start < words.length; start++) {
-      const assignment = ASSIGNMENT.exec(words[start] ?? "");
+    for (; start < pieces.length; start++) {
+      const assignment = ASSIGNMENT.exec(text(pieces[start] ?? []));
       if (assignment === null) break;
       env.set(assignment[1] ?? "", assignment[2] ?? "");
     }
+    // The assignments in front are not globbed; every word after them is.
+    const words = [
+      ...pieces.slice(0, start).map(text),
+      ...pieces.slice(start).flatMap((word) => this.#glob(word)),
+    ];
     if (start === words.length) {
       // A bare assignment sets the shell's variables.
       for (const [name, value] of env) this.#variables.set(name, value);
@@ -683,7 +928,10 @@ class Run<E> {
           sinks[redirect.fd] = sinks[redirect.to];
           break;
         case "file": {
-          const path = this.#expand(redirect.target);
+          const target = this.#pieces(redirect.target);
+          // A glob names the file when it matches one; `sh` refuses one that matches more.
+          const [path = "", ...more] = this.#glob(target);
+          if (more.length > 0) return fail(`sh: ${text(target)}: ambiguous redirect`);
           if (redirect.mode === "read") {
             const content = this.#read(path);
             if (content === undefined) return fail(`sh: ${path}: No such file or directory`);
@@ -742,6 +990,7 @@ class Run<E> {
 
   #builtin(name: Builtin, args: ReadonlyArray<string>, stdin: string): Outcome {
     switch (name) {
+      case ":":
       case "true":
         return ok("");
       case "false":
@@ -806,13 +1055,7 @@ class Run<E> {
             continue;
           }
           if (!this.#directories.has(path)) return fail(`ls: ${arg}: No such file or directory`);
-          const prefix = path === "/" ? "/" : `${path}/`;
-          const entries = new Set(
-            [...this.#files.keys(), ...this.#directories]
-              .filter((entry) => entry.startsWith(prefix) && entry !== path)
-              .map((entry) => entry.slice(prefix.length).split("/")[0] ?? ""),
-          );
-          lines.push(...[...entries].toSorted());
+          lines.push(...this.#children(path));
         }
         return ok(lines.length === 0 ? "" : `${lines.join("\n")}\n`);
       }
@@ -860,32 +1103,10 @@ class Run<E> {
         return ok(stdin);
       }
       case "cp":
-      case "mv": {
-        const paths = args.filter((arg) => !arg.startsWith("-"));
-        const [source, destination] = paths;
-        if (source === undefined || destination === undefined || paths.length > 2) {
-          return fail(`${name}: expected a source and a destination`);
-        }
-        const from = this.#resolve(source);
-        const content = this.#files.get(from);
-        if (content === undefined) return fail(`${name}: ${source}: No such file or directory`);
-        const to = this.#directories.has(this.#resolve(destination))
-          ? `${destination}/${basename(from)}`
-          : destination;
-        const error = this.#write(to, content, false);
-        if (error !== undefined) return fail(`${name}: ${error}`);
-        if (name === "mv" && from !== this.#resolve(to)) this.#delete(from);
-        return ok("");
-      }
-      case "rm": {
-        const force = args.some((arg) => /^-\w*f/.test(arg));
-        for (const arg of args.filter((arg) => !arg.startsWith("-"))) {
-          if (!this.#delete(this.#resolve(arg)) && !force) {
-            return fail(`rm: ${arg}: No such file or directory`);
-          }
-        }
-        return ok("");
-      }
+      case "mv":
+        return this.#copy(name, args);
+      case "rm":
+        return this.#remove(args);
       case "test":
       case "[": {
         let operands = args;
@@ -900,6 +1121,91 @@ class Run<E> {
         return result !== negate ? ok("") : fail("", 1);
       }
     }
+  }
+
+  /**
+   * `cp` and `mv`: one source to a path, or any number into a folder. A folder
+   * is moved whole, and copied whole only with `-r`, `-R` or `-a`. Like the
+   * real ones, they go on past a source that fails and then fail.
+   */
+  #copy(name: "cp" | "mv", args: ReadonlyArray<string>): Outcome {
+    const { flags, operands, unsupported } = options(args, "rRaf");
+    if (unsupported !== undefined) return fail(`${name}: option ${unsupported} is not supported`);
+    const recursive = flags.has("r") || flags.has("R") || flags.has("a");
+    const destination = operands.at(-1);
+    const sources = operands.slice(0, -1);
+    if (destination === undefined || sources.length === 0) {
+      return fail(`${name}: expected a source and a destination`);
+    }
+    const into = this.#directories.has(this.#resolve(destination));
+    if (sources.length > 1 && !into) return fail(`${name}: ${destination}: Not a directory`);
+    const errors: Array<string> = [];
+    for (const source of sources) {
+      const from = this.#resolve(source);
+      const to = this.#resolve(into ? `${destination}/${basename(from)}` : destination);
+      if (this.#directories.has(from)) {
+        if (name === "cp" && !recursive) {
+          errors.push(`cp: -r not specified; omitting directory ${source}`);
+        } else if (to === from || to.startsWith(`${from}/`)) {
+          errors.push(`${name}: cannot ${name === "cp" ? "copy" : "move"} ${source} into itself`);
+        } else if (this.#files.has(to)) {
+          errors.push(`${name}: cannot overwrite non-directory ${to} with directory ${source}`);
+        } else if (name === "mv" && this.#children(to).length > 0) {
+          errors.push(`mv: cannot move ${source} to ${to}: Directory not empty`);
+        } else if (!this.#directories.has(parent(to))) {
+          errors.push(`${name}: ${destination}: No such file or directory`);
+        } else this.#transplant(from, to, name === "mv");
+        continue;
+      }
+      const content = this.#files.get(from);
+      if (content === undefined) {
+        errors.push(`${name}: ${source}: No such file or directory`);
+        continue;
+      }
+      if (to === from) {
+        errors.push(`${name}: ${source} and ${destination} are the same file`);
+        continue;
+      }
+      const error = this.#write(to, content, false);
+      if (error !== undefined) errors.push(`${name}: ${error}`);
+      else if (name === "mv") this.#files.delete(from);
+    }
+    return errors.length === 0 ? ok("") : fail(errors.join("\n"));
+  }
+
+  /**
+   * `rm`: a file, or with `-r` or `-R` a folder and everything under it; a
+   * folder without them is refused, unless `-d` and it is empty. With `-f` a
+   * missing path is no error. Like the real one, it goes on past a path it
+   * cannot remove and then fails.
+   */
+  #remove(args: ReadonlyArray<string>): Outcome {
+    const { flags, operands, unsupported } = options(args, "rRfdv");
+    if (unsupported !== undefined) return fail(`rm: option ${unsupported} is not supported`);
+    const recursive = flags.has("r") || flags.has("R");
+    const force = flags.has("f");
+    if (operands.length === 0 && !force) return fail("rm: missing operand");
+    const errors: Array<string> = [];
+    for (const operand of operands) {
+      const path = this.#resolve(operand);
+      if (/(^|\/)\.\.?\/?$/.test(operand)) {
+        errors.push(`rm: refusing to remove '.' or '..' directory: skipping ${operand}`);
+      } else if (this.#files.delete(path)) {
+        continue;
+      } else if (!this.#directories.has(path)) {
+        if (!force) errors.push(`rm: cannot remove ${operand}: No such file or directory`);
+      } else if (path === "/") {
+        errors.push("rm: it is dangerous to operate recursively on /");
+      } else if (recursive || (flags.has("d") && this.#children(path).length === 0)) {
+        const under = this.#under(path);
+        for (const file of under.files) this.#files.delete(file);
+        for (const directory of under.directories) this.#directories.delete(directory);
+        this.#directories.delete(path);
+      } else {
+        errors.push(`rm: cannot remove ${operand}: Is a directory`);
+      }
+    }
+    return errors.length === 0 ? ok("") : fail(errors.join("\n"));
   }
 
   #test(operands: ReadonlyArray<string>): boolean | undefined {

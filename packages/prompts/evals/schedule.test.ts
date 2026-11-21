@@ -3,14 +3,15 @@ import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 import { DECODE_OPTIONS, tools, type Wake } from "../src/index.ts";
-import { setRoutineStub } from "./harness.ts";
+import { HeldRoutines } from "./harness.ts";
 
 // The `set_routine` stub against the server's own boundary examples
 // (`apps/server/src/routines/schedule.test.ts`): what the server refuses, the
 // stub refuses, and what it accepts gets the first run the server plans. The
 // one-time examples are moved a year on, to lie ahead of the time they are
-// saved at, so the impossible ones are refused only for being impossible. An expression without five fields never reaches the stub: the
-// tool's own schema refuses it.
+// saved at, so the impossible ones are refused only for being impossible. An
+// expression without five fields never reaches the stub: the tool's own
+// schema refuses it.
 
 const wake = (now: string, zone: string): Wake => ({
   at: DateTime.makeUnsafe(now),
@@ -28,9 +29,8 @@ const decodeSaved = Schema.decodeUnknownSync(
 
 /** The first run the stub plans for a routine created at `now`, or `refused`. */
 const planned = (trigger: { schedule: string } | { at: string }, now: string, zone: string) => {
-  const saved = setRoutineStub(
+  const saved = new HeldRoutines(wake(now, zone)).set(
     decodeInput({ action: "create", name: "Check", instruction: "Check.", ...trigger }),
-    wake(now, zone),
   );
   return saved.refused ? "refused" : decodeSaved(saved.output).nextRunAt;
 };

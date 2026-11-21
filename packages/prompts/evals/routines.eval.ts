@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { RoutineId } from "@j3-bots/contracts";
+import { type Routine, RoutineId } from "@j3-bots/contracts";
 import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -23,8 +23,7 @@ import {
 } from "./fixtures.ts";
 import {
   type Call,
-  CREATED_ROUTINE_ID,
-  firstRun,
+  HeldRoutines,
   runTurn,
   type Scenario,
   type Skills,
@@ -600,20 +599,23 @@ interface Permit {
 }
 
 /**
- * What a command did that may have changed something: it wrote or removed a
- * file, tried to change GitHub, or tried something the workspace could not
- * run, whose purpose is unknown.
+ * What a command did that may have changed something: it left the workspace
+ * different (a file written or removed, a folder created or removed, however
+ * it went about it), tried to change GitHub, or tried something the workspace
+ * could not run, whose effect is unknown.
  */
 const mayChange = (event: FixtureEvent): boolean =>
-  event.type === "file-write" ||
-  event.type === "file-delete" ||
+  event.type === "file-written" ||
+  event.type === "file-removed" ||
+  event.type === "directory-created" ||
+  event.type === "directory-removed" ||
   event.type === "gh-change" ||
   event.type === "unavailable";
 
 /**
  * A call that changes nothing, which any run may make after its message: a
  * `j3` tool that only reads, or a command that did nothing {@link mayChange}
- * counts, such as a `gh` read.
+ * counts, such as a `gh` read or an `ls`.
  */
 const READ_ONLY: Permit = {
   what: "a read-only call",
@@ -629,16 +631,18 @@ const pauseItself = (wake: RoutineWake): Permit => ({
 
 /**
  * The state-file update `instruction` names, which a run may make after its
- * message: a command that writes only files under `files/` whose paths the
- * instruction gives, and otherwise only reads.
+ * message: a command whose only change to the workspace is writing files
+ * under `files/` whose paths the instruction gives. How it wrote them (a
+ * temporary file moved into place, say) does not matter; any other change
+ * does.
  */
 const stateUpdate = (instruction: string): Permit => ({
   what: "an update of a state file its instruction names",
   test: (call) =>
     call.name === "run_command" &&
-    call.events.some((event) => event.type === "file-write") &&
+    call.events.some((event) => event.type === "file-written") &&
     call.events.every((event) =>
-      event.type === "file-write"
+      event.type === "file-written"
         ? event.path.startsWith(`${HOME}/files/`) &&
           instruction.includes(event.path.slice(HOME.length + 1))
         : !mayChange(event),
@@ -733,29 +737,30 @@ const speaksOnce = (
 const reported = (heading: string, turn: Turn, problems: ReadonlyArray<string>) =>
   problems.length === 0 ? [] : [`${heading}: ${problems.join("; ")}\n${transcript(turn)}`];
 
-/** The id the server gives the routine the setup turn creates. */
-const CREATED_ID = Schema.decodeSync(RoutineId)(CREATED_ROUTINE_ID);
-
-/** A run of the routine a setup turn saved, as the server would start it: at its next run, with `recentRuns`. */
+/**
+ * A run of the routine a setup turn left saved, as the server would start it:
+ * at its next run, with `recentRuns`; `undefined` when it has none, such as a
+ * routine waiting for a webhook.
+ */
 const savedRunWake = (
-  setup: Wake,
-  routine: ToolInput<"set_routine">,
+  routine: Routine,
   recentRuns: (at: DateTime.Utc) => ReadonlyArray<RoutineRunSummary> = () => [],
 ): RoutineWake | undefined => {
-  const next = firstRun(routine, setup);
-  if (next === undefined || routine.instruction === undefined) return undefined;
+  const next = routine.nextRunAt;
+  if (next === null) return undefined;
+  const { trigger } = routine;
   return {
     at: next,
     timeZone,
     sinceLastTurn: [],
     kind: "routine",
     routine: {
-      id: CREATED_ID,
-      name: routine.name ?? "",
+      id: routine.id,
+      name: routine.name,
       trigger:
-        routine.schedule === undefined
-          ? { type: "once" }
-          : { type: "schedule", cron: routine.schedule },
+        trigger._tag === "schedule"
+          ? { type: "schedule", cron: trigger.cron }
+          : { type: trigger._tag },
       instruction: routine.instruction,
     },
     recentRuns: recentRuns(next),
@@ -780,7 +785,7 @@ const replayRun = (
     Effect.catchTag("TurnUnfinished", (error) => Effect.succeed([`${heading}: ${error.message}`])),
   );
 
-const NO_RUN = ["the saved routine has no next run or no instruction to replay"];
+const NO_RUN = ["the saved routine has no next run to replay"];
 
 /**
  * Runs the docs check the setup turn saved as the server would: once on a
@@ -792,10 +797,9 @@ const NO_RUN = ["the saved routine has no next run or no instruction to replay"]
 const replayDocsCheck = Effect.fn("evals.replayDocsCheck")(function* (
   model: string,
   skills: Skills,
-  setup: Wake,
-  routine: ToolInput<"set_routine">,
+  routine: Routine,
 ) {
-  const wake = savedRunWake(setup, routine);
+  const wake = savedRunWake(routine);
   if (wake === undefined) return NO_RUN;
   const results = yield* Effect.all(
     [
@@ -824,6 +828,31 @@ const replayDocsCheck = Effect.fn("evals.replayDocsCheck")(function* (
 });
 
 /**
+ * The merge watch's run once #12 has merged, but for what its message means:
+ * it reads #12, then, in a later model message, speaks once, then pauses its
+ * own routine once, and after the pause makes only read-only calls. Returns
+ * the problems and the message's text.
+ */
+const mergedRun = (
+  calls: ReadonlyArray<Call>,
+  wake: RoutineWake,
+): { readonly problems: ReadonlyArray<string>; readonly text?: string } => {
+  const pause = pauseItself(wake);
+  const pauses = calls.filter(pause.test);
+  const [first] = pauses;
+  const { problems, text } = spoke(calls, wake, {
+    look: TWELVE_LOOK,
+    permits: [pause, stateUpdate(wake.routine.instruction)],
+  });
+  const all = [
+    ...problems,
+    ...(pauses.length === 1 ? [] : [`paused its routine ${pauses.length} times, not once`]),
+    ...(first === undefined ? [] : onlyPermitted(calls, first, "its pause", [])),
+  ];
+  return text === undefined ? { problems: all } : { problems: all, text };
+};
+
+/**
  * Runs the merge watch the setup turn saved as the server would: while #12
  * is open, where it must look and end without a word or a pause; once #12
  * has merged, where it must say so once and then pause itself; and once a
@@ -832,11 +861,10 @@ const replayDocsCheck = Effect.fn("evals.replayDocsCheck")(function* (
 const replayMergeWatch = Effect.fn("evals.replayMergeWatch")(function* (
   model: string,
   skills: Skills,
-  setup: Wake,
-  routine: ToolInput<"set_routine">,
+  routine: Routine,
 ) {
-  const wake = savedRunWake(setup, routine);
-  const reportedWake = savedRunWake(setup, routine, (next) => [
+  const wake = savedRunWake(routine);
+  const reportedWake = savedRunWake(routine, (next) => [
     {
       at: DateTime.subtract(next, { minutes: 30 }),
       outcome: {
@@ -846,7 +874,7 @@ const replayMergeWatch = Effect.fn("evals.replayMergeWatch")(function* (
     },
   ]);
   if (wake === undefined || reportedWake === undefined) return NO_RUN;
-  const pause = pauseItself(wake);
+  const pause = pauseItself(reportedWake);
   const results = yield* Effect.all(
     [
       replayRun(
@@ -862,14 +890,10 @@ const replayMergeWatch = Effect.fn("evals.replayMergeWatch")(function* (
         "the saved watch, run once #12 has merged",
         { wake, workspace: twelveWorkspace(wake, twelveMerged(25)) },
         Effect.fn(function* ({ calls }) {
-          const pauses = calls.filter(pause.test).length;
-          return [
-            ...(yield* speaksOnce(wake, MERGED, {
-              look: TWELVE_LOOK,
-              permits: [pause, stateUpdate(wake.routine.instruction)],
-            })(calls)),
-            ...(pauses === 1 ? [] : [`paused its routine ${pauses} times, not once`]),
-          ];
+          const { problems, text } = mergedRun(calls, wake);
+          return text === undefined
+            ? problems
+            : [...problems, ...(yield* judged(MERGED, wake.routine.instruction, text))];
         }),
       ),
       replayRun(
@@ -926,21 +950,28 @@ const setupProblems = (
 };
 
 /**
- * The one routine a setup turn must create, or why it did not: a `set_routine`
- * the server would refuse fails the setup, even if a later one was saved,
- * whether its schedule or time was refused or its arguments did not decode
- * (a cron with six fields, say).
+ * The one routine a setup turn must create, as the turn leaves it, with the
+ * call that created it, or why there is none: a `set_routine` the server
+ * would refuse fails the setup, even if a later one was saved, whether its
+ * schedule or time was refused, its arguments did not decode (a cron with six
+ * fields, say) or it named a routine the bot does not have. What a later
+ * `update`, `pause` or `delete` did to the routine counts: a routine the turn
+ * leaves paused or deleted never runs.
  */
-const theCreated = (calls: ReadonlyArray<Call>) => {
+const theCreated = (calls: ReadonlyArray<Call>, held: ReadonlyArray<Routine>) => {
   const refused = named(calls, "set_routine").filter((call) => call.refused === true);
   if (refused.length > 0) {
     return `the server would refuse ${refused.length === 1 ? "a `set_routine` call" : `${refused.length} \`set_routine\` calls`}: ${refused.map((call) => `${JSON.stringify(call.input)} → ${call.output}`).join("; ")}`;
   }
   const sent = creates(calls);
   const [first, ...others] = sent;
-  return first !== undefined && others.length === 0
-    ? first
-    : `${sent.length} \`set_routine\` creates, not one`;
+  if (first === undefined || others.length > 0)
+    return `${sent.length} \`set_routine\` creates, not one`;
+  const [routine, ...more] = held;
+  if (routine === undefined) return "the routine it created is deleted by the end of the turn";
+  if (more.length > 0) return `${held.length} routines at the end of the turn, not one`;
+  if (!routine.enabled) return "the routine it created ends the turn paused, so it never runs";
+  return { call: first.call, routine };
 };
 
 const decodeState = Schema.decodeUnknownOption(
@@ -967,7 +998,7 @@ const stateRunProblems = (
   if (message === undefined) return [];
   const text = says(calls).find(({ call }) => call === message)?.say.text ?? "";
   const writes = calls.filter((call) =>
-    did(call, (event) => event.type === "file-write" && event.path === STATE_PATH),
+    did(call, (event) => event.type === "file-written" && event.path === STATE_PATH),
   );
   const state = stateAtEnd === undefined ? undefined : decodeState(stateAtEnd);
   const reportedNumbers =
@@ -1076,11 +1107,12 @@ const cases: ReadonlyArray<Case> = [
   {
     name: "creates a routine for recurring work, whose saved instruction runs silent on a passing build and reports a failing one",
     scenario: { wake: setupWake, workspace: buildWorkspace(setupWake, PASSING_RUNS) },
-    problems: Effect.fn("evals.setupCase")(function* ({ calls }, { model, skills }) {
-      const creation = theCreated(calls);
+    problems: Effect.fn("evals.setupCase")(function* ({ calls, routines }, { model, skills }) {
+      const creation = theCreated(calls, routines.current);
       if (typeof creation === "string") return [creation];
       const { problems, closing } = setupProblems(calls, creation.call);
-      const schedule = creation.routine.schedule ?? "";
+      const { trigger } = creation.routine;
+      const schedule = trigger._tag === "schedule" ? trigger.cron : "";
       const [minute, hour, day, month, weekday] = schedule.split(/\s+/);
       const weekdaysAtEight =
         minute === "0" &&
@@ -1092,7 +1124,7 @@ const cases: ReadonlyArray<Case> = [
         ...problems,
         ...(weekdaysAtEight ? [] : [`schedule "${schedule}" is not weekdays at 8:00`]),
         ...(closing === undefined ? [] : yield* judged(WEEKDAYS_AT_EIGHT, SETUP, closing)),
-        ...(yield* replayDocsCheck(model, skills, setupWake, creation.routine)),
+        ...(yield* replayDocsCheck(model, skills, creation.routine)),
       ];
     }),
   },
@@ -1148,17 +1180,14 @@ const cases: ReadonlyArray<Case> = [
   {
     name: "turns a request to hear when something happens into a watch that reports it once, then pauses itself",
     scenario: { wake: mergeSetupWake, workspace: twelveWorkspace(mergeSetupWake, TWELVE_OPEN) },
-    problems: Effect.fn("evals.mergeWatchCase")(function* ({ calls }, { model, skills }) {
-      const creation = theCreated(calls);
+    problems: Effect.fn("evals.mergeWatchCase")(function* ({ calls, routines }, { model, skills }) {
+      const creation = theCreated(calls, routines.current);
       if (typeof creation === "string") return [creation];
       const { problems } = setupProblems(calls, creation.call);
-      if (creation.routine.schedule === undefined) {
+      if (creation.routine.trigger._tag !== "schedule") {
         return [...problems, "the watch was not saved with a schedule"];
       }
-      return [
-        ...problems,
-        ...(yield* replayMergeWatch(model, skills, mergeSetupWake, creation.routine)),
-      ];
+      return [...problems, ...(yield* replayMergeWatch(model, skills, creation.routine))];
     }),
   },
 ];
@@ -1198,31 +1227,87 @@ describe("the stand-in workspace", () => {
     expect(run("jq . files/x.json").output).toMatch(/command not found/);
   });
 
-  it("records a file removed, and a command it could not run", () => {
-    const workspace = githubWorkspace(
+  /** A workspace with two notes besides the state file, as a run might find it. */
+  const notes = () =>
+    githubWorkspace(
       github(runAt, FAILING_RUNS),
       new Map([
+        [STATE_FILE, STATE],
         ["files/a.txt", "a"],
         ["files/b.txt", "b"],
       ]),
     );
-    expect(workspace.run("mv files/a.txt files/c.txt").events).toEqual([
-      { type: "file-write", path: `${HOME}/files/c.txt`, content: "a" },
-      { type: "file-delete", path: `${HOME}/files/a.txt` },
+  const changes = (workspace: Workspace<GhEvent>, command: string) =>
+    workspace.run(command).events.filter((event) => event.type !== "file-read");
+
+  it("records what a command left changed, not each step it took", () => {
+    const workspace = notes();
+    expect(changes(workspace, "mv files/a.txt files/c.txt")).toEqual([
+      { type: "file-removed", path: `${HOME}/files/a.txt` },
+      { type: "file-written", path: `${HOME}/files/c.txt`, content: "a" },
     ]);
-    expect(workspace.run("rm -f files/b.txt files/missing.txt").events).toEqual([
-      { type: "file-delete", path: `${HOME}/files/b.txt` },
+    expect(changes(workspace, "rm -f files/b.txt files/missing.txt")).toEqual([
+      { type: "file-removed", path: `${HOME}/files/b.txt` },
     ]);
+    expect(
+      changes(workspace, "echo x > /tmp/scratch && cat /tmp/scratch && rm /tmp/scratch"),
+    ).toEqual([]);
+    expect(
+      changes(workspace, `echo '{"reported":[1]}' > /tmp/state && mv /tmp/state ${STATE_FILE}`),
+    ).toEqual([{ type: "file-written", path: STATE_PATH, content: '{"reported":[1]}\n' }]);
     expect(types("curl -X POST https://hooks.example.com/docs")).toEqual(["unavailable"]);
     expect(types("for f in files/*; do rm $f; done")).toEqual(["unavailable"]);
+  });
+
+  it("expands an unquoted glob against the workspace, and keeps one that matches nothing", () => {
+    const workspace = notes();
+    expect(workspace.run("echo files/*").output).toBe(
+      "files/a.txt files/b.txt files/docs-prs.json\n",
+    );
+    expect(workspace.run("echo files/?.txt files/[!a].txt").output).toBe(
+      "files/a.txt files/b.txt files/b.txt\n",
+    );
+    expect(workspace.run("echo 'files/*' files/\\* \"files/*\" files/*.md").output).toBe(
+      "files/* files/* files/* files/*.md\n",
+    );
+    expect(workspace.run("cd files && echo *.txt ../files/a*").output).toBe(
+      "a.txt b.txt ../files/a.txt\n",
+    );
+    expect(workspace.run("ls files/*").output).toBe(
+      "files/a.txt\nfiles/b.txt\nfiles/docs-prs.json\n",
+    );
+  });
+
+  it("removes a folder only with -r, and everything under it", () => {
+    const refused = notes();
+    const run = refused.run("rm files");
+    expect(run.output).toBe("rm: cannot remove files: Is a directory\n");
+    expect(run.events).toEqual([]);
+    expect(refused.run("rm files && echo removed || echo kept").output).toMatch(/^kept$/m);
+
+    const removed = notes();
+    expect(changes(removed, "rm -rf files/")).toEqual([
+      { type: "file-removed", path: `${HOME}/files/a.txt` },
+      { type: "file-removed", path: `${HOME}/files/b.txt` },
+      { type: "file-removed", path: STATE_PATH },
+      { type: "directory-removed", path: `${HOME}/files` },
+    ]);
+    expect(removed.run("ls files").output).toBe("ls: files: No such file or directory\n");
+  });
+
+  it("records a folder created, and runs `:` as doing nothing", () => {
+    expect(changes(notes(), "mkdir -p files/extra/deep")).toEqual([
+      { type: "directory-created", path: `${HOME}/files/extra` },
+      { type: "directory-created", path: `${HOME}/files/extra/deep` },
+    ]);
+    expect(run(": nothing to see")).toEqual({ output: "", events: [] });
   });
 
   it("keeps a file written with a here-document for later commands", () => {
     const workspace = githubWorkspace(github(runAt, FAILING_RUNS));
     const write = workspace.run(`cat > ${STATE_FILE} <<'EOF'\n{"reported":[1]}\nEOF`);
     expect(write.events).toEqual([
-      { type: "file-write", path: STATE_PATH, content: "" },
-      { type: "file-write", path: STATE_PATH, content: '{"reported":[1]}\n' },
+      { type: "file-written", path: STATE_PATH, content: '{"reported":[1]}\n' },
     ]);
     expect(workspace.run(`cat ./${STATE_FILE}`).output).toBe('{"reported":[1]}\n');
   });
@@ -1258,7 +1343,7 @@ describe("the run graders", () => {
     "New on acme/docs: #124 Document the new search API, #125 Fix broken anchors in FAQ.";
   const write = (step: number, numbers: ReadonlyArray<number> = REPORTED_AFTER) =>
     call(step, "run_command", {}, [
-      { type: "file-write", path: STATE_PATH, content: JSON.stringify({ reported: numbers }) },
+      { type: "file-written", path: STATE_PATH, content: JSON.stringify({ reported: numbers }) },
     ]);
   const final = (numbers: ReadonlyArray<number> = REPORTED_AFTER) =>
     JSON.stringify({ reported: numbers });
@@ -1279,7 +1364,7 @@ describe("the run graders", () => {
       call(3, "run_command", {}, [{ type: "gh" }, { type: "pull-requests-read", numbers: [125] }]),
       call(4, "run_command", {}, [
         { type: "file-read", path: `${HOME}/files/notes.txt` },
-        { type: "file-write", path: STATE_PATH, content: final() },
+        { type: "file-written", path: STATE_PATH, content: final() },
       ]),
     ];
     expect(stateRun([...look, say(2, report), ...reads], final())).toEqual([]);
@@ -1318,7 +1403,7 @@ describe("the run graders", () => {
         say(2, report),
         write(3),
         call(4, "run_command", {}, [
-          { type: "file-write", path: `${HOME}/files/notes.txt`, content: "done" },
+          { type: "file-written", path: `${HOME}/files/notes.txt`, content: "done" },
         ]),
       ],
       final(),
@@ -1350,19 +1435,107 @@ describe("the run graders", () => {
     };
     const update = `echo '${final()}' > ${STATE_FILE}`;
 
-    it("accepts the state-file update", () => {
-      expect(played([ran(3, update)])).toEqual([]);
+    it.each([
+      ["the state-file update", [ran(3, update)]],
+      [
+        "the update written to a temporary file and moved into place",
+        [ran(3, `echo '${final()}' > ${STATE_FILE}.tmp && mv ${STATE_FILE}.tmp ${STATE_FILE}`)],
+      ],
+      [
+        "the update moved in from /tmp",
+        [ran(3, `echo '${final()}' > /tmp/state.json && mv /tmp/state.json ${STATE_FILE}`)],
+      ],
+      ["a look at the files after it", [ran(3, update), ran(4, "ls files/*")]],
+      [
+        "an `rm` of a folder without -r, which removes nothing",
+        [ran(3, update), ran(4, "rm files")],
+      ],
+    ])("accepts %s", (_, after) => {
+      expect(played(after)).toEqual([]);
     });
 
     it.each([
       ["an `rm` after it", [ran(3, update), ran(4, `rm ${NOTES}`)]],
+      ["an `rm -rf` of the folder", [ran(3, update), ran(4, "rm -rf files/")]],
+      ["an `rm -r` of the folder", [ran(3, update), ran(4, "rm -r files")]],
+      ["an `rm -f` of a glob", [ran(3, update), ran(4, "rm -f files/*")]],
+      ["a folder created", [ran(3, update), ran(4, "mkdir -p files/extra")]],
       [
         "a POST through a command the workspace lacks",
         [ran(3, update), ran(4, "curl -X POST https://hooks.example.com/docs")],
       ],
       ["the update with an `rm` of another file", [ran(3, `${update} && rm ${NOTES}`)]],
+      ["the update with an `rm -f` of a glob", [ran(3, `${update} && rm -f files/n*`)]],
+      ["the update with a folder created", [ran(3, `${update} && mkdir files/extra`)]],
     ])("rejects %s", (_, after) => {
       expect(played(after)).not.toEqual([]);
+    });
+
+    it.each([
+      ["ls files/*", true],
+      ["cat files/*", true],
+      ["echo x > /tmp/scratch && rm /tmp/scratch", true],
+      ["rm -rf files/", false],
+      ["rm -f files/*", false],
+      ["rm -r files", false],
+      ["mkdir -p files/extra", false],
+    ])("counts %j as read-only: %s", (command, readOnly) => {
+      const workspace = githubWorkspace(
+        github(pullRequestWake.at, PASSING_RUNS),
+        new Map([[NOTES, "n"]]),
+      );
+      expect(READ_ONLY.test(ran(3, command)(workspace))).toBe(readOnly);
+    });
+
+    it.each([
+      [`${update} && rm -f files/*`, false],
+      [`${update} && rm -f ${NOTES}`, false],
+      [`echo '${final()}' > /tmp/state.json && mv /tmp/state.json ${STATE_FILE}`, true],
+    ])("counts %j as a state-file update: %s", (command, counts) => {
+      const workspace = githubWorkspace(
+        github(pullRequestWake.at, PASSING_RUNS),
+        new Map([
+          [STATE_FILE, STATE],
+          [NOTES, "n"],
+        ]),
+      );
+      expect(
+        stateUpdate(pullRequestWake.routine.instruction).test(ran(3, command)(workspace)),
+      ).toBe(counts);
+    });
+  });
+
+  describe("on the merge watch's run once #12 has merged", () => {
+    const read = call(1, "run_command", {}, [
+      { type: "gh" },
+      { type: "pull-request-read", number: 12 },
+    ]);
+    const merged = (step: number) => call(step, "say", { text: "#12 merged.", done: true });
+    const pause = (step: number): Call => {
+      const routine: ToolInput<"set_routine"> = { action: "pause", id: routineWake.routine.id };
+      return { ...call(step, "set_routine", routine), routine };
+    };
+    const stateWrite = (step: number) =>
+      call(step, "run_command", {}, [
+        { type: "file-written", path: `${HOME}/files/watch.json`, content: "{}" },
+      ]);
+    const wake: RoutineWake = {
+      ...routineWake,
+      routine: {
+        ...routineWake.routine,
+        instruction:
+          "Check pull request #12 on acme/docs. Once it has merged, tell your user, then pause this routine. Keep files/watch.json up to date.",
+      },
+    };
+
+    it("accepts a message, then a pause, then read-only calls", () => {
+      expect(
+        mergedRun([read, merged(2), pause(3), call(4, "list_routines", {})], wake).problems,
+      ).toEqual([]);
+    });
+
+    it("rejects a state-file write after the pause", () => {
+      expect(mergedRun([read, merged(2), pause(3), stateWrite(4)], wake).problems).not.toEqual([]);
     });
   });
 
@@ -1387,22 +1560,62 @@ describe("the setup grader", () => {
     instruction: DOCS_CHECK,
     schedule: "0 8 * * 1-5",
   };
-  const saved: Call = { ...CALL, step: 3, name: "set_routine", input: routine, routine };
+  /** A setup turn's `set_routine` calls, each answered by the stub in order, and the routines it leaves. */
+  const setup = (inputs: ReadonlyArray<ToolInput<"set_routine">>) => {
+    const held = new HeldRoutines(setupWake);
+    const calls = inputs.map((input, index): Call => {
+      const saved = held.set(input);
+      return {
+        ...CALL,
+        step: index + 2,
+        name: "set_routine",
+        input,
+        routine: input,
+        output: saved.output,
+        refused: saved.refused,
+      };
+    });
+    return { calls, held: held.current };
+  };
 
-  it("takes the one create the server saved", () => {
-    expect(theCreated([saved])).toEqual({ call: saved, routine });
+  it("takes the one create the server saved, as the turn leaves it", () => {
+    const { calls, held } = setup([routine]);
+    expect(theCreated(calls, held)).toEqual({ call: calls[0], routine: held[0] });
   });
 
+  it("replays the routine as a later update left it", () => {
+    const instruction = `${DOCS_CHECK} Mention the run's number.`;
+    const { calls, held } = setup([routine, { action: "update", id: "routine-1", instruction }]);
+    const created = theCreated(calls, held);
+    expect(typeof created === "string" ? created : created.routine.instruction).toBe(instruction);
+  });
+
+  it.each([
+    ["it is paused later in the turn", [routine, { action: "pause", id: "routine-1" }]],
+    ["it is deleted later in the turn", [routine, { action: "delete", id: "routine-1" }]],
+    [
+      "an update names a routine the bot does not have",
+      [routine, { action: "update", id: "routine-9", name: "Docs" }],
+    ],
+  ] satisfies ReadonlyArray<[string, ReadonlyArray<ToolInput<"set_routine">>]>)(
+    "fails a create when %s",
+    (_, inputs) => {
+      const { calls, held } = setup(inputs);
+      expect(theCreated(calls, held)).toBeTypeOf("string");
+    },
+  );
+
   it("rejects a create refused before it decoded, though a later one was saved", () => {
+    const { calls, held } = setup([routine]);
     const sixFields: Call = {
       ...CALL,
-      step: 2,
+      step: 1,
       name: "set_routine",
       input: { ...routine, schedule: "0 0 8 * * 1-5" },
       output: JSON.stringify({ error: "The call was refused as invalid." }),
       refused: true,
     };
-    expect(theCreated([sixFields, saved])).toBeTypeOf("string");
+    expect(theCreated([sixFields, ...calls], held)).toBeTypeOf("string");
   });
 });
 
