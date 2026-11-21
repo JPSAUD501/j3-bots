@@ -512,7 +512,7 @@ export const layer = Layer.effect(
     });
 
     const provideSecret = (input: { readonly entryId: EntryId; readonly answer: SecretAnswer }) =>
-      perCard(input.entryId)(submit(input));
+      perCard.run(input.entryId)(submit(input));
 
     const markers = SqlSchema.findAll({
       Request: Schema.Void,
@@ -539,7 +539,7 @@ export const layer = Layer.effect(
 
     const checkSubmissions = Effect.gen(function* () {
       for (const { entry_id, submission_id } of yield* markers(undefined).pipe(Effect.orDie)) {
-        yield* perCard(entry_id)(checkSubmission(entry_id, submission_id));
+        yield* perCard.run(entry_id)(checkSubmission(entry_id, submission_id));
       }
     }).pipe(Effect.withSpan("Cards.checkSubmissions"));
 

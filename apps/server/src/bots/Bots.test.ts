@@ -18,7 +18,8 @@ import { Layout } from "../Layout.ts";
 import { Memory } from "../memory/Memory.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import * as TestDomain from "../testing/domain.ts";
-import { until } from "../testing/turns.ts";
+import { mainSessionId, until } from "../testing/turns.ts";
+import { SessionGate } from "../turns/SessionGate.ts";
 import { BotStore } from "./BotStore.ts";
 import { Bots } from "./Bots.ts";
 import { EngineSessions } from "./EngineSessions.ts";
@@ -292,7 +293,8 @@ it.effect(
       yield* first.entered;
       const [stored] = yield* store.list;
       if (stored === undefined) return assert.fail("The bot was not stored");
-      const lowered = stored.bot.permissionMode === "supervised" ? "auto" : "supervised";
+      const original = stored.bot.permissionMode;
+      const lowered = original === "supervised" ? "auto" : "supervised";
       const second = yield* control.holdNext("configureSession");
       const updating = yield* Effect.forkChild(
         bots.update({
@@ -301,6 +303,13 @@ it.effect(
           changes: { permissionMode: lowered },
         }),
       );
+      // The change waits on the session's gate, which the alignment holds:
+      // nothing of it is saved yet.
+      const gate = yield* SessionGate;
+      const rowId = yield* mainSessionId(stored.bot.id);
+      yield* until(gate.users(rowId).pipe(Effect.map((users) => users === 2)));
+      const meanwhile = yield* store.find(stored.bot.id);
+      assert.strictEqual(Option.getOrThrow(meanwhile).bot.permissionMode, original);
       yield* first.release;
 
       // Aligned again before it takes work: it takes none meanwhile.

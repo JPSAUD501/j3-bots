@@ -21,7 +21,12 @@ export class SessionGate extends Context.Service<
     readonly run: (
       sessionId: string,
     ) => <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
+    /**
+     * How many steps hold the session's gate or wait for it: what shows that
+     * a step is waiting behind another.
+     */
+    readonly users: (sessionId: string) => Effect.Effect<number>;
   }
 >()("@j3-bots/server/turns/SessionGate") {}
 
-export const layer = Layer.sync(SessionGate, () => SessionGate.of({ run: keyedLock() }));
+export const layer = Layer.sync(SessionGate, () => SessionGate.of(keyedLock()));

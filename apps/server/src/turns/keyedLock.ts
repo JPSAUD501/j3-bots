@@ -15,7 +15,9 @@ interface Entry {
  */
 export const keyedLock = () => {
   const entries = new Map<string, Entry>();
-  return (key: string) =>
+  /** Runs `effect` holding the key's lock. */
+  const run =
+    (key: string) =>
     <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
       Effect.suspend(() => {
         const entry = entries.get(key) ?? { lock: Semaphore.makeUnsafe(1), users: 0 };
@@ -32,4 +34,7 @@ export const keyedLock = () => {
             ),
           );
       });
+  /** How many effects hold the key's lock or wait for it. */
+  const users = (key: string) => Effect.sync(() => entries.get(key)?.users ?? 0);
+  return { run, users };
 };
