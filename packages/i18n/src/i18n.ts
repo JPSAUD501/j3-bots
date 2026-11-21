@@ -6,7 +6,7 @@ import { ptBR } from "./pt-BR.ts";
 /**
  * The translation layer. English is the source: `en.ts` holds every interface
  * sentence, whole, with `{name}` placeholders. Other catalogs must have every
- * key and keep every placeholder, or they do not type-check.
+ * key, keep every placeholder and add none, or they do not type-check.
  *
  * Plural sentences are two keys, `….one` and `….other`, chosen with the
  * locale's plural rules. The languages are the contract's `LANGUAGES`, the
@@ -32,6 +32,16 @@ type Keeping<P extends string> = [P] extends [never]
   : UnionToIntersection<P extends string ? `${string}{${P}}${string}` : never>;
 
 export type Catalog = { readonly [K in MessageKey]: Keeping<Placeholders<Source[K]>> };
+
+/**
+ * `C` as it is when no sentence of it has a placeholder the source lacks;
+ * otherwise each such sentence's type names what it adds, so `C` is refused.
+ */
+export type AddingNone<C extends Catalog> = {
+  readonly [K in MessageKey]: [Exclude<Placeholders<C[K]>, Placeholders<Source[K]>>] extends [never]
+    ? C[K]
+    : `adds {${Exclude<Placeholders<C[K]>, Placeholders<Source[K]>>}}`;
+};
 
 type Params<K extends MessageKey> = Placeholders<Source[K]>;
 
