@@ -4,7 +4,7 @@ import { clockTime } from "@j3-bots/client-runtime/presentation";
 import * as DateTime from "effect/DateTime";
 import * as Device from "expo-device";
 import { getCalendars } from "expo-localization";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { KeyboardAvoidingView, Platform, ScrollView, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useI18n } from "../i18n.ts";
@@ -74,21 +74,9 @@ export function PairingScreen(props: {
   const [name, setName] = useState(defaultDeviceName);
   const [state, setState] = useState<FormState>({ _tag: "editing" });
 
-  const lockedUntil =
-    state._tag === "refused" &&
-    state.problem._tag === "failed" &&
-    state.problem.reason._tag === "rate-limited"
-      ? state.problem.reason.retryAt
-      : null;
-  // Pairing opens again by itself once the lockout ends.
-  useEffect(() => {
-    if (lockedUntil === null) return;
-    const wait = DateTime.toEpochMillis(lockedUntil) - Date.now();
-    const timer = setTimeout(() => setState({ _tag: "editing" }), Math.max(0, wait));
-    return () => clearTimeout(timer);
-  }, [lockedUntil]);
-
-  const busy = state._tag === "pairing" || lockedUntil !== null;
+  // A lockout only shows its time: the server enforces it, and the operator
+  // can lift it on the host before then, so Pair stays available.
+  const busy = state._tag === "pairing";
   const ready = address.trim() !== "" && code.trim() !== "" && name.trim() !== "" && !busy;
 
   const problemText = (problem: Problem): string => {
@@ -166,7 +154,12 @@ export function PairingScreen(props: {
             kind="code"
             label={t("pairing.code")}
             value={code}
-            onChange={setCode}
+            onChange={(typed) => {
+              setCode(typed);
+              // A new code is a new attempt: the last answer, a lockout's time
+              // included, no longer describes it.
+              if (state._tag === "refused") setState({ _tag: "editing" });
+            }}
             invalid={problem?._tag === "failed" && problem.reason._tag === "invalid-code"}
           />
           <Field
