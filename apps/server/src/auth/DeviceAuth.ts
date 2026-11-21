@@ -19,6 +19,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
+import { transactional } from "../persistence/transaction.ts";
 
 /** How a socket upgrade proves which device it is. */
 export type SocketCredential =
@@ -52,7 +53,10 @@ export class DeviceAuth extends Context.Service<
     ) => Effect.Effect<DeviceId, NotAuthenticated>;
     /** A ticket for a client that cannot send an `Authorization` header on an upgrade. */
     readonly issueTicket: (deviceId: DeviceId) => Effect.Effect<SocketTicketGrant>;
-    /** Refuses the device's token from now on and closes its sockets. Succeeds if already revoked. */
+    /**
+     * Refuses the device's token from now on, deletes its push registration in
+     * the same transaction, and closes its sockets. Succeeds if already revoked.
+     */
     readonly revoke: (deviceId: DeviceId) => Effect.Effect<void, NotFound>;
     /** Completes once the device is revoked: at once if it already is. */
     readonly revoked: (deviceId: DeviceId) => Effect.Effect<void>;
@@ -65,6 +69,7 @@ export const layer = Layer.effect(
   DeviceAuth,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const transaction = transactional(sql);
     const digest = yield* Digest.Digest;
     const random = yield* SecureRandom.SecureRandom;
     const tickets = new Map<string, { readonly deviceId: DeviceId; readonly expiresAt: number }>();
@@ -130,9 +135,11 @@ export const layer = Layer.effect(
 
     const revoke = Effect.fn("DeviceAuth.revoke")(function* (deviceId: DeviceId) {
       const at = DateTime.formatIso(yield* DateTime.now);
-      yield* sql`UPDATE devices SET revoked_at = ${at} WHERE id = ${deviceId} AND revoked_at IS NULL`.pipe(
-        Effect.orDie,
-      );
+      // A revoked device is never pushed to again: its registration goes with it.
+      yield* Effect.gen(function* () {
+        yield* sql`UPDATE devices SET revoked_at = ${at} WHERE id = ${deviceId} AND revoked_at IS NULL`;
+        yield* sql`DELETE FROM push_registrations WHERE device_id = ${deviceId}`;
+      }).pipe(transaction);
       const row = yield* findById(deviceId).pipe(Effect.orDie);
       if (Option.isNone(row)) return yield* new NotFound({ resource: "device" });
       for (const [value, ticket] of tickets)

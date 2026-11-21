@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import { type BotId, CommandId, type EntryTarget, type Notification } from "@j3-bots/contracts";
+import {
+  type BotId,
+  CommandId,
+  type DeviceId,
+  type EntryTarget,
+  type Notification,
+  PushToken,
+} from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Queue from "effect/Queue";
@@ -45,6 +52,22 @@ const pairDevice = (name: string) =>
     const devices = yield* Devices;
     const { code } = yield* devices.startPairing;
     return (yield* devices.pair({ code, name })).deviceId;
+  });
+
+/** The device registers for push, with a token of its own. */
+const registerPush = (deviceId: DeviceId) =>
+  Effect.gen(function* () {
+    const devices = yield* Devices;
+    yield* devices.registerPush({
+      commandId: CommandId.make(`register-${deviceId}`),
+      deviceId,
+      registration: {
+        provider: "expo",
+        token: PushToken.make(`ExponentPushToken[fixture-${deviceId}]`),
+        platform: "android",
+        language: "en",
+      },
+    });
   });
 
 /** A socket's notifications, as they arrive. */
@@ -149,7 +172,7 @@ it.effect(
 );
 
 it.effect(
-  "tells a device on each of its sockets, leaves one with none to a push, and neither to a revoked one",
+  "tells a device on each of its sockets, pushes to a registered one with none, and neither to a revoked one",
   () =>
     Effect.gen(function* () {
       const presence = yield* Presence;
@@ -157,6 +180,11 @@ it.effect(
       const laptop = yield* pairDevice("Laptop");
       const phone = yield* pairDevice("Phone");
       const tablet = yield* pairDevice("Tablet");
+      // Paired, with no socket, but never registered: nothing reaches it.
+      yield* pairDevice("Browser");
+      yield* registerPush(laptop);
+      yield* registerPush(phone);
+      yield* registerPush(tablet);
       const queues = [
         yield* listen(yield* presence.connect(laptop)),
         yield* listen(yield* presence.connect(laptop)),
@@ -179,6 +207,7 @@ it.effect("keeps a device live until its last socket closes, then leaves it to a
     const presence = yield* Presence;
     const scout = yield* createBot("Scout");
     const laptop = yield* pairDevice("Laptop");
+    yield* registerPush(laptop);
     const first = yield* Scope.make();
     const second = yield* Scope.make();
     yield* presence.connect(laptop).pipe(Scope.provide(first));
@@ -201,6 +230,7 @@ it.effect("tells nobody, by socket or push, of what one device has in view", () 
     const scout = yield* createBot("Scout");
     const laptop = yield* pairDevice("Laptop");
     const phone = yield* pairDevice("Phone");
+    yield* registerPush(phone);
     const watching = yield* presence.connect(laptop);
     const queue = yield* listen(yield* presence.connect(laptop));
     yield* watching.view(conversation(scout.id));

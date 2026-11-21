@@ -104,6 +104,11 @@ export const handlers = ServedRpcs.toLayer(
       "pairing.start": () => devices.startPairing,
       // Revoking is idempotent by nature: a retry revokes nothing more.
       "device.revoke": ({ deviceId }) => auth.revoke(deviceId),
+      // Always this socket's own device: a device registers only itself.
+      "push.register": ({ commandId, ...registration }) =>
+        devices.registerPush({ commandId, deviceId: device.id, registration }),
+      "push.unregister": ({ commandId }) =>
+        devices.unregisterPush({ commandId, deviceId: device.id }),
     };
   }),
 );
