@@ -15,6 +15,8 @@ export const HOME_ENTRIES = {
   bots: "bots",
   /** Memory and skills every bot reads. */
   shared: "shared",
+  /** What the server keeps for itself outside the database. */
+  state: "state",
   attachments: "attachments",
   adminSocket: "admin.sock",
   /** Held by the one server running for the home. */
@@ -53,6 +55,7 @@ export const SYSTEM_PROMPT_FILE = `${WORKSPACE_ENTRIES.generated}/system.md`;
  *   skills/  files/
  * shared/memory/         user.md and log/<yyyy-mm>.md, every bot's to read
  * shared/skills/
+ * state/shipped-skills.json  which texts in shared/skills the server installed
  * attachments/           file bytes, by digest
  * providers/<provider>/  the configuration folder of an engine provider instance
  * web/                   where the operator may put a built web client; public
@@ -68,6 +71,7 @@ export const homeLayout = (path: Path.Path, home: string) => {
     sharedMemory,
     sharedSkills,
     attachments: path.join(home, HOME_ENTRIES.attachments),
+    shippedSkills: path.join(home, HOME_ENTRIES.state, "shipped-skills.json"),
     providerHome: (provider: (typeof PROVIDER_HOMES)[number]) =>
       path.join(home, HOME_ENTRIES.providers, provider),
     /**
@@ -77,7 +81,7 @@ export const homeLayout = (path: Path.Path, home: string) => {
      * it: not `skills` and `files`, which are the bot's, links included.
      */
     written: (bots: ReadonlyArray<string>) => {
-      const { config, database, engine, providers, shared, attachments, adminSocket, lock } =
+      const { config, database, engine, providers, shared, state, attachments, adminSocket, lock } =
         HOME_ENTRIES;
       const { generated, instructions, memory } = WORKSPACE_ENTRIES;
       return [
@@ -87,6 +91,7 @@ export const homeLayout = (path: Path.Path, home: string) => {
           providers,
           HOME_ENTRIES.bots,
           shared,
+          state,
           attachments,
           adminSocket,
           lock,

@@ -333,6 +333,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       toolBridge: options.toolBridge,
       systemPromptFile: options.systemPromptFile,
       basePrompt: yield* Ref.get(basePrompt),
+      sharedSkills: options.sharedSkills,
     });
   }).pipe(
     provisioning.withPermits(1),

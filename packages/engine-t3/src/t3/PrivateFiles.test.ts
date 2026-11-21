@@ -34,3 +34,26 @@ it.effect("removes only in a folder the check accepts, and a link itself, not wh
     assert.deepStrictEqual(yield* fs.readDirectory(outside), ["owner-file"]);
   }).pipe(Effect.scoped, Effect.provide(machine)),
 );
+
+it.effect("checks a link's target from where its folder really is, links resolved", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fs.realPath(yield* fs.makeTempDirectoryScoped());
+    yield* fs.makeDirectory(path.join(home, "shallow"));
+    yield* fs.makeDirectory(path.join(home, "a", "b"), { recursive: true });
+    // `a/b/deep` is `shallow`, one level nearer the top: `../../x` from it leaves the home.
+    yield* fs.symlink(path.join(home, "shallow"), path.join(home, "a", "b", "deep"));
+    const files = yield* makePrivateFiles((location) =>
+      Effect.succeed(location === home || location.startsWith(`${home}/`)),
+    );
+
+    const location = path.join(home, "a", "b", "deep", "link");
+    const refused = yield* files.link(location, "../../../x").pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(refused));
+    assert.isFalse(yield* fs.exists(path.join(home, "shallow", "link")));
+
+    yield* files.link(location, "../x");
+    assert.strictEqual(yield* fs.readLink(path.join(home, "shallow", "link")), "../x");
+  }).pipe(Effect.scoped, Effect.provide(machine)),
+);

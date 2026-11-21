@@ -30,8 +30,9 @@ const logShutdown = Layer.effectDiscard(Effect.addFinalizer(() => Effect.logInfo
  * The engine, run under `<J3_HOME>/engine`, writing only where the home's
  * containment check allows, with the Claude Code and Codex instances of
  * `engineProviders`. Each harness starts this package's `j3` bridge as the bot
- * tools' MCP server, pointed at the tool endpoint on loopback, and Codex takes
- * the base prompt as it changes.
+ * tools' MCP server, pointed at the tool endpoint on loopback, Codex takes
+ * the base prompt as it changes, and both list the shared skills, among them
+ * the ones J3 Bots ships, installed here first.
  */
 const engine = Layer.unwrap(
   Effect.gen(function* () {
@@ -40,6 +41,8 @@ const engine = Layer.unwrap(
     const layout = yield* Layout.Layout;
     const path = yield* Path.Path;
     const basePrompt = yield* BasePrompt.BasePrompt;
+    // Before the engine's first start, which links the shared skills into each harness home.
+    yield* SharedSkills.install();
     return EngineLive.layer({
       home: config.engineHome,
       port: config.enginePort,
@@ -51,6 +54,7 @@ const engine = Layer.unwrap(
       },
       systemPromptFile: SYSTEM_PROMPT_FILE,
       basePrompt: basePrompt.text,
+      sharedSkills: layout.sharedSkills,
       // The adapter's writes go through the same containment check as the server's.
       isPrivate: (location) => layout.writable(location).pipe(Effect.isSuccess),
     });
@@ -60,20 +64,15 @@ const engine = Layer.unwrap(
 /**
  * The whole server. Built in dependency order: configuration, the home taken
  * for this process (a second server for the same home stops there, before it
- * opens the database), the migrated database, the engine and the domain, then
- * the client listener, and then the tool endpoint and the admin socket, which
- * reports where the client listener bound. The skills J3 Bots ships are
- * installed into the home beside them. Where it bound (`Listener`) is
- * made beneath them all, since the domain names it in a webhook's address. Each listener binds only once its
- * routes are built (`Ports.serve`). Interrupting it (SIGINT, SIGTERM) releases
- * everything in reverse.
+ * opens the database), the migrated database, the shipped skills and the
+ * engine that links them into each harness home, the domain, then the client
+ * listener, and then the tool endpoint and the admin socket, which reports
+ * where the client listener bound. Where it bound (`Listener`) is made beneath
+ * them all, since the domain names it in a webhook's address. Each listener
+ * binds only once its routes are built (`Ports.serve`). Interrupting it
+ * (SIGINT, SIGTERM) releases everything in reverse.
  */
-export const layer = Layer.mergeAll(
-  ToolEndpoint.layer,
-  AdminSocket.layer,
-  SharedSkills.layer,
-  logShutdown,
-).pipe(
+export const layer = Layer.mergeAll(ToolEndpoint.layer, AdminSocket.layer, logShutdown).pipe(
   Layer.provide(Http.serve(Listener.layer, { logAddress: true })),
   // One decision for the client routes and the admin socket's report.
   Layer.provide(WebClient.statusLayer),

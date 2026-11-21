@@ -26,7 +26,7 @@ Design rules for the layers:
 
 ## How each layer reaches each harness
 
-J3 Bots does not control the harness's own system prompt. It adds to it through the mechanisms T3 Code exposes on a provider instance. The base prompt, per-bot and tool mechanisms below were verified on release `4969` with a canary instruction in each, except where marked. Skill discovery through linked folders has not been exercised.
+J3 Bots does not control the harness's own system prompt. It adds to it through the mechanisms T3 Code exposes on a provider instance. The base prompt, per-bot and tool mechanisms below were verified on release `4969` with a canary instruction in each, except where marked. Skill discovery was verified on the same release with Claude Code 2.1.328 and Codex 0.170.0 ([Engine: provisioning](../architecture/engine.md#provisioning)).
 
 **Claude Code.** T3 Code always sends Claude Code's own preset system prompt with an addition. A provider instance's launch argument `--append-system-prompt-file <path>` is merged into that addition, and a relative path is resolved inside each thread's project folder. J3 Bots configures one Claude instance with `--append-system-prompt-file .j3/system.md`, and every bot gets its own file from its own workspace. The file is read when the Claude process starts or resumes, which happens at least every time a bot wakes after 30 idle minutes (**Read**). A system prompt addition survives compaction (**Read**).
 
@@ -40,7 +40,7 @@ J3 Bots does not control the harness's own system prompt. It adds to it through 
 | Profile, pinned memory | Same file | `AGENTS.md` in the workspace |
 | Envelope | The dispatched message | The dispatched message |
 | Tools | `mcpServers` in the J3-owned config directory's `.claude.json` | `[mcp_servers.j3]` in the J3-owned `CODEX_HOME` |
-| Skills | Planned (not built yet; **Assumed**): `skills/` in the workspace, linked to `.claude/skills` | Planned (not built yet; **Assumed**): `skills/` in the workspace, linked to the folder Codex discovers |
+| Shared skills | Linked, one link per skill, into `skills/` in the J3-owned config directory | Linked, one link per skill, into `skills/` in the J3-owned `CODEX_HOME` |
 
 ## Coexisting with the host
 
@@ -170,13 +170,16 @@ The engine's own tools stay available inside a session. The base prompt says whi
 
 ## Skills
 
-A skill is a folder with a `SKILL.md`: when it applies, what it needs, the steps, how to verify the result, what requires approval. The file opens with a `name` and a one-line `description`, which is what a harness lists so the model knows when to read the rest (**Assumed** for both harnesses: not yet observed in a J3 Bots session).
+A skill is a folder with a `SKILL.md`: when it applies, what it needs, the steps, how to verify the result, what requires approval. The file opens with a `name` and a one-line `description`, which is what a harness lists so the model knows when to read the rest (**Verified** for Claude Code: each home skill's `name` and `description` are in the skill listing of the request it sends to the model. For Codex, its app server's `skills/list` lists the skill, and a bot asked to list its skills named `j3-routines`; that shows the name reached the model, not that the description did).
 
 - **Shared skills** live in `<J3_HOME>/shared/skills/<name>/SKILL.md`, readable by every bot.
 - **Bot skills** live in `skills/` in the bot's own workspace.
-- The server is meant to link both folders to wherever each harness looks for skills. That linking is not built yet, so no harness lists a skill today; skill discovery through linked folders has not been exercised either.
+- Every shared skill is linked into each Claude Code and Codex home, at every start of the engine, so each harness lists it as one of its own user skills ([Engine: provisioning](../architecture/engine.md#provisioning)). A skill added to the shared folder, or removed from it, reaches the harnesses at the engine's next start.
+- A bot's own skills are not linked into its harness: one harness home serves every bot, and Claude Code would list a shared skill over a project skill of the same name. The bot finds them in its workspace, where the base prompt points it. Listing them too, per bot, is open.
 
-J3 Bots ships its own skills for procedures too long for the base prompt. Their text lives in `packages/prompts/src/skills/<name>.md`, and the server writes each one to the shared skills as `<name>/SKILL.md` every time it starts, replacing the previous release's text. Their names start with `j3-`, so the operator's own skills, under any other name, are never touched. The `j3-` prefix is reserved: a skill the operator puts under such a name is rewritten with the shipped text on the next start. A shipped skill's folder that is not a real folder directly in the shared skills (for example a link to another skill's folder) is skipped with a warning rather than written through. The text enters the [prompt version](#versioning).
+J3 Bots ships its own skills for procedures too long for the base prompt. Their text lives in `packages/prompts/src/skills/<name>.md`, and the server writes each one to the shared skills as `<name>/SKILL.md` every time it starts, before the engine starts, replacing the copy an earlier release installed. Their names start with `j3-`, so the operator's own skills, under any other name, are never touched. The server records the SHA-256 of each text it writes in `<J3_HOME>/state/shipped-skills.json`, its own state outside the shared skills, so nothing put in a skill's folder can claim a copy as the server's. A `SKILL.md` under a shipped name is the server's when it holds the current shipped text (adopted even when unrecorded, since it is what the server would write), a text the record names, or a text a release installed before the record existed (`j3-routines` as first shipped). Anything else is not one the server installed, whether the operator wrote it or edited the installed copy: it is kept, with a warning on every start, and the shipped text is not installed until it is moved aside. A `SKILL.md` that is not a regular file (a link, a folder, a FIFO) is kept the same way and never read. During a replacement the record names both the old and the new text, so a start cut short between the two writes still recognizes its own copy. A record that cannot be decoded recognizes nothing but the shipped texts, and a record that is not a regular file stops the install, with a warning, until it is moved aside. A shipped skill's folder that is not a real folder directly in the shared skills (for example a link to another skill's folder) is skipped with a warning rather than written through, and a shared skills folder that is not a folder installs nothing, with a warning. A write that fails (a read-only `state/`, say) stops the install with a warning and keeps the skills already there. None of these stops the server. The text enters the [prompt version](#versioning).
+
+Before the harnesses listed the shipped skills, every rule of `j3-routines` that matters during a run was also put in the base prompt and the tool descriptions. That duplication can now be revisited, once the evals show a bot follows the skill without it.
 
 | Skill | What it teaches |
 | --- | --- |

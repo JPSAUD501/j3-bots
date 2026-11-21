@@ -17,7 +17,7 @@ import * as Hex from "effect/encoding/Hex";
 
 /** The folders the adapter writes, by role, for an engine data directory at `home`. */
 export const engineFolders = (path: Path.Path, home: string) => ({
-  /** J3 Bots' own: the credential, the record of the engine process, the runtime. */
+  /** J3 Bots' own: the credential, the record of the engine process, the skill links it made, the runtime. */
   j3: path.join(home, "j3"),
   /** The pinned engine release, installed by the adapter. */
   runtime: path.join(home, "j3", "runtime"),
@@ -53,6 +53,8 @@ type StorageError = StorageExposed | PlatformError.PlatformError;
  * happens.
  */
 export interface PrivateFiles {
+  /** Whether `location`, links resolved, is in private state, by the caller's check. */
+  readonly contains: (location: string) => Effect.Effect<boolean>;
   /** Creates `folder` (mode 0700) if missing. */
   readonly folder: (folder: string) => Effect.Effect<void, StorageError>;
   /**
@@ -87,6 +89,22 @@ export interface PrivateFiles {
    * itself, never what it leads to; a missing one is fine.
    */
   readonly remove: (location: string) => Effect.Effect<void, StorageError>;
+  /**
+   * Removes the symbolic link at `location`, once the folder that holds it
+   * passes the check. Anything else at `location`, or nothing, is left as it
+   * is.
+   */
+  readonly unlink: (location: string) => Effect.Effect<void, StorageError>;
+  /**
+   * Makes a symbolic link at `location` that leads to `target`, a path
+   * relative to the real path of `location`'s folder, links resolved, which is
+   * where the system resolves it from. Both are checked first: the folder that
+   * holds the link, and where `target` leads from that real folder, links
+   * resolved, so a link the adapter makes never leads out of private state
+   * when it is made. Nothing may be at `location` yet: a link is never made
+   * over anything.
+   */
+  readonly link: (location: string, target: string) => Effect.Effect<void, StorageError>;
 }
 
 /** Random bytes in a temporary file's name: never guessed ahead of the write. */
@@ -158,6 +176,18 @@ export const makePrivateFiles = Effect.fnUntraced(function* (
     yield* fs.remove(location, { recursive: true, force: true });
   });
 
+  const unlink = Effect.fnUntraced(function* (location: string) {
+    const parent = path.dirname(location);
+    if (!(yield* isPrivate(parent))) return yield* refuse(parent);
+    const existing = yield* fs.lstat(location).pipe(
+      Effect.asSome,
+      Effect.catchReason("PlatformError", "NotFound", () => Effect.succeedNone),
+    );
+    if (Option.isNone(existing) || existing.value.type !== "SymbolicLink") return;
+    // Not recursive: whatever was put here after the check, no folder is emptied.
+    yield* fs.remove(location);
+  });
+
   const write = Effect.fnUntraced(function* (file: string, contents: string) {
     const parent = path.dirname(file);
     yield* folder(parent);
@@ -206,5 +236,22 @@ export const makePrivateFiles = Effect.fnUntraced(function* (
       yield* Stream.runForEach(bytes, (chunk) => Effect.uninterruptible(writeAll(file, fd, chunk)));
     }).pipe(Effect.scoped);
 
-  return { folder, write, writable, writeStream, remove } satisfies PrivateFiles;
+  const link = Effect.fnUntraced(function* (location: string, target: string) {
+    const parent = path.dirname(location);
+    yield* folder(parent);
+    const destination = path.resolve(yield* fs.realPath(parent), target);
+    if (!(yield* isPrivate(destination))) return yield* refuse(destination);
+    yield* fs.symlink(target, location);
+  });
+
+  return {
+    contains: isPrivate,
+    folder,
+    write,
+    writable,
+    writeStream,
+    remove,
+    unlink,
+    link,
+  } satisfies PrivateFiles;
 });
