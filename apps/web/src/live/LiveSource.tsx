@@ -24,7 +24,6 @@ import {
   useJ3Client,
   useMemory,
   useReadable,
-  useRoster,
   useRoutines,
   useSettings,
   useWorkSteps,
@@ -136,10 +135,10 @@ function Gate({ children }: { children: ReactNode }) {
   const pairingKnown = connection._tag !== "starting" && connection._tag !== "storage-failed";
   useEffect(() => {
     if (!pairingKnown) return;
-    closeNotificationsOutside(pairing).catch(() => {
+    closeNotificationsOutside(pairing, () => j3.pairing.get()).catch(() => {
       // The browser would not list them; they close when the operator dismisses them.
     });
-  }, [pairingKnown, pairing]);
+  }, [j3, pairingKnown, pairing]);
   switch (connection._tag) {
     case "starting":
       return null;
@@ -258,10 +257,14 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   const detailsBotId: BotId | null = search.details === true && params.botId ? params.botId : null;
 
   const connection = useConnection();
-  const roster = useRoster();
+  // The whole roster, hidden bots included: the shell leaves hidden bots out
+  // of its list, and still shows one opened from a search or a notification.
+  const listedRoster = useReadable(j3.roster);
+  const roster = listedRoster._tag === "ready" ? listedRoster.value : null;
   const engine = useEngineStatus();
   const settings = useSettings();
-  const settingsSave = useReadable(j3.settingsSave);
+  const profileSave = useReadable(j3.settingsSaves.profile);
+  const notificationsSave = useReadable(j3.settingsSaves.notifications);
   const devices = useDevices();
   const actions = useActions();
   const drafts = useReadable(j3.drafts);
@@ -280,7 +283,11 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   const [newBot, setNewBot] = useState(false);
   const [memoryView, setMemoryView] = useState<MemoryView | null>(null);
   const [editingBot, setEditingBot] = useState<BotId | null>(null);
-  const [conversationCovered, setConversationCovered] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  // Without a roster, Settings has no button and closes without saying so.
+  if (settingsOpen && (roster === null || roster.length === 0)) setSettingsOpen(false);
+  // What the shell shows with nothing over it.
+  const [shown, setShown] = useState<EntryTarget | null>(null);
   const botSaves = useReadable(j3.botSaves);
   const memorySaves = useReadable(j3.memorySaves);
   const openMemoryKey =
@@ -302,22 +309,28 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
           loadingOlder: conversation.state.loadingOlder,
         };
 
-  // The server keeps notifications quiet for what is on screen here. A window
-  // that is hidden or in the background shows the operator nothing, and
-  // neither does a conversation with the details or a dialog over it.
+  // The server keeps notifications quiet for what is on screen here: what the
+  // shell shows with nothing over it, in a window that is visible and has
+  // focus. A window that is hidden or in the background shows the operator
+  // nothing.
   const viewKey = target === null ? null : targetKey(target);
-  const uncovered = !conversationCovered && !newBot && editingBot === null && memoryView === null;
-  const looking = inView && uncovered;
   useEffect(() => {
-    j3.setView(looking ? targetOf(botId, roomId) : null);
-  }, [j3, botId, roomId, looking]);
+    j3.setView(inView ? shown : null);
+  }, [j3, inView, shown]);
 
   // What the server says no device has in view, shown by the browser once the
   // operator allowed it. A click focuses a window and opens the conversation
   // or room, whose newest entry is what the notification was about, if the
-  // window still follows the pairing that received it.
+  // window still follows the pairing that received it. Nothing is left over
+  // it: Settings, the details and the dialogs close. A save under way is not
+  // given up on, and the profile form in Settings keeps what the operator typed.
   const presentation = usePresentation();
   const openTarget = useEffectEvent((opened: EntryTarget) => {
+    setSettingsOpen(false);
+    setNewBot(false);
+    setEditingBot(null);
+    setMemoryView(null);
+    // Opening it drops the details from the address, which closes them.
     if (opened._tag === "conversation") {
       void navigate({ to: "/bots/$botId", params: { botId: opened.botId } });
     } else {
@@ -327,10 +340,11 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   const notify = useEffectEvent((notification: Notification) => {
     if (pairing === null || !stillPaired() || notificationAccess() !== "granted") return;
     // What is on screen here never notifies, even when the server sent it
-    // before it heard this window's view, as right after a reconnection.
-    if (uncovered && isInView() && viewKey !== null && targetKey(notification.target) === viewKey) {
-      return;
-    }
+    // before it heard this window's view, as right after a reconnection. In
+    // that moment a window in the background can still show a notification
+    // about what another window has in view, which this one cannot know.
+    // That is accepted: it is brief, and the click opens what is already open.
+    if (isInView() && shown !== null && targetKey(notification.target) === targetKey(shown)) return;
     // Names come from the whole roster, hidden bots included: the shell lists
     // bots for what it draws, below this source. Before the roster first
     // loads there is no name to show, so the notification is dropped on
@@ -378,7 +392,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   const data: ShellData = {
     engine: engine._tag === "ready" ? engine.value : null,
     engineStale: engine._tag === "ready" && engine.stale,
-    roster: roster?.rows ?? null,
+    roster,
     conversation: (asked) =>
       viewKey !== null && targetKey(asked) === viewKey ? view : loadingView,
     draft: (asked) => drafts.get(targetKey(asked)) ?? blankDraft,
@@ -393,7 +407,8 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
     files: (botId) => (botId === detailsBotId ? loadedList(files) : null),
     memory: (botId) => (botId === detailsBotId ? loadedList(memory) : null),
     settings: settings._tag === "ready" ? settings.value : null,
-    settingsSave,
+    settingsSaves: { profile: profileSave, notifications: notificationsSave },
+    settingsOpen,
     devices: devices._tag === "ready" ? devices.value : null,
     connected: connection._tag === "connected",
   };
@@ -459,7 +474,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   const editingBotValue: Bot | null =
     editingBot === null
       ? null
-      : (roster?.rows.flatMap((row) =>
+      : (roster?.flatMap((row) =>
           row._tag === "bot" && row.bot.id === editingBot ? [row.bot] : [],
         )[0] ?? null);
 
@@ -468,9 +483,9 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
     setEditingBot(null);
   };
 
-  // A bot that leaves the roster while its editor is open, deleted or hidden,
-  // closes the editor for good. Its save is not dismissed: the operator did not
-  // give up on it, so a failure is announced, and kept to show if they reopen it.
+  // A bot deleted while its editor is open closes the editor for good. Its save
+  // is not dismissed: the operator did not give up on it, so a failure is
+  // announced, and kept to show if they reopen it.
   if (editingBot !== null && roster !== null && editingBotValue === null) setEditingBot(null);
 
   const updateBot = (bot: Bot, changes: BotChanges) =>
@@ -560,7 +575,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
     markRead: (asked, through) => {
       if (viewKey !== null && targetKey(asked) === viewKey) conversation.markRead(through);
     },
-    setConversationCovered,
+    setShown,
     stopBot: (botId) => void j3.stopBot(botId),
     createBot: (name, primary) =>
       j3.createBot({ name, primary }).then((result) => {
@@ -585,7 +600,8 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
         if (result._tag === "done") void navigate({ to: "/" });
         else say(t("details.deleteFailed"));
       }),
-    updateSettings: (changes) => void j3.updateSettings(changes),
+    updateSettings: (change) => void j3.updateSettings(change),
+    setSettingsOpen,
     startPairing: () =>
       j3
         .startPairing()

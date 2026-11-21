@@ -4,7 +4,7 @@
  * are decided, bots answer after a moment. A stand-in for the client runtime
  * in development only; nothing here reaches a server.
  */
-import type { Draft, DraftFile, SettingsSave } from "@j3-bots/client-runtime";
+import type { Draft, DraftFile, SettingsSaves } from "@j3-bots/client-runtime";
 import {
   AttachmentId,
   BotId,
@@ -32,7 +32,8 @@ interface State extends Omit<SampleTeam, "bots" | "room" | "attachments"> {
   readonly inFlight: ReadonlySet<EntryId>;
   /** Each conversation's unsent text and files, by `keyOf`. */
   readonly drafts: Readonly<Record<string, Draft>>;
-  readonly settingsSave: SettingsSave;
+  readonly settingsSaves: SettingsSaves;
+  readonly settingsOpen: boolean;
 }
 
 const blankDraft: Draft = { text: "", files: [], sending: false };
@@ -356,16 +357,30 @@ function sampleIntents({ get, update }: Store): ShellIntents {
         ...s,
         roster: s.roster.filter((item) => !(item._tag === "bot" && item.bot.id === botId)),
       })),
-    updateSettings: (changes) =>
-      update((s) => ({
-        ...s,
-        settings: {
-          ...s.settings,
-          ...changes,
-          notifications: { ...s.settings.notifications, ...changes.notifications },
-        },
-        settingsSave: { _tag: "saved", changes },
-      })),
+    updateSettings: (change) =>
+      update((s) =>
+        change.section === "profile"
+          ? {
+              ...s,
+              settings: { ...s.settings, ...change.changes },
+              settingsSaves: {
+                ...s.settingsSaves,
+                profile: { _tag: "saved", changes: change.changes },
+              },
+            }
+          : {
+              ...s,
+              settings: {
+                ...s.settings,
+                notifications: { ...s.settings.notifications, ...change.changes },
+              },
+              settingsSaves: {
+                ...s.settingsSaves,
+                notifications: { _tag: "saved", changes: change.changes },
+              },
+            },
+      ),
+    setSettingsOpen: (open) => update((s) => ({ ...s, settingsOpen: open })),
     startPairing: () =>
       Promise.resolve({
         _tag: "started",
@@ -388,7 +403,7 @@ function sampleIntents({ get, update }: Store): ShellIntents {
     openMemoryFile: nothing,
     loadOlder: nothing,
     markRead: nothing,
-    setConversationCovered: nothing,
+    setShown: nothing,
     newBot: nothing,
     newRoom: nothing,
     editProfile: nothing,
@@ -422,7 +437,8 @@ function toData(state: State): ShellData {
     files: (botId) => state.files[botId] ?? [],
     memory: (botId) => state.memory[botId] ?? [],
     settings: state.settings,
-    settingsSave: state.settingsSave,
+    settingsSaves: state.settingsSaves,
+    settingsOpen: state.settingsOpen,
     devices: state.devices,
     connected: true,
   };
@@ -438,7 +454,8 @@ export function useSampleSource({ firstRun = false }: { firstRun?: boolean } = {
       ...sampleTeam(SAMPLE_NOW),
       inFlight: new Set(),
       drafts: {},
-      settingsSave: { _tag: "idle" },
+      settingsSaves: { profile: { _tag: "idle" }, notifications: { _tag: "idle" } },
+      settingsOpen: false,
     };
     return createStore(firstRun ? withoutBots(team) : team);
   });

@@ -94,6 +94,12 @@ export { EngineStatus } from "./stores/EngineStatus.ts";
 export { Presence } from "./stores/Presence.ts";
 export type { Loaded } from "./stores/reads.ts";
 export { needsOperator, Roster, rosterRows } from "./stores/Roster.ts";
-export { Settings, type SettingsChanges, type SettingsSave } from "./stores/Settings.ts";
+export {
+  Settings,
+  type ProfileChanges,
+  type SettingsChange,
+  type SettingsSave,
+  type SettingsSaves,
+} from "./stores/Settings.ts";
 export type { Synced } from "./stores/synced.ts";
 export { WorkSteps, type WorkStepsState } from "./stores/WorkSteps.ts";

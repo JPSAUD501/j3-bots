@@ -728,32 +728,48 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
     }).pipe(Effect.provide(client())),
   );
 
-  it.effect("keeps a settings save under way through a disconnection until it is saved", () =>
+  it.effect("keeps each section's save under way through a disconnection until it is saved", () =>
     Effect.gen(function* () {
       yield* pairAndConnect;
       const settings = yield* Settings;
       const network = yield* TestPlatform.TestNetwork;
       const connection = yield* Connection;
-      yield* waitFor(settings.state, (state) => state._tag === "ready");
+      const loaded = yield* waitFor(settings.state, (state) => state._tag === "ready");
+      if (loaded._tag !== "ready") return assert.fail("No settings");
+      const previews = !loaded.value.notifications.previews;
 
       yield* network.set("offline");
       yield* waitFor(connection.state, (state) => state._tag === "offline");
-      const saving = yield* settings
-        .update({ operatorName: "Ana" })
+      const profile = yield* settings
+        .update({ section: "profile", changes: { operatorName: "Ana" } })
         .pipe(Effect.forkChild({ startImmediately: true }));
-      assert.deepStrictEqual(settings.save.get(), {
+      // A switch saved meanwhile leaves the profile's save alone.
+      const notifications = yield* settings
+        .update({ section: "notifications", changes: { previews } })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      assert.deepStrictEqual(settings.saves.profile.get(), {
         _tag: "saving",
         changes: { operatorName: "Ana" },
       });
+      assert.deepStrictEqual(settings.saves.notifications.get(), {
+        _tag: "saving",
+        changes: { previews },
+      });
 
       yield* network.set("online");
-      assert.strictEqual((yield* Fiber.join(saving))._tag, "done");
-      assert.deepStrictEqual(settings.save.get(), {
+      assert.strictEqual((yield* Fiber.join(profile))._tag, "done");
+      assert.strictEqual((yield* Fiber.join(notifications))._tag, "done");
+      assert.deepStrictEqual(settings.saves.profile.get(), {
         _tag: "saved",
         changes: { operatorName: "Ana" },
       });
+      assert.deepStrictEqual(settings.saves.notifications.get(), {
+        _tag: "saved",
+        changes: { previews },
+      });
       const saved = settings.state.get();
       assert.strictEqual(saved._tag === "ready" && saved.value.operatorName, "Ana");
+      assert.strictEqual(saved._tag === "ready" && saved.value.notifications.previews, previews);
     }).pipe(Effect.scoped, Effect.provide(client())),
   );
 
@@ -3248,7 +3264,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
       yield* network.loseReplies(true);
       const saving = yield* Effect.forkChild(
-        settings.update({ notifications: { previews: !before } }),
+        settings.update({ section: "notifications", changes: { previews: !before } }),
         { startImmediately: true },
       );
 
@@ -3264,7 +3280,10 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
             }),
           );
         const other = yield* Settings;
-        const back = yield* other.update({ notifications: { previews: before } });
+        const back = yield* other.update({
+          section: "notifications",
+          changes: { previews: before },
+        });
         assert.strictEqual(back._tag, "done");
       }).pipe(Effect.scoped, Effect.provide(client()));
 
@@ -3272,9 +3291,9 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       yield* network.loseReplies(false);
       yield* network.dropSockets;
       assert.strictEqual((yield* Fiber.join(saving))._tag, "done");
-      assert.deepStrictEqual(settings.save.get(), {
+      assert.deepStrictEqual(settings.saves.notifications.get(), {
         _tag: "saved",
-        changes: { notifications: { previews: !before } },
+        changes: { previews: !before },
       });
       const shown = settings.state.get();
       assert.strictEqual(shown._tag === "ready" && shown.value.notifications.previews, before);
@@ -3292,7 +3311,10 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       yield* Effect.gen(function* () {
         yield* pairAndConnect;
         const other = yield* Settings;
-        const changed = yield* other.update({ notifications: { previews: !before } });
+        const changed = yield* other.update({
+          section: "notifications",
+          changes: { previews: !before },
+        });
         assert.strictEqual(changed._tag, "done");
       }).pipe(Effect.scoped, Effect.provide(client()));
 

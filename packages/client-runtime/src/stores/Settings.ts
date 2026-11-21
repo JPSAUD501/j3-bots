@@ -8,24 +8,34 @@ import { Actions, intentResult, type IntentResult } from "../intents/Actions.ts"
 import { Cell, type Readable } from "../Store.ts";
 import { loading, markStale, ready, type Synced } from "./synced.ts";
 
-/** What `settings.update` changes. Fields left out keep their value. */
-export type SettingsChanges = Partial<
-  Pick<SettingsValue, "operatorName" | "timeZone" | "budgets">
-> & {
-  readonly notifications?: NotificationSettingsChange;
-};
+/** What the profile in Settings changes. Fields left out keep their value. */
+export type ProfileChanges = Partial<Pick<SettingsValue, "operatorName" | "timeZone">>;
 
 /**
- * A save of the settings: under way, or how the last one ended, each with what
- * it sends, so a form can tell its own saves from another's. A failed one
- * keeps what it sent, so a form that did not see it can offer it again.
+ * A change of the settings, with the section of Settings that makes it. Each
+ * section saves on its own, so one's save never speaks for another's.
  */
-export type SettingsSave =
+export type SettingsChange =
+  | { readonly section: "profile"; readonly changes: ProfileChanges }
+  | { readonly section: "notifications"; readonly changes: NotificationSettingsChange };
+
+/**
+ * A section's save: under way, or how its last one ended, each with what it
+ * sends. A failed one keeps what it sent, so a form that did not see it can
+ * offer it again.
+ */
+export type SettingsSave<Changes> =
   | { readonly _tag: "idle" }
   | {
       readonly _tag: "saving" | "saved" | "failed";
-      readonly changes: SettingsChanges;
+      readonly changes: Changes;
     };
+
+/** The latest save of each section of Settings. */
+export interface SettingsSaves {
+  readonly profile: SettingsSave<ProfileChanges>;
+  readonly notifications: SettingsSave<NotificationSettingsChange>;
+}
 
 /**
  * The operator's preferences. The contract has no subscription for them and
@@ -41,11 +51,12 @@ export class Settings extends Context.Service<
   {
     readonly state: Readable<Synced<SettingsValue>>;
     /**
-     * The latest save, which outlives any screen that shows it: one that waits
-     * through a disconnection is still under way when Settings opens again.
+     * Each section's latest save, which outlives any screen that shows it: one
+     * that waits through a disconnection is still under way when Settings
+     * opens again.
      */
-    readonly save: Readable<SettingsSave>;
-    readonly update: (changes: SettingsChanges) => Effect.Effect<IntentResult<SettingsValue>>;
+    readonly saves: { readonly [Section in keyof SettingsSaves]: Readable<SettingsSaves[Section]> };
+    readonly update: (change: SettingsChange) => Effect.Effect<IntentResult<SettingsValue>>;
     /** Reads them again, as when Settings opens, for a change another device made meanwhile. */
     readonly refresh: Effect.Effect<void, NotPaired>;
   }
@@ -77,7 +88,10 @@ export const layer = Layer.effect(
     const connection = yield* Connection;
     const actions = yield* Actions;
     const state = new Cell<Synced<SettingsValue>>(loading);
-    const save = new Cell<SettingsSave>({ _tag: "idle" });
+    const saves = {
+      profile: new Cell<SettingsSaves["profile"]>({ _tag: "idle" }),
+      notifications: new Cell<SettingsSaves["notifications"]>({ _tag: "idle" }),
+    };
 
     const latest = latestRead((settings: SettingsValue) => state.set(ready(settings)));
     /** Reads the settings, and shows them unless a read started later is under way or done. */
@@ -94,22 +108,33 @@ export const layer = Layer.effect(
 
     const refresh = connection.call(read);
 
-    const update = Effect.fn("Settings.update")(function* (changes: SettingsChanges) {
+    /** Sends `sent` and follows it in the save of the section that made `changes`. */
+    const save = Effect.fn("Settings.save")(function* <Changes>(
+      cell: Cell<SettingsSave<Changes>>,
+      changes: Changes,
+      sent: ProfileChanges & { readonly notifications?: NotificationSettingsChange },
+    ) {
       const commandId = yield* actions.commandId;
-      const saving: SettingsSave = { _tag: "saving", changes };
-      save.set(saving);
+      const saving: SettingsSave<Changes> = { _tag: "saving", changes };
+      cell.set(saving);
       const exit = yield* connection
-        .call((client) => client["settings.update"]({ commandId, ...changes }))
+        .call((client) => client["settings.update"]({ commandId, ...sent }))
         .pipe(Effect.exit);
       const result = intentResult(exit);
       if (result._tag === "done") yield* refresh.pipe(Effect.ignore);
-      // A later save speaks for itself.
-      if (save.get() === saving) {
-        save.set({ _tag: result._tag === "done" ? "saved" : "failed", changes });
+      // A later save of the same section speaks for itself.
+      if (cell.get() === saving) {
+        cell.set({ _tag: result._tag === "done" ? "saved" : "failed", changes });
       }
       return result;
     });
 
-    return Settings.of({ state, save, update, refresh });
+    const update = Effect.fn("Settings.update")(function* (change: SettingsChange) {
+      return yield* change.section === "profile"
+        ? save(saves.profile, change.changes, change.changes)
+        : save(saves.notifications, change.changes, { notifications: change.changes });
+    });
+
+    return Settings.of({ state, saves, update, refresh });
   }),
 );

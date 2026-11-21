@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Dialog } from "@base-ui/react/dialog";
-import type { SettingsSave } from "@j3-bots/client-runtime";
+import type { SettingsSaves } from "@j3-bots/client-runtime";
 import {
   type Device,
   type DeviceId,
@@ -29,8 +29,8 @@ import {
 import {
   editsAfterFailedSave,
   noEdits,
-  savesProfile,
   settingsPatch,
+  type SettingsEdits,
 } from "../presentation/settings";
 import type { ShellData, ShellIntents } from "../shell/data";
 import { cn } from "../lib/cn";
@@ -43,6 +43,7 @@ import { Switch } from "./ui/switch";
 type SettingsIntents = Pick<
   ShellIntents,
   | "updateSettings"
+  | "setSettingsOpen"
   | "startPairing"
   | "revokeDevice"
   | "refreshSettings"
@@ -53,28 +54,57 @@ type SettingsIntents = Pick<
 interface SettingsButtonProps {
   readonly data: Pick<
     ShellData,
-    "engine" | "engineStale" | "settings" | "settingsSave" | "devices" | "connected"
+    | "engine"
+    | "engineStale"
+    | "settings"
+    | "settingsSaves"
+    | "settingsOpen"
+    | "devices"
+    | "connected"
   >;
   readonly intents: SettingsIntents;
-  readonly onOpenChange: (open: boolean) => void;
+}
+
+/**
+ * The profile form's unsaved edits, held outside the dialog: Settings closed
+ * for the operator, as when a notification opens a conversation, keeps them;
+ * closing it themselves discards them. A save of the form that ends saved
+ * leaves nothing unsaved; one that failed leaves what it sent, so reopening
+ * Settings never loses it.
+ */
+function useProfileEdits(save: SettingsSaves["profile"]) {
+  const kept = () =>
+    save._tag === "failed" ? editsAfterFailedSave(noEdits, save.changes) : noEdits;
+  const [edits, setEdits] = useState(kept);
+  const [lastSave, setLastSave] = useState(save);
+  if (lastSave !== save) {
+    setLastSave(save);
+    if (save._tag === "saved") setEdits(noEdits);
+    if (save._tag === "failed") setEdits((current) => editsAfterFailedSave(current, save.changes));
+  }
+  return { edits, setEdits, discard: () => setEdits(kept()) };
 }
 
 /**
  * The roster's footer: opens everything that is not about one bot. Opening
  * reads the settings and devices again, for what another device changed.
  */
-export function SettingsButton({ data, intents, onOpenChange }: SettingsButtonProps) {
+export function SettingsButton({ data, intents }: SettingsButtonProps) {
   const { t } = useI18n();
   const titleId = useId();
+  const profile = useProfileEdits(data.settingsSaves.profile);
   return (
     <div className="border-t border-border p-2">
       <Dialog.Root
+        open={data.settingsOpen}
         onOpenChange={(open) => {
           if (open) {
             intents.refreshSettings();
             intents.refreshDevices();
+          } else {
+            profile.discard();
           }
-          onOpenChange(open);
+          intents.setSettingsOpen(open);
         }}
       >
         <Dialog.Trigger
@@ -110,13 +140,15 @@ export function SettingsButton({ data, intents, onOpenChange }: SettingsButtonPr
               <EngineSection engine={data.engine} stale={data.engineStale} />
               <YouSection
                 settings={data.settings}
-                save={data.settingsSave}
+                save={data.settingsSaves.profile}
+                edits={profile.edits}
+                onEdit={profile.setEdits}
                 connected={data.connected}
                 onSave={intents.updateSettings}
               />
               <NotificationsSection
                 settings={data.settings}
-                save={data.settingsSave}
+                save={data.settingsSaves.notifications}
                 connected={data.connected}
                 onSave={intents.updateSettings}
               />
@@ -203,68 +235,42 @@ const timeZones = (current: string): ReadonlyArray<string> => {
 /** What bots call the operator, and the time zone routines and times follow. */
 function YouSection({
   settings,
-  save,
-  connected,
-  onSave,
-}: {
-  settings: Settings | null;
-  save: SettingsSave;
-  connected: boolean;
-  onSave: SettingsIntents["updateSettings"];
-}) {
+  ...form
+}: Omit<YouFormProps, "settings"> & { settings: Settings | null }) {
   const { t } = useI18n();
   return (
     <Section title={t("settings.you")}>
-      {settings === null ? (
-        <Loading />
-      ) : (
-        <YouForm settings={settings} save={save} connected={connected} onSave={onSave} />
-      )}
+      {settings === null ? <Loading /> : <YouForm settings={settings} {...form} />}
     </Section>
   );
 }
 
+interface YouFormProps {
+  readonly settings: Settings;
+  readonly save: SettingsSaves["profile"];
+  /** What the operator changed and has not saved, kept by `useProfileEdits`. */
+  readonly edits: SettingsEdits;
+  readonly onEdit: (update: (edits: SettingsEdits) => SettingsEdits) => void;
+  readonly connected: boolean;
+  readonly onSave: SettingsIntents["updateSettings"];
+}
+
 /**
  * Saving needs the server: offline, Save says why it is unavailable. A save
- * sends only the fields the operator changed. While one of the form's is
- * under way, even one started before Settings last closed, the form shows
- * what it sends and takes no edit. A field the operator left alone shows the
- * saved value as it arrives; one they changed keeps their edit until the form
- * saves it, so a notification switch saved meanwhile leaves the edits alone. A save of the
- * form that failed leaves what it sent as the form's edits, so reopening
- * Settings never loses it.
+ * sends only the fields the operator changed. While the form's save is under
+ * way, even one started before Settings last closed, the form shows what it
+ * sends and takes no edit. A field the operator left alone shows the saved
+ * value as it arrives; one they changed keeps their edit until the form saves
+ * it.
  */
-function YouForm({
-  settings,
-  save,
-  connected,
-  onSave,
-}: {
-  settings: Settings;
-  save: SettingsSave;
-  connected: boolean;
-  onSave: SettingsIntents["updateSettings"];
-}) {
+function YouForm({ settings, save, edits, onEdit, connected, onSave }: YouFormProps) {
   const { t } = useI18n();
   const nameId = useId();
   const zoneId = useId();
   const offlineId = useId();
-  const [edits, setEdits] = useState(() =>
-    save._tag === "failed" ? editsAfterFailedSave(noEdits, save.changes) : noEdits,
-  );
   // How a save ended shows only for one this form saw under way, until the next edit.
   const [watching, setWatching] = useState(save._tag === "saving");
-  const [lastSave, setLastSave] = useState(save);
-  const mine = save._tag !== "idle" && savesProfile(save.changes);
-  if (lastSave !== save) {
-    setLastSave(save);
-    // A save of the form that ends saved leaves nothing unsaved; one that failed leaves what it sent.
-    if (mine && save._tag === "saved") setEdits(noEdits);
-    if (mine && save._tag === "failed") {
-      setEdits((current) => editsAfterFailedSave(current, save.changes));
-    }
-  }
-  const saving = save._tag === "saving" && mine;
+  const saving = save._tag === "saving";
   const sending = saving ? save.changes : null;
   const name =
     edits.name ??
@@ -272,7 +278,7 @@ function YouForm({
     "";
   const zone = edits.zone ?? sending?.timeZone ?? settings.timeZone;
   const patch = settingsPatch(settings, edits);
-  const status = watching && mine && !saving ? save._tag : null;
+  const status = watching && !saving ? save._tag : null;
   return (
     <form
       className="flex flex-col gap-3"
@@ -280,7 +286,7 @@ function YouForm({
         event.preventDefault();
         if (patch._tag !== "changes" || saving || !connected) return;
         setWatching(true);
-        onSave(patch.changes);
+        onSave({ section: "profile", changes: patch.changes });
       }}
     >
       <div className="flex flex-col gap-1">
@@ -296,7 +302,7 @@ function YouForm({
           readOnly={saving}
           onChange={(event) => {
             const value = event.currentTarget.value;
-            setEdits((current) => ({ ...current, name: value }));
+            onEdit((current) => ({ ...current, name: value }));
             setWatching(false);
           }}
           className={fieldClass}
@@ -313,7 +319,7 @@ function YouForm({
           onChange={(event) => {
             if (saving) return;
             const value = event.currentTarget.value;
-            setEdits((current) => ({ ...current, zone: value }));
+            onEdit((current) => ({ ...current, zone: value }));
             setWatching(false);
           }}
           className={fieldClass}
@@ -374,14 +380,13 @@ function NotificationsSection({
   onSave,
 }: {
   settings: Settings | null;
-  save: SettingsSave;
+  save: SettingsSaves["notifications"];
   connected: boolean;
   onSave: SettingsIntents["updateSettings"];
 }) {
   const { t } = useI18n();
   const access = useNotificationAccess();
-  const sent = save._tag === "idle" ? undefined : save.changes.notifications;
-  const saving = save._tag === "saving" && sent !== undefined;
+  const saving = save._tag === "saving";
   const [watching, setWatching] = useState(saving);
   if (settings === null) {
     return (
@@ -390,13 +395,13 @@ function NotificationsSection({
       </Section>
     );
   }
-  const shown = { ...settings.notifications, ...(saving ? sent : undefined) };
-  const failed = watching && save._tag === "failed" && sent !== undefined;
+  const shown = { ...settings.notifications, ...(saving ? save.changes : undefined) };
+  const failed = watching && save._tag === "failed";
   // Only the switch that changed: another device may have changed the other one.
   const change = (changes: NotificationSettingsChange) => {
     if (saving || !connected) return;
     setWatching(true);
-    onSave({ notifications: changes });
+    onSave({ section: "notifications", changes });
   };
   return (
     <Section title={t("settings.notifications")}>

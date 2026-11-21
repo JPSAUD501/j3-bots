@@ -33,6 +33,7 @@ import {
   rosterKeyText,
 } from "../presentation/roster";
 import type { ShellData, ShellIntents } from "./data";
+import { useCovered } from "../lib/covered";
 import { useNewestSeen } from "../lib/useNewestSeen";
 import { useShellLayout } from "./layout";
 import { isEditable, shellShortcuts } from "./shortcuts";
@@ -98,18 +99,26 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
   // included, and the shell's shortcuts wait until it closes.
   const detailsModal = layout === "phone" || layout === "tablet";
   const detailsCover = item !== null && detailsOpen && detailsModal;
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  // Without a roster, Settings has no button and closes without saying so.
-  const listed = data.roster !== null && data.roster.length > 0;
-  if (!listed && settingsOpen) setSettingsOpen(false);
-
-  // The details as a sheet, or Settings, hide the conversation: the source
-  // then reports nothing in view, and what arrives there notifies.
-  const covered = detailsCover || settingsOpen;
-  const reportCovered = useEffectEvent(intents.setConversationCovered);
-  useEffect(() => reportCovered(covered), [covered]);
-
   const selectionKey = item === null ? null : rosterKeyText(rosterKeyOf(item));
+
+  // The conversation the operator can see: the one shown, with no sheet or
+  // dialog over it, as read tracking also tells. Any other, and what is
+  // covered, notifies when something arrives there.
+  const [conversationRegion, setConversationRegion] = useState<HTMLElement | null>(null);
+  const covered = useCovered(conversationRegion);
+  const { setShown } = intents;
+  const visibleBot = !covered && item?._tag === "bot" ? item.bot.id : null;
+  const visibleRoom = !covered && item?._tag === "room" ? item.room.id : null;
+  useEffect(() => {
+    setShown(
+      visibleBot !== null
+        ? { _tag: "conversation", botId: visibleBot }
+        : visibleRoom !== null
+          ? { _tag: "room", roomId: visibleRoom }
+          : null,
+    );
+  }, [setShown, visibleBot, visibleRoom]);
+
   // Moving to another conversation with a mouse or keyboard puts the cursor in its
   // composer; opening or closing the details beside the conversation moves focus
   // with them, as the dialog does below `wide`. When the details close because the
@@ -223,7 +232,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
       rowLink={navigation.rowLink}
       onNewBot={intents.newBot}
       onNewRoom={intents.newRoom}
-      footer={<SettingsButton data={data} intents={intents} onOpenChange={setSettingsOpen} />}
+      footer={<SettingsButton data={data} intents={intents} />}
       ref={rosterRef}
     />
   );
@@ -376,6 +385,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
         active={active}
         layout={layout}
         containerRef={containerRef}
+        conversationRef={setConversationRegion}
         onCloseDetails={() => navigation.setDetailsOpen(false)}
       />
     </BotsProvider>
