@@ -8,7 +8,7 @@ import {
   weekdayList,
   zoneName,
 } from "@j3-bots/client-runtime/presentation";
-import type { I18n } from "../i18n/i18n";
+import type { I18n } from "@j3-bots/i18n";
 import type { TimeContext } from "./time";
 
 /**

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vite-plus/test";
-import { createI18n, resolveLocale } from "./i18n";
+import { createI18n, resolveLocale } from "./i18n.ts";
 
 describe("createI18n", () => {
   it("fills placeholders, formatting numbers for the language", () => {

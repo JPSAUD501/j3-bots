@@ -57,7 +57,8 @@ import {
   type MemoryEdit,
 } from "@j3-bots/client-runtime";
 import { handoffPeer, type RoomFormMode } from "@j3-bots/client-runtime/presentation";
-import { useI18n, usePresentation } from "../app/context";
+import { notificationText } from "@j3-bots/i18n";
+import { useI18n } from "../app/context";
 import { ConnectionBanner } from "../components/ConnectionBanner";
 import { memoryLabel } from "../components/DetailsPanel";
 import { EditBotDialog } from "../components/EditBotDialog";
@@ -68,7 +69,6 @@ import { guessDeviceName, Incompatible, Pairing, StorageFailed } from "../compon
 import { ServerAddress } from "../components/ServerAddress";
 import { type Notice, Toast } from "../components/Toast";
 import { notificationAccess } from "../preferences/notifications";
-import { notificationContent } from "../presentation/notification";
 import type { ConversationView, DesktopServer, ShellData, ShellIntents } from "../shell/data";
 import { ShellSourceProvider } from "../shell/source";
 import {
@@ -307,7 +307,8 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   const j3 = useJ3Client();
   // An answer that arrives after the pairing changed belongs to the one that ended.
   const stillPaired = () => j3.pairing.get() === pairing;
-  const { t } = useI18n();
+  const i18n = useI18n();
+  const { t } = i18n;
   const navigate = useNavigate();
   const params = useParams({ strict: false });
   const search = useSearch({ strict: false });
@@ -406,7 +407,6 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   // memory viewer holding an edit, stay open, with the conversation opened
   // under them: the click never throws typing away, and closing the dialog
   // lands on what the notification was about. A save under way is not given up on.
-  const presentation = usePresentation();
   const openTarget = useEffectEvent((opened: EntryTarget) => {
     setSettingsOpen(false);
     if (!newBotUnsaved) setNewBot(false);
@@ -442,7 +442,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
       rows.flatMap((row) =>
         row._tag === "room" && row.room.id === id ? [row.room.name] : [],
       )[0] ?? null;
-    const content = notificationContent(notification, { ...presentation, botName }, roomName);
+    const content = notificationText(notification, { botName, roomName }, i18n);
     if (content === null) return;
     showNotification(
       { ...content, tag: notification.entryId, target: notification.target, pairing },

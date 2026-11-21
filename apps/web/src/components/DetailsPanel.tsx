@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { useState, type ReactElement, type ReactNode, type Ref } from "react";
 import { useBots, useI18n, usePresentation } from "../app/context";
-import type { KeyWith } from "../i18n/i18n";
+import type { KeyWith } from "@j3-bots/i18n";
 import { cn } from "../lib/cn";
 import { scheduleInWords } from "../lib/schedule";
 import { activityTime, timeInSentence } from "../lib/time";

@@ -10,6 +10,8 @@ import {
   Conflict,
   type EngineStatus,
   Invalid,
+  LANGUAGES,
+  type Language,
   MemoryPath,
   MemoryRevision,
   ModelId,
@@ -55,7 +57,6 @@ import { SecretRequestCard } from "../components/SecretRequestCard";
 import { Timeline, type TimelineIntents } from "../components/Timeline";
 import { UsageSection } from "../components/UsageSection";
 import { WorkFold } from "../components/WorkFold";
-import { locales, type Locale } from "../i18n/i18n";
 import { cn } from "../lib/cn";
 import { addresseeLine } from "../presentation/mentions";
 import { Shell } from "../shell/Shell";
@@ -70,10 +71,10 @@ const bots = team.roster.flatMap((item) => (item._tag === "bot" ? [item.bot] : [
 const nothing = () => {};
 const shortcuts = shellShortcuts();
 
-const languageNames: Record<Locale, string> = { en: "English", "pt-BR": "Português (Brasil)" };
+const languageNames: Record<Language, string> = { en: "English", "pt-BR": "Português (Brasil)" };
 
 export default function GalleryPage() {
-  const [locale, setLocale] = useState<Locale>("en");
+  const [locale, setLocale] = useState<Language>("en");
   return (
     <I18nProvider locale={locale}>
       <ClockProvider now={SAMPLE_NOW}>
@@ -94,7 +95,7 @@ export default function GalleryPage() {
                     aria-label="Language"
                     className="flex gap-1 rounded-md bg-muted p-1"
                   >
-                    {locales.map((l) => (
+                    {LANGUAGES.map((l) => (
                       <button
                         key={l}
                         type="button"

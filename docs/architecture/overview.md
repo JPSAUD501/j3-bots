@@ -94,6 +94,7 @@ packages/
   client-runtime/   connection, state and commands shared by all clients
   prompts/          base prompt, wake envelopes, tool descriptions, with their tests
   design-tokens/    colors, type, spacing, motion as data
+  i18n/             interface sentences in every language, notification wording
 docs/
 ```
 

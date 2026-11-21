@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Bot, BotId } from "@j3-bots/contracts";
+import type { Bot, BotId, Language } from "@j3-bots/contracts";
 import { createContext, use, useEffect, useMemo, type ReactNode } from "react";
-import { createI18n, resolveLocale, type I18n, type Locale } from "../i18n/i18n";
+import { createI18n, resolveLocale, type I18n } from "@j3-bots/i18n";
 import { usePreferences } from "../preferences/preferences";
 import type { PresentationContext } from "../presentation/roster";
 import { useClock } from "./clock";
@@ -9,7 +9,7 @@ import { useClock } from "./clock";
 const I18nContext = createContext<I18n>(createI18n("en"));
 
 /** Interface text in the operator's language: their choice, or the browser's. */
-export function I18nProvider({ locale, children }: { locale?: Locale; children: ReactNode }) {
+export function I18nProvider({ locale, children }: { locale?: Language; children: ReactNode }) {
   const { language } = usePreferences();
   const resolved =
     locale ?? (language === "system" ? resolveLocale(navigator.languages) : language);

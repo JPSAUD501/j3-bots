@@ -296,6 +296,9 @@ importers:
       '@j3-bots/desktop-bridge':
         specifier: workspace:*
         version: link:../../packages/desktop-bridge
+      '@j3-bots/i18n':
+        specifier: workspace:*
+        version: link:../../packages/i18n
       '@tanstack/react-router':
         specifier: 1.170.10
         version: 1.170.10(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -423,6 +426,16 @@ importers:
       effect:
         specifier: 4.1.3
         version: 4.1.3
+
+  packages/i18n:
+    dependencies:
+      '@j3-bots/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      vite-plus:
+        specifier: 1.4.0
+        version: 1.4.0(@types/node@24.12.4)(@vitest/ui@5.0.5)(jiti@2.7.0)(yaml@2.9.1)
 
   packages/prompts:
     dependencies:

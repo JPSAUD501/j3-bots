@@ -3,7 +3,7 @@ import type { Bot, EngineStatus, ProviderStatus } from "@j3-bots/contracts";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 import { useI18n, usePresentation } from "../app/context";
-import type { I18n } from "../i18n/i18n";
+import type { I18n } from "@j3-bots/i18n";
 import { cn } from "../lib/cn";
 import { usageLimitText } from "../presentation/roster";
 import { BotAvatar } from "./BotAvatar";

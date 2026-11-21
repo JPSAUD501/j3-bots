@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Catalog } from "./i18n";
+import type { Catalog } from "./i18n.ts";
 
 /** Brazilian Portuguese. Every key of `en.ts`, with every placeholder kept. */
 export const ptBR: Catalog = {

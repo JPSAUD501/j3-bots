@@ -2,7 +2,7 @@
 import type { RoutineChangeEntry } from "@j3-bots/contracts";
 import { CalendarClockIcon, CirclePauseIcon, Trash2Icon, WebhookIcon } from "lucide-react";
 import { usePresentation } from "../app/context";
-import type { KeyWith } from "../i18n/i18n";
+import type { KeyWith } from "@j3-bots/i18n";
 import { scheduleInWords } from "../lib/schedule";
 
 const changeText: Record<RoutineChangeEntry["change"], KeyWith> = {
