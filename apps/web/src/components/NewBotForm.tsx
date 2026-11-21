@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
 import { Button } from "./ui/button";
@@ -12,6 +12,8 @@ interface NewBotFormProps {
   readonly onCreate: (name: string, primary: boolean) => Promise<void>;
   /** Absent where there is nothing to go back to. */
   readonly onCancel?: () => void;
+  /** Told whether a name is typed and not created yet; told `false` again on unmount. */
+  readonly onUnsavedChange?: (unsaved: boolean) => void;
   readonly className?: string;
 }
 
@@ -20,7 +22,13 @@ interface NewBotFormProps {
  * itself. Create stays focusable while it cannot act, and pressing it then
  * does nothing, as in pairing and the composer.
  */
-export function NewBotForm({ primaryAtFirst, onCreate, onCancel, className }: NewBotFormProps) {
+export function NewBotForm({
+  primaryAtFirst,
+  onCreate,
+  onCancel,
+  onUnsavedChange,
+  className,
+}: NewBotFormProps) {
   const { t } = useI18n();
   const nameId = useId();
   const [name, setName] = useState("");
@@ -28,6 +36,12 @@ export function NewBotForm({ primaryAtFirst, onCreate, onCancel, className }: Ne
   const [state, setState] = useState<"editing" | "creating" | "failed">("editing");
   const trimmed = name.trim();
   const ready = trimmed !== "" && state !== "creating";
+  const unsaved = trimmed !== "";
+  useEffect(() => {
+    if (!unsaved || onUnsavedChange === undefined) return;
+    onUnsavedChange(true);
+    return () => onUnsavedChange(false);
+  }, [unsaved, onUnsavedChange]);
   const submit = (
     <Button type="submit" variant="primary" aria-disabled={!ready}>
       {t("firstRun.create.submit")}

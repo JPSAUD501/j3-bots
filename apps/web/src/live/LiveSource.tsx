@@ -64,7 +64,12 @@ import { notificationAccess } from "../preferences/notifications";
 import { notificationContent } from "../presentation/notification";
 import type { ConversationView, ShellData, ShellIntents } from "../shell/data";
 import { ShellSourceContext } from "../shell/source";
-import { closeNotificationsOf, onNotificationClick, showNotification } from "./notify";
+import {
+  closeNotificationsOf,
+  closeNotificationsOutside,
+  onNotificationClick,
+  showNotification,
+} from "./notify";
 import { deliverFile, reserveWindow } from "./openFile";
 import { platform } from "./platform";
 
@@ -131,16 +136,24 @@ function Gate({ children }: { children: ReactNode }) {
   const [everConnected, setEverConnected] = useState(false);
   if (connection._tag === "connected" && !everConnected) setEverConnected(true);
   // A pairing this window followed ends, signed out or revoked, here or in
-  // another tab: what it received leaves the screen, its words with it.
+  // another tab: what it received leaves the screen, its words with it. The
+  // first pairing the window knows also closes what any other pairing
+  // received, for a window closed before it finished sweeping one that ended.
   const followed = useRef(pairing);
+  const sweptOthers = useRef(false);
   useEffect(() => {
     const ended = followed.current;
     followed.current = pairing;
-    if (ended === null || ended === pairing) return;
-    closeNotificationsOf(ended).catch(() => {
+    const unlisted = () => {
       // The browser would not list them; they close when the operator dismisses them.
-    });
-  }, [pairing]);
+    };
+    if (pairing !== null && !sweptOthers.current) {
+      sweptOthers.current = true;
+      closeNotificationsOutside(pairing, () => j3.pairing.get()).catch(unlisted);
+    }
+    if (ended === null || ended === pairing) return;
+    closeNotificationsOf(ended).catch(unlisted);
+  }, [j3, pairing]);
   switch (connection._tag) {
     case "starting":
       return null;
@@ -285,7 +298,9 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   const [newBot, setNewBot] = useState(false);
   const [memoryView, setMemoryView] = useState<MemoryView | null>(null);
   const [editingBot, setEditingBot] = useState<BotId | null>(null);
-  // Whether the bot editor and the memory viewer hold edits not saved yet, as they report.
+  // Whether New bot, the bot editor and the memory viewer hold what the
+  // operator typed and has not saved yet, as they report.
+  const [newBotUnsaved, setNewBotUnsaved] = useState(false);
   const [botEditUnsaved, setBotEditUnsaved] = useState(false);
   const [memoryEditing, setMemoryEditing] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -328,14 +343,14 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   // or room, whose newest entry is what the notification was about, if the
   // window still follows the pairing that received it. Settings, the details
   // and the dialogs over it close, and the profile form in Settings keeps what
-  // the operator typed. The bot editor or the memory viewer holding an edit
-  // stays open, with the conversation opened under it: the click never throws
-  // typing away, and closing the editor lands on what the notification was
-  // about. A save under way is not given up on.
+  // the operator typed. New bot holding a name, and the bot editor or the
+  // memory viewer holding an edit, stay open, with the conversation opened
+  // under them: the click never throws typing away, and closing the dialog
+  // lands on what the notification was about. A save under way is not given up on.
   const presentation = usePresentation();
   const openTarget = useEffectEvent((opened: EntryTarget) => {
     setSettingsOpen(false);
-    setNewBot(false);
+    if (!newBotUnsaved) setNewBot(false);
     if (!botEditUnsaved) setEditingBot(null);
     if (!memoryEditing) setMemoryView(null);
     // Opening it drops the details from the address, which closes them.
@@ -651,6 +666,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
       <NewBotDialog
         open={newBot}
         onOpenChange={setNewBot}
+        onUnsavedChange={setNewBotUnsaved}
         onCreate={(name, primary) =>
           intents.createBot(name, primary).then((botId) => {
             setNewBot(false);

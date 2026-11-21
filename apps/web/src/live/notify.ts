@@ -66,6 +66,17 @@ export function closeReceivedUnder(notifications: Iterable<Shown>, pairing: Devi
 }
 
 /**
+ * Closes those of `notifications` received under a pairing other than
+ * `pairing`: `pairing`'s, and one that names none, stay.
+ */
+export function closeReceivedOutside(notifications: Iterable<Shown>, pairing: DeviceId): void {
+  for (const notification of notifications) {
+    const from = decodePairing(notification.data);
+    if (Option.isSome(from) && from.value.pairing !== pairing) notification.close();
+  }
+}
+
+/**
  * Shows a notification through the service worker where there is one, since
  * some browsers (Android's) show none otherwise, and from the page where
  * there is not. A click focuses a window of the app and hands it the click:
@@ -119,6 +130,25 @@ export async function closeNotificationsOf(ended: DeviceId): Promise<void> {
   }
   const registration = await activeServiceWorker();
   if (registration !== null) closeReceivedUnder(await registration.getNotifications(), ended);
+}
+
+/**
+ * Closes every notification another pairing received, once a window first
+ * knows the pairing it follows, `first`. A window that was closed while it
+ * swept a pairing that ended leaves that pairing's on screen; the next window
+ * to start closes them. Safe then, and only then: `first` is the newest
+ * pairing the browser keeps, so any other has ended. A pairing that replaces
+ * `first` while the browser lists them is newer, so the sweep stops and
+ * leaves the change of pairing to close what `first` received.
+ */
+export async function closeNotificationsOutside(
+  first: DeviceId,
+  currentPairing: () => DeviceId | null,
+): Promise<void> {
+  const registration = await activeServiceWorker();
+  if (registration === null) return;
+  const shown = await registration.getNotifications();
+  if (currentPairing() === first) closeReceivedOutside(shown, first);
 }
 
 const decodeClick = Schema.decodeUnknownOption(

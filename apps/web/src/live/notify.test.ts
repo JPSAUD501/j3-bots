@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { DeviceId } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { closeReceivedUnder } from "./notify";
+import { closeReceivedOutside, closeReceivedUnder } from "./notify";
 
 const ended = DeviceId.make("device-ended");
 const newer = DeviceId.make("device-newer");
@@ -25,5 +25,15 @@ describe("closeReceivedUnder", () => {
     const unnamed = shown(null);
     closeReceivedUnder([ofEnded, ofNewer, unnamed], ended);
     expect([ofEnded.closed, ofNewer.closed, unnamed.closed]).toEqual([true, false, false]);
+  });
+});
+
+describe("closeReceivedOutside", () => {
+  it("closes what any other pairing received and leaves the current pairing's", () => {
+    const ofEnded = shown({ target: { _tag: "room", roomId: "launch" }, pairing: ended });
+    const ofCurrent = shown({ target: { _tag: "room", roomId: "launch" }, pairing: newer });
+    const unnamed = shown(null);
+    closeReceivedOutside([ofEnded, ofCurrent, unnamed], newer);
+    expect([ofEnded.closed, ofCurrent.closed, unnamed.closed]).toEqual([true, false, false]);
   });
 });
