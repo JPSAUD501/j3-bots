@@ -4,6 +4,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   OrchestrationV2DomainEvent,
   OrchestrationV2Run,
+  OrchestrationV2ThreadProjection,
   type OrchestrationV2UserInputQuestion,
   RunId,
 } from "@t3tools/contracts";
@@ -26,6 +27,7 @@ import {
   engineAnswersOf,
   type EventBody,
   isDeleted,
+  mirrorOf,
   nothingToStop,
   replacement,
   reportedWorkOf,
@@ -309,10 +311,18 @@ const backgroundAtEnd = (events: ReadonlyArray<{ readonly _tag: string }>) =>
   events.flatMap((event) =>
     event._tag === "turn-finished" && "backgroundWork" in event ? [event.backgroundWork] : [],
   );
-/** Background work pending in these turns, and work attributed to none if `unattributed`. */
-const pendingIn = (ids: ReadonlyArray<string>, unattributed = false) => ({
+/**
+ * Background work pending in these turns, and work attributed to none if
+ * `unattributed`; by default all of it is what the engine's stop ends.
+ */
+const pendingIn = (
+  ids: ReadonlyArray<string>,
+  unattributed = false,
+  stoppable = ids.length > 0 || unattributed,
+) => ({
   turns: ids.map((id) => TurnId.make(id)),
   unattributed,
+  stoppable,
 });
 const NONE = pendingIn([]);
 describe("backgroundWorkOf", () => {
@@ -532,6 +542,70 @@ describe("backgroundWorkOf", () => {
     assert.deepStrictEqual(backgroundWorkOf(mirror).pending, pendingIn(["run-2"]));
   });
 
+  // A fresh-context start queued behind a turn leaves the old provider session
+  // running while it has background work; its provider thread reports the task
+  // until it ends, and the engine's stop does not reach it (**Read** at
+  // `db51b67`, `Orchestrator.ts`, L2765-2808, L13642-13692; the testkit's
+  // "Fresh context with an old session's background task").
+  it("reports a task an old provider session still runs after a fresh context, out of the stop's reach", () => {
+    const mirror = emptyMirror();
+    applyEvent(
+      mirror,
+      event("thread.created", { ...appThread, activeProviderThreadId: "provider-thread-1" }),
+    );
+    mirror.providerSessions.set("session-1", "ready");
+    mirror.providerSessions.set("session-2", "ready");
+    applyEvent(mirror, run("running", 1));
+    applyEvent(
+      mirror,
+      providerThread(["task-old"], undefined, "run-1", { providerSessionId: "session-1" }),
+    );
+    applyEvent(mirror, run("completed", 1));
+    const fresh = { id: "provider-thread-2", providerSessionId: "session-2", firstRunOrdinal: 2 };
+    const freshCommand = (status: string) =>
+      item({
+        id: "item-fresh-command",
+        runId: "run-2",
+        type: "command_execution",
+        input: "npm run dev",
+        status,
+      });
+    applyEvent(mirror, run("running", 2));
+    applyEvent(mirror, providerThread([], undefined, "run-2", fresh));
+    applyEvent(mirror, freshCommand("running"));
+    applyEvent(mirror, run("completed", 2));
+    // The fresh run left work the stop ends, beside the old session's.
+    assert.deepStrictEqual(backgroundWorkOf(mirror).pending, pendingIn(["run-1", "run-2"]));
+    assert.isFalse(nothingToStop(mirror, at));
+
+    applyEvent(mirror, freshCommand("interrupted"));
+    assert.deepStrictEqual(backgroundWorkOf(mirror).pending, pendingIn(["run-1"], false, false));
+    assert.isTrue(nothingToStop(mirror, at));
+
+    // Archiving detaches the session, which ends its work.
+    applyEvent(
+      mirror,
+      event("provider-session.detached", { providerSessionId: "session-1", detachedAt: at }),
+    );
+    assert.deepStrictEqual(backgroundWorkOf(mirror).pending, NONE);
+  });
+
+  // Follow-ups can share a child thread, and the engine's rule counts agents:
+  // the first one listed stays (**Read** at `db51b67`,
+  // `orchestrationV2PendingBackgroundWork.ts`, L318-326).
+  it("counts the subagents of one child thread once, for the run that listed it first", () => {
+    const mirror = emptyMirror();
+    const first = { taskId: "task-1", kind: "subagent", childThreadId: "thread-child" };
+    const followUp = { taskId: "task-2", kind: "subagent", childThreadId: "thread-child" };
+    applyEvent(mirror, run("running", 1));
+    applyEvent(mirror, providerThread([], [first], "run-1"));
+    applyEvent(mirror, run("completed", 1));
+    applyEvent(mirror, run("running", 2));
+    applyEvent(mirror, providerThread([], [first, followUp], "run-2"));
+    applyEvent(mirror, run("completed", 2));
+    assert.deepStrictEqual(backgroundWorkOf(mirror).pending, pendingIn(["run-1"]));
+  });
+
   it("leaves a monitor the agent does not await to wake the session on its own", () => {
     const mirror = emptyMirror();
     applyEvent(mirror, run("running", 1));
@@ -712,6 +786,43 @@ describe("the cause of a turn the engine started on its own", () => {
         turn.turnId === TurnId.make("run-2") ? [turn.cause] : [],
       ),
       [DELEGATED],
+    );
+  });
+
+  // A snapshot has no run's first record: the opening is the user message
+  // under the run that no message item carries, the one the notification
+  // item stands for (**Read** at `db51b67`, `notification.ts`, L229-253).
+  it("keeps its origin in a snapshot taken after a steer restarted the turn", () => {
+    const steerMessage = {
+      ...wakeMessage().payload,
+      id: steer,
+      text: "Also check the logs.",
+      createdBy: "user",
+    };
+    const projection = Schema.decodeUnknownSync(OrchestrationV2ThreadProjection)({
+      thread: appThread,
+      runs: [run("completed", 1).payload, run("running", 2, { userMessageId: steer }).payload],
+      attempts: [],
+      nodes: [],
+      subagents: [],
+      providerSessions: [],
+      providerThreads: [],
+      providerTurns: [],
+      runtimeRequests: [],
+      messages: [wakeMessage("run-1").payload, steerMessage],
+      plans: [],
+      turnItems: [notice.payload, steerItem.payload],
+      checkpointScopes: [],
+      checkpoints: [],
+      contextHandoffs: [],
+      contextTransfers: [],
+      visibleTurnItems: [],
+      updatedAt: at,
+    });
+    const { event: replaced } = replacement(mirrorOf(projection), false, at);
+    assert.deepStrictEqual(
+      replaced.openTurns.map((turn) => [turn.turnId, turn.cause]),
+      [[TurnId.make("run-2"), DELEGATED]],
     );
   });
 });

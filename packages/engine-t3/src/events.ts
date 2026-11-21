@@ -175,9 +175,11 @@ export const PendingContinuation = Schema.Struct({ resumesAt: Schema.DateTimeUtc
 export type PendingContinuation = typeof PendingContinuation.Type;
 
 /**
- * A session's background work as the engine's stop counts it, with no turn
- * running, by the turn that started it. Work the adapter could not judge
- * counts as pending until it can.
+ * A session's background work, with no turn running, by the turn that started
+ * it: what the engine's stop counts, and what a provider session the engine
+ * keeps from before a fresh-context start still reports, which the engine's
+ * stop does not reach. Work the adapter could not judge counts as pending
+ * until it can.
  */
 export const BackgroundWork = Schema.Struct({
   /**
@@ -189,10 +191,16 @@ export const BackgroundWork = Schema.Struct({
   turns: Schema.Array(TurnId),
   /** Pending work the engine attributes to no turn. */
   unattributed: Schema.Boolean,
+  /**
+   * Whether any of it is what the engine's stop interrupts. Work that only a
+   * provider thread from before a fresh-context start reports is not: it ends
+   * on its own, or when the session is retired.
+   */
+  stoppable: Schema.Boolean,
 });
 export type BackgroundWork = typeof BackgroundWork.Type;
 
-/** Whether the session has any background work pending: what the engine's stop interrupts. */
+/** Whether the session has any background work pending, whether or not a stop reaches it. */
 export const isBackgroundWorkPending = (work: BackgroundWork) =>
   work.turns.length > 0 || work.unattributed;
 

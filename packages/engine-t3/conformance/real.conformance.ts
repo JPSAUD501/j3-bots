@@ -288,9 +288,14 @@ describe("Engine conformance, real engine only", () => {
         assert.deepStrictEqual(running.backgroundWork, {
           turns: [turnOf(delegating)],
           unattributed: false,
+          stoppable: true,
         });
         // Stop ended the task, and left nothing to run in its place.
-        assert.deepStrictEqual(stopped.backgroundWork, { turns: [], unattributed: false });
+        assert.deepStrictEqual(stopped.backgroundWork, {
+          turns: [],
+          unattributed: false,
+          stoppable: false,
+        });
         assert.deepStrictEqual(stopped.runnableTurns, []);
       }).pipe(
         Effect.provide(bench.pipe(Layer.provideMerge(realEngine), Layer.provideMerge(platform))),

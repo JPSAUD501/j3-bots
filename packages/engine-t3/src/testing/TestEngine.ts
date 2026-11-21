@@ -1453,14 +1453,17 @@ const make = Effect.gen(function* () {
             // Every event is handed to the streams as it happens, so each stream
             // is already caught up: the marker follows what it was last given.
             // The TestEngine knows every tool's persistence: its work is never in doubt.
+            const turns =
+              session.running === null
+                ? [...session.turns.values()]
+                    .filter((turn) => turn.background)
+                    .map((turn) => turn.turnId)
+                : [];
+            // It starts no fresh context: all its work is what a stop ends.
             const backgroundWork: BackgroundWork = {
-              turns:
-                session.running === null
-                  ? [...session.turns.values()]
-                      .filter((turn) => turn.background)
-                      .map((turn) => turn.turnId)
-                  : [],
+              turns,
               unattributed: false,
+              stoppable: turns.length > 0,
             };
             // The running turn, also one whose provider turn has not started, and those waiting.
             const runnableTurns =

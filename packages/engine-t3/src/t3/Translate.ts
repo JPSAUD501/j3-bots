@@ -9,6 +9,7 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProviderFailureClass,
+  type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   type OrchestrationV2RuntimeRequest,
@@ -28,7 +29,6 @@ import {
   type EndedTurn,
   type EngineRequest,
   type HostSpeech,
-  isBackgroundWorkPending,
   type OpenRequest,
   type OpenTurn,
   type PendingContinuation,
@@ -70,6 +70,7 @@ type Item = OrchestrationV2TurnItem;
 type RuntimeRequest = OrchestrationV2RuntimeRequest;
 type Thread = OrchestrationV2AppThread;
 type ProviderThread = OrchestrationV2ProviderThread;
+type ProviderSession = OrchestrationV2ProviderSession;
 type Message = OrchestrationV2ConversationMessage;
 
 /** The engine's state of one thread, as far as J3 Bots reads it. */
@@ -84,6 +85,12 @@ export interface Mirror {
    * `hasBackgroundWork`), each task attributed to its run (`attributeTasks`).
    */
   readonly providerThreads: Map<string, ProviderThread>;
+  /**
+   * The status of each provider session the engine keeps for the thread, by
+   * id: read only for which provider threads' background work is still live
+   * (`backgroundWorkOf`).
+   */
+  readonly providerSessions: Map<string, ProviderSession["status"]>;
   /**
    * The message each run opened with, by run id, as its first record carried
    * it: a steering restart moves the run's `userMessageId` to the steer, on
@@ -124,6 +131,7 @@ export const emptyMirror = (): Mirror => ({
   items: new Map(),
   requests: new Map(),
   providerThreads: new Map(),
+  providerSessions: new Map(),
   openings: new Map(),
   origins: new Map(),
   toolDigests: new Map(),
@@ -138,6 +146,7 @@ export const copyMirror = (mirror: Mirror): Mirror => ({
   items: new Map(mirror.items),
   requests: new Map(mirror.requests),
   providerThreads: new Map(mirror.providerThreads),
+  providerSessions: new Map(mirror.providerSessions),
   openings: new Map(mirror.openings),
   origins: new Map(mirror.origins),
   toolDigests: new Map(mirror.toolDigests),
@@ -170,6 +179,9 @@ export const mirrorOf = (
     items,
     requests: new Map(projection.runtimeRequests.map((request) => [request.id, request])),
     providerThreads: new Map(projection.providerThreads.map((thread) => [thread.id, thread])),
+    providerSessions: new Map(
+      projection.providerSessions.map((session) => [session.id, session.status]),
+    ),
     openings,
     origins: new Map(
       [...openings].map(([runId, messageId]) => [
@@ -224,7 +236,8 @@ export const applyEvent = (mirror: Mirror, event: OrchestrationV2DomainEvent): b
       // one, unless it only reserves a seat for a queued run, as the engine's
       // projection applies it (**Read** at `db51b67`, `ProjectionStore.ts`,
       // L1142-1150): a fresh-context start switches it so, with no thread
-      // event, and `backgroundWorkOf` reads only the active one.
+      // event, and the engine's stop counts only the active one's tasks
+      // (`backgroundWorkOf`).
       if (
         mirror.thread !== undefined &&
         event.payload.appThreadId === mirror.thread.id &&
@@ -237,9 +250,19 @@ export const applyEvent = (mirror: Mirror, event: OrchestrationV2DomainEvent): b
         attributeTasks(event.payload, mirror.providerThreads.get(event.payload.id), event.runId),
       );
       return false;
+    case "provider-session.attached":
+    case "provider-session.updated":
+      // As for a provider thread: only `backgroundWorkOf` reads it. The
+      // engine's projection keeps a session until it is detached (**Read** at
+      // `db51b67`, `ProjectionStore.ts`, L1129-1141).
+      mirror.providerSessions.set(event.payload.id, event.payload.status);
+      return false;
+    case "provider-session.detached":
+      mirror.providerSessions.delete(event.payload.providerSessionId);
+      return false;
     case "message.updated": {
       // The engine records a run's opening message in the command that
-      // creates the run, right after `run.created` (**Read** at `db51b67`,
+      // creates the run, after `run.created` (**Read** at `db51b67`,
       // `Orchestrator.ts`: the queued run at L8128 and its message at L8184,
       // a start at L8617 and L8669, L9643 and L9691), so a turn's origin is
       // known before it can start, though not yet when the run is created
@@ -681,9 +704,9 @@ export interface UndecidedTool {
 }
 
 /**
- * The session's background work as the mirror shows it, by the rule the
- * engine's stop counts it with, by the turn that started each piece: work it
- * counts as pending, and live dynamic tools whose persistence no read of the
+ * The session's background work as the mirror shows it, by the turn that
+ * started each piece: work pending, which says whether the engine's stop
+ * counts any of it, and live dynamic tools whose persistence no read of the
  * item could decide, which the engine's own projection decides
  * (`workInShell`).
  */
@@ -704,49 +727,134 @@ const taskIdOf = (item: Item) => item.nativeItemRef?.nativeId ?? item.id;
  * Background work by the turn that started it, the turns in the order they
  * ran. A turn the mirror no longer has comes after those it has.
  */
-const workBy = (mirror: Mirror, owners: ReadonlyArray<string | null>): BackgroundWork => {
+const workBy = (
+  mirror: Mirror,
+  owners: ReadonlyArray<string | null>,
+  stoppable: boolean,
+): BackgroundWork => {
   const order = (runId: string) => mirror.runs.get(runId)?.ordinal ?? Number.POSITIVE_INFINITY;
   const turns = [...new Set(owners.filter((owner) => owner !== null))].sort(
     (a, b) => order(a) - order(b),
   );
-  return { turns: turns.map((turn) => TurnId.make(turn)), unattributed: owners.includes(null) };
+  return {
+    turns: turns.map((turn) => TurnId.make(turn)),
+    unattributed: owners.includes(null),
+    stoppable,
+  };
 };
 
+const RELEASED_SESSION: ReadonlySet<ProviderSession["status"]> = new Set(["stopped", "error"]);
+
+/** A provider thread whose tasks are live work, and whether the engine's stop counts them. */
+interface LiveProviderThread {
+  readonly thread: ProviderThread;
+  readonly stoppable: boolean;
+}
+
 /**
- * The session's background work as the engine's stop counts it: what
- * `thread.stop` interrupts in a session whose latest run has ended, an
- * interrupt that lands only after the stop answered. The engine's own rule
- * (**Read** at `db51b67`, `orchestrationV2PendingBackgroundWork.ts`,
- * `derivePendingBackgroundWork`, L261-330, and `pendingBackgroundTurnItems`,
- * L243-258), as `Orchestrator.ts`, `dispatchThreadStop` (L14141-14178),
- * applies it: with no run active and the latest run settled, a task the
- * active provider thread reports, or a live command, dynamic tool or subagent
- * item outside a rolled-back run, one entry per task id. The rule is the
- * session's: a stop ends all of it, whichever run started it. Each piece is
- * attributed to the run the engine gives it: a task's `runId`, which the
- * projection stamps (`attributeTasks`), or an item's own.
+ * The provider threads whose tasks are live work, each with whether the
+ * engine's stop counts its tasks. The stop counts only the thread's active
+ * provider thread, or every one while it has none (**Read** at `db51b67`,
+ * `orchestrationV2PendingBackgroundWork.ts`, `derivePendingBackgroundWork`,
+ * L289-292).
+ *
+ * A fresh-context start moves the thread to a new provider thread, and
+ * releases the old one's provider session only when the provider hosts one
+ * provider thread per session and the session has no background work: a
+ * queued fresh start leaves a busy session running, as one a schedule sends
+ * does, and any other start the engine would begin at once is refused
+ * (`Orchestrator.ts`, `sessionsReleasedByFreshContext`, L1520-1533, applied at
+ * L2765-2808 and L8325-8345; the testkit's "Fresh context with an old
+ * session's background task"). The old provider thread keeps reporting its
+ * tasks until they end, or until archiving the thread detaches every session
+ * (L4713-4736). The engine's stop does not reach them: it picks its target by
+ * the active provider thread's tasks and live items, and interrupts another
+ * provider thread only at the provider turn of a live item
+ * (`dispatchThreadStop`, L14141-14178; `dispatchRunInterrupt`, L13642-13692).
+ *
+ * So another provider thread's tasks count, though not for the stop, while it
+ * is one of the thread's own conversations, not a subagent's, and its provider
+ * session is one the engine keeps: attached, as a released one is detached in
+ * the same command (L3285-3296, L8701-8712), and neither stopped nor failed,
+ * as the engine judges a session it could still release.
+ */
+const liveProviderThreads = (mirror: Mirror): ReadonlyArray<LiveProviderThread> => {
+  const active = mirror.thread?.activeProviderThreadId ?? null;
+  return [...mirror.providerThreads.values()].flatMap((thread): Array<LiveProviderThread> => {
+    if (active === null || thread.id === active) return [{ thread, stoppable: true }];
+    const session =
+      thread.providerSessionId === null
+        ? undefined
+        : mirror.providerSessions.get(thread.providerSessionId);
+    return thread.appThreadId === mirror.thread?.id &&
+      thread.ownerNodeId === null &&
+      session !== undefined &&
+      !RELEASED_SESSION.has(session)
+      ? [{ thread, stoppable: false }]
+      : [];
+  });
+};
+
+/** One pending task, as `backgroundWorkOf` lists it. */
+interface PendingEntry {
+  readonly runId: string | null;
+  readonly stoppable: boolean;
+  /** The child thread a subagent runs in, if it names one. */
+  readonly childThreadId: string | null;
+}
+
+/**
+ * The session's background work as the engine's stop counts it, and the work
+ * the stop does not reach that a provider thread from before a fresh-context
+ * start still reports (`liveProviderThreads`). The stop interrupts it in a
+ * session whose latest run has ended, an interrupt that lands only after the
+ * stop answered. The engine's own rule (**Read** at `db51b67`,
+ * `orchestrationV2PendingBackgroundWork.ts`, `derivePendingBackgroundWork`,
+ * L261-330, and `pendingBackgroundTurnItems`, L243-258), as `Orchestrator.ts`,
+ * `dispatchThreadStop` (L14141-14178), applies it: with no run active and the
+ * latest run settled, a task the active provider thread reports, or a live
+ * command, dynamic tool or subagent item outside a rolled-back run, in the
+ * order the engine reads them, by ordinal (`ProjectionStore.ts`, L3911), one
+ * entry per task id, and one per child thread among subagents, the first
+ * listed: follow-ups can share a child thread, and the rule counts agents
+ * (L318-326). The other provider threads' tasks come after those. The rule is
+ * the session's: a stop ends all it counts, whichever run started it. Each
+ * piece is attributed to the run the engine gives it: a task's `runId`, which
+ * the projection stamps (`attributeTasks`), or an item's own.
  */
 export const backgroundWorkOf = (mirror: Mirror): MirroredWork => {
-  const none: MirroredWork = { pending: { turns: [], unattributed: false }, undecided: [] };
+  const none: MirroredWork = {
+    pending: { turns: [], unattributed: false, stoppable: false },
+    undecided: [],
+  };
   if ([...mirror.runs.values()].some((run) => ACTIVE_RUN.has(run.status))) return none;
   const latest = latestRun(mirror);
   if (latest === undefined || !SETTLED_FOR_BACKGROUND.has(latest.status)) return none;
-  const active = mirror.thread?.activeProviderThreadId ?? null;
-  const owners: Array<string | null> = [];
+  const threads = liveProviderThreads(mirror);
+  const entries: Array<PendingEntry> = [];
   const listed = new Set<string>();
-  for (const thread of mirror.providerThreads.values()) {
-    if (active !== null && thread.id !== active) continue;
-    for (const task of thread.pendingBackgroundTasks ?? []) {
-      if (task.taskId.length === 0 || listed.has(task.taskId)) continue;
-      listed.add(task.taskId);
-      owners.push(task.runId ?? null);
+  const listTasks = (stoppable: boolean) => {
+    for (const { thread } of threads.filter((live) => live.stoppable === stoppable)) {
+      for (const task of thread.pendingBackgroundTasks ?? []) {
+        if (task.taskId.length === 0 || listed.has(task.taskId)) continue;
+        listed.add(task.taskId);
+        entries.push({
+          runId: task.runId ?? null,
+          stoppable,
+          childThreadId: task.kind === "subagent" ? (task.childThreadId ?? null) : null,
+        });
+      }
     }
-  }
+  };
+  listTasks(true);
   const rolledBack = new Set(
     [...mirror.runs.values()].flatMap((run) => (run.status === "rolled_back" ? [run.id] : [])),
   );
   const undecided: Array<UndecidedTool> = [];
-  for (const item of mirror.items.values()) {
+  const items = [...mirror.items.values()].sort(
+    (a, b) => a.ordinal - b.ordinal || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+  );
+  for (const item of items) {
     const taskId = taskIdOf(item);
     if (
       !BACKGROUND_ITEM.has(item.type) ||
@@ -759,10 +867,32 @@ export const backgroundWorkOf = (mirror: Mirror): MirroredWork => {
     const work = item.type === "dynamic_tool" ? toolWork(mirror, item) : "pending";
     if (work === "none") continue;
     listed.add(taskId);
-    if (work === "pending") owners.push(item.runId);
-    else undecided.push({ taskId, turnId: item.runId === null ? null : TurnId.make(item.runId) });
+    if (work === "undecided") {
+      undecided.push({ taskId, turnId: item.runId === null ? null : TurnId.make(item.runId) });
+      continue;
+    }
+    entries.push({
+      runId: item.runId,
+      stoppable: true,
+      childThreadId: item.type === "subagent" ? item.childThreadId : null,
+    });
   }
-  return { pending: workBy(mirror, owners), undecided };
+  listTasks(false);
+  const children = new Set<string>();
+  const counted = entries.filter((entry) => {
+    if (entry.childThreadId === null) return true;
+    if (children.has(entry.childThreadId)) return false;
+    children.add(entry.childThreadId);
+    return true;
+  });
+  return {
+    pending: workBy(
+      mirror,
+      counted.map((entry) => entry.runId),
+      counted.some((entry) => entry.stoppable),
+    ),
+    undecided,
+  };
 };
 
 /**
@@ -774,11 +904,15 @@ export const reportedWorkOf = (
   work: MirroredWork,
   pendingTools: ReadonlyArray<UndecidedTool>,
 ): BackgroundWork =>
-  workBy(mirror, [
-    ...work.pending.turns,
-    ...(work.pending.unattributed ? [null] : []),
-    ...pendingTools.map((tool) => tool.turnId),
-  ]);
+  workBy(
+    mirror,
+    [
+      ...work.pending.turns,
+      ...(work.pending.unattributed ? [null] : []),
+      ...pendingTools.map((tool) => tool.turnId),
+    ],
+    work.pending.stoppable || pendingTools.length > 0,
+  );
 
 /**
  * Which tools the mirror could not decide (`MirroredWork`) are pending, by
@@ -1896,9 +2030,12 @@ export const runnableTurns = (mirror: Mirror): ReadonlyArray<TurnId> =>
     .filter((run) => run.status === "queued" || ACTIVE_RUN.has(run.status))
     .map(turnIdOf);
 
-/** No background work, nor any the adapter could not judge yet. */
-const isNothing = (work: MirroredWork) =>
-  !isBackgroundWorkPending(work.pending) && work.undecided.length === 0;
+/**
+ * No background work the engine's stop counts, nor any it may count, that
+ * the adapter could not judge yet.
+ */
+const isNothingToStop = (work: MirroredWork) =>
+  !work.pending.stoppable && work.undecided.length === 0;
 
 /**
  * Whether nothing a Stop targets can still run in the session: no run that
@@ -1915,7 +2052,7 @@ export const nothingToStop = (mirror: Mirror, now: DateTime.Utc): boolean => {
       (run) =>
         (!isEnded(run) && !waiting.has(run.id)) ||
         (isEnded(run) && continuationOf(mirror, run, now) !== null),
-    ) && isNothing(backgroundWorkOf(mirror))
+    ) && isNothingToStop(backgroundWorkOf(mirror))
   );
 };
 

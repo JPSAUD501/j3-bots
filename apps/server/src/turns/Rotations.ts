@@ -69,11 +69,11 @@ const encodeNote = Schema.encodeEffect(json(CatchUpNote));
  * session, and one never opened, run nothing: it is replaced at once. One the
  * engine could not resume is replaced once no turn runs or can run there,
  * whatever background work it still has, which the retirement ends, as for a
- * lost one. Any other waits until the session is quiet by the engine's own
- * stop rule: no turn, and no background work pending. For the operator's own
- * actions a Stop ran first, so it is quiet once that Stop settles; the run
- * limit waits for the work to end by itself, and its session takes new work
- * meanwhile.
+ * lost one. Any other waits until the session is quiet: no turn, and no
+ * background work pending, also work the engine's stop does not reach. For
+ * the operator's own actions a Stop ran first, so it is quiet once that Stop
+ * settles and that work has ended; the run limit waits for the work to end by
+ * itself, and its session takes new work meanwhile.
  */
 type Waits = "nothing" | "turns" | "everything";
 
