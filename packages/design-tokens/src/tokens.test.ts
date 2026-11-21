@@ -13,15 +13,19 @@ import {
   type Vision,
 } from "./color.ts";
 import { botPalette, colors, type ColorRole } from "./tokens.ts";
+import { renderUniwindCss } from "./uniwind.ts";
 import { renderWebCss } from "./web.ts";
 
 const modes = ["light", "dark"] as const;
 
-describe("web stylesheet", () => {
+describe.each([
+  ["web.css", renderWebCss],
+  ["uniwind.css", renderUniwindCss],
+])("generated %s", (file, render) => {
   it("is regenerated after every token change", () => {
-    const committed = NodeFS.readFileSync(new URL("../generated/web.css", import.meta.url), "utf8");
+    const committed = NodeFS.readFileSync(new URL(`../generated/${file}`, import.meta.url), "utf8");
     // Run `pnpm --filter @j3-bots/design-tokens generate` when this fails.
-    expect(committed).toBe(renderWebCss());
+    expect(committed).toBe(render());
   });
 });
 
