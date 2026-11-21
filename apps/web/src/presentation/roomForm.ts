@@ -114,20 +114,45 @@ export function roomDraft(values: RoomFormValues, primaryId: BotId | null): Chec
 const sameOrder = (a: ReadonlyArray<BotId>, b: ReadonlyArray<BotId>) =>
   a.length === b.length && a.every((id, index) => id === b[index]);
 
+/** The hop limit `values` give, with an empty one read as the default. */
+const resolvedHopLimit = (values: RoomFormValues, defaultHopLimit: number | null) => {
+  const typed = hopLimitOf(values.hopLimit);
+  return typed === null ? defaultHopLimit : typed;
+};
+
 /**
- * What the form changes about `room`, and only that. An empty hop limit sets
- * it back to the default.
+ * Whether `values` say the same as `opened`, the form as it opened: the same
+ * name, bots in the same order, the same host and the same hop limit. An edit
+ * the operator undid changes nothing.
+ */
+export function sameRoomForm(
+  opened: RoomFormValues,
+  values: RoomFormValues,
+  primaryId: BotId | null,
+  defaultHopLimit: number | null,
+): boolean {
+  return (
+    values.name.trim() === opened.name.trim() &&
+    sameOrder(values.members, opened.members) &&
+    hostOf(values, primaryId) === hostOf(opened, primaryId) &&
+    resolvedHopLimit(values, defaultHopLimit) === resolvedHopLimit(opened, defaultHopLimit)
+  );
+}
+
+/**
+ * What the form changes from `opened`, the room as the form opened with it,
+ * and only that: a field changed elsewhere meanwhile and left alone here is
+ * not sent back. An empty hop limit sets it back to the default.
  */
 export function roomChanges(
-  room: Room,
+  opened: RoomFormValues,
   values: RoomFormValues,
   primaryId: BotId | null,
   defaultHopLimit: number | null,
 ): Checked<RoomChanges> {
   const problems = roomFormProblems(values, defaultHopLimit, "default");
   const hostId = hostOf(values, primaryId);
-  const typed = hopLimitOf(values.hopLimit);
-  const hopLimit = typed === null ? defaultHopLimit : typed;
+  const hopLimit = resolvedHopLimit(values, defaultHopLimit);
   if (problems.size > 0 || hostId === null || hopLimit === null || hopLimit === "invalid") {
     return { _tag: "invalid", problems };
   }
@@ -135,10 +160,10 @@ export function roomChanges(
   return {
     _tag: "ready",
     value: {
-      ...(name === room.name ? {} : { name }),
-      ...(sameOrder(values.members, room.members) ? {} : { members: values.members }),
-      ...(hostId === room.hostId ? {} : { hostId }),
-      ...(hopLimit === room.hopLimit ? {} : { hopLimit }),
+      ...(name === opened.name.trim() ? {} : { name }),
+      ...(sameOrder(values.members, opened.members) ? {} : { members: values.members }),
+      ...(hostId === hostOf(opened, primaryId) ? {} : { hostId }),
+      ...(hopLimit === resolvedHopLimit(opened, defaultHopLimit) ? {} : { hopLimit }),
     },
   };
 }

@@ -4,6 +4,7 @@ import type {
   Attachment,
   BotId,
   CommandId,
+  Mentions,
   Entry,
   EntryId,
   MessageEntry,
@@ -13,7 +14,8 @@ import type {
 } from "@j3-bots/contracts";
 import type { ConversationItem } from "@j3-bots/client-runtime";
 import type * as Redacted from "effect/Redacted";
-import { useBots } from "../app/context";
+import { useBots, useI18n } from "../app/context";
+import { mentionedWhoLeft } from "../presentation/mentions";
 import { buildTimeline } from "../presentation/timeline";
 import { ApprovalCard } from "./ApprovalCard";
 import { HandoffCard } from "./HandoffCard";
@@ -34,8 +36,11 @@ export interface TimelineIntents {
   readonly declineSecret: (entryId: EntryId) => void;
   readonly retryNotice: (entryId: EntryId) => void;
   readonly retryMessage: (entryId: EntryId) => void;
-  /** Sends again a message this device could not send. */
-  readonly resendMessage: (commandId: CommandId) => void;
+  /**
+   * Sends again a message this device could not send, with `mentions` in
+   * place of its own when given.
+   */
+  readonly resendMessage: (commandId: CommandId, mentions?: Mentions) => void;
   /** Takes a message this device could not send out of the conversation. */
   readonly discardMessage: (commandId: CommandId) => void;
   /** A fold opened: its steps are worth reading until it closes. */
@@ -50,8 +55,12 @@ export interface TimelineIntents {
 interface TimelineProps {
   /** Entries oldest first, then the operator's messages still on their way. */
   readonly entries: ReadonlyArray<ConversationItem>;
-  /** Rooms show who said each message; a bot's conversation has one speaker. */
-  readonly inRoom: boolean;
+  /**
+   * In a room, the members it has now: rooms show who said each message, and
+   * a message refused for mentioning a member who left says so. Null in a
+   * bot's conversation, which has one speaker.
+   */
+  readonly roomMembers: ReadonlyArray<BotId> | null;
   readonly workSteps: (entryId: EntryId) => ReadonlyArray<WorkStep> | null;
   /** Whether the operator's answer to a card is still on its way. */
   readonly submitting: (entryId: EntryId) => boolean;
@@ -59,8 +68,10 @@ interface TimelineProps {
 }
 
 /** Every entry of a conversation or room, oldest first: bubbles, cards, folds and notices. */
-export function Timeline({ entries, inRoom, workSteps, submitting, intents }: TimelineProps) {
+export function Timeline({ entries, roomMembers, workSteps, submitting, intents }: TimelineProps) {
   const bots = useBots();
+  const { t } = useI18n();
+  const inRoom = roomMembers !== null;
   const mentionable = inRoom ? [...bots.values()].map((bot) => bot.profile.name) : [];
   return (
     <div className="flex flex-col">
@@ -72,6 +83,10 @@ export function Timeline({ entries, inRoom, workSteps, submitting, intents }: Ti
           // nothing in the bubble loses focus when the entry arrives; the entry
           // id it gains then makes it count toward the read mark.
           if (message._tag === "outgoing") {
+            const left =
+              roomMembers === null || message.status._tag !== "not-sent"
+                ? null
+                : mentionedWhoLeft(message.status.failure, message.mentions, roomMembers);
             return (
               <div key={item.key}>
                 <MessageBubble
@@ -79,8 +94,19 @@ export function Timeline({ entries, inRoom, workSteps, submitting, intents }: Ti
                   position={item.position}
                   mentionable={mentionable}
                   onOpenAttachment={intents.openAttachment}
-                  onRetry={() => intents.resendMessage(message.commandId)}
+                  onRetry={() =>
+                    left === null
+                      ? intents.resendMessage(message.commandId)
+                      : intents.resendMessage(message.commandId, left.without)
+                  }
                   onDiscard={() => intents.discardMessage(message.commandId)}
+                  {...(left === null
+                    ? {}
+                    : {
+                        leftRoom: left.left.map(
+                          (id) => bots.get(id)?.profile.name ?? t("bot.unknown"),
+                        ),
+                      })}
                 />
               </div>
             );

@@ -39,7 +39,7 @@ interface State extends Omit<SampleTeam, "bots" | "room" | "attachments"> {
   readonly settingsOpen: boolean;
 }
 
-const blankDraft: Draft = { text: "", files: [], sending: false };
+const blankDraft: Draft = { text: "", mentions: [], files: [], sending: false };
 
 /** How long an answer to a card takes to arrive, so a second click has something to miss. */
 const ANSWER_DELAY = 500;
@@ -212,7 +212,8 @@ function sampleIntents({ get, update }: Store): ShellIntents {
     });
 
   return {
-    setDraftText: (target, text) => changeDraft(target, (draft) => ({ ...draft, text })),
+    setDraftText: (target, text, mentions) =>
+      changeDraft(target, (draft) => ({ ...draft, text, mentions })),
     // Files are "uploaded" at once: the sample has no server to send them to.
     attachFiles: (target, picked) =>
       changeDraft(target, (draft) => ({

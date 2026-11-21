@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { Attachment, DeviceId, type EntryTarget, type Mentions } from "@j3-bots/contracts";
+import {
+  Attachment,
+  BotId,
+  DeviceId,
+  type EntryTarget,
+  type Mentions,
+  NonNegativeInt,
+} from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -33,9 +40,25 @@ export type DraftFile =
   | { readonly _tag: "ready"; readonly key: string; readonly attachment: Attachment }
   | ({ readonly _tag: "failed"; readonly key: string; readonly problem: FileProblem } & LocalFile);
 
+/**
+ * A mention the operator picked in a room's draft: who it names, and where
+ * its token (`@` and the label) starts in the text. Only a pick makes one;
+ * text that merely reads like a mention is none. Whether it still stands
+ * when the draft is sent is the client's to judge from the text.
+ */
+export const DraftMention = Schema.Union([
+  /** One member, by id, written as `@` and the name it had when picked. */
+  Schema.TaggedStruct("bot", { botId: BotId, label: Schema.String, position: NonNegativeInt }),
+  /** Every member, written `@everyone`. */
+  Schema.TaggedStruct("everyone", { position: NonNegativeInt }),
+]);
+export type DraftMention = typeof DraftMention.Type;
+
 /** What the operator is writing to one conversation or room, and has not sent. */
 export interface Draft {
   readonly text: string;
+  /** The mentions picked in `text`, in no particular order. Always empty outside a room. */
+  readonly mentions: ReadonlyArray<DraftMention>;
   readonly files: ReadonlyArray<DraftFile>;
   /**
    * The operator pressed Send and `send` is moving it to the outbox, which
@@ -45,7 +68,7 @@ export interface Draft {
   readonly sending: boolean;
 }
 
-const empty: Draft = { text: "", files: [], sending: false };
+const empty: Draft = { text: "", mentions: [], files: [], sending: false };
 
 /** What `send` did with the draft. */
 export type DraftSendResult =
@@ -80,8 +103,9 @@ export interface DraftChangedElsewhere {
 }
 
 /**
- * A draft as the device keeps it: the text and the files already on the
- * server, and the pairing that wrote it. Each write gives it a new
+ * A draft as the device keeps it: the text, the mentions picked in it, the
+ * files already on the server, and the pairing that wrote it. A record kept
+ * before drafts held mentions reads as holding none. Each write gives it a new
  * `revision`, so a window can tell whether the draft is still the one it
  * read. The text is kept whatever its length: the limit of a message applies
  * when it is sent. A draft emptied or sent is kept too, empty, with a
@@ -95,6 +119,7 @@ const StoredDraft = Schema.fromJsonString(
       revision: Schema.String,
       pairing: DeviceId,
       text: Schema.String,
+      mentions: Schema.optionalKey(Schema.Array(DraftMention)),
       files: Schema.Array(Attachment),
     }),
   ),
@@ -113,19 +138,30 @@ const localFileOf = (file: DraftFile): LocalFile =>
 
 const isEmpty = (draft: Draft) => draft.text === "" && draft.files.length === 0;
 
-/** What the device keeps of a draft: its text and the files already on the server. */
+/** What the device keeps of a draft: its text, its mentions and the files already on the server. */
 interface Kept {
   readonly text: string;
+  readonly mentions: ReadonlyArray<DraftMention>;
   readonly files: ReadonlyArray<Attachment>;
 }
 
 const keptOf = (draft: Draft): Kept => ({
   text: draft.text,
+  mentions: draft.mentions,
   files: draft.files.flatMap((file) => (file._tag === "ready" ? [file.attachment] : [])),
 });
 
+const sameMention = (one: DraftMention, other: DraftMention | undefined) =>
+  other !== undefined &&
+  one.position === other.position &&
+  (one._tag === "bot"
+    ? other._tag === "bot" && one.botId === other.botId && one.label === other.label
+    : other._tag === "everyone");
+
 const sameKept = (one: Kept, other: Kept) =>
   one.text === other.text &&
+  one.mentions.length === other.mentions.length &&
+  one.mentions.every((mention, index) => sameMention(mention, other.mentions[index])) &&
   one.files.length === other.files.length &&
   one.files.every((file, index) => file.id === other.files[index]?.id);
 
@@ -138,12 +174,14 @@ const keptIn = (record: string | undefined, pairing: DeviceId): Kept | undefined
   if (record === undefined) return keptOf(empty);
   const decoded = Option.getOrUndefined(decodeStored(record));
   if (decoded === undefined) return undefined;
-  return decoded.pairing === pairing ? decoded : keptOf(empty);
+  if (decoded.pairing !== pairing) return keptOf(empty);
+  return { text: decoded.text, mentions: decoded.mentions ?? [], files: decoded.files };
 };
 
 /** A draft as the device keeps it, as this window shows it. */
 const shown = (kept: Kept): Draft => ({
   text: kept.text,
+  mentions: kept.mentions,
   files: kept.files.map((attachment) => ({ _tag: "ready", key: attachment.id, attachment })),
   sending: false,
 });
@@ -203,8 +241,15 @@ export class Drafts extends Context.Service<
   {
     /** Drafts by `targetKey`. A target with no entry has an empty draft. */
     readonly state: Readable<ReadonlyMap<string, Draft>>;
-    /** Changes the draft's text, unless it is `sending`. */
-    readonly setText: (target: EntryTarget, text: string) => Effect.Effect<void>;
+    /**
+     * Changes the draft's text, with the mentions picked in it (none when left
+     * out), unless it is `sending`.
+     */
+    readonly setText: (
+      target: EntryTarget,
+      text: string,
+      mentions?: ReadonlyArray<DraftMention>,
+    ) => Effect.Effect<void>;
     /**
      * Adds files to the draft and uploads each the contract's limits allow.
      * A file that breaks one stays in the draft as `failed`, saying which.
@@ -396,12 +441,20 @@ export const layer = Layer.effect(
     const uploads = new Map<string, Fiber.Fiber<void>>();
     // Text on offer for `restore`, by key: text this window held, never kept,
     // when another window changed its draft, with the revision of the offer.
-    const displaced = new Map<string, { readonly text: string; readonly revision: number }>();
+    const displaced = new Map<
+      string,
+      {
+        readonly text: string;
+        readonly mentions: ReadonlyArray<DraftMention>;
+        readonly revision: number;
+      }
+    >();
     let offerRevision = 0;
     const offers = new Cell<ReadonlyMap<string, number>>(new Map());
-    const offer = (key: string, text: string | null) => {
-      if (text === null) displaced.delete(key);
-      else displaced.set(key, { text, revision: ++offerRevision });
+    const offer = (key: string, held: Pick<Draft, "text" | "mentions"> | null) => {
+      if (held === null) displaced.delete(key);
+      else
+        displaced.set(key, { text: held.text, mentions: held.mentions, revision: ++offerRevision });
       offers.set(new Map([...displaced].map(([offered, { revision }]) => [offered, revision])));
     };
     // Reading the drafts of the pairing this window follows now.
@@ -472,7 +525,7 @@ export const layer = Layer.effect(
         const stored = shown(keptIn(value, pairing) ?? keptOf(empty));
         // Text the device never kept, which this window shows no more.
         const offered = held.text !== "" && held.text !== stored.text && held.text !== read.text;
-        if (offered) offer(key, held.text);
+        if (offered) offer(key, held);
         if (value === undefined) known.delete(key);
         else known.set(key, value);
 
@@ -644,19 +697,27 @@ export const layer = Layer.effect(
     const replaceFile = (target: EntryTarget, fileKey: string, file: DraftFile) =>
       Effect.sync(() => replaceFileNow(target, fileKey, file));
 
-    const withText = (text: string) => (draft: Draft) =>
-      draft.text === text ? draft : { ...draft, text };
+    const withText =
+      (text: string, mentions: ReadonlyArray<DraftMention>) =>
+      (draft: Draft): Draft =>
+        sameKept(keptOf(draft), { ...keptOf(draft), text, mentions })
+          ? draft
+          : { ...draft, text, mentions };
 
-    const setText = (target: EntryTarget, text: string) => change(target, withText(text));
+    const setText = (
+      target: EntryTarget,
+      text: string,
+      mentions: ReadonlyArray<DraftMention> = [],
+    ) => change(target, withText(text, mentions));
 
     const restore = (target: EntryTarget) =>
       locked(
         Effect.sync(() => {
           const key = targetKey(target);
-          const text = displaced.get(key)?.text;
-          if (text === undefined || state.get().get(key)?.sending === true) return;
+          const held = displaced.get(key);
+          if (held === undefined || state.get().get(key)?.sending === true) return;
           offer(key, null);
-          changeNow(target, withText(text));
+          changeNow(target, withText(held.text, held.mentions));
         }),
       );
 

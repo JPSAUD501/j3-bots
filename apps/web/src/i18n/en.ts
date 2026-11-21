@@ -13,6 +13,7 @@ export const en = {
   "roster.new": "New bot or room",
   "roster.newBot": "New bot",
   "roster.newRoom": "New room",
+  "roster.newRoom.needsBots": "A room needs two bots. Create another bot first.",
   "roster.empty": "No bots yet.",
   "roster.noMatch": "Nothing matches “{query}”.",
   "roster.noMessages": "No messages yet",
@@ -309,8 +310,10 @@ export const en = {
   "roomForm.failed": "Your changes weren’t saved. Try again.",
   "roomForm.membersRefused":
     "A room needs two to six bots, its host among them. One of them may have been deleted meanwhile.",
+  "roomForm.dropped.one": "{names} was deleted, so it’s no longer picked.",
+  "roomForm.dropped.other": "{names} were deleted, so they’re no longer picked.",
   "roomForm.archived": "{name} was archived meanwhile, so nothing was saved.",
-  "roomForm.gone": "{name} no longer exists, so nothing was saved.",
+  "roomForm.gone": "{name} was deleted, so nothing can be saved.",
   "roomForm.failedClosed": "Changes to {name} weren’t saved.",
   "roomForm.createFailedClosed": "The room {name} wasn’t created.",
 
@@ -359,6 +362,8 @@ export const en = {
   "empty.quiet.body": "No messages yet. Tell {name} what you need.",
 
   "message.sending": "Sending…",
+  "message.notSent.left.one": "Not sent: {names} is no longer in this room",
+  "message.notSent.left.other": "Not sent: {names} are no longer in this room",
   "message.notSent.refused": "Not sent: the server refused it",
   "message.notSent.tooLong": "Not sent: too long for this bot’s engine to take in one message",
   "message.notSent.notPaired": "Not sent: this device is signed out",
@@ -399,6 +404,9 @@ export const en = {
   "composer.dismiss": "Dismiss",
   "composer.unread": "Couldn’t load your draft.",
   "composer.unread.retry": "Try again",
+  "composer.to.host": "To {name} (host)",
+  "composer.to": "To {names}",
+  "composer.to.everyone": "To everyone",
   "composer.notSaved": "Not saved yet",
   "composer.waitToAttach": "Wait a moment, then add the files again.",
 

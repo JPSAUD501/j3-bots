@@ -2,6 +2,7 @@
 import type {
   ConversationItem,
   Draft,
+  DraftMention,
   RecentTurnsState,
   SettingsChange,
   SettingsSaves,
@@ -101,7 +102,12 @@ type PairingStart =
 /** What the operator can ask for from the shell. Every intent is carried out by the client runtime. */
 export interface ShellIntents extends TimelineIntents {
   readonly setRoutineEnabled: BotDetailsIntents["setRoutineEnabled"];
-  readonly setDraftText: (target: EntryTarget, text: string) => void;
+  /** The draft's new text, with the mentions picked in it. */
+  readonly setDraftText: (
+    target: EntryTarget,
+    text: string,
+    mentions: ReadonlyArray<DraftMention>,
+  ) => void;
   readonly attachFiles: (target: EntryTarget, files: ReadonlyArray<File>) => void;
   readonly detachFile: (target: EntryTarget, key: string) => void;
   /**

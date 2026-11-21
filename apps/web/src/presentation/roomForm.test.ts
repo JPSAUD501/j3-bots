@@ -9,6 +9,7 @@ import {
   roomDraft,
   roomFormOf,
   type RoomFormValues,
+  sameRoomForm,
   withMember,
 } from "./roomForm";
 
@@ -72,19 +73,31 @@ describe("roomDraft", () => {
 });
 
 describe("roomChanges", () => {
-  it("sends only what changed, and a host that follows when its bot leaves", () => {
-    const values = { ...roomFormOf(room), members: [ana, bo] };
-    expect(roomChanges(room, values, null, 4)).toEqual({
+  const opened = roomFormOf(room);
+
+  it("sends only what changed from the form as it opened, and a host that follows when its bot leaves", () => {
+    expect(roomChanges(opened, { ...opened, members: [ana, bo] }, null, 4)).toEqual({
       _tag: "ready",
       value: { members: [ana, bo], hostId: ana },
     });
-    expect(roomChanges(room, roomFormOf(room), null, 4)).toEqual({ _tag: "ready", value: {} });
+    // Fields left as they opened are not sent, so a change made elsewhere meanwhile stands.
+    expect(roomChanges(opened, { ...opened, hopLimit: "5" }, null, 4)).toEqual({
+      _tag: "ready",
+      value: { hopLimit: 5 },
+    });
+  });
+
+  it("finds nothing to send for an edit the operator undid", () => {
+    const undone = { ...opened, name: " Launch ", members: [hal, ana], hostPick: hal };
+    expect(sameRoomForm(opened, undone, null, 4)).toBe(true);
+    expect(roomChanges(opened, undone, null, 4)).toEqual({ _tag: "ready", value: {} });
+    expect(sameRoomForm(opened, { ...opened, members: [ana, hal] }, null, 4)).toBe(false);
   });
 
   it("sets an emptied hop limit back to the default, which must be known", () => {
-    const values = { ...roomFormOf(room), hopLimit: "" };
-    expect(roomChanges(room, values, null, 6)).toEqual({ _tag: "ready", value: { hopLimit: 6 } });
-    const checked = roomChanges(room, values, null, null);
+    const values = { ...opened, hopLimit: "" };
+    expect(roomChanges(opened, values, null, 6)).toEqual({ _tag: "ready", value: { hopLimit: 6 } });
+    const checked = roomChanges(opened, values, null, null);
     expect(checked._tag === "invalid" && [...checked.problems]).toEqual(["hop-limit"]);
   });
 });

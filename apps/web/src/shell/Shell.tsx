@@ -35,7 +35,7 @@ import {
 import type { ShellData, ShellIntents } from "./data";
 import { isCovered, useCovered } from "../lib/covered";
 import { useNewestSeen } from "../lib/useNewestSeen";
-import { mentionsIn } from "../presentation/mentions";
+import { addressed, addresseeLine } from "../presentation/mentions";
 import { useShellLayout } from "./layout";
 import { isEditable, shellShortcuts } from "./shortcuts";
 
@@ -73,7 +73,8 @@ interface ShellProps {
 /** The whole interface: roster, conversation and details, from data and intents. */
 export function Shell({ data, intents, navigation, keyboard = true }: ShellProps) {
   const { selected, detailsOpen } = navigation;
-  const { t } = useI18n();
+  const i18n = useI18n();
+  const { t } = i18n;
   const shortcuts = shellShortcuts();
   const { dictate, editProfile } = intents;
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -274,6 +275,18 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
             return bot ? [{ id, name: bot.profile.name, avatar: bot.profile.avatar }] : [];
           })
         : undefined;
+    // Who the message wakes as the draft stands: only mentions picked, and still standing, count.
+    const mentions =
+      item._tag === "room" ? addressed(draft.text, draft.mentions, item.room.members) : undefined;
+    const addressee =
+      item._tag === "room"
+        ? addresseeLine(
+            mentions,
+            item.room.hostId,
+            (botId) => bots.find((candidate) => candidate.id === botId)?.profile.name,
+            i18n,
+          )
+        : null;
     const toggleDetails = () => navigation.setDetailsOpen(!detailsOpen);
     const goToEntry = (entryId: EntryId) => {
       const card = timeline?.querySelector<HTMLElement>(`[data-entry-id="${CSS.escape(entryId)}"]`);
@@ -334,7 +347,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
               )}
               <Timeline
                 entries={view.items}
-                inRoom={item._tag === "room"}
+                roomMembers={item._tag === "room" ? item.room.members : null}
                 workSteps={data.workSteps}
                 submitting={data.submitting}
                 intents={intents}
@@ -348,7 +361,8 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
               draftKey={rosterKeyText(rosterKeyOf(item))}
               recipient={recipient}
               value={draft.text}
-              onValueChange={(value) => intents.setDraftText(target, value)}
+              mentions={draft.mentions}
+              onValueChange={(value, picked) => intents.setDraftText(target, value, picked)}
               files={draft.files}
               sending={draft.sending}
               loading={data.draftsLoading}
@@ -356,12 +370,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
               notSaved={data.draftNotSaved(target)}
               onAttachFiles={(files) => intents.attachFiles(target, files)}
               onDetachFile={(fileKey) => intents.detachFile(target, fileKey)}
-              onSend={() =>
-                intents.sendDraft(
-                  target,
-                  mentionable === undefined ? undefined : mentionsIn(draft.text, mentionable),
-                )
-              }
+              onSend={() => intents.sendDraft(target, mentions)}
               {...(dictate ? { onDictate: () => dictate(target) } : {})}
               {...(offer === null
                 ? {}
@@ -374,6 +383,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
                   })}
               inputRef={composerRef}
               {...(mentionable === undefined ? {} : { mentionable })}
+              {...(addressee === null ? {} : { addressee })}
             />
           ) : (
             <div className="flex flex-wrap items-center justify-center gap-x-2 py-2 text-center text-xs text-muted-foreground">

@@ -69,3 +69,26 @@ function inlines(text: string, mentionable: ReadonlyArray<string>): Inline[] {
 }
 
 const count = (s: string, ch: string) => s.split(ch).length - 1;
+
+const INLINE_CODE = /`[^`\n]+`/g;
+
+/**
+ * Where `text` holds code, as a bubble renders it: each fenced block and each
+ * inline span, from its first backtick to its last, as `[start, end)`.
+ */
+export function codeRanges(text: string): ReadonlyArray<readonly [number, number]> {
+  const ranges: Array<readonly [number, number]> = [];
+  let cursor = 0;
+  const inline = (from: number, to: number) => {
+    for (const span of text.slice(from, to).matchAll(INLINE_CODE)) {
+      ranges.push([from + span.index, from + span.index + span[0].length]);
+    }
+  };
+  for (const fence of text.matchAll(FENCE)) {
+    inline(cursor, fence.index);
+    ranges.push([fence.index, fence.index + fence[0].length]);
+    cursor = fence.index + fence[0].length;
+  }
+  inline(cursor, text.length);
+  return ranges;
+}

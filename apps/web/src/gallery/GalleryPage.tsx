@@ -6,6 +6,7 @@
  */
 import {
   type DraftFile,
+  type DraftMention,
   type PairingFailure,
   type RecentTurns,
   type RecentTurnsState,
@@ -13,13 +14,13 @@ import {
 } from "@j3-bots/client-runtime";
 import {
   AttachmentId,
+  type BotId,
   Conflict,
   type EngineStatus,
   Invalid,
   MemoryPath,
   MemoryRevision,
   ModelId,
-  NotFound,
   ProviderId,
   type ProviderStatus,
   type Room,
@@ -31,7 +32,7 @@ import { avatarShapeNames, botColors, colors, radii, typeScale } from "@j3-bots/
 import * as DateTime from "effect/DateTime";
 import { useId, useState, type ReactNode } from "react";
 import { ClockProvider, OperatorTimeZone } from "../app/clock";
-import { BotsProvider, I18nProvider } from "../app/context";
+import { BotsProvider, I18nProvider, useI18n } from "../app/context";
 import { ApprovalCard } from "../components/ApprovalCard";
 import { BotAvatar, RoomAvatar } from "../components/BotAvatar";
 import { Composer, type MentionCandidate, MentionList } from "../components/Composer";
@@ -55,7 +56,7 @@ import { UsageSection } from "../components/UsageSection";
 import { WorkFold } from "../components/WorkFold";
 import { locales, type Locale } from "../i18n/i18n";
 import { cn } from "../lib/cn";
-import { mentionOptions } from "../presentation/mentions";
+import { addressed, addresseeLine, mentionOptions } from "../presentation/mentions";
 import { Shell } from "../shell/Shell";
 import { shellShortcuts } from "../shell/shortcuts";
 import { SAMPLE_NOW, ids, sampleTeam } from "./sample";
@@ -399,6 +400,15 @@ function BubblesSection() {
             onRetry={nothing}
             onDiscard={nothing}
           />
+          {/* In a room, refused because a member it mentions left: Send again sends it without them. */}
+          <MessageBubble
+            message={bubbles.notSent}
+            position="single"
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+            onDiscard={nothing}
+            leftRoom={["Wren"]}
+          />
           <MessageBubble
             message={bubbles.unrecorded}
             position="single"
@@ -423,7 +433,7 @@ function BubblesSection() {
         <div className="max-w-(--layout-text-column)">
           <Timeline
             entries={team.entries[`bot:${ids.scout}`] ?? []}
-            inRoom={false}
+            roomMembers={null}
             workSteps={workSteps}
             submitting={notSubmitting}
             intents={timelineIntents}
@@ -434,7 +444,7 @@ function BubblesSection() {
         <div className="max-w-(--layout-text-column)">
           <Timeline
             entries={team.entries[`room:${ids.newsletter}`] ?? []}
-            inRoom
+            roomMembers={team.room.members}
             workSteps={workSteps}
             submitting={notSubmitting}
             intents={timelineIntents}
@@ -603,11 +613,26 @@ function ComposerDemo({
   notSaved?: boolean;
   /** Text another tab replaced, on offer. */
   replaced?: string | null;
-  /** In a room, its members. */
-  mentionable?: ReadonlyArray<MentionCandidate>;
+  /** In a room, its members and its host. */
+  mentionable?: { readonly members: ReadonlyArray<MentionCandidate>; readonly hostId: BotId };
 }) {
+  const i18n = useI18n();
   const draftKey = useId();
   const [value, setValue] = useState(initial);
+  const [mentions, setMentions] = useState<ReadonlyArray<DraftMention>>([]);
+  const addressee =
+    mentionable === undefined
+      ? null
+      : addresseeLine(
+          addressed(
+            value,
+            mentions,
+            mentionable.members.map((member) => member.id),
+          ),
+          mentionable.hostId,
+          (botId) => mentionable.members.find((member) => member.id === botId)?.name,
+          i18n,
+        );
   const [files, setFiles] = useState(initialFiles);
   const [replaced, setReplaced] = useState(initialReplaced);
   return (
@@ -615,15 +640,23 @@ function ComposerDemo({
       draftKey={draftKey}
       recipient={recipient}
       value={value}
-      onValueChange={setValue}
+      mentions={mentions}
+      onValueChange={(text, picked) => {
+        setValue(text);
+        setMentions(picked);
+      }}
       files={files}
       sending={sending}
       notSaved={notSaved}
       onAttachFiles={nothing}
       onDetachFile={(key) => setFiles((current) => current.filter((file) => file.key !== key))}
-      onSend={() => setValue("")}
+      onSend={() => {
+        setValue("");
+        setMentions([]);
+      }}
       onDictate={nothing}
-      {...(mentionable === undefined ? {} : { mentionable })}
+      {...(mentionable === undefined ? {} : { mentionable: mentionable.members })}
+      {...(addressee === null ? {} : { addressee })}
       {...(replaced === null
         ? {}
         : {
@@ -631,6 +664,7 @@ function ComposerDemo({
               revision: 1,
               onRestore: () => {
                 setValue(replaced);
+                setMentions([]);
                 setReplaced(null);
               },
               onDismiss: () => setReplaced(null),
@@ -980,10 +1014,13 @@ function RoomsSection() {
           }}
           initialFailure={{ _tag: "refused", error: new Invalid({ reason: "room-members" }) }}
         />
-        <RoomFormVariant label="Edit: as saved" mode={{ _tag: "edit", room: team.room }} />
+        <RoomFormVariant
+          label="Edit: as saved"
+          mode={{ _tag: "edit", room: team.room, gone: false }}
+        />
         <RoomFormVariant
           label="Edit: the room was archived meanwhile, offline"
-          mode={{ _tag: "edit", room: team.room }}
+          mode={{ _tag: "edit", room: team.room, gone: false }}
           connected={false}
           initial={{
             name: team.room.name,
@@ -995,12 +1032,11 @@ function RoomsSection() {
         />
         <RoomFormVariant
           label="Unarchive: a room left with one bot"
-          mode={{ _tag: "unarchive", room: archivedRoom }}
+          mode={{ _tag: "unarchive", room: archivedRoom, gone: false }}
         />
         <RoomFormVariant
-          label="Edit: the room was deleted meanwhile"
-          mode={{ _tag: "edit", room: team.room }}
-          initialFailure={{ _tag: "refused", error: new NotFound({ resource: "room" }) }}
+          label="Edit: the room was deleted while the form was open; it stays open and saves nothing"
+          mode={{ _tag: "edit", room: team.room, gone: true }}
         />
       </div>
       <div className="flex flex-wrap gap-6">
@@ -1012,9 +1048,13 @@ function RoomsSection() {
         <MentionVariant label="Mentions: after @w, the members it matches" query="w" active={0} />
         <MentionVariant label="Mentions: after @ev, only everyone" query="ev" active={0} />
       </div>
-      <Labeled label="Composer in a room: type @ to open the list; arrows, Enter, Tab and Escape work, and so does a tap">
+      <Labeled label="Composer in a room: type @ to open the list; arrows, Enter, Tab and Escape work, and so does a tap. Only a pick mentions; the line under it says who the message wakes">
         <div className="max-w-(--layout-text-column) pt-60">
-          <ComposerDemo initial="" recipient={team.room.name} mentionable={roomMembers} />
+          <ComposerDemo
+            initial=""
+            recipient={team.room.name}
+            mentionable={{ members: roomMembers, hostId: team.room.hostId }}
+          />
         </div>
       </Labeled>
     </Section>

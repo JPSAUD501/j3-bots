@@ -11,6 +11,7 @@ export const ptBR: Catalog = {
   "roster.new": "Novo bot ou sala",
   "roster.newBot": "Novo bot",
   "roster.newRoom": "Nova sala",
+  "roster.newRoom.needsBots": "Uma sala precisa de dois bots. Crie outro bot antes.",
   "roster.empty": "Nenhum bot ainda.",
   "roster.noMatch": "Nada corresponde a “{query}”.",
   "roster.noMessages": "Nenhuma mensagem ainda",
@@ -311,8 +312,10 @@ export const ptBR: Catalog = {
   "roomForm.failed": "Suas alterações não foram salvas. Tente de novo.",
   "roomForm.membersRefused":
     "Uma sala precisa de dois a seis bots, com o anfitrião entre eles. Talvez um deles tenha sido excluído nesse meio-tempo.",
+  "roomForm.dropped.one": "{names} foi excluído e saiu da seleção.",
+  "roomForm.dropped.other": "{names} foram excluídos e saíram da seleção.",
   "roomForm.archived": "{name} foi arquivada nesse meio-tempo, então nada foi salvo.",
-  "roomForm.gone": "{name} não existe mais, então nada foi salvo.",
+  "roomForm.gone": "{name} foi excluída, então nada pode ser salvo.",
   "roomForm.failedClosed": "As alterações em {name} não foram salvas.",
   "roomForm.createFailedClosed": "A sala {name} não foi criada.",
 
@@ -362,6 +365,8 @@ export const ptBR: Catalog = {
   "empty.quiet.body": "Nenhuma mensagem ainda. Diga a {name} do que você precisa.",
 
   "message.sending": "Enviando…",
+  "message.notSent.left.one": "Não enviada: {names} não está mais nesta sala",
+  "message.notSent.left.other": "Não enviada: {names} não estão mais nesta sala",
   "message.notSent.refused": "Não enviada: o servidor recusou",
   "message.notSent.tooLong":
     "Não enviada: longa demais para o motor deste bot receber numa mensagem só",
@@ -405,6 +410,9 @@ export const ptBR: Catalog = {
   "composer.dismiss": "Dispensar",
   "composer.unread": "Não foi possível carregar seu rascunho.",
   "composer.unread.retry": "Tentar de novo",
+  "composer.to.host": "Para {name} (anfitrião)",
+  "composer.to": "Para {names}",
+  "composer.to.everyone": "Para todos",
   "composer.notSaved": "Ainda não salvo",
   "composer.waitToAttach": "Espere um instante e adicione os arquivos de novo.",
 

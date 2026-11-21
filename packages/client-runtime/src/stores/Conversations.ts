@@ -371,13 +371,15 @@ export class Conversations extends Context.Service<
       },
     ) => Effect.Effect<boolean, LocalStorageError | InvalidMessage | NotPaired>;
     /**
-     * Sends again, with its own command id, a message that was not sent. Does
-     * nothing when the device no longer keeps it as not sent: another window
-     * sent it again or discarded it. Fails, changing nothing, when the device
-     * cannot keep the new attempt.
+     * Sends again, with its own command id, a message that was not sent, with
+     * `mentions` in place of the ones it had when given, as when a member it
+     * mentioned has left the room. Does nothing when the device no longer
+     * keeps it as not sent: another window sent it again or discarded it.
+     * Fails, changing nothing, when the device cannot keep the new attempt.
      */
     readonly resend: (
       commandId: CommandId,
+      mentions?: Mentions,
     ) => Effect.Effect<IntentResult<EntryId>, LocalStorageError>;
     /**
      * Removes a message that was not sent from the conversation, unless the
@@ -1383,22 +1385,34 @@ export const layer = Layer.effect(
       return kept;
     });
 
-    const resend = Effect.fn("Conversations.resend")(function* (commandId: CommandId) {
+    const resend = Effect.fn("Conversations.resend")(function* (
+      commandId: CommandId,
+      mentions?: Mentions,
+    ) {
       const held = outbox.get().find((candidate) => candidate.message.commandId === commandId);
       if (held === undefined) return unexpected;
       const { message, kept } = held;
       if (message.status._tag !== "not-sent") return unexpected;
       const status = { _tag: "sending" } as const;
+      const addressed = mentions === undefined ? {} : { mentions };
       let attempt = 0;
       if (kept === null) {
-        setUnkeptStatus(commandId, status);
+        outbox.update((list) =>
+          list.map((candidate) =>
+            candidate.message.commandId === commandId
+              ? { ...candidate, message: { ...candidate.message, ...addressed, status } }
+              : candidate,
+          ),
+        );
       } else {
         const { record } = kept;
         if (record.status._tag !== "not-sent") return unexpected;
         // A new attempt, claiming the one it follows. It was read from the device, so it encodes again.
         const failures = [...record.failures, record.status.failure];
         attempt = failures.length;
-        const sending = yield* encodeRecord({ ...record, failures, status }).pipe(Effect.orDie);
+        const sending = yield* encodeRecord({ ...record, ...addressed, failures, status }).pipe(
+          Effect.orDie,
+        );
         const claimed = yield* storage
           .commit(
             [{ table: "outbox", key: commandId, value: sending }],

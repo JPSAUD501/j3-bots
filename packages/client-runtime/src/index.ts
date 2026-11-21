@@ -91,6 +91,7 @@ export {
   type Draft,
   type DraftChangedElsewhere,
   type DraftFile,
+  DraftMention,
   type DraftSendResult,
 } from "./stores/Drafts.ts";
 export { EngineStatus } from "./stores/EngineStatus.ts";

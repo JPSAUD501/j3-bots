@@ -18,6 +18,7 @@ import {
   Invalid,
   NotFound,
   ProviderId,
+  RoomId,
   MAX_USAGE_TURNS,
   USAGE_PERIOD,
   type UsageTurn,
@@ -1257,6 +1258,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         ]);
         assert.deepStrictEqual(drafts.state.get().get(key), {
           text: "as written",
+          mentions: [],
           files: [],
           sending: true,
         });
@@ -1990,6 +1992,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
       assert.deepStrictEqual(drafts.state.get().get(targetKey(target)), {
         text: "do not lose me",
+        mentions: [],
         files: [],
         sending: false,
       });
@@ -2126,6 +2129,41 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
     }),
   );
 
+  it.effect("keeps the mentions picked in a draft through a reload", () =>
+    Effect.gen(function* () {
+      const device = TestPlatform.makeDevice();
+      const target: EntryTarget = { _tag: "room", roomId: RoomId.make("launch") };
+      const key = targetKey(target);
+
+      const first = yield* Effect.gen(function* () {
+        yield* pairAndConnect;
+        const botId = yield* createBot("Ana Lima");
+        const mentions = [
+          { _tag: "bot", botId, label: "Ana Lima", position: 4 },
+          { _tag: "everyone", position: 19 },
+        ] as const;
+        yield* (yield* Drafts).setText(target, "ask @Ana Lima, then @everyone", mentions);
+        yield* whenStored(device.storage, "drafts", key, holds("Ana Lima"));
+        return { mentions, credential: yield* savedCredential };
+      }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
+
+      yield* Effect.gen(function* () {
+        const drafts = yield* Drafts;
+        assert.deepStrictEqual(drafts.state.get().get(key)?.mentions, first.mentions);
+        // A draft kept before drafts held mentions reads as holding none.
+        const pairing = yield* (yield* Connection).deviceId;
+        const older = JSON.stringify({ revision: "older", pairing, text: "@Ana", files: [] });
+        yield* device.storage.commit([{ table: "drafts", key, value: older }]).pipe(Effect.orDie);
+      }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+
+      yield* Effect.gen(function* () {
+        const shown = (yield* Drafts).state.get().get(key);
+        assert.strictEqual(shown?.text, "@Ana");
+        assert.deepStrictEqual(shown?.mentions, []);
+      }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+    }),
+  );
+
   it.effect("marks a file refused, once, when the server cannot store it privately", () => {
     const refused = { count: 0 };
     return Effect.gen(function* () {
@@ -2214,6 +2252,45 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
             ],
           );
         }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+      }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+    }),
+  );
+
+  it.effect("sends again a refused message with the mentions it is given in place of its own", () =>
+    Effect.gen(function* () {
+      const { sends, refusing } = yield* Fakes;
+      const { device, target, botId, credential } = yield* pairedDevice("Stays");
+      const text = "@Stays and @Left, have a look";
+      refusing.add(text);
+
+      yield* Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const conversation = yield* conversations.open(target);
+        const left = yield* createBot("Left");
+        yield* conversations.enqueue({
+          target,
+          text,
+          mentions: { _tag: "bots", ids: [botId, left] },
+        });
+        const commandId = yield* Queue.take(sends);
+        yield* waitFor(conversation.state, (state) =>
+          outgoingIn(state).some((message) => message.status._tag === "not-sent"),
+        );
+
+        refusing.delete(text);
+        const result = yield* conversations.resend(commandId, { _tag: "bots", ids: [botId] });
+        assert.strictEqual(result._tag, "done");
+        assert.strictEqual(yield* Queue.take(sends), commandId);
+        const sent = yield* waitFor(conversation.state, (state) =>
+          state.items.some((item) => item._tag === "message" && item.commandId === commandId),
+        );
+        const message = sent.items.find(
+          (item) => item._tag === "message" && item.commandId === commandId,
+        );
+        assert.deepStrictEqual(message?._tag === "message" && message.mentions, {
+          _tag: "bots",
+          ids: [botId],
+        });
       }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
     }),
   );

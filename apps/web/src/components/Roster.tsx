@@ -3,6 +3,7 @@ import type { RosterItem, RosterItemKey } from "@j3-bots/contracts";
 import { PlusIcon, SearchIcon } from "lucide-react";
 import { useState, type KeyboardEvent, type ReactElement, type ReactNode, type Ref } from "react";
 import { useBots, useI18n } from "../app/context";
+import { ROOM_MEMBERS } from "../presentation/roomForm";
 import { filterRoster, orderRoster, rosterKeyOf, rosterKeyText } from "../presentation/roster";
 import { RosterRow } from "./RosterRow";
 import { Button } from "./ui/button";
@@ -103,7 +104,14 @@ export function Roster({
           </MenuTrigger>
           <MenuPopup side="bottom" align="end">
             <MenuItem onClick={onNewBot}>{t("roster.newBot")}</MenuItem>
-            <MenuItem onClick={onNewRoom}>{t("roster.newRoom")}</MenuItem>
+            {/* A room needs two bots: with fewer, the row says so and makes a bot instead. */}
+            {bots.size >= ROOM_MEMBERS.min ? (
+              <MenuItem onClick={onNewRoom}>{t("roster.newRoom")}</MenuItem>
+            ) : (
+              <MenuItem onClick={onNewBot} hint={t("roster.newRoom.needsBots")}>
+                {t("roster.newRoom")}
+              </MenuItem>
+            )}
           </MenuPopup>
         </Menu>
       </div>

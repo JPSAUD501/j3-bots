@@ -181,16 +181,25 @@ export interface J3Client {
   }) => Promise<
     Actions.IntentResult<EntryId> | { readonly _tag: "invalid"; readonly problem: MessageProblem }
   >;
-  /** `not-kept` when the device could not keep the new attempt: nothing was sent. */
+  /**
+   * `mentions`, when given, replace the message's own. `not-kept` when the
+   * device could not keep the new attempt: nothing was sent.
+   */
   readonly resend: (
     commandId: CommandId,
+    mentions?: Mentions,
   ) => Promise<Actions.IntentResult<EntryId> | { readonly _tag: "not-kept" }>;
   /** Resolves `false` when the device could not keep the change: the message stays as it was. */
   readonly discard: (commandId: CommandId) => Promise<boolean>;
 
   /** Every conversation's draft, by `targetKey`. Kept on the device. */
   readonly drafts: Readable<ReadonlyMap<string, Drafts.Draft>>;
-  readonly setDraftText: (target: EntryTarget, text: string) => void;
+  /** The draft's new text, with the mentions picked in it; none when left out. */
+  readonly setDraftText: (
+    target: EntryTarget,
+    text: string,
+    mentions?: ReadonlyArray<Drafts.DraftMention>,
+  ) => void;
   /** Adds files to the draft and uploads them. */
   readonly attachFiles: (
     target: EntryTarget,
@@ -431,10 +440,10 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
             ),
           ),
       ),
-    resend: (commandId) =>
+    resend: (commandId, mentions) =>
       run.promise(
         conversations
-          .resend(commandId)
+          .resend(commandId, mentions)
           .pipe(
             Effect.catchTag("LocalStorageError", () =>
               Effect.succeed({ _tag: "not-kept" } as const),
@@ -450,7 +459,8 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
       ),
 
     drafts: services.drafts.state,
-    setDraftText: (target, text) => run.sync(services.drafts.setText(target, text)),
+    setDraftText: (target, text, mentions) =>
+      run.sync(services.drafts.setText(target, text, mentions)),
     attachFiles: (target, files) => fire(services.drafts.attach(target, files)),
     detachFile: (target, key) => fire(services.drafts.detach(target, key)),
     sendDraft: (target, mentions) => run.promise(services.drafts.send(target, mentions)),

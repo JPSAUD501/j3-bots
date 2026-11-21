@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   type DraftFile,
+  type DraftMention,
   type FileProblem,
   type MessageProblem,
   messageProblem,
@@ -17,6 +18,7 @@ import { ArrowUpIcon, FileIcon, MicIcon, PlusIcon, UsersIcon, XIcon } from "luci
 import {
   type KeyboardEvent,
   type RefObject,
+  useEffect,
   useId,
   useLayoutEffect,
   useRef,
@@ -27,6 +29,7 @@ import type { I18n } from "../i18n/i18n";
 import { cn } from "../lib/cn";
 import {
   EVERYONE,
+  followEdit,
   insertMention,
   type Mentionable,
   type MentionOption,
@@ -49,7 +52,10 @@ interface ComposerProps {
   /** Who the message goes to: a bot's or a room's name. */
   readonly recipient: string;
   readonly value: string;
-  readonly onValueChange: (value: string) => void;
+  /** The mentions picked in `value`. Only a room has any. */
+  readonly mentions?: ReadonlyArray<DraftMention>;
+  /** The new text, with the picked mentions that still stand in it, moved along with it. */
+  readonly onValueChange: (value: string, mentions: ReadonlyArray<DraftMention>) => void;
   /** The files in the draft, as they upload. */
   readonly files?: ReadonlyArray<DraftFile>;
   /** The draft is on its way to the outbox, for a few milliseconds: it takes no change. */
@@ -84,10 +90,12 @@ interface ComposerProps {
   };
   readonly inputRef?: RefObject<HTMLTextAreaElement | null>;
   /**
-   * In a room, its members: typing `@` offers them and `@everyone`, and a
-   * pick puts the name in the text, which is what addresses the message.
+   * In a room, its members: typing `@` offers them and `@everyone`, and only
+   * a pick mentions one; a name typed or pasted addresses nobody.
    */
   readonly mentionable?: ReadonlyArray<MentionCandidate>;
+  /** In a room, who the message wakes as it stands, in one quiet line under the pill. */
+  readonly addressee?: string;
 }
 
 /** Why a file cannot go, in one sentence. */
@@ -152,13 +160,16 @@ const nameOf = (file: DraftFile) => (file._tag === "ready" ? file.attachment.nam
  * restores or dismisses it; either way the focus returns to the field. The
  * field draws no ring of its own: the pill takes the focus outline. In a room,
  * `@` opens a list of the members and `@everyone` above the pill: arrow keys
- * move through it, Enter or Tab picks, Escape closes it until the next `@`,
- * and a tap picks without taking the focus from the field.
+ * move through it, keeping the active option in view, Enter or Tab picks, so
+ * a second Enter sends, Escape closes it until the next `@`, and a tap picks
+ * without taking the focus from the field. Only a pick mentions a member; a
+ * quiet line under the pill says who the message wakes.
  */
 export function Composer({
   draftKey,
   recipient,
   value,
+  mentions = [],
   onValueChange,
   files = [],
   sending = false,
@@ -172,6 +183,7 @@ export function Composer({
   replaced,
   inputRef,
   mentionable,
+  addressee,
 }: ComposerProps) {
   const i18n = useI18n();
   const { t } = i18n;
@@ -179,6 +191,7 @@ export function Composer({
   const ownFieldRef = useRef<HTMLTextAreaElement>(null);
   const fieldRef = inputRef ?? ownFieldRef;
   const waitingId = useId();
+  const addresseeId = useId();
   const label = t("composer.label", { name: recipient });
   const empty = value.trim() === "" && !files.some((file) => file._tag === "ready");
   const uploading = files.some((file) => file._tag === "uploading");
@@ -204,6 +217,7 @@ export function Composer({
   const mention = useMentionPicker({
     draftKey,
     value,
+    mentions,
     onValueChange,
     field: fieldRef,
     members: frozen ? undefined : mentionable,
@@ -359,9 +373,11 @@ export function Composer({
           value={value}
           readOnly={frozen}
           onChange={(event) => {
+            const field = event.currentTarget;
             setNotTaken(false);
-            onValueChange(event.currentTarget.value);
-            mention.follow(event.currentTarget);
+            const caret = field.selectionStart === field.selectionEnd ? field.selectionStart : null;
+            onValueChange(field.value, followEdit(value, field.value, caret, mentions));
+            mention.follow(field);
           }}
           onSelect={(event) => mention.follow(event.currentTarget)}
           onFocus={(event) => mention.follow(event.currentTarget)}
@@ -380,6 +396,7 @@ export function Composer({
           }}
           placeholder={label}
           aria-label={label}
+          aria-describedby={addressee === undefined ? undefined : addresseeId}
           {...mention.fieldProps}
           data-composer=""
           className="field-sizing-content max-h-(--layout-composer-max-height) min-h-8 flex-1 resize-none bg-transparent px-1 py-1.5 text-base outline-none placeholder:text-muted-foreground pointer-coarse:min-h-(--layout-touch-target) pointer-coarse:py-2.5 pointer-coarse:text-lg"
@@ -409,6 +426,12 @@ export function Composer({
       <span id={waitingId} hidden>
         {t("composer.stillUploading")}
       </span>
+      {/* Read with the field, not announced as it changes: it changes with each mention. */}
+      {addressee !== undefined && (
+        <p id={addresseeId} className="truncate px-3 text-xs text-muted-foreground">
+          {addressee}
+        </p>
+      )}
       {/* Quiet: it clears by itself once the device keeps the draft. */}
       {notSaved && (
         <p role="status" className="px-3 text-xs text-muted-foreground">
@@ -504,13 +527,15 @@ function DraftFileChip({
 function useMentionPicker({
   draftKey,
   value,
+  mentions,
   onValueChange,
   field,
   members,
 }: {
   draftKey: string;
   value: string;
-  onValueChange: (value: string) => void;
+  mentions: ReadonlyArray<DraftMention>;
+  onValueChange: (value: string, mentions: ReadonlyArray<DraftMention>) => void;
   field: RefObject<HTMLTextAreaElement | null>;
   members: ReadonlyArray<Mentionable> | undefined;
 }) {
@@ -530,7 +555,8 @@ function useMentionPicker({
   // Where the caret goes once a pick has reached the field.
   const placeCaret = useRef<number | null>(null);
 
-  const query = members === undefined || caret === null ? null : mentionQuery(value, caret);
+  const query =
+    members === undefined || caret === null ? null : mentionQuery(value, caret, mentions);
   const options =
     query === null || members === undefined ? [] : mentionOptions(query.query, members);
   const open = query !== null && query.start !== dismissed && options.length > 0;
@@ -555,9 +581,9 @@ function useMentionPicker({
 
   const pick = (option: MentionOption) => {
     if (query === null || caret === null) return;
-    const next = insertMention(value, caret, query, option);
+    const next = insertMention(value, caret, mentions, query, option);
     placeCaret.current = next.caret;
-    onValueChange(next.text);
+    onValueChange(next.text, next.mentions);
   };
 
   return {
@@ -572,7 +598,7 @@ function useMentionPicker({
       setCaret(element.selectionStart === element.selectionEnd ? element.selectionStart : null);
       if (
         dismissed !== null &&
-        mentionQuery(element.value, element.selectionStart)?.start !== dismissed
+        mentionQuery(element.value, element.selectionStart, mentions)?.start !== dismissed
       ) {
         setDismissed(null);
       }
@@ -582,7 +608,9 @@ function useMentionPicker({
     onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => {
       if (!open || query === null || event.nativeEvent.isComposing) return false;
       const option = options[current];
-      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      // Arrows with a modifier belong to the shell, which moves through the roster with them.
+      const modified = event.altKey || event.ctrlKey || event.metaKey;
+      if ((event.key === "ArrowDown" || event.key === "ArrowUp") && !modified) {
         setActive(movedOption(current, event.key === "ArrowDown" ? 1 : -1, options.length));
       } else if ((event.key === "Enter" || event.key === "Tab") && !event.shiftKey && option) {
         pick(option);
@@ -626,8 +654,19 @@ export function MentionList({
 }) {
   const { t } = useI18n();
   const avatars = new Map(members.map((member) => [member.id, member.avatar]));
+  const listRef = useRef<HTMLUListElement>(null);
+  const activeId = optionId(active);
+  // The active option stays in view as the keys move through a list longer than it shows.
+  useEffect(() => {
+    const list = listRef.current;
+    if (list === null) return;
+    for (const option of list.children) {
+      if (option.id === activeId) option.scrollIntoView({ block: "nearest" });
+    }
+  }, [activeId]);
   return (
     <ul
+      ref={listRef}
       id={id}
       role="listbox"
       aria-label={t("mention.label")}

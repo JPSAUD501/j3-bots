@@ -82,6 +82,12 @@ interface MessageBubbleProps {
   readonly onDiscard?: () => void;
   /** A retry is on its way: Send again takes no second one. */
   readonly submitting?: boolean;
+  /**
+   * The names of the members the message mentions who have left the room,
+   * for which the server refused it: said in place of the refusal. Send
+   * again then sends it without them.
+   */
+  readonly leftRoom?: ReadonlyArray<string>;
 }
 
 /** One message: the operator's on the right and dark, a bot's on the left and light. */
@@ -94,6 +100,7 @@ export function MessageBubble({
   onRetry,
   onDiscard,
   submitting = false,
+  leftRoom,
 }: MessageBubbleProps) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
@@ -105,7 +112,14 @@ export function MessageBubble({
   // The device could not record what the server answered: a problem, though nothing to retry.
   const troubled = failed || status._tag === "unrecorded";
   const key = statusKey(status, submitting);
-  const deliveryText = key === null ? null : t(key);
+  const deliveryText =
+    status._tag === "not-sent" && leftRoom !== undefined && leftRoom.length > 0
+      ? ctx.i18n.plural("message.notSent.left", leftRoom.length, {
+          names: new Intl.ListFormat(ctx.i18n.locale, { type: "conjunction" }).format(leftRoom),
+        })
+      : key === null
+        ? null
+        : t(key);
   // Sent again, Send again goes; focus that was on it moves to the message, which stays whatever
   // its delivery line then says, even nothing.
   const { target, actions } = useFocusAfterActions<HTMLDivElement>(failed);
