@@ -1,19 +1,27 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SchemaGetter from "effect/SchemaGetter";
 import { PairingCode } from "./device.ts";
 
+/**
+ * `text` as a URL, or none when it is not one. Built on `new URL`: `URL.parse`
+ * is missing from Safari before 18 and from some JavaScript engines a native
+ * client runs on.
+ */
+export const parseUrl: (text: string) => Option.Option<URL> = Option.liftThrowable(
+  (text: string) => new URL(text),
+);
+
+const isHttp = (url: URL) => url.protocol === "http:" || url.protocol === "https:";
+
 /** An `http:` or `https:` origin: scheme, host and port, nothing more. */
 export const ServerOrigin = Schema.String.check(
-  Schema.makeFilter((text: string) => {
-    const url = URL.parse(text);
-    return (
-      (url !== null &&
-        (url.protocol === "http:" || url.protocol === "https:") &&
-        url.origin === text) ||
-      "an http: or https: origin"
-    );
-  }),
+  Schema.makeFilter(
+    (text: string) =>
+      Option.exists(parseUrl(text), (url) => isHttp(url) && url.origin === text) ||
+      "an http: or https: origin",
+  ),
 ).pipe(Schema.brand("ServerOrigin"));
 export type ServerOrigin = typeof ServerOrigin.Type;
 
@@ -21,67 +29,80 @@ export type ServerOrigin = typeof ServerOrigin.Type;
 export const PairingLinkTarget = Schema.Struct({ server: ServerOrigin, code: PairingCode });
 export type PairingLinkTarget = typeof PairingLinkTarget.Type;
 
-/** The scheme and host of a pairing link. Each client resolves `j3bots://` links itself. */
-const PAIRING_LINK_BASE = "j3bots://pair";
+const FRAGMENT = "#pair=";
 
 /**
- * `j3bots://pair?server=<origin>&code=<code>`, each parameter once and nothing
- * else: no path, port, user name or fragment. What the parameters hold is the
- * target's to check.
+ * `<origin>/#pair=<code>` exactly: the origin as a browser writes it, the path
+ * `/`, no query, user name or other fragment. Whether the code has a code's
+ * form is the target's to check.
  */
-const isPairingLinkText = (text: string) => {
-  const url = URL.parse(text);
-  if (
-    url === null ||
-    url.protocol !== "j3bots:" ||
-    url.host !== "pair" ||
-    url.pathname !== "" ||
-    url.username !== "" ||
-    url.password !== "" ||
-    text.includes("#")
-  ) {
-    return "a j3bots://pair link";
-  }
-  const keys = [...url.searchParams.keys()].toSorted();
-  return (
-    (keys.length === 2 && keys[0] === "code" && keys[1] === "server") ||
-    "server and code, once each"
-  );
-};
+const isPairingLinkText = (text: string) =>
+  Option.exists(
+    parseUrl(text),
+    (url) => isHttp(url) && url.hash.startsWith(FRAGMENT) && text === `${url.origin}/${url.hash}`,
+  ) || "an http: or https: origin, then /#pair= and a code";
 
 /**
- * A link that pairs a new client: the server's origin and a pairing code, as a
- * QR code carries them to a phone's camera. It pre-fills the pairing screen;
- * a client never pairs from a link by itself. The code still works once and
- * expires as any code does.
+ * A link that pairs a new client: the server's own address with the pairing
+ * code in the fragment, as a QR code carries them to a phone's camera. A
+ * camera opens it in the browser, where the web client takes the code from
+ * the fragment; a native client's scanner reads the same link. The fragment
+ * never reaches the server, so the code stays out of its logs and of
+ * `Referer`. A link only fills in the pairing screen: a client never pairs
+ * from one by itself. The code still works once and expires as any code does.
  */
 export const PairingLink = Schema.String.check(Schema.makeFilter(isPairingLinkText)).pipe(
   Schema.decodeTo(PairingLinkTarget, {
     decode: SchemaGetter.transform((text: string) => {
-      const params = new URL(text).searchParams;
-      return { server: params.get("server") ?? "", code: params.get("code") ?? "" };
+      const url = new URL(text);
+      return { server: url.origin, code: url.hash.slice(FRAGMENT.length) };
     }),
     encode: SchemaGetter.transform(
       ({ server, code }: { readonly server: string; readonly code: string }) =>
-        `${PAIRING_LINK_BASE}?${new URLSearchParams({ server, code })}`,
+        `${server}/${FRAGMENT}${code}`,
     ),
   }),
 );
 
-/** Hosts that name the machine reading them, so never another device's way to the server. */
-const isLoopback = (hostname: string) =>
-  hostname === "localhost" || hostname === "[::1]" || /^127\.\d+\.\d+\.\d+$/.test(hostname);
+/** An IPv4 address an IPv6 URL host maps, as `[::ffff:7f00:1]`, in dotted form. */
+const mappedIpv4 = (hostname: string) => {
+  const groups = /^\[::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})\]$/.exec(hostname);
+  if (groups === null) return hostname;
+  const [high, low] = [Number.parseInt(groups[1]!, 16), Number.parseInt(groups[2]!, 16)];
+  return `${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`;
+};
 
 /**
- * The origins a pairing link can carry to another device, best first: the one
- * this client reaches the server at (`current`), then those the server
- * offers, each once. A loopback origin is left out: on the device that reads
- * the link, it names that device.
+ * Hosts that name the machine reading them, so never another device's way to
+ * the server: loopback, and the unspecified address, which reaches it too.
+ */
+const isSelf = (hostname: string) => {
+  const host = mappedIpv4(hostname);
+  return (
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host === "[::1]" ||
+    host === "[::]" ||
+    host === "0.0.0.0" ||
+    /^127\.\d+\.\d+\.\d+$/.test(host)
+  );
+};
+
+/**
+ * The origins a pairing link can carry to another device, best first, each
+ * once. The one this client reaches the server at (`current`) comes first
+ * when it is `https:`, as a domain a proxy serves, or one the server offers;
+ * a plain-HTTP origin the server does not offer, as a forwarded port, is left
+ * out. Then those the server offers, in its order. An origin that names the
+ * reading device itself, as loopback does, is left out.
  */
 export const pairingOrigins = (
   offered: ReadonlyArray<ServerOrigin>,
   current?: ServerOrigin,
-): ReadonlyArray<ServerOrigin> =>
-  [...new Set(current === undefined ? offered : [current, ...offered])].filter(
-    (origin) => !isLoopback(new URL(origin).hostname),
-  );
+): ReadonlyArray<ServerOrigin> => {
+  const first =
+    current !== undefined && (current.startsWith("https:") || offered.includes(current))
+      ? [current]
+      : [];
+  return [...new Set([...first, ...offered])].filter((origin) => !isSelf(new URL(origin).hostname));
+};

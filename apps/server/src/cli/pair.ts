@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
-  PairingLink,
   type PairingCode,
+  PairingLink,
   pairingOrigins,
-  type ServerOrigin,
+  parseUrl,
+  ServerOrigin,
 } from "@j3-bots/contracts";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
@@ -11,7 +12,9 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { Command } from "effect/cli";
+import * as Stdio from "effect/Stdio";
+import * as Terminal from "effect/Terminal";
+import { Command, Flag } from "effect/cli";
 import { AdminClient } from "../admin/AdminClient.ts";
 import type { ListenerStatus } from "../admin/protocol.ts";
 import * as ServerConfig from "../config.ts";
@@ -45,36 +48,89 @@ const whereToOpen = (listener: ListenerStatus, origins: ReadonlyArray<ServerOrig
   return ["On the new device, open J3 Bots and enter the code."];
 };
 
-/**
- * A QR code of the pairing link to the first address another device can
- * reach, for a phone's camera to fill in the server and the code. None when
- * the server offers no such address.
- */
-const scanToPair = (origins: ReadonlyArray<ServerOrigin>, code: PairingCode) => {
-  const [server] = pairingOrigins(origins);
-  if (server === undefined) return [];
-  return [
-    "",
-    `With the J3 Bots app on a phone, scan this to fill in ${server} and the code:`,
-    terminalQr(encodeLink({ server, code })),
-  ];
-};
-
 const encodeLink = Schema.encodeSync(PairingLink);
+const decodeOrigin = Schema.decodeUnknownOption(ServerOrigin);
+
+const addressFlag = Flag.String("address").pipe(
+  Flag.withDescription(
+    "The address the QR code carries, for the phone to open J3 Bots at: one of those the command lists, or an https address the server is reached at, such as a domain a proxy serves. The first one listed when left out.",
+  ),
+  Flag.optional,
+);
+
+/**
+ * The origin the QR code carries: the one the operator chose, which must be
+ * one the server lists or `https:`, else the first it lists. None when
+ * there is no such origin, as on a server that listens on loopback only.
+ */
+const carriedOrigin = Effect.fn("pair.carriedOrigin")(function* (
+  origins: ReadonlyArray<ServerOrigin>,
+  chosen: Option.Option<string>,
+) {
+  if (Option.isNone(chosen)) return Option.fromUndefinedOr(pairingOrigins(origins)[0]);
+  const origin = Option.flatMap(parseUrl(chosen.value.trim()), (url) => decodeOrigin(url.origin));
+  // `pairingOrigins` puts an origin first only when it may carry it.
+  if (Option.isNone(origin) || pairingOrigins(origins, origin.value)[0] !== origin.value) {
+    return yield* refuse(
+      "--address must be one of the addresses the server listens at, as `j3-bots pair` lists them, or an https address another device reaches it at. No code was made.",
+    );
+  }
+  return origin;
+});
+
+/**
+ * A QR code of the pairing link to `server`, for a phone's camera, and which
+ * address it carries. Where the terminal cannot show it, the link as text and
+ * why there is no QR code.
+ */
+const scanToPair = Effect.fn("pair.scanToPair")(function* (
+  server: ServerOrigin,
+  code: PairingCode,
+) {
+  const link = encodeLink({ server, code });
+  const terminal = yield* Terminal.Terminal;
+  const qr = terminalQr(link, {
+    isTerminal: yield* (yield* Stdio.Stdio).stdoutIsTerminal,
+    columns: yield* terminal.columns,
+    rows: yield* terminal.rows,
+  });
+  const goesTo = `It opens J3 Bots at ${server}; for another address, run \`j3-bots pair --address <address>\`.`;
+  switch (qr._tag) {
+    case "shown":
+      return [
+        "",
+        "Scan this with a phone's camera to open J3 Bots there with the code filled in:",
+        qr.lines,
+        goesTo,
+      ];
+    case "not-a-terminal":
+      return ["", `On a phone, open ${link} to pair it with the code filled in.`, goesTo];
+    case "too-small":
+      return [
+        "",
+        `On a phone, open ${link} to pair it with the code filled in.`,
+        goesTo,
+        `For a QR code of it, enlarge this terminal to ${qr.columns} columns by ${qr.rows} rows and run \`j3-bots pair\` again.`,
+      ];
+  }
+});
 
 /** `ABCDE-FGHJK`: two halves, easier to read out and type. */
 const formatCode = (code: string) => `${code.slice(0, 5)}-${code.slice(5)}`;
 
-export const pairCommand = Command.make("pair").pipe(
+export const pairCommand = Command.make("pair", { address: addressFlag }).pipe(
   Command.withDescription(
-    "Print a one-time code that pairs a new device with the running server. It works once, within five minutes.",
+    "Print a one-time code that pairs a new device with the running server, and a QR code that opens J3 Bots on a phone with the code filled in. The code works once, within five minutes.",
   ),
-  Command.withHandler(() =>
+  Command.withHandler(({ address }) =>
     Effect.gen(function* () {
       const socket = yield* userFacing(ServerConfig.resolveAdminSocket);
       const admin = yield* AdminClient;
       const status = yield* userFacing(admin.status(socket));
       if (Option.isNone(status)) return yield* refuse(NOT_RUNNING);
+      const { listener } = status.value;
+      const origins = yield* reachableOrigins(listener);
+      const carried = yield* carriedOrigin(origins, address);
       const grant = yield* userFacing(admin.startPairing(socket));
       if (Option.isNone(grant)) return yield* refuse(NOT_RUNNING);
       const now = yield* DateTime.now;
@@ -82,15 +138,13 @@ export const pairCommand = Command.make("pair").pipe(
         1,
         Math.round(Duration.toMinutes(DateTime.distance(now, grant.value.expiresAt))),
       );
-      const { listener } = status.value;
-      const origins = yield* reachableOrigins(listener);
       yield* Console.log(
         [
           `Pairing code: ${formatCode(grant.value.code)}`,
           "",
           `It works once, for the next ${minutes} minute${minutes === 1 ? "" : "s"}.`,
           ...whereToOpen(listener, origins),
-          ...scanToPair(origins, grant.value.code),
+          ...(Option.isSome(carried) ? yield* scanToPair(carried.value, grant.value.code) : []),
         ].join("\n"),
       );
     }),

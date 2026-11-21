@@ -35,9 +35,10 @@ export interface PairingOffer {
   readonly code: PairingCode;
   readonly expiresAt: DateTime.Utc;
   /**
-   * The origins a pairing link can carry to another device, best first: the
-   * one this client reaches the server at, then those the server offers,
-   * loopback left out (`pairingOrigins`). Empty when there is none.
+   * The origins a pairing link can carry to another device, best first
+   * (`pairingOrigins`): the one this client reaches the server at when it is
+   * `https:` or the server offers it, then those the server offers. Empty
+   * when there is none.
    */
   readonly origins: ReadonlyArray<ServerOrigin>;
 }

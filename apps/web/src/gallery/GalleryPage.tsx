@@ -19,6 +19,7 @@ import {
   ModelId,
   type Notification,
   type NotificationKind,
+  PairingCode,
   ProviderId,
   type ProviderStatus,
   type Room,
@@ -1517,6 +1518,20 @@ function ConnectionSection() {
           <Pairing
             reason="new"
             defaultName="Chrome on Android"
+            address="http://192.0.2.10:3737"
+            onPair={refused({ _tag: "invalid-code" })}
+          />
+        </Frame>
+        <Frame
+          label="Pairing: opened from a QR code, its code filled in (any code is refused as wrong)"
+          width={390}
+          height={560}
+        >
+          <Pairing
+            reason="new"
+            defaultName="Safari on iPhone"
+            initialCode={PairingCode.make("7KQ2M9XH4D")}
+            address="http://192.0.2.10:3737"
             onPair={refused({ _tag: "invalid-code" })}
           />
         </Frame>
@@ -1528,6 +1543,7 @@ function ConnectionSection() {
           <Pairing
             reason="signed-out"
             defaultName="Safari on iPhone"
+            address="https://j3.example.test"
             onPair={refused({
               _tag: "rate-limited",
               retryAt: lockedUntil,
@@ -1542,6 +1558,7 @@ function ConnectionSection() {
           <Pairing
             reason="still-listed"
             defaultName="Firefox on Linux"
+            address="http://192.0.2.10:3737"
             onPair={refused({ _tag: "invalid-code" })}
           />
         </Frame>

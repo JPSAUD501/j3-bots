@@ -2,6 +2,7 @@
 import * as DateTime from "effect/DateTime";
 import { useEffect, useId, useRef, useState, type ReactElement } from "react";
 import type { PairingFailure, PairResult, UnpairedReason } from "@j3-bots/client-runtime";
+import type { PairingCode } from "@j3-bots/contracts";
 import { clockTime } from "@j3-bots/client-runtime/presentation";
 import { useI18n, usePresentation } from "../app/context";
 import type { DesktopServer } from "../shell/data";
@@ -50,6 +51,10 @@ interface PairingProps {
   }) => Promise<PairResult>;
   /** The name the device field starts with. */
   readonly defaultName: string;
+  /** The code the field starts with, from a pairing link; the operator still presses Pair. */
+  readonly initialCode?: PairingCode | null | undefined;
+  /** The origin of the server this device pairs with, shown above the form. */
+  readonly address: string;
   /**
    * In the desktop app, the server the operator named, and a way back to the
    * screen that names it. A browser's server is the page's own, so it has none.
@@ -60,17 +65,26 @@ interface PairingProps {
 }
 
 /**
- * The first screen on a new device: the code from `j3-bots pair` and a name
- * for the device. Once paired, the app opens by itself.
+ * The first screen on a new device: the server it pairs with, the code from
+ * `j3-bots pair` and a name for the device. Once paired, the app opens by
+ * itself.
  */
-export function Pairing({ reason, onPair, defaultName, server, restart }: PairingProps) {
+export function Pairing({
+  reason,
+  onPair,
+  defaultName,
+  initialCode,
+  address,
+  server,
+  restart,
+}: PairingProps) {
   const ctx = usePresentation();
   const { t, parts } = ctx.i18n;
   const codeId = useId();
   const nameId = useId();
   const errorId = useId();
   const codeRef = useRef<HTMLInputElement>(null);
-  const [code, setCode] = useState("");
+  const [code, setCode] = useState<string>(initialCode ?? "");
   const [name, setName] = useState(defaultName);
   const [state, setState] = useState<
     | { readonly _tag: "editing" }
@@ -132,6 +146,26 @@ export function Pairing({ reason, onPair, defaultName, server, restart }: Pairin
           {reason === "signed-out" ? t("pairing.signedOut") : t("pairing.stillListed")}
         </p>
       )}
+      <div className="flex max-w-xs flex-col items-center gap-1 text-xs text-muted-foreground">
+        <span className="font-mono text-sm break-all text-foreground">
+          {t("pairing.server", { address })}
+        </span>
+        {server !== undefined && (
+          <ChangeServer
+            address={server.address}
+            onChange={() => {
+              setChangingServer(true);
+              return server.forget().then((forgotten) => {
+                if (!forgotten) setChangingServer(false);
+                return forgotten;
+              });
+            }}
+            paired={false}
+            disabled={state._tag === "pairing"}
+            className="items-center"
+          />
+        )}
+      </div>
       <form
         className="flex w-full max-w-xs flex-col gap-3 text-start"
         onSubmit={(event) => {
@@ -194,26 +228,6 @@ export function Pairing({ reason, onPair, defaultName, server, restart }: Pairin
             <Button onClick={restart}>{t("gate.restart")}</Button>
           )}
       </form>
-      {server !== undefined && (
-        <div className="flex max-w-xs flex-col items-center gap-1 text-xs text-muted-foreground">
-          <span className="font-mono break-all">
-            {t("pairing.server", { address: server.address })}
-          </span>
-          <ChangeServer
-            address={server.address}
-            onChange={() => {
-              setChangingServer(true);
-              return server.forget().then((forgotten) => {
-                if (!forgotten) setChangingServer(false);
-                return forgotten;
-              });
-            }}
-            paired={false}
-            disabled={state._tag === "pairing"}
-            className="items-center"
-          />
-        </div>
-      )}
     </Centered>
   );
 }

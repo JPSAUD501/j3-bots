@@ -7,7 +7,8 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { desktop } from "./live/desktop";
 import { listenForNotificationClicks } from "./live/notify";
-import { router } from "./router";
+import { LinkedPairingCode, takePairingCode } from "./live/pairingLink";
+import { makeRouter } from "./router";
 
 const root = document.getElementById("root");
 if (root === null) throw new Error("index.html has no #root element.");
@@ -33,8 +34,15 @@ listenForNotificationClicks();
 // next; loading the page again picks up the new build.
 window.addEventListener("vite:preloadError", () => window.location.reload());
 
+// A pairing link's code leaves the address bar before the router reads it. The
+// desktop app's page is its own, never a link's.
+const linkedCode = desktop === null ? takePairingCode(window.location, window.history) : null;
+const router = makeRouter();
+
 createRoot(root).render(
   <StrictMode>
-    <RouterProvider router={router} />
+    <LinkedPairingCode value={linkedCode}>
+      <RouterProvider router={router} />
+    </LinkedPairingCode>
   </StrictMode>,
 );

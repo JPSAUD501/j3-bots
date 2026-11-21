@@ -641,7 +641,7 @@ export const en = {
   "settings.pair.again": "Get a new code",
   "settings.pair.instructions": "Enter this code on the other device:",
   "settings.pair.scanOrEnter":
-    "Scan the QR code with the J3 Bots app on a phone, or enter the code on the other device:",
+    "Scan the QR code with a phone’s camera, or enter the code on the other device:",
   "settings.pair.qr": "QR code that pairs a device with J3 Bots at {address}",
   "settings.pair.address": "Address in the QR code",
   "settings.pair.expires": "Works once, until {time}",

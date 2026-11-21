@@ -627,8 +627,8 @@ function DevicesSection({
 /**
  * The code to enter on the other device and, when the server can be reached
  * from another device, a QR code of the pairing link for a phone's camera. The
- * link carries the address this device uses unless the operator picks
- * another the server listens at.
+ * link carries the first origin the offer lists unless the operator picks
+ * another of them.
  */
 function PairingCodeShown({ offer }: { offer: PairingOffer }) {
   const ctx = usePresentation();

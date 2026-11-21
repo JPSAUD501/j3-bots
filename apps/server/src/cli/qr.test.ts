@@ -37,13 +37,45 @@ const picture = (printed: string) => {
   return { pixels, width, height };
 };
 
+const target = {
+  server: Schema.decodeSync(ServerOrigin)("http://192.0.2.10:3737"),
+  code: PairingCode.make("7KQ2M9XH4D"),
+};
+const link = Schema.encodeSync(PairingLink)(target);
+const roomy = { isTerminal: true, columns: 120, rows: 60 };
+
 it("prints a pairing link a camera reads back as the server and the code", () => {
-  const target = {
-    server: Schema.decodeSync(ServerOrigin)("http://192.0.2.10:3737"),
-    code: PairingCode.make("7KQ2M9XH4D"),
-  };
-  const { pixels, width, height } = picture(terminalQr(Schema.encodeSync(PairingLink)(target)));
+  const qr = terminalQr(link, roomy);
+  assert.strictEqual(qr._tag, "shown");
+  if (qr._tag !== "shown") return;
+  const { pixels, width, height } = picture(qr.lines);
   const read = jsQR.default(pixels, width, height, { inversionAttempts: "dontInvert" });
   assert.isNotNull(read);
   assert.deepStrictEqual(Schema.decodeSync(PairingLink)(read!.data), target);
+});
+
+it("draws nothing where standard output is not a terminal", () => {
+  assert.deepStrictEqual(terminalQr(link, { ...roomy, isTerminal: false }), {
+    _tag: "not-a-terminal",
+  });
+});
+
+it("draws nothing on a terminal too small for the code and its quiet zone, and says what it needs", () => {
+  const qr = terminalQr(link, roomy);
+  assert.strictEqual(qr._tag, "shown");
+  if (qr._tag !== "shown") return;
+  const lines = qr.lines.split("\n");
+  const needed = {
+    columns: [...lines[0]!.replaceAll(/\x1b\[[0-9;]*m/g, "")].length,
+    rows: lines.length,
+  };
+  assert.deepStrictEqual(terminalQr(link, { ...roomy, columns: needed.columns - 1 }), {
+    _tag: "too-small",
+    ...needed,
+  });
+  assert.deepStrictEqual(terminalQr(link, { ...roomy, rows: needed.rows - 1 }), {
+    _tag: "too-small",
+    ...needed,
+  });
+  assert.strictEqual(terminalQr(link, { ...roomy, ...needed })._tag, "shown");
 });

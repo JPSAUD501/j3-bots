@@ -654,7 +654,7 @@ const sentences = {
   "settings.pair.again": "Gerar outro código",
   "settings.pair.instructions": "Digite este código no outro dispositivo:",
   "settings.pair.scanOrEnter":
-    "Escaneie o código QR com o app J3 Bots no celular ou digite o código no outro dispositivo:",
+    "Escaneie o código QR com a câmera do celular ou digite o código no outro dispositivo:",
   "settings.pair.qr": "Código QR que pareia um dispositivo com o J3 Bots em {address}",
   "settings.pair.address": "Endereço no código QR",
   "settings.pair.expires": "Vale uma vez, até {time}",

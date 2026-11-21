@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
@@ -515,6 +516,20 @@ export const Notification = Schema.Struct({
 });
 export type Notification = typeof Notification.Type;
 
+/**
+ * A pairing code, and the origins the server listens at as another device
+ * reaches it, best first, as `j3-bots pair` lists them: what a pairing link
+ * (`PairingLink`) can carry. Empty when the server knows none, as over HTTPS
+ * with a certificate that names no host, and from a server older than
+ * `origins`, which answers without it at the same protocol version.
+ */
+export const PairingStarted = Schema.Struct({
+  code: PairingCode,
+  expiresAt: Schema.DateTimeUtc,
+  origins: Schema.Array(ServerOrigin).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
+});
+export type PairingStarted = typeof PairingStarted.Type;
+
 export const ClientRpcs = RpcGroup.make(
   /**
    * What the operator is looking at on this socket. The server notifies about
@@ -524,20 +539,8 @@ export const ClientRpcs = RpcGroup.make(
   /** Notifications for this socket to show. Live only: missed ones are not replayed. */
   Rpc.make("notifications.subscribe", { success: Notification, stream: true }),
   Rpc.make("devices.list", { success: Schema.Array(Device) }),
-  /**
-   * A code a new client can pair with, shown on this one, and the origins the
-   * server listens at as another device reaches it, best first, as
-   * `j3-bots pair` lists them: what a pairing link (`PairingLink`) can carry.
-   * Empty when the server knows none, as over HTTPS with a certificate that
-   * names no host.
-   */
-  Rpc.make("pairing.start", {
-    success: Schema.Struct({
-      code: PairingCode,
-      expiresAt: Schema.DateTimeUtc,
-      origins: Schema.Array(ServerOrigin),
-    }),
-  }),
+  /** A code a new client can pair with, shown on this one. */
+  Rpc.make("pairing.start", { success: PairingStarted }),
   /**
    * Closes that device's sockets at once, refuses its token from now on and
    * deletes its push registration.
