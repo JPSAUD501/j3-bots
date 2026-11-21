@@ -34,6 +34,7 @@ import * as Ledger from "./turns/Ledger.ts";
 import * as Observer from "./turns/Observer.ts";
 import * as Pipeline from "./turns/Pipeline.ts";
 import * as Readiness from "./turns/Readiness.ts";
+import * as RoomStates from "./turns/RoomStates.ts";
 import * as Rotations from "./turns/Rotations.ts";
 import * as RunningWork from "./turns/RunningWork.ts";
 import * as Sender from "./turns/Sender.ts";
@@ -87,7 +88,9 @@ export const layer = Layer.mergeAll(BotTools.layer, Turns.layer, PushWorker.laye
   Layer.provideMerge(
     Layer.mergeAll(MemoryFiles.layer, Entries.layer, Attachments.layer, BotStore.layer),
   ),
-  Layer.provideMerge(Layer.mergeAll(BotStates.layer, Presence.layer, PushDeliveries.layer)),
+  Layer.provideMerge(
+    Layer.mergeAll(BotStates.layer, RoomStates.layer, Presence.layer, PushDeliveries.layer),
+  ),
   Layer.provideMerge(Devices.layer),
   Layer.provideMerge(
     Layer.mergeAll(

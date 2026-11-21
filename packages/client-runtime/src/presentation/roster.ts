@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Bot, RosterItem, RosterItemKey } from "@j3-bots/contracts";
+import type { Bot, Room, RosterItem, RosterItemKey } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
+import { type IntentResult, refusedWith } from "../intents/Actions.ts";
 import { needsOperator } from "../stores/Roster.ts";
 
 /**
@@ -9,6 +10,37 @@ import { needsOperator } from "../stores/Roster.ts";
  */
 export const canStop = (bot: Bot): boolean =>
   bot.state._tag === "thinking" || bot.state._tag === "working" || bot.settingsHeld;
+
+/**
+ * Whether a room's header offers Stop: `stopping` while the server ends the
+ * room's work, which then offers nothing to press.
+ */
+export type RoomStop = "hidden" | "offered" | "stopping";
+
+/**
+ * The room's Stop follows the work the server counts for it (`Room.work`):
+ * its members' turns for it, the wakes and dispatches waiting for it, and the
+ * work its turns left running in the background. An archived room has
+ * nothing to stop: archiving stopped it.
+ */
+export const roomStop = (room: Room): RoomStop => {
+  if (room.status === "archived") return "hidden";
+  switch (room.work) {
+    case "none":
+      return "hidden";
+    case "running":
+      return "offered";
+    case "stopping":
+      return "stopping";
+  }
+};
+
+/**
+ * Whether a room's Stop that did not take effect is said. A room archived
+ * meanwhile shows so, and its archiving stopped its work.
+ */
+export const roomStopFailed = (result: IntentResult): boolean =>
+  result._tag === "failed" && !refusedWith(result, "room-archived");
 
 /** Which bot or room a roster item is. */
 export const rosterKeyOf = (item: RosterItem): RosterItemKey =>

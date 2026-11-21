@@ -60,7 +60,7 @@ const Due = Schema.Struct({
 });
 type Due = typeof Due.Type;
 
-const Retired = Schema.Struct({ id: SessionRowId, engine_session_id: SessionId });
+const Retired = Schema.Struct({ id: SessionRowId, bot_id: BotId, engine_session_id: SessionId });
 
 const encodeNote = Schema.encodeEffect(json(CatchUpNote));
 
@@ -215,7 +215,7 @@ export const layer = Layer.effect(
       Request: Schema.Void,
       Result: Retired,
       execute: () => sql`
-        SELECT id, engine_session_id FROM sessions
+        SELECT id, bot_id, engine_session_id FROM sessions
         WHERE retired_at IS NOT NULL AND lost_at IS NULL AND engine_session_id IS NOT NULL
           AND engine_retired_at IS NULL
         ORDER BY rowid
@@ -495,8 +495,14 @@ export const layer = Layer.effect(
             outcome.defer();
             continue;
           }
-          // Its events are followed no more: what is still open there is settled now.
-          yield* transaction(sessionArchived(session.id));
+          // Its events are followed no more: what is still open there is settled
+          // now, and the work its rooms counted there with it (`RoomStates`).
+          yield* transaction(
+            Effect.andThen(
+              sessionArchived(session.id),
+              changes.touch({ _tag: "bot", botId: session.bot_id }),
+            ),
+          );
           yield* observer.close(session.id);
         }
         return outcome.done();

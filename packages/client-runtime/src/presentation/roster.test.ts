@@ -1,8 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { EntryId, RoomId, type Bot, type EntryPreview, type RosterItem } from "@j3-bots/contracts";
+import {
+  type CommandError,
+  Conflict,
+  EntryId,
+  NotFound,
+  RoomId,
+  type Bot,
+  type EntryPreview,
+  type Room,
+  type RosterItem,
+} from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { at, bot, preview } from "../../test/fixtures.ts";
-import { filterRoster, orderRoster } from "./roster.ts";
+import type { IntentResult } from "../intents/Actions.ts";
+import { filterRoster, orderRoster, roomStop, roomStopFailed } from "./roster.ts";
 
 const row = (b: Bot, lastEntry: EntryPreview | null = null, unread = false): RosterItem => ({
   _tag: "bot",
@@ -23,6 +34,7 @@ const room = (lastEntry: EntryPreview | null): RosterItem => ({
     hopLimit: 3,
     pinned: false,
     createdAt: at("2026-11-01T00:00:00Z"),
+    work: "none",
   },
   lastEntry,
   lastActivityAt: lastEntry?.createdAt ?? null,
@@ -81,5 +93,52 @@ describe("filterRoster", () => {
   it("matches names and titles regardless of case and accents", () => {
     expect(names(filterRoster(items, " joao "))).toEqual(["João"]);
     expect(names(filterRoster(items, "RESEARCH"))).toEqual(["João"]);
+  });
+});
+
+describe("roomStop", () => {
+  const launch: Room = {
+    id: RoomId.make("launch"),
+    name: "Launch",
+    status: "active",
+    members: [bot("Scout").id, bot("Wren").id],
+    hostId: bot("Scout").id,
+    hopLimit: 3,
+    pinned: false,
+    createdAt: at("2026-11-01T00:00:00Z"),
+    work: "none",
+  };
+
+  it("offers Stop while the room's work runs, and shows it stopping until the server ends it", () => {
+    expect(roomStop({ ...launch, work: "running" })).toBe("offered");
+    expect(roomStop({ ...launch, work: "stopping" })).toBe("stopping");
+    expect(roomStop(launch)).toBe("hidden");
+  });
+
+  it("offers nothing in an archived room, whose archiving stopped its work", () => {
+    const archived: Room = {
+      ...launch,
+      status: "archived",
+      archivedAt: at("2026-11-20T15:00:00Z"),
+    };
+    expect(roomStop(archived)).toBe("hidden");
+  });
+});
+
+describe("roomStopFailed", () => {
+  const refused = (error: CommandError): IntentResult => ({
+    _tag: "failed",
+    failure: { _tag: "refused", error },
+  });
+
+  it("says nothing of a Stop refused because the room was archived meanwhile", () => {
+    expect(roomStopFailed(refused(new Conflict({ reason: "room-archived" })))).toBe(false);
+    expect(roomStopFailed({ _tag: "done", value: undefined })).toBe(false);
+  });
+
+  it("says every other Stop that did not take effect", () => {
+    expect(roomStopFailed(refused(new Conflict({ reason: "engine-unavailable" })))).toBe(true);
+    expect(roomStopFailed(refused(new NotFound({ resource: "room" })))).toBe(true);
+    expect(roomStopFailed({ _tag: "failed", failure: { _tag: "unexpected" } })).toBe(true);
   });
 });

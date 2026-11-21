@@ -323,6 +323,23 @@ function sampleIntents({ get, update }: Store): ShellIntents {
         e._tag === "message" ? { ...e, delivery: { _tag: "pending" } } : e,
       ),
     stopBot: (botId) => update((s) => updateBot(s, botId, setState({ _tag: "idle" }))),
+    // The sample's members work only for the room, so its Stop ends whatever they run.
+    stopRoom: (roomId) =>
+      update((s) => {
+        const found = s.roster.find((i) => i._tag === "room" && i.room.id === roomId);
+        const members = found?._tag === "room" ? found.room.members : [];
+        return members.reduce(
+          (next, botId) =>
+            updateBot(next, botId, (bot) =>
+              bot.state._tag === "thinking" || bot.state._tag === "working"
+                ? setState({ _tag: "idle" })(bot)
+                : bot,
+            ),
+          updateRoom(s, roomId, (room) =>
+            room.status === "active" ? { ...room, work: "none" } : room,
+          ),
+        );
+      }),
     setRoutineEnabled: (routineId, enabled) =>
       update((s) => ({
         ...s,
@@ -451,6 +468,7 @@ function sampleIntents({ get, update }: Store): ShellIntents {
                 status: "active",
                 members: room.members,
                 hostId: room.hostId,
+                work: "none",
               },
         ),
       );

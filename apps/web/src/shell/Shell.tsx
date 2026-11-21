@@ -323,6 +323,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
           onBack={() => navigation.select(null)}
           onStop={() => {
             if (item._tag === "bot") intents.stopBot(item.bot.id);
+            else intents.stopRoom(item.room.id);
           }}
           onGoToWaiting={goToEntry}
           stopShortcut={shortcuts.stop}

@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import { Ids } from "../Ids.ts";
+import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { json, timeText } from "../persistence/columns.ts";
 import {
   type Audience,
@@ -75,6 +76,7 @@ export const layer = Layer.effect(
     const sql = yield* SqlClient.SqlClient;
     const ids = yield* Ids;
     const signals = yield* Signals;
+    const changes = yield* ChangeLog;
     const stops = stopTargets(sql);
     const live = liveTarget(sql);
 
@@ -126,6 +128,8 @@ export const layer = Layer.effect(
           )
         `;
         written.push(id);
+        // The room has work waiting now (`RoomStates`).
+        if (roomId !== null) yield* changes.touch({ _tag: "room", roomId });
       }
       if (written.length > 0) yield* sql.afterCommit(signals.dispatch.fire);
       // A routine's wake waits for the routine runner, which opens its side session.

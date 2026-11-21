@@ -42,6 +42,7 @@ const room: Room = {
   hopLimit: 4,
   pinned: false,
   createdAt: at("2026-11-01T00:00:00Z"),
+  work: "none",
 };
 
 /** How the form reads a room with a host, with `primaryId` as the primary bot and a default hop limit of 4. */

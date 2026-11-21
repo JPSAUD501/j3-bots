@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Attachment, Bot } from "@j3-bots/contracts";
-import { messageStatus, type IntentFailure, type MessageStatus } from "@j3-bots/client-runtime";
+import {
+  messageStatus,
+  refusedWith,
+  type IntentFailure,
+  type MessageStatus,
+} from "@j3-bots/client-runtime";
 import {
   clockTime,
   type GroupPosition,
@@ -48,9 +53,7 @@ const statusKey = (status: MessageStatus, submitting: boolean): KeyWith | null =
       return "message.sending";
     case "not-sent":
       // Too long for the bot's engine is the one refusal the client cannot foresee and the operator can act on.
-      return status.failure._tag === "refused" &&
-        status.failure.error._tag === "Invalid" &&
-        status.failure.error.reason === "message-length"
+      return refusedWith(status.failure, "message-length")
         ? "message.notSent.tooLong"
         : notSentKeys[status.failure._tag];
     case "unrecorded":

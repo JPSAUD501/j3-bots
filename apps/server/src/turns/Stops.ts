@@ -22,6 +22,7 @@ import { BotStore } from "../bots/BotStore.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
 import { Entries } from "../entries/Entries.ts";
 import { Ids } from "../Ids.ts";
+import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { RoomWork } from "../rooms/RoomWork.ts";
@@ -152,6 +153,7 @@ export const layer = Layer.effect(
     const readiness = yield* Readiness;
     const receipts = yield* CommandReceipts;
     const bots = yield* BotStore;
+    const changes = yield* ChangeLog;
     const targets = stopTargets(sql);
     const { sessionLost } = sessionLoss(sql, yield* Entries, ledger, yield* WorkSteps, signals);
 
@@ -160,6 +162,25 @@ export const layer = Layer.effect(
       scope._tag === "bot"
         ? sql`1`
         : sql`(audience = 'room' AND audience_room_id = ${scope.roomId})`;
+
+    /**
+     * Confirms the session's targets (`stopTargets.confirm`); once one is, the
+     * roster is told about its bot, whose rooms' work may have ended with the
+     * Stop (`RoomStates`).
+     */
+    const botOfSession = SqlSchema.findOneOption({
+      Request: SessionRowId,
+      Result: Schema.Struct({ bot_id: BotId }),
+      execute: (sessionId) => sql`SELECT bot_id FROM sessions WHERE id = ${sessionId}`,
+    });
+    const confirm = Effect.fn("Stops.confirm")(function* (sessionId: SessionRowId) {
+      if (!(yield* targets.confirm(sessionId))) return false;
+      const session = yield* botOfSession(sessionId).pipe(Effect.orDie);
+      if (Option.isSome(session)) {
+        yield* changes.touch({ _tag: "bot", botId: session.value.bot_id });
+      }
+      return true;
+    });
 
     /** Whether a wake column set is the bot's opening (`StopOptions`). */
     const opening = sql`json_extract(payload_json, '$._tag') = 'first-run'`;
@@ -619,6 +640,8 @@ export const layer = Layer.effect(
         WHERE stop_id = ${round.stop_id} AND session_id = ${round.session_id}
           AND stopped_at IS NULL
       `;
+      // The roster shows the room's work as it is once its Stop settled (`RoomStates`).
+      if (round.room_id !== null) yield* changes.touch({ _tag: "room", roomId: round.room_id });
     }, Effect.orDie);
 
     /**
@@ -837,7 +860,7 @@ export const layer = Layer.effect(
                   AND round = ${round.round} AND observed_at IS NULL
               `;
             }
-            if (yield* targets.confirm(sessionId)) return { confirmed: true, next: null } as const;
+            if (yield* confirm(sessionId)) return { confirmed: true, next: null } as const;
           }
           const { opened, next } = yield* targets.recheck(sessionId, engineShows);
           if (opened) yield* sql.afterCommit(signals.stops.fire);
@@ -867,7 +890,7 @@ export const layer = Layer.effect(
       const engineSessionId = first.engine_session_id;
       if (engineSessionId === null) {
         for (const round of rounds) yield* markNothingToStop(round);
-        const confirmed = yield* transaction(targets.confirm(first.session_id)).pipe(Effect.orDie);
+        const confirmed = yield* transaction(confirm(first.session_id)).pipe(Effect.orDie);
         if (confirmed) yield* settledSession;
         return "done" satisfies Progress;
       }

@@ -72,6 +72,7 @@ export const en = {
   "conversation.openDetails": "Show details for {name}",
   "conversation.details": "Details",
   "conversation.stop": "Stop",
+  "conversation.stopping": "Stopping",
 
   "message.queued": "Queued",
   "message.cancelled": "Not sent: you stopped the bot first",
@@ -285,6 +286,12 @@ export const en = {
   "room.delete.body": "{name} and everything said in it are deleted for good. Its bots stay.",
   "room.delete.cancel": "Keep {name}",
   "room.deleteFailed": "{name} wasn’t deleted. Try again.",
+  "room.stop": "Stop the work",
+  "room.stop.title": "Stop the work in {name}?",
+  "room.stop.body":
+    "The bots end what they are doing for {name}, and the work they left running for it. Anything else they’re doing goes on.",
+  "room.stop.cancel": "Keep going",
+  "room.stopFailed": "The work in {name} wasn’t stopped. Try again.",
   "room.composerArchived": "{name} is archived, so it takes no messages.",
 
   "roomForm.newTitle": "New room",

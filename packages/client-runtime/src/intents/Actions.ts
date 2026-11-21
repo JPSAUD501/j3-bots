@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { type BotId, CommandId, type CommandError, type EntryId } from "@j3-bots/contracts";
+import {
+  type BotId,
+  CommandId,
+  type CommandError,
+  type EntryId,
+  type RoomId,
+} from "@j3-bots/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
@@ -24,6 +30,22 @@ export type IntentFailure =
 export type IntentResult<A = void> =
   | { readonly _tag: "done"; readonly value: A }
   | { readonly _tag: "failed"; readonly failure: IntentFailure };
+
+/** A reason the server gives when it refuses a command as it stands (`Conflict`, `Invalid`). */
+export type RefusalReason = Extract<CommandError, { readonly reason: string }>["reason"];
+
+/** Whether the server refused the command for `reason`. */
+export const refusedWith = (
+  outcome: IntentResult<unknown> | IntentFailure | null,
+  reason: RefusalReason,
+): boolean => {
+  const failure = outcome?._tag === "failed" ? outcome.failure : outcome;
+  return (
+    failure?._tag === "refused" &&
+    failure.error._tag !== "NotFound" &&
+    failure.error.reason === reason
+  );
+};
 
 /** The result of running a command, for a UI that shows outcomes rather than causes. */
 export const intentResult = <A>(exit: Exit.Exit<A, CommandError | NotPaired>): IntentResult<A> => {
@@ -54,6 +76,8 @@ export const cardAction = (entryId: EntryId) => `card:${entryId}`;
 /** Retrying a failed message or a failed turn. */
 export const retryAction = (entryId: EntryId) => `retry:${entryId}`;
 export const stopAction = (botId: BotId) => `stop:${botId}`;
+/** Stopping the work addressed to a room. */
+export const roomStopAction = (roomId: RoomId) => `room-stop:${roomId}`;
 
 interface Running {
   readonly result: Deferred.Deferred<IntentResult>;

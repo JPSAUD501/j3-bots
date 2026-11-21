@@ -136,6 +136,8 @@ export interface ShellIntents extends TimelineIntents {
    */
   readonly setShown: (target: EntryTarget | null) => void;
   readonly stopBot: (botId: BotId) => void;
+  /** Stops the work addressed to the room; the shell says so if it did not. */
+  readonly stopRoom: (roomId: RoomId) => void;
   /** Absent where there is no dictation. */
   readonly dictate?: (target: EntryTarget) => void;
   /** Resolves with the new bot's id once the server has created it. */

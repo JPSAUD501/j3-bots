@@ -166,7 +166,7 @@ export interface J3Client {
   readonly devices: Readable<Synced<ReadonlyArray<Device>>>;
   /** The turns bots spent recently, read while held, for the usage view. */
   readonly openUsage: () => UsageHandle;
-  /** Actions in flight or just accepted, by `cardAction`, `retryAction` or `stopAction` key. */
+  /** Actions in flight or just accepted, by `cardAction`, `retryAction`, `stopAction` or `roomStopAction` key. */
   readonly actions: Readable<ReadonlyMap<string, Actions.ActionState>>;
 
   readonly openConversation: (target: EntryTarget) => ConversationHandle;
@@ -299,6 +299,7 @@ export interface J3Client {
     answer: Conversations.SecretAnswer,
   ) => Promise<Actions.IntentResult>;
   readonly stopBot: (botId: BotId) => Promise<Actions.IntentResult>;
+  readonly stopRoom: (roomId: RoomId) => Promise<Actions.IntentResult>;
 
   readonly updateSettings: (
     change: Settings.SettingsChange,
@@ -523,6 +524,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     answerCard: (entryId, answer) => run.promise(conversations.answerCard(entryId, answer)),
     provideSecret: (entryId, answer) => run.promise(conversations.provideSecret(entryId, answer)),
     stopBot: (botId) => run.promise(services.roster.stop(botId)),
+    stopRoom: (roomId) => run.promise(services.roster.stopRoom(roomId)),
 
     updateSettings: (change) => run.promise(services.settings.update(change)),
     refreshSettings: () => fire(services.settings.refresh),

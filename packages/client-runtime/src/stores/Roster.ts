@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BotId, RosterItem, RosterItemKey } from "@j3-bots/contracts";
+import type { BotId, RoomId, RosterItem, RosterItemKey } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import { Connection } from "../connection/Connection.ts";
-import { Actions, type IntentResult, stopAction } from "../intents/Actions.ts";
+import { Actions, type IntentResult, roomStopAction, stopAction } from "../intents/Actions.ts";
 import { Cell, type Readable } from "../Store.ts";
 import { loading, markStale, ready, type Synced } from "./synced.ts";
 
@@ -44,6 +44,11 @@ export class Roster extends Context.Service<
     readonly state: Readable<Synced<ReadonlyArray<RosterItem>>>;
     /** Ends the bot's running work and cancels what it has not received yet. */
     readonly stop: (botId: BotId) => Effect.Effect<IntentResult>;
+    /**
+     * Ends the work addressed to the room, and what it has not received yet.
+     * Its bots' work for anyone else goes on.
+     */
+    readonly stopRoom: (roomId: RoomId) => Effect.Effect<IntentResult>;
   }
 >()("@j3-bots/client-runtime/stores/Roster") {}
 
@@ -82,6 +87,15 @@ export const layer = Layer.effect(
       );
     });
 
-    return Roster.of({ state, stop });
+    const stopRoom = Effect.fn("Roster.stopRoom")(function* (roomId: RoomId) {
+      const commandId = yield* actions.commandId;
+      return yield* actions.run(
+        roomStopAction(roomId),
+        null,
+        connection.call((client) => client["room.stop"]({ commandId, roomId })),
+      );
+    });
+
+    return Roster.of({ state, stop, stopRoom });
   }),
 );

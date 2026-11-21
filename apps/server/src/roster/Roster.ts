@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Bot, Room, RosterItem, RosterItemKey } from "@j3-bots/contracts";
+import type {
+  Bot,
+  Room,
+  RoomId,
+  RoomWorkState,
+  RosterItem,
+  RosterItemKey,
+} from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -11,6 +18,7 @@ import { Entries } from "../entries/Entries.ts";
 import { previewOf } from "../entries/preview.ts";
 import { ChangeLog, type ChangeScope } from "../persistence/ChangeLog.ts";
 import { Rooms } from "../rooms/Rooms.ts";
+import { RoomStates } from "../turns/RoomStates.ts";
 
 export type RosterFrame =
   | { readonly _tag: "snapshot"; readonly items: ReadonlyArray<RosterItem> }
@@ -65,6 +73,7 @@ export const layer = Layer.effect(
     const rooms = yield* Rooms;
     const entries = yield* Entries;
     const changes = yield* ChangeLog;
+    const roomStates = yield* RoomStates;
 
     const botItem = Effect.fn("Roster.botItem")(function* (bot: Bot) {
       const summary = yield* entries.summary({ _tag: "conversation", botId: bot.id });
@@ -96,31 +105,71 @@ export const layer = Layer.effect(
       return [...botItems, ...roomItems].toSorted(compare);
     });
 
-    /** The frame for one changed scope: the item as it is now, or its removal. */
-    const changedOf = Effect.fn("Roster.changedOf")(function* (scope: ChangeScope) {
-      if (scope._tag === "room") {
-        const room = yield* rooms.find(scope.roomId);
-        return Option.isSome(room)
-          ? ({ _tag: "changed", upsert: [yield* roomItem(room.value)], remove: [] } as const)
-          : ({
-              _tag: "changed",
-              upsert: [],
-              remove: [{ _tag: "room", roomId: scope.roomId }],
-            } as const);
-      }
-      const bot = yield* bots.find(scope.botId);
-      return Option.isSome(bot)
-        ? ({ _tag: "changed", upsert: [yield* botItem(bot.value.bot)], remove: [] } as const)
-        : ({ _tag: "changed", upsert: [], remove: [{ _tag: "bot", botId: scope.botId }] } as const);
-    });
-
     const subscribe = Stream.unwrap(
       Effect.gen(function* () {
         // Joined before the snapshot is read, so no change falls between.
         const signals = yield* changes.subscribe;
-        const snapshot: RosterFrame = { _tag: "snapshot", items: yield* items };
+        const snapshot = yield* items;
+        // The work each active room was last sent with, to this subscriber.
+        const sentWork = new Map<RoomId, RoomWorkState>();
+        const sent = (item: RosterItem) => {
+          if (item._tag !== "room") return item;
+          if (item.room.status === "active") sentWork.set(item.room.id, item.room.work);
+          else sentWork.delete(item.room.id);
+          return item;
+        };
+
+        /**
+         * The rooms whose work changed for this subscriber, among the bot's.
+         * The turns, wakes and Stops that make a room's work are its members'
+         * work, so a change of a member is when the room's may change too.
+         */
+        const roomsOfBot = Effect.fn("Roster.roomsOfBot")(function* (bot: Bot) {
+          const working = yield* roomStates.workOfBot(bot.id);
+          const changed: Array<RosterItem> = [];
+          for (const [roomId, work] of working) {
+            if (sentWork.get(roomId) === work) continue;
+            const room = yield* rooms.find(roomId);
+            if (Option.isSome(room)) changed.push(sent(yield* roomItem(room.value)));
+          }
+          return changed;
+        });
+
+        /** The frame for one changed scope: the item as it is now, or its removal. */
+        const changedOf = Effect.fn("Roster.changedOf")(function* (scope: ChangeScope) {
+          if (scope._tag === "room") {
+            const room = yield* rooms.find(scope.roomId);
+            if (Option.isSome(room)) {
+              return {
+                _tag: "changed",
+                upsert: [sent(yield* roomItem(room.value))],
+                remove: [],
+              } satisfies RosterFrame;
+            }
+            sentWork.delete(scope.roomId);
+            return {
+              _tag: "changed",
+              upsert: [],
+              remove: [{ _tag: "room", roomId: scope.roomId }],
+            } satisfies RosterFrame;
+          }
+          const bot = yield* bots.find(scope.botId);
+          if (Option.isNone(bot)) {
+            return {
+              _tag: "changed",
+              upsert: [],
+              remove: [{ _tag: "bot", botId: scope.botId }],
+            } satisfies RosterFrame;
+          }
+          return {
+            _tag: "changed",
+            upsert: [yield* botItem(bot.value.bot), ...(yield* roomsOfBot(bot.value.bot))],
+            remove: [],
+          } satisfies RosterFrame;
+        });
+
         return Stream.concat(
-          Stream.succeed(snapshot),
+          Stream.succeed<RosterFrame>({ _tag: "snapshot", items: snapshot.map(sent) }),
           Stream.fromSubscription(signals).pipe(
             Stream.filter((scope) => scope._tag !== "routines"),
             Stream.mapEffect(changedOf),
