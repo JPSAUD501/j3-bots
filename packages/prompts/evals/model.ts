@@ -84,7 +84,8 @@ interface Reply {
   /**
    * The endpoint's `finish_reason`: `stop` when the model ended the message
    * itself, `tool_calls` when it stopped to call tools, `length` when it was
-   * cut off. `null` when the endpoint did not say.
+   * cut off. `null` when the endpoint did not say. A proxy that reports
+   * `stop` alongside tool calls fails the turn as unfinished, on purpose.
    */
   readonly finishReason: string | null;
 }

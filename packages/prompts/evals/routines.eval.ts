@@ -12,8 +12,9 @@ import { type Call, commandOf, runTurn, type Scenario, transcript } from "./harn
 // creates a routine for recurring work, with a valid schedule and an
 // instruction that stands alone; creates none for a one-off request; and in a
 // routine run stays silent when a condition is not met, but speaks when it is,
-// when a reminder is due, and when it could not do the work. Each case is one
-// turn per model, scored on its tool calls.
+// when a reminder is due, and when it could not do the work, unless a recent
+// run already said what blocks it. Each case is one turn per model, scored on
+// its tool calls.
 
 /** The models to evaluate, cheapest adequate first. Override with a comma-separated `J3_EVAL_MODELS`. */
 const MODELS = Effect.runSync(
@@ -58,6 +59,21 @@ const routineWake: Wake = {
   triggerData: null,
 };
 
+/** The same watch, the day after a run told your user its GitHub sign-in had expired. */
+const blockerReportedWake: Wake = {
+  ...routineWake,
+  recentRuns: [
+    {
+      at: daysAgo(1),
+      outcome: {
+        type: "delivered",
+        text: "I couldn't check the docs build: GitHub sign-in expired (HTTP 401).",
+      },
+    },
+    ...quietRuns.slice(1),
+  ],
+};
+
 /** A one-time reminder, as the skill would save "remind me at 9 to submit my expenses". */
 const reminderWake: Wake = {
   ...base,
@@ -91,19 +107,29 @@ const FAILING = [
   "X guides/pricing.md: link to /plans returns 404",
 ].join("\n");
 
-/** A read-only look at the build: `gh run list`, `gh run view`, or a `gh api` read. */
-const READS_BUILD = /\bgh\s+(run\s+(list|view)|api)\b/;
+/** `gh run list` or `gh run view`. */
+const READS_RUNS = /\bgh\s+run\s+(list|view)\b/;
+/** A `gh api` call on acme/docs's workflow runs or jobs. */
+const READS_RUNS_API = /\bgh\s+api\b.*\brepos\/acme\/docs\/actions\/(runs|jobs)\b/;
 const WRITES = /\b(rerun|cancel|delete)\b|(-X|--method)\s*(POST|PUT|PATCH|DELETE)\b/i;
+/** Fields make `gh api` send a POST, unless the method is given as GET. */
+const API_FIELDS = /\s(-f|-F|--field|--raw-field|--input)\b/;
+const API_GET = /(-X|--method)\s*GET\b/i;
+
+/** A read-only look at the build. */
 const checksBuild = (command: string): boolean =>
-  READS_BUILD.test(command) && !WRITES.test(command);
+  !WRITES.test(command) &&
+  (READS_RUNS.test(command) ||
+    (READS_RUNS_API.test(command) && (!API_FIELDS.test(command) || API_GET.test(command))));
 
 const UNAVAILABLE = "sh: this command is not available in this workspace";
+const GH_NOT_FOUND = "gh: Not Found (HTTP 404)";
 
-/** A shell that answers `output` to a read-only look at the build, and nothing else. */
+/** A shell that answers `output` to a read-only look at the build, and an error to anything else. */
 const buildShell =
   (output: string) =>
   (command: string): string =>
-    checksBuild(command) ? output : UNAVAILABLE;
+    checksBuild(command) ? output : /\bgh\b/.test(command) ? GH_NOT_FOUND : UNAVAILABLE;
 
 /** A shell whose GitHub sign-in has expired. */
 const signedOutShell = (command: string): string =>
@@ -151,17 +177,39 @@ const BACK_REFERENCE =
  * "do not send anything".
  */
 const SILENCE =
-  /\b((end|finish|stop)s?( \w+){0,3} (silently|quietly|without)|(stay|remain|keep)s? (quiet|silent)|(say|send|report)s? nothing|(don['’]t|do not|never) (send|say|message|tell|notify|reply|report|speak|call))\b/i;
+  /\b((end|finish|stop)s?( \w+){0,3} (silently|quietly|without|with no)|(stay|remain|keep)s? (quiet|silent)|(say|send|report)s? nothing|(don['’]t|do not|never) (send|say|message|tell|notify|reply|report|speak|call))\b/i;
 
 /** Words that mark a clause about the healthy case: the build passed, nothing changed, an all-clear. */
 const HEALTHY =
   /\b(passing|passes|passed|green|succeed(s|ed)?|success(ful)?|((has|did|is) )?not (fail(ed|ing)?|broken|red)|nothing (is )?(new|wrong)|all[- ]clear|all (is )?(well|good|fine))\b/i;
 const OTHERWISE = /\botherwise\b/i;
 const FAILURE = /\b(fail\w*|broken|red|problem|error|wrong)\b/i;
+/** Words that make a clause conditional. */
+const CONDITIONAL = /\b(if|when|whenever|only|unless)\b/i;
+/** Words that make a clause hold on every run. */
+const EVERY_RUN = /\b(every|each|always|regardless|anyway)\b/i;
 
-/** "Otherwise" is the healthy case only when the clause does not name a failure. */
-const isHealthy = (clause: string): boolean =>
-  HEALTHY.test(clause) || (OTHERWISE.test(clause) && !FAILURE.test(clause));
+/**
+ * The condition a clause opens with: what follows "if" or "when", up to a
+ * colon or a comma that does not go on with "or" or "and".
+ */
+const CONDITION = /\b(?:if|when|whenever)\b((?:[^,:]|,\s*(?:or|and)\b)*)/i;
+const HEALTHY_ALL = new RegExp(HEALTHY.source, "gi");
+
+/**
+ * Whether a clause is about the healthy case. A clause with a condition is
+ * judged by that condition alone: it names the healthy case and no failure
+ * beside it, so "if it is not failed" is healthy and "if it failed, or is
+ * anything other than a success" is not. One without is judged whole, and
+ * "otherwise" counts only when the clause does not name a failure.
+ */
+const isHealthy = (clause: string): boolean => {
+  const condition = CONDITION.exec(clause)?.[1];
+  if (condition !== undefined) {
+    return HEALTHY.test(condition) && !FAILURE.test(condition.replace(HEALTHY_ALL, ""));
+  }
+  return HEALTHY.test(clause) || (OTHERWISE.test(clause) && !FAILURE.test(clause));
+};
 
 /** A verb or noun that delivers something to the user. */
 const SEND =
@@ -185,15 +233,29 @@ const sendsAnyway = (clause: string): boolean =>
     return !NEGATION.test(phrase) && !/^\s+(nothing|no)\b/i.test(after);
   });
 
-/** Problems with how an instruction's last lines handle the healthy case. */
+/**
+ * Problems with how an instruction handles the healthy case: it must say to
+ * stay silent then, send nothing in a clause about it, and send nothing in a
+ * clause that holds on every run with no condition ("on every check send an
+ * update").
+ */
 const quietDeliveryProblems = (instruction: string): ReadonlyArray<string> => {
-  const healthy = instruction.slice(-300).split(/[.;]/).filter(isHealthy);
+  const clauses = instruction.split(/[.;]/);
+  const healthy = clauses.filter(isHealthy);
   const problems: Array<string> = [];
   if (!healthy.some((clause) => SILENCE.test(clause))) {
     problems.push("the instruction does not say to stay silent when nothing is wrong");
   }
   if (healthy.some(sendsAnyway)) {
     problems.push("the instruction sends a message when nothing is wrong");
+  }
+  const unconditional = clauses.filter(
+    (clause) => EVERY_RUN.test(clause) && !CONDITIONAL.test(clause) && sendsAnyway(clause),
+  );
+  if (unconditional.length > 0) {
+    problems.push(
+      `the instruction sends a message on every run: ${JSON.stringify(unconditional[0]?.trim())}`,
+    );
   }
   return problems;
 };
@@ -230,6 +292,24 @@ const speaksOnce = (calls: ReadonlyArray<Call>, mentions: RegExp, what: string) 
   ];
 };
 
+/** Problems with a routine run that must look at the build before it speaks. */
+const speaksAfterCheck = (calls: ReadonlyArray<Call>): ReadonlyArray<string> => {
+  const checked = firstBuildCheck(calls);
+  if (checked === -1) return ["never looked at the build"];
+  const first = named(calls, "say")[0];
+  return first !== undefined && calls.indexOf(first) < checked
+    ? ["spoke before looking at the build"]
+    : [];
+};
+
+/** Problems with a routine run that must stay silent. */
+const silentRun = (calls: ReadonlyArray<Call>): ReadonlyArray<string> => [
+  ...(firstBuildCheck(calls) === -1 ? ["never looked at the build"] : []),
+  ...["say", "ask", "message_bot", "set_routine"].flatMap((name) =>
+    named(calls, name).length > 0 ? [`called \`${name}\``] : [],
+  ),
+];
+
 const cases: ReadonlyArray<Case> = [
   {
     name: "creates a routine for recurring work, with a valid schedule and an instruction that stands alone",
@@ -247,6 +327,12 @@ const cases: ReadonlyArray<Case> = [
       }
       const { call, routine } = first;
       const problems: Array<string> = [];
+      // The turn opens with a `say`, then looks for an existing routine before it creates one.
+      if (says(calls)[0]?.call !== calls[0]) problems.push("the first call is not a `say`");
+      const listed = calls.findIndex((candidate) => candidate.name === "list_routines");
+      if (listed === -1 || listed > calls.indexOf(call)) {
+        problems.push("`list_routines` was not called before the routine was created");
+      }
       const schedule = routine.schedule ?? "";
       const [minute, hour, day, month, weekday] = schedule.split(/\s+/);
       if (
@@ -312,18 +398,13 @@ const cases: ReadonlyArray<Case> = [
   {
     name: "keeps a routine run silent when nothing is worth saying",
     scenario: { wake: routineWake, shell: buildShell(PASSING) },
-    problems: (calls) => [
-      ...(firstBuildCheck(calls) === -1 ? ["never checked the build"] : []),
-      ...["say", "ask", "message_bot", "set_routine"].flatMap((name) =>
-        named(calls, name).length > 0 ? [`called \`${name}\``] : [],
-      ),
-    ],
+    problems: silentRun,
   },
   {
     name: "speaks once in a routine run when something is worth saying",
     scenario: { wake: routineWake, shell: buildShell(FAILING) },
     problems: (calls) => [
-      ...(firstBuildCheck(calls) === -1 ? ["never checked the build"] : []),
+      ...speaksAfterCheck(calls),
       ...speaksOnce(calls, /pricing|link|404/i, "say what failed"),
     ],
   },
@@ -335,12 +416,19 @@ const cases: ReadonlyArray<Case> = [
   {
     name: "says once what blocked a routine run that lost its access",
     scenario: { wake: routineWake, shell: signedOutShell },
-    problems: (calls) =>
-      speaksOnce(
+    problems: (calls) => [
+      ...speaksAfterCheck(calls),
+      ...speaksOnce(
         calls,
         /\b(auth\w*|credentials?|token|sign(ed)?[- ]?(in|out)|log(ged)?[- ]?(in|out)|access|401|permission)\b/i,
         "name the access problem",
       ),
+    ],
+  },
+  {
+    name: "stays silent when a recent run already said what blocks it",
+    scenario: { wake: blockerReportedWake, shell: signedOutShell },
+    problems: silentRun,
   },
 ];
 
@@ -350,6 +438,9 @@ describe("the quiet-delivery check", () => {
     "If the latest run on main failed, message your user with the job name. Otherwise end silently.",
     "If the build is red, tell your user what broke; if it is green, do not send an all-clear.",
     "If the latest run failed, send Rui one short message naming it. If it is not failed, end silently without messaging.",
+    "If the latest run has been going for more than 30 minutes, message your user. If it passed, say nothing. Keep the message to two short sentences.",
+    "Report only if the latest run concluded with failure, or if its conclusion is anything other than success. If the build is green, end without sending anything at all.",
+    'If its status is "in_progress" or "queued", or its conclusion is "success", it is not red: end the run without sending anything. If red, send Rui one short message. Otherwise end the run with no message at all.',
   ])("accepts %j", (instruction) => {
     expect(quietDeliveryProblems(instruction)).toEqual([]);
   });
@@ -358,6 +449,8 @@ describe("the quiet-delivery check", () => {
     "If the build fails, tell your user. If it passes, don't send a failure alert, but send an all-clear.",
     "If it fails, message your user. Do not message anyone else.",
     "If the build is passing, tell your user it is green.",
+    "If it passes, say nothing. On every check send an update.",
+    "Send your user the build status every morning. If it passed, end silently.",
   ])("rejects %j", (instruction) => {
     expect(quietDeliveryProblems(instruction)).not.toEqual([]);
   });
