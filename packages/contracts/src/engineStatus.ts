@@ -3,7 +3,7 @@ import * as Schema from "effect/Schema";
 import { BotId, Label, ModelId, ProviderId, RoutineId } from "./base.ts";
 
 export const UsageWindow = Schema.Struct({
-  /** As the provider names it, such as "5 hours" or "Weekly". */
+  /** As the engine words it, such as "Session" (a five-hour window) or "Weekly". */
   label: Label,
   usedPercent: Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
   resetsAt: Schema.NullOr(Schema.DateTimeUtc),

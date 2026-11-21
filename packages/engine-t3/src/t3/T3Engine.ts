@@ -17,7 +17,6 @@ import {
   type ChatAttachment,
   type OrchestrationV2Command,
   type OrchestrationV2ThreadStreamItem,
-  type ServerProvider,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -93,7 +92,7 @@ import { ORCHESTRATION_PROTOCOL, pin } from "./Pin.ts";
 import type { FileChangeItem } from "./approvalDetail.ts";
 import { cursorFor, makeBatches, type BatchPlace } from "./Batches.ts";
 import { makePrivateFiles } from "./PrivateFiles.ts";
-import { providerStatuses, providersOfEvent } from "./Providers.ts";
+import { type ReportedProvider, providerStatuses, providersOfEvent } from "./Providers.ts";
 import {
   activeConnection,
   instanceIdFor,
@@ -1657,7 +1656,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   // Status and console
 
   /** The engine's own report of its provider instances, kept while it is ready. */
-  const reported = yield* SubscriptionRef.make<ReadonlyArray<ServerProvider>>([]);
+  const reported = yield* SubscriptionRef.make<ReadonlyArray<ReportedProvider>>([]);
   /**
    * Every report the engine sends, from a subscription opened again a few
    * seconds after it ends or fails, for as long as the engine is ready.
@@ -1674,7 +1673,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     // An engine that is not ready reports nothing: a report from before it
     // left is not kept for when it is back.
     Stream.switchMap((current) =>
-      current._tag === "ready" ? reports : Stream.succeed<ReadonlyArray<ServerProvider>>([]),
+      current._tag === "ready" ? reports : Stream.succeed<ReadonlyArray<ReportedProvider>>([]),
     ),
     Stream.runForEach((providers) => SubscriptionRef.set(reported, providers)),
     Effect.forkScoped,
