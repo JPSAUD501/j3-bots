@@ -110,6 +110,9 @@ export class Presence extends Context.Service<
      * Tells the live recipients of one `recipients` result on each socket
      * they still have open. A device that connected since is not told: it
      * was a device to push, and stays one, so no device is told both ways.
+     * A live recipient whose sockets all closed since is told nothing, and
+     * not pushed to either: as with any notification missed while
+     * disconnected, the roster shows the entry unread.
      */
     readonly tell: (recipients: Recipients) => Effect.Effect<void>;
     /** Tells the devices with a socket open about an entry just committed, unless someone has its target in view. */
