@@ -175,11 +175,22 @@ export const layer = Layer.effect(
      * to the bot's settings. A lost session, and one on a provider the bot
      * left, are replaced instead.
      */
+    /**
+     * Live bots whose main session is missing, unopened or not aligned;
+     * `opened` when it is opened, on the bot's provider, and only its
+     * alignment is due.
+     */
     const unprovisioned = SqlSchema.findAll({
       Request: Schema.Void,
-      Result: Schema.Struct({ id: BotId }),
+      Result: Schema.Struct({ id: BotId, opened: Flag }),
       execute: () => sql`
-        SELECT b.id FROM bots b WHERE NOT EXISTS (
+        SELECT b.id, EXISTS (
+          SELECT 1 FROM sessions s
+          WHERE s.bot_id = b.id AND s.purpose = 'main' AND s.retired_at IS NULL
+            AND s.engine_session_id IS NOT NULL AND s.lost_at IS NULL
+            AND s.provider_id = b.provider_id
+        ) AS opened
+        FROM bots b WHERE NOT EXISTS (
           SELECT 1 FROM sessions s
           WHERE s.bot_id = b.id AND s.purpose = 'main' AND s.retired_at IS NULL
             AND s.engine_session_id IS NOT NULL
@@ -369,14 +380,18 @@ export const layer = Layer.effect(
 
     /**
      * Opens the bot's main session under its existing key, or a new one if it
-     * has none, and brings it to the bot's settings. An engine that takes no
-     * commands ends the pass, which runs again once it is ready; any other
-     * failure is tried again with backoff. An alignment waiting for a turn is
-     * tried again when the turn ends, which nudges the rotator, and one held
-     * by background work as often as a rotation held by it.
+     * has none, and brings it to the bot's settings; a session already opened
+     * is only aligned. An engine that takes no commands ends the pass, which
+     * runs again once it is ready; a session the engine no longer has, also
+     * one archived from the engine's console, is recorded lost, which nudges
+     * the next pass to replace it; any other failure is tried again with
+     * backoff. An alignment waiting for a turn is tried again when the turn
+     * ends, which nudges the rotator, and one held by background work as
+     * often as a rotation held by it.
      */
     const open = Effect.fn("Rotations.open")(function* (
       botId: BotId,
+      opened: boolean,
       outcome: ReturnType<typeof passOutcome>,
     ) {
       const now = yield* DateTime.now;
@@ -385,20 +400,28 @@ export const layer = Layer.effect(
         outcome.until(failed.at);
         return "done" as const;
       }
-      const opened = yield* Effect.exit(sessions.provision(botId));
-      if (opened._tag === "Success") {
+      const result = yield* Effect.exit(opened ? sessions.align(botId) : sessions.provision(botId));
+      if (result._tag === "Success") {
         openFailures.delete(botId);
-        if (opened.value === "background-work") {
+        if (result.value === "background-work") {
           outcome.until(DateTime.addDuration(now, BACKGROUND_RECHECK));
         }
         return "done" as const;
       }
-      const error = Cause.findErrorOption(opened.cause);
+      const error = Cause.findErrorOption(result.cause);
       if (
         Option.isSome(error) &&
         (error.value._tag === "EngineUnavailable" || error.value._tag === "EngineIncompatible")
       ) {
         return "unavailable" as const;
+      }
+      if (Option.isSome(error) && error.value._tag === "SessionNotFound") {
+        const lost = yield* sessions.ofEngineSession(error.value.sessionId);
+        if (Option.isSome(lost)) {
+          openFailures.delete(botId);
+          yield* transaction(sessionLost(SessionRowId.make(lost.value.id)));
+          return "done" as const;
+        }
       }
       const failures = (failed?.failures ?? 0) + 1;
       const at = DateTime.addDuration(now, openRetry(failures));
@@ -406,7 +429,7 @@ export const layer = Layer.effect(
       outcome.until(at);
       yield* Effect.logWarning(
         "A bot's main session could not be opened or aligned; it is tried again",
-        { botId, cause: opened.cause },
+        { botId, cause: result.cause },
       );
       return "done" as const;
     });
@@ -424,8 +447,10 @@ export const layer = Layer.effect(
           if (result === "deferred") outcome.defer();
           if (result === "replaced") replaced = true;
         }
-        for (const { id } of yield* unprovisioned(undefined).pipe(Effect.orDie)) {
-          if ((yield* open(id, outcome)) === "unavailable") return { _tag: "unavailable" } as const;
+        for (const { id, opened } of yield* unprovisioned(undefined).pipe(Effect.orDie)) {
+          if ((yield* open(id, opened, outcome)) === "unavailable") {
+            return { _tag: "unavailable" } as const;
+          }
         }
         // Wakes held for a replaced session go to the new one, opened by now
         // if the engine took it.

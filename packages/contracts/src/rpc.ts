@@ -271,7 +271,8 @@ export const BotRpcs = RpcGroup.make(
    * the bot takes no new work, and the server keeps trying while the engine
    * is unavailable. A turn already running keeps the settings it started with,
    * and background work still running holds the change, which a
-   * `settings-held` notice says; a Stop ends both.
+   * `settings-held` notice says and the bot's `settingsHeld` shows; a Stop
+   * ends both.
    */
   Rpc.make("bot.update", {
     payload: {

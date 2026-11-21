@@ -380,6 +380,12 @@ export class TestEngineControl extends Context.Service<
      * end with `SessionNotFound`, and so does every command for it.
      */
     readonly loseSession: (sessionId: SessionId) => Effect.Effect<void>;
+    /**
+     * The session is archived from the engine's own console: every command
+     * for it is `SessionNotFound`, while its event streams stay open, as the
+     * adapter's do: only its commands check the thread's archive.
+     */
+    readonly archiveSession: (sessionId: SessionId) => Effect.Effect<void>;
     readonly dispatches: (sessionId: SessionId) => Effect.Effect<ReadonlyArray<ReceivedDispatch>>;
     readonly responses: (
       sessionId: SessionId,
@@ -1833,6 +1839,12 @@ const make = Effect.gen(function* () {
         for (const subscriber of session.subscribers.keys()) {
           yield* Queue.fail(subscriber, new SessionNotFound({ sessionId }));
         }
+      }),
+
+    archiveSession: (sessionId) =>
+      Effect.gen(function* () {
+        const session = yield* existingSession(sessionId);
+        retire(session, yield* DateTime.now);
       }),
 
     dispatches: (sessionId) =>

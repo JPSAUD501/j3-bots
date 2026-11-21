@@ -54,7 +54,7 @@ export interface StoredBot {
   readonly engineProjectId: Option.Option<EngineProjectId>;
 }
 
-const toStored = (row: typeof BotRow.Type, state: BotState): StoredBot => ({
+const toStored = (row: typeof BotRow.Type, state: BotState, settingsHeld: boolean): StoredBot => ({
   bot: {
     id: row.id,
     profile: {
@@ -69,6 +69,7 @@ const toStored = (row: typeof BotRow.Type, state: BotState): StoredBot => ({
     pinned: row.pinned,
     hidden: row.hidden,
     state,
+    settingsHeld,
     createdAt: row.created_at,
   },
   workspacePath: row.workspace_path,
@@ -209,7 +210,9 @@ export const layer = Layer.effect(
     }, Effect.orDie);
 
     const withState = (row: typeof BotRow.Type) =>
-      Effect.map(states.of(row.id), (state) => toStored(row, state));
+      Effect.zipWith(states.of(row.id), states.settingsHeld(row.id), (state, held) =>
+        toStored(row, state, held),
+      );
 
     const find = Effect.fn("BotStore.find")(function* (id: BotId) {
       const row = yield* findRow(id);

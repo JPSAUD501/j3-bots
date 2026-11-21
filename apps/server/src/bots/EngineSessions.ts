@@ -21,6 +21,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Entries } from "../entries/Entries.ts";
 import { Ids } from "../Ids.ts";
+import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { conversation } from "../turns/model.ts";
@@ -133,6 +134,14 @@ export class EngineSessions extends Context.Service<
       EngineDown | ProjectNotFound | ModelUnavailable | SessionNotFound
     >;
     /**
+     * Brings the bot's opened main session to the bot's settings, for a bot
+     * whose workspace, project and session are in place and only an alignment
+     * is due.
+     */
+    readonly align: (
+      botId: BotId,
+    ) => Effect.Effect<Alignment, EngineDown | ModelUnavailable | SessionNotFound>;
+    /**
      * Runs `change`, which saves a new model or permission mode of the bot,
      * in the gate of the bot's main session, so it never commits while a send
      * into that session is on its way to the engine. `change` calls
@@ -178,6 +187,7 @@ export const layer = Layer.effect(
     const gate = yield* SessionGate;
     const workOf = sessionWork(sql);
     const { notify } = notices(sql, yield* Entries);
+    const changes = yield* ChangeLog;
     // One provisioning at a time: a bot's creation and the rotator may both
     // find its session missing.
     const provisioning = yield* Semaphore.make(1);
@@ -248,7 +258,7 @@ export const layer = Layer.effect(
       if (rowId === null) return;
       // A new change is told of again if it waits for background work.
       yield* sql`
-        UPDATE sessions SET settings_pending = settings_pending + 1, settings_held_told = 0
+        UPDATE sessions SET settings_pending = settings_pending + 1, settings_held = 0
         WHERE id = ${rowId}
       `.pipe(Effect.orDie);
       // The rotator aligns it.
@@ -313,31 +323,43 @@ export const layer = Layer.effect(
     );
 
     /**
-     * Tells the bot's conversation, once per change, that its settings wait
-     * for background work in the session.
+     * Records that the session's settings wait for background work there,
+     * which the roster shows, and tells the bot's conversation, once per
+     * change.
      */
     const heldByBackgroundWork = Effect.fn("EngineSessions.heldByBackgroundWork")(
       function* (botId: BotId, rowId: string) {
-        const told = yield* sql`
-          UPDATE sessions SET settings_held_told = 1
-          WHERE id = ${rowId} AND settings_pending > 0 AND settings_held_told = 0
+        const held = yield* sql`
+          UPDATE sessions SET settings_held = 1
+          WHERE id = ${rowId} AND settings_pending > 0 AND settings_held = 0
           RETURNING id
         `;
-        if (told.length > 0) yield* notify(botId, conversation, { _tag: "settings-held" }, null);
+        if (held.length === 0) return;
+        yield* notify(botId, conversation, { _tag: "settings-held" }, null);
+        yield* changes.touch({ _tag: "bot", botId });
       },
       transaction,
       Effect.orDie,
     );
 
-    /** Marks the session aligned, unless a change committed since `changes` were read. */
-    const aligned = Effect.fn("EngineSessions.aligned")(function* (rowId: string, changes: number) {
-      const cleared = yield* sql`
-        UPDATE sessions SET settings_pending = 0
-        WHERE id = ${rowId} AND settings_pending = ${changes}
-        RETURNING id
-      `;
-      return cleared.length > 0;
-    }, Effect.orDie);
+    /**
+     * Marks the session aligned, unless a change committed since `pending`
+     * were read. A hold by background work ends with it.
+     */
+    const aligned = Effect.fn("EngineSessions.aligned")(
+      function* (botId: BotId, rowId: string, pending: number) {
+        const [row] = yield* sql<{ readonly held: number }>`
+          SELECT settings_held AS held FROM sessions
+          WHERE id = ${rowId} AND settings_pending = ${pending}
+        `;
+        if (row === undefined) return false;
+        yield* sql`UPDATE sessions SET settings_pending = 0, settings_held = 0 WHERE id = ${rowId}`;
+        if (row.held === 1) yield* changes.touch({ _tag: "bot", botId });
+        return true;
+      },
+      transaction,
+      Effect.orDie,
+    );
 
     /**
      * Brings the bot's opened main session to the bot's settings, if it has
@@ -380,7 +402,7 @@ export const layer = Layer.effect(
               );
             if (refused === "background-work") yield* heldByBackgroundWork(botId, rowId);
             if (refused !== null) return refused;
-            if (yield* aligned(rowId, due.changes)) {
+            if (yield* aligned(botId, rowId, due.changes)) {
               // A wake waiting for the session is dispatched now, and a
               // held queue resumed.
               yield* signals.dispatch.fire;
@@ -425,6 +447,11 @@ export const layer = Layer.effect(
       return yield* align(botId);
     }, provisioning.withPermits(1));
 
+    /** An alignment on its own, which no provisioning crosses either. */
+    const alignAlone = Effect.fn("EngineSessions.alignAlone")(function* (botId: BotId) {
+      return yield* align(botId);
+    }, provisioning.withPermits(1));
+
     const removeProject = Effect.fn("EngineSessions.removeProject")(function* (botId: BotId) {
       const found = yield* bots.find(botId);
       if (Option.isNone(found)) return;
@@ -442,6 +469,7 @@ export const layer = Layer.effect(
 
     return EngineSessions.of({
       provision,
+      align: alignAlone,
       inMainSessionGate,
       settingsChanged,
       removeProject,

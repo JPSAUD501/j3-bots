@@ -105,6 +105,13 @@ export const Bot = Schema.Struct({
   /** Kept out of the roster; still running and reachable through search. */
   hidden: Schema.Boolean,
   state: BotState,
+  /**
+   * A change of the bot's model or permission mode waits for background work
+   * still running in its session, which applying it would end. The bot takes
+   * no new work meanwhile; a Stop ends the work, and the change applies then.
+   * Clients offer the Stop while it is true, whatever the state.
+   */
+  settingsHeld: Schema.Boolean,
   createdAt: Schema.DateTimeUtc,
 });
 export type Bot = typeof Bot.Type;

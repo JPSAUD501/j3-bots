@@ -115,6 +115,7 @@ export function sampleTeam(now: DateTime.Utc) {
       pinned: extra.pinned ?? false,
       hidden: extra.hidden ?? false,
       state,
+      settingsHeld: false,
       createdAt: ago(60 * 24 * 30),
     };
   }

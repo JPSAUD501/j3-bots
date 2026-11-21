@@ -6,8 +6,10 @@ import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
+import { BotStore } from "../bots/BotStore.ts";
 import { Bots } from "../bots/Bots.ts";
 import { BotTools } from "../tools/BotTools.ts";
 import * as TestDomain from "../testing/domain.ts";
@@ -25,6 +27,7 @@ import {
   sendToBot,
   sendWithFile,
   sessionAfter,
+  stopSettled,
   timesSent,
   turnEnded,
   until,
@@ -32,6 +35,7 @@ import {
 import { MAX_INDETERMINATE_ANSWERS, type SessionRowId } from "./model.ts";
 import { Observer } from "./Observer.ts";
 import { Pipeline } from "./Pipeline.ts";
+import { RETRY_TICK } from "./reconciler.ts";
 import { Rotations, ROTATE_AFTER_RUNS } from "./Rotations.ts";
 import { Stops } from "./Stops.ts";
 import { Usage } from "./Usage.ts";
@@ -527,6 +531,78 @@ it.effect(
       yield* nextTurn(bot.id, started);
       yield* deliveryIs(message, "delivered");
       assert.strictEqual(yield* control.sessionPermissionMode(session), "supervised");
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "offers a Stop while background work holds a settings change, and the Stop applies it",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const bots = yield* Bots;
+      const store = yield* BotStore;
+      const rotations = yield* Rotations;
+      const stored = (botId: BotId) =>
+        store.find(botId).pipe(Effect.map((found) => Option.getOrThrow(found).bot));
+      yield* TestClock.adjust("1 second");
+      const bot = yield* bots.create({
+        commandId: command(),
+        draft: { name: "Ana", job: "", permissionMode: "full-access" },
+      });
+      const session = yield* engineSession(bot.id);
+      yield* sendToBot(bot.id, "Start the dev server.");
+      const started = yield* nextTurn(bot.id);
+      yield* control.startBackgroundWork({ sessionId: session, turnId: started });
+      yield* finish(bot.id, session, started);
+      yield* bots.update({
+        commandId: command(),
+        botId: bot.id,
+        changes: { permissionMode: "supervised" },
+      });
+      yield* rotations.rotateDue;
+      // Idle, with no turn to stop: the roster says the change waits.
+      const waiting = yield* stored(bot.id);
+      assert.strictEqual(waiting.state._tag, "idle");
+      assert.isTrue(waiting.settingsHeld);
+
+      // The Stop ends the work, and its settling applies the change.
+      const stops = yield* Stops;
+      yield* stops.stopBot({ commandId: command(), botId: bot.id });
+      yield* stops.runPending;
+      yield* TestClock.adjust(RETRY_TICK);
+      yield* stopSettled;
+      yield* until(
+        control.sessionPermissionMode(session).pipe(Effect.map((mode) => mode === "supervised")),
+      );
+      yield* until(stored(bot.id).pipe(Effect.map((after) => !after.settingsHeld)));
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "replaces a session archived from the engine's console while a settings change waited for it",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const bots = yield* Bots;
+      yield* TestClock.adjust("1 second");
+      const bot = yield* bots.create({
+        commandId: command(),
+        draft: { name: "Ana", job: "", permissionMode: "full-access" },
+      });
+      const session = yield* engineSession(bot.id);
+      // Its event stream stays open: only the alignment finds it gone.
+      yield* control.archiveSession(session);
+      yield* bots.update({
+        commandId: command(),
+        botId: bot.id,
+        changes: { permissionMode: "supervised" },
+      });
+
+      const replacement = yield* sessionAfter(bot.id, session);
+      assert.strictEqual(yield* control.sessionPermissionMode(replacement), "supervised");
+      const message = yield* sendToBot(bot.id, "Still there?");
+      yield* nextTurn(bot.id);
+      yield* deliveryIs(message, "delivered");
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
