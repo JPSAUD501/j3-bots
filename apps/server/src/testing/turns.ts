@@ -277,6 +277,31 @@ const delivery = (entryId: EntryId) =>
     ),
   );
 
+/** The teammate messages the bot's conversation shows, oldest first. */
+export const handoffs = (botId: BotId) =>
+  conversation(botId).pipe(
+    Effect.map((entries) =>
+      entries.flatMap((entry) =>
+        entry._tag === "handoff" ? [`${entry.direction}: ${entry.text}`] : [],
+      ),
+    ),
+  );
+
+/** How many teammate wakes and held teammate messages the bot has, cancelled ones left out. */
+export const teammateMessagesFor = (botId: BotId) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const [row] = yield* sql<{ readonly wakes: number; readonly held: number }>`
+      SELECT
+        (
+          SELECT COUNT(*) FROM wakes
+          WHERE bot_id = ${botId} AND kind = 'bot' AND status <> 'cancelled'
+        ) AS wakes,
+        (SELECT COUNT(*) FROM held_messages WHERE recipient_bot_id = ${botId}) AS held
+    `.pipe(Effect.orDie);
+    return { wakes: row?.wakes ?? 0, held: row?.held ?? 0 };
+  });
+
 /** Waits for the message to reach `tag`. */
 export const deliveryIs = (entryId: EntryId, tag: MessageDelivery["_tag"]) =>
   until(delivery(entryId).pipe(Effect.map((found) => found?._tag === tag)));

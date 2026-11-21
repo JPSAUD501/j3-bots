@@ -37,6 +37,7 @@ import {
   deliveryIs,
   engineSession,
   flushed,
+  handoffs,
   holdGate,
   mainSessionId,
   messageTeammate,
@@ -49,6 +50,7 @@ import {
   sendInRoom,
   sendToBot,
   sessionAfter,
+  teammateMessagesFor,
   timesSent,
   turnEnded,
   until,
@@ -549,31 +551,6 @@ it.effect("refuses a say with an image larger than the engine takes inline", () 
     assert.deepStrictEqual(yield* storedBlobs, []);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
-
-/** The teammate messages the bot's conversation shows, oldest first. */
-const handoffs = (botId: BotId) =>
-  conversation(botId).pipe(
-    Effect.map((entries) =>
-      entries.flatMap((entry) =>
-        entry._tag === "handoff" ? [`${entry.direction}: ${entry.text}`] : [],
-      ),
-    ),
-  );
-
-/** How many teammate wakes and held teammate messages the bot has, cancelled ones left out. */
-const teammateMessagesFor = (botId: BotId) =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const [row] = yield* sql<{ readonly wakes: number; readonly held: number }>`
-      SELECT
-        (
-          SELECT COUNT(*) FROM wakes
-          WHERE bot_id = ${botId} AND kind = 'bot' AND status <> 'cancelled'
-        ) AS wakes,
-        (SELECT COUNT(*) FROM held_messages WHERE recipient_bot_id = ${botId}) AS held
-    `.pipe(Effect.orDie);
-    return { wakes: row?.wakes ?? 0, held: row?.held ?? 0 };
-  });
 
 /** Where each teammate message the bot's conversation shows stands, oldest first. */
 const handoffStates = (botId: BotId) =>

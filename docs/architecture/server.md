@@ -280,7 +280,7 @@ The digest is the delivered messages of the bot's conversation, the operator's a
 
 ## Bot tools
 
-Bots act on J3 Bots through a small MCP server named `j3`. The harness starts it as a local stdio process, one per loaded session; that process forwards each call to the J3 Bots server's tool endpoint, an HTTP listener of its own on `127.0.0.1:J3_TOOL_PORT`, which stays on loopback whatever `host` is. It holds no state and does no work of its own, because a host with many recently active bots runs many of them (see [Engine](engine.md#footprint)).
+Bots act on J3 Bots through a small MCP server named `j3`. The harness starts it as a local stdio process, one per loaded session; that process forwards each call to the J3 Bots server's tool endpoint, an HTTP listener of its own on `127.0.0.1:J3_TOOL_PORT`, which stays on loopback whatever `host` is and takes a request only as the bridge makes it ([Security](security.md#j3-bots-own-surface)). It holds no state and does no work of its own, because a host with many recently active bots runs many of them (see [Engine](engine.md#footprint)).
 
 The bridge identifies its caller from `T3CODE_THREAD_ID`, an environment variable the engine sets for each stdio MCP server the harness starts, with the session's thread id. The bridge reads it with `sessionOfToolCaller` from `packages/engine-t3` and never names the variable itself. The server maps that id to a session and a bot. A call from an unknown thread is refused. **Verified** on Claude Code on releases `4941` and `4969`, and on Codex from `4969`, the pinned release ([Engine](engine.md#version-pinning)).
 
