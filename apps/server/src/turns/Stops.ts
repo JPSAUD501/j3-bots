@@ -450,8 +450,10 @@ export const layer = Layer.effect(
      * A room's round held back only by work the server cannot see run, which
      * holds it at most `ROOM_ROUND_HOLD_BOUND` from when it first did, as
      * stored on the round: `held` until then, with the runner due back at
-     * the bound, and `overdue` after. An overdue round goes as a bot Stop's
-     * would, and what it ends fails `stopped`, which the operator can retry.
+     * the bound, and `overdue` after. An overdue round is judged again on
+     * events caught up with the engine (`sendRound`), and then goes as a bot
+     * Stop's would, and what it ends fails `stopped`, which the operator can
+     * retry.
      */
     const unseenHold = Effect.fn("Stops.unseenHold")(function* (round: Round, outcome: Outcome) {
       const now = yield* DateTime.now;
@@ -481,7 +483,8 @@ export const layer = Layer.effect(
      * known yet or a turn of another audience runs, which end on their own,
      * and for a bounded time while only work the server cannot see run does
      * (`unseenHold`); `free` when nothing does. The bound counts again from
-     * the next time unseen work alone holds the round once a visible turn did.
+     * the next time unseen work alone holds the round once a turn of another
+     * audience was admitted (`stopTargets.admitted`).
      */
     const roomRoundHold = Effect.fn("Stops.roomRoundHold")(function* (
       round: Round,
@@ -489,14 +492,7 @@ export const layer = Layer.effect(
       outcome: Outcome,
     ) {
       if (yield* inFlight(round.session_id)) return "held" as const;
-      if (yield* runsOtherAudience(round.session_id, roomId)) {
-        yield* sql`
-          UPDATE stop_targets SET held_since = NULL
-          WHERE stop_id = ${round.stop_id} AND session_id = ${round.session_id}
-            AND round = ${round.round} AND held_since IS NOT NULL
-        `.pipe(Effect.orDie);
-        return "held" as const;
-      }
+      if (yield* runsOtherAudience(round.session_id, roomId)) return "held" as const;
       if (yield* awaitsOtherAudience(round.session_id, roomId)) {
         return yield* unseenHold(round, outcome);
       }
@@ -532,28 +528,34 @@ export const layer = Layer.effect(
     });
 
     /**
-     * Whether a turn the engine's report lists as runnable may start, or
-     * run, with no event telling of it yet: one that is not the room's, and
-     * not waiting behind the queue the engine holds, where the events show
-     * no start of it. A round for the room's background work would interrupt
-     * it.
+     * What the turns the engine's report lists as runnable may be, as the
+     * server sees them: `none` when it lists none; `unseen` when one is not
+     * the room's and may start, or run, with no event telling of it yet,
+     * which a round for the room's background work would interrupt; `held`
+     * when each waits, never started, behind the queue the engine holds, so
+     * no run is active and the report's background work is complete; and
+     * `active` otherwise, when a turn of the room's may run.
      */
-    const runnableUnseen = Effect.fn("Stops.runnableUnseen")(function* (
+    const runnableOf = Effect.fn("Stops.runnableOf")(function* (
       sessionId: SessionRowId,
       roomId: RoomId,
       runnable: ReadonlyArray<TurnId>,
     ) {
-      if (runnable.length === 0) return false;
+      if (runnable.length === 0) return "none" as const;
       const rows = yield* sql<{ readonly engine_turn_id: string; readonly room: number }>`
         SELECT engine_turn_id, (audience = 'room' AND audience_room_id = ${roomId}) AS room
         FROM turns WHERE session_id = ${sessionId} AND ${sql.in("engine_turn_id", runnable)}
       `;
-      const [held] = yield* sql<{ readonly held: number }>`SELECT ${queueHeld(sessionId)} AS held`;
+      const [queue] = yield* sql<{ readonly held: number }>`SELECT ${queueHeld(sessionId)} AS held`;
+      const held = queue?.held === 1;
       const seen = new Map(rows.map((row) => [row.engine_turn_id, row.room === 1]));
-      return runnable.some((turnId) => {
+      const kinds = runnable.map((turnId) => {
         const room = seen.get(turnId);
-        return room === undefined ? held?.held !== 1 : !room;
+        if (room === undefined) return held ? "held" : "unseen";
+        return room ? "active" : "unseen";
       });
+      if (kinds.includes("unseen")) return "unseen" as const;
+      return kinds.includes("active") ? ("active" as const) : ("held" as const);
     }, Effect.orDie);
 
     /** Whether the engine's report lists background work one of the room's turns started. */
@@ -674,9 +676,13 @@ export const layer = Layer.effect(
      * ended: without one, it waits for the next pass, which asks for it
      * first. It waits, for a bounded time, while the report lists a turn that
      * may start or run unseen; it goes while the report still lists that
-     * work, or lists runnable turns at all, since the engine lists no
-     * background work while a run is active. Only a report that lists neither,
-     * with no turn running, settles it unsent.
+     * work, or lists a runnable turn that may be active, since the engine
+     * lists no background work while a run is active. Turns that only wait
+     * behind the queue the engine holds are not active, and leave the report
+     * complete: one that lists none of the room's work, with no turn running,
+     * settles the round unsent. A round overdue on its bound is judged only
+     * on a report taken this pass, as a later pass takes one first, and goes
+     * only while the room's work is still running or flagged.
      */
     const sendRound = Effect.fn("Stops.sendRound")(function* (
       round: Round,
@@ -691,19 +697,22 @@ export const layer = Layer.effect(
           : Effect.gen(function* () {
               const hold = yield* roomRoundHold(round, roomId, outcome);
               if (hold === "held") return "held" as const;
-              if (hold === "overdue") return "send" as const;
+              // An overdue round is judged only on a view caught up with the
+              // engine this pass.
+              if (hold === "overdue" && report === null) return "refresh" as const;
               const left = yield* roomWork({ sessionId: round.session_id, roomId }).pipe(
                 Effect.orDie,
               );
-              if (left.running) return "send" as const;
+              if (left.running || (left.flagged && hold === "overdue")) return "send" as const;
               if (left.flagged) {
                 if (report === null) return "refresh" as const;
-                if (yield* runnableUnseen(round.session_id, roomId, report.runnableTurns)) {
+                const runnable = yield* runnableOf(round.session_id, roomId, report.runnableTurns);
+                if (runnable === "unseen") {
                   const unseen = yield* unseenHold(round, outcome);
                   return unseen === "held" ? ("refresh" as const) : ("send" as const);
                 }
                 if (
-                  report.runnableTurns.length > 0 ||
+                  runnable === "active" ||
                   (yield* listsRoomWork(round.session_id, roomId, report.backgroundWork.turns))
                 ) {
                   return "send" as const;
@@ -847,7 +856,9 @@ export const layer = Layer.effect(
         // it settles the target with no round. The report is asked for
         // outside the gate, which no step holds while it waits for events;
         // one that cannot be had now leaves the round for a later pass, since
-        // the flags alone may be stale.
+        // the flags alone may be stale. So is a round overdue on its bound,
+        // which goes only on a view caught up with the engine: the turn it
+        // waited for may have started, or ended, unseen so far.
         let report: Synchronized | null = null;
         if (round.room_id !== null) {
           const hold = yield* roomRoundHold(round, round.room_id, outcome);
@@ -855,7 +866,7 @@ export const layer = Layer.effect(
           const left = yield* roomWork({ sessionId: round.session_id, roomId: round.room_id }).pipe(
             Effect.orDie,
           );
-          if (hold === "free" && !left.running && left.flagged) {
+          if (hold === "overdue" || (!left.running && left.flagged)) {
             // A session the engine no longer has is lost, and one the engine
             // cannot be reached for now waits for a later pass.
             const refreshed = yield* observer.synchronize(round.session_id, engineSessionId).pipe(

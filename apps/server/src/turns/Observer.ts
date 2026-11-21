@@ -570,6 +570,7 @@ export const layer = Layer.effect(
           admitted_room_id = (SELECT id FROM rooms WHERE id = ${columns.roomId})
         WHERE id = ${session.id}
       `;
+      yield* stops.admitted(session.id, columns.roomId);
       // A harness's wake takes its hop count now, from the flags that show
       // what may have woken it, before its own work can clear them.
       if (cause._tag !== "dispatch" && origin === null) yield* chains.borrow(session.id, turnId);

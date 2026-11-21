@@ -40,7 +40,10 @@ export type Ending =
  * for that turn in turn, unless the engine holds the queue, as after a failed
  * turn, where it cannot start: the Stop then cancels it. (A `new-turn` is
  * **Assumed** not to start while the engine holds the queue.) A wait on a
- * turn no event shows is bounded (`ROOM_ROUND_HOLD_BOUND`).
+ * turn no event shows is bounded (`ROOM_ROUND_HOLD_BOUND`), counted again
+ * from each turn of another audience admitted (`admitted`); past it, the
+ * round is judged on events caught up with the engine, and settles unsent
+ * when nothing of the room is left.
  * `steerRoom` is the steer's room column, NULL for the conversation, and
  * `null` for a send that is no steer. The planner, a send and its claim read
  * it with the same rule. `sessionId` is often a caller's column, so the tables
@@ -306,6 +309,28 @@ export const stopTargets = (sql: SqlClient.SqlClient) => {
         `;
       }
       return targets.length > 0;
+    }, Effect.orDie),
+
+    /**
+     * A turn of the session was admitted for `roomId`'s audience (null for
+     * the conversation): each round not sent yet of a room's Stop for another
+     * audience counts its bound on unseen work (`ROOM_ROUND_HOLD_BOUND`)
+     * again from the next time such work alone holds it, as the turn held it
+     * meanwhile, also one that started and ended between two passes of the
+     * runner.
+     */
+    admitted: Effect.fn("stopTargets.admitted")(function* (
+      sessionId: SessionRowId,
+      roomId: RoomId | null,
+    ) {
+      yield* sql`
+        UPDATE stop_targets SET held_since = NULL
+        WHERE session_id = ${sessionId} AND sent_at IS NULL AND stopped_at IS NULL
+          AND held_since IS NOT NULL
+          AND stop_id IN (
+            SELECT id FROM stops WHERE room_id IS NOT NULL AND room_id IS NOT ${roomId}
+          )
+      `;
     }, Effect.orDie),
 
     /**

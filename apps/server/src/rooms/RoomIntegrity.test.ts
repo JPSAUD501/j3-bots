@@ -617,6 +617,56 @@ it.effect(
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect(
+  "counts a room's Stop bound again from a private turn that started and ended between two passes",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const sql = yield* SqlClient.SqlClient;
+      const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
+      const members = [hal, ana];
+      const room = yield* roomWith(hal, [ana]);
+      yield* operatorWrites(room.id, members, "Watch the build.", nobody);
+      const watching = yield* nextTurn(hal.bot.id);
+      yield* control.startBackgroundWork({ sessionId: hal.session, turnId: watching });
+      yield* finish(hal, watching, members);
+
+      // The engine takes the operator's message, whose turn no event shows
+      // yet: the room's Stop waits on it, bounded.
+      const startup = yield* control.holdNextStartup(hal.session);
+      yield* sendToBot(hal.bot.id, "What is left today?");
+      const session = yield* mainSessionId(hal.bot.id);
+      yield* until(
+        Effect.map(
+          sql<{ readonly n: number }>`
+            SELECT COUNT(*) AS n FROM dispatches
+            WHERE session_id = ${session} AND status = 'accepted' AND disposition = 'started'
+          `.pipe(Effect.orDie),
+          ([row]) => (row?.n ?? 0) > 0,
+        ),
+      );
+      yield* (yield* Rooms).stop({ commandId: command(), roomId: room.id });
+      yield* (yield* Stops).runPending;
+      assert.strictEqual(yield* issuedRounds, 0);
+
+      // Late in the bound, the turn shows; a harness's wake queues a turn
+      // behind it, whose start no event will show. The private turn ends.
+      yield* TestClock.adjust("110 seconds");
+      yield* startup.release;
+      const privately = yield* nextTurn(hal.bot.id, watching);
+      yield* control.holdNextStartup(hal.session);
+      yield* control.startEngineTurn(hal.session);
+      yield* finish(hal, privately, members);
+
+      // The wait on the woken turn counts from the private turn, not from
+      // the first hold: past the first bound, the round still waits.
+      yield* TestClock.adjust("30 seconds");
+      yield* (yield* Stops).runPending;
+      assert.strictEqual(yield* issuedRounds, 0);
+      assert.isTrue(yield* backgroundRuns(hal));
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("holds a room's Stop past its bound while a private turn visibly runs", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;
@@ -692,6 +742,45 @@ it.effect(
       yield* stopSettled;
       assert.isFalse(yield* backgroundRuns(hal));
       yield* until(queueResumed(hal));
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "settles a room's Stop unsent when all that waits is the operator's steer a failed turn left in a held queue",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
+      const members = [hal, ana];
+      const room = yield* roomWith(hal, [ana]);
+      yield* operatorWrites(room.id, members, "Watch the build.", nobody);
+      const watching = yield* nextTurn(hal.bot.id);
+      yield* control.startBackgroundWork({ sessionId: hal.session, turnId: watching });
+      yield* finish(hal, watching, members);
+
+      // The operator talks to Hal in private and steers that turn; the
+      // room's Stop waits for it. The build ends meanwhile.
+      yield* sendToBot(hal.bot.id, "What is left today?");
+      const privately = yield* nextTurn(hal.bot.id, watching);
+      const steer = yield* sendToBot(hal.bot.id, "And the release notes?");
+      yield* settle([hal]);
+      yield* (yield* Rooms).stop({ commandId: command(), roomId: room.id });
+      yield* control.endBackgroundWork(hal.session);
+
+      // The turn fails before it takes the steer, which waits behind the
+      // hold the failure left. Nothing of the room is left: the Stop settles
+      // with no round, and the steer runs once the queue resumes.
+      yield* control.finishTurn({
+        sessionId: hal.session,
+        turnId: privately,
+        outcome: { _tag: "failed", failure: "provider-error", retryAt: null },
+      });
+      yield* turnEnded(hal.bot.id);
+      yield* stopSettled;
+      assert.strictEqual(yield* issuedRounds, 0);
+      yield* until(queueResumed(hal));
+      yield* nextTurn(hal.bot.id, privately);
+      yield* deliveryIs(steer, "delivered");
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
