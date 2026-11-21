@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import * as Cron from "effect/Cron";
+import { BotId, Routine, RoutineId, RoutineRunId } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -12,6 +13,7 @@ import {
   DECODE_OPTIONS,
   renderSystemFile,
   renderWake,
+  type RoutineWake,
   sharedSkills,
   type ToolInput,
   toolList,
@@ -20,6 +22,7 @@ import {
 } from "../src/index.ts";
 import type { FixtureEvent, GhEvent } from "./fixtures.ts";
 import { complete, type FunctionTool, type Message } from "./model.ts";
+import { localInstant, nextScheduled, plannedRun, type Trigger } from "./schedule.ts";
 import type { Workspace } from "./shell.ts";
 
 /**
@@ -96,6 +99,8 @@ export interface Call {
   readonly routine?: ToolInput<"set_routine">;
   /** What the call answered. */
   readonly output: string;
+  /** For a `set_routine` call, true when the server would have refused it. */
+  readonly refused?: boolean;
   /** For a `run_command` call, what the command did in the workspace; empty for any other call. */
   readonly events: ReadonlyArray<FixtureEvent>;
 }
@@ -159,89 +164,188 @@ const decodeShellInput = Schema.decodeUnknownOption(Schema.Struct({ command: Sch
 
 const json = (value: unknown): string => JSON.stringify(value);
 
-/**
- * When a routine saved now would first run, as the server would answer it:
- * the schedule's next time after the wake, a one-time run's own time, or none
- * for a webhook. `undefined` for a schedule that never names a date.
- */
-export const nextRunAt = (
+/** A `set_routine` call's trigger, with its times read in `zone`, or `nonexistent` for an `at` that names no time. */
+const triggerOf = (
   routine: ToolInput<"set_routine">,
-  wake: Wake,
-): DateTime.Utc | null | undefined => {
-  const zone = wake.timeZone;
-  if (routine.schedule !== undefined) {
-    const cron = Cron.parse(routine.schedule, zone);
-    if (Result.isFailure(cron)) return undefined;
-    // `next` throws for an expression that names no date that exists (`0 9 31 2 *`).
-    const next = Result.try(() => Cron.next(cron.success, DateTime.toDateUtc(wake.at)));
-    return Result.isSuccess(next) ? DateTime.fromDateUnsafe(next.success) : undefined;
-  }
-  if (routine.at !== undefined) {
-    // A time without an offset is wall-clock time in the operator's zone.
-    return /(?:Z|[+-]\d{2}:\d{2})$/.test(routine.at)
-      ? DateTime.makeUnsafe(routine.at)
-      : DateTime.toUtc(
-          DateTime.makeZonedUnsafe(`${routine.at}Z`, { timeZone: zone, adjustForTimeZone: true }),
-        );
-  }
-  return null;
+  zone: DateTime.TimeZone.Named,
+): Trigger | "nonexistent" | undefined => {
+  if (routine.webhook === true) return { _tag: "webhook" };
+  if (routine.schedule !== undefined) return { _tag: "schedule", cron: routine.schedule, zone };
+  if (routine.at === undefined) return undefined;
+  return Option.match(localInstant(routine.at, zone), {
+    onNone: () => "nonexistent" as const,
+    onSome: (at): Trigger => ({ _tag: "once", at }),
+  });
 };
 
 /** The id the `set_routine` stub gives a routine it creates. */
 export const CREATED_ROUTINE_ID = "routine-1";
 
+/** The fictional bot, and the run in progress, as the server's records name them. */
+const BOT_ID = Schema.decodeSync(BotId)("bot-juniper");
+const RUN_ID = Schema.decodeSync(RoutineRunId)("run-current");
+
+const encodeRoutine = Schema.encodeSync(Schema.toCodecJson(Routine));
+
+/** A trigger as the server saves it. */
+const savedTrigger = (trigger: Trigger): Routine["trigger"] =>
+  trigger._tag === "schedule"
+    ? { _tag: "schedule", cron: trigger.cron, timeZone: DateTime.zoneToString(trigger.zone) }
+    : trigger;
+
 /**
- * What `set_routine` answers to a call its schema accepted. During a routine
- * run, as on the server, only a `pause` of that routine is taken.
+ * The routine that is running, as the server records it during its run: a
+ * one-time routine was paused when its run started, any other is enabled.
  */
-const savedRoutine = (routine: ToolInput<"set_routine">, wake: Wake): string => {
-  if (wake.kind === "routine" && !(routine.action === "pause" && routine.id === wake.routine.id)) {
-    return json({
-      error:
-        "During a routine run, the only call allowed is `pause` of the routine that is running.",
-    });
-  }
-  if (routine.action !== "create") {
-    return json({ routine: { ...routine, enabled: routine.action !== "pause" } });
-  }
-  const next = nextRunAt(routine, wake);
-  if (next === undefined) {
-    return json({ error: "The schedule names no time that exists. Nothing was saved." });
-  }
-  return json({
-    routine: {
-      id: CREATED_ROUTINE_ID,
-      name: routine.name,
-      instruction: routine.instruction,
-      trigger: routine.schedule ?? routine.at ?? "webhook",
-      enabled: true,
-      nextRunAt: next === null ? null : DateTime.formatIso(next),
+const runningRoutine = (wake: RoutineWake): Routine => {
+  const { routine } = wake;
+  const trigger: Trigger =
+    routine.trigger.type === "schedule"
+      ? { _tag: "schedule", cron: routine.trigger.cron, zone: wake.timeZone }
+      : routine.trigger.type === "once"
+        ? { _tag: "once", at: wake.at }
+        : { _tag: "webhook" };
+  return {
+    id: routine.id,
+    botId: BOT_ID,
+    name: routine.name,
+    instruction: routine.instruction,
+    trigger: savedTrigger(trigger),
+    enabled: trigger._tag !== "once",
+    // A webhook routine's address is left out: no case runs one.
+    webhookUrl: null,
+    nextRunAt:
+      trigger._tag === "schedule"
+        ? Option.getOrNull(nextScheduled(trigger.cron, trigger.zone, wake.at))
+        : null,
+    lastRun: {
+      id: RUN_ID,
+      startedAt: wake.at,
+      finishedAt: null,
+      status: "running",
+      attempts: 1,
+      delivered: [],
+      note: null,
     },
+    runCount: wake.recentRuns.length + 1,
+  };
+};
+
+/** What the `set_routine` stub answered, and whether the server would have refused the call. */
+interface Saved {
+  readonly output: string;
+  readonly refused: boolean;
+}
+
+const refusal = (error: string): Saved => ({ output: json({ error }), refused: true });
+
+const accepted = (routine: Routine): Saved => ({
+  output: json(encodeRoutine(routine)),
+  refused: false,
+});
+
+/**
+ * What `set_routine` answers to a call its schema accepted. Like the server,
+ * it answers with the routine as saved, and applies the server's rules for a
+ * trigger (`schedule.ts`): a schedule or a time the server would refuse is
+ * refused, and a routine created is given the first run the server would
+ * plan. During a routine run only a `pause` of that routine is taken, and it
+ * answers with that routine, paused. Outside a run, a call other than `create`
+ * concerns a routine no case defines, so it answers with what the call set.
+ */
+export const setRoutineStub = (routine: ToolInput<"set_routine">, wake: Wake): Saved => {
+  if (wake.kind === "routine") {
+    return routine.action === "pause" && routine.id === wake.routine.id
+      ? accepted({ ...runningRoutine(wake), enabled: false, nextRunAt: null })
+      : refusal(
+          `A routine run can only pause its own routine: set_routine with action pause and id ${wake.routine.id}. Put any other change in your say message, for your user to ask for.`,
+        );
+  }
+  const trigger = triggerOf(routine, wake.timeZone);
+  if (trigger === "nonexistent") {
+    return refusal(`${routine.at} is not a date and time that exists.`);
+  }
+  const planned = trigger === undefined ? undefined : plannedRun(trigger, wake.at);
+  if (planned !== undefined && Result.isFailure(planned)) {
+    return refusal(
+      planned.failure === "schedule"
+        ? `The schedule "${routine.schedule}" cannot be used: it needs five cron fields that name a date that exists, and at most one run every five minutes.`
+        : "That time has already passed. Give a time ahead.",
+    );
+  }
+  if (
+    routine.action !== "create" ||
+    trigger === undefined ||
+    routine.name === undefined ||
+    routine.instruction === undefined
+  ) {
+    return {
+      output: json({ ...routine, enabled: routine.action !== "pause" }),
+      refused: false,
+    };
+  }
+  return accepted({
+    id: Schema.decodeSync(RoutineId)(CREATED_ROUTINE_ID),
+    botId: BOT_ID,
+    name: routine.name,
+    instruction: routine.instruction,
+    trigger: savedTrigger(trigger),
+    enabled: true,
+    webhookUrl:
+      trigger._tag === "webhook"
+        ? `https://bots.example.com/hooks/${CREATED_ROUTINE_ID}?key=fictional-key`
+        : null,
+    nextRunAt: planned === undefined ? null : Option.getOrNull(planned.success),
+    lastRun: null,
+    runCount: 0,
   });
 };
 
+/**
+ * When a routine the server would save now first runs: the time it plans,
+ * or `undefined` when it would refuse the routine or the trigger names no time.
+ */
+export const firstRun = (
+  routine: ToolInput<"set_routine">,
+  wake: Wake,
+): DateTime.Utc | undefined => {
+  const trigger = triggerOf(routine, wake.timeZone);
+  if (trigger === undefined || trigger === "nonexistent") return undefined;
+  return Result.match(plannedRun(trigger, wake.at), {
+    onFailure: () => undefined,
+    onSuccess: Option.getOrUndefined,
+  });
+};
+
+/**
+ * What `list_routines` answers: none in a conversation, and in a routine run
+ * the routine that is running, as the server lists it then.
+ */
+const listedRoutines = (wake: Wake): Schema.Json => ({
+  routines: wake.kind === "routine" ? [encodeRoutine(runningRoutine(wake))] : [],
+});
+
 type Request = Pick<Call, "step" | "name" | "input" | "routine">;
 
+type Answer = Pick<Call, "output" | "events" | "refused">;
+
 /** What the server would answer, as far as these scenarios need, and what a command did. */
-const answer = (
-  scenario: Scenario,
-  workspace: Workspace<GhEvent>,
-  request: Request,
-): Pick<Call, "output" | "events"> => {
-  const reply = (output: string) => ({ output, events: [] });
+const answer = (scenario: Scenario, workspace: Workspace<GhEvent>, request: Request): Answer => {
+  const reply = (output: string): Answer => ({ output, events: [] });
   switch (request.name) {
     case "say":
       return reply(json({ status: "recorded" }));
     case "ask":
       return reply(json({ asked: true }));
     case "list_routines":
-      return reply(json({ routines: [] }));
-    case "set_routine":
-      return reply(
-        request.routine === undefined
-          ? json({ error: "The call was refused as invalid." })
-          : savedRoutine(request.routine, scenario.wake),
-      );
+      return reply(json(listedRoutines(scenario.wake)));
+    case "set_routine": {
+      if (request.routine === undefined) {
+        return { ...reply(json({ error: "The call was refused as invalid." })), refused: true };
+      }
+      const saved = setRoutineStub(request.routine, scenario.wake);
+      return { ...reply(saved.output), refused: saved.refused };
+    }
     case "recall":
       return reply(json({ facts: [] }));
     case "remember":

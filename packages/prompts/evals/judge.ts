@@ -8,8 +8,10 @@ import { complete } from "./model.ts";
 /**
  * A yes-or-no question about a bot's message, put to one model under a fixed
  * rubric, for what no tool call shows: whether a message tells its reader
- * something, plainly. Every check of what a message means goes through here;
- * the graders match no words themselves.
+ * something, plainly. Every check of what a message means goes through here.
+ * The graders themselves look at a message's text in one place only: that the
+ * pull-request digest has #124 and #125 in it as numbers, a structural check
+ * beside the judge's reading of it.
  *
  * `J3_EVAL_JUDGE_MODEL` names the model, by default a small Claude model. That
  * default is also one of the models under test, so its reading of a bot's
@@ -18,8 +20,8 @@ import { complete } from "./model.ts";
  * whose answer is known, worded in ways a keyword match would miss and
  * including the opposite claim: a judge that drifts fails those, and the run
  * shows it. Its answers are sampled at temperature 0, and a reply that did not
- * finish on its own, or whose last line is not exactly `yes` or `no`, fails the
- * case as unclear instead of counting either way. Temperature 0 through a proxy
+ * finish on its own, called a tool, or whose last line is not exactly `yes` or
+ * `no`, fails the case as unclear instead of counting either way. Temperature 0 through a proxy
  * is not deterministic (the same message has drawn both answers), so each
  * question is answered three times and the majority decides, for the fixed
  * messages as for a bot's.
@@ -62,9 +64,13 @@ const verdict = Effect.fn("evals.verdict")(function* (
   );
   const text = reply.content ?? "";
   const last = text.trimEnd().split("\n").at(-1)?.trim();
-  if (reply.finishReason !== "stop" || (last !== "yes" && last !== "no")) {
+  if (
+    reply.finishReason !== "stop" ||
+    reply.toolCalls.length > 0 ||
+    (last !== "yes" && last !== "no")
+  ) {
     return yield* new JudgeUnclear({
-      message: `The judge's reply is unclear: it must finish on its own (finish_reason ${reply.finishReason ?? "(none)"}) and end on a line that is exactly yes or no: ${text === "" ? "(no text)" : text}`,
+      message: `The judge's reply is unclear: it must finish on its own (finish_reason ${reply.finishReason ?? "(none)"}), call no tools (it called ${reply.toolCalls.length}) and end on a line that is exactly yes or no: ${text === "" ? "(no text)" : text}`,
     });
   }
   return last === "yes";

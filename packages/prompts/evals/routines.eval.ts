@@ -23,7 +23,7 @@ import {
 import {
   type Call,
   CREATED_ROUTINE_ID,
-  nextRunAt,
+  firstRun,
   runTurn,
   type Scenario,
   type Skills,
@@ -47,10 +47,12 @@ import { HOME } from "./shell.ts";
 //
 // Each case is one turn per model and skill column, scored on what its tool
 // calls did. What a message means is read by the judge (`judge.ts`), on fixed
-// questions whose reading is checked on fixed messages below; the graders
-// match no words themselves, only structure: the order of calls, schedules,
-// ids and file content. After a run's message, only what its case permits may
-// follow.
+// questions whose reading is checked on fixed messages below. The graders
+// read structure: the order of calls, schedules, ids and file content. The one
+// place they look at a message's text is the pull-request digest, where they
+// check that #124 and #125 appear as numbers; whether the message reports
+// them as new is the judge's. After a run's message, only read-only calls and
+// what its case permits may follow.
 
 /** The models to evaluate, cheapest adequate first. Override with a comma-separated `J3_EVAL_MODELS`. */
 const MODELS = Effect.runSync(
@@ -372,6 +374,7 @@ const BUILD_FAILED: Check = {
   reject: [
     "The build is green. No failures found.",
     "I couldn't check the docs build: GitHub sign-in expired (HTTP 401).",
+    "It may have failed, I couldn't tell.",
   ],
 };
 
@@ -384,7 +387,11 @@ const FAILURE_NAMED: Check = {
     "Docs build failed on main: link-check, guides/pricing.md links to /plans, which returns 404.",
     "Heads-up: the link checker is red; the new pricing page links to /plans, a 404.",
   ],
-  reject: ["The docs build on main broke (run 1043).", "The build is green. No failures found."],
+  reject: [
+    "The docs build on main broke (run 1043).",
+    "The build is green. No failures found.",
+    "It may have failed, I couldn't tell.",
+  ],
 };
 
 const REMINDED: Check = {
@@ -425,6 +432,23 @@ const MERGED: Check = {
   reject: ["#12 hasn't merged yet", "#12 is still waiting for review."],
 };
 
+const NEW_PULL_REQUESTS_REPORTED: Check = {
+  question:
+    "Does this message tell its reader that pull requests #124 (Document the new search API) and #125 (Fix broken anchors in FAQ) are new, naming each by its number and its title?",
+  what: "that #124 and #125 are new, each by number and title",
+  asked: pullRequestWake.routine.instruction,
+  accept: [
+    "New on acme/docs: #124 Document the new search API, #125 Fix broken anchors in FAQ.",
+    "Two new pull requests on acme/docs: #125 (lena, Fix broken anchors in FAQ) and #124 (omar, Document the new search API).",
+  ],
+  reject: [
+    "New on acme/docs: #124 Document the new search API.",
+    "New on acme/docs: #124 and #125.",
+    "#124 Document the new search API and #125 Fix broken anchors in FAQ are still open; you heard about both earlier.",
+    "No new pull requests on acme/docs.",
+  ],
+};
+
 /** The weekday docs check the setup turn is asked for. */
 const SETUP =
   "the docs build broke twice this week and nobody noticed until customers did. from now on can you check it every weekday morning at 8 and only bother me if it's red?";
@@ -453,6 +477,7 @@ const CHECKS: ReadonlyArray<Check> = [
   REMINDED,
   ACCESS_LOST,
   MERGED,
+  NEW_PULL_REQUESTS_REPORTED,
   WEEKDAYS_AT_EIGHT,
 ];
 
@@ -520,8 +545,8 @@ const says = (calls: ReadonlyArray<Call>) =>
     return decoded._tag === "Some" ? [{ call, say: decoded.value }] : [];
   });
 
-/** The routines the turn created and the stub accepted, as the server would save them. */
-const created = (calls: ReadonlyArray<Call>) =>
+/** The routine creates the turn sent that the schema accepted, as the server would read them. */
+const creates = (calls: ReadonlyArray<Call>) =>
   calls.flatMap((call) =>
     call.routine !== undefined && call.routine.action === "create"
       ? [{ call, routine: call.routine }]
@@ -573,6 +598,19 @@ interface Permit {
   readonly test: (call: Call) => boolean;
 }
 
+/**
+ * A call that changes nothing, which any run may make after its message: a
+ * `j3` tool that only reads, or a command that neither writes a file nor tries
+ * to change GitHub, such as a `gh` read.
+ */
+const READ_ONLY: Permit = {
+  what: "a read-only call",
+  test: (call) =>
+    ["list_routines", "recall", "list_teammates"].includes(call.name) ||
+    (call.name === "run_command" &&
+      call.events.every((event) => event.type !== "file-write" && event.type !== "gh-change")),
+};
+
 const pauseItself = (wake: RoutineWake): Permit => ({
   what: "a `pause` of its own routine",
   test: (call) => pausesItself(call, wake),
@@ -580,35 +618,36 @@ const pauseItself = (wake: RoutineWake): Permit => ({
 
 /**
  * The state-file update `instruction` names, which a run may make after its
- * message: a command that reads or writes only files under `files/` whose
- * paths the instruction gives.
+ * message: a command that writes only files under `files/` whose paths the
+ * instruction gives, and otherwise only reads.
  */
 const stateUpdate = (instruction: string): Permit => ({
   what: "an update of a state file its instruction names",
   test: (call) =>
     call.name === "run_command" &&
-    call.events.length > 0 &&
+    call.events.some((event) => event.type === "file-write") &&
     call.events.every(
       (event) =>
-        (event.type === "file-write" || event.type === "file-read") &&
-        event.path.startsWith(`${HOME}/files/`) &&
-        instruction.includes(event.path.slice(HOME.length + 1)),
+        event.type !== "gh-change" &&
+        (event.type !== "file-write" ||
+          (event.path.startsWith(`${HOME}/files/`) &&
+            instruction.includes(event.path.slice(HOME.length + 1)))),
     ),
 });
 
 /**
- * Problems with the calls after `anchor`: each must be one that `permits`
- * allows, in a later model message, since it depends on `anchor` having
- * returned.
+ * Problems with the calls after `anchor`: each must be read-only or one that
+ * `permits` allows, in a later model message, since it depends on `anchor`
+ * having returned.
  */
 const onlyPermitted = (
   calls: ReadonlyArray<Call>,
   anchor: Call,
   what: string,
-  permits: ReadonlyArray<Permit>,
+  given: ReadonlyArray<Permit>,
 ): ReadonlyArray<string> => {
-  const allowed =
-    permits.length === 0 ? "nothing" : permits.map((permit) => permit.what).join(" or ");
+  const permits = [READ_ONLY, ...given];
+  const allowed = permits.map((permit) => permit.what).join(" or ");
   return calls
     .slice(calls.indexOf(anchor) + 1)
     .flatMap((call) =>
@@ -693,8 +732,8 @@ const savedRunWake = (
   routine: ToolInput<"set_routine">,
   recentRuns: (at: DateTime.Utc) => ReadonlyArray<RoutineRunSummary> = () => [],
 ): RoutineWake | undefined => {
-  const next = nextRunAt(routine, setup);
-  if (next === null || next === undefined || routine.instruction === undefined) return undefined;
+  const next = firstRun(routine, setup);
+  if (next === undefined || routine.instruction === undefined) return undefined;
   return {
     at: next,
     timeZone,
@@ -876,13 +915,20 @@ const setupProblems = (
   };
 };
 
-/** The one routine a setup turn must create, or why there is not exactly one. */
+/**
+ * The one routine a setup turn must create, or why it did not: a create the
+ * server would refuse fails the setup, even if a later one was saved.
+ */
 const theCreated = (calls: ReadonlyArray<Call>) => {
-  const routines = created(calls);
-  const [first] = routines;
-  return routines.length === 1 && first !== undefined
+  const sent = creates(calls);
+  const refused = sent.filter(({ call }) => call.refused === true);
+  const [first, ...others] = sent;
+  if (refused.length > 0) {
+    return `the server would refuse ${refused.length === 1 ? "a create" : `${refused.length} creates`}: ${refused.map(({ call }) => call.output).join("; ")}`;
+  }
+  return first !== undefined && others.length === 0
     ? first
-    : `${routines.length} accepted \`set_routine\` creates, not one`;
+    : `${sent.length} \`set_routine\` creates, not one`;
 };
 
 const decodeState = Schema.decodeUnknownOption(
@@ -896,9 +942,10 @@ const namesNumber = (text: string, number: number) =>
 /**
  * Problems specific to the pull-request watch's run: before its message, in
  * an earlier model message, it read the state file and a list holding the new
- * pull requests; the message names both by number; every write of the state
- * file comes in a later model message than the message; and the file, as the
- * turn leaves it, lists every open pull request.
+ * pull requests; the message has both numbers in it (a structural check: the
+ * judge reads whether it reports them as new, with their titles); every write
+ * of the state file comes in a later model message than the message; and the
+ * file, as the turn leaves it, lists every open pull request.
  */
 const stateRunProblems = (
   calls: ReadonlyArray<Call>,
@@ -967,26 +1014,42 @@ const fromCalls =
   (turn) =>
     Effect.succeed(problems(turn.calls));
 
-/** A one-off question about the build, asked of a workspace whose build is as `runs` says. */
+/**
+ * A one-off question about the build, asked of a workspace whose build is as
+ * `runs` says. The answer graded is the closing one, the last `say` with
+ * `done: true`, sent after the check: the judge must read it as saying the
+ * build passed, or failed, as it did. A message after it that says the
+ * opposite fails the case.
+ */
 const oneOff = (runs: ReadonlyArray<Run>, passing: boolean) => {
   const wake = userWake(ONE_OFF);
+  const [claim, opposite] = passing ? [BUILD_PASSING, BUILD_FAILED] : [BUILD_FAILED, BUILD_PASSING];
   return {
     scenario: { wake, workspace: buildWorkspace(wake, runs) },
     problems: Effect.fn("evals.oneOffCase")(function* ({ calls }: Turn) {
       const checked = calls.find(BUILD_LOOK.test);
-      const answer = says(calls).find(
-        ({ call, say }) => say.done === true && checked !== undefined && call.step > checked.step,
-      );
+      const said = says(calls);
+      const closing = said.findLast(({ say }) => say.done === true);
       const problems = [
         ...(named(calls, "set_routine").length > 0 ? ["called `set_routine`"] : []),
         ...(checked === undefined ? ["never checked the build"] : []),
       ];
-      return answer === undefined
-        ? [
-            ...problems,
-            "no `say` with `done: true` in a message after the check delivered the answer",
-          ]
-        : [...problems, ...(yield* judged(BUILD_PASSING, ONE_OFF, answer.say.text, passing))];
+      if (closing === undefined)
+        return [...problems, "no `say` with `done: true` delivered the answer"];
+      const later = said.slice(said.indexOf(closing) + 1);
+      return [
+        ...problems,
+        ...(checked === undefined
+          ? []
+          : after(checked, closing.call, {
+              source: "checked the build",
+              dependent: "delivered the answer",
+            })),
+        ...(yield* judged(claim, ONE_OFF, closing.say.text)),
+        ...(yield* Effect.forEach(later, ({ say }) =>
+          judged(opposite, ONE_OFF, say.text, false),
+        )).flat(),
+      ];
     }),
   } satisfies Omit<Case, "name">;
 };
@@ -1057,13 +1120,18 @@ const cases: ReadonlyArray<Case> = [
   {
     name: "reports new pull requests once, then records them in its state file",
     scenario: { wake: pullRequestWake, workspace: pullRequestWorkspace },
-    problems: ({ calls, workspace }) =>
-      Effect.succeed([
-        ...spoke(calls, pullRequestWake, {
-          permits: [stateUpdate(pullRequestWake.routine.instruction)],
-        }).problems,
+    problems: Effect.fn("evals.pullRequestCase")(function* ({ calls, workspace }) {
+      const { problems, text } = spoke(calls, pullRequestWake, {
+        permits: [stateUpdate(pullRequestWake.routine.instruction)],
+      });
+      return [
+        ...problems,
         ...stateRunProblems(calls, workspace.file(STATE_FILE)),
-      ]),
+        ...(text === undefined
+          ? []
+          : yield* judged(NEW_PULL_REQUESTS_REPORTED, pullRequestWake.routine.instruction, text)),
+      ];
+    }),
   },
   {
     name: "turns a request to hear when something happens into a watch that reports it once, then pauses itself",
@@ -1172,6 +1240,18 @@ describe("the run graders", () => {
 
   it("accepts a state-file write of every open pull request in a later message", () => {
     expect(stateRun([...look, say(2, report), write(3)], final())).toEqual([]);
+  });
+
+  it("accepts read-only calls after the message", () => {
+    const reads = [
+      call(3, "list_routines", {}),
+      call(3, "run_command", {}, [{ type: "gh" }, { type: "pull-requests-read", numbers: [125] }]),
+      call(4, "run_command", {}, [
+        { type: "file-read", path: `${HOME}/files/notes.txt` },
+        { type: "file-write", path: STATE_PATH, content: final() },
+      ]),
+    ];
+    expect(stateRun([...look, say(2, report), ...reads], final())).toEqual([]);
   });
 
   it.each([
