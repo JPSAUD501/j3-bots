@@ -4,9 +4,11 @@ import * as NodeHttp from "node:http";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Schema from "effect/Schema";
+import type * as NetAddress from "effect/net/NetAddress";
 import { readText } from "../body.ts";
 import { ServerConfig } from "../config.ts";
 import * as Ports from "../system/Ports.ts";
@@ -23,25 +25,43 @@ const TOOL_CALL_BODY_LIMIT = 4 * 1024 * 1024;
 const decodeToolCall = Schema.decodeUnknownEffect(Schema.fromJsonString(ToolCallRequest));
 
 /**
+ * Whether a request is made the way the bridge makes it: to `127.0.0.1` at
+ * the port the endpoint listens on, with a JSON body and no `Origin`. A web
+ * page in a browser on this machine can reach loopback too, and a browser
+ * sends a POST's `Origin`, a page on a name rebound to loopback sends that
+ * name as `Host`, and a JSON content type from another origin needs a
+ * preflight the endpoint never answers.
+ */
+const fromBridge = (
+  request: HttpServerRequest.HttpServerRequest,
+  address: NetAddress.SocketAddress,
+) =>
+  address._tag !== "UnixPathAddress" &&
+  request.headers["host"] === `127.0.0.1:${address.port}` &&
+  request.headers["origin"] === undefined &&
+  request.headers["content-type"] === "application/json";
+
+/**
  * Where the `j3` bridges forward bot tool calls. It listens on loopback only,
  * whatever `J3_HOST` is: the bridges run on this machine, started by the
- * engine's harnesses, and nothing else may reach it.
+ * engine's harnesses, and a request made any other way is refused before its
+ * body is read.
  */
 export const routes = HttpRouter.add(
   "POST",
   TOOL_CALL_PATH,
   Effect.gen(function* () {
-    const body = yield* readText(
-      yield* HttpServerRequest.HttpServerRequest,
-      TOOL_CALL_BODY_LIMIT,
-    ).pipe(Effect.result);
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const { address } = yield* HttpServer.HttpServer;
+    if (!fromBridge(request, address)) return HttpServerResponse.empty({ status: 403 });
+    const body = yield* readText(request, TOOL_CALL_BODY_LIMIT).pipe(Effect.result);
     if (body._tag === "Failure") {
       return HttpServerResponse.empty({ status: body.failure._tag === "BodyTooLarge" ? 413 : 400 });
     }
-    const request = yield* decodeToolCall(body.success).pipe(Effect.option);
-    if (request._tag === "None") return HttpServerResponse.empty({ status: 400 });
+    const call = yield* decodeToolCall(body.success).pipe(Effect.option);
+    if (call._tag === "None") return HttpServerResponse.empty({ status: 400 });
     const tools = yield* BotTools;
-    return yield* tools.call(request.value).pipe(
+    return yield* tools.call(call.value).pipe(
       Effect.flatMap((response) =>
         HttpServerResponse.schemaJson(ToolCallResponse)(response).pipe(Effect.orDie),
       ),

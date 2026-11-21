@@ -1,0 +1,223 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import { assert, it } from "@effect/vitest";
+import type { BotId } from "@j3-bots/contracts";
+import type { SessionId, TurnId } from "@j3-bots/engine-t3";
+import { TestEngineControl } from "@j3-bots/engine-t3/testing";
+import { NO_TURN_REFUSAL } from "@j3-bots/prompts";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as HttpServer from "effect/http/HttpServer";
+import * as Ports from "../system/Ports.ts";
+import * as TestDomain from "../testing/domain.ts";
+import {
+  createBot,
+  engineSession,
+  handoffs,
+  nextTurn,
+  sendToBot,
+  teammateMessagesFor,
+} from "../testing/turns.ts";
+import { TOOL_CALL_PATH, ToolCallResponse } from "./protocol.ts";
+import * as ToolEndpoint from "./ToolEndpoint.ts";
+
+const endpoint = Ports.serve(ToolEndpoint.routes, NodeHttpServer.layerTest, {
+  logAddress: false,
+}).pipe(Layer.provideMerge(TestDomain.layer));
+
+/** The bot is working on a message from the operator. */
+const working = (name: string, text: string) =>
+  Effect.gen(function* () {
+    const bot = yield* createBot(name);
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, text);
+    return { bot, session, turnId: yield* nextTurn(bot.id) };
+  });
+
+/** The arguments of an urgent message to `to`. */
+const urgent = (to: BotId, text = "When is the launch?") => ({ to, text, urgent: true });
+
+/** The engine records the bot's urgent message to `to` as an open call of its turn. */
+const calls = (sessionId: SessionId, turnId: TurnId, to: BotId) =>
+  Effect.gen(function* () {
+    yield* (yield* TestEngineControl).toolCall({
+      sessionId,
+      turnId,
+      tool: "message_bot",
+      input: urgent(to),
+      recorded: "now",
+    });
+  });
+
+/** Ana's running turn has an open urgent message to Bo, which no request has claimed. */
+const anaMessagesBo = Effect.gen(function* () {
+  const bo = yield* createBot("Bo");
+  const ana = yield* working("Ana", "Ask Bo for the launch date.");
+  yield* calls(ana.session, ana.turnId, bo.id);
+  return { ana, bo };
+});
+
+/**
+ * Posts a forward of a `message_bot` call to the endpoint, made the way the
+ * bridge makes it unless `made` says otherwise.
+ */
+const forward = (
+  call: { readonly requestId: string; readonly sessionId: SessionId; readonly arguments: object },
+  made: { readonly host?: string; readonly origin?: string; readonly contentType?: string } = {},
+) =>
+  Effect.gen(function* () {
+    const { address } = yield* HttpServer.HttpServer;
+    if (address._tag === "UnixPathAddress") return yield* Effect.die("The endpoint listens on TCP");
+    const request = HttpClientRequest.post(
+      `http://127.0.0.1:${address.port}${TOOL_CALL_PATH}`,
+    ).pipe(
+      HttpClientRequest.setHeader("host", made.host ?? `127.0.0.1:${address.port}`),
+      HttpClientRequest.bodyText(
+        JSON.stringify({ ...call, tool: "message_bot" }),
+        made.contentType ?? "application/json",
+      ),
+    );
+    // Node's own client, which sends the `Host` it is given.
+    return yield* HttpClient.execute(
+      made.origin === undefined
+        ? request
+        : HttpClientRequest.setHeader(request, "origin", made.origin),
+    ).pipe(Effect.provide(NodeHttpClient.layerNodeHttp));
+  });
+
+/** The endpoint's answer to a forward it took. */
+const answer = (response: HttpClientResponse.HttpClientResponse) =>
+  HttpClientResponse.schemaBodyJson(ToolCallResponse)(response);
+
+const SENT = { _tag: "result", value: { status: "sent", note: "It wakes them now." } } as const;
+
+/** No teammate message was recorded for Bo, and nothing wakes Bo. */
+const boGotNothing = (anaId: BotId, boId: BotId) =>
+  Effect.gen(function* () {
+    assert.deepStrictEqual(yield* teammateMessagesFor(boId), { wakes: 0, held: 0 });
+    assert.deepStrictEqual(yield* handoffs(anaId), []);
+    assert.deepStrictEqual(yield* handoffs(boId), []);
+  });
+
+/** Bo got the message once, and one wake for it. */
+const boGotItOnce = (anaId: BotId, boId: BotId) =>
+  Effect.gen(function* () {
+    assert.deepStrictEqual(yield* teammateMessagesFor(boId), { wakes: 1, held: 0 });
+    assert.deepStrictEqual(yield* handoffs(anaId), ["sent: When is the launch?"]);
+    assert.deepStrictEqual(yield* handoffs(boId), ["received: When is the launch?"]);
+  });
+
+/**
+ * A request the bridge would not make is refused before it acts, and the call
+ * it named is still there for the bridge's own request.
+ */
+const refusedThenTaken = (made: {
+  readonly host?: string;
+  readonly origin?: string;
+  readonly contentType?: string;
+}) =>
+  Effect.gen(function* () {
+    const { ana, bo } = yield* anaMessagesBo;
+    const call = { sessionId: ana.session, arguments: urgent(bo.id) };
+
+    const refused = yield* forward({ ...call, requestId: "call-1" }, made);
+    assert.strictEqual(refused.status, 403);
+    yield* boGotNothing(ana.bot.id, bo.id);
+
+    const taken = yield* forward({ ...call, requestId: "call-2" });
+    assert.deepStrictEqual(yield* answer(taken), SENT);
+    yield* boGotItOnce(ana.bot.id, bo.id);
+  });
+
+it.effect("refuses a forward addressed to another host name", () =>
+  Effect.gen(function* () {
+    const { address } = yield* HttpServer.HttpServer;
+    if (address._tag === "UnixPathAddress") return yield* Effect.die("The endpoint listens on TCP");
+    // A page on a name that resolves to loopback sends its own name.
+    yield* refusedThenTaken({ host: `rebound.example:${address.port}` });
+  }).pipe(Effect.provide(endpoint)),
+);
+
+it.effect("refuses a forward that carries an Origin", () =>
+  refusedThenTaken({ origin: "https://page.example" }).pipe(Effect.provide(endpoint)),
+);
+
+it.effect("refuses a forward whose body is not declared JSON", () =>
+  // What a page may send another origin without asking first.
+  refusedThenTaken({ contentType: "text/plain" }).pipe(Effect.provide(endpoint)),
+);
+
+it.effect("refuses a call named for a session whose turn has no such call open", () =>
+  Effect.gen(function* () {
+    const { ana, bo } = yield* anaMessagesBo;
+    const bia = yield* working("Bia", "Check the build.");
+
+    // Bia's session names the call Ana's turn has open.
+    const borrowed = yield* forward({
+      requestId: "call-1",
+      sessionId: bia.session,
+      arguments: urgent(bo.id),
+    });
+    assert.deepStrictEqual(yield* answer(borrowed), { _tag: "refused", message: NO_TURN_REFUSAL });
+    yield* boGotNothing(ana.bot.id, bo.id);
+    assert.deepStrictEqual(yield* handoffs(bia.bot.id), []);
+
+    // The call is still Ana's.
+    const own = yield* forward({
+      requestId: "call-2",
+      sessionId: ana.session,
+      arguments: urgent(bo.id),
+    });
+    assert.deepStrictEqual(yield* answer(own), SENT);
+    yield* boGotItOnce(ana.bot.id, bo.id);
+  }).pipe(Effect.provide(endpoint)),
+);
+
+it.effect("refuses a request id another session's call already used", () =>
+  Effect.gen(function* () {
+    const { ana, bo } = yield* anaMessagesBo;
+    // Bia's turn has the same call open.
+    const bia = yield* working("Bia", "Ask Bo for the launch date too.");
+    yield* calls(bia.session, bia.turnId, bo.id);
+    const first = yield* forward({
+      requestId: "call-1",
+      sessionId: ana.session,
+      arguments: urgent(bo.id),
+    });
+    assert.deepStrictEqual(yield* answer(first), SENT);
+
+    // Bia's request takes the id of Ana's.
+    const reused = yield* forward({
+      requestId: "call-1",
+      sessionId: bia.session,
+      arguments: urgent(bo.id),
+    });
+    assert.deepStrictEqual(yield* answer(reused), { _tag: "refused", message: NO_TURN_REFUSAL });
+    assert.deepStrictEqual(yield* handoffs(bia.bot.id), []);
+    yield* boGotItOnce(ana.bot.id, bo.id);
+  }).pipe(Effect.provide(endpoint)),
+);
+
+it.effect("answers a replayed request id with its first result, whatever it now carries", () =>
+  Effect.gen(function* () {
+    const { ana, bo } = yield* anaMessagesBo;
+    const first = yield* forward({
+      requestId: "call-1",
+      sessionId: ana.session,
+      arguments: urgent(bo.id),
+    });
+    assert.deepStrictEqual(yield* answer(first), SENT);
+
+    const replayed = yield* forward({
+      requestId: "call-1",
+      sessionId: ana.session,
+      arguments: urgent(bo.id, "Ship it today."),
+    });
+    assert.deepStrictEqual(yield* answer(replayed), SENT);
+    yield* boGotItOnce(ana.bot.id, bo.id);
+  }).pipe(Effect.provide(endpoint)),
+);
