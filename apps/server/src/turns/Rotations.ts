@@ -14,6 +14,7 @@ import * as SqlSchema from "effect/sql/SqlSchema";
 import { EngineSessions } from "../bots/EngineSessions.ts";
 import { Entries } from "../entries/Entries.ts";
 import { Ids } from "../Ids.ts";
+import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { Flag, json, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { conversationDigest } from "./digest.ts";
@@ -125,6 +126,7 @@ export const layer = Layer.effect(
     const signals = yield* Signals;
     const readiness = yield* Readiness;
     const ids = yield* Ids;
+    const changes = yield* ChangeLog;
     const workOf = sessionWork(sql);
     const { requestRotation, dropDigests } = rotationRequests(sql, signals);
     const { sessionLost, sessionArchived } = sessionLoss(
@@ -267,7 +269,12 @@ export const layer = Layer.effect(
           if (!session.lost && session.rotation_reason === null) return null;
           if (waitsFor(session) !== "nothing" && !(yield* locallyQuiet(session.id))) return null;
           const now = yield* DateTime.now;
-          yield* sql`UPDATE sessions SET retired_at = ${timeText(now)} WHERE id = ${session.id}`;
+          const [retired] = yield* sql<{ readonly held: number }>`
+            UPDATE sessions SET retired_at = ${timeText(now)} WHERE id = ${session.id}
+            RETURNING settings_held AS held
+          `;
+          // Clients offered a Stop while a change waited here; the next session opens with it.
+          if (retired?.held === 1) yield* changes.touch({ _tag: "bot", botId: session.bot_id });
           yield* dropDigests(session.bot_id);
           if (session.rotation_reason !== "fresh-start") {
             const note: CatchUpNote = {
@@ -415,7 +422,10 @@ export const layer = Layer.effect(
         const lost = yield* sessions.ofEngineSession(error.value.sessionId);
         if (Option.isSome(lost)) {
           openFailures.delete(botId);
-          yield* transaction(sessionLost(SessionRowId.make(lost.value.id)));
+          yield* transaction(sessionLost(lost.value.id));
+          // Its event stream may still be open, and nothing else closes it:
+          // the engine already archived it, so it is never retired there.
+          yield* observer.close(lost.value.id);
           return "done" as const;
         }
       }

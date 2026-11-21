@@ -7,10 +7,12 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import { BotStore } from "../bots/BotStore.ts";
 import { Bots } from "../bots/Bots.ts";
+import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { BotTools } from "../tools/BotTools.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
@@ -578,6 +580,52 @@ it.effect(
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("tells clients a held settings change is gone once its session is retired", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bots = yield* Bots;
+    const store = yield* BotStore;
+    const rotations = yield* Rotations;
+    const sql = yield* SqlClient.SqlClient;
+    const settingsHeld = (botId: BotId) =>
+      store.find(botId).pipe(Effect.map((found) => Option.getOrThrow(found).bot.settingsHeld));
+    yield* TestClock.adjust("1 second");
+    const bot = yield* bots.create({
+      commandId: command(),
+      draft: { name: "Ana", job: "", permissionMode: "full-access" },
+    });
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Start the dev server.");
+    const started = yield* nextTurn(bot.id);
+    yield* control.startBackgroundWork({ sessionId: session, turnId: started });
+    yield* finish(bot.id, session, started);
+    yield* bots.update({
+      commandId: command(),
+      botId: bot.id,
+      changes: { permissionMode: "supervised" },
+    });
+    yield* rotations.rotateDue;
+    assert.isTrue(yield* settingsHeld(bot.id));
+
+    // Archived from the engine's console, the next alignment finds it gone,
+    // and the session is retired. No replacement opens, so nothing but the
+    // retirement tells clients.
+    const changes = yield* (yield* ChangeLog).subscribe;
+    yield* control.failNextOpenSessions(1);
+    yield* control.archiveSession(session);
+    yield* rotations.rotateDue;
+    yield* until(
+      sql<{ readonly n: number }>`
+        SELECT COUNT(*) AS n FROM sessions
+        WHERE engine_session_id = ${session} AND retired_at IS NOT NULL
+      `.pipe(Effect.map(([row]) => row?.n === 1)),
+    );
+    const told = yield* PubSub.takeUpTo(changes, Number.POSITIVE_INFINITY);
+    assert.isFalse(yield* settingsHeld(bot.id));
+    assert.isTrue(told.some((scope) => scope._tag === "bot" && scope.botId === bot.id));
+  }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
+);
+
 it.effect(
   "replaces a session archived from the engine's console while a settings change waited for it",
   () =>
@@ -590,6 +638,10 @@ it.effect(
         draft: { name: "Ana", job: "", permissionMode: "full-access" },
       });
       const session = yield* engineSession(bot.id);
+      yield* exchange(bot.id, session, "Plan the launch.", "Drafted it.");
+      const archived = yield* mainSessionId(bot.id);
+      const observer = yield* Observer;
+      assert.isTrue(yield* observer.ready(archived));
       // Its event stream stays open: only the alignment finds it gone.
       yield* control.archiveSession(session);
       yield* bots.update({
@@ -603,6 +655,8 @@ it.effect(
       const message = yield* sendToBot(bot.id, "Still there?");
       yield* nextTurn(bot.id);
       yield* deliveryIs(message, "delivered");
+      // The replaced session's events are no longer followed.
+      assert.isFalse(yield* observer.ready(archived));
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
