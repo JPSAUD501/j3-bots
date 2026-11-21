@@ -628,7 +628,7 @@ export const ptBR: Catalog = {
   "settings.device.current": "Este dispositivo",
   "settings.device.neverSeen": "Ainda não conectou",
   "settings.device.lastSeen": "Visto por último {when}",
-  "settings.device.pushOn": "Notificações ativadas",
+  "settings.device.pushOn": "Notificações push ativadas",
   "settings.device.revoke": "Desconectar",
   "settings.device.revoke.title": "Desconectar {name}?",
   "settings.device.revoke.body":

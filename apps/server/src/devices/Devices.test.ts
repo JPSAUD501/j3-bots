@@ -97,7 +97,7 @@ const registered = (current: DeviceId) =>
     return list.filter((device) => device.pushRegistered).map((device) => device.name);
   });
 
-/** Every stored push token: the server never hands one back to a client. */
+/** Every stored push token. */
 const pushTokens = SqlClient.SqlClient.use(
   (sql) => sql<{ readonly token: string }>`SELECT token FROM push_registrations ORDER BY token`,
 ).pipe(Effect.map((rows) => rows.map((row) => row.token)));
@@ -174,23 +174,41 @@ it.effect("ends a registration when the device unregisters, signs out or is revo
     assert.deepStrictEqual(yield* registered(laptop), []);
     assert.deepStrictEqual(yield* pushTokens, []);
 
-    // A revoked device's socket, until it closes, cannot register again.
+    // A revoked device's socket, until it closes, cannot register again, and
+    // a command it sent before is not answered from its receipt.
+    const refused = <A, E extends { readonly _tag: string }>(command: Effect.Effect<A, E>) =>
+      command.pipe(Effect.exit, Effect.map(failure));
     assert.deepStrictEqual(
-      failure(
-        yield* service
-          .registerPush({
-            commandId: CommandId.make("late"),
-            deviceId: phone,
-            registration: expo("ExponentPushToken[fixture-late]"),
-          })
-          .pipe(Effect.exit),
+      yield* refused(
+        service.registerPush({
+          commandId: CommandId.make("late"),
+          deviceId: phone,
+          registration: expo("ExponentPushToken[fixture-late]"),
+        }),
+      ),
+      Option.some("NotFound"),
+    );
+    assert.deepStrictEqual(
+      yield* refused(
+        service.registerPush({
+          commandId: CommandId.make("register-1"),
+          deviceId: phone,
+          registration: expo("ExponentPushToken[fixture-1]"),
+        }),
+      ),
+      Option.some("NotFound"),
+    );
+    yield* auth.revoke(laptop);
+    assert.deepStrictEqual(
+      yield* refused(
+        service.unregisterPush({ commandId: CommandId.make("off"), deviceId: laptop }),
       ),
       Option.some("NotFound"),
     );
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
-it("refuses a push token over its limit", () => {
+it("refuses a push token that is not printable ASCII or is over its limit", () => {
   const request = J3Rpcs.requests.get("push.register");
   assert.isDefined(request);
   const decode = Schema.decodeUnknownExit(request.payloadSchema);
@@ -203,4 +221,7 @@ it("refuses a push token over its limit", () => {
   });
   assert.isTrue(Exit.isSuccess(decode(payload("x".repeat(MAX_PUSH_TOKEN_LENGTH)))));
   assert.isTrue(Exit.isFailure(decode(payload("x".repeat(MAX_PUSH_TOKEN_LENGTH + 1)))));
+  assert.isTrue(Exit.isSuccess(decode(payload("ExponentPushToken[fixture-1]"))));
+  assert.isTrue(Exit.isFailure(decode(payload("ExponentPushToken[fixture 1]"))));
+  assert.isTrue(Exit.isFailure(decode(payload("ExponentPushToken[fixture-é]"))));
 });

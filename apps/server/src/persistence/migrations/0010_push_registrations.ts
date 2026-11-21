@@ -12,7 +12,7 @@ export default Effect.gen(function* () {
   // `failures` counts the sends that failed since the token was registered.
   yield* sql`
     CREATE TABLE push_registrations (
-      device_id TEXT PRIMARY KEY REFERENCES devices (id) ON DELETE CASCADE,
+      device_id TEXT NOT NULL PRIMARY KEY REFERENCES devices (id) ON DELETE CASCADE,
       provider TEXT NOT NULL CHECK (provider IN ('expo')),
       token TEXT NOT NULL,
       platform TEXT NOT NULL CHECK (platform IN ('ios', 'android')),

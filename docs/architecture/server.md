@@ -30,6 +30,8 @@ J3 Bots keeps two kinds of state, in two places, for two different readers.
 | Device | A paired client: its token hash, when it was revoked |
 | Push registration | Where to push to one device: the push service, the token, the platform, the language to write in, when it was registered and how many sends failed since. One per device at most, deleted with the device's revocation |
 
+A column that holds one of a fixed set of values carries a `CHECK` listing them, as a push registration's provider and platform do. SQLite cannot change a `CHECK` in place, so a new push provider means rebuilding that table; whether the provider keeps that constraint is decided when sending is built.
+
 Entries are ordered by `order`, set when the entry is created and never changed. The change sequence that clients resume subscriptions with is separate: it records when an entry changed, not where it sits.
 
 **The filesystem** (`<J3_HOME>/bots/<bot>/`) holds what a bot reads and writes with its own tools, and what the operator may want to open in an editor:
@@ -465,7 +467,7 @@ The server sends a notification when a bot adds an entry to a conversation or ro
 - **Web and desktop**: over the open connection, shown by the client.
 - **Mobile**: a push through the platform's service. The payload carries the bot's name and, if the operator allows it, the first line of the message. See [open question 4](../open-questions.md).
 
-**Push registration.** A device that can receive pushes registers for them on its own socket (`push.register`): the push service (Expo's, for now), the token that service gave the app, the platform, and the language the device shows, which a push to it is written in. A device registers only itself, never another. A second registration replaces the first, and a token belongs to one device: registering a token another device holds takes it from that device, so an app that paired again is not pushed to twice. `push.unregister` ends the registration, and revoking the device, which signing out does, deletes it in the same transaction, so a revoked device is never pushed to. The Devices list shows which devices have push on. Sending is not built yet: the server works out the devices to push and sends nothing.
+**Push registration.** A device that can receive pushes registers for them on its own socket (`push.register`): the push service (Expo's, for now), the token that service gave the app, the platform, and the language the device shows, which a push to it is written in. A device registers only itself, never another. A second registration replaces the first, and a token belongs to one device: registering a token another device holds takes it from that device, so an app that paired again is not pushed to twice. `push.unregister` ends the registration, and revoking the device, which signing out does, deletes it in the same transaction, so a revoked device is never pushed to. Both commands check that the device is still paired before they look for a receipt, so a command a revoked device sent before fails with `NotFound("device")` instead of being answered as it was. The Devices list shows which devices have push on. Sending is not built yet: the server works out the devices to push and sends nothing.
 
 ## Client API
 

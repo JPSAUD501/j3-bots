@@ -30,6 +30,7 @@ import { hashDeviceToken } from "../auth/DeviceAuth.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
 import { Ids } from "../Ids.ts";
 import { Flag, Time, timeText } from "../persistence/columns.ts";
+import { transactional } from "../persistence/transaction.ts";
 
 /** Crockford base32 in upper case, as `PairingCode` takes it. */
 const CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -88,18 +89,23 @@ export class Devices extends Context.Service<
     /**
      * Stores where to push to the device, replacing its earlier registration
      * and taking the token from any other device that held it, once per
-     * command. `NotFound("device")` when the device is revoked.
+     * command. `NotFound("device")` when the device is revoked, even for a
+     * command it sent before.
      */
     readonly registerPush: (input: {
       readonly commandId: CommandId;
       readonly deviceId: DeviceId;
       readonly registration: PushRegistration;
     }) => Effect.Effect<void, NotFound | Conflict>;
-    /** Deletes the device's push registration, if it has one, once per command. */
+    /**
+     * Deletes the device's push registration, if it has one, once per command.
+     * `NotFound("device")` when the device is revoked, even for a command it
+     * sent before.
+     */
     readonly unregisterPush: (input: {
       readonly commandId: CommandId;
       readonly deviceId: DeviceId;
-    }) => Effect.Effect<void, Conflict>;
+    }) => Effect.Effect<void, NotFound | Conflict>;
   }
 >()("@j3-bots/server/devices/Devices") {}
 
@@ -210,56 +216,75 @@ export const layer = Layer.effect(
       execute: (id) => sql`SELECT id FROM devices WHERE id = ${id} AND revoked_at IS NULL`,
     });
 
+    /**
+     * Runs a device's command only while the device is paired. The check comes
+     * before the command's receipt is read, in the same transaction, so a
+     * command replayed after the device was revoked is refused rather than
+     * answered from its receipt, and a revocation cannot slip in between.
+     */
+    const asPairedDevice = <A, E, R>(
+      deviceId: DeviceId,
+      command: Effect.Effect<A, E, R>,
+    ): Effect.Effect<A, E | NotFound, R> =>
+      Effect.gen(function* () {
+        if (Option.isNone(yield* isPaired(deviceId).pipe(Effect.orDie))) {
+          return yield* new NotFound({ resource: "device" });
+        }
+        return yield* command;
+      }).pipe(transactional(sql));
+
     const registerPush = Effect.fn("Devices.registerPush")(function* (input: {
       readonly commandId: CommandId;
       readonly deviceId: DeviceId;
       readonly registration: PushRegistration;
     }) {
       const { provider, token, platform, language } = input.registration;
-      yield* receipts.once({
-        commandId: input.commandId,
-        method: "push.register",
-        payload: { deviceId: input.deviceId, ...input.registration },
-        result: Schema.Void,
-        apply: Effect.gen(function* () {
-          // Read in the transaction that writes, so a revocation cannot slip in between.
-          if (Option.isNone(yield* isPaired(input.deviceId).pipe(Effect.orDie))) {
-            return yield* new NotFound({ resource: "device" });
-          }
-          const at = timeText(yield* DateTime.now);
-          yield* sql`
-            DELETE FROM push_registrations
-            WHERE provider = ${provider} AND token = ${token} AND device_id <> ${input.deviceId}
-          `.pipe(Effect.orDie);
-          yield* sql`
-            INSERT INTO push_registrations (device_id, provider, token, platform, language, updated_at)
-            VALUES (${input.deviceId}, ${provider}, ${token}, ${platform}, ${language}, ${at})
-            ON CONFLICT (device_id) DO UPDATE SET
-              provider = excluded.provider,
-              token = excluded.token,
-              platform = excluded.platform,
-              language = excluded.language,
-              updated_at = excluded.updated_at,
-              failures = 0
-          `.pipe(Effect.orDie);
+      yield* asPairedDevice(
+        input.deviceId,
+        receipts.once({
+          commandId: input.commandId,
+          method: "push.register",
+          payload: { deviceId: input.deviceId, ...input.registration },
+          result: Schema.Void,
+          apply: Effect.gen(function* () {
+            const at = timeText(yield* DateTime.now);
+            yield* sql`
+              DELETE FROM push_registrations
+              WHERE provider = ${provider} AND token = ${token} AND device_id <> ${input.deviceId}
+            `.pipe(Effect.orDie);
+            yield* sql`
+              INSERT INTO push_registrations (device_id, provider, token, platform, language, updated_at)
+              VALUES (${input.deviceId}, ${provider}, ${token}, ${platform}, ${language}, ${at})
+              ON CONFLICT (device_id) DO UPDATE SET
+                provider = excluded.provider,
+                token = excluded.token,
+                platform = excluded.platform,
+                language = excluded.language,
+                updated_at = excluded.updated_at,
+                failures = 0
+            `.pipe(Effect.orDie);
+          }),
         }),
-      });
+      );
     });
 
     const unregisterPush = Effect.fn("Devices.unregisterPush")(function* (input: {
       readonly commandId: CommandId;
       readonly deviceId: DeviceId;
     }) {
-      yield* receipts.once({
-        commandId: input.commandId,
-        method: "push.unregister",
-        payload: { deviceId: input.deviceId },
-        result: Schema.Void,
-        apply: sql`DELETE FROM push_registrations WHERE device_id = ${input.deviceId}`.pipe(
-          Effect.asVoid,
-          Effect.orDie,
-        ),
-      });
+      yield* asPairedDevice(
+        input.deviceId,
+        receipts.once({
+          commandId: input.commandId,
+          method: "push.unregister",
+          payload: { deviceId: input.deviceId },
+          result: Schema.Void,
+          apply: sql`DELETE FROM push_registrations WHERE device_id = ${input.deviceId}`.pipe(
+            Effect.asVoid,
+            Effect.orDie,
+          ),
+        }),
+      );
     });
 
     return Devices.of({

@@ -536,7 +536,10 @@ export const ClientRpcs = RpcGroup.make(
     payload: { ...command, ...PushRegistration.fields },
     error: CommandError,
   }),
-  /** Ends this socket's device's push registration, if it has one. */
+  /**
+   * Ends this socket's device's push registration, if it has one.
+   * `NotFound("device")` when the device was revoked.
+   */
   Rpc.make("push.unregister", { payload: command, error: CommandError }),
 );
 
