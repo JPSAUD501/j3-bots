@@ -5,13 +5,14 @@
   "type": "module",
   "scripts": {
     "build": "vp run -r build",
-    "typecheck": "vp run -r typecheck",
+    "typecheck": "vp run -r typecheck && effect-tsgo tsrs --noEmit -p scripts",
     "lint": "scripts/check-spdx.sh && vp lint --report-unused-disable-directives --deny-warnings",
     "fmt": "vp fmt",
     "fmt:check": "vp fmt --check",
     "test": "vp run -r test",
     "knip": "knip",
-    "vendor:t3-contracts": "scripts/vendor-t3-contracts.sh"
+    "vendor:t3-contracts": "scripts/vendor-t3-contracts.sh",
+    "release": "node scripts/build-release.ts"
   },
   "devDependencies": {
     "@effect/tsgo": "catalog:",
@@ -22,5 +23,9 @@
   "engines": {
     "node": "26.13.1"
   },
-  "packageManager": "pnpm@12.16.1"
+  "packageManager": "pnpm@12.16.1",
+  "nodeReleaseChecksums": {
+    "node-v26.13.1-linux-arm64.tar.xz": "89e1853138db51e8b82d3e98ba9c0d3f2956a28e5e55ea1b7e12d25aae92d5dd",
+    "node-v26.13.1-linux-x64.tar.xz": "5c063e46bab0fbc1c17cc445d7ff129cbdcd0471be6ed83b6ab864f8143bc864"
+  }
 }

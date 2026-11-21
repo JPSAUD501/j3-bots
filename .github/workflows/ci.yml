@@ -85,3 +85,39 @@ jobs:
           name: desktop-smoke-failure
           path: apps/desktop/smoke-failure.png
           if-no-files-found: ignore
+
+  release:
+    name: Release archive (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            runner: ubuntu-24.04
+          - platform: linux-arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      # The web client and the server bundle, with the pinned Node for this
+      # runner's platform, checked against its checksum in package.json.
+      - name: Build
+        run: vp run release
+
+      # Unpacks the archive and runs it with every folder that holds a node
+      # dropped from PATH: doctor, the server, its web client, and one bot turn
+      # on the pinned engine through the scripted agent.
+      - name: Smoke
+        run: |
+          archive=$(ls "$GITHUB_WORKSPACE"/dist/release/j3-bots-*-${{ matrix.platform }}.tar.gz)
+          J3_RELEASE_ARCHIVE="$archive" vp run --filter @j3-bots/server smoke:release

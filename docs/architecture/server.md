@@ -512,7 +512,7 @@ The server reads its settings from `<J3_HOME>/config.json`. On first start, once
 | | `J3_ENGINE_BINARY` | the pinned release | For testing an engine build. Not in the file, and a service never uses it |
 | | `J3_SCRIPTED_AGENT` | none | The engine's scripted ACP agent, offered as a provider named `scripted` and listed first, so new bots run on it: an end-to-end run with no model. For development. Not in the file, and a service never uses it |
 | `toolPort` | `J3_TOOL_PORT` | `3739` | The bot tool endpoint's loopback port, which the `j3` bridges call |
-| `webClient` | `J3_WEB_CLIENT` | this checkout's `apps/web/dist` | The built web client, served on the API's origin. A folder named here must hold an `index.html`. Everything in it is public, so it may not overlap private state in either direction, symbolic links resolved: it may not hold the home, the TLS certificate or key, or anything the home keeps private, nor lie inside any of them. The one place inside the home it may be is `<J3_HOME>/web`. The default is served once it is built |
+| `webClient` | `J3_WEB_CLIENT` | the one that comes with J3 Bots: `web/` in a release, `apps/web/dist` in a checkout ([decision 0015](../decisions/0015-a-release-is-a-self-contained-archive.md)) | The built web client, served on the API's origin. A folder named here must hold an `index.html`. Everything in it is public, so it may not overlap private state in either direction, symbolic links resolved: it may not hold the home, the TLS certificate or key, or anything the home keeps private, nor lie inside any of them. The one place inside the home it may be is `<J3_HOME>/web`. The default is served once it is built |
 
 Relative paths in the file resolve against `J3_HOME`.
 

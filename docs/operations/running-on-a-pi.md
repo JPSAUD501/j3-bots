@@ -62,7 +62,7 @@ j3-bots service install
 
 From the unit on, a failure leaves the new unit installed: systemd may still refuse the start request, as while its start limit holds ([The unit](#the-unit)), or the server may fail to start or not answer within that minute. Run `j3-bots doctor` to see what state the service and the server are in, then read why in the log: `journalctl --user -u j3-bots -n 100`.
 
-On its first start, the server downloads the engine it is pinned to into `~/.j3-bots/engine`, so the engine may still be starting when `service install` returns.
+On its first start, the server downloads the engine it is pinned to into `~/.j3-bots/engine`, so the engine may still be starting when `service install` returns. `j3-bots engine fetch` downloads it beforehand, without starting anything.
 
 The unit records the real path of the Node that ran `service install`, this checkout's server bundle and the `PATH` of the shell you ran it from, so the engine finds the harnesses. Each folder on that `PATH` is recorded by its real path, and folders under `XDG_RUNTIME_DIR`, such as the per-shell links fnm makes, are left out because they are gone after a reboot. Two cases need `service install` again:
 

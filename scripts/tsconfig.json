@@ -1,0 +1,9 @@
+{
+  // The repository's own build scripts, run by plain Node.
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "lib": ["ESNext"]
+  },
+  "include": ["*.ts"]
+}

@@ -3,6 +3,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig, loadEnv } from "vite-plus";
+import { bundleInputs } from "../../scripts/bundle-inputs.ts";
 import { pwa } from "./pwa/plugin.ts";
 
 // The same plugin set as T3 Code's web client: file routes with per-route code
@@ -25,6 +26,8 @@ export default defineConfig(({ mode }) => {
       react({ compiler: true }),
       tailwindcss(),
       pwa(),
+      // What the release's third-party notices are made from (scripts/build-release.ts).
+      bundleInputs("web"),
     ],
     server: {
       port: 5833,

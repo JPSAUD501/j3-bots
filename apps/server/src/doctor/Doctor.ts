@@ -13,6 +13,7 @@ import { AdminClient } from "../admin/AdminClient.ts";
 import { type AdminStatus, CONNECT_RESTARTS } from "../admin/protocol.ts";
 import * as ServerConfig from "../config.ts";
 import * as Home from "../home/Home.ts";
+import * as Installation from "../installation.ts";
 import { socketOwner } from "../service/owner.ts";
 import * as Unit from "../service/unit.ts";
 import { Host } from "../system/Host.ts";
@@ -252,7 +253,7 @@ const engineCheck = Effect.fn("doctor.engine")(function* (
         "Engine",
         "warning",
         `T3 Code ${install.version} is not installed yet. The server downloads it, about 200 MB, on its first start.`,
-        "Make sure this machine can reach github.com when the server first starts.",
+        "Make sure this machine can reach github.com when the server first starts, or download it now with `j3-bots engine fetch`.",
       );
     }
   }
@@ -366,11 +367,16 @@ const webClientCheck = Effect.fn("doctor.webClient")(function* (
     return check("Web client", "ok", "The running server serves it.");
   }
   if (!(yield* isBuilt(directory))) {
+    const fromRelease =
+      config.webClient._tag === "bundled" &&
+      (yield* Installation.installation).layout._tag === "release";
     return check(
       "Web client",
       "warning",
       `No web client is built in ${directory}, so the server serves only its API.`,
-      "Run `pnpm build` in this checkout, then restart the service: `systemctl --user restart j3-bots`.",
+      fromRelease
+        ? "The release is incomplete: unpack it again, then restart the service: `systemctl --user restart j3-bots`."
+        : "Run `pnpm build` in this checkout, then restart the service: `systemctl --user restart j3-bots`.",
     );
   }
   switch (live._tag) {

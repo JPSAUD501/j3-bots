@@ -17,7 +17,8 @@
     "build": "vp pack",
     "start": "node src/bin.ts serve",
     "typecheck": "effect-tsgo tsrs --noEmit",
-    "test": "vp test run --config ../../vite.config.ts --dir ."
+    "test": "vp test run --config ../../vite.config.ts --dir src",
+    "smoke:release": "vp test run --config ../../vite.config.ts --dir smoke"
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",

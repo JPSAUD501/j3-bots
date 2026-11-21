@@ -38,7 +38,7 @@ const logShutdown = Layer.effectDiscard(Effect.addFinalizer(() => Effect.logInfo
 const engine = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
-    const bridge = yield* Installation.bridgeEntryPoint;
+    const bridge = (yield* Installation.installation).bridgeEntryPoint;
     const layout = yield* Layout.Layout;
     const path = yield* Path.Path;
     const basePrompt = yield* BasePrompt.BasePrompt;

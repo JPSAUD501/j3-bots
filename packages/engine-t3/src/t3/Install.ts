@@ -7,13 +7,14 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { boundedCommand } from "./Command.ts";
 import { archiveName, pin, releaseUrl } from "./Pin.ts";
-import { engineFolders, type PrivateFiles } from "./PrivateFiles.ts";
+import { engineFolders, makePrivateFiles, type PrivateFiles } from "./PrivateFiles.ts";
 
 // Installs the pinned engine release into the J3-owned engine home:
 //
@@ -251,4 +252,47 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
   yield* remove(staging);
   yield* remove(partial);
   return executable;
+});
+
+/**
+ * `ensureInstalled` for this machine, into `home`, which is created private
+ * first if it is missing: what the engine runs before its first start.
+ */
+export const installForThisMachine = Effect.fn("engine.installForThisMachine")(function* (
+  home: string,
+  files: PrivateFiles,
+) {
+  yield* files
+    .folder(home)
+    .pipe(
+      Effect.mapError(() => new EngineInstallFailed({ reason: "storage", version: pin.version })),
+    );
+  return yield* ensureInstalled({ home, platform: process.platform, arch: process.arch, files });
+});
+
+/**
+ * Installs the pinned engine under `home` without starting it, when it is not
+ * installed yet: `j3-bots engine fetch`, so a new release's engine can be in
+ * place before the server that runs it starts. Every write goes through
+ * `isPrivate`, as the running engine's do. Answers whether it was installed
+ * already and where its executable is.
+ */
+export const fetchPinned = Effect.fn("engine.fetchPinned")(function* (options: {
+  readonly home: string;
+  readonly isPrivate: (location: string) => Effect.Effect<boolean>;
+}) {
+  const before = yield* inspectInstall({
+    home: options.home,
+    platform: process.platform,
+    arch: process.arch,
+  });
+  const files = yield* makePrivateFiles(options.isPrivate).pipe(
+    Effect.provide(SecureRandom.layerWebCrypto),
+  );
+  const executable = yield* installForThisMachine(options.home, files);
+  return {
+    version: pin.version,
+    executable,
+    alreadyInstalled: before._tag === "installed",
+  };
 });
