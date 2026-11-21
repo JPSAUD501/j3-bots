@@ -5,8 +5,10 @@ import {
   avatarMarks,
   avatarMarkStroke,
   avatarProportions,
+  avatarShapeCutout,
   avatarShapes,
   resolveAvatar,
+  roomAvatarShare,
   type AvatarMarkName,
   type AvatarMarkPart,
   type BotColor,
@@ -137,7 +139,7 @@ export function AvatarShape({ avatar, size }: { avatar: Avatar; size: number }) 
         d={avatarShapes[shape].path}
         fill="currentColor"
         stroke="var(--avatar-cutout, var(--background))"
-        strokeWidth={10}
+        strokeWidth={avatarShapeCutout}
         paintOrder="stroke"
       />
     </svg>
@@ -147,7 +149,7 @@ export function AvatarShape({ avatar, size }: { avatar: Avatar; size: number }) 
 /** Two members' shapes overlapping: a room. */
 export function RoomAvatar({ members, size }: { members: ReadonlyArray<Avatar>; size: number }) {
   const [back, front] = members;
-  const part = Math.round(size * 0.68);
+  const part = Math.round(size * roomAvatarShare);
   return (
     <span
       className="relative inline-block shrink-0"

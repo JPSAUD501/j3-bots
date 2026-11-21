@@ -8,7 +8,9 @@ import {
   avatarMarks,
   avatarMarkStroke,
   avatarProportions,
+  avatarShapeCutout,
   resolveAvatar,
+  roomAvatarShare,
   type AvatarLook,
   type AvatarMarkPart,
 } from "../avatar.ts";
@@ -27,6 +29,12 @@ import { botPalette, colors, type Themed } from "../tokens.ts";
 
 const srgb = (value: string): Rgb => toSrgb8(parseColor(value));
 
+/** An avatar's tokens: its shape and its color. */
+interface AvatarTokens {
+  readonly shape: string;
+  readonly color: string;
+}
+
 /** Where an avatar lands on a canvas: its box's top left corner and its side, in px. */
 export interface AvatarBox {
   readonly x: number;
@@ -41,7 +49,7 @@ export interface AvatarBox {
  */
 export function drawAvatar(
   canvas: Canvas,
-  avatar: { readonly shape: string; readonly color: string },
+  avatar: AvatarTokens,
   look: AvatarLook,
   theme: keyof Themed,
   box: AvatarBox,
@@ -92,20 +100,61 @@ export function drawAvatar(
 }
 
 /**
+ * A clear canvas `size` px square, for a still image. `size` is a whole
+ * number of px, at least 1; anything else throws a `RangeError`.
+ */
+function stillCanvas(size: number): Canvas {
+  if (!isPixelCount(size)) {
+    throw new RangeError(`A still avatar's size is a whole number of px, at least 1, not ${size}.`);
+  }
+  return new Canvas(size, size);
+}
+
+/**
  * A still avatar as a PNG `size` px square on a clear background, in
  * `theme`'s colors: for a notification's image, where SVG is not accepted.
  * `size` is a whole number of px, at least 1; anything else throws a `RangeError`.
  */
 export function renderStillAvatar(
-  avatar: { readonly shape: string; readonly color: string },
+  avatar: AvatarTokens,
   look: AvatarLook,
   theme: keyof Themed,
   size: number,
 ): Uint8Array<ArrayBuffer> {
-  if (!isPixelCount(size)) {
-    throw new RangeError(`A still avatar's size is a whole number of px, at least 1, not ${size}.`);
-  }
-  const canvas = new Canvas(size, size);
+  const canvas = stillCanvas(size);
   drawAvatar(canvas, avatar, look, theme, { x: 0, y: 0, size });
+  return canvas.png();
+}
+
+/** A shape alone, with no mark, cut out of what it overlaps. */
+function drawShape(canvas: Canvas, avatar: AvatarTokens, theme: keyof Themed, box: AvatarBox) {
+  const { shape, color } = resolveAvatar(avatar);
+  const unit = box.size / 100;
+  const outline = mapSubpaths(flattenPath(avatarShapes[shape].path), (p) => ({
+    x: box.x + p.x * unit,
+    y: box.y + p.y * unit,
+  }));
+  canvas.clear(outline, avatarShapeCutout * unit);
+  canvas.fill(outline, srgb(botPalette[color][theme]));
+}
+
+/**
+ * A still room avatar as a PNG `size` px square on a clear background, in
+ * `theme`'s colors: its first two members' shapes, overlapping, with no mark,
+ * as a room shows anywhere. A member missing leaves its place clear. `size`
+ * is a whole number of px, at least 1; anything else throws a `RangeError`.
+ */
+export function renderStillRoomAvatar(
+  members: ReadonlyArray<AvatarTokens>,
+  theme: keyof Themed,
+  size: number,
+): Uint8Array<ArrayBuffer> {
+  const canvas = stillCanvas(size);
+  const part = size * roomAvatarShare;
+  const [back, front] = members;
+  if (back !== undefined) drawShape(canvas, back, theme, { x: 0, y: 0, size: part });
+  if (front !== undefined) {
+    drawShape(canvas, front, theme, { x: size - part, y: size - part, size: part });
+  }
   return canvas.png();
 }

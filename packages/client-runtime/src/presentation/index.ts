@@ -4,7 +4,7 @@
  * roster order, timeline grouping, what a form may save, how a moment is
  * formatted. Free of any interface library and of the interface's sentences.
  */
-export { avatarAppearance } from "./avatar.ts";
+export { avatarAppearance, notificationLook } from "./avatar.ts";
 export {
   type BotEdits,
   botPatch,

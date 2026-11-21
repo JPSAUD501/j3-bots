@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BotState } from "@j3-bots/contracts";
+import type { BotState, Notification } from "@j3-bots/contracts";
 import type { AvatarLook } from "@j3-bots/design-tokens";
 
 type AvatarMotion = "none" | "breathe" | "spin";
@@ -34,3 +34,29 @@ export function avatarAppearance(state: BotState, unread: boolean): AvatarAppear
 }
 
 const STALLED: AvatarAppearance = { mark: "dotted", motion: "none", badge: null };
+
+/**
+ * How a bot's avatar shows, still, in a notification about one of its
+ * entries: what the notification means to the operator. A card waits on
+ * them, whatever state the roster has heard so far. A blocked bot shows it is
+ * blocked, and one waiting on another card shows that. Anything else is
+ * something the operator has not read, so the bot shows as done even while
+ * its turn goes on: a reply's notification usually arrives before the roster
+ * hears the turn ended, so the roster's state would show nearly every
+ * finished reply as still working.
+ */
+export function notificationLook(
+  notification: Pick<Notification, "kind" | "entryId">,
+  state: BotState,
+): AvatarLook {
+  if (state._tag === "blocked" || state._tag === "waiting") return avatarAppearance(state, true);
+  switch (notification.kind) {
+    case "question":
+    case "approval":
+    case "secret-request":
+      return avatarAppearance({ _tag: "waiting", entryId: notification.entryId }, true);
+    case "message":
+    case "handoff":
+      return avatarAppearance({ _tag: "idle" }, true);
+  }
+}
