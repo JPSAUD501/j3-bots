@@ -186,6 +186,11 @@ export interface DesktopServer {
   /** Its origin, as shown to the operator. */
   readonly address: string;
   /**
+   * Whether this device's sign-in is stored encrypted with a key the system
+   * keeps. `false` where Linux has no keyring the app can use.
+   */
+  readonly signInEncrypted: boolean;
+  /**
    * Forgets it, with this device's sign-in there and everything kept for it,
    * and opens the app's first page, the server address screen. Resolves `false`
    * when it is still kept.

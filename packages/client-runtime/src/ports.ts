@@ -43,9 +43,9 @@ export class CredentialStorageError extends Schema.TaggedError<CredentialStorage
 
 /**
  * The device credential in the platform's secure storage: the keychain or
- * keystore on mobile, the OS credential vault on desktop, and on the web
- * IndexedDB, which only pages of the server's own origin can read. The
- * runtime keeps no other copy on disk.
+ * keystore on mobile, IndexedDB holding the token encrypted with the
+ * system's key on desktop, and on the web IndexedDB, which only pages of the
+ * server's own origin can read. The runtime keeps no other copy on disk.
  */
 export class CredentialStore extends Context.Service<
   CredentialStore,

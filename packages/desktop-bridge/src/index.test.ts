@@ -2,7 +2,14 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
-import { ConnectRequest, ConnectResult, DesktopState, HostedBridge } from "./index.ts";
+import {
+  ConnectRequest,
+  ConnectResult,
+  DesktopState,
+  HostedBridge,
+  OpenRequest,
+  UploadBody,
+} from "./index.ts";
 
 const decodes = <S extends Schema.Constraint & { readonly DecodingServices: never }>(
   schema: S,
@@ -16,7 +23,7 @@ describe("the desktop bridge", () => {
       "https://j3.example.test",
       "http://[::1]:3737",
     ]) {
-      assert.isTrue(decodes(DesktopState, { server }), server);
+      assert.isTrue(decodes(DesktopState, { server, tokenProtection: "encrypted" }), server);
     }
     for (const server of [
       "http://192.0.2.10:3737/",
@@ -29,9 +36,10 @@ describe("the desktop bridge", () => {
       "192.0.2.10:3737",
       "",
     ]) {
-      assert.isFalse(decodes(DesktopState, { server }), server);
+      assert.isFalse(decodes(DesktopState, { server, tokenProtection: "encrypted" }), server);
     }
-    assert.isTrue(decodes(DesktopState, { server: null }));
+    assert.isTrue(decodes(DesktopState, { server: null, tokenProtection: "unencrypted" }));
+    assert.isFalse(decodes(DesktopState, { server: null, tokenProtection: "obscured" }));
     assert.isFalse(decodes(DesktopState, {}));
   });
 
@@ -49,22 +57,29 @@ describe("the desktop bridge", () => {
     assert.isFalse(decodes(ConnectRequest, { address: "x".repeat(2049) }));
     assert.isFalse(decodes(ConnectRequest, { address: 3737 }));
     assert.isFalse(decodes(ConnectRequest, null));
+    assert.isTrue(decodes(OpenRequest, { sealed: "djEwAAAA" }));
+    assert.isFalse(decodes(OpenRequest, { sealed: "not base64!" }));
+    assert.isFalse(decodes(OpenRequest, { sealed: "" }));
+    assert.isTrue(decodes(UploadBody, { _tag: "chunk", bytes: new Uint8Array(4) }));
+    assert.isFalse(decodes(UploadBody, { _tag: "chunk", bytes: [1, 2, 3] }));
+    assert.isFalse(decodes(UploadBody, { _tag: "chunk", bytes: "AAAA" }));
   });
 
   it("finds the bridge only where the preload script put a whole one", () => {
+    const call = () => Promise.resolve(null);
     const calls = {
-      connect: () => Promise.resolve(null),
-      forgetServer: () => Promise.resolve(null),
+      connect: call,
+      forgetServer: call,
+      sealToken: call,
+      openToken: call,
+      networkStatus: call,
+      onResumed: call,
+      upload: call,
     };
-    assert.isTrue(decodes(HostedBridge, { state: { server: null }, ...calls }));
+    const state = { server: null, tokenProtection: "encrypted" };
+    assert.isTrue(decodes(HostedBridge, { state, ...calls }));
     assert.isFalse(decodes(HostedBridge, undefined));
-    assert.isFalse(decodes(HostedBridge, { state: { server: "nowhere" }, ...calls }));
-    assert.isFalse(
-      decodes(HostedBridge, {
-        state: { server: null },
-        connect: "yes",
-        forgetServer: calls.forgetServer,
-      }),
-    );
+    assert.isFalse(decodes(HostedBridge, { state: { ...state, server: "nowhere" }, ...calls }));
+    assert.isFalse(decodes(HostedBridge, { state, ...calls, connect: "yes" }));
   });
 });

@@ -632,6 +632,9 @@ export const en = {
   "settings.pair.offline": "Available once this device is connected to J3 Bots again.",
   "settings.server": "Server",
   "settings.browser": "This browser",
+  "settings.thisDevice": "This device",
+  "settings.thisDevice.unencrypted":
+    "This computer has no keyring J3 Bots can use, so this device’s sign-in is stored without encryption. Anyone who can read your files here can use it.",
   "settings.signOut": "Sign out this device",
   "settings.signOut.hint": "Signing out ends this device’s access and deletes what it keeps here.",
   "settings.signOut.pending": "Signing out…",

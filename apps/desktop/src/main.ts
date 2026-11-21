@@ -7,6 +7,12 @@ import {
   DesktopState,
   type ForgetResult,
   IPC_CHANNELS,
+  NetworkState,
+  OpenRequest,
+  type OpenResult,
+  SealRequest,
+  type SealResult,
+  UploadStart,
 } from "@j3-bots/desktop-bridge";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -22,6 +28,8 @@ import {
   ipcMain,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
+  net,
+  powerMonitor,
   protocol,
   screen,
   session,
@@ -35,6 +43,8 @@ import { externalUrl, isAppUrl } from "./navigation.ts";
 import * as ServerChoice from "./serverChoice.ts";
 import { checkServer } from "./serverCheck.ts";
 import * as Settings from "./settings.ts";
+import { makeTokenSeal } from "./tokenSeal.ts";
+import { refuseUpload, runUpload } from "./upload.ts";
 import { MIN_SIZE, openingBounds } from "./window.ts";
 
 // The desktop app: a window on the web client's own build, served from a
@@ -71,7 +81,14 @@ app.setPath(
 if (process.platform === "win32") app.setAppUserModelId(APP_ID);
 
 const encodeState = Schema.encodeSync(DesktopState);
+const encodeNetwork = Schema.encodeSync(NetworkState);
 const decodeConnectRequest = Schema.decodeUnknownOption(ConnectRequest);
+const decodeSealRequest = Schema.decodeUnknownOption(SealRequest);
+const decodeOpenRequest = Schema.decodeUnknownOption(OpenRequest);
+const decodeUploadStart = Schema.decodeUnknownOption(UploadStart);
+
+/** Whether the system has a network, as the page is told. */
+const networkState = () => encodeNetwork({ online: net.isOnline() });
 
 /** Whether an IPC message comes from the top frame of one of the app's own pages. */
 const fromApp = (event: IpcMainEvent | IpcMainInvokeEvent) =>
@@ -208,6 +225,26 @@ const program = Effect.gen(function* () {
     return yield* choice.connect(decoded.value.address, pageOf(event));
   });
 
+  const tokens = makeTokenSeal();
+
+  const sealToken = Effect.fn("desktop.sealToken")(function* (
+    event: IpcMainInvokeEvent,
+    request: unknown,
+  ): Effect.fn.Return<SealResult> {
+    const decoded = decodeSealRequest(request);
+    if (!fromApp(event) || Option.isNone(decoded)) return { _tag: "failed" };
+    return yield* tokens.seal(decoded.value.token);
+  });
+
+  const openToken = Effect.fn("desktop.openToken")(function* (
+    event: IpcMainInvokeEvent,
+    request: unknown,
+  ): Effect.fn.Return<OpenResult> {
+    const decoded = decodeOpenRequest(request);
+    if (!fromApp(event) || Option.isNone(decoded)) return { _tag: "failed" };
+    return yield* tokens.open(decoded.value.sealed);
+  });
+
   const forgetServer = Effect.fn("desktop.forgetServer")(function* (
     event: IpcMainInvokeEvent,
   ): Effect.fn.Return<ForgetResult> {
@@ -219,19 +256,41 @@ const program = Effect.gen(function* () {
     Effect.sync(() => {
       ipcMain.on(IPC_CHANNELS.state, (event) => {
         event.returnValue = fromApp(event)
-          ? encodeState({ server: runSync(settings.get).server })
+          ? encodeState({
+              server: runSync(settings.get).server,
+              tokenProtection: tokens.protection,
+            })
           : null;
       });
       ipcMain.handle(IPC_CHANNELS.connect, (event, request: unknown) =>
         runPromise(connect(event, request)),
       );
       ipcMain.handle(IPC_CHANNELS.forgetServer, (event) => runPromise(forgetServer(event)));
+      ipcMain.handle(IPC_CHANNELS.sealToken, (event, request: unknown) =>
+        runPromise(sealToken(event, request)),
+      );
+      ipcMain.handle(IPC_CHANNELS.openToken, (event, request: unknown) =>
+        runPromise(openToken(event, request)),
+      );
+      ipcMain.handle(IPC_CHANNELS.network, (event) => (fromApp(event) ? networkState() : null));
+      // An upload goes only to the attachments route of the server kept now.
+      ipcMain.on(IPC_CHANNELS.upload, (event, message: unknown) => {
+        const [port] = event.ports;
+        if (port === undefined) return;
+        const start = decodeUploadStart(message);
+        if (!fromApp(event) || Option.isNone(start)) return refuseUpload(port);
+        runUpload(start.value, runSync(settings.get).server, port);
+      });
     }),
     () =>
       Effect.sync(() => {
         ipcMain.removeAllListeners(IPC_CHANNELS.state);
         ipcMain.removeHandler(IPC_CHANNELS.connect);
         ipcMain.removeHandler(IPC_CHANNELS.forgetServer);
+        ipcMain.removeHandler(IPC_CHANNELS.sealToken);
+        ipcMain.removeHandler(IPC_CHANNELS.openToken);
+        ipcMain.removeHandler(IPC_CHANNELS.network);
+        ipcMain.removeAllListeners(IPC_CHANNELS.upload);
       }),
   );
 
@@ -290,6 +349,19 @@ const program = Effect.gen(function* () {
     window.show();
     window.focus();
   };
+  // After sleep the network may have changed under the page: it is told, so
+  // the client tries again at once rather than when its backoff ends.
+  yield* Effect.acquireRelease(
+    Effect.sync(() => {
+      const resumed = () => {
+        if (!window.isDestroyed()) window.webContents.send(IPC_CHANNELS.resumed, networkState());
+      };
+      powerMonitor.on("resume", resumed);
+      return resumed;
+    }),
+    (resumed) => Effect.sync(() => powerMonitor.off("resume", resumed)),
+  );
+
   window.once("ready-to-show", () => {
     window.show();
     if (launchedWhileStarting) window.focus();

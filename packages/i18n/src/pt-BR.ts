@@ -645,6 +645,9 @@ const sentences = {
   "settings.pair.offline": "Disponível quando este dispositivo voltar a se conectar ao J3 Bots.",
   "settings.server": "Servidor",
   "settings.browser": "Este navegador",
+  "settings.thisDevice": "Este dispositivo",
+  "settings.thisDevice.unencrypted":
+    "Este computador não tem um chaveiro que o J3 Bots possa usar, então o acesso deste dispositivo fica guardado sem criptografia. Quem puder ler seus arquivos aqui pode usá-lo.",
   "settings.signOut": "Sair neste dispositivo",
   "settings.signOut.hint": "Sair encerra o acesso deste dispositivo e apaga o que ele guarda aqui.",
   "settings.signOut.pending": "Saindo…",

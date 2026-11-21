@@ -103,7 +103,11 @@ const server = desktop === null ? new URL(window.location.origin) : desktop.serv
 const desktopServer: DesktopServer | undefined =
   desktop === null || server === null
     ? undefined
-    : { address: server.origin, forget: desktop.forgetServer };
+    : {
+        address: server.origin,
+        forget: desktop.forgetServer,
+        signInEncrypted: desktop.tokenProtection === "encrypted",
+      };
 
 /** One client for the page, made on first use. */
 const client = (origin: URL) => (started ??= createJ3Client(makePlatform(origin)));
