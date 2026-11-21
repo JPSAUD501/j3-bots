@@ -57,8 +57,6 @@ export const credentialRecord = (server: URL, pageOrigin: string): CredentialRec
 /** The browser's record as the credential store reads and writes it. */
 export const plainCredential = (record: CredentialRecord): CredentialCodec => ({
   pairingOf: (stored) => Option.map(record.read(stored), ({ deviceId }) => deviceId),
-  open: (stored) =>
-    Effect.succeed(Option.map(record.read(stored), (credential) => ({ credential, stale: false }))),
+  open: (stored) => Effect.succeed(record.read(stored)),
   write: (credential) => Effect.succeed(record.write(credential)),
-  mayReplace: () => true,
 });

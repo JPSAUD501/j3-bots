@@ -55,13 +55,15 @@ interface PairingProps {
    * screen that names it. A browser's server is the page's own, so it has none.
    */
   readonly server?: DesktopServer | undefined;
+  /** In the desktop app, restarts it, as once the system's keyring is unlocked. */
+  readonly restart?: (() => void) | undefined;
 }
 
 /**
  * The first screen on a new device: the code from `j3-bots pair` and a name
  * for the device. Once paired, the app opens by itself.
  */
-export function Pairing({ reason, onPair, defaultName, server }: PairingProps) {
+export function Pairing({ reason, onPair, defaultName, server, restart }: PairingProps) {
   const ctx = usePresentation();
   const { t, parts } = ctx.i18n;
   const codeId = useId();
@@ -104,7 +106,11 @@ export function Pairing({ reason, onPair, defaultName, server }: PairingProps) {
           ? t("pairing.incompatible")
           : t("gate.incompatible.desktopBody", { address: server.address });
       case "storage-failed":
-        return t("pairing.storageFailed");
+        // The code is spent and the device listed by now: in the desktop
+        // app, only a new process sees a keyring unlocked since it started.
+        return restart === undefined
+          ? t("pairing.storageFailed")
+          : t("pairing.storageFailed.desktop");
     }
   }
 
@@ -181,6 +187,11 @@ export function Pairing({ reason, onPair, defaultName, server }: PairingProps) {
           state._tag === "failed" &&
           state.reason._tag === "incompatible-server" && (
             <Button onClick={() => window.location.reload()}>{t("gate.reload")}</Button>
+          )}
+        {restart !== undefined &&
+          state._tag === "failed" &&
+          state.reason._tag === "storage-failed" && (
+            <Button onClick={restart}>{t("gate.restart")}</Button>
           )}
       </form>
       {server !== undefined && (

@@ -11,23 +11,27 @@ import type { CredentialCodec } from "./credentialStore";
 import type { Desktop } from "./desktop";
 
 /**
- * The device credential as the desktop app keeps it in IndexedDB: the device
- * id and the issuing server's origin in the clear, so a write's pairing check
- * reads them in its own transaction, and the token only as the app sealed it
- * (`safeStorage`), with how it was sealed.
+ * Whose a stored credential is: the device id and the issuing server's
+ * origin, kept in the clear, so a write's pairing check reads them in its
+ * own transaction, and so a record of this server is told apart from
+ * anything else before its token is looked at.
  */
-const SealedRecord = Schema.fromJsonString(
-  Schema.Struct({
-    deviceId: DeviceId,
-    server: Schema.String,
-    sealed: Schema.String,
-    protection: TokenProtection,
-  }),
-);
-const decodeRecord = Schema.decodeUnknownOption(SealedRecord);
-const encodeRecord = Schema.encodeSync(SealedRecord);
+const Pairing = Schema.Struct({ deviceId: DeviceId, server: Schema.String });
+
+/**
+ * The device credential as the desktop app keeps it in IndexedDB: whose it
+ * is, and the token only as the app sealed it (`safeStorage`), with how it
+ * was sealed.
+ */
+const SealedRecord = Schema.Struct({
+  ...Pairing.fields,
+  sealed: Sealed,
+  protection: TokenProtection,
+});
+const decodePairing = Schema.decodeUnknownOption(Schema.fromJsonString(Pairing));
+const decodeRecord = Schema.decodeUnknownOption(Schema.fromJsonString(SealedRecord));
+const encodeRecord = Schema.encodeSync(Schema.fromJsonString(SealedRecord));
 const decodeToken = Schema.decodeUnknownOption(DeviceToken);
-const isSealed = Schema.is(Sealed);
 
 /**
  * How long the app may take to seal or open the token: long enough for the
@@ -38,65 +42,64 @@ const isSealed = Schema.is(Sealed);
  */
 export const SEALER_DEADLINE = Duration.seconds(60);
 
-/** The record in `stored`, if the server at `server` issued it. */
-const recordOf = (server: URL, stored: unknown) =>
-  decodeRecord(stored).pipe(Option.filter((record) => record.server === server.origin));
+/** Whose `stored` is, if the server at `server` issued it. */
+const pairingOf = (server: URL, stored: unknown) =>
+  decodePairing(stored).pipe(Option.filter((pairing) => pairing.server === server.origin));
 
 /** How the credential in `stored`, if the server at `server` issued it, keeps its token. */
 export const storedProtection = (server: URL, stored: unknown): Option.Option<TokenProtection> =>
-  Option.map(recordOf(server, stored), (record) => record.protection);
+  decodeRecord(stored).pipe(
+    Option.filter((record) => record.server === server.origin),
+    Option.map((record) => record.protection),
+  );
 
 /** What the codec needs of the desktop app. */
 export type TokenSealer = Pick<Desktop, "sealToken" | "openToken">;
 
 const NOT_OPENED: OpenResult = { _tag: "unavailable" };
 
-/**
- * What `sealer` opens `sealed` to. A value that is not a sealed token was
- * never opened, so it says nothing of whose it is: like no answer, it is
- * `unavailable`.
- */
-const openToken = (sealer: TokenSealer, sealed: string): Effect.Effect<OpenResult> =>
-  isSealed(sealed)
-    ? Effect.promise(() => sealer.openToken(sealed)).pipe(
-        Effect.timeoutOption(SEALER_DEADLINE),
-        Effect.map(Option.getOrElse(() => NOT_OPENED)),
-      )
-    : Effect.succeed(NOT_OPENED);
+const unreadable = () => Effect.fail(new CredentialStorageError({ operation: "load" }));
 
 /**
  * Reads and writes the credential of the server at `server` through
- * `sealer`. A record of another server is absent, and so is one whose token
- * decrypts to something the app did not seal: the device reads as not
- * paired, and the operator pairs it again. A token the app does not open
- * (a locked keyring, a key the system no longer has, a sealed value that is
- * not one, no answer by `SEALER_DEADLINE`) fails to load instead: the
- * pairing, and what is kept for it, stays until it opens. A token sealed
- * again never replaces one kept encrypted with one kept unencrypted.
+ * `sealer`. A value that is not a record of this server is absent, and so is
+ * one whose token decrypts to something the app did not seal: the device
+ * reads as not paired, and the operator pairs it again. A record of this
+ * server whose token is not one the app could have sealed (missing, not
+ * base64 in the form the app writes) is damaged storage, and so is a token
+ * the app does not open (a locked keyring, a key the system no longer has,
+ * no answer by `SEALER_DEADLINE`): it fails to load, and the pairing, with
+ * what is kept for it, stays.
  */
 export const sealedCredential = (server: URL, sealer: TokenSealer): CredentialCodec => ({
-  pairingOf: (stored) => Option.map(recordOf(server, stored), (record) => record.deviceId),
+  pairingOf: (stored) => Option.map(pairingOf(server, stored), (pairing) => pairing.deviceId),
   open: (stored) =>
-    Option.match(recordOf(server, stored), {
+    Option.match(pairingOf(server, stored), {
       onNone: () => Effect.succeedNone,
-      onSome: (record) =>
-        openToken(sealer, record.sealed).pipe(
-          Effect.flatMap((opened) => {
-            switch (opened._tag) {
-              case "unavailable":
-                return Effect.fail(new CredentialStorageError({ operation: "load" }));
-              case "failed":
-                return Effect.succeedNone;
-              case "opened":
-                return Effect.succeed(
-                  Option.map(decodeToken(opened.token), (valid) => ({
-                    credential: { deviceId: record.deviceId, token: Redacted.make(valid) },
-                    stale: opened.stale,
-                  })),
-                );
-            }
-          }),
-        ),
+      onSome: () =>
+        Option.match(decodeRecord(stored), {
+          onNone: unreadable,
+          onSome: (record) =>
+            Effect.promise(() => sealer.openToken(record.sealed)).pipe(
+              Effect.timeoutOption(SEALER_DEADLINE),
+              Effect.map(Option.getOrElse(() => NOT_OPENED)),
+              Effect.flatMap((opened) => {
+                switch (opened._tag) {
+                  case "unavailable":
+                    return unreadable();
+                  case "failed":
+                    return Effect.succeedNone;
+                  case "opened":
+                    return Effect.succeed(
+                      Option.map(decodeToken(opened.token), (valid) => ({
+                        deviceId: record.deviceId,
+                        token: Redacted.make(valid),
+                      })),
+                    );
+                }
+              }),
+            ),
+        }),
     }),
   write: (credential) =>
     Effect.promise(() => sealer.sealToken(Redacted.value(credential.token))).pipe(
@@ -115,7 +118,4 @@ export const sealedCredential = (server: URL, sealer: TokenSealer): CredentialCo
             ),
       ),
     ),
-  mayReplace: (stored, next) =>
-    !Option.contains(storedProtection(server, stored), "encrypted") ||
-    Option.contains(storedProtection(server, next), "encrypted"),
 });

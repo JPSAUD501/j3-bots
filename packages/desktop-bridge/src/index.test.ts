@@ -52,6 +52,11 @@ describe("the desktop bridge", () => {
     assert.isTrue(decodes(OpenRequest, { sealed: "djEwAAAA" }));
     assert.isFalse(decodes(OpenRequest, { sealed: "not base64!" }));
     assert.isFalse(decodes(OpenRequest, { sealed: "" }));
+    // Not in base64's canonical form: each decodes, leniently, to no bytes or to other ones.
+    assert.isFalse(decodes(OpenRequest, { sealed: "A" }));
+    assert.isFalse(decodes(OpenRequest, { sealed: "djEwAAA" }));
+    assert.isFalse(decodes(OpenRequest, { sealed: "djEwAAB=" }));
+    assert.isTrue(decodes(OpenRequest, { sealed: "djEwAAA=" }));
   });
 
   it("finds the bridge only where the preload script put a whole one", () => {

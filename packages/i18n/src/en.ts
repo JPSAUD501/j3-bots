@@ -446,6 +446,8 @@ export const en = {
     "This page and the J3 Bots server are different versions. Reload the page.",
   "pairing.storageFailed":
     "Paired, but this browser wouldn’t keep the sign-in. Allow site data for this page and pair again.",
+  "pairing.storageFailed.desktop":
+    "Paired, but J3 Bots couldn’t store the sign-in encrypted on this device. Unlock your system’s keychain or keyring, restart J3 Bots, then pair again with a new code.",
 
   "server.title": "Where does J3 Bots run?",
   "server.body": "Enter the address of the machine that runs J3 Bots. {command} prints it there.",
@@ -638,7 +640,7 @@ export const en = {
   "settings.browser": "This browser",
   "settings.thisDevice": "This device",
   "settings.thisDevice.unencrypted":
-    "This computer has no keyring J3 Bots can use, so this device’s sign-in is stored without encryption. Anyone who can read your files here can use it.",
+    "This computer had no keyring J3 Bots could use when it paired, so this device’s sign-in is stored without encryption. Anyone who can read your files here can use it. Pair this device again after unlocking your keychain or keyring to store it encrypted.",
   "settings.signOut": "Sign out this device",
   "settings.signOut.hint": "Signing out ends this device’s access and deletes what it keeps here.",
   "settings.signOut.pending": "Signing out…",

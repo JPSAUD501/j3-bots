@@ -452,6 +452,8 @@ const sentences = {
     "Esta página e o servidor do J3 Bots estão em versões diferentes. Recarregue a página.",
   "pairing.storageFailed":
     "Pareado, mas o navegador não guardou o acesso. Permita dados de site para esta página e pareie de novo.",
+  "pairing.storageFailed.desktop":
+    "Pareado, mas o J3 Bots não conseguiu guardar o acesso com criptografia neste dispositivo. Desbloqueie o chaveiro do sistema, reinicie o J3 Bots e pareie de novo com um código novo.",
 
   "server.title": "Onde o J3 Bots está rodando?",
   "server.body":
@@ -651,7 +653,7 @@ const sentences = {
   "settings.browser": "Este navegador",
   "settings.thisDevice": "Este dispositivo",
   "settings.thisDevice.unencrypted":
-    "Este computador não tem um chaveiro que o J3 Bots possa usar, então o acesso deste dispositivo fica guardado sem criptografia. Quem puder ler seus arquivos aqui pode usá-lo.",
+    "Este computador não tinha um chaveiro que o J3 Bots pudesse usar quando foi pareado, então o acesso deste dispositivo fica guardado sem criptografia. Quem puder ler seus arquivos aqui pode usá-lo. Pareie este dispositivo de novo depois de desbloquear o chaveiro do sistema para guardá-lo com criptografia.",
   "settings.signOut": "Sair neste dispositivo",
   "settings.signOut.hint": "Sair encerra o acesso deste dispositivo e apaga o que ele guarda aqui.",
   "settings.signOut.pending": "Saindo…",

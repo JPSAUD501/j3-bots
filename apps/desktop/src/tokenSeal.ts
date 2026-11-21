@@ -52,10 +52,10 @@ export const makeTokenSeal = () => {
     Effect.promise(async (): Promise<OpenResult> => {
       if (!(await available())) return { _tag: "unavailable" };
       return safeStorage.decryptStringAsync(Buffer.from(sealed, "base64")).then(
-        ({ result, shouldReEncrypt }) =>
+        ({ result }) =>
           Option.match(decodePayload(result), {
             onNone: (): OpenResult => ({ _tag: "failed" }),
-            onSome: ({ token }): OpenResult => ({ _tag: "opened", token, stale: shouldReEncrypt }),
+            onSome: ({ token }): OpenResult => ({ _tag: "opened", token }),
           }),
         (): OpenResult => ({ _tag: "unavailable" }),
       );

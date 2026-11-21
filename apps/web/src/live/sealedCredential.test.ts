@@ -24,6 +24,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -46,8 +47,8 @@ const second = credentialOf("device-2", "b");
 const plain = (found: Option.Option<DeviceCredential>) =>
   Option.map(found, ({ deviceId, token }) => ({ deviceId, token: Redacted.value(token) }));
 
-/** IndexedDB's one credential record, in memory. `beforeSwap` runs as each swap starts. */
-const memoryCell = (beforeSwap: () => Promise<void> = () => Promise.resolve()) => {
+/** IndexedDB's one credential record, in memory. */
+const memoryCell = () => {
   let value: unknown;
   const cell: CredentialCell = {
     get: () => Promise.resolve(value),
@@ -55,41 +56,52 @@ const memoryCell = (beforeSwap: () => Promise<void> = () => Promise.resolve()) =
       value = next;
       return Promise.resolve();
     },
-    swap: async (expected, next) => {
-      await beforeSwap();
-      if (value !== expected) return false;
-      value = next ?? undefined;
-      return true;
+    remove: (expected) => {
+      if (value !== expected) return Promise.resolve(false);
+      value = undefined;
+      return Promise.resolve(true);
     },
   };
   return { cell, stored: () => value };
 };
 
 /**
- * The system that seals the token for the app. Its key changes with `epoch`:
- * what was sealed under an earlier one still opens, and should be sealed
- * again. While `locked`, it opens nothing, as a locked keyring.
+ * The system that seals the token for the app. While `locked`, it opens
+ * nothing, as a locked keyring.
  */
 const makeSystem = () => {
-  const sealedTokens = new Map<string, { readonly token: string; readonly epoch: number }>();
-  const system = { epoch: 0, protection: "encrypted" as TokenProtection, locked: false };
+  const sealedTokens = new Map<string, string>();
+  const system = { protection: "encrypted" as TokenProtection, locked: false };
   const sealer: TokenSealer = {
     sealToken: (token) => {
       const sealed = btoa(`sealed-${sealedTokens.size}`);
-      sealedTokens.set(sealed, { token, epoch: system.epoch });
+      sealedTokens.set(sealed, token);
       return Promise.resolve({ sealed, protection: system.protection });
     },
     openToken: (sealed) => {
-      const found = sealedTokens.get(sealed);
+      const token = sealedTokens.get(sealed);
       const opened: OpenResult = system.locked
         ? { _tag: "unavailable" }
-        : found === undefined
+        : token === undefined
           ? { _tag: "failed" }
-          : { _tag: "opened", token: found.token, stale: found.epoch < system.epoch };
+          : { _tag: "opened", token };
       return Promise.resolve(opened);
     },
   };
   return { system, sealer };
+};
+
+/** A bridge that is asked, and never answers. */
+const silentSealer = () => {
+  const asked = new Cell(0);
+  const sealer: TokenSealer = {
+    sealToken: () => new Promise(() => undefined),
+    openToken: () => {
+      asked.update((count) => count + 1);
+      return new Promise(() => undefined);
+    },
+  };
+  return { sealer, asked };
 };
 
 const storeFor = (server: URL, sealer: TokenSealer, cell: CredentialCell) =>
@@ -158,8 +170,14 @@ const memoryStorage = (pairing: () => Option.Option<DeviceId>) => {
       }),
     changes: Stream.never,
   });
-  return { storage, size: (name: LocalTable) => table(name).size, writes };
+  return {
+    storage,
+    writes,
+    sizes: () => [table("drafts").size, table("outbox").size],
+  };
 };
+
+type Device = ReturnType<typeof memoryStorage>;
 
 /** Resolves once `readable` holds a value that passes `test`. */
 const when = <A>(readable: Readable<A>, test: (value: A) => boolean) =>
@@ -172,6 +190,57 @@ const when = <A>(readable: Readable<A>, test: (value: A) => boolean) =>
     const stop = readable.subscribe(check);
     check();
   });
+
+/**
+ * A client of `serverA` with the credential in `cell`, read through
+ * `sealer`, and the records in `device`. Offline: it never reaches for a
+ * server. `clock`, when given, is its clock.
+ */
+const launch = (
+  sealer: TokenSealer,
+  cell: CredentialCell,
+  device: Device,
+  clock: Layer.Layer<never> = Layer.empty,
+) =>
+  createJ3Client(
+    Layer.mergeAll(
+      Layer.succeed(ServerAddress, { origin: serverA }),
+      Layer.succeed(CredentialStore, storeFor(serverA, sealer, cell)),
+      Layer.succeed(ClientStorage, device.storage),
+      Layer.succeed(WindowLocks, makeInProcessLocks()),
+      Layer.succeed(
+        FileTransfer,
+        FileTransfer.of({ upload: () => Effect.fail(new TransferFailed()) }),
+      ),
+      Layer.succeed(
+        Network,
+        Network.of({ status: Effect.succeed("offline"), changes: Stream.never }),
+      ),
+      FetchHttpClient.layer,
+      Socket.layerWebSocketConstructorGlobal,
+      SecureRandom.layerWebCrypto,
+      clock,
+    ),
+  );
+
+const target: EntryTarget = { _tag: "conversation", botId: BotId.make("bot-1") };
+
+/**
+ * Pairs the device with `first`, sealed by `sealer`, and keeps a draft and
+ * an unsent message for that pairing, as a window that then closed.
+ */
+const pairedWithRecords = async (sealer: TokenSealer) => {
+  const { cell, stored } = memoryCell();
+  const device = memoryStorage(() => sealedCredential(serverA, sealer).pairingOf(stored()));
+  await Effect.runPromise(storeFor(serverA, sealer, cell).save(first));
+  const earlier = await launch(sealer, cell, device);
+  await when(earlier.pairing, (pairing) => pairing === first.deviceId);
+  earlier.setDraftText(target, "keep me");
+  void earlier.send({ target, text: "on its way" });
+  await when(device.writes, () => device.sizes().every((size) => size > 0));
+  await earlier.dispose();
+  return { cell, stored, device, kept: device.sizes() };
+};
 
 describe("the desktop app's credential", () => {
   it("is stored with its token sealed, and reads back", async () => {
@@ -192,17 +261,11 @@ describe("the desktop app's credential", () => {
     expect(await Effect.runPromise(store.load)).toEqual(Option.none());
   });
 
-  it("is cleared though another window sealed it again between the read and the delete", async () => {
+  it("is cleared while the system will not open it", async () => {
+    const { cell, stored } = memoryCell();
     const { system, sealer } = makeSystem();
-    let otherWindow = () => Promise.resolve();
-    const { cell, stored } = memoryCell(() => otherWindow());
     await Effect.runPromise(storeFor(serverA, sealer, cell).save(first));
-    system.epoch += 1;
-    // As this window is about to delete it, another reads it and seals it again under the new key.
-    otherWindow = async () => {
-      otherWindow = () => Promise.resolve();
-      await Effect.runPromise(storeFor(serverA, sealer, cell).load);
-    };
+    system.locked = true;
     expect(await Effect.runPromise(storeFor(serverA, sealer, cell).clear(first))).toEqual(
       Option.none(),
     );
@@ -213,68 +276,15 @@ describe("the desktop app's credential", () => {
     const { cell } = memoryCell();
     await Effect.runPromise(storeFor(serverA, makeSystem().sealer, cell).save(first));
     // Sealed by another profile, or written by something else.
-    const store = storeFor(serverA, makeSystem().sealer, cell);
-    expect(await Effect.runPromise(store.load)).toEqual(Option.none());
-    await cell.put(JSON.stringify({ deviceId: "device-1", server: serverA.origin }));
-    expect(await Effect.runPromise(store.load)).toEqual(Option.none());
-  });
-
-  it("is not cleared quietly while another window keeps sealing it again", async () => {
-    const { system, sealer } = makeSystem();
-    let otherWindow = () => Promise.resolve();
-    const { cell, stored } = memoryCell(() => otherWindow());
-    await Effect.runPromise(storeFor(serverA, sealer, cell).save(first));
-    // Before each delete, another window reads it and seals it again under a newer key.
-    let sealingAgain = false;
-    otherWindow = async () => {
-      if (sealingAgain) return;
-      sealingAgain = true;
-      system.epoch += 1;
-      await Effect.runPromise(storeFor(serverA, sealer, cell).load);
-      sealingAgain = false;
-    };
-    const exit = await Effect.runPromiseExit(storeFor(serverA, sealer, cell).clear(first));
-    expect(failedWith(exit, "clear")).toBe(true);
-    expect(stored()).toBeDefined();
-  });
-
-  it("is not sealed again with less protection than it is kept with", async () => {
-    const { cell, stored } = memoryCell();
-    const { system, sealer } = makeSystem();
-    const store = storeFor(serverA, sealer, cell);
-    await Effect.runPromise(store.save(first));
-    const kept = stored();
-    // The system's key changed, and what it seals now is only obscured.
-    system.epoch += 1;
-    system.protection = "unencrypted";
-    expect(plain(await Effect.runPromise(store.load))).toEqual(plain(Option.some(first)));
-    expect(stored()).toBe(kept);
-  });
-
-  it("fails to load, keeping the pairing, when its sealed token is not one", async () => {
-    const { cell } = memoryCell();
-    const { sealer } = makeSystem();
-    await cell.put(
-      JSON.stringify({
-        deviceId: "device-1",
-        server: serverA.origin,
-        sealed: "not base64!",
-        protection: "encrypted",
-      }),
+    expect(await Effect.runPromise(storeFor(serverA, makeSystem().sealer, cell).load)).toEqual(
+      Option.none(),
     );
-    const exit = await Effect.runPromiseExit(storeFor(serverA, sealer, cell).load);
-    expect(failedWith(exit, "load")).toBe(true);
   });
 
   it("fails to load, and to save, when the app never answers", async () => {
     const { cell } = memoryCell();
-    const { sealer } = makeSystem();
-    await Effect.runPromise(storeFor(serverA, sealer, cell).save(first));
-    const silent: TokenSealer = {
-      sealToken: () => new Promise(() => undefined),
-      openToken: () => new Promise(() => undefined),
-    };
-    const store = storeFor(serverA, silent, cell);
+    await Effect.runPromise(storeFor(serverA, makeSystem().sealer, cell).save(first));
+    const store = storeFor(serverA, silentSealer().sealer, cell);
     expect(failedWith(await pastTheDeadline(store.load), "load")).toBe(true);
     expect(failedWith(await pastTheDeadline(store.save(second)), "save")).toBe(true);
   });
@@ -287,72 +297,66 @@ describe("the desktop app's credential", () => {
     expect(await Effect.runPromise(storeFor(serverB, sealer, cell).load)).toEqual(Option.none());
   });
 
-  it("is sealed again when the system says its key changed", async () => {
-    const { cell, stored } = memoryCell();
-    const { system, sealer } = makeSystem();
-    system.protection = "unencrypted";
-    const store = storeFor(serverA, sealer, cell);
-    await Effect.runPromise(store.save(first));
-    // A keyring the app can use now: the system encrypts with its key.
-    system.epoch += 1;
-    system.protection = "encrypted";
-    expect(plain(await Effect.runPromise(store.load))).toEqual(plain(Option.some(first)));
-    expect(JSON.parse(String(stored()))).toMatchObject({ protection: "encrypted" });
-    expect(plain(await Effect.runPromise(store.load))).toEqual(plain(Option.some(first)));
-  });
-
   it("keeps the pairing and what is kept for it while the system will not open it", async () => {
-    const { cell, stored } = memoryCell();
     const { system, sealer } = makeSystem();
-    const codec = sealedCredential(serverA, sealer);
-    const device = memoryStorage(() => codec.pairingOf(stored()));
-    const target: EntryTarget = { _tag: "conversation", botId: BotId.make("bot-1") };
-    const launch = () =>
-      createJ3Client(
-        Layer.mergeAll(
-          Layer.succeed(ServerAddress, { origin: serverA }),
-          Layer.succeed(
-            CredentialStore,
-            makeCredentialStore({ codec, cell, announce: Effect.void, changes: Stream.never }),
-          ),
-          Layer.succeed(ClientStorage, device.storage),
-          Layer.succeed(WindowLocks, makeInProcessLocks()),
-          Layer.succeed(
-            FileTransfer,
-            FileTransfer.of({ upload: () => Effect.fail(new TransferFailed()) }),
-          ),
-          // Offline: the client never reaches for a server.
-          Layer.succeed(
-            Network,
-            Network.of({ status: Effect.succeed("offline"), changes: Stream.never }),
-          ),
-          FetchHttpClient.layer,
-          Socket.layerWebSocketConstructorGlobal,
-          SecureRandom.layerWebCrypto,
-        ),
-      );
-    await Effect.runPromise(storeFor(serverA, sealer, cell).save(first));
-
-    const earlier = await launch();
-    await when(earlier.pairing, (pairing) => pairing === first.deviceId);
-    earlier.setDraftText(target, "keep me");
-    void earlier.send({ target, text: "on its way" });
-    await when(device.writes, () => device.size("drafts") > 0 && device.size("outbox") > 0);
-    await earlier.dispose();
-    const kept = [device.size("drafts"), device.size("outbox")];
+    const { cell, device, kept } = await pairedWithRecords(sealer);
 
     system.locked = true;
-    const later = await launch();
+    const later = await launch(sealer, cell, device);
     await when(later.connection, (state) => state._tag !== "starting");
     expect(later.connection.get()._tag).toBe("storage-failed");
-    expect([device.size("drafts"), device.size("outbox")]).toEqual(kept);
-
-    system.locked = false;
-    later.reconnectNow();
-    await when(later.pairing, (pairing) => pairing === first.deviceId);
-    await when(later.drafts, (drafts) => drafts.size > 0);
-    expect([...later.drafts.get().values()].map((draft) => draft.text)).toEqual(["keep me"]);
-    expect([device.size("drafts"), device.size("outbox")]).toEqual(kept);
+    expect(device.sizes()).toEqual(kept);
     await later.dispose();
+
+    // Restarted once the keyring is unlocked.
+    system.locked = false;
+    const restarted = await launch(sealer, cell, device);
+    await when(restarted.pairing, (pairing) => pairing === first.deviceId);
+    await when(restarted.drafts, (drafts) => drafts.size > 0);
+    expect([...restarted.drafts.get().values()].map((draft) => draft.text)).toEqual(["keep me"]);
+    expect(device.sizes()).toEqual(kept);
+    await restarted.dispose();
+  });
+
+  it.each([
+    ["no sealed token", null],
+    ["a sealed token that is not base64", "not base64!"],
+    ["a sealed token of no bytes", "A"],
+  ])("keeps the pairing and what is kept for it when its record holds %s", async (_, sealed) => {
+    const { sealer } = makeSystem();
+    const { cell, device, kept } = await pairedWithRecords(sealer);
+    await cell.put(
+      JSON.stringify({
+        deviceId: first.deviceId,
+        server: serverA.origin,
+        sealed,
+        protection: "encrypted",
+      }),
+    );
+
+    const later = await launch(sealer, cell, device);
+    await when(later.connection, (state) => state._tag !== "starting");
+    expect(later.connection.get()._tag).toBe("storage-failed");
+    expect(device.sizes()).toEqual(kept);
+    await later.dispose();
+  });
+
+  it("waits for the app once as the client starts", async () => {
+    const { cell, device } = await pairedWithRecords(makeSystem().sealer);
+    const silent = silentSealer();
+    const scope = Scope.makeUnsafe();
+    const clock = await Effect.runPromise(Layer.buildWithScope(TestClock.layer(), scope));
+
+    const starting = launch(silent.sealer, cell, device, Layer.succeedContext(clock));
+    await when(silent.asked, (count) => count > 0);
+    // The deadline is set as the app is asked; once it has passed, the
+    // client says it cannot read the sign-in.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await Effect.runPromise(TestClock.adjust(SEALER_DEADLINE).pipe(Effect.provideContext(clock)));
+    const later = await starting;
+    await when(later.connection, (state) => state._tag === "storage-failed");
+    expect(silent.asked.get()).toBe(1);
+    await later.dispose();
+    await Effect.runPromise(Scope.close(scope, Exit.void));
   });
 });

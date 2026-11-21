@@ -52,13 +52,13 @@ const credentialCell = (observe: (stored: unknown) => void): CredentialCell => (
       return stored;
     }),
   put: (value) => Idb.put("credentials", CREDENTIAL_KEY, value).then(() => observe(value)),
-  swap: (expected, next) =>
+  remove: (expected) =>
     Idb.commit(
-      [{ store: "credentials", key: CREDENTIAL_KEY, value: next }],
+      [{ store: "credentials", key: CREDENTIAL_KEY, value: null }],
       [Idb.holding({ store: "credentials", key: CREDENTIAL_KEY, value: expected })],
-    ).then((stored) => {
-      if (stored) observe(next);
-      return stored;
+    ).then((removed) => {
+      if (removed) observe(undefined);
+      return removed;
     }),
 });
 

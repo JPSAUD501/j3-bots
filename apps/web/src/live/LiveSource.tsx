@@ -209,6 +209,7 @@ function Gate({ children }: { children: ReactNode }) {
             defaultName={guessDeviceName(navigator.userAgent)}
             onPair={j3.pair}
             server={desktopServer}
+            restart={desktop?.relaunch}
           />
         </Screen>
       );

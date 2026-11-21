@@ -82,11 +82,19 @@ export type ForgetResult = typeof ForgetResult.Type;
 /** A device token as the page asks the app to seal it, or the app answers it opened. */
 const Token = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1024));
 
-/** A sealed token: base64, as the page stores it. */
+/**
+ * A sealed token, as the page stores it: base64 in its one canonical form
+ * (whole groups of four, padding where it belongs, no stray bits in the
+ * last character), never empty. A lenient decoder reads `A` as no bytes at
+ * all, and the system opens no bytes as an empty string, so a value is
+ * held to the form the app wrote before it is decoded.
+ */
 export const Sealed = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(4096),
-  Schema.isPattern(/^[A-Za-z0-9+/]+={0,2}$/),
+  Schema.isPattern(
+    /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/][AQgw]==|[A-Za-z0-9+/]{2}[AEIMQUYcgkosw048]=)?$/,
+  ),
 );
 
 export const SealRequest = Schema.Struct({ token: Token });
@@ -103,11 +111,8 @@ export const OpenRequest = Schema.Struct({ sealed: Sealed });
 export type OpenRequest = typeof OpenRequest.Type;
 
 export const OpenResult = Schema.Union([
-  /**
-   * The token, and whether to seal it again (`stale`): the system says it
-   * was sealed under a key it no longer encrypts with.
-   */
-  Schema.TaggedStruct("opened", { token: Token, stale: Schema.Boolean }),
+  /** The token. */
+  Schema.TaggedStruct("opened", { token: Token }),
   /** It decrypted, but not to a token this profile sealed: the record is damaged or not the app's. */
   Schema.TaggedStruct("failed", {}),
   /**
