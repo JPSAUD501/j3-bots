@@ -342,17 +342,28 @@ export function EditBotForm({
 interface EditBotDialogProps extends Omit<EditBotFormProps, "bot" | "titleId" | "onUnsavedChange"> {
   /** The bot being edited; null closes the dialog. */
   readonly bot: Bot | null;
+  /**
+   * Whether the form holds edits that are not saved, as it reports through
+   * `onUnsavedChange`. Held by the owner, which keeps such a form open.
+   */
+  readonly unsaved: boolean;
+  readonly onUnsavedChange: (unsaved: boolean) => void;
 }
 
 /** `EditBotForm` as a dialog: the whole screen on a phone, a sheet over the app on wider ones. */
-export function EditBotDialog({ bot, onClose, ...form }: EditBotDialogProps) {
+export function EditBotDialog({
+  bot,
+  onClose,
+  unsaved,
+  onUnsavedChange,
+  ...form
+}: EditBotDialogProps) {
   const titleId = useId();
-  // A click outside does not throw away unsaved edits; Escape and the close button still close.
-  const [unsaved, setUnsaved] = useState(false);
   const { held, closed } = useHeldWhileClosing(bot);
   return (
     <Dialog.Root
       open={bot !== null}
+      // A click outside does not throw away unsaved edits; Escape and the close button still close.
       disablePointerDismissal={unsaved}
       onOpenChange={(open) => {
         if (!open) onClose();
@@ -373,7 +384,7 @@ export function EditBotDialog({ bot, onClose, ...form }: EditBotDialogProps) {
               key={held.opening}
               bot={held.value}
               onClose={onClose}
-              onUnsavedChange={setUnsaved}
+              onUnsavedChange={onUnsavedChange}
               titleId={titleId}
               {...form}
             />

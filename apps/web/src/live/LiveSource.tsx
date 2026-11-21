@@ -64,7 +64,7 @@ import { notificationAccess } from "../preferences/notifications";
 import { notificationContent } from "../presentation/notification";
 import type { ConversationView, ShellData, ShellIntents } from "../shell/data";
 import { ShellSourceContext } from "../shell/source";
-import { closeNotificationsOutside, onNotificationClick, showNotification } from "./notify";
+import { closeNotificationsOf, onNotificationClick, showNotification } from "./notify";
 import { deliverFile, reserveWindow } from "./openFile";
 import { platform } from "./platform";
 
@@ -130,15 +130,17 @@ function Gate({ children }: { children: ReactNode }) {
   const pairing = useReadable(j3.pairing);
   const [everConnected, setEverConnected] = useState(false);
   if (connection._tag === "connected" && !everConnected) setEverConnected(true);
-  // Once this window knows the pairing it follows, a notification another one
-  // received leaves the screen: signed out or revoked, its words go with it.
-  const pairingKnown = connection._tag !== "starting" && connection._tag !== "storage-failed";
+  // A pairing this window followed ends, signed out or revoked, here or in
+  // another tab: what it received leaves the screen, its words with it.
+  const followed = useRef(pairing);
   useEffect(() => {
-    if (!pairingKnown) return;
-    closeNotificationsOutside(pairing, () => j3.pairing.get()).catch(() => {
+    const ended = followed.current;
+    followed.current = pairing;
+    if (ended === null || ended === pairing) return;
+    closeNotificationsOf(ended).catch(() => {
       // The browser would not list them; they close when the operator dismisses them.
     });
-  }, [j3, pairingKnown, pairing]);
+  }, [pairing]);
   switch (connection._tag) {
     case "starting":
       return null;
@@ -283,6 +285,9 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   const [newBot, setNewBot] = useState(false);
   const [memoryView, setMemoryView] = useState<MemoryView | null>(null);
   const [editingBot, setEditingBot] = useState<BotId | null>(null);
+  // Whether the bot editor and the memory viewer hold edits not saved yet, as they report.
+  const [botEditUnsaved, setBotEditUnsaved] = useState(false);
+  const [memoryEditing, setMemoryEditing] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Without a roster, Settings has no button and closes without saying so.
   if (settingsOpen && (roster === null || roster.length === 0)) setSettingsOpen(false);
@@ -321,15 +326,18 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   // What the server says no device has in view, shown by the browser once the
   // operator allowed it. A click focuses a window and opens the conversation
   // or room, whose newest entry is what the notification was about, if the
-  // window still follows the pairing that received it. Nothing is left over
-  // it: Settings, the details and the dialogs close. A save under way is not
-  // given up on, and the profile form in Settings keeps what the operator typed.
+  // window still follows the pairing that received it. Settings, the details
+  // and the dialogs over it close, and the profile form in Settings keeps what
+  // the operator typed. The bot editor or the memory viewer holding an edit
+  // stays open, with the conversation opened under it: the click never throws
+  // typing away, and closing the editor lands on what the notification was
+  // about. A save under way is not given up on.
   const presentation = usePresentation();
   const openTarget = useEffectEvent((opened: EntryTarget) => {
     setSettingsOpen(false);
     setNewBot(false);
-    setEditingBot(null);
-    setMemoryView(null);
+    if (!botEditUnsaved) setEditingBot(null);
+    if (!memoryEditing) setMemoryView(null);
     // Opening it drops the details from the address, which closes them.
     if (opened._tag === "conversation") {
       void navigate({ to: "/bots/$botId", params: { botId: opened.botId } });
@@ -655,6 +663,8 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
         engine={data.engine}
         save={editingBot === null ? undefined : botSaves.get(editingBot)}
         connected={data.connected}
+        unsaved={botEditUnsaved}
+        onUnsavedChange={setBotEditUnsaved}
         onSave={(changes) => {
           if (editingBotValue !== null) updateBot(editingBotValue, changes);
         }}
@@ -664,6 +674,8 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
         file={memoryView}
         save={openMemoryKey === null ? undefined : memorySaves.get(openMemoryKey)}
         connected={data.connected}
+        editing={memoryEditing}
+        onEditingChange={setMemoryEditing}
         onSave={(edit) => {
           if (memoryView !== null) writeMemoryFile(memoryView, edit);
         }}

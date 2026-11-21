@@ -46,11 +46,24 @@ function clicked(click: NotificationClick) {
 
 const decodePairing = Schema.decodeUnknownOption(Schema.Struct({ pairing: DeviceId }));
 
-/** Whether the service worker's `notification` was received under `pairing`. */
-const receivedUnder = (notification: Notification, pairing: DeviceId | null) => {
+/** A notification the browser shows: what it carries, and how it leaves the screen. */
+type Shown = Pick<Notification, "data" | "close">;
+
+/** Whether `notification` was received under `pairing`, as its data says. */
+const receivedUnder = (notification: Shown, pairing: DeviceId) => {
   const from = decodePairing(notification.data);
   return Option.isSome(from) && from.value.pairing === pairing;
 };
+
+/**
+ * Closes those of `notifications` received under `pairing`, and only those:
+ * one another pairing received, or that names none, stays.
+ */
+export function closeReceivedUnder(notifications: Iterable<Shown>, pairing: DeviceId): void {
+  for (const notification of notifications) {
+    if (receivedUnder(notification, pairing)) notification.close();
+  }
+}
 
 /**
  * Shows a notification through the service worker where there is one, since
@@ -78,9 +91,7 @@ export async function showNotification(
   if (registration !== null) {
     await registration.showNotification(shown.title, options);
     if (!ended()) return;
-    for (const notification of await registration.getNotifications({ tag: shown.tag })) {
-      if (receivedUnder(notification, shown.pairing)) notification.close();
-    }
+    closeReceivedUnder(await registration.getNotifications({ tag: shown.tag }), shown.pairing);
     return;
   }
   // Shown from the page at once, and listed before a pairing that ends could look.
@@ -96,29 +107,18 @@ export async function showNotification(
 }
 
 /**
- * Closes every notification a pairing other than `pairing` received, so none
- * outlives the pairing it belongs to: once it ends, its bots' names and words
- * leave the screen too. `currentPairing` is the pairing the page follows now:
- * a sweep that a newer pairing overtakes stops, so it never closes what that
- * pairing showed meanwhile, as when another tab pairs again while the browser
- * lists its notifications.
+ * Closes every notification the pairing `ended` received, so none outlives
+ * the pairing it belongs to: once it ends, its bots' names and words leave
+ * the screen too. Only that pairing's: a pairing never comes back, so this is
+ * right however late it runs, and a newer pairing keeps what it showed, even
+ * one this window has not heard of yet, as when another tab pairs again.
  */
-export async function closeNotificationsOutside(
-  pairing: DeviceId | null,
-  currentPairing: () => DeviceId | null,
-): Promise<void> {
-  const overtaken = () => currentPairing() !== pairing;
-  if (overtaken()) return;
+export async function closeNotificationsOf(ended: DeviceId): Promise<void> {
   for (const entry of shownByPage) {
-    if (entry.pairing !== pairing) entry.notification.close();
+    if (entry.pairing === ended) entry.notification.close();
   }
   const registration = await activeServiceWorker();
-  if (registration === null) return;
-  const listed = await registration.getNotifications();
-  if (overtaken()) return;
-  for (const notification of listed) {
-    if (!receivedUnder(notification, pairing)) notification.close();
-  }
+  if (registration !== null) closeReceivedUnder(await registration.getNotifications(), ended);
 }
 
 const decodeClick = Schema.decodeUnknownOption(

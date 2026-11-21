@@ -260,17 +260,28 @@ interface MemoryViewerProps extends Omit<
 > {
   /** The file open in the viewer, as state holds it; null closes the viewer. */
   readonly file: { readonly title: string; readonly reading: MemoryReading } | null;
+  /**
+   * Whether the view holds an edit, as it reports through `onEditingChange`.
+   * Held by the owner, which keeps a view with an edit open.
+   */
+  readonly editing: boolean;
+  readonly onEditingChange: (editing: boolean) => void;
 }
 
 /** `MemoryFile` as a dialog: the whole screen on a phone, a sheet over the app on wider ones. */
-export function MemoryViewer({ file, onClose, ...view }: MemoryViewerProps) {
+export function MemoryViewer({
+  file,
+  onClose,
+  editing,
+  onEditingChange,
+  ...view
+}: MemoryViewerProps) {
   const titleId = useId();
-  // A click outside does not throw away an edit; Escape and the close button still close.
-  const [editing, setEditing] = useState(false);
   const { held, closed } = useHeldWhileClosing(file);
   return (
     <Dialog.Root
       open={file !== null}
+      // A click outside does not throw away an edit; Escape and the close button still close.
       disablePointerDismissal={editing}
       onOpenChange={(open) => {
         if (!open) onClose();
@@ -292,7 +303,7 @@ export function MemoryViewer({ file, onClose, ...view }: MemoryViewerProps) {
               title={held.value.title}
               reading={held.value.reading}
               onClose={onClose}
-              onEditingChange={setEditing}
+              onEditingChange={onEditingChange}
               titleId={titleId}
               {...view}
             />
