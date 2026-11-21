@@ -433,6 +433,12 @@ const sentences = {
   "composer.notSaved": "Ainda não salvo",
   "composer.waitToAttach": "Espere um instante e adicione os arquivos de novo.",
 
+  "share.title": "Enviar para",
+  "share.files.one": "{count} arquivo",
+  "share.files.other": "{count} arquivos",
+  "share.wait": "Seus rascunhos ainda não estão prontos. Escolha de novo em instantes.",
+  "share.unreadable": "Não foi possível ler o que foi compartilhado.",
+
   "file.gone": "{name} não está mais no servidor.",
   "file.unreachable": "Não deu para abrir {name}. Verifique a conexão e tente de novo.",
 

@@ -1,16 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Cell, targetKey } from "@j3-bots/client-runtime";
-import {
-  type Shared,
-  type SharedDraft,
-  type SharedFile,
-  sharedDraft,
-} from "@j3-bots/client-runtime/presentation";
+import { type Shared, type SharedDraft, sharedDraft } from "@j3-bots/client-runtime/presentation";
 import { useJ3Client, useReadable } from "@j3-bots/client-runtime/react";
 import type { EntryTarget } from "@j3-bots/contracts";
 import { File } from "expo-file-system";
 import * as Sharing from "expo-sharing";
+import { useMemo } from "react";
 import { AppState, Platform } from "react-native";
+import { DeviceBlob } from "../platform/pick.ts";
 import { carriesFiles, sharedOf } from "./shared.ts";
 
 /** A share received and not yet put in a draft. */
@@ -81,54 +78,63 @@ export const receiveShares = (): void => {
 };
 
 /** What the operator can do with the share waiting for them. */
-type WaitingShare =
+export type WaitingShare =
   | {
       readonly _tag: "shared";
       readonly shared: Shared;
       /**
        * Puts the share in the draft of `target`, the bot or room the operator
        * picked, by the runtime's rule (`sharedDraft`), and stops waiting.
-       * `read` gives each file's bytes from the copy at its `uri`, with its
-       * `mediaType` and `size`. Nothing is sent: the composer then shows the
+       * Each file is read from its copy as it uploads, with the media type and
+       * size it was admitted with. Nothing is sent: the composer shows the
        * draft with its files uploading. Returns the files left out, each with
-       * the reason the composer gives.
+       * why, or `not-taken` when the draft takes no change now, as the
+       * composer's does not while it is sent or while the drafts load or
+       * could not be read: the share then keeps waiting.
        */
-      readonly putInDraft: (
-        target: EntryTarget,
-        read: (file: SharedFile) => Blob,
-      ) => SharedDraft["leftOut"];
+      readonly putInDraft: (target: EntryTarget) => SharedDraft["leftOut"] | "not-taken";
       readonly dismiss: () => void;
     }
   | { readonly _tag: "unreadable"; readonly dismiss: () => void };
 
-/**
- * The share waiting for the operator to pick the bot or room whose draft it
- * goes in, or null when none waits. This is where the picker starts.
- */
+/** The share waiting for the operator to pick the bot or room whose draft it goes in, or null. */
 export function useWaitingShare(): WaitingShare | null {
   const client = useJ3Client();
   const received = useReadable(waiting);
-  if (received === null) return null;
-  // A newer share that arrived meanwhile keeps waiting.
-  const done = () => {
-    if (waiting.get() === received) waiting.set(null);
-  };
-  if (received._tag === "unreadable") return { _tag: "unreadable", dismiss: done };
-  return {
-    _tag: "shared",
-    shared: received.shared,
-    putInDraft: (target, read) => {
-      const draft = sharedDraft(client.drafts.get().get(targetKey(target)), received.shared);
-      client.setDraftText(target, draft.text, draft.mentions);
-      if (draft.uploads.length > 0) {
-        client.attachFiles(
-          target,
-          draft.uploads.map((file) => ({ name: file.name, body: read(file) })),
-        );
-      }
-      done();
-      return draft.leftOut;
-    },
-    dismiss: done,
-  };
+  return useMemo((): WaitingShare | null => {
+    if (received === null) return null;
+    // A newer share that arrived meanwhile keeps waiting.
+    const done = () => {
+      if (waiting.get() === received) waiting.set(null);
+    };
+    if (received._tag === "unreadable") return { _tag: "unreadable", dismiss: done };
+    return {
+      _tag: "shared",
+      shared: received.shared,
+      putInDraft: (target) => {
+        const current = client.drafts.get().get(targetKey(target));
+        if (
+          current?.sending === true ||
+          client.draftsSwitching.get() ||
+          client.draftsReadFailed.get()
+        ) {
+          return "not-taken";
+        }
+        const draft = sharedDraft(current, received.shared);
+        client.setDraftText(target, draft.text, draft.mentions);
+        if (draft.uploads.length > 0) {
+          client.attachFiles(
+            target,
+            draft.uploads.map((file) => ({
+              name: file.name,
+              body: new DeviceBlob(file.uri, file.mediaType, file.size),
+            })),
+          );
+        }
+        done();
+        return draft.leftOut;
+      },
+      dismiss: done,
+    };
+  }, [client, received]);
 }

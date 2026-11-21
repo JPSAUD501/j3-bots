@@ -427,6 +427,12 @@ export const en = {
   "composer.notSaved": "Not saved yet",
   "composer.waitToAttach": "Wait a moment, then add the files again.",
 
+  "share.title": "Send to",
+  "share.files.one": "{count} file",
+  "share.files.other": "{count} files",
+  "share.wait": "Your drafts aren’t ready yet. Pick again in a moment.",
+  "share.unreadable": "Couldn’t read what was shared.",
+
   "file.gone": "{name} is no longer on the server.",
   "file.unreachable": "{name} couldn’t be opened. Check the connection and try again.",
 
