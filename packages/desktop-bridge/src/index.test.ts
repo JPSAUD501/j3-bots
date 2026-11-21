@@ -4,6 +4,7 @@ import { BotId, PairingCode, RoomId } from "@j3-bots/contracts";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 import {
+  Accelerator,
   AppLinkUrl,
   ConnectRequest,
   ConnectResult,
@@ -14,6 +15,8 @@ import {
   OpenRequest,
   SavingReport,
   ServerOrigin,
+  ShellCommand,
+  TrayReport,
   UpdateStatus,
 } from "./index.ts";
 
@@ -123,6 +126,11 @@ describe("the desktop bridge", () => {
       closeNotifications: call,
       onNotificationClick: call,
       onAppLink: call,
+      reportLanguage: call,
+      reportTray: call,
+      onCommand: call,
+      shortcutStatus: call,
+      setShortcut: call,
     };
     const state = { server: null, pairingCode: null };
     assert.isTrue(decodes(HostedBridge, { state, ...calls }));
@@ -169,6 +177,53 @@ describe("the desktop bridge", () => {
     assert.isFalse(decodes(NotificationClick, { ...click, target: { _tag: "room" } }));
     assert.isFalse(decodes(NotificationClick, { target: click.target }));
     assert.isFalse(decodes(NotificationClick, "j3:notification-click"));
+  });
+
+  it("takes as a global shortcut only a key held with Ctrl, Alt, Super or ⌘, written as Electron does", () => {
+    for (const accelerator of [
+      "CommandOrControl+Shift+J",
+      "Control+Alt+Space",
+      "Alt+Super+F12",
+      "Super+1",
+    ]) {
+      assert.isTrue(decodes(Accelerator, accelerator), accelerator);
+    }
+    for (const accelerator of [
+      "Shift+J",
+      "J",
+      "Shift+CommandOrControl+J",
+      "CommandOrControl+Shift",
+      "CommandOrControl+F25",
+      "CommandOrControl+j",
+      "CommandOrControl+Shift+J+K",
+    ]) {
+      assert.isFalse(decodes(Accelerator, accelerator), accelerator);
+    }
+  });
+
+  it("lists in the tray what the page reports, within bounds", () => {
+    const waiting = { target: { _tag: "conversation", botId: "bot-wren" }, name: "Wren" };
+    assert.isTrue(decodes(TrayReport, { pairing: "device-1", count: 1, waiting: [waiting] }));
+    assert.isTrue(decodes(TrayReport, { pairing: null, count: 0, waiting: [] }));
+    assert.isFalse(decodes(TrayReport, { pairing: "device-1", count: -1, waiting: [] }));
+    assert.isFalse(
+      decodes(TrayReport, {
+        pairing: "device-1",
+        count: 11,
+        waiting: Array.from({ length: 11 }, () => waiting),
+      }),
+    );
+    assert.isFalse(
+      decodes(TrayReport, { pairing: "device-1", count: 1, waiting: [{ ...waiting, name: "" }] }),
+    );
+  });
+
+  it("hands the page an opening only with the pairing whose roster listed it", () => {
+    const target = { _tag: "room", roomId: "room-launch" };
+    assert.isTrue(decodes(ShellCommand, { _tag: "open", target, pairing: "device-1" }));
+    assert.isFalse(decodes(ShellCommand, { _tag: "open", target }));
+    assert.isTrue(decodes(ShellCommand, { _tag: "focus" }));
+    assert.isFalse(decodes(ShellCommand, { _tag: "quit" }));
   });
 });
 

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /** The shell's keyboard shortcuts, labeled for the platform they run on. */
 
-const isMac = () => /Mac|iPhone|iPad/.test(navigator.platform);
+/** Whether the page runs on an Apple system, whose shortcuts use ⌘ and symbols. */
+export const isMac = () => /Mac|iPhone|iPad/.test(navigator.platform);
 
 interface Shortcut {
   /** As shown on screen. */

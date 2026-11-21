@@ -3,6 +3,8 @@ import {
   DeviceId,
   EntryId,
   EntryTarget,
+  Label,
+  Language,
   PairingCode,
   PairingLinkTarget,
   ServerOrigin,
@@ -229,6 +231,92 @@ export type CloseNotificationsRequest = typeof CloseNotificationsRequest.Type;
 export const NotificationClick = Schema.Struct({ target: EntryTarget, pairing: DeviceId });
 export type NotificationClick = typeof NotificationClick.Type;
 
+/** The language the page shows, which the app's menus follow. */
+export const LanguageReport = Schema.Struct({ language: Language });
+export type LanguageReport = typeof LanguageReport.Type;
+
+/** A bot or room that needs the operator, as the tray lists it. */
+export const Waiting = Schema.Struct({ target: EntryTarget, name: Label });
+export type Waiting = typeof Waiting.Type;
+
+/** How many bots and rooms the tray names; it counts the rest. */
+export const TRAY_LISTED = 10;
+
+/**
+ * What the tray shows, as the page reports it each time it changes: how many
+ * bots and rooms need the operator, the first `TRAY_LISTED` of them in roster
+ * order, and the pairing whose roster they come from (`null`, with none,
+ * while the page follows none).
+ */
+export const TrayReport = Schema.Struct({
+  pairing: Schema.NullOr(DeviceId),
+  count: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  waiting: Schema.Array(Waiting).check(Schema.isMaxLength(TRAY_LISTED)),
+});
+export type TrayReport = typeof TrayReport.Type;
+
+/**
+ * Something the app asks the page to do, from its menus or its global
+ * shortcut. `focus`: the composer of the open conversation, or the roster.
+ * `composer`, `next`, `previous`, `stop` and `closeDetails`: the shell's
+ * keyboard shortcuts, by name. `open`: a bot or room the operator chose in
+ * the tray, under the pairing whose roster listed it.
+ */
+export const ShellCommand = Schema.Union([
+  Schema.TaggedStruct("focus", {}),
+  Schema.TaggedStruct("composer", {}),
+  Schema.TaggedStruct("next", {}),
+  Schema.TaggedStruct("previous", {}),
+  Schema.TaggedStruct("stop", {}),
+  Schema.TaggedStruct("closeDetails", {}),
+  Schema.TaggedStruct("open", { target: EntryTarget, pairing: DeviceId }),
+]);
+export type ShellCommand = typeof ShellCommand.Type;
+
+/**
+ * A global shortcut, as Electron's accelerators write it: one or more of
+ * `CommandOrControl`, `Control`, `Alt`, `Super` (in that order, at least one
+ * of them), then `Shift` or not, then a letter, a digit, a function key or
+ * `Space`.
+ */
+export const Accelerator = Schema.String.check(
+  Schema.isMaxLength(64),
+  Schema.isPattern(
+    /^(?=(?:CommandOrControl|Control|Alt|Super)\+)(?:CommandOrControl\+)?(?:Control\+)?(?:Alt\+)?(?:Super\+)?(?:Shift\+)?(?:[A-Z0-9]|F[1-9]|F1[0-9]|F2[0-4]|Space)$/,
+  ),
+);
+export type Accelerator = typeof Accelerator.Type;
+
+/** The shortcut that shows the app until the operator chooses another. */
+export const DEFAULT_SHORTCUT: Accelerator = "CommandOrControl+Shift+J";
+
+/**
+ * Whether the global shortcut works. `registered`: it does. `taken`: another
+ * app or the system holds it. `unavailable`: this desktop lets no app hold a
+ * key outside its windows. `requested`: on Wayland, where the desktop decides
+ * through its portal and does not tell the app what it decided.
+ */
+export const ShortcutState = Schema.Literals(["registered", "taken", "unavailable", "requested"]);
+export type ShortcutState = typeof ShortcutState.Type;
+
+export const ShortcutStatus = Schema.Struct({ accelerator: Accelerator, state: ShortcutState });
+export type ShortcutStatus = typeof ShortcutStatus.Type;
+
+export const ShortcutRequest = Schema.Struct({ accelerator: Accelerator });
+export type ShortcutRequest = typeof ShortcutRequest.Type;
+
+/**
+ * How changing the shortcut ended: `changed`, and `status` is the new one's;
+ * `taken`, another app or the system holds it, and the shortcut that was
+ * there stays (`status`); or `not-saved`, the app could not keep it, and the
+ * one that was there stays.
+ */
+export const ShortcutChange = Schema.Struct({
+  outcome: Schema.Literals(["changed", "taken", "not-saved"]),
+  status: ShortcutStatus,
+});
+export type ShortcutChange = typeof ShortcutChange.Type;
+
 /** A function, called only to have its answer decoded. */
 const Callable = Schema.declare(
   (input: unknown): input is (...args: ReadonlyArray<unknown>) => unknown =>
@@ -257,5 +345,10 @@ export const HostedBridge = Schema.Struct({
   closeNotifications: Callable,
   onNotificationClick: Callable,
   onAppLink: Callable,
+  reportLanguage: Callable,
+  reportTray: Callable,
+  onCommand: Callable,
+  shortcutStatus: Callable,
+  setShortcut: Callable,
 });
 export type HostedBridge = typeof HostedBridge.Type;

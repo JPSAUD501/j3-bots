@@ -44,6 +44,16 @@ export const IPC_CHANNELS = {
   appLinksWanted: "j3bots:app-links-wanted",
   /** From the main process, as the operator follows a link to the app: `AppLink`. */
   appLinkOpened: "j3bots:app-link-opened",
+  /** `LanguageReport`: the language the page shows, for the app's menus. Not answered. */
+  language: "j3bots:language",
+  /** `TrayReport`: what the tray lists, each time it changes. Not answered. */
+  tray: "j3bots:tray",
+  /** From the main process, from its menus or its global shortcut: `ShellCommand`. */
+  command: "j3bots:command",
+  /** Answers `ShortcutStatus`. */
+  shortcut: "j3bots:shortcut",
+  /** `ShortcutRequest`, answered with `ShortcutChange`. */
+  setShortcut: "j3bots:set-shortcut",
 } as const;
 
 /** What the preload script puts on `window[BRIDGE_KEY]`. Its answers are decoded by the page. */
@@ -76,4 +86,12 @@ export interface DesktopBridge {
    * with any that arrived before; answers a function that stops it.
    */
   readonly onAppLink: (listener: (link: unknown) => void) => () => void;
+  /** Tells the app the language the page shows (a `LanguageReport`). */
+  readonly reportLanguage: (report: unknown) => void;
+  /** Tells the app what the tray lists (a `TrayReport`). */
+  readonly reportTray: (report: unknown) => void;
+  /** Calls `listener` with each command from the app's menus or its shortcut; answers a function that stops it. */
+  readonly onCommand: (listener: (command: unknown) => void) => () => void;
+  readonly shortcutStatus: () => Promise<unknown>;
+  readonly setShortcut: (accelerator: string) => Promise<unknown>;
 }
