@@ -5,5 +5,10 @@
  * with its own renderer never loads the PNG encoder.
  */
 export { parseColor, toSrgb8, type LinearRgb } from "../color.ts";
-export { drawAvatar, renderStillAvatar, type AvatarBox } from "./avatarRaster.ts";
+export {
+  drawAvatar,
+  renderStillAvatar,
+  renderStillRoomAvatar,
+  type AvatarBox,
+} from "./avatarRaster.ts";
 export { Canvas, type Rgb } from "./canvas.ts";

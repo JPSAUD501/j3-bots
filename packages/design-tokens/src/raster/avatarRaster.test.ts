@@ -5,7 +5,7 @@ import { avatarMarkNames, avatarProportions } from "../avatar.ts";
 import { avatarShapeNames, avatarShapes } from "../avatarShapes.ts";
 import { contrastRatio, parseColor, toSrgb8 } from "../color.ts";
 import { botPalette, colors } from "../tokens.ts";
-import { drawAvatar, renderStillAvatar } from "./avatarRaster.ts";
+import { drawAvatar, renderStillAvatar, renderStillRoomAvatar } from "./avatarRaster.ts";
 import { Canvas, coverage, flattenPath, mapSubpaths } from "./canvas.ts";
 
 const SIZE = 24;
@@ -183,4 +183,34 @@ describe("renderStillAvatar", () => {
       ).toThrow(RangeError);
     },
   );
+});
+
+describe("renderStillRoomAvatar", () => {
+  it("cuts the front member's shape out of the one behind it, as a room shows on a page", () => {
+    const size = 100;
+    const png = renderStillRoomAvatar(
+      [
+        { shape: "square", color: "teal" },
+        { shape: "square", color: "orange" },
+      ],
+      "light",
+      size,
+    );
+    const view = new DataView(png.buffer, png.byteOffset);
+    const idat = 8 + 25;
+    const rows = inflateSync(png.subarray(idat + 8, idat + 8 + view.getUint32(idat)));
+    // Each row is its filter byte, then four bytes a pixel.
+    const pixel = (x: number, y: number) => {
+      const at = y * (1 + size * 4) + 1 + x * 4;
+      return Array.from(rows.subarray(at, at + 4));
+    };
+    const opaque = (color: "teal" | "orange") => [
+      ...toSrgb8(parseColor(botPalette[color].light)),
+      255,
+    ];
+    // The front square's left edge is at 36.8 px; the back one runs to 63.2 px.
+    expect(pixel(30, 50)).toEqual(opaque("teal"));
+    expect(pixel(35, 50)[3]).toBe(0);
+    expect(pixel(50, 50)).toEqual(opaque("orange"));
+  });
 });

@@ -361,9 +361,16 @@ export class Canvas {
     this.paint(covered, color, options.opacity ?? 1);
   }
 
-  /** Clears what the subpaths cover, as far as they cover each pixel. */
-  clear(subpaths: ReadonlyArray<Subpath>) {
+  /**
+   * Clears what the subpaths cover, as far as they cover each pixel, and with
+   * `outline`, a band that wide along their edges too, as a stroke would cover it.
+   */
+  clear(subpaths: ReadonlyArray<Subpath>, outline?: number) {
     const covered = coverage(subpaths, this.width, this.height);
+    if (outline !== undefined) {
+      const band = strokeCoverage(subpaths, outline, this.width, this.height);
+      for (let i = 0; i < band.length; i++) covered[i] = Math.max(covered[i] ?? 0, band[i] ?? 0);
+    }
     for (let i = 0; i < covered.length; i++) {
       const at = i * 4 + 3;
       this.pixels[at] = Math.round((this.pixels[at] ?? 0) * (1 - (covered[i] ?? 0)));

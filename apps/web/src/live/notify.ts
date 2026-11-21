@@ -17,6 +17,8 @@ interface ShownNotification extends NotificationText, NotificationClick {
    * server sends, and the browser keeps one notification per tag.
    */
   readonly tag: string;
+  /** The icon's URL: the still avatar of what it is about (`notificationIcon`). */
+  readonly icon: string;
 }
 
 /**
@@ -94,7 +96,7 @@ export async function showNotification(
   const options: NotificationOptions = {
     body: shown.body,
     tag: shown.tag,
-    icon: "/icon-192.png",
+    icon: shown.icon,
     data: { target: shown.target, pairing: shown.pairing },
   };
   const registration = await activeServiceWorker();

@@ -81,6 +81,19 @@ export interface AvatarLook {
   readonly badge: AvatarBadgeName | null;
 }
 
+/**
+ * A shape drawn alone, with no mark, shows who without a state. It is cut out
+ * of what it overlaps by an outline this wide, in its 100-unit box: a still
+ * image leaves it clear, as it does a badge's.
+ */
+export const avatarShapeCutout = 10;
+
+/**
+ * A room's avatar overlaps its first two members' shapes, each this share of
+ * the box's side: the first at the top left, the second over it at the bottom right.
+ */
+export const roomAvatarShare = 0.68;
+
 /** An avatar this size in px or smaller is small. */
 const SMALL = 28;
 

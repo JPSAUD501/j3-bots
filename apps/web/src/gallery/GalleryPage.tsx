@@ -9,22 +9,34 @@ import {
   type BotId,
   Conflict,
   type EngineStatus,
+  EntryId,
+  type EntryTarget,
   Invalid,
   LANGUAGES,
   type Language,
   MemoryPath,
   MemoryRevision,
   ModelId,
+  type Notification,
+  type NotificationKind,
   ProviderId,
   type ProviderStatus,
   type Room,
+  type RoomId,
   type RosterItem,
   type RosterItemKey,
   type UsageWindow,
 } from "@j3-bots/contracts";
-import { avatarShapeNames, botColors, colors, radii, typeScale } from "@j3-bots/design-tokens";
+import {
+  avatarShapeNames,
+  botColors,
+  colors,
+  radii,
+  typeScale,
+  type Themed,
+} from "@j3-bots/design-tokens";
 import * as DateTime from "effect/DateTime";
-import { useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import {
   turnsNotRead,
   type DraftFile,
@@ -57,7 +69,9 @@ import { SecretRequestCard } from "../components/SecretRequestCard";
 import { Timeline, type TimelineIntents } from "../components/Timeline";
 import { UsageSection } from "../components/UsageSection";
 import { WorkFold } from "../components/WorkFold";
+import { notificationText } from "@j3-bots/i18n";
 import { cn } from "../lib/cn";
+import { notificationIcon } from "../live/notificationIcon";
 import { addresseeLine } from "../presentation/mentions";
 import { Shell } from "../shell/Shell";
 import { shellShortcuts } from "../shell/shortcuts";
@@ -111,6 +125,7 @@ export default function GalleryPage() {
                 </header>
                 <TokensSection />
                 <AvatarsSection />
+                <NotificationsSection />
                 <RosterSection />
                 <BubblesSection />
                 <CardsSection />
@@ -139,7 +154,8 @@ function Section({
   stacked = false,
 }: {
   title: string;
-  children: ReactNode;
+  /** What each theme's panel shows, or a function of the theme for what draws its own colors. */
+  children: ReactNode | ((theme: keyof Themed) => ReactNode);
   stacked?: boolean;
 }) {
   return (
@@ -157,7 +173,9 @@ function Section({
             <p className="mb-3 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
               {theme}
             </p>
-            <div className="flex flex-col gap-6">{children}</div>
+            <div className="flex flex-col gap-6">
+              {typeof children === "function" ? children(theme) : children}
+            </div>
           </div>
         ))}
       </div>
@@ -300,6 +318,96 @@ function AvatarsSection() {
           />
         </div>
       </Labeled>
+    </Section>
+  );
+}
+
+const sampleNotification = (
+  kind: NotificationKind,
+  botId: BotId,
+  target: EntryTarget = { _tag: "conversation", botId },
+): Notification => ({
+  target,
+  entryId: EntryId.make(`${kind}-${botId}`),
+  botId,
+  kind,
+  preview: null,
+});
+
+/**
+ * One notification of each kind, from bots in different states (Otto is idle
+ * when he asks; Ledger is blocked), and one from a room.
+ */
+const sampleNotifications: ReadonlyArray<Notification> = [
+  sampleNotification("message", ids.scout),
+  sampleNotification("handoff", ids.wren),
+  sampleNotification("question", ids.otto),
+  sampleNotification("approval", ids.atlas),
+  sampleNotification("secret-request", ids.iris),
+  sampleNotification("message", ids.ledger),
+  sampleNotification("message", ids.wren, { _tag: "room", roomId: ids.newsletter }),
+];
+
+/** A notification as a system shows one: its icon as the app draws it, its title and its body. */
+function NotificationPreview({
+  notification,
+  theme,
+}: {
+  notification: Notification;
+  theme: keyof Themed;
+}) {
+  const i18n = useI18n();
+  const [icon, setIcon] = useState<string | null>(null);
+  useEffect(() => {
+    let current = true;
+    void notificationIcon(notification, team.roster, theme).then((url) => {
+      if (current) setIcon(url);
+    });
+    return () => {
+      current = false;
+    };
+  }, [notification, theme]);
+  const name = (id: BotId) =>
+    team.roster.flatMap((row) =>
+      row._tag === "bot" && row.bot.id === id ? [row.bot.profile.name] : [],
+    )[0] ?? null;
+  const roomName = (id: RoomId) =>
+    team.roster.flatMap((row) =>
+      row._tag === "room" && row.room.id === id ? [row.room.name] : [],
+    )[0] ?? null;
+  const text = notificationText(notification, { botName: name, roomName }, i18n);
+  return (
+    <div className="flex items-center gap-3 rounded-lg border border-border bg-card p-3">
+      {icon === null ? (
+        <span className="size-12 shrink-0" />
+      ) : (
+        <img src={icon} alt="" width={48} height={48} className="shrink-0" />
+      )}
+      <div className="min-w-0">
+        <p className="truncate text-sm font-medium">{text?.title}</p>
+        <p className="truncate text-xs text-muted-foreground">{text?.body}</p>
+        <p className="font-mono text-2xs text-muted-foreground">{notification.kind}</p>
+      </div>
+    </div>
+  );
+}
+
+function NotificationsSection() {
+  return (
+    <Section title="Notifications">
+      {(theme) => (
+        <Labeled label="Each kind, with the icon drawn in the theme the system is in">
+          <div className="grid gap-2 @wide:grid-cols-2">
+            {sampleNotifications.map((notification) => (
+              <NotificationPreview
+                key={notification.entryId}
+                notification={notification}
+                theme={theme}
+              />
+            ))}
+          </div>
+        </Labeled>
+      )}
     </Section>
   );
 }

@@ -77,6 +77,7 @@ import {
   onNotificationClick,
   showNotification,
 } from "./notify";
+import { notificationIcon, systemTheme } from "./notificationIcon";
 import { deliverFile, reserveWindow } from "./openFile";
 import { desktop } from "./desktop";
 import { makePlatform, signInUnencrypted } from "./platform";
@@ -452,13 +453,18 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
       )[0] ?? null;
     const content = notificationText(notification, { botName, roomName }, i18n);
     if (content === null) return;
-    showNotification(
-      { ...content, tag: notification.entryId, target: notification.target, pairing },
-      () => j3.pairing.get(),
-    ).catch(() => {
-      // The browser refused it, as when the permission was withdrawn meanwhile.
-      // The entry still shows as unread in the roster.
-    });
+    // In the theme the system is in as it shows, since the system draws it.
+    notificationIcon(notification, rows, systemTheme())
+      .then((icon) =>
+        showNotification(
+          { ...content, icon, tag: notification.entryId, target: notification.target, pairing },
+          () => j3.pairing.get(),
+        ),
+      )
+      .catch(() => {
+        // The browser refused it, as when the permission was withdrawn meanwhile.
+        // The entry still shows as unread in the roster.
+      });
   });
   useEffect(() => j3.onNotification(notify), [j3]);
   useEffect(
