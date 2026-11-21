@@ -2,12 +2,16 @@
 import type * as Path from "effect/Path";
 
 /**
- * What the home holds, by name (see `docs/architecture/server.md#data`).
+ * What the home holds, by name (see `docs/architecture/server.md#data`):
+ * everything the server and the engine write there, and nothing else.
  * Everything but `web` is private.
  */
 export const HOME_ENTRIES = {
   config: "config.json",
   database: "j3.sqlite",
+  /** SQLite's write-ahead log and its index, beside the database in WAL mode. */
+  databaseLog: "j3.sqlite-wal",
+  databaseLogIndex: "j3.sqlite-shm",
   engine: "engine",
   /** One home per Claude Code or Codex instance of the engine, `providers/<provider>`. */
   providers: "providers",
@@ -76,17 +80,31 @@ export const homeLayout = (path: Path.Path, home: string) => {
       path.join(home, HOME_ENTRIES.providers, provider),
     /**
      * Every location the server writes, for a home whose bots are `bots`:
-     * each entry of the home but `web`, the database's journal beside it, the
-     * shared folders, the provider homes, and each bot's workspace with what the server writes in
-     * it: not `skills` and `files`, which are the bot's, links included.
+     * each entry of the home but `web`, the shared folders, the provider
+     * homes, and each bot's workspace with what the server writes in it: not
+     * `skills` and `files`, which are the bot's, links included.
      */
     written: (bots: ReadonlyArray<string>) => {
-      const { config, database, engine, providers, shared, state, attachments, adminSocket, lock } =
-        HOME_ENTRIES;
+      const {
+        config,
+        database,
+        databaseLog,
+        databaseLogIndex,
+        engine,
+        providers,
+        shared,
+        state,
+        attachments,
+        adminSocket,
+        lock,
+      } = HOME_ENTRIES;
       const { generated, instructions, memory } = WORKSPACE_ENTRIES;
       return [
         ...[
           config,
+          database,
+          databaseLog,
+          databaseLogIndex,
           engine,
           providers,
           HOME_ENTRIES.bots,
@@ -96,8 +114,6 @@ export const homeLayout = (path: Path.Path, home: string) => {
           adminSocket,
           lock,
         ].map((entry) => path.join(home, entry)),
-        // SQLite keeps its journal beside the database.
-        ...["", "-wal", "-shm"].map((suffix) => path.join(home, `${database}${suffix}`)),
         sharedMemory,
         sharedSkills,
         ...PROVIDER_HOMES.map((provider) => path.join(home, providers, provider)),

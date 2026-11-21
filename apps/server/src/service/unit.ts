@@ -72,6 +72,18 @@ export const environmentOf = (unit: string): ReadonlyMap<string, string> => {
   return environment;
 };
 
+/**
+ * The words of a unit's `ExecStart=` as systemd reads them, for a unit this
+ * module rendered: the executable, then its arguments. None when the unit has
+ * no `ExecStart=`.
+ */
+export const execStartOf = (unit: string): ReadonlyArray<string> => {
+  const line = unit.split("\n").find((each) => each.startsWith("ExecStart="));
+  return line === undefined
+    ? []
+    : unquote(line.slice("ExecStart=".length)).map((word) => word.replaceAll("$$", "$"));
+};
+
 /** The words of one setting's value, the inverse of `quote`. */
 const unquote = (value: string) => {
   const words: Array<string> = [];

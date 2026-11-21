@@ -14,6 +14,7 @@ import { pairCommand } from "./pair.ts";
 import { providerCommand } from "./provider.ts";
 import { serveCommand } from "./serve.ts";
 import { serviceCommand } from "./service.ts";
+import { uninstallCommand } from "./uninstall.ts";
 
 const cli = Command.make("j3-bots").pipe(
   Command.withDescription(
@@ -26,6 +27,7 @@ const cli = Command.make("j3-bots").pipe(
     providerCommand,
     serviceCommand,
     engineCommand,
+    uninstallCommand,
   ]),
 );
 

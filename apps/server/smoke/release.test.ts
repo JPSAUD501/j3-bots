@@ -26,6 +26,7 @@ import * as RpcClient from "effect/rpc/RpcClient";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as AdminClient from "../src/admin/AdminClient.ts";
 import { RELEASE_MANIFEST, ReleaseManifest } from "../src/installation.ts";
+import { runToEnd, searchPathWithoutNode } from "./host.ts";
 
 // A release archive, as `pnpm release` builds it, run as a stranger would run
 // it: unpacked anywhere, with no Node on PATH. Its doctor runs; it fetches the
@@ -36,9 +37,6 @@ import { RELEASE_MANIFEST, ReleaseManifest } from "../src/installation.ts";
 
 const ENGINE_READY_WITHIN = Duration.minutes(2);
 const TURN_WITHIN = Duration.minutes(1);
-
-/** The names Node goes by on a search path. */
-const NODE_COMMANDS = ["node", "nodejs"];
 
 const SCRIPTED_AGENT = `${import.meta.dirname}/../../../packages/engine-t3/scripted-agent/agent.ts`;
 
@@ -51,17 +49,6 @@ const freePort = Effect.callback<number>((resume) => {
     server.close(() => resume(Effect.succeed(port)));
   });
 });
-
-/** Runs `command` to its end: its exit code and everything it wrote. */
-const runToEnd = (command: ChildProcess.Command) =>
-  Effect.gen(function* () {
-    const handle = yield* (yield* ChildProcessSpawner.ChildProcessSpawner).spawn(command);
-    const [output, exitCode] = yield* Effect.all(
-      [handle.all.pipe(Stream.decodeText, Stream.mkString), handle.exitCode],
-      { concurrency: 2 },
-    );
-    return { output, exitCode: Number(exitCode) };
-  }).pipe(Effect.scoped);
 
 const decodeManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(ReleaseManifest));
 
@@ -100,20 +87,8 @@ it.layer(services, { excludeTestServices: true })("release archive", (it) => {
           .readFileString(path.join(release, RELEASE_MANIFEST))
           .pipe(Effect.flatMap(decodeManifest));
 
-        // PATH is one folder of links to every command on this PATH but Node,
-        // wherever this machine has it, so only the archive's Node can run.
-        const commands = path.join(scratch, "commands");
-        yield* fs.makeDirectory(commands);
-        const linked = new Set(NODE_COMMANDS);
-        for (const directory of (yield* Config.String("PATH")).split(":")) {
-          if (directory === "") continue;
-          const names = yield* fs.readDirectory(directory).pipe(Effect.orElseSucceed(() => []));
-          for (const name of names) {
-            if (linked.has(name)) continue;
-            linked.add(name);
-            yield* fs.symlink(path.join(directory, name), path.join(commands, name));
-          }
-        }
+        // Only the archive's Node can run.
+        const commands = yield* searchPathWithoutNode(path.join(scratch, "commands"));
         const home = path.join(scratch, "home");
         const userHome = path.join(scratch, "user");
         yield* fs.makeDirectory(userHome);

@@ -7,7 +7,7 @@ This guide sets up the J3 Bots server as a systemd user service on a Raspberry P
 - A Raspberry Pi 4 with 4 GB of memory or more, on 64-bit Raspberry Pi OS (`uname -m` prints `aarch64`).
 - About 3 GB of free disk. The engine is about 200 MB once downloaded. The database and the bots' files grow with use.
 - About 1.5 GB of free memory while a bot works. Measured on a Raspberry Pi 4 with 4 GB (release 0.0.0, engine 0.1.11-nightly.20261120.4969): the server takes about 120 MB and the engine about 400 MB with no turn running, and a harness adds its own while it runs, about 225 MB for Claude Code. The service's memory peaked at about 1.3 GB over its first start and one turn.
-- Node 26 (J3 Bots is built and tested on 26.13.1), pnpm 12 and Git. One way to get Node is [fnm](https://github.com/Schniz/fnm): `fnm install 26.13.1`. pnpm then installs with `npm install --global pnpm@12.16.1`.
+- `curl` or `wget`, `sha256sum` (or `shasum`) and `tar`, which Raspberry Pi OS has. A release carries its own Node. Running from a checkout instead needs Node 26 (J3 Bots is built and tested on 26.13.1), pnpm 12 and Git.
 - The harnesses your bots will run on, such as Claude Code (`claude`) or Codex (`codex`), installed and signed in as the user that runs J3 Bots.
 
 No Docker and no root access are involved, except one `sudo loginctl` command so that the service starts at boot.
@@ -27,6 +27,33 @@ export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 
 ## Install
 
+As the user J3 Bots runs as, never as root:
+
+```sh
+curl -fsSL https://github.com/JPSAUD501/j3-bots/releases/latest/download/install.sh | sh
+```
+
+That address answers only once a release that is not a pre-release is published. A pre-release is installed from its own tag, by name:
+
+```sh
+curl -fsSL https://github.com/JPSAUD501/j3-bots/releases/download/v0.1.0-rc.1/install.sh | sh -s -- --version 0.1.0-rc.1
+```
+
+`install.sh` refuses root, a system other than x64 or arm64 Linux, and, unless given `--no-service`, a user with no systemd user manager. Then it:
+
+- finds the latest release, or the one `--version` names (a pre-release, which it never picks by itself, only so);
+- downloads the archive for this machine and checks it against the release's `SHA256SUMS`;
+- unpacks it into `~/.local/share/j3-bots/versions/<version>/`, outside the data directory;
+- writes the `j3-bots` command, `~/.local/bin/j3-bots`, which runs that version, and records where it is in `~/.local/share/j3-bots/launcher`;
+- runs `j3-bots doctor`, then `j3-bots service install` ([First run](#first-run) says what both do), unless `--no-service`;
+- says what is next: connect the providers, then pair.
+
+`J3_INSTALL_DIR` and `J3_BIN_DIR` move the first two folders, and `J3_HOME` the data directory. The install folder, its `versions/` and the folder of the command must be yours and not writable by every account: what is in them runs as you, so `install.sh` refuses any other, and says which and why. A folder your own group may write, as `umask 002` makes them, is accepted. It writes its own folders with no write access for group or others, whatever your `umask`.
+
+Run it again with the same version to restore the command, its record and the service. It uses the release already in `versions/<version>/` as it is, so a damaged release there is fixed by `j3-bots uninstall`, then the command above again. It never removes a folder it did not make: a `versions/<version>/` that is not a release, with no `release.json`, is refused and kept. It refuses to install another version over an installed one: to change version, run `j3-bots uninstall` (your data is kept), then the command above again.
+
+### From a checkout
+
 ```sh
 git clone https://github.com/JPSAUD501/j3-bots.git ~/j3-bots
 cd ~/j3-bots
@@ -41,6 +68,8 @@ ln -sf ~/j3-bots/apps/server/dist/bin.mjs ~/.local/bin/j3-bots
 Most systems put `~/.local/bin` on `PATH` at the next login. Until then, run the commands as `~/.local/bin/j3-bots`.
 
 ## First run
+
+`install.sh` runs both of these; from a checkout, run them yourself:
 
 ```sh
 j3-bots doctor
@@ -225,10 +254,12 @@ To restore:
 ## Remove
 
 ```sh
-j3-bots service uninstall
+j3-bots uninstall
 ```
 
-This stops the service, disables it and deletes its unit. The data directory stays, and the command names it: the one the unit ran with, which `service status` also shows. Delete it yourself if you mean to.
+This undoes `install.sh`, and removes only what it wrote: it stops the service, disables it and deletes its unit, then deletes the `j3-bots` command, each version `install.sh` unpacked in `~/.local/share/j3-bots/versions/` and the record of the command, and then each of those two folders if that leaves it empty. A command at the recorded path that is not exactly the one `install.sh` writes is kept, and so is anything else you put in those folders. A release you unpacked yourself is not an install: `uninstall` refuses it and removes nothing. The service is this install's only when its unit runs this install: the recorded command, or a release in its `versions/`. A unit that runs another J3 Bots, such as a checkout, is kept, and `uninstall` says so. The data directory stays, and the command names it: the one this install's service ran with, which `service status` also shows, else this shell's. `j3-bots uninstall --delete-data` deletes J3 Bots' data in it too, after asking; `--yes` answers for a script. That is every entry the server writes there ([Server: data](../architecture/server.md#data)), and then the data directory if that leaves it empty. Only a folder a server has used, one with its `server.lock` or `j3.sqlite`, is touched: any other is not a J3 Bots data directory, and nothing in it is deleted. A web client you put in its `web/` is kept, and so is the folder, as is a file of yours in it. When the data directory is a link, the link and the folder it points to are kept. It refuses, and removes nothing, while a server it does not stop runs for that data directory.
+
+From a checkout, `j3-bots service uninstall` stops the service, disables it and deletes its unit, and keeps the data directory; the checkout and the data directory are yours to delete.
 
 ## What `doctor` checks
 

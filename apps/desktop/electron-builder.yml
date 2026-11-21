@@ -3,7 +3,7 @@
 # The desktop app's packages: AppImage and deb on Linux, dmg and zip on macOS,
 # an NSIS installer on Windows (the targets T3 Code builds). The app is
 # unsigned for now, and the macOS and Windows artifacts say so in their names;
-# see docs/operations/releasing-the-desktop-app.md.
+# see docs/operations/releasing.md.
 #
 # Names and ids are development placeholders until open question 6 settles
 # them; `appId` matches `APP_ID` in src/identity.ts.

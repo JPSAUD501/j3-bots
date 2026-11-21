@@ -116,7 +116,10 @@ jobs:
 
       # Unpacks the archive and runs it with every folder that holds a node
       # dropped from PATH: doctor, the server, its web client, and one bot turn
-      # on the pinned engine through the scripted agent.
+      # on the pinned engine through the scripted agent. Then installs it with
+      # scripts/install.sh from a local mirror of a release, without the
+      # service (a runner has no systemd user manager), and removes it with
+      # `j3-bots uninstall --delete-data`.
       - name: Smoke
         run: |
           archive=$(ls "$GITHUB_WORKSPACE"/dist/release/j3-bots-*-${{ matrix.platform }}.tar.gz)
