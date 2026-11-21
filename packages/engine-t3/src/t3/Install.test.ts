@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- The release lists a SHA-256 of its archive, computed here as the install checks it; a folder swapped for a link mid-download takes node:fs, from inside the response body.
+// @effect-diagnostics nodeBuiltinImport:off -- The pin holds a SHA-256 of the archive, computed here as the install checks it; a folder swapped for a link mid-download takes node:fs, from inside the response body.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFs from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -15,28 +15,21 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { ensureInstalled } from "./Install.ts";
-import { archiveName, pin, releaseUrl } from "./Pin.ts";
+import { pin } from "./Pin.ts";
 import { makePrivateFiles } from "./PrivateFiles.ts";
 
 /** The release's archive. Not a real one: the install stops at unpacking it. */
 const ARCHIVE = new TextEncoder().encode("the pinned engine release, byte for byte");
-const ARCHIVE_NAME = archiveName("linux-x64");
 const DIGEST = NodeCrypto.createHash("sha256").update(ARCHIVE).digest("hex");
 
 /**
- * The release server: its checksums, and the archive, from the byte a range
- * asks for. Every request is recorded in `requests`: `SHA256SUMS`, or the
- * archive by the range it asks for, or `whole`. `afterArchive` runs once the
- * install has read the archive's last byte, before it has written it.
+ * The release server: the archive, from the byte a range asks for. Every
+ * request is recorded in `requests`: the range it asks for, or `whole`.
+ * `afterArchive` runs once the install has read the archive's last byte,
+ * before it has written it.
  */
 const release = (requests: Array<string>, afterArchive: () => void) =>
   HttpClient.make((request) => {
-    if (request.url === releaseUrl("SHA256SUMS")) {
-      requests.push("SHA256SUMS");
-      return Effect.succeed(
-        HttpClientResponse.fromWeb(request, new Response(`${DIGEST}  ${ARCHIVE_NAME}\n`)),
-      );
-    }
     const range = /^bytes=(\d+)-$/.exec(request.headers["range"] ?? "");
     requests.push(range?.[0] ?? "whole");
     const from = Number(range?.[1] ?? 0);
@@ -69,6 +62,8 @@ interface Setup {
    * Otherwise every location does, and what refuses a link is the write itself.
    */
   readonly homeOnly?: boolean;
+  /** The digest pinned for the archive. Otherwise the one the release serves. */
+  readonly pinned?: string;
 }
 
 /** Whether `location`, through its nearest parent that exists, links resolved, is inside `home`. */
@@ -105,7 +100,13 @@ const install = (requests: Array<string>, setup: Setup) =>
           )
         : Effect.succeed(true),
     );
-    const exit = yield* ensureInstalled({ home, platform: "linux", arch: "x64", files }).pipe(
+    const exit = yield* ensureInstalled({
+      home,
+      platform: "linux",
+      arch: "x64",
+      sha256: { "linux-x64": setup.pinned ?? DIGEST },
+      files,
+    }).pipe(
       Effect.provideService(
         HttpClient.HttpClient,
         release(requests, () => setup.afterArchive?.(workspace)),
@@ -147,10 +148,28 @@ describe("ensureInstalled", () => {
         prepare: ({ partial }) => fs.writeFile(partial, ARCHIVE.slice(0, 10)),
       });
 
-      assert.deepStrictEqual(requests, ["SHA256SUMS", "bytes=10-"]);
-      // The resumed file matched the release's digest; only unpacking it failed.
+      assert.deepStrictEqual(requests, ["bytes=10-"]);
+      // The resumed file matched the pinned digest; only unpacking it failed.
       assert.strictEqual(reason, "extract");
       assert.deepStrictEqual(yield* fs.readFile(partial), ARCHIVE);
+    }).pipe(Effect.scoped, Effect.provide(machine)),
+  );
+
+  it.effect("refuses an archive the pin has another digest for, and installs nothing", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const requests: Array<string> = [];
+
+      const { runtime, partial, staging, reason } = yield* install(requests, {
+        pinned: NodeCrypto.createHash("sha256").update("another build").digest("hex"),
+      });
+
+      assert.strictEqual(reason, "checksum");
+      assert.deepStrictEqual(requests, ["whole"]);
+      assert.isFalse(yield* fs.exists(path.join(runtime, pin.version)));
+      assert.isFalse(yield* fs.exists(partial));
+      assert.isFalse(yield* fs.exists(staging));
     }).pipe(Effect.scoped, Effect.provide(machine)),
   );
 

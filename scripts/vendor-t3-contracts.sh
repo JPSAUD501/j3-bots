@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Replaces packages/engine-t3/vendor/t3-contracts with T3 Code's packages/contracts
-# at the engine commit recorded in engine.json.
+# at the engine commit recorded in engine.json, and writes the digests of the
+# release's archives into engine.json: the only archives an install accepts.
 #
 # To move the engine pin: edit engine.json (version and commit), run this script,
-# then make the workspace typecheck and the conformance suite pass.
+# then make the workspace typecheck and the conformance suite pass. The new
+# digests show up in the pin's diff.
 set -euo pipefail
 
 if [[ $# -ne 0 ]]; then
@@ -38,6 +40,37 @@ if [[ $tag_commit != "$commit" ]]; then
   echo "Tag v$version points at '${tag_commit:-nothing}', not $commit from engine.json" >&2
   exit 1
 fi
+
+# The digest of each platform's standalone server archive, from the release's
+# SHA256SUMS. An install accepts only an archive with the digest recorded here,
+# so a release rebuilt later under the same version is refused, not trusted.
+node - "$root/engine.json" "$version" <<'NODE'
+const fs = require("node:fs");
+const [file, version] = process.argv.slice(2);
+const platforms = ["darwin-arm64", "linux-arm64", "linux-x64"];
+const url = `https://github.com/pingdotgg/t3code/releases/download/v${version}/SHA256SUMS`;
+(async () => {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`${url} answered ${response.status}`);
+  const listed = new Map();
+  for (const line of (await response.text()).split("\n")) {
+    const match = /^([0-9a-f]{64}) [ *](.+)$/.exec(line.trim());
+    if (match) listed.set(match[2], match[1]);
+  }
+  const sha256 = {};
+  for (const platform of platforms) {
+    const digest = listed.get(`t3-${version}-${platform}.tar.gz`);
+    if (digest === undefined) throw new Error(`SHA256SUMS of v${version} lists no ${platform} archive`);
+    sha256[platform] = digest;
+  }
+  const pin = JSON.parse(fs.readFileSync(file, "utf8"));
+  const updated = { version: pin.version, commit: pin.commit, sha256 };
+  fs.writeFileSync(file, `${JSON.stringify(updated, null, 2)}\n`);
+})().catch((error) => {
+  console.error(error.message);
+  process.exit(1);
+});
+NODE
 
 scratch="$(mktemp -d)"
 trap 'rm -rf -- "$scratch"' EXIT

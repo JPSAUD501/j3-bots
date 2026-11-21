@@ -7,7 +7,7 @@ J3 Bots aims for the quality bar of the project it builds on. This document reco
 | Concern | Choice |
 | --- | --- |
 | Language | TypeScript everywhere |
-| Runtime | Node, pinned to one exact version for development, CI and release builds |
+| Runtime | Node, pinned to one exact version for development, CI and release builds: `engines.node` in the root `package.json`, with the checksum of each release tarball an archive ships beside it |
 | Package manager | pnpm, with a version catalog so every package resolves the same version of a shared dependency |
 | Task runner, test runner, bundler | Vite+ (`vp`): Vitest for tests, oxlint for lint, oxfmt for format |
 | Type checking | The native TypeScript compiler with Effect diagnostics |
@@ -99,3 +99,5 @@ T3 Code runs machinery that is right for its size and too much for a new project
 ## Releases
 
 One version number for the whole repository. Each release names the exact engine version it was tested with, and that pairing is the unit of support.
+
+A release is one archive per Linux architecture that carries its own Node, built by `pnpm release` ([decision 0015](../decisions/0015-a-release-is-a-self-contained-archive.md)). CI builds the archive for x64 and arm64 on every pull request and runs it with no Node on `PATH`: `doctor`, the server, its web client and one bot turn on the pinned engine, through the scripted agent.

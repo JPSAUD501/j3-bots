@@ -178,7 +178,7 @@ export const install = Effect.gen(function* () {
 
   const unit = yield* Unit.render({
     node: yield* fs.realPath(process.execPath),
-    entryPoint: yield* Installation.entryPoint,
+    entryPoint: (yield* Installation.installation).entryPoint,
     home: config.home,
     searchPath,
     totalMemoryBytes: host.totalMemoryBytes,

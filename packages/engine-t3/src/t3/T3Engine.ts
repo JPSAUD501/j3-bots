@@ -84,7 +84,7 @@ import {
   renewalDue,
   type Credential,
 } from "./Credential.ts";
-import { EngineInstallFailed, ensureInstalled } from "./Install.ts";
+import { installForThisMachine } from "./Install.ts";
 import { commandIdFor, messageIdFor, projectIdFor, threadIdFor } from "./Keys.ts";
 import { isMissingThread } from "./missingThread.ts";
 import { isBackgroundWorkRefusal } from "./backgroundRefusal.ts";
@@ -427,16 +427,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
    */
   const install = Option.isSome(options.binaryOverride)
     ? Effect.succeed(options.binaryOverride.value)
-    : files.folder(options.home).pipe(
-        Effect.mapError(() => new EngineInstallFailed({ reason: "storage", version: pin.version })),
-        Effect.andThen(
-          ensureInstalled({
-            home: options.home,
-            platform: process.platform,
-            arch: process.arch,
-            files,
-          }),
-        ),
+    : installForThisMachine(options.home, files).pipe(
         Effect.tapError((error) =>
           Effect.logWarning("Installing the engine failed", error).pipe(
             Effect.andThen(

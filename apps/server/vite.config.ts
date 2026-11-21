@@ -2,6 +2,7 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- tsdown reads the copy source as a path when it loads this config.
 import * as NodePath from "node:path";
 import { defineConfig } from "vite-plus";
+import { bundleInputs } from "../../scripts/bundle-inputs.ts";
 
 // The production build (`vp pack`, tsdown), after T3 Code's: one ESM file per
 // entry with every dependency bundled in, so `dist/` runs on Node with no
@@ -39,5 +40,7 @@ export default defineConfig({
       { from: promptFiles("skills"), to: "dist/skills" },
     ],
     banner: { js: "#!/usr/bin/env node" },
+    // What the release's third-party notices are made from (scripts/build-release.ts).
+    plugins: [bundleInputs("server")],
   },
 });

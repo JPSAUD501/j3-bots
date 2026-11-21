@@ -23,6 +23,7 @@ import { IdempotencyKey, SyncToken, type TurnId } from "../src/ids.ts";
 import { makeEngineRpc } from "../src/t3/Connection.ts";
 import { ensureCredential } from "../src/t3/Credential.ts";
 import { ensureInstalled } from "../src/t3/Install.ts";
+import { pin } from "../src/t3/Pin.ts";
 import { makePrivateFiles } from "../src/t3/PrivateFiles.ts";
 import { layer as engineLayer } from "../src/t3/T3Engine.ts";
 import { workInShell } from "../src/t3/Translate.ts";
@@ -112,6 +113,7 @@ const foreignRpc = Effect.gen(function* () {
     home,
     platform: NodeProcess.platform,
     arch: NodeProcess.arch,
+    sha256: pin.sha256,
     files,
   });
   const { token } = yield* ensureCredential({ executable, home, files });

@@ -1,4 +1,9 @@
 {
   "version": "0.1.11-nightly.20261120.4969",
-  "commit": "db51b6719f116de156401ed264b5d732f35b2c93"
+  "commit": "db51b6719f116de156401ed264b5d732f35b2c93",
+  "sha256": {
+    "darwin-arm64": "ec4e287901733fc850175f36ef080a4b97cc2702c7e2217df7bd03960b306cc6",
+    "linux-arm64": "e11a836b0111c4eba8c1d38915816aadaf3abeb62481ce4eba2fdbc155491491",
+    "linux-x64": "c4c0588a157d7d411fdb72545b736cc4b936387e31fdade7901859b8af5b8c2a"
+  }
 }

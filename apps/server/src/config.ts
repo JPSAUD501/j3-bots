@@ -18,7 +18,7 @@ import { isBuilt } from "./web/built.ts";
 type WebClientSource =
   /** Set in `webClient` or `J3_WEB_CLIENT`: it must hold a built client. */
   | { readonly _tag: "configured"; readonly directory: string }
-  /** The client built in this checkout, served once it is built. */
+  /** The client that comes with this copy of J3 Bots (`installation.ts`), served once it is built. */
   | { readonly _tag: "bundled"; readonly directory: string };
 
 export interface ServerConfigShape {
@@ -111,7 +111,7 @@ class ConfigRefused extends Schema.TaggedError<ConfigRefused>()("ConfigRefused",
       case "tls-unusable":
         return `${this.setting}: ${this.subject}`;
       case "web-client-missing":
-        return `${this.setting} (${this.subject}) holds no built web client (no index.html). Build it, or remove the setting to use the one in this checkout.`;
+        return `${this.setting} (${this.subject}) holds no built web client (no index.html). Build it, or remove the setting to use the one that comes with J3 Bots.`;
       case "web-client-holds-state":
         return `${this.setting} is a folder that holds ${this.subject}, which the server would then publish. Point it at the built client's own folder.`;
       case "web-client-in-home":
@@ -467,7 +467,7 @@ export const load = Effect.gen(function* () {
     }
     webClient = { _tag: "configured", directory };
   } else {
-    webClient = { _tag: "bundled", directory: yield* Installation.bundledWebClient };
+    webClient = { _tag: "bundled", directory: (yield* Installation.installation).webClient };
   }
   // Everything under the client's folder is public, so it and the server's
   // private state may not overlap, in either direction, links resolved.
@@ -476,7 +476,7 @@ export const load = Effect.gen(function* () {
       setting:
         webClient._tag === "configured"
           ? webClientSetting
-          : `The web client in this checkout (${webClient.directory})`,
+          : `The web client that comes with J3 Bots (${webClient.directory})`,
       reason,
       subject,
     });

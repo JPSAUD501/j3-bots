@@ -7,13 +7,13 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
-import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { boundedCommand } from "./Command.ts";
 import { archiveName, pin, releaseUrl } from "./Pin.ts";
-import { engineFolders, type PrivateFiles } from "./PrivateFiles.ts";
+import { engineFolders, makePrivateFiles, type PrivateFiles } from "./PrivateFiles.ts";
 
 // Installs the pinned engine release into the J3-owned engine home:
 //
@@ -43,7 +43,7 @@ export class EngineInstallFailed extends Schema.TaggedError<EngineInstallFailed>
       case "download":
         return `Downloading T3 Code ${this.version} failed.`;
       case "checksum":
-        return `The T3 Code ${this.version} download does not match the release's checksum.`;
+        return `The T3 Code ${this.version} download is not the archive J3 Bots pins.`;
       case "extract":
         return `Unpacking T3 Code ${this.version} failed.`;
       case "storage":
@@ -57,21 +57,26 @@ const RELEASE_PLATFORMS: Record<string, Record<string, string>> = {
   darwin: { arm64: "darwin-arm64" },
 };
 
-/** The release's name for a Node `process.platform` and `process.arch`, if it ships one. */
-const releasePlatform = (platform: string, arch: string): Option.Option<string> =>
-  Option.fromNullishOr(RELEASE_PLATFORMS[platform]?.[arch]);
+/**
+ * The release's archive for a Node `process.platform` and `process.arch`, and
+ * the digest `sha256` pins for it, if the release ships one and it has one.
+ */
+const pinnedArchive = (
+  sha256: Readonly<Record<string, string>>,
+  platform: string,
+  arch: string,
+): Option.Option<{ readonly name: string; readonly digest: string }> =>
+  Option.fromNullishOr(RELEASE_PLATFORMS[platform]?.[arch]).pipe(
+    Option.flatMap((releasePlatform) =>
+      Option.map(Option.fromNullishOr(sha256[releasePlatform]), (digest) => ({
+        name: archiveName(releasePlatform),
+        digest,
+      })),
+    ),
+  );
 
 const runtimeDirectory = (path: Path.Path, home: string) =>
   path.join(engineFolders(path, home).runtime, pin.version);
-
-/** The digest `SHA256SUMS` lists for `file`. */
-const checksumFor = (sums: string, file: string): Option.Option<string> => {
-  for (const line of sums.split("\n")) {
-    const match = /^([0-9a-f]{64}) [ *](.+)$/.exec(line.trim());
-    if (match?.[2] === file && match[1] !== undefined) return Option.some(match[1]);
-  }
-  return Option.none();
-};
 
 const INSTALLED_MARKER = ".installed";
 
@@ -104,7 +109,7 @@ export const inspectInstall = Effect.fn("engine.inspectInstall")(function* (inpu
       executable: path.join(target, "t3"),
     } satisfies EngineInstall;
   }
-  return Option.isSome(releasePlatform(input.platform, input.arch))
+  return Option.isSome(pinnedArchive(pin.sha256, input.platform, input.arch))
     ? ({ _tag: "missing", version: pin.version } satisfies EngineInstall)
     : ({ _tag: "unsupported-platform", version: pin.version } satisfies EngineInstall);
 });
@@ -114,11 +119,16 @@ export const inspectInstall = Effect.fn("engine.inspectInstall")(function* (inpu
  * install is detected by its marker, and what an install cut off after it was
  * published left beside it (its download, its unpacking folder) is removed.
  * Resumable: an interrupted download continues from where it stopped.
+ *
+ * `sha256` holds the archive digest for each release platform: the pin's own,
+ * `pin.sha256`. The archive is installed only if it has that digest, and a
+ * platform it has none for is `unsupported-platform`.
  */
 export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (input: {
   readonly home: string;
   readonly platform: string;
   readonly arch: string;
+  readonly sha256: Readonly<Record<string, string>>;
   readonly files: PrivateFiles;
 }) {
   const fs = yield* FileSystem.FileSystem;
@@ -151,9 +161,9 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
     return executable;
   }
 
-  const platform = releasePlatform(input.platform, input.arch);
-  if (Option.isNone(platform)) return yield* fail("unsupported-platform");
-  const archive = archiveName(platform.value);
+  const pinned = pinnedArchive(input.sha256, input.platform, input.arch);
+  if (Option.isNone(pinned)) return yield* fail("unsupported-platform");
+  const { name: archive, digest: expected } = pinned.value;
 
   const client = (yield* HttpClient.HttpClient).pipe(HttpClient.followRedirects(5));
   const download = (cause: unknown) =>
@@ -164,14 +174,6 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
   // Checked before anything is fetched, so a link or a folder there fails at
   // once rather than after a large download; the write itself checks again.
   const have = yield* input.files.writable(partial).pipe(Effect.mapError(storage));
-
-  const sums = yield* client.get(releaseUrl("SHA256SUMS")).pipe(
-    Effect.flatMap(HttpClientResponse.filterStatusOk),
-    Effect.flatMap((response) => response.text),
-    Effect.catch(download),
-  );
-  const expected = checksumFor(sums, archive);
-  if (Option.isNone(expected)) return yield* fail("unsupported-platform");
 
   // Resume with a range request; a server that ignores it sends the whole file again.
   const response = yield* client
@@ -202,7 +204,7 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
     Stream.runForEach((chunk) => Effect.sync(() => hash.update(chunk))),
     Effect.mapError(storage),
   );
-  if (hash.digest("hex") !== expected.value) {
+  if (hash.digest("hex") !== expected) {
     // A corrupt partial would fail the same way forever; start over next time.
     yield* remove(partial);
     return yield* fail("checksum");
@@ -244,11 +246,60 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
     return yield* fail("extract");
   }
   yield* fs
-    .writeFileString(path.join(root, INSTALLED_MARKER), `${expected.value}\n`)
+    .writeFileString(path.join(root, INSTALLED_MARKER), `${expected}\n`)
     .pipe(Effect.mapError(storage));
   yield* remove(target);
   yield* fs.rename(root, target).pipe(Effect.mapError(storage));
   yield* remove(staging);
   yield* remove(partial);
   return executable;
+});
+
+/**
+ * `ensureInstalled` for this machine, into `home`, which is created private
+ * first if it is missing: what the engine runs before its first start.
+ */
+export const installForThisMachine = Effect.fn("engine.installForThisMachine")(function* (
+  home: string,
+  files: PrivateFiles,
+) {
+  yield* files
+    .folder(home)
+    .pipe(
+      Effect.mapError(() => new EngineInstallFailed({ reason: "storage", version: pin.version })),
+    );
+  return yield* ensureInstalled({
+    home,
+    platform: process.platform,
+    arch: process.arch,
+    sha256: pin.sha256,
+    files,
+  });
+});
+
+/**
+ * Installs the pinned engine under `home` without starting it, when it is not
+ * installed yet: `j3-bots engine fetch`, so a new release's engine can be in
+ * place before the server that runs it starts. Every write goes through
+ * `isPrivate`, as the running engine's do. Answers whether it was installed
+ * already and where its executable is.
+ */
+export const fetchPinned = Effect.fn("engine.fetchPinned")(function* (options: {
+  readonly home: string;
+  readonly isPrivate: (location: string) => Effect.Effect<boolean>;
+}) {
+  const before = yield* inspectInstall({
+    home: options.home,
+    platform: process.platform,
+    arch: process.arch,
+  });
+  const files = yield* makePrivateFiles(options.isPrivate).pipe(
+    Effect.provide(SecureRandom.layerWebCrypto),
+  );
+  const executable = yield* installForThisMachine(options.home, files);
+  return {
+    version: pin.version,
+    executable,
+    alreadyInstalled: before._tag === "installed",
+  };
 });
