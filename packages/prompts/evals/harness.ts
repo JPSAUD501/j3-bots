@@ -231,10 +231,14 @@ const runningRoutine = (wake: RoutineWake): Routine => {
   };
 };
 
-/** What the `set_routine` stub answered, and whether the server would have refused the call. */
+/**
+ * What the `set_routine` stub answered, whether the server would have refused
+ * the call, and the routine as the server would now hold it, when it saved one.
+ */
 interface Saved {
   readonly output: string;
   readonly refused: boolean;
+  readonly routine?: Routine;
 }
 
 const refusal = (error: string): Saved => ({ output: json({ error }), refused: true });
@@ -242,6 +246,7 @@ const refusal = (error: string): Saved => ({ output: json({ error }), refused: t
 const accepted = (routine: Routine): Saved => ({
   output: json(encodeRoutine(routine)),
   refused: false,
+  routine,
 });
 
 /**
@@ -318,19 +323,48 @@ export const firstRun = (
 };
 
 /**
- * What `list_routines` answers: none in a conversation, and in a routine run
- * the routine that is running, as the server lists it then.
+ * The routines the server holds during one turn, for `list_routines`: none
+ * in a conversation, and in a routine run the routine that is running, as the
+ * server records it then. A routine `set_routine` saves replaces the one with
+ * its id, or joins them, so a run that paused itself lists itself paused.
  */
-const listedRoutines = (wake: Wake): Schema.Json => ({
-  routines: wake.kind === "routine" ? [encodeRoutine(runningRoutine(wake))] : [],
-});
+export class HeldRoutines {
+  readonly #wake: Wake;
+  readonly #routines: Array<Routine>;
+
+  constructor(wake: Wake) {
+    this.#wake = wake;
+    this.#routines = wake.kind === "routine" ? [runningRoutine(wake)] : [];
+  }
+
+  /** What `list_routines` answers. */
+  list(): Schema.Json {
+    return { routines: this.#routines.map((routine) => encodeRoutine(routine)) };
+  }
+
+  /** What `set_routine` answers, keeping what it saved. */
+  set(input: ToolInput<"set_routine">): Saved {
+    const saved = setRoutineStub(input, this.#wake);
+    const { routine } = saved;
+    if (routine !== undefined) {
+      const index = this.#routines.findIndex((held) => held.id === routine.id);
+      if (index === -1) this.#routines.push(routine);
+      else this.#routines[index] = routine;
+    }
+    return saved;
+  }
+}
 
 type Request = Pick<Call, "step" | "name" | "input" | "routine">;
 
 type Answer = Pick<Call, "output" | "events" | "refused">;
 
 /** What the server would answer, as far as these scenarios need, and what a command did. */
-const answer = (scenario: Scenario, workspace: Workspace<GhEvent>, request: Request): Answer => {
+const answer = (
+  routines: HeldRoutines,
+  workspace: Workspace<GhEvent>,
+  request: Request,
+): Answer => {
   const reply = (output: string): Answer => ({ output, events: [] });
   switch (request.name) {
     case "say":
@@ -338,12 +372,12 @@ const answer = (scenario: Scenario, workspace: Workspace<GhEvent>, request: Requ
     case "ask":
       return reply(json({ asked: true }));
     case "list_routines":
-      return reply(json(listedRoutines(scenario.wake)));
+      return reply(json(routines.list()));
     case "set_routine": {
       if (request.routine === undefined) {
         return { ...reply(json({ error: "The call was refused as invalid." })), refused: true };
       }
-      const saved = setRoutineStub(request.routine, scenario.wake);
+      const saved = routines.set(request.routine);
       return { ...reply(saved.output), refused: saved.refused };
     }
     case "recall":
@@ -382,6 +416,7 @@ export const runTurn = Effect.fn("evals.runTurn")(
   function* (model: string, skills: Skills, scenario: Scenario) {
     const envelope = yield* renderWake(scenario.wake);
     const workspace = scenario.workspace();
+    const routines = new HeldRoutines(scenario.wake);
     const tools = functionTools(workspace.commands);
     const messages: Array<Message> = [
       { role: "system", content: systemPrompt(model, skills) },
@@ -414,7 +449,7 @@ export const runTurn = Effect.fn("evals.runTurn")(
           toolCall.function.name,
           parsed._tag === "Some" ? parsed.value : toolCall.function.arguments,
         );
-        const call: Call = { ...request, ...answer(scenario, workspace, request) };
+        const call: Call = { ...request, ...answer(routines, workspace, request) };
         calls.push(call);
         messages.push({ role: "tool", tool_call_id: toolCall.id, content: call.output });
       }

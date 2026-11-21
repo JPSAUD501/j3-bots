@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as DateTime from "effect/DateTime";
-import { type FileEvent, fail, ok, type Outcome, type Program, Workspace } from "./shell.ts";
+import { fail, ok, type Outcome, type Program, type ShellEvent, Workspace } from "./shell.ts";
 
 /**
  * A stand-in `gh` for the fictional repository acme/docs: its CI runs on
@@ -41,7 +41,7 @@ export type GhEvent =
   /** One pull request was shown. */
   | { readonly type: "pull-request-read"; readonly number: number };
 
-export type FixtureEvent = GhEvent | FileEvent;
+export type FixtureEvent = GhEvent | ShellEvent;
 
 interface Job {
   readonly id: number;

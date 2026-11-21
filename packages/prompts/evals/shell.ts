@@ -4,8 +4,9 @@ import * as Schema from "effect/Schema";
 /**
  * A small shell for the evals' stand-in workspaces. It runs a command the way
  * `sh` would, against an in-memory file tree and the programs a fixture
- * supplies, and records what the command did: the files it read and wrote
- * and the events the fixture's programs report. Graders read those records,
+ * supplies, and records what the command did: the files it read, wrote and
+ * removed, what it could not run, and the events the fixture's programs
+ * report. Graders read those records,
  * so `echo 'gh run list'` counts as nothing, and a read inside `$(…)` counts
  * as a read, however the command is spelled.
  *
@@ -19,10 +20,20 @@ import * as Schema from "effect/Schema";
  * learns what to use instead of reading output no real shell would give.
  */
 
-/** A read or write of a file in the workspace, by its absolute path. */
-export type FileEvent =
+/** What the shell itself saw a command do, besides what its programs report. */
+export type ShellEvent =
+  /** A file in the workspace was read, by its absolute path. */
   | { readonly type: "file-read"; readonly path: string }
-  | { readonly type: "file-write"; readonly path: string; readonly content: string };
+  /** A file was written, with its content after the write. */
+  | { readonly type: "file-write"; readonly path: string; readonly content: string }
+  /** A file was removed, by `rm` or as the source of `mv`. */
+  | { readonly type: "file-delete"; readonly path: string }
+  /**
+   * Part of the command did not run: a program the workspace lacks, or syntax
+   * this shell does not take. What it meant to do is unknown, so no grader can
+   * count it as harmless.
+   */
+  | { readonly type: "unavailable"; readonly what: string };
 
 /** What a program prints and how it exits. */
 export interface Outcome {
@@ -45,7 +56,7 @@ export type Program<E> = (args: ReadonlyArray<string>, context: ProgramContext<E
 /** What one command printed, its output and errors together, and what it did. */
 export interface ShellRun<E> {
   readonly output: string;
-  readonly events: ReadonlyArray<E | FileEvent>;
+  readonly events: ReadonlyArray<E | ShellEvent>;
 }
 
 export const ok = (stdout: string): Outcome => ({ stdout, stderr: "", status: 0 });
@@ -528,12 +539,13 @@ export class Workspace<E> {
 
   /** Runs one command in a fresh shell in {@link HOME}. */
   run(command: string): ShellRun<E> {
-    const events: Array<E | FileEvent> = [];
+    const events: Array<E | ShellEvent> = [];
     let script: Script;
     try {
       script = parse(command);
     } catch (error) {
       if (!Schema.is(ParseError)(error)) throw error;
+      events.push({ type: "unavailable", what: error.message });
       return { output: `sh: ${error.message} in this workspace\n`, events };
     }
     const shell = new Run(this.#files, this.#directories, this.#programs, this.commands, events);
@@ -553,14 +565,14 @@ class Run<E> {
   readonly #directories: Set<string>;
   readonly #programs: ReadonlyMap<string, Program<E>>;
   readonly #commands: ReadonlyArray<string>;
-  readonly #events: Array<E | FileEvent>;
+  readonly #events: Array<E | ShellEvent>;
 
   constructor(
     files: Map<string, string>,
     directories: Set<string>,
     programs: ReadonlyMap<string, Program<E>>,
     commands: ReadonlyArray<string>,
-    events: Array<E | FileEvent>,
+    events: Array<E | ShellEvent>,
   ) {
     this.#files = files;
     this.#directories = directories;
@@ -592,6 +604,13 @@ class Run<E> {
     this.#files.set(absolute, next);
     this.#events.push({ type: "file-write", path: absolute, content: next });
     return undefined;
+  }
+
+  /** Removes a file by its absolute path; false when there was none. */
+  #delete(absolute: string): boolean {
+    if (!this.#files.delete(absolute)) return false;
+    this.#events.push({ type: "file-delete", path: absolute });
+    return true;
   }
 
   script(script: Script, stdin: string): Outcome {
@@ -712,6 +731,7 @@ class Run<E> {
   ): Outcome {
     const program = this.#programs.get(name);
     if (program === undefined) {
+      this.#events.push({ type: "unavailable", what: `command ${name}` });
       return fail(
         `sh: ${name}: command not found. This workspace has: ${this.#commands.join(", ")}.`,
         127,
@@ -854,13 +874,13 @@ class Run<E> {
           : destination;
         const error = this.#write(to, content, false);
         if (error !== undefined) return fail(`${name}: ${error}`);
-        if (name === "mv") this.#files.delete(from);
+        if (name === "mv" && from !== this.#resolve(to)) this.#delete(from);
         return ok("");
       }
       case "rm": {
         const force = args.some((arg) => /^-\w*f/.test(arg));
         for (const arg of args.filter((arg) => !arg.startsWith("-"))) {
-          if (!this.#files.delete(this.#resolve(arg)) && !force) {
+          if (!this.#delete(this.#resolve(arg)) && !force) {
             return fail(`rm: ${arg}: No such file or directory`);
           }
         }

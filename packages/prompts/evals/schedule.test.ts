@@ -9,7 +9,7 @@ import { setRoutineStub } from "./harness.ts";
 // (`apps/server/src/routines/schedule.test.ts`): what the server refuses, the
 // stub refuses, and what it accepts gets the first run the server plans. The
 // one-time examples are moved a year on, to lie ahead of the time they are
-// saved at. An expression without five fields never reaches the stub: the
+// saved at, so the impossible ones are refused only for being impossible. An expression without five fields never reaches the stub: the
 // tool's own schema refuses it.
 
 const wake = (now: string, zone: string): Wake => ({
@@ -55,9 +55,9 @@ describe("the set_routine stub, on the server's examples", () => {
 
   it.each([
     ["2026-11-20T09:59Z", "refused"],
-    ["2026-02-31T09:00", "refused"],
-    ["2026-07-01T24:00", "refused"],
-    ["2026-07-01T09:00+24:00", "refused"],
+    ["2027-02-31T09:00", "refused"],
+    ["2027-07-01T24:00", "refused"],
+    ["2027-07-01T09:00+24:00", "refused"],
     ["2027-07-01T09:00", "2027-07-01T08:00:00.000Z"],
     ["2027-07-01T09:00:30+02:00", "2027-07-01T07:00:30.000Z"],
     ["2027-03-28T01:30", "2027-03-28T01:30:00.000Z"],

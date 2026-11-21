@@ -15,6 +15,7 @@ import {
 } from "../src/index.ts";
 import {
   type FixtureEvent,
+  type GhEvent,
   type GitHub,
   githubWorkspace,
   type PullRequest,
@@ -31,7 +32,7 @@ import {
   type Turn,
 } from "./harness.ts";
 import { judge } from "./judge.ts";
-import { HOME } from "./shell.ts";
+import { HOME, type Workspace } from "./shell.ts";
 
 // The routine skill's evals: given the base prompt, with the skill and without
 // it, a model creates a routine for recurring work whose saved instruction,
@@ -599,16 +600,26 @@ interface Permit {
 }
 
 /**
+ * What a command did that may have changed something: it wrote or removed a
+ * file, tried to change GitHub, or tried something the workspace could not
+ * run, whose purpose is unknown.
+ */
+const mayChange = (event: FixtureEvent): boolean =>
+  event.type === "file-write" ||
+  event.type === "file-delete" ||
+  event.type === "gh-change" ||
+  event.type === "unavailable";
+
+/**
  * A call that changes nothing, which any run may make after its message: a
- * `j3` tool that only reads, or a command that neither writes a file nor tries
- * to change GitHub, such as a `gh` read.
+ * `j3` tool that only reads, or a command that did nothing {@link mayChange}
+ * counts, such as a `gh` read.
  */
 const READ_ONLY: Permit = {
   what: "a read-only call",
   test: (call) =>
     ["list_routines", "recall", "list_teammates"].includes(call.name) ||
-    (call.name === "run_command" &&
-      call.events.every((event) => event.type !== "file-write" && event.type !== "gh-change")),
+    (call.name === "run_command" && !call.events.some(mayChange)),
 };
 
 const pauseItself = (wake: RoutineWake): Permit => ({
@@ -626,12 +637,11 @@ const stateUpdate = (instruction: string): Permit => ({
   test: (call) =>
     call.name === "run_command" &&
     call.events.some((event) => event.type === "file-write") &&
-    call.events.every(
-      (event) =>
-        event.type !== "gh-change" &&
-        (event.type !== "file-write" ||
-          (event.path.startsWith(`${HOME}/files/`) &&
-            instruction.includes(event.path.slice(HOME.length + 1)))),
+    call.events.every((event) =>
+      event.type === "file-write"
+        ? event.path.startsWith(`${HOME}/files/`) &&
+          instruction.includes(event.path.slice(HOME.length + 1))
+        : !mayChange(event),
     ),
 });
 
@@ -916,16 +926,18 @@ const setupProblems = (
 };
 
 /**
- * The one routine a setup turn must create, or why it did not: a create the
- * server would refuse fails the setup, even if a later one was saved.
+ * The one routine a setup turn must create, or why it did not: a `set_routine`
+ * the server would refuse fails the setup, even if a later one was saved,
+ * whether its schedule or time was refused or its arguments did not decode
+ * (a cron with six fields, say).
  */
 const theCreated = (calls: ReadonlyArray<Call>) => {
-  const sent = creates(calls);
-  const refused = sent.filter(({ call }) => call.refused === true);
-  const [first, ...others] = sent;
+  const refused = named(calls, "set_routine").filter((call) => call.refused === true);
   if (refused.length > 0) {
-    return `the server would refuse ${refused.length === 1 ? "a create" : `${refused.length} creates`}: ${refused.map(({ call }) => call.output).join("; ")}`;
+    return `the server would refuse ${refused.length === 1 ? "a `set_routine` call" : `${refused.length} \`set_routine\` calls`}: ${refused.map((call) => `${JSON.stringify(call.input)} → ${call.output}`).join("; ")}`;
   }
+  const sent = creates(calls);
+  const [first, ...others] = sent;
   return first !== undefined && others.length === 0
     ? first
     : `${sent.length} \`set_routine\` creates, not one`;
@@ -1186,6 +1198,25 @@ describe("the stand-in workspace", () => {
     expect(run("jq . files/x.json").output).toMatch(/command not found/);
   });
 
+  it("records a file removed, and a command it could not run", () => {
+    const workspace = githubWorkspace(
+      github(runAt, FAILING_RUNS),
+      new Map([
+        ["files/a.txt", "a"],
+        ["files/b.txt", "b"],
+      ]),
+    );
+    expect(workspace.run("mv files/a.txt files/c.txt").events).toEqual([
+      { type: "file-write", path: `${HOME}/files/c.txt`, content: "a" },
+      { type: "file-delete", path: `${HOME}/files/a.txt` },
+    ]);
+    expect(workspace.run("rm -f files/b.txt files/missing.txt").events).toEqual([
+      { type: "file-delete", path: `${HOME}/files/b.txt` },
+    ]);
+    expect(types("curl -X POST https://hooks.example.com/docs")).toEqual(["unavailable"]);
+    expect(types("for f in files/*; do rm $f; done")).toEqual(["unavailable"]);
+  });
+
   it("keeps a file written with a here-document for later commands", () => {
     const workspace = githubWorkspace(github(runAt, FAILING_RUNS));
     const write = workspace.run(`cat > ${STATE_FILE} <<'EOF'\n{"reported":[1]}\nEOF`);
@@ -1301,6 +1332,40 @@ describe("the run graders", () => {
     expect(stateRun(calls, stateAtEnd)).not.toEqual([]);
   });
 
+  describe("on commands run in the stand-in workspace after the message", () => {
+    const NOTES = "files/notes.txt";
+    const ran = (step: number, command: string) => (workspace: Workspace<GhEvent>) =>
+      call(step, "run_command", { command }, workspace.run(command).events);
+    /** The run's calls, each command run in one workspace in order, and the state file it leaves. */
+    const played = (after: ReadonlyArray<(workspace: Workspace<GhEvent>) => Call>) => {
+      const workspace = githubWorkspace(
+        github(pullRequestWake.at, PASSING_RUNS),
+        new Map([
+          [STATE_FILE, STATE],
+          [NOTES, "notes"],
+        ]),
+      );
+      const calls = [...look, say(2, report), ...after.map((step) => step(workspace))];
+      return stateRun(calls, workspace.file(STATE_FILE));
+    };
+    const update = `echo '${final()}' > ${STATE_FILE}`;
+
+    it("accepts the state-file update", () => {
+      expect(played([ran(3, update)])).toEqual([]);
+    });
+
+    it.each([
+      ["an `rm` after it", [ran(3, update), ran(4, `rm ${NOTES}`)]],
+      [
+        "a POST through a command the workspace lacks",
+        [ran(3, update), ran(4, "curl -X POST https://hooks.example.com/docs")],
+      ],
+      ["the update with an `rm` of another file", [ran(3, `${update} && rm ${NOTES}`)]],
+    ])("rejects %s", (_, after) => {
+      expect(played(after)).not.toEqual([]);
+    });
+  });
+
   it("rejects a pause of its own routine in a silent run", () => {
     const pause = {
       ...call(2, "set_routine", {}),
@@ -1312,6 +1377,32 @@ describe("the run graders", () => {
         BUILD_LOOK,
       )([call(1, "run_command", {}, [{ type: "build-read" }]), pause]),
     ).toContain("paused its own routine with nothing to report");
+  });
+});
+
+describe("the setup grader", () => {
+  const routine: ToolInput<"set_routine"> = {
+    action: "create",
+    name: "Docs build",
+    instruction: DOCS_CHECK,
+    schedule: "0 8 * * 1-5",
+  };
+  const saved: Call = { ...CALL, step: 3, name: "set_routine", input: routine, routine };
+
+  it("takes the one create the server saved", () => {
+    expect(theCreated([saved])).toEqual({ call: saved, routine });
+  });
+
+  it("rejects a create refused before it decoded, though a later one was saved", () => {
+    const sixFields: Call = {
+      ...CALL,
+      step: 2,
+      name: "set_routine",
+      input: { ...routine, schedule: "0 0 8 * * 1-5" },
+      output: JSON.stringify({ error: "The call was refused as invalid." }),
+      refused: true,
+    };
+    expect(theCreated([sixFields, saved])).toBeTypeOf("string");
   });
 });
 
