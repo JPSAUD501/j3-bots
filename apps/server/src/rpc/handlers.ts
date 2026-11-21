@@ -21,7 +21,6 @@ import { Stops } from "../turns/Stops.ts";
 import { Usage } from "../turns/Usage.ts";
 import { WorkSteps } from "../turns/WorkSteps.ts";
 
-/**
 /** The RPCs this server answers: every one of `J3Rpcs`. */
 export const ServedRpcs = J3Rpcs;
 
