@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import type { BotId, Routine, RoutineId } from "@j3-bots/contracts";
+import type { Bot, BotId, Routine, RoutineId } from "@j3-bots/contracts";
 import { ENGINE_INPUT_LIMIT, Engine, SessionId, TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as DateTime from "effect/DateTime";
@@ -59,13 +59,16 @@ const routineOf = (botId: BotId) =>
     });
   });
 
+/** A webhook routine of the bot, run once on demand. */
+const ranRoutineOf = (bot: Bot) =>
+  Effect.gen(function* () {
+    const routine = yield* routineOf(bot.id);
+    yield* (yield* Routines).run({ commandId: command(), routineId: routine.id });
+    return { bot, routine };
+  });
+
 /** A webhook routine of a fresh bot, run once on demand. */
-const ranRoutine = Effect.gen(function* () {
-  const bot = yield* createBot("Ana");
-  const routine = yield* routineOf(bot.id);
-  yield* (yield* Routines).run({ commandId: command(), routineId: routine.id });
-  return { bot, routine };
-});
+const ranRoutine = Effect.flatMap(createBot("Ana"), ranRoutineOf);
 
 /** The routine's runs, newest first. */
 const history = (routineId: RoutineId) =>
@@ -484,8 +487,9 @@ it.effect("starts a retry only once the attempt whose answer was lost is out of 
   Effect.gen(function* () {
     const control = yield* TestEngineControl;
     const sql = yield* SqlClient.SqlClient;
+    const ana = yield* createBot("Ana");
     const deferred = yield* control.deferNextDispatch;
-    const { bot, routine } = yield* ranRoutine;
+    const { bot, routine } = yield* ranRoutineOf(ana);
 
     // The attempt's send is never answered, and its recovery gives up.
     yield* until(
@@ -525,13 +529,14 @@ it.effect("gives a contended turn slot to the operator's message before a routin
     yield* concurrentTurns(2);
     const cara = yield* createBot("Cara");
     const dan = yield* createBot("Dan");
+    const ana = yield* createBot("Ana");
     yield* flushed(cara.id);
     yield* flushed(dan.id);
 
     // The dispatcher's pass waits on Cara's send while a routine's start is written.
     const held = yield* holdGate(cara.id);
     yield* sendToBot(cara.id, "Plan the sprint.");
-    const { bot } = yield* ranRoutine;
+    const { bot } = yield* ranRoutineOf(ana);
     yield* until(
       sql`
         SELECT 1 FROM dispatches d JOIN sessions s ON s.id = d.session_id
