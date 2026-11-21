@@ -77,7 +77,7 @@ import {
   onNotificationClick,
   showNotification,
 } from "./notify";
-import { notificationIcon, systemTheme } from "./notificationIcon";
+import { loadRasterizer, notificationIcon, systemTheme } from "./notificationIcon";
 import { deliverFile, reserveWindow } from "./openFile";
 import { desktop } from "./desktop";
 import { makePlatform, signInUnencrypted } from "./platform";
@@ -462,11 +462,18 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
         ),
       )
       .catch(() => {
-        // The browser refused it, as when the permission was withdrawn meanwhile.
-        // The entry still shows as unread in the roster.
+        // It was not shown, as when the browser refused it because the
+        // permission was withdrawn meanwhile. The entry still shows as unread
+        // in the roster.
       });
   });
   useEffect(() => j3.onNotification(notify), [j3]);
+  // Fetched once the app has started, not when the first notification
+  // arrives: by then the server may have been upgraded and the old build's
+  // files deleted, and a failed fetch reloads the page (main.tsx).
+  useEffect(() => {
+    if (pairing !== null && notificationAccess() === "granted") void loadRasterizer();
+  }, [pairing]);
   useEffect(
     () =>
       onNotificationClick((click) => {

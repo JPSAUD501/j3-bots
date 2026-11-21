@@ -41,7 +41,9 @@ const STALLED: AvatarAppearance = { mark: "dotted", motion: "none", badge: null 
  * them, whatever state the roster has heard so far. A blocked bot shows it is
  * blocked, and one waiting on another card shows that. Anything else is
  * something the operator has not read, so the bot shows as done even while
- * its turn goes on: a still ring or arc would say nothing the notification does.
+ * its turn goes on: a reply's notification usually arrives before the roster
+ * hears the turn ended, so the roster's state would show nearly every
+ * finished reply as still working.
  */
 export function notificationLook(
   notification: Pick<Notification, "kind" | "entryId">,

@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /**
  * A notification's icon: the still avatar of what it is about, drawn as a PNG,
- * since browsers take no SVG there. The rasterizer is loaded with the first
- * notification, never as the app starts.
+ * since browsers take no SVG there. The rasterizer is not part of the app's
+ * start: `loadRasterizer` fetches it once the app has started, so a page left
+ * open across a server upgrade, whose old build's files are gone, already
+ * holds it when a notification arrives.
  */
 import type { BotId, Notification, RosterItem } from "@j3-bots/contracts";
 import { notificationLook } from "@j3-bots/client-runtime/presentation";
@@ -26,6 +28,16 @@ const ICON_SIZE = 192;
 export const systemTheme = (): keyof Themed =>
   matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 
+let rasterizer: Promise<typeof import("@j3-bots/design-tokens/raster") | null> | undefined;
+
+/**
+ * The rasterizer, fetched once. A page that has started and shows
+ * notifications calls this then, before any notification; a failed fetch
+ * leaves the app's icon in its place.
+ */
+export const loadRasterizer = () =>
+  (rasterizer ??= import("@j3-bots/design-tokens/raster").catch(() => null));
+
 const dataUrl = (png: Uint8Array) => {
   let binary = "";
   for (const byte of png) binary += String.fromCharCode(byte);
@@ -38,8 +50,7 @@ const dataUrl = (png: Uint8Array) => {
  * gives it (`notificationLook`); a room shows its first two members'
  * shapes, as the roster does. The app's icon stands in when there is no
  * avatar to draw, as for a room whose members are all gone from the roster,
- * or when the rasterizer cannot load, as on a page older than the server's
- * build.
+ * or when the rasterizer could not be fetched.
  */
 export async function notificationIcon(
   notification: Notification,
@@ -49,7 +60,7 @@ export async function notificationIcon(
   const bots = roster.flatMap((row) => (row._tag === "bot" ? [row.bot] : []));
   const bot = (id: BotId) => bots.find((candidate) => candidate.id === id);
   const { target } = notification;
-  const draw = await import("@j3-bots/design-tokens/raster").catch(() => null);
+  const draw = await loadRasterizer();
   if (draw === null) return APP_ICON;
   if (target._tag === "conversation") {
     const writer = bot(notification.botId);
