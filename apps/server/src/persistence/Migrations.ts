@@ -9,6 +9,7 @@ import Migration0005 from "./migrations/0005_sessions.ts";
 import Migration0006 from "./migrations/0006_notifications.ts";
 import Migration0007 from "./migrations/0007_routine_runs.ts";
 import Migration0008 from "./migrations/0008_teammate_messages.ts";
+import Migration0009 from "./migrations/0009_room_turns.ts";
 
 /**
  * Migrations go forward only. Add one by appending an entry with the next id;
@@ -23,6 +24,7 @@ const migrations = SqliteMigrator.fromRecord({
   "6_notifications": Migration0006,
   "7_routine_runs": Migration0007,
   "8_teammate_messages": Migration0008,
+  "9_room_turns": Migration0009,
 });
 
 /** Applies, in one transaction, every migration the database has not recorded yet. */

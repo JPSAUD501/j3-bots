@@ -75,6 +75,7 @@ export const WakeRow = Schema.Struct({
   id: Schema.String,
   bot_id: BotId,
   kind: WakeKind,
+  priority: Schema.Int,
   audience: AudienceColumn,
   audience_room_id: Schema.NullOr(RoomId),
   hops: Schema.Int,
@@ -86,8 +87,8 @@ export const WakeRow = Schema.Struct({
 export type WakeRow = typeof WakeRow.Type;
 
 export const WAKE_COLUMNS = `
-  id, bot_id, kind, audience, audience_room_id, hops, payload_json, status, source_entry_id,
-  created_at
+  id, bot_id, kind, priority, audience, audience_room_id, hops, payload_json, status,
+  source_entry_id, created_at
 `;
 
 /** What becomes of the wakes of a dispatch that ends undelivered. */
@@ -494,7 +495,9 @@ export const layer = Layer.effect(
           if (state !== null) yield* showHandoff(shown, state);
           continue;
         }
-        if (shown._tag !== "message") continue;
+        // A bot's room message wakes the members it mentions, but it was
+        // delivered when it was said: only the operator's waits on its wakes.
+        if (shown._tag !== "message" || shown.author._tag !== "operator") continue;
         const delivery = deliveryOf(yield* deliveryRows(entryId).pipe(Effect.orDie));
         if (delivery !== undefined && !sameDelivery(delivery, shown.delivery)) {
           yield* entries.update({ ...shown, delivery });

@@ -27,6 +27,7 @@ export {
   renderWakeForSize,
   type RoomEntry,
   type RoomMentions,
+  type RoomReason,
   type RoomWake,
   type RoutineRunSummary,
   type RoutineTrigger,

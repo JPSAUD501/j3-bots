@@ -6,7 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
-import { CLOSING_LINES, renderWake, type Wake, type WakeKind } from "./envelope.ts";
+import { CLOSING_LINES, renderWake, ROOM_CLOSING_LINES, type Wake } from "./envelope.ts";
 import { foldForMatching } from "./text.ts";
 
 /** A random source that returns the given nonces, as bytes, in order, then repeats the last. */
@@ -74,6 +74,7 @@ const wakesWith = (s: string): ReadonlyArray<Wake> => {
         hostName: s,
       },
       reason: "mentioned",
+      omitted: 2,
       entries: [
         {
           author: "user",
@@ -283,6 +284,7 @@ describe("renderWake", () => {
           hostName: "Pixel",
         },
         reason: "mentioned",
+        omitted: 3,
         entries: [
           {
             author: "user",
@@ -305,6 +307,7 @@ describe("renderWake", () => {
       <member id="scout" name="Scout" title="Research"/>
       <member id="pixel" name="Pixel" title="Design"/>
       </room>
+      3 earlier entries you have not seen are left out; what woke you and the newest follow.
       <message from="user" at="09:39" to="Scout">
       @Scout can you find last year's launch numbers?
       </message>
@@ -312,7 +315,7 @@ describe("renderWake", () => {
       I have the deck if that helps.
       </data-7f3a9c01b2d4>
       </j3-wake>
-      In this room, \`say\` reaches everyone. Speak if you were addressed or have something new; otherwise end your turn without a word.
+      In this room, \`say\` reaches everyone. You were addressed: answer, and \`mention\` a member only if they must act next.
       "
     `);
   });
@@ -476,10 +479,18 @@ describe("renderWake", () => {
     );
   });
 
-  it("ends every envelope with its kind's closing line", () => {
+  it("ends every envelope with its kind's closing line, a room's chosen by why the bot was woken", () => {
     for (const wake of wakesWith("text")) {
-      const kind: WakeKind = wake.kind;
-      expect(render(wake).endsWith(`</j3-wake>\n${CLOSING_LINES[kind]}\n`)).toBe(true);
+      const lines =
+        wake.kind === "room"
+          ? (["host", "mentioned", "everyone"] as const).map((reason) => ({
+              wake: { ...wake, reason },
+              line: ROOM_CLOSING_LINES[reason],
+            }))
+          : [{ wake, line: CLOSING_LINES[wake.kind] }];
+      for (const { wake: rendered, line } of lines) {
+        expect(render(rendered).endsWith(`</j3-wake>\n${line}\n`)).toBe(true);
+      }
     }
   });
 });

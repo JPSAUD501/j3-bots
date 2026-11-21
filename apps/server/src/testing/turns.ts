@@ -38,7 +38,6 @@ import { recoveryBackoff, SessionRowId } from "../turns/model.ts";
 import { Observer } from "../turns/Observer.ts";
 import { Pipeline } from "../turns/Pipeline.ts";
 import { SessionGate } from "../turns/SessionGate.ts";
-import { Wakes } from "../turns/Wakes.ts";
 import { TestProviders } from "./domain.ts";
 
 let commands = 0;
@@ -337,41 +336,19 @@ export const roomOf = (botId: BotId) =>
     });
   });
 
-/**
- * The operator writes in a room and the bot is woken for it, as room routing
- * will once it addresses members (M3).
- */
+/** The operator writes in a room, mentioning the bot, which wakes it for the room. */
 export const sendInRoom = (botId: BotId, roomId: RoomId, text: string) =>
   Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const entry = yield* (yield* Entries).append({
+    const pipeline = yield* Pipeline;
+    const entryId = yield* pipeline.sendMessage({
+      commandId: command(),
       target: { _tag: "room", roomId },
-      entry: {
-        _tag: "message",
-        author: { _tag: "operator" },
-        text,
-        attachments: [],
-        mentions: { _tag: "bots", ids: [botId] },
-        delivery: { _tag: "pending" },
-        commandId: null,
-      },
+      text,
+      attachments: [],
+      mentions: { _tag: "bots", ids: [botId] },
     });
-    yield* sql.withTransaction(
-      (yield* Wakes).record([
-        {
-          botId,
-          kind: "user",
-          audience: { _tag: "room", roomId },
-          payload: { _tag: "message", entryId: entry.id },
-          sourceEntryId: entry.id,
-          hops: 0,
-          retryOf: null,
-          cause: { _tag: "operator" },
-        },
-      ]),
-    );
-    yield* (yield* Pipeline).dispatchPending;
-    return entry.id;
+    yield* pipeline.dispatchPending;
+    return entryId;
   });
 
 /** The operator writes to the bot with a file attached. */
