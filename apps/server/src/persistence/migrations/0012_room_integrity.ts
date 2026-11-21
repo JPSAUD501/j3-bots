@@ -33,8 +33,8 @@ export default Effect.gen(function* () {
 
   // A turn ended while turns of the session had background work flagged: the
   // Stop runner asks the engine for a report once nothing runs, which clears
-  // the flags of work that ended. Any report is the check: a turn that ran
-  // or waited during it makes it due again when it ends.
+  // the flags of work that ended. A report taken while nothing runs or waits
+  // is the check; the end of a turn that ran or waited makes it due again.
   yield* sql`
     ALTER TABLE sessions ADD COLUMN background_check_due INTEGER NOT NULL DEFAULT 0
       CHECK (background_check_due IN (0, 1))

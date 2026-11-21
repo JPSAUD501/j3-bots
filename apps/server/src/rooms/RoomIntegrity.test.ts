@@ -33,6 +33,7 @@ import {
   command,
   conversation,
   deliveryIs,
+  failedAs,
   mainSessionId,
   messageTeammate,
   nextTurn,
@@ -393,6 +394,15 @@ const flagged = (one: Member, turnId: TurnId) =>
     return row?.pending === 1;
   });
 
+/** How many Stop targets are not settled yet. */
+const unsettledTargets = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const [row] = yield* sql<{ readonly n: number }>`
+    SELECT COUNT(*) AS n FROM stop_targets WHERE stopped_at IS NULL
+  `.pipe(Effect.orDie);
+  return row?.n ?? 0;
+});
+
 /** How many Stop rounds were sent to the engine. */
 const issuedRounds = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -509,6 +519,89 @@ it.effect("holds a room's Stop while the engine starts a private turn no event s
 );
 
 it.effect(
+  "holds a room's Stop for its turns' background work while the engine starts a turn no event shows yet",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
+      const members = [hal, ana];
+      const room = yield* roomWith(hal, [ana]);
+      yield* operatorWrites(room.id, members, "Watch the build.", nobody);
+      const watching = yield* nextTurn(hal.bot.id);
+      yield* control.startBackgroundWork({ sessionId: hal.session, turnId: watching });
+      yield* finish(hal, watching, members);
+
+      // A harness's wake starts a turn, which no event shows yet: the report
+      // the room's Stop asks for lists it as runnable.
+      const startup = yield* control.holdNextStartup(hal.session);
+      yield* control.startEngineTurn(hal.session);
+      yield* (yield* Rooms).stop({ commandId: command(), roomId: room.id });
+      yield* (yield* Stops).runPending;
+      assert.strictEqual(yield* issuedRounds, 0);
+      assert.strictEqual(yield* unsettledTargets, 1);
+
+      // The turn shows and ends: the room's Stop then ends the build.
+      yield* startup.release;
+      const woken = yield* nextTurn(hal.bot.id, watching);
+      assert.isTrue(yield* backgroundRuns(hal));
+      yield* finish(hal, woken, members);
+      yield* until(Effect.map(backgroundRuns(hal), (runs) => !runs));
+      yield* TestClock.adjust(RETRY_TICK);
+      yield* stopSettled;
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+/** Whether the engine's latest hold of the member's queue was resumed. */
+const queueResumed = (one: Member) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const session = yield* mainSessionId(one.bot.id);
+    const [row] = yield* sql<{ readonly resumed: number }>`
+      SELECT queue_held_cursor IS NOT NULL AND queue_held_cursor = queue_resumed_cursor AS resumed
+      FROM sessions WHERE id = ${session}
+    `.pipe(Effect.orDie);
+    return row?.resumed === 1;
+  });
+
+it.effect(
+  "cancels the operator's steer a failed turn requeued behind a held queue when the room's Stop goes, then resumes the queue",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
+      const members = [hal, ana];
+      const room = yield* roomWith(hal, [ana]);
+      yield* operatorWrites(room.id, members, "Watch the build.", nobody);
+      const watching = yield* nextTurn(hal.bot.id);
+      yield* control.startBackgroundWork({ sessionId: hal.session, turnId: watching });
+      yield* finish(hal, watching, members);
+
+      // The operator talks to Hal in private and steers that turn; the
+      // room's Stop waits for it.
+      yield* sendToBot(hal.bot.id, "What is left today?");
+      const privately = yield* nextTurn(hal.bot.id, watching);
+      const steer = yield* sendToBot(hal.bot.id, "And the release notes?");
+      yield* settle([hal]);
+      yield* (yield* Rooms).stop({ commandId: command(), roomId: room.id });
+      assert.strictEqual(yield* issuedRounds, 0);
+
+      // The turn fails before it takes the steer: the engine requeues the
+      // steer as a turn of its own, behind the hold the failure left. It
+      // cannot start, so the room's Stop goes, and cancels it with the build.
+      yield* control.finishTurn({
+        sessionId: hal.session,
+        turnId: privately,
+        outcome: { _tag: "failed", failure: "provider-error", retryAt: null },
+      });
+      yield* turnEnded(hal.bot.id);
+      yield* failedAs(steer, "stopped");
+      yield* stopSettled;
+      assert.isFalse(yield* backgroundRuns(hal));
+      yield* until(queueResumed(hal));
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
   "sends a room's Stop for its turns' background work only on a report the engine gave",
   () =>
     Effect.gen(function* () {
@@ -580,7 +673,9 @@ it.effect(
         text: "The logs are clean.",
         urgent: false,
       });
-      assert.include(reply._tag === "refused" ? reply.message : "", "limit of 1");
+      const refused = reply._tag === "refused" ? reply.message : "";
+      assert.include(refused, "limit of 1");
+      assert.include(refused, "background work");
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 

@@ -583,9 +583,9 @@ export const layer = Layer.effect(
      * started it: each listed turn's work may still run, as of the report.
      * The report lists work only while no turn runs or waits
      * (`BackgroundWork`), so only then does a turn it leaves out have none
-     * left; otherwise what was known stands. Either way the session's check
-     * is done (`Stops`): the end of a turn that ran or waited makes it due
-     * again.
+     * left, and only then is the session's check done (`Stops`); otherwise
+     * what was known stands, and the check stays due. The end of a turn that
+     * ran or waited makes it due again.
      */
     const backgroundReported = Effect.fn("Observer.backgroundReported")(function* (
       session: Watched,
@@ -598,9 +598,9 @@ export const layer = Layer.effect(
           WHERE session_id = ${session.id} AND ${sql.in("engine_turn_id", listed)}
         `;
       }
-      yield* sql`UPDATE sessions SET background_check_due = 0 WHERE id = ${session.id}`;
       if (event.runnableTurns.length > 0) return;
       if ((yield* openTurnRows(session.id).pipe(Effect.orDie)).length > 0) return;
+      yield* sql`UPDATE sessions SET background_check_due = 0 WHERE id = ${session.id}`;
       yield* sql`
         UPDATE turns SET background_pending = 0
         WHERE session_id = ${session.id} AND background_pending = 1

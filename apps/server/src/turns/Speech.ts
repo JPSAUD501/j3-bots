@@ -76,6 +76,16 @@ const MAX_SAY_ATTACHMENTS_SIZE = 25 * 1024 * 1024;
 const MATCH_RETRIES = 5;
 const MATCH_WITHIN = Duration.seconds(2);
 
+/**
+ * Why a chain may go no further, for the bot: it reached the hop limit. A
+ * count borrowed from background work (`hopCounts.borrow`) says where it came
+ * from, so the limit does not look arbitrary to a turn that started on its own.
+ */
+const chainReached = (borrowed: boolean, what: "turns" | "messages", limit: number) =>
+  borrowed
+    ? `this turn started on its own while background work that a chain of ${what} between bots started was still running in your session, so it counts as part of that chain, which reached your user's limit of ${limit} since they last spoke.`
+    : `this chain of ${what} between bots reached your user's limit of ${limit} since they last spoke.`;
+
 /** A request pinned to the engine's record of its call, and so to a turn and an audience. */
 interface Pin {
   readonly requestId: string;
@@ -665,14 +675,14 @@ export const layer = Layer.effect(
       const work = yield* workStopped(found);
       if (work.stopped) return null;
       // A chain that cannot be traced wakes nobody.
-      const hops = yield* hopCount(found);
-      if (hops === null) return { _tag: "untraced" } as const;
+      const counted = yield* hopCount(found);
+      if (counted === null) return { _tag: "untraced" } as const;
       const routed = yield* routing.botMessage({
         room,
         botId: found.botId,
         message,
         mention,
-        hops,
+        hops: counted.hops,
         seq: work.seq,
       });
       if (routed._tag === "hop-limit" && !(yield* roomChainStopped(found))) {
@@ -683,7 +693,7 @@ export const layer = Layer.effect(
           null,
         );
       }
-      return routed;
+      return routed._tag === "hop-limit" ? { ...routed, borrowed: counted.borrowed } : routed;
     });
 
     const say = Effect.fn("Speech.say")(function* (found: Pin, input: ToolInput<"say">) {
@@ -767,7 +777,7 @@ export const layer = Layer.effect(
               return {
                 status: "recorded",
                 stopped: "hops",
-                note: `Your message is in the room, but nobody was woken: this chain of turns between bots reached your user's limit of ${routed.limit} since they last spoke. Do not mention anyone again for it. If your user is waiting on it, say so in the room.`,
+                note: `Your message is in the room, but nobody was woken: ${chainReached(routed.borrowed, "turns", routed.limit)} Do not mention anyone again for it. If your user is waiting on it, say so in the room.`,
               } satisfies Schema.Json;
             }
             return { status: "recorded" } satisfies Schema.Json;
@@ -897,8 +907,8 @@ export const layer = Layer.effect(
               );
             }
           }
-          const hops = yield* hopCount(found);
-          if (hops === null || hops > budgets.hops) {
+          const counted = yield* hopCount(found);
+          if (counted === null || counted.hops > budgets.hops) {
             if (!(yield* chainStopped(found))) {
               yield* notify(
                 found.botId,
@@ -910,9 +920,9 @@ export const layer = Layer.effect(
             return {
               _tag: "refused",
               reason:
-                hops === null
+                counted === null
                   ? "Nothing was sent: this turn started on its own, and what started it cannot be traced, so it may not message teammates. Do not try again. If your user is waiting on it, tell them with `say`."
-                  : `Nothing was sent: this chain of messages between bots reached your user's limit of ${budgets.hops} since they last spoke. Do not try again. If your user is waiting on it, tell them with \`say\`.`,
+                  : `Nothing was sent: ${chainReached(counted.borrowed, "messages", budgets.hops)} Do not try again. If your user is waiting on it, tell them with \`say\`.`,
             } satisfies typeof StoredRefusal.Type;
           }
           const card = (target: EntryTarget, direction: "sent" | "received") =>
@@ -942,7 +952,7 @@ export const layer = Layer.effect(
                 audience: conversation,
                 payload: { _tag: "teammate", entryId: received.id },
                 sourceEntryId: received.id,
-                hops,
+                hops: counted.hops,
                 retryOf: null,
                 cause: {
                   _tag: "teammate",
@@ -958,7 +968,7 @@ export const layer = Layer.effect(
                 id, recipient_bot_id, sender_bot_id, handoff_entry_id, text, hops, created_at
               ) VALUES (
                 ${yield* ids.make("held")}, ${recipientId}, ${found.botId}, ${received.id},
-                ${input.text}, ${hops}, ${timeText(received.createdAt)}
+                ${input.text}, ${counted.hops}, ${timeText(received.createdAt)}
               )
             `.pipe(Effect.orDie);
           }

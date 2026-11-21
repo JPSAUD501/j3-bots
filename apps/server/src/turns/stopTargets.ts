@@ -33,9 +33,12 @@ export type Ending =
  * (`docs/architecture/server.md`, Stop). Every one does, except that a steer
  * into the admitted turn passes a room's Stop for another room that has
  * issued no round there yet: that Stop sends nothing while a turn of another
- * audience runs (`Stops`), and what the steer adds ends with that turn, or,
- * when that turn already ended in the engine, becomes one new turn of its own
- * (`new-turn`), which the Stop waits for in turn.
+ * audience runs (`Stops`), nor while the steer is unsettled. What the steer
+ * adds ends with that turn, or becomes one turn of its own: a new turn
+ * (`new-turn`) when that turn already ended in the engine, or a follow-up
+ * (`steer-requeued`) when it ends without taking the steer. The Stop waits
+ * for that turn in turn, unless the engine holds the queue, as after a failed
+ * turn, where it cannot start: the Stop then cancels it.
  * `steerRoom` is the steer's room column, NULL for the conversation, and
  * `null` for a send that is no steer. The planner, a send and its claim read
  * it with the same rule. `sessionId` is often a caller's column, so the tables

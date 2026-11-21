@@ -14,6 +14,12 @@ const Carried = Schema.Struct({
 });
 type Carried = typeof Carried.Type;
 
+/** A chain's hop count, and whether it was borrowed from background work (`hopCounts.borrow`). */
+export interface HopCount {
+  readonly hops: number;
+  readonly borrowed: boolean;
+}
+
 /**
  * How a turn's chain counts its hops (`docs/architecture/server.md`,
  * Budgets), shared by the observer, which captures a harness's wake's count
@@ -159,14 +165,18 @@ export const hopCounts = (sql: SqlClient.SqlClient) => {
     return count;
   });
 
-  /** The hop count of a wake the turn causes, or `null` when it cannot be traced. */
+  /**
+   * The hop count of a wake the turn causes, and whether its chain borrowed
+   * it from background work (`borrow`); `null` when it cannot be traced.
+   */
   const hopCount = Effect.fn("hopCounts.hopCount")(function* (
     sessionId: SessionRowId,
     turnId: TurnId,
-  ) {
+  ): Effect.fn.Return<HopCount | null> {
     const carried = yield* carriedIn(sessionId, turnId);
-    if (carried.rooted) return hopsOf(carried);
-    return yield* borrow(sessionId, turnId);
+    if (carried.rooted) return { hops: hopsOf(carried), borrowed: false };
+    const hops = yield* borrow(sessionId, turnId);
+    return hops === null ? null : { hops, borrowed: true };
   });
 
   return { chainSql, deliveredInSql, carriedIn, borrow, hopCount };
