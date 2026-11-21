@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { EntryId, RoomId, type Bot, type EntryPreview, type RosterItem } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { at, bot, context, plain, preview } from "../test/fixtures";
-import { presenceLine, rosterLine } from "./roster";
+import { at, bot, context, plain, preview } from "../../test/fixtures.ts";
+import { presenceLine, rosterLine } from "./status.ts";
 
 const ctx = context("2026-11-20T15:00:00Z", "en", { scout: "Scout", wren: "Wren" });
 

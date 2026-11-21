@@ -5,7 +5,7 @@ import { useRef, useState, type ReactNode } from "react";
 import { useI18n, usePresentation } from "../app/context";
 import type { I18n } from "@j3-bots/i18n";
 import { cn } from "../lib/cn";
-import { usageLimitText } from "../presentation/roster";
+import { usageLimitText } from "@j3-bots/client-runtime/wording";
 import { BotAvatar } from "./BotAvatar";
 import { useConnectionLineShown } from "./ConnectionBanner";
 import { NewBotForm } from "./NewBotForm";

@@ -73,7 +73,7 @@ import { WorkFold } from "../components/WorkFold";
 import { notificationText } from "@j3-bots/i18n";
 import { cn } from "../lib/cn";
 import { iconUrl, notificationIcon } from "../live/notificationIcon";
-import { addresseeLine } from "../presentation/mentions";
+import { addresseeLine } from "@j3-bots/client-runtime/wording";
 import { Shell } from "../shell/Shell";
 import { shellShortcuts } from "../shell/shortcuts";
 import { SAMPLE_NOW, ids, sampleTeam } from "./sample";

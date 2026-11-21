@@ -217,6 +217,9 @@ export const en = {
 
   "composer.label": "Message {name}",
   "composer.attach": "Attach a file",
+  "composer.attach.photos": "Photos and videos",
+  "composer.attach.files": "Files",
+  "composer.attach.cancel": "Cancel",
   "composer.dictate": "Dictate a message",
   "composer.send": "Send message",
 
@@ -391,6 +394,7 @@ export const en = {
   "composer.files": "Files to send",
   "composer.stillUploading": "Files are still uploading",
   "composer.file.uploading": "Uploading, {percent}",
+  "composer.file.uploadingUnmeasured": "Uploading…",
   "composer.file.remove": "Remove {name}",
   "composer.file.failed": "{name} can’t be sent: {reason}",
   "composer.file.empty": "The file is empty",

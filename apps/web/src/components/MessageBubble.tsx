@@ -1,18 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Attachment, Bot } from "@j3-bots/contracts";
-import {
-  messageStatus,
-  refusedWith,
-  type IntentFailure,
-  type MessageStatus,
-} from "@j3-bots/client-runtime";
+import { messageStatus } from "@j3-bots/client-runtime";
 import {
   clockTime,
   type GroupPosition,
   type TimelineMessage,
 } from "@j3-bots/client-runtime/presentation";
 import { usePresentation } from "../app/context";
-import type { KeyWith } from "@j3-bots/i18n";
+import { deliveryLine } from "@j3-bots/client-runtime/wording";
 import { cn } from "../lib/cn";
 import { useFocusAfterActions } from "../lib/useFocusAfterActions";
 import { AvatarShape } from "./BotAvatar";
@@ -32,42 +27,6 @@ const botCorners: Record<GroupPosition, string> = {
   first: "rounded-bl-sm",
   middle: "rounded-l-sm",
   last: "rounded-tl-sm",
-};
-
-const failedKeys = {
-  rejected: "message.failed.rejected",
-  unresolved: "message.failed.unresolved",
-  stopped: "message.failed.stopped",
-} as const satisfies Record<Extract<MessageStatus, { _tag: "failed" }>["reason"], KeyWith>;
-
-const notSentKeys = {
-  refused: "message.notSent.refused",
-  "not-paired": "message.notSent.notPaired",
-  unexpected: "message.notSent.unexpected",
-} as const satisfies Record<IntentFailure["_tag"], KeyWith>;
-
-/** What the operator reads under their message, or null when there is nothing to say. */
-const statusKey = (status: MessageStatus, submitting: boolean): KeyWith | null => {
-  switch (status._tag) {
-    case "sending":
-      return "message.sending";
-    case "not-sent":
-      // Too long for the bot's engine is the one refusal the client cannot foresee and the operator can act on.
-      return refusedWith(status.failure, "message-length")
-        ? "message.notSent.tooLong"
-        : notSentKeys[status.failure._tag];
-    case "unrecorded":
-      return "message.unrecorded";
-    case "queued":
-      return "message.queued";
-    case "delivered":
-      return null;
-    case "cancelled":
-      return "message.cancelled";
-    case "failed":
-      // A retry on its way reads as queued again, which it is about to be.
-      return submitting ? "message.queued" : failedKeys[status.reason];
-  }
 };
 
 interface MessageBubbleProps {
@@ -120,15 +79,7 @@ export function MessageBubble({
   const failed = status._tag === "failed" || status._tag === "not-sent";
   // The device could not record what the server answered: a problem, though nothing to retry.
   const troubled = failed || status._tag === "unrecorded";
-  const key = statusKey(status, submitting);
-  const deliveryText =
-    status._tag === "not-sent" && leftRoom !== undefined && leftRoom.length > 0
-      ? ctx.i18n.plural("message.notSent.left", leftRoom.length, {
-          names: new Intl.ListFormat(ctx.i18n.locale, { type: "conjunction" }).format(leftRoom),
-        })
-      : key === null
-        ? null
-        : t(key);
+  const deliveryText = deliveryLine(status, { submitting, leftRoom: leftRoom ?? [] }, ctx.i18n);
   // Sent again, Send again goes; focus that was on it moves to the message, which stays whatever
   // its delivery line then says, even nothing.
   const { target, actions } = useFocusAfterActions<HTMLDivElement>(failed);

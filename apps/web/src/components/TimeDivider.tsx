@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type * as DateTime from "effect/DateTime";
 import { usePresentation } from "../app/context";
-import { dividerTime } from "../lib/time";
+import { dividerTime } from "@j3-bots/client-runtime/wording";
 
 export function TimeDivider({ at }: { at: DateTime.Utc }) {
   const ctx = usePresentation();

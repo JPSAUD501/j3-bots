@@ -18,7 +18,7 @@ import {
 import { canStop, roomStop } from "@j3-bots/client-runtime/presentation";
 import { useBots, useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
-import { memberList, presenceLine, type StatusLine } from "../presentation/roster";
+import { memberList, presenceLine, type StatusLine } from "@j3-bots/client-runtime/wording";
 import { BotAvatar, RoomAvatar } from "./BotAvatar";
 import { toneClass } from "./RosterRow";
 import { Kbd } from "./ui/kbd";

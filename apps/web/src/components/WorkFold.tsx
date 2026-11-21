@@ -19,7 +19,7 @@ import { millisBetween, shortDuration } from "@j3-bots/client-runtime/presentati
 import { usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
 import { touchTarget } from "../lib/touchTarget";
-import { workFoldTitle } from "../presentation/roster";
+import { workFoldTitle } from "@j3-bots/client-runtime/wording";
 import { CodeLines } from "./CodeLines";
 
 const stepIcon: Record<WorkStep["kind"], typeof TerminalIcon> = {

@@ -224,7 +224,10 @@ export interface UploadRequest {
   readonly url: string;
   readonly headers: Readonly<Record<string, string>>;
   readonly body: Blob;
-  /** Called as the body's bytes leave the device, with how many have so far. */
+  /**
+   * Called as the body's bytes leave the device, with how many have so far;
+   * never, where the platform cannot tell.
+   */
   readonly onProgress: (sent: number) => void;
 }
 
@@ -244,9 +247,10 @@ export class TransferFailed extends Schema.TaggedError<TransferFailed>()("Transf
 }
 
 /**
- * Sends a file's bytes to the server and reports progress as they go, which
- * `fetch` cannot do: `XMLHttpRequest` in a browser, the platform's upload task
- * elsewhere. Interrupting the effect aborts the transfer.
+ * Sends a file's bytes to the server, reporting progress as they go where the
+ * platform can: `XMLHttpRequest` in a browser, which `fetch` cannot match;
+ * `fetch` on the phone, the one way there to refuse a redirect. Interrupting
+ * the effect aborts the transfer.
  */
 export class FileTransfer extends Context.Service<
   FileTransfer,

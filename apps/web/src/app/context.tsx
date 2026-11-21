@@ -3,7 +3,7 @@ import type { Bot, BotId, Language } from "@j3-bots/contracts";
 import { createContext, use, useEffect, useMemo, type ReactNode } from "react";
 import { createI18n, resolveLocale, type I18n } from "@j3-bots/i18n";
 import { usePreferences } from "../preferences/preferences";
-import type { PresentationContext } from "../presentation/roster";
+import type { PresentationContext } from "@j3-bots/client-runtime/wording";
 import { useClock } from "./clock";
 
 const I18nContext = createContext<I18n>(createI18n("en"));

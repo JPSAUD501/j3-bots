@@ -22,7 +22,7 @@ import {
   mentionedWhoLeft,
 } from "@j3-bots/client-runtime/presentation";
 import { useBots, useI18n } from "../app/context";
-import { resendLabel } from "../presentation/mentions";
+import { resendLabel } from "@j3-bots/client-runtime/wording";
 import { ApprovalCard } from "./ApprovalCard";
 import { HandoffCard } from "./HandoffCard";
 import { MessageBubble } from "./MessageBubble";

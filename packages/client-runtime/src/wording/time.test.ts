@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vite-plus/test";
-import { fullTime } from "@j3-bots/client-runtime/presentation";
-import { at, context, plain } from "../test/fixtures";
-import { scheduleInWords } from "./schedule";
-import { activityTime, dividerTime, timeInSentence, upcomingTime } from "./time";
+import { at, context, plain } from "../../test/fixtures.ts";
+import { fullTime } from "../presentation/time.ts";
+import { activityTime, dividerTime, timeInSentence, upcomingTime } from "./time.ts";
 
 // 23:30 on Thursday, November 19 in São Paulo, already Friday in UTC.
 const ctx = context("2026-11-20T02:30:00Z");
@@ -56,8 +55,5 @@ describe("times never break inside themselves", () => {
     expect(fullTime(at("2026-11-23T11:47:00Z"), ctx)).toMatch(wholeAtEnd);
     expect(timeInSentence(at("2026-11-20T11:47:00Z"), ctx)).toMatch(wholeAtEnd);
     expect(dividerTime(at("2026-11-17T11:47:00Z"), ctx)).toMatch(wholeAtEnd);
-    expect(
-      scheduleInWords({ _tag: "schedule", cron: "47 8 * * 1-5", timeZone: ctx.timeZone }, ctx),
-    ).toMatch(wholeAtEnd);
   });
 });

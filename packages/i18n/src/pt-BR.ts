@@ -215,6 +215,9 @@ const sentences = {
 
   "composer.label": "Mensagem para {name}",
   "composer.attach": "Anexar um arquivo",
+  "composer.attach.photos": "Fotos e vídeos",
+  "composer.attach.files": "Arquivos",
+  "composer.attach.cancel": "Cancelar",
   "composer.dictate": "Ditar uma mensagem",
   "composer.send": "Enviar mensagem",
 
@@ -395,6 +398,7 @@ const sentences = {
   "composer.files": "Arquivos para enviar",
   "composer.stillUploading": "Os arquivos ainda estão subindo",
   "composer.file.uploading": "Enviando, {percent}",
+  "composer.file.uploadingUnmeasured": "Enviando…",
   "composer.file.remove": "Remover {name}",
   "composer.file.failed": "{name} não pode ser enviado: {reason}",
   "composer.file.empty": "O arquivo está vazio",

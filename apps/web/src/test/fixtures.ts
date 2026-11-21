@@ -1,18 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-/** Small builders for tests: one entry or bot, with only what a test cares about given. */
+/** Small builders for tests, with only what a test cares about given. */
 import {
   BotId,
-  EntryId,
   ModelId,
   ProviderId,
   type Bot,
   type BotState,
-  type EntryPreview,
   type Language,
 } from "@j3-bots/contracts";
-import * as DateTime from "effect/DateTime";
+import type { PresentationContext } from "@j3-bots/client-runtime/wording";
 import { createI18n } from "@j3-bots/i18n";
-import type { PresentationContext } from "../presentation/roster";
+import * as DateTime from "effect/DateTime";
 
 export const at = (iso: string) => DateTime.makeUnsafe(iso);
 
@@ -26,26 +24,6 @@ export function context(
     timeZone: "America/Sao_Paulo",
     now: at(now),
     botName: (id) => names[id] ?? null,
-  };
-}
-
-let next = 0;
-
-/** A roster row's view of an entry. */
-export function preview(
-  createdAt: string,
-  kind: EntryPreview["kind"] = "message",
-  text = "Hello",
-  author: EntryPreview["author"] = { _tag: "operator" },
-  recipientId: EntryPreview["recipientId"] = null,
-): EntryPreview {
-  return {
-    entryId: EntryId.make(`p${++next}`),
-    kind,
-    author,
-    text,
-    recipientId,
-    createdAt: at(createdAt),
   };
 }
 

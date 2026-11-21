@@ -110,3 +110,18 @@ const unit = (i18n: { readonly locale: string }, name: string, n: number) =>
 
 export const millisBetween = (from: DateTime.Utc, to: DateTime.Utc) =>
   DateTime.toEpochMillis(to) - DateTime.toEpochMillis(from);
+
+/**
+ * The zone, if this device knows it; null if not. The server checks a saved
+ * zone against its own time zone data, which can be newer than a device's,
+ * so a client shows times in a zone it does not know in its own instead.
+ */
+export function knownTimeZone(timeZone: string): string | null {
+  try {
+    // A zone it does not know throws a RangeError.
+    new Intl.DateTimeFormat(undefined, { timeZone }).format(0);
+    return timeZone;
+  } catch {
+    return null;
+  }
+}

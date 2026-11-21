@@ -17,7 +17,7 @@ import {
 } from "@j3-bots/client-runtime/presentation";
 import { useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
-import { timeInSentence } from "../lib/time";
+import { timeInSentence } from "@j3-bots/client-runtime/wording";
 import { windowText } from "../presentation/usage";
 import { AvatarShape } from "./BotAvatar";
 import { Loading, Section } from "./SettingsSection";

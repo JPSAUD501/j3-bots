@@ -418,6 +418,30 @@ export type Entry = typeof Entry.Type;
 export const PREVIEW_LENGTH = 200;
 
 /**
+ * The text an entry leads with, which its preview carries: the message, the
+ * first question, the action, what is asked for, the routine's name; empty
+ * for an entry with no text of its own.
+ */
+export const entryText = (entry: Entry): string => {
+  switch (entry._tag) {
+    case "message":
+    case "handoff":
+      return entry.text;
+    case "question":
+      return entry.questions[0].prompt;
+    case "approval":
+      return entry.action;
+    case "secret-request":
+      return entry.label;
+    case "routine-change":
+      return entry.name;
+    case "work-fold":
+    case "notice":
+      return "";
+  }
+};
+
+/**
  * What the roster shows under a name: the latest entry, cut short. `text` is
  * the message, the question or the action, at most `PREVIEW_LENGTH` characters,
  * and empty for entries with no text of their own.

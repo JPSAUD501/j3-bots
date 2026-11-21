@@ -43,7 +43,7 @@ import type {
   ShellIntents,
 } from "../shell/data";
 import { cn } from "../lib/cn";
-import { activityTime } from "../lib/time";
+import { activityTime } from "@j3-bots/client-runtime/wording";
 import { AppUpdate } from "./AppUpdate";
 import { ShortcutSetting } from "./ShortcutSetting";
 import { ConnectProviders, engineProblem, ProviderRow } from "./EmptyStates";
