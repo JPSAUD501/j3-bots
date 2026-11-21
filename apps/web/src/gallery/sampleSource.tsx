@@ -243,7 +243,8 @@ function sampleIntents({ get, update }: Store): ShellIntents {
     restoreDraft: nothing,
     retryDrafts: () => Promise.resolve(true),
     dismissDraftOffer: nothing,
-    sendDraft: (target, mentions) => {
+    sendDraft: (target, addressing) => {
+      const mentions = addressing?.mentions;
       const key = keyOf(target);
       const draft = get().drafts[key] ?? blankDraft;
       const text = draft.text.trim();

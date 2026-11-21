@@ -10,85 +10,177 @@ export type Block =
   | { readonly kind: "code"; readonly language: string | null; readonly text: string };
 
 const FENCE = /^```([\w+-]*)\n([\s\S]*?)\n?```$/gm;
-// Inline code, a web link, or an @mention.
-const INLINE = /`([^`\n]+)`|(https?:\/\/[^\s<>"]+)|@([\p{L}\p{N}_-]+)/gu;
+// Inline code, or a web link. A link stops at a backtick, which opens code.
+const LITERAL = /`([^`\n]+)`|(https?:\/\/[^\s<>"`]+)/gu;
 const TRAILING = /[.,;:!?'"]+$/;
+
+/** A part of message text read as it is written: a fenced block, inline code or a link. */
+type Literal =
+  | {
+      readonly kind: "fence";
+      readonly start: number;
+      readonly end: number;
+      readonly language: string | null;
+      readonly text: string;
+    }
+  | {
+      readonly kind: "inline";
+      readonly start: number;
+      readonly end: number;
+      readonly inline: Inline;
+    };
+
+/**
+ * The literal parts of `text`, in order and apart: fenced blocks, and between
+ * them inline code and web links. One reading, which the bubble renders and
+ * the composer judges mentions by, so they never disagree.
+ */
+function literals(text: string): ReadonlyArray<Literal> {
+  const found: Array<Literal> = [];
+  const inline = (from: number, to: number) => {
+    for (const match of text.slice(from, to).matchAll(LITERAL)) {
+      const [whole, code, url] = match;
+      const start = from + match.index;
+      if (code !== undefined) {
+        found.push({
+          kind: "inline",
+          start,
+          end: start + whole.length,
+          inline: { kind: "code", text: code },
+        });
+      } else if (url !== undefined) {
+        let href = url.replace(TRAILING, "");
+        // A closing parenthesis belongs to the link only if the link opened one.
+        while (href.endsWith(")") && count(href, "(") < count(href, ")")) href = href.slice(0, -1);
+        found.push({
+          kind: "inline",
+          start,
+          end: start + href.length,
+          inline: { kind: "link", href, text: href },
+        });
+      }
+    }
+  };
+  let cursor = 0;
+  for (const fence of text.matchAll(FENCE)) {
+    inline(cursor, fence.index);
+    found.push({
+      kind: "fence",
+      start: fence.index,
+      end: fence.index + fence[0].length,
+      language: fence[1] || null,
+      text: fence[2] ?? "",
+    });
+    cursor = fence.index + fence[0].length;
+  }
+  inline(cursor, text.length);
+  return found;
+}
+
+const count = (s: string, ch: string) => s.split(ch).length - 1;
+
+/**
+ * Where `text` is read as written, so an `@` there mentions nobody: each
+ * fenced block, inline code span and web link, as `[start, end)`.
+ */
+export function literalRanges(text: string): ReadonlyArray<readonly [number, number]> {
+  return literals(text).map(({ start, end }) => [start, end] as const);
+}
+
+/**
+ * A mention opens at the start of the text, after a space or after opening
+ * punctuation, so an address like `ana@example.com` holds none.
+ */
+export const opensAt = (text: string, at: number) =>
+  at === 0 || /[\s([{"'“‘«:]/u.test(text.charAt(at - 1));
+
+/** A name ends where the text does or where no letter, digit or underscore follows. */
+export const endsAt = (text: string, at: number) => !/[\p{L}\p{N}\p{M}_]/u.test(text.charAt(at));
 
 /**
  * Splits message text into what the bubble renders: paragraphs with inline
  * code, links and mentions, and fenced code blocks. Everything else is plain
- * text. Only http and https addresses become links. `@Name` is a mention only
- * when the name is in `mentionable`, `@everyone` too.
+ * text. Only http and https addresses become links. `@` and a name in
+ * `mentionable` is a mention where it opens and ends as one, outside code and
+ * links; of two names that both fit, the longer.
  */
 export function parseMessageText(text: string, mentionable: ReadonlyArray<string> = []): Block[] {
+  const names = mentionable.filter((name) => name !== "").toSorted((a, b) => b.length - a.length);
   const blocks: Block[] = [];
+  const parts = literals(text);
+  const paragraphs = (from: number, to: number) => {
+    const split = (start: number, end: number) => {
+      while (start < end && text[start] === "\n") start += 1;
+      while (end > start && text[end - 1] === "\n") end -= 1;
+      if (text.slice(start, end).trim() === "") return;
+      blocks.push({
+        kind: "paragraph",
+        inlines: inlines(
+          text,
+          start,
+          end,
+          parts.filter((part) => part.kind === "inline" && part.start >= start && part.end <= end),
+          names,
+        ),
+      });
+    };
+    let start = from;
+    for (const gap of text.slice(from, to).matchAll(/\n{2,}/g)) {
+      split(start, from + gap.index);
+      start = from + gap.index + gap[0].length;
+    }
+    split(start, to);
+  };
   let cursor = 0;
-  for (const fence of text.matchAll(FENCE)) {
-    paragraphs(text.slice(cursor, fence.index), mentionable, blocks);
-    blocks.push({ kind: "code", language: fence[1] || null, text: fence[2] ?? "" });
-    cursor = fence.index + fence[0].length;
+  for (const part of parts) {
+    if (part.kind !== "fence") continue;
+    paragraphs(cursor, part.start);
+    blocks.push({ kind: "code", language: part.language, text: part.text });
+    cursor = part.end;
   }
-  paragraphs(text.slice(cursor), mentionable, blocks);
+  paragraphs(cursor, text.length);
   return blocks;
 }
 
-function paragraphs(text: string, mentionable: ReadonlyArray<string>, into: Block[]) {
-  for (const paragraph of text.split(/\n{2,}/)) {
-    const trimmed = paragraph.replace(/^\n+|\n+$/g, "");
-    if (trimmed.trim() !== "")
-      into.push({ kind: "paragraph", inlines: inlines(trimmed, mentionable) });
-  }
-}
-
-function inlines(text: string, mentionable: ReadonlyArray<string>): Inline[] {
+/** The inlines of `[from, to)` of `text`: its literal parts, and mentions and text between them. */
+function inlines(
+  text: string,
+  from: number,
+  to: number,
+  parts: ReadonlyArray<Literal>,
+  names: ReadonlyArray<string>,
+): Inline[] {
   const out: Inline[] = [];
-  let cursor = 0;
   const pushText = (s: string) => {
     if (s === "") return;
     const last = out.at(-1);
     if (last?.kind === "text") out[out.length - 1] = { kind: "text", text: last.text + s };
     else out.push({ kind: "text", text: s });
   };
-  for (const match of text.matchAll(INLINE)) {
-    const [whole, code, url, name] = match;
-    pushText(text.slice(cursor, match.index));
-    cursor = match.index + whole.length;
-    if (code !== undefined) out.push({ kind: "code", text: code });
-    else if (url !== undefined) {
-      let href = url.replace(TRAILING, "");
-      // A closing parenthesis belongs to the link only if the link opened one.
-      while (href.endsWith(")") && count(href, "(") < count(href, ")")) href = href.slice(0, -1);
-      out.push({ kind: "link", href, text: href });
-      cursor -= url.length - href.length;
-    } else if (name !== undefined && mentionable.includes(name)) {
+  const prose = (start: number, end: number) => {
+    let cursor = start;
+    for (let at = text.indexOf("@", start); at !== -1 && at < end; at = text.indexOf("@", at + 1)) {
+      if (at < cursor || !opensAt(text, at)) continue;
+      const name = names.find(
+        (candidate) =>
+          at + 1 + candidate.length <= end &&
+          text.startsWith(candidate, at + 1) &&
+          endsAt(text, at + 1 + candidate.length),
+      );
+      if (name === undefined) continue;
+      pushText(text.slice(cursor, at));
       out.push({ kind: "mention", name });
-    } else pushText(whole);
-  }
-  pushText(text.slice(cursor));
-  return out;
-}
-
-const count = (s: string, ch: string) => s.split(ch).length - 1;
-
-const INLINE_CODE = /`[^`\n]+`/g;
-
-/**
- * Where `text` holds code, as a bubble renders it: each fenced block and each
- * inline span, from its first backtick to its last, as `[start, end)`.
- */
-export function codeRanges(text: string): ReadonlyArray<readonly [number, number]> {
-  const ranges: Array<readonly [number, number]> = [];
-  let cursor = 0;
-  const inline = (from: number, to: number) => {
-    for (const span of text.slice(from, to).matchAll(INLINE_CODE)) {
-      ranges.push([from + span.index, from + span.index + span[0].length]);
+      cursor = at + 1 + name.length;
     }
+    pushText(text.slice(cursor, end));
   };
-  for (const fence of text.matchAll(FENCE)) {
-    inline(cursor, fence.index);
-    ranges.push([fence.index, fence.index + fence[0].length]);
-    cursor = fence.index + fence[0].length;
+  let cursor = from;
+  for (const part of parts) {
+    if (part.kind !== "inline") continue;
+    prose(cursor, part.start);
+    out.push(part.inline);
+    cursor = part.end;
   }
-  inline(cursor, text.length);
-  return ranges;
+  prose(cursor, to);
+  return out;
 }

@@ -206,9 +206,14 @@ export interface J3Client {
     files: ReadonlyArray<{ readonly name: string; readonly body: Blob }>,
   ) => void;
   readonly detachFile: (target: EntryTarget, key: string) => void;
-  /** Sends the draft once and clears it. */
-  /** `mentions` only applies in a room; leaving it out mentions nobody. */
-  readonly sendDraft: (target: EntryTarget, mentions?: Mentions) => Promise<Drafts.DraftSendResult>;
+  /**
+   * Sends the draft once and clears it. `addressing` only applies in a room;
+   * leaving it out mentions nobody.
+   */
+  readonly sendDraft: (
+    target: EntryTarget,
+    addressing?: Drafts.Addressing,
+  ) => Promise<Drafts.DraftSendResult>;
   /**
    * Calls `listener` for each draft another window sent or changed under this
    * one; see `Drafts.changedElsewhere`. Returns the function that stops it.
@@ -463,7 +468,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
       run.sync(services.drafts.setText(target, text, mentions)),
     attachFiles: (target, files) => fire(services.drafts.attach(target, files)),
     detachFile: (target, key) => fire(services.drafts.detach(target, key)),
-    sendDraft: (target, mentions) => run.promise(services.drafts.send(target, mentions)),
+    sendDraft: (target, addressing) => run.promise(services.drafts.send(target, addressing)),
     onDraftChangedElsewhere: (listener) => listen(services.drafts.changedElsewhere, listener),
     draftOffers: services.drafts.offers,
     draftsSwitching: services.drafts.switching,

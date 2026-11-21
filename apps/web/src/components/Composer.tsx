@@ -29,6 +29,9 @@ import type { I18n } from "../i18n/i18n";
 import { cn } from "../lib/cn";
 import {
   EVERYONE,
+  type DraggedText,
+  draggedText,
+  followDrop,
   followEdit,
   insertMention,
   type Mentionable,
@@ -219,6 +222,8 @@ export function Composer({
   const remember = (element: HTMLTextAreaElement) => {
     selection.current = [element.selectionStart, element.selectionEnd];
   };
+  // Text being dragged out of the field, with the mentions in it, which a drop back in moves.
+  const dragged = useRef<DraggedText | null>(null);
   const mention = useMentionPicker({
     draftKey,
     value,
@@ -384,7 +389,16 @@ export function Composer({
             const [start, end] = selection.current ?? [0, 0];
             const over: readonly [number, number] | null = start < end ? [start, end] : null;
             const place = { replaced: over, caret };
-            onValueChange(field.value, followEdit(value, field.value, place, mentions));
+            const input =
+              event.nativeEvent instanceof InputEvent ? event.nativeEvent.inputType : null;
+            // A drop leaves the caret, or the text it selects, ending where the dropped text does.
+            const dropAt = field.selectionEnd - (field.value.length - value.length);
+            onValueChange(
+              field.value,
+              input === "insertFromDrop"
+                ? followDrop(value, field.value, dropAt, mentions, dragged.current)
+                : followEdit(value, field.value, place, mentions),
+            );
             remember(field);
             mention.follow(field);
           }}
@@ -398,6 +412,17 @@ export function Composer({
           }}
           onBlur={mention.leave}
           onCut={(event) => remember(event.currentTarget)}
+          onDragStart={(event) => {
+            const field = event.currentTarget;
+            dragged.current = draggedText(
+              value,
+              [field.selectionStart, field.selectionEnd],
+              mentions,
+            );
+          }}
+          onDragEnd={() => {
+            dragged.current = null;
+          }}
           onDrop={(event) => remember(event.currentTarget)}
           onKeyDown={(event) => {
             remember(event.currentTarget);

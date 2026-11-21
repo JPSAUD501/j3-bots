@@ -70,6 +70,17 @@ export interface Draft {
 
 const empty: Draft = { text: "", mentions: [], files: [], sending: false };
 
+/**
+ * Who a room message addresses, as the client judged it from the mentions
+ * standing in the draft: whom `message.send` asks, and the names the members
+ * it mentions were picked by where those picks stand, the first for each
+ * member being the pick that addressed it.
+ */
+export interface Addressing {
+  readonly mentions: Mentions;
+  readonly labels: ReadonlyArray<MentionLabel>;
+}
+
 /** What `send` did with the draft. */
 export type DraftSendResult =
   /** It is on its way, through the outbox. */
@@ -136,17 +147,6 @@ const localFileOf = (file: DraftFile): LocalFile =>
       }
     : file;
 
-/** The name each member `mentions` names had where the operator picked it in `draft`. */
-const labelsOf = (draft: Draft, mentions: Mentions): ReadonlyArray<MentionLabel> =>
-  mentions._tag === "everyone"
-    ? []
-    : mentions.ids.flatMap((botId) => {
-        const picked = draft.mentions.find(
-          (mention) => mention._tag === "bot" && mention.botId === botId,
-        );
-        return picked?._tag === "bot" ? [{ botId, label: picked.label }] : [];
-      });
-
 const isEmpty = (draft: Draft) => draft.text === "" && draft.files.length === 0;
 
 /** What the device keeps of a draft: its text, its mentions and the files already on the server. */
@@ -162,17 +162,23 @@ const keptOf = (draft: Draft): Kept => ({
   files: draft.files.flatMap((file) => (file._tag === "ready" ? [file.attachment] : [])),
 });
 
-const sameMention = (one: DraftMention, other: DraftMention | undefined) =>
-  other !== undefined &&
+const sameMention = (one: DraftMention, other: DraftMention) =>
   one.position === other.position &&
   (one._tag === "bot"
     ? other._tag === "bot" && one.botId === other.botId && one.label === other.label
     : other._tag === "everyone");
 
-const sameKept = (one: Kept, other: Kept) =>
+/** Whether two drafts hold the same writing: the same text, with the same mentions picked in it. */
+const sameWriting = (
+  one: Pick<Kept, "text" | "mentions">,
+  other: Pick<Kept, "text" | "mentions">,
+) =>
   one.text === other.text &&
   one.mentions.length === other.mentions.length &&
-  one.mentions.every((mention, index) => sameMention(mention, other.mentions[index])) &&
+  one.mentions.every((mention) => other.mentions.some((picked) => sameMention(mention, picked)));
+
+const sameKept = (one: Kept, other: Kept) =>
+  sameWriting(one, other) &&
   one.files.length === other.files.length &&
   one.files.every((file, index) => file.id === other.files[index]?.id);
 
@@ -278,8 +284,9 @@ export class Drafts extends Context.Service<
      * second finds the draft already on its way. What goes is the draft as it
      * was at the call, or nothing. The transaction claims the draft as this
      * window last read or wrote it, so two windows never send it twice.
+     * Without `addressing` the message mentions nobody.
      */
-    readonly send: (target: EntryTarget, mentions?: Mentions) => Effect.Effect<DraftSendResult>;
+    readonly send: (target: EntryTarget, addressing?: Addressing) => Effect.Effect<DraftSendResult>;
     /**
      * Each draft another window sent or changed while this one was changing
      * or sending it. Nothing this window held was written: it now shows the
@@ -534,8 +541,9 @@ export const layer = Layer.effect(
         const held = state.get().get(key) ?? empty;
         const read = keptIn(known.get(key), pairing) ?? keptOf(empty);
         const stored = shown(keptIn(value, pairing) ?? keptOf(empty));
-        // Text the device never kept, which this window shows no more.
-        const offered = held.text !== "" && held.text !== stored.text && held.text !== read.text;
+        // Writing the device never kept, which this window shows no more: the
+        // same text with other mentions picked in it is other writing.
+        const offered = held.text !== "" && !sameWriting(held, stored) && !sameWriting(held, read);
         if (offered) offer(key, held);
         if (value === undefined) known.delete(key);
         else known.set(key, value);
@@ -818,7 +826,7 @@ export const layer = Layer.effect(
         ).pipe(Effect.andThen(upload === undefined ? Effect.void : Fiber.interrupt(upload)));
       });
 
-    const send = Effect.fn("Drafts.send")(function* (target: EntryTarget, mentions?: Mentions) {
+    const send = Effect.fn("Drafts.send")(function* (target: EntryTarget, addressing?: Addressing) {
       const key = targetKey(target);
       // What the operator pressed Send on, captured at the press.
       const draft = state.get().get(key) ?? empty;
@@ -859,7 +867,7 @@ export const layer = Layer.effect(
                 target,
                 text,
                 attachments,
-                ...(mentions === undefined ? {} : { mentions, labels: labelsOf(draft, mentions) }),
+                ...addressing,
               },
               {
                 pairing,

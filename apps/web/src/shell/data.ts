@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type {
+  Addressing,
   ConversationItem,
   Draft,
   DraftMention,
@@ -18,7 +19,6 @@ import type {
   EntryTarget,
   MemoryFile,
   MemoryPath,
-  Mentions,
   PairingCode,
   RoomId,
   RosterItem,
@@ -112,9 +112,9 @@ export interface ShellIntents extends TimelineIntents {
   readonly detachFile: (target: EntryTarget, key: string) => void;
   /**
    * Sends the draft once, however often it is called, and clears it.
-   * `mentions` only applies in a room; leaving it out mentions nobody.
+   * `addressing` only applies in a room; leaving it out mentions nobody.
    */
-  readonly sendDraft: (target: EntryTarget, mentions?: Mentions) => void;
+  readonly sendDraft: (target: EntryTarget, addressing?: Addressing) => void;
   /** Puts back the text another tab replaced. */
   readonly restoreDraft: (target: EntryTarget) => void;
   /** Lets go of the text another tab replaced. */

@@ -276,13 +276,13 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
           })
         : undefined;
     // Who the message wakes as the draft stands: only mentions picked, and still standing, count.
-    const mentions =
+    const addressing =
       item._tag === "room" ? addressed(draft.text, draft.mentions, item.room.members) : undefined;
     const addressee =
       item._tag === "room"
         ? addresseeLine(
             addresseeOf(
-              mentions ?? null,
+              addressing?.mentions ?? null,
               item.room.hostId,
               (botId) => bots.find((candidate) => candidate.id === botId)?.profile.name,
               i18n,
@@ -373,7 +373,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
               notSaved={data.draftNotSaved(target)}
               onAttachFiles={(files) => intents.attachFiles(target, files)}
               onDetachFile={(fileKey) => intents.detachFile(target, fileKey)}
-              onSend={() => intents.sendDraft(target, mentions)}
+              onSend={() => intents.sendDraft(target, addressing)}
               {...(dictate ? { onDictate: () => dictate(target) } : {})}
               {...(offer === null
                 ? {}

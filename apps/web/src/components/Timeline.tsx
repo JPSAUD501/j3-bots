@@ -13,7 +13,7 @@ import type {
   RoutineId,
   WorkStep,
 } from "@j3-bots/contracts";
-import type { ConversationItem } from "@j3-bots/client-runtime";
+import type { ConversationItem, MentionLabel } from "@j3-bots/client-runtime";
 import type * as Redacted from "effect/Redacted";
 import { useBots, useI18n } from "../app/context";
 import {
@@ -80,9 +80,9 @@ export function Timeline({ entries, room, workSteps, submitting, intents }: Time
   const i18n = useI18n();
   const { t } = i18n;
   const nameOf = (botId: BotId) => bots.get(botId)?.profile.name;
-  // In a room, a message highlights only whom it addressed.
-  const highlighted = (mentions: Mentions | null) =>
-    room === null ? [] : mentionedNames(mentions, nameOf);
+  // In a room, a message highlights only whom it addressed, by the names it was picked by when known.
+  const highlighted = (mentions: Mentions | null, labels: ReadonlyArray<MentionLabel>) =>
+    room === null ? [] : mentionedNames(mentions, labels, nameOf);
   return (
     <div className="flex flex-col">
       {buildTimeline(entries).map((item) => {
@@ -107,7 +107,7 @@ export function Timeline({ entries, room, workSteps, submitting, intents }: Time
                 <MessageBubble
                   message={message}
                   position={item.position}
-                  mentionable={highlighted(message.mentions)}
+                  mentionable={highlighted(message.mentions, message.labels)}
                   onOpenAttachment={intents.openAttachment}
                   onRetry={() =>
                     left === null
@@ -137,7 +137,8 @@ export function Timeline({ entries, room, workSteps, submitting, intents }: Time
                 speaker={
                   room !== null && author._tag === "bot" ? (bots.get(author.botId) ?? null) : null
                 }
-                mentionable={highlighted(message.mentions)}
+                // The server's entry keeps no names picked: its members go by their names now.
+                mentionable={highlighted(message.mentions, [])}
                 onOpenAttachment={intents.openAttachment}
                 onRetry={() => intents.retryMessage(message.id)}
                 submitting={submitting(message.id)}

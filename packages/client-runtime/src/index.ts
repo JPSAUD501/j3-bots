@@ -69,6 +69,7 @@ export {
   type ConversationItem,
   Conversations,
   type ConversationState,
+  type MentionLabel,
   messageStatus,
   type MessageStatus,
   type OutgoingMessage,
@@ -88,6 +89,7 @@ export {
 } from "./stores/Details.ts";
 export { Devices, type RevokeResult } from "./stores/Devices.ts";
 export {
+  type Addressing,
   type Draft,
   type DraftChangedElsewhere,
   type DraftFile,

@@ -62,11 +62,12 @@ import { memoryLabel } from "../components/DetailsPanel";
 import { EditBotDialog } from "../components/EditBotDialog";
 import { MemoryViewer, type MemoryReading } from "../components/MemoryViewer";
 import { NewBotDialog } from "../components/NewBotDialog";
-import { RoomDialog, type RoomFormMode, type RoomSubmission } from "../components/RoomDialog";
+import { RoomDialog, type RoomSubmission } from "../components/RoomDialog";
 import { guessDeviceName, Incompatible, Pairing, StorageFailed } from "../components/Pairing";
 import { type Notice, Toast } from "../components/Toast";
 import { notificationAccess } from "../preferences/notifications";
 import { notificationContent } from "../presentation/notification";
+import type { RoomFormMode } from "../presentation/roomForm";
 import { handoffPeer } from "../presentation/timeline";
 import type { ConversationView, ShellData, ShellIntents } from "../shell/data";
 import { ShellSourceProvider } from "../shell/source";
@@ -637,7 +638,9 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
         failure.error._tag === "Invalid" &&
         failure.error.reason === "room-members"
       ) {
-        setRoomForm({ _tag: "unarchive", roomId });
+        // A form the operator opened meanwhile stays theirs: the refusal is said instead.
+        if (open.current.room === null) setRoomForm({ _tag: "unarchive", roomId });
+        else say(t("room.unarchiveNeedsMembers", { name: room.name }));
       } else {
         say(t("room.unarchiveFailed", { name: room.name }));
       }
@@ -709,8 +712,8 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
     restoreDraft: j3.restoreDraft,
     retryDrafts: j3.retryDrafts,
     dismissDraftOffer: j3.dismissDraftOffer,
-    sendDraft: (asked, mentions) =>
-      void j3.sendDraft(asked, mentions).then((result) => {
+    sendDraft: (asked, addressing) =>
+      void j3.sendDraft(asked, addressing).then((result) => {
         if (result === "not-kept") say(t("composer.notKept"));
       }),
     loadOlder: (asked) => {

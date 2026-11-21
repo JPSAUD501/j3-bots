@@ -278,6 +278,8 @@ export const en = {
   "room.unarchive": "Unarchive {name}",
   "room.archiveFailed": "{name} wasn’t archived. Try again.",
   "room.unarchiveFailed": "{name} wasn’t unarchived. Try again.",
+  "room.unarchiveNeedsMembers":
+    "{name} wasn’t unarchived: it needs two to six bots and a host first. Unarchive it again to pick them.",
   "room.delete": "Delete {name}",
   "room.delete.title": "Delete {name}?",
   "room.delete.body": "{name} and everything said in it are deleted for good. Its bots stay.",

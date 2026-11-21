@@ -278,6 +278,8 @@ export const ptBR: Catalog = {
   "room.unarchive": "Desarquivar {name}",
   "room.archiveFailed": "{name} não foi arquivada. Tente de novo.",
   "room.unarchiveFailed": "{name} não foi desarquivada. Tente de novo.",
+  "room.unarchiveNeedsMembers":
+    "{name} não foi desarquivada: antes ela precisa de dois a seis bots e um anfitrião. Desarquive-a de novo para escolhê-los.",
   "room.delete": "Excluir {name}",
   "room.delete.title": "Excluir {name}?",
   "room.delete.body":

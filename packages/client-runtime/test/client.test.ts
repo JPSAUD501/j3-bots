@@ -1605,6 +1605,44 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
     }),
   );
 
+  it.effect("offers back mentions another tab displaced with the same text", () =>
+    Effect.gen(function* () {
+      const device = TestPlatform.makeDevice();
+      const first = yield* Effect.gen(function* () {
+        yield* pairAndConnect;
+        const botId = yield* createBot("Wren");
+        const target: EntryTarget = { _tag: "conversation", botId };
+        yield* (yield* Drafts).setText(target, "shared");
+        yield* whenStored(device.storage, "drafts", targetKey(target), present);
+        return { target, botId, credential: yield* savedCredential };
+      }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
+      const key = targetKey(first.target);
+      const text = "@Wren, have a look";
+      const picked = { _tag: "bot", botId: first.botId, label: "Wren", position: 0 } as const;
+
+      yield* Effect.gen(function* () {
+        const one = yield* Drafts;
+        yield* Effect.gen(function* () {
+          const two = yield* Drafts;
+          // One tab types the name; the other picks it, in the same text.
+          yield* one.setText(first.target, text);
+          yield* whenStored(device.storage, "drafts", key, holds("have a look"));
+          yield* two.setText(first.target, text, [picked]);
+          yield* waitFor(
+            two.state,
+            (state) => state.get(key)?.text === text && state.get(key)?.mentions.length === 0,
+          );
+
+          // The pick is not lost without a word: it is on offer, and comes back.
+          assert.isTrue(two.offers.get().has(key));
+          yield* two.restore(first.target);
+          assert.deepStrictEqual(two.state.get().get(key)?.mentions, [picked]);
+          yield* whenStored(device.storage, "drafts", key, holds('"label":"Wren"'));
+        }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+      }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+    }),
+  );
+
   it.effect("keeps offering text another tab displaced through a later change", () =>
     Effect.gen(function* () {
       const device = TestPlatform.makeDevice();
@@ -2310,7 +2348,11 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           const conversation = yield* (yield* Conversations).open(target);
           const drafts = yield* Drafts;
           yield* drafts.setText(target, text, [{ _tag: "bot", botId, label: "Wren", position: 0 }]);
-          assert.strictEqual(yield* drafts.send(target, { _tag: "bots", ids: [botId] }), "sent");
+          const addressing = {
+            mentions: { _tag: "bots", ids: [botId] },
+            labels: [{ botId, label: "Wren" }],
+          } as const;
+          assert.strictEqual(yield* drafts.send(target, addressing), "sent");
           yield* Queue.take(sends);
           yield* waitFor(conversation.state, (state) => notSent(state) !== undefined);
         }).pipe(Effect.scoped, Effect.provide(client(credential, device)));

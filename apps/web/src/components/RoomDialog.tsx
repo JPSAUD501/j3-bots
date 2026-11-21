@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Dialog } from "@base-ui/react/dialog";
 import type { IntentFailure, RoomChanges, RoomDraft } from "@j3-bots/client-runtime";
-import type { Bot, BotId, Room } from "@j3-bots/contracts";
+import type { Bot, BotId } from "@j3-bots/contracts";
 import { CheckIcon, XIcon } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { useI18n } from "../app/context";
@@ -9,13 +9,16 @@ import { cn } from "../lib/cn";
 import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
 import {
   blankRoomForm,
+  followRoom,
   hostOf,
   ROOM_MEMBERS,
   ROOM_NAME_MAX,
   roomChanges,
   roomDraft,
   roomFormOf,
+  type RoomFormMode,
   type RoomFormProblem,
+  roomFormTarget,
   type RoomFormValues,
   sameRoomForm,
   withMember,
@@ -24,15 +27,6 @@ import {
 import { AvatarShape } from "./BotAvatar";
 import { Button } from "./ui/button";
 import { ChoiceIndicator, choiceRow } from "./ui/choice";
-
-/**
- * What the form is for: a new room, changing one, or giving an archived one
- * what it needs back. `gone` when the room was deleted while the form was
- * open: the form stays, says so, and saves nothing.
- */
-export type RoomFormMode =
-  | { readonly _tag: "create" }
-  | { readonly _tag: "edit" | "unarchive"; readonly room: Room; readonly gone: boolean };
 
 /** What the form sends: a new room, or changes to the one it edits. */
 export type RoomSubmission =
@@ -55,7 +49,7 @@ export interface RoomFormProps {
   readonly onUnsavedChange?: (unsaved: boolean) => void;
   /** The id of the form's heading, which names the dialog. */
   readonly titleId: string;
-  /** Where the form starts, for the gallery; the room as it is, or empty, otherwise. */
+  /** Where the form starts, for the gallery; the room as the server has it, or empty, otherwise. */
   readonly initial?: RoomFormValues;
   /** A failure to show from the start, for the gallery. */
   readonly initialFailure?: IntentFailure;
@@ -70,11 +64,13 @@ const fieldClass =
  * follows the bots picked: the one the operator chose while it stays in,
  * else the primary bot, else the first picked. What is missing is said once
  * the operator tries to send; a refusal from the server is said in the footer,
- * or beside the bots when they are the reason, and keeps what was typed. Save
- * sends only what the operator changed from what the form opened with, and
- * with nothing changed it closes without asking the server. A bot picked and
- * deleted meanwhile leaves the selection, which says so; a room deleted
- * meanwhile keeps the form open, saying so, and saves nothing.
+ * or beside the bots when they are the reason, and keeps what was typed. What
+ * the operator left alone follows the room as the server has it, so a change
+ * made elsewhere shows here; Save sends only what the form changes from the
+ * room as it is, and with nothing changed it closes without asking the
+ * server. A bot picked and deleted meanwhile leaves the selection, which says
+ * so; a room deleted meanwhile keeps the form open, saying so, and saves
+ * nothing.
  */
 export function RoomForm({
   mode,
@@ -103,7 +99,7 @@ export function RoomForm({
   };
   const room = mode._tag === "create" ? null : mode.room;
   const gone = mode._tag !== "create" && mode.gone;
-  // Where the form started: the room as the server had it when the form opened, or nothing.
+  // Where the form starts: the room as the server has it, or nothing.
   const [start, setStart] = useState(
     () => initial ?? (room === null ? blankRoomForm : roomFormOf(room)),
   );
@@ -111,17 +107,32 @@ export function RoomForm({
   // Bots picked and then deleted elsewhere, by name, which leave the selection and are named under it.
   const [dropped, setDropped] = useState<ReadonlyArray<string>>([]);
   const [botsSeen, setBotsSeen] = useState(bots);
-  if (botsSeen !== bots) {
-    setBotsSeen(bots);
-    const present = new Set<BotId>(bots.map((bot) => bot.id));
-    // The server dropped them from the room too, so what it has is what the form compares with.
-    setStart(withoutDeleted(start, present));
-    const deleted = values.members.filter((id) => !present.has(id));
-    if (deleted.length > 0) {
-      setValues(withoutDeleted(values, present));
-      const names = new Map(botsSeen.map((bot) => [bot.id, bot.profile.name]));
-      setDropped([...dropped, ...deleted.flatMap((id) => names.get(id) ?? [])]);
+  const [roomSeen, setRoomSeen] = useState(room);
+  if (botsSeen !== bots || roomSeen !== room) {
+    let nextStart = start;
+    let nextValues = values;
+    if (botsSeen !== bots) {
+      setBotsSeen(bots);
+      const present = new Set<BotId>(bots.map((bot) => bot.id));
+      // The server drops them from the room too, which the form follows once the room says so.
+      nextStart = withoutDeleted(start, present);
+      nextValues = withoutDeleted(values, present, nextStart.hostPick);
+      const deleted = values.members.filter((id) => !present.has(id));
+      if (deleted.length > 0) {
+        const names = new Map(botsSeen.map((bot) => [bot.id, bot.profile.name]));
+        setDropped([...dropped, ...deleted.flatMap((id) => names.get(id) ?? [])]);
+      }
     }
+    if (roomSeen !== room) {
+      setRoomSeen(room);
+      if (room !== null) {
+        const followed = followRoom(nextStart, nextValues, room);
+        nextStart = followed.start;
+        nextValues = followed.values;
+      }
+    }
+    setStart(nextStart);
+    setValues(nextValues);
   }
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<IntentFailure | null>(initialFailure ?? null);
@@ -453,10 +464,10 @@ export function RoomDialog({ mode, onClose, unsaved, onUnsavedChange, ...form }:
           aria-labelledby={titleId}
           className="fixed inset-0 z-40 flex flex-col bg-background pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] text-foreground outline-none transition-opacity duration-(--duration-slow) data-ending-style:opacity-0 data-starting-style:opacity-0 tablet:inset-x-4 tablet:top-12 tablet:bottom-12 tablet:mx-auto tablet:max-w-lg tablet:rounded-lg tablet:border tablet:border-border tablet:shadow-xl"
         >
-          {/* Mounted afresh with each opening, so it starts from the room as saved. */}
+          {/* Mounted afresh with each opening and each other target, so it starts from the room as saved. */}
           {held !== null && (
             <RoomForm
-              key={held.opening}
+              key={`${held.opening}/${roomFormTarget(held.value)}`}
               mode={held.value}
               onClose={onClose}
               onUnsavedChange={onUnsavedChange}

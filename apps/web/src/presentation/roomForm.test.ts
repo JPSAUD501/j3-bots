@@ -4,10 +4,12 @@ import { describe, expect, it } from "vite-plus/test";
 import { at } from "../test/fixtures";
 import {
   blankRoomForm,
+  followRoom,
   hostOf,
   roomChanges,
   roomDraft,
   roomFormOf,
+  roomFormTarget,
   type RoomFormValues,
   sameRoomForm,
   withMember,
@@ -120,15 +122,65 @@ describe("roomChanges", () => {
     });
   });
 
-  it("compares with the room less a bot deleted meanwhile, and sends the host it shows for a deleted host", () => {
+  it("shows the host the server chose once its host is deleted, and sends nothing", () => {
     const opened = roomFormOf({ ...room, members: [hal, ana, bo], hostId: ana });
     const present = new Set([hal, bo]);
     const start = withoutDeleted(opened, present);
-    const values = withoutDeleted(opened, present);
-    expect(start).toEqual({ ...opened, members: [hal, bo], hostPick: null });
-    expect(roomChanges(start, values, null, 4)).toEqual({
+    const values = withoutDeleted(opened, present, start.hostPick);
+    // The server moves the room to Hal, though Bo is the primary bot.
+    const followed = followRoom(start, values, { ...room, members: [hal, bo], hostId: hal });
+    expect(hostOf(followed.values, bo)).toBe(hal);
+    expect(roomChanges(followed.start, followed.values, bo, 4)).toEqual({
       _tag: "ready",
-      value: { hostId: hal },
+      value: {},
     });
+  });
+
+  it("sends the host it shows whenever the server's is another, as when that one leaves", () => {
+    const opened = roomFormOf({ ...room, members: [hal, ana, bo], hostId: hal });
+    // Another tab makes Ana the host; this form follows, then takes Ana out.
+    const elsewhere: Room = { ...room, members: [hal, ana, bo], hostId: ana };
+    const followed = followRoom(opened, opened, elsewhere);
+    expect(hostOf(followed.values, null)).toBe(ana);
+    const values = withMember(followed.values, ana, false);
+    expect(hostOf(values, null)).toBe(hal);
+    expect(roomChanges(followed.start, values, null, 4)).toEqual({
+      _tag: "ready",
+      value: { members: [hal, bo], hostId: hal },
+    });
+  });
+
+  it("gives a host picked and then deleted back to the server's", () => {
+    const opened = roomFormOf({ ...room, members: [hal, ana, bo], hostId: hal });
+    const values = { ...opened, hostPick: bo };
+    const present = new Set([hal, ana]);
+    const start = withoutDeleted(opened, present);
+    expect(hostOf(withoutDeleted(values, present, start.hostPick), ana)).toBe(hal);
+  });
+});
+
+describe("followRoom", () => {
+  it("follows the room where the operator changed nothing, and keeps what they changed", () => {
+    const opened = roomFormOf(room);
+    const values = { ...opened, name: "Liftoff" };
+    const elsewhere: Room = { ...room, name: "Launch v2", hopLimit: 6 };
+    const followed = followRoom(opened, values, elsewhere);
+    expect(followed.values).toEqual({ ...opened, name: "Liftoff", hopLimit: "6" });
+    expect(roomChanges(followed.start, followed.values, null, 4)).toEqual({
+      _tag: "ready",
+      value: { name: "Liftoff" },
+    });
+  });
+});
+
+describe("roomFormTarget", () => {
+  it("stays while the form changes the same room the same way, and changes for anything else", () => {
+    const edit = { _tag: "edit", room, gone: false } as const;
+    const renamed = { ...edit, room: { ...room, name: "Liftoff" } };
+    const unarchive = { _tag: "unarchive", room, gone: false } as const;
+    const other = { ...edit, room: { ...room, id: RoomId.make("other") } };
+    expect(roomFormTarget(renamed)).toBe(roomFormTarget(edit));
+    const targets = [{ _tag: "create" } as const, edit, unarchive, other].map(roomFormTarget);
+    expect(new Set(targets).size).toBe(targets.length);
   });
 });

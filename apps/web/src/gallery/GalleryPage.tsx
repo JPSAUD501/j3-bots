@@ -631,7 +631,7 @@ function ComposerDemo({
               value,
               mentions,
               mentionable.members.map((member) => member.id),
-            ) ?? null,
+            )?.mentions ?? null,
             mentionable.hostId,
             (botId) => mentionable.members.find((member) => member.id === botId)?.name,
             i18n,

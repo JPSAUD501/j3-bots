@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { DraftMention, IntentFailure } from "@j3-bots/client-runtime";
+import type {
+  Addressing,
+  DraftMention,
+  IntentFailure,
+  MentionLabel,
+} from "@j3-bots/client-runtime";
 import type { BotId, Mentions } from "@j3-bots/contracts";
 import type { I18n } from "../i18n/i18n";
-import { codeRanges } from "./messageText";
+import { endsAt, literalRanges, opensAt } from "./messageText";
 
 /** A room member the operator can mention, by the name the room shows. */
 export interface Mentionable {
@@ -22,34 +27,25 @@ export const EVERYONE = "everyone";
 const mentionToken = (mention: DraftMention) =>
   `@${mention._tag === "bot" ? mention.label : EVERYONE}`;
 
-/**
- * A mention opens at the start of the text, after a space or after opening
- * punctuation, so an address like `ana@example.com` holds none.
- */
-const opensAt = (text: string, at: number) =>
-  at === 0 || /[\s([{"'“‘«:]/u.test(text.charAt(at - 1));
-
-/** A name ends where the text does or where no letter, digit or underscore follows. */
-const endsAt = (text: string, at: number) => !/[\p{L}\p{N}\p{M}_]/u.test(text.charAt(at));
-
-const inCode = (ranges: ReadonlyArray<readonly [number, number]>, at: number) =>
+const inLiteral = (ranges: ReadonlyArray<readonly [number, number]>, at: number) =>
   ranges.some(([start, end]) => at >= start && at < end);
 
 /**
  * Whether a picked mention still addresses anyone: its token is intact where
- * it was written, opens and ends as a mention does, and is not in code.
+ * it was written, opens and ends as a mention does, and is not in code or a
+ * link, by the same rules the bubble highlights it by.
  */
 const stands = (
   text: string,
   mention: DraftMention,
-  code: ReadonlyArray<readonly [number, number]>,
+  literal: ReadonlyArray<readonly [number, number]>,
 ) => {
   const token = mentionToken(mention);
   return (
     text.startsWith(token, mention.position) &&
     opensAt(text, mention.position) &&
     endsAt(text, mention.position + token.length) &&
-    !inCode(code, mention.position)
+    !inLiteral(literal, mention.position)
   );
 };
 
@@ -58,30 +54,38 @@ const stands = (
  * operator picked count, and only while they stand in the text as it is sent,
  * trimmed as `Drafts.send` trims it. `@everyone` asks every member; otherwise
  * each member mentioned, by the id picked, in the order they appear. A member
- * no longer in the room is left out. `undefined` when it addresses nobody,
- * which goes to the host.
+ * no longer in the room is left out. With it, the names the members it
+ * mentions were picked by where those picks stand, in the order they appear:
+ * the first for each member is the pick that addressed it. `undefined` when
+ * it addresses nobody, which goes to the host.
  */
 export function addressed(
   text: string,
   mentions: ReadonlyArray<DraftMention>,
   members: ReadonlyArray<BotId>,
-): Mentions | undefined {
+): Addressing | undefined {
   const sent = text.trim();
   // Where the text sent starts in the draft: mentions are placed in the draft.
   const offset = text.length - text.trimStart().length;
-  const code = codeRanges(sent);
+  const literal = literalRanges(sent);
   const standing = mentions
     .map((mention) => ({ ...mention, position: mention.position - offset }))
-    .filter((mention) => mention.position >= 0 && stands(sent, mention, code))
+    .filter((mention) => mention.position >= 0 && stands(sent, mention, literal))
     .toSorted((a, b) => a.position - b.position);
-  if (standing.some((mention) => mention._tag === "everyone")) return { _tag: "everyone" };
+  if (standing.some((mention) => mention._tag === "everyone")) {
+    return { mentions: { _tag: "everyone" }, labels: [] };
+  }
   const ids: Array<BotId> = [];
+  const labels: Array<MentionLabel> = [];
   for (const mention of standing) {
-    if (mention._tag === "bot" && members.includes(mention.botId) && !ids.includes(mention.botId)) {
-      ids.push(mention.botId);
+    if (mention._tag !== "bot" || !members.includes(mention.botId)) continue;
+    if (!ids.includes(mention.botId)) ids.push(mention.botId);
+    const { botId, label } = mention;
+    if (!labels.some((kept) => kept.botId === botId && kept.label === label)) {
+      labels.push({ botId, label });
     }
   }
-  return ids.length === 0 ? undefined : { _tag: "bots", ids };
+  return ids.length === 0 ? undefined : { mentions: { _tag: "bots", ids }, labels };
 }
 
 /** Who a room message wakes, as the server routes it, by the names to show. */
@@ -144,17 +148,22 @@ export function resendLabel(to: Addressee, { t }: I18n): string {
 }
 
 /**
- * The names a room message highlights: those it addressed, as the server
- * took them, or `@everyone`. A name that merely reads like a mention is not
- * highlighted.
+ * The names a room message highlights: those of the members it addressed, as
+ * the server took them, or `@everyone`. Each member goes by the names it was
+ * picked by, when the message keeps them, else by its name now. A name that
+ * merely reads like a mention is not highlighted.
  */
 export function mentionedNames(
   mentions: Mentions | null,
+  labels: ReadonlyArray<MentionLabel>,
   nameOf: (botId: BotId) => string | undefined,
 ): ReadonlyArray<string> {
   if (mentions === null) return [];
   if (mentions._tag === "everyone") return [EVERYONE];
-  return mentions.ids.flatMap((id) => nameOf(id) ?? []);
+  return mentions.ids.flatMap((id) => {
+    const picked = labels.flatMap((label) => (label.botId === id ? [label.label] : []));
+    return picked.length > 0 ? picked : (nameOf(id) ?? []);
+  });
 }
 
 /**
@@ -227,11 +236,11 @@ function replacedSelection(
 /**
  * The mentions of `before` that still stand once the operator edited it into
  * `after`. An edit over a selection replaced exactly that selection, so a
- * pick in it is gone whatever was pasted or typed over it. Otherwise the edit
- * is the one run of text that changed; the caret after it, when known, places
- * that run where the operator typed, so a character typed just before an `@`
- * moves the mention rather than breaking it. Editing a mention's token, even
- * one character of it, ends that mention.
+ * pick in it is gone whatever was pasted or typed over it, even the same
+ * text. Otherwise the edit is the one run of text that changed; the caret
+ * after it, when known, places that run where the operator typed, so a
+ * character typed just before an `@` moves the mention rather than breaking
+ * it. Editing a mention's token, even one character of it, ends that mention.
  */
 export function followEdit(
   before: string,
@@ -239,13 +248,14 @@ export function followEdit(
   { replaced: selection, caret }: EditPlace,
   mentions: ReadonlyArray<DraftMention>,
 ): ReadonlyArray<DraftMention> {
-  if (mentions.length === 0 || before === after) return mentions;
+  if (mentions.length === 0) return mentions;
   const run = selection === null ? null : replacedSelection(before, after, selection);
   if (run !== null) {
     const [from, to] = run;
     const moved = replaced(mentions, from, to, after.length - before.length + (to - from));
     return moved.filter((mention) => after.startsWith(mentionToken(mention), mention.position));
   }
+  if (before === after) return mentions;
   // The text after the caret is untouched, so the changed run ends at the caret at the latest.
   const suffix = Math.min(
     commonSuffix(before, after),
@@ -257,6 +267,61 @@ export function followEdit(
   );
   const moved = replaced(mentions, prefix, before.length - suffix, after.length - suffix - prefix);
   return moved.filter((mention) => after.startsWith(mentionToken(mention), mention.position));
+}
+
+/** What text dragged out of the field carries: the text, and the mentions wholly in it, placed from its start. */
+export interface DraggedText {
+  readonly text: string;
+  readonly mentions: ReadonlyArray<DraftMention>;
+}
+
+/** What dragging `[start, end)` of `text` carries, with the mentions picked in it. */
+export function draggedText(
+  text: string,
+  [start, end]: readonly [number, number],
+  mentions: ReadonlyArray<DraftMention>,
+): DraggedText {
+  return {
+    text: text.slice(start, end),
+    mentions: mentions.flatMap((mention) =>
+      mention.position >= start && mention.position + mentionToken(mention).length <= end
+        ? [{ ...mention, position: mention.position - start }]
+        : [],
+    ),
+  };
+}
+
+/**
+ * The mentions once text was dropped into the field at `at`, turning
+ * `before` into `after`: those already there move with the text after the
+ * drop, and, when the text dropped is what `dragged` carried out of this
+ * field, its mentions come with it. Dragging text within the field moves it,
+ * and the mentions in it with it.
+ */
+export function followDrop(
+  before: string,
+  after: string,
+  at: number,
+  mentions: ReadonlyArray<DraftMention>,
+  dragged: DraggedText | null,
+): ReadonlyArray<DraftMention> {
+  const inserted = after.length - before.length;
+  if (
+    inserted <= 0 ||
+    at < 0 ||
+    after.slice(0, at) !== before.slice(0, at) ||
+    after.slice(at + inserted) !== before.slice(at)
+  ) {
+    return followEdit(before, after, { replaced: null, caret: null }, mentions);
+  }
+  const moved = replaced(mentions, at, at, inserted);
+  const carried =
+    dragged !== null && after.slice(at, at + inserted) === dragged.text
+      ? dragged.mentions.map((mention) => ({ ...mention, position: mention.position + at }))
+      : [];
+  return [...moved, ...carried].filter((mention) =>
+    after.startsWith(mentionToken(mention), mention.position),
+  );
 }
 
 /** The mention being typed: where its `@` is, and what follows it up to the caret. */
@@ -312,7 +377,7 @@ export function mentionQuery(
   const start = text.lastIndexOf("@", caret - 1);
   if (start < lineStart || !opensAt(text, start)) return null;
   if (mentions.some((mention) => mention.position === start)) return null;
-  if (inCode(codeRanges(text), start)) return null;
+  if (inLiteral(literalRanges(text), start)) return null;
   return { start, query: text.slice(start + 1, caret) };
 }
 

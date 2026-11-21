@@ -20,6 +20,23 @@ export interface RoomFormValues {
 
 export type RoomFormProblem = "name" | "members" | "hop-limit";
 
+/**
+ * What the form is for: a new room, changing one, or giving an archived one
+ * what it needs back. `gone` when the room was deleted while the form was
+ * open: the form stays, says so, and saves nothing.
+ */
+export type RoomFormMode =
+  | { readonly _tag: "create" }
+  | { readonly _tag: "edit" | "unarchive"; readonly room: Room; readonly gone: boolean };
+
+/**
+ * What a form is for, as a key: the same while it changes the same room the
+ * same way, whatever the server says of that room meanwhile, and another for
+ * anything else, so a form never carries what was typed over to another.
+ */
+export const roomFormTarget = (mode: RoomFormMode): string =>
+  mode._tag === "create" ? "create" : `${mode._tag}:${mode.room.id}`;
+
 export const blankRoomForm: RoomFormValues = {
   name: "",
   members: [],
@@ -27,9 +44,12 @@ export const blankRoomForm: RoomFormValues = {
   hopLimit: "",
 };
 
+const sameOrder = (a: ReadonlyArray<BotId>, b: ReadonlyArray<BotId>) =>
+  a.length === b.length && a.every((id, index) => id === b[index]);
+
 /**
  * The form filled from a room, to change it: what the server has, so an
- * archived room without a host opens without one picked.
+ * archived room without a host has none picked.
  */
 export const roomFormOf = (room: Room): RoomFormValues => ({
   name: room.name,
@@ -39,18 +59,46 @@ export const roomFormOf = (room: Room): RoomFormValues => ({
 });
 
 /**
- * `values` without the bots that are no longer `present`. A host deleted
- * leaves no pick: the server has moved the room to another host, or to none.
+ * `values` without the bots that are no longer `present`. A host picked and
+ * deleted gives way to `host`: for the form, the room's host as the server
+ * last had it; for the room, none, as the server moves it to another host or
+ * to none, which the form follows once the room says which.
  */
 export function withoutDeleted(
   values: RoomFormValues,
   present: ReadonlySet<BotId>,
+  host: BotId | null = null,
 ): RoomFormValues {
-  if (values.members.every((id) => present.has(id))) return values;
+  const hostGone = values.hostPick !== null && !present.has(values.hostPick);
+  if (values.members.every((id) => present.has(id)) && !hostGone) return values;
   return {
     ...values,
     members: values.members.filter((id) => present.has(id)),
-    hostPick: values.hostPick !== null && present.has(values.hostPick) ? values.hostPick : null,
+    hostPick: hostGone ? host : values.hostPick,
+  };
+}
+
+/**
+ * The form moved onto `room` as the server has it now, from `start`, the room
+ * as the form last had it: what the operator left alone follows the server,
+ * the host among it, and what they changed stays as they changed it. The
+ * form then compares with the room as it is, so it sends only what differs
+ * from it.
+ */
+export function followRoom(
+  start: RoomFormValues,
+  values: RoomFormValues,
+  room: Room,
+): { readonly start: RoomFormValues; readonly values: RoomFormValues } {
+  const live = roomFormOf(room);
+  return {
+    start: live,
+    values: {
+      name: values.name === start.name ? live.name : values.name,
+      members: sameOrder(values.members, start.members) ? live.members : values.members,
+      hostPick: values.hostPick === start.hostPick ? live.hostPick : values.hostPick,
+      hopLimit: values.hopLimit === start.hopLimit ? live.hopLimit : values.hopLimit,
+    },
   };
 }
 
@@ -130,9 +178,6 @@ export function roomDraft(values: RoomFormValues, primaryId: BotId | null): Chec
   };
 }
 
-const sameOrder = (a: ReadonlyArray<BotId>, b: ReadonlyArray<BotId>) =>
-  a.length === b.length && a.every((id, index) => id === b[index]);
-
 /** The hop limit `values` give, with an empty one read as the default. */
 const resolvedHopLimit = (values: RoomFormValues, defaultHopLimit: number | null) => {
   const typed = hopLimitOf(values.hopLimit);
@@ -140,9 +185,10 @@ const resolvedHopLimit = (values: RoomFormValues, defaultHopLimit: number | null
 };
 
 /**
- * Whether `values` say the same as `opened`, the form as it opened: the same
- * name, bots in the same order, the same host and the same hop limit. An edit
- * the operator undid changes nothing.
+ * Whether `values` say the same as `opened`, where the form started: empty,
+ * or the room as the server has it now. The same name, bots in the same
+ * order, the same host and the same hop limit. An edit the operator undid
+ * changes nothing.
  */
 export function sameRoomForm(
   opened: RoomFormValues,
@@ -159,15 +205,15 @@ export function sameRoomForm(
 }
 
 /**
- * What the form changes from `opened`, the room as the server had it when
- * the form opened, less the bots deleted since, and only that: a field
- * changed elsewhere meanwhile and left alone here is not sent back. The host
- * the form shows is sent whenever the server's is not that one, as when it
- * has none or its host was deleted. An empty hop limit sets it back to the
- * default.
+ * What the form changes from `room`, the room as the server has it now, and
+ * only that: a field changed elsewhere and left alone here follows the room
+ * (`followRoom`), so it is not sent back. The host the form shows is sent
+ * whenever the server's is not that one, as when it has none, or the bot
+ * hosting it leaves the room in this change. An empty hop limit sets it back
+ * to the default.
  */
 export function roomChanges(
-  opened: RoomFormValues,
+  room: RoomFormValues,
   values: RoomFormValues,
   primaryId: BotId | null,
   defaultHopLimit: number | null,
@@ -182,10 +228,10 @@ export function roomChanges(
   return {
     _tag: "ready",
     value: {
-      ...(name === opened.name.trim() ? {} : { name }),
-      ...(sameOrder(values.members, opened.members) ? {} : { members: values.members }),
-      ...(hostId === opened.hostPick ? {} : { hostId }),
-      ...(hopLimit === resolvedHopLimit(opened, defaultHopLimit) ? {} : { hopLimit }),
+      ...(name === room.name.trim() ? {} : { name }),
+      ...(sameOrder(values.members, room.members) ? {} : { members: values.members }),
+      ...(hostId === room.hostPick ? {} : { hostId }),
+      ...(hopLimit === resolvedHopLimit(room, defaultHopLimit) ? {} : { hopLimit }),
     },
   };
 }

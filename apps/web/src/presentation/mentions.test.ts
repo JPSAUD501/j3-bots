@@ -7,6 +7,8 @@ import {
   addressed,
   addresseeOf,
   addresseeLine,
+  draggedText,
+  followDrop,
   followEdit,
   insertMention,
   type Mentionable,
@@ -30,6 +32,9 @@ const ids = members.map((one) => one.id);
 const bot = ({ id, name }: Mentionable): MentionOption => ({ _tag: "bot", id, name });
 const everyone: MentionOption = { _tag: "everyone" };
 
+/** Whom a draft's message asks, as `message.send` takes it. */
+const addressedTo = (...draft: Parameters<typeof addressed>) => addressed(...draft)?.mentions;
+
 /** What the operator ends up with after typing `typed` and picking `option` at its end. */
 function picked(typed: string, option: MentionOption, mentions: ReadonlyArray<DraftMention> = []) {
   const query = mentionQuery(typed, typed.length, mentions);
@@ -43,30 +48,30 @@ describe("addressed", () => {
     const second = picked(`${first.text}then @an`, bot(ana), first.mentions);
     const third = picked(`${second.text}and @sc`, bot(scout), second.mentions);
     expect(third.text).toBe("@Scout then @Ana and @Scout ");
-    expect(addressed(third.text, third.mentions, ids)).toEqual({
+    expect(addressedTo(third.text, third.mentions, ids)).toEqual({
       _tag: "bots",
       ids: [scout.id, ana.id],
     });
   });
 
   it("is nobody for a name typed rather than picked", () => {
-    expect(addressed("@Ana and @everyone, look", [], ids)).toBeUndefined();
+    expect(addressedTo("@Ana and @everyone, look", [], ids)).toBeUndefined();
   });
 
   it("is nobody for a mention that ends up in code", () => {
     const inline = picked("`ask @an", bot(ana));
-    expect(addressed(inline.text, inline.mentions, ids)).toEqual({ _tag: "bots", ids: [ana.id] });
-    expect(addressed(`${inline.text}\``, inline.mentions, ids)).toBeUndefined();
+    expect(addressedTo(inline.text, inline.mentions, ids)).toEqual({ _tag: "bots", ids: [ana.id] });
+    expect(addressedTo(`${inline.text}\``, inline.mentions, ids)).toBeUndefined();
     const fenced = picked("```\n@an", bot(ana));
-    expect(addressed(`${fenced.text}\n\`\`\``, fenced.mentions, ids)).toBeUndefined();
+    expect(addressedTo(`${fenced.text}\n\`\`\``, fenced.mentions, ids)).toBeUndefined();
   });
 
   it("judges code on the text as sent, trimmed", () => {
     // Indented, the fence is none in the draft; trimmed as it is sent, it is one.
     const indented = picked("    ```\n@an", bot(ana));
-    expect(addressed(`${indented.text}\n\`\`\``, indented.mentions, ids)).toBeUndefined();
+    expect(addressedTo(`${indented.text}\n\`\`\``, indented.mentions, ids)).toBeUndefined();
     const spaced = picked("  @an", bot(ana));
-    expect(addressed(spaced.text, spaced.mentions, ids)).toEqual({ _tag: "bots", ids: [ana.id] });
+    expect(addressedTo(spaced.text, spaced.mentions, ids)).toEqual({ _tag: "bots", ids: [ana.id] });
   });
 
   it("stops counting a mention once its token is edited", () => {
@@ -74,16 +79,16 @@ describe("addressed", () => {
     expect(text).toBe("@Ana Lima ");
     const edited = "@Ana Lma ";
     const place = { replaced: null, caret: 7 };
-    expect(addressed(edited, followEdit(text, edited, place, mentions), ids)).toBeUndefined();
+    expect(addressedTo(edited, followEdit(text, edited, place, mentions), ids)).toBeUndefined();
     // A name run on into another word is not the name picked either.
-    expect(addressed("@Ana Limas", mentions, ids)).toBeUndefined();
+    expect(addressedTo("@Ana Limas", mentions, ids)).toBeUndefined();
   });
 
   it("follows the member picked through a rename, and drops one who left the room", () => {
     const { text, mentions } = picked("@sc", bot(scout));
     const renamed = [member("scout", "Scout Prime")];
     expect(
-      addressed(
+      addressedTo(
         text,
         mentions,
         renamed.map((one) => one.id),
@@ -92,7 +97,7 @@ describe("addressed", () => {
       _tag: "bots",
       ids: [scout.id],
     });
-    expect(addressed(text, mentions, [ana.id, joao.id])).toBeUndefined();
+    expect(addressedTo(text, mentions, [ana.id, joao.id])).toBeUndefined();
   });
 
   it("mentions the one picked of two members with the same name", () => {
@@ -100,7 +105,7 @@ describe("addressed", () => {
     const room = [ana, otherAna];
     expect(mentionOptions("an", room)).toEqual([bot(ana), bot(otherAna)]);
     const { text, mentions } = picked("@an", bot(otherAna));
-    expect(addressed(text, mentions, [ana.id, otherAna.id])).toEqual({
+    expect(addressedTo(text, mentions, [ana.id, otherAna.id])).toEqual({
       _tag: "bots",
       ids: [otherAna.id],
     });
@@ -111,15 +116,46 @@ describe("addressed", () => {
     const room = [scout, named];
     expect(mentionOptions("every", room)).toEqual([bot(named), everyone]);
     const theBot = picked("@every", bot(named));
-    expect(addressed(theBot.text, theBot.mentions, [scout.id, named.id])).toEqual({
+    expect(addressedTo(theBot.text, theBot.mentions, [scout.id, named.id])).toEqual({
       _tag: "bots",
       ids: [named.id],
     });
     const all = picked("@sc", bot(scout));
     const both = picked(`${all.text}@ev`, everyone, all.mentions);
-    expect(addressed(both.text, both.mentions, [scout.id, named.id])).toEqual({
+    expect(addressedTo(both.text, both.mentions, [scout.id, named.id])).toEqual({
       _tag: "everyone",
     });
+  });
+});
+
+describe("addressed labels", () => {
+  it("names each member by the pick that addressed it, not one left in code", () => {
+    const text = "`@Ana` was renamed, so @Ana Prime please";
+    const inCode: DraftMention = { _tag: "bot", botId: ana.id, label: "Ana", position: 1 };
+    const counted: DraftMention = {
+      _tag: "bot",
+      botId: ana.id,
+      label: "Ana Prime",
+      position: text.indexOf("@Ana Prime"),
+    };
+    expect(addressed(text, [inCode, counted], ids)).toEqual({
+      mentions: { _tag: "bots", ids: [ana.id] },
+      labels: [{ botId: ana.id, label: "Ana Prime" }],
+    });
+  });
+
+  it("finds no mention in a link, nor in code a link runs up to", () => {
+    const text = "https://example.test/` note @Ana `";
+    const mention: DraftMention = {
+      _tag: "bot",
+      botId: ana.id,
+      label: "Ana",
+      position: text.indexOf("@Ana"),
+    };
+    expect(addressed(text, [mention], ids)).toBeUndefined();
+    const linked = "https://example.test/(@Ana";
+    const inLink: DraftMention = { ...mention, position: linked.indexOf("@Ana") };
+    expect(addressed(linked, [inLink], ids)).toBeUndefined();
   });
 });
 
@@ -136,7 +172,7 @@ describe("followEdit", () => {
     );
     expect(moved).toEqual([{ ...mentions[0], position: 24 }]);
     // Pasted text that only reads like a mention addresses nobody.
-    expect(addressed(pasted, moved, ids)).toEqual({ _tag: "bots", ids: [ana.id] });
+    expect(addressedTo(pasted, moved, ids)).toEqual({ _tag: "bots", ids: [ana.id] });
   });
 
   it("moves a mention when an @ is typed right before its own", () => {
@@ -156,10 +192,33 @@ describe("followEdit", () => {
     const pasted = "ask @Ana, hi ";
     expect(followEdit(text, pasted, { replaced: [4, 9], caret: 13 }, mentions)).toEqual([]);
     // Text pasted over a selection after the mention leaves it standing.
+    // The same text pasted over it ends it too: what was pasted was not picked.
+    expect(followEdit(text, text, { replaced: [4, 9], caret: 9 }, mentions)).toEqual([]);
     const after = "ask @Ana and you";
     expect(followEdit(`${text}me`, after, { replaced: [9, 11], caret: 16 }, mentions)).toEqual(
       mentions,
     );
+  });
+});
+
+describe("followDrop", () => {
+  it("moves the mentions in text dragged within the field, and keeps the others", () => {
+    const first = picked("@an", bot(ana));
+    const { text, mentions } = picked(`${first.text}hi @sc`, bot(scout), first.mentions);
+    expect(text).toBe("@Ana hi @Scout ");
+    // "@Scout " dragged to the start: taken out where it was, then dropped in.
+    const source = [text.indexOf("@Scout"), text.length] as const;
+    const dragged = draggedText(text, source, mentions);
+    const taken = "@Ana hi ";
+    const left = followEdit(text, taken, { replaced: source, caret: null }, mentions);
+    const dropped = "@Scout @Ana hi ";
+    const moved = followDrop(taken, dropped, 0, left, dragged);
+    expect(addressedTo(dropped, moved, ids)).toEqual({ _tag: "bots", ids: [scout.id, ana.id] });
+    // The same text dropped in from elsewhere was not picked.
+    expect(addressedTo(dropped, followDrop(taken, dropped, 0, left, null), ids)).toEqual({
+      _tag: "bots",
+      ids: [ana.id],
+    });
   });
 });
 
@@ -245,7 +304,7 @@ describe("insertMention", () => {
     const shifted = later.mentions.map((one) => ({ ...one, position: one.position + 3 }));
     const { text, mentions } = insertMention(`@an${later.text}`, 3, shifted, query, bot(ana));
     expect(text).toBe("@Ana x @Scout ");
-    expect(addressed(text, mentions, ids)).toEqual({ _tag: "bots", ids: [ana.id, scout.id] });
+    expect(addressedTo(text, mentions, ids)).toEqual({ _tag: "bots", ids: [ana.id, scout.id] });
   });
 });
 
@@ -291,9 +350,17 @@ describe("mentionedNames", () => {
   const nameOf = (botId: BotId) => members.find((one) => one.id === botId)?.name;
 
   it("highlights whom the message addressed, and no one else", () => {
-    expect(mentionedNames({ _tag: "bots", ids: [ana.id] }, nameOf)).toEqual(["Ana"]);
-    expect(mentionedNames({ _tag: "everyone" }, nameOf)).toEqual(["everyone"]);
-    expect(mentionedNames(null, nameOf)).toEqual([]);
+    expect(mentionedNames({ _tag: "bots", ids: [ana.id] }, [], nameOf)).toEqual(["Ana"]);
+    expect(mentionedNames({ _tag: "everyone" }, [], nameOf)).toEqual(["everyone"]);
+    expect(mentionedNames(null, [], nameOf)).toEqual([]);
+  });
+
+  it("goes by the names the members were picked by, when the message keeps them", () => {
+    const labels = [{ botId: ana.id, label: "Ana Prime" }];
+    expect(mentionedNames({ _tag: "bots", ids: [ana.id, scout.id] }, labels, nameOf)).toEqual([
+      "Ana Prime",
+      "Scout",
+    ]);
   });
 });
 
