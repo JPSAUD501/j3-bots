@@ -50,8 +50,19 @@ const setUp = Effect.gen(function* () {
     fs
       .readFileString(path.join(home, "skills", name, "SKILL.md"))
       .pipe(Effect.orElseSucceed(() => undefined));
-  const link = () => linkSharedSkills({ files, home, shared });
-  return { fs, path, root, outside, shared, home, files, addShared, listed, link };
+  const record = path.join(root, "engine", "j3", "skill-links", "claude-code.json");
+  const link = () => linkSharedSkills({ files, home, shared, record });
+  /** Where each link in the home's skill folder leads, as the system resolves it. */
+  const destinations = Effect.gen(function* () {
+    const folder = path.join(home, "skills");
+    const real = yield* fs.realPath(folder);
+    const found: Array<string> = [];
+    for (const name of yield* fs.readDirectory(folder)) {
+      found.push(path.resolve(real, yield* fs.readLink(path.join(folder, name))));
+    }
+    return found;
+  });
+  return { fs, path, root, outside, shared, home, files, addShared, listed, link, destinations };
 });
 
 describe("linkSharedSkills", () => {
@@ -119,6 +130,58 @@ describe("linkSharedSkills", () => {
     }).pipe(Effect.scoped, Effect.provide(machine)),
   );
 
+  it.effect("keeps every link in the home it did not make, dot entries included", () =>
+    Effect.gen(function* () {
+      const { fs, path, home, addShared, listed, link } = yield* setUp;
+      yield* addShared("expenses", "Expenses");
+      const folder = path.join(home, "skills");
+      yield* fs.makeDirectory(folder, { recursive: true });
+      // The operator's: one into the shared folder itself, one as J3 Bots would write it.
+      yield* fs.symlink("../../../shared/skills", path.join(folder, ".system"));
+      yield* fs.symlink("../../../shared/skills/old", path.join(folder, "old"));
+
+      yield* link();
+      yield* link();
+
+      assert.strictEqual(
+        yield* fs.readLink(path.join(folder, ".system")),
+        "../../../shared/skills",
+      );
+      assert.strictEqual(
+        yield* fs.readLink(path.join(folder, "old")),
+        "../../../shared/skills/old",
+      );
+      assert.strictEqual(yield* listed("expenses"), skill("expenses", "Expenses"));
+    }).pipe(Effect.scoped, Effect.provide(machine)),
+  );
+
+  it.effect("skips a shared entry it cannot read, and links the rest", () =>
+    Effect.gen(function* () {
+      const { fs, path, shared, home, addShared, listed, link } = yield* setUp;
+      yield* addShared("expenses", "Expenses");
+      yield* fs.symlink("loop", path.join(shared, "loop"));
+      // A folder without a `SKILL.md` that is a regular file.
+      yield* fs.makeDirectory(path.join(shared, "folder-skill", "SKILL.md"), { recursive: true });
+
+      yield* link();
+
+      assert.strictEqual(yield* listed("expenses"), skill("expenses", "Expenses"));
+      assert.deepStrictEqual(yield* fs.readDirectory(path.join(home, "skills")), ["expenses"]);
+    }).pipe(Effect.scoped, Effect.provide(machine)),
+  );
+
+  it.effect("links nothing when the shared skills are a file, and still provisions", () =>
+    Effect.gen(function* () {
+      const { fs, path, shared, home, link } = yield* setUp;
+      yield* fs.remove(shared, { recursive: true });
+      yield* fs.writeFileString(shared, "not a folder");
+
+      yield* link();
+
+      assert.deepStrictEqual(yield* fs.readDirectory(path.join(home, "skills")), []);
+    }).pipe(Effect.scoped, Effect.provide(machine)),
+  );
+
   describe("never links or writes out of the data directory", () => {
     it.effect("does not link a shared skill whose folder is a link out of it", () =>
       Effect.gen(function* () {
@@ -126,6 +189,39 @@ describe("linkSharedSkills", () => {
         yield* addShared("j3-routines", "Routines");
         yield* fs.writeFileString(path.join(outside, "SKILL.md"), skill("keys", "Elsewhere"));
         yield* fs.symlink(outside, path.join(shared, "keys"));
+
+        yield* link();
+
+        assert.isUndefined(yield* listed("keys"));
+        assert.strictEqual(yield* listed("j3-routines"), skill("j3-routines", "Routines"));
+      }).pipe(Effect.scoped, Effect.provide(machine)),
+    );
+
+    it.effect("links from where a linked home really is, not where its path says", () =>
+      Effect.gen(function* () {
+        const { fs, path, root, home, addShared, listed, link, destinations } = yield* setUp;
+        yield* addShared("j3-routines", "Routines");
+        // The home is a link to a folder one level shallower, still in the data.
+        yield* fs.makeDirectory(path.join(root, "shallow"));
+        yield* fs.makeDirectory(path.dirname(home), { recursive: true });
+        yield* fs.symlink(path.join(root, "shallow"), home);
+
+        yield* link();
+
+        assert.strictEqual(yield* listed("j3-routines"), skill("j3-routines", "Routines"));
+        for (const destination of yield* destinations) {
+          assert.isTrue(destination.startsWith(`${root}/`), destination);
+        }
+      }).pipe(Effect.scoped, Effect.provide(machine)),
+    );
+
+    it.effect("does not link a shared skill whose SKILL.md is a link", () =>
+      Effect.gen(function* () {
+        const { fs, path, outside, shared, addShared, listed, link } = yield* setUp;
+        yield* fs.writeFileString(path.join(outside, "SKILL.md"), skill("keys", "Elsewhere"));
+        yield* fs.makeDirectory(path.join(shared, "keys"));
+        yield* fs.symlink(path.join(outside, "SKILL.md"), path.join(shared, "keys", "SKILL.md"));
+        yield* addShared("j3-routines", "Routines");
 
         yield* link();
 

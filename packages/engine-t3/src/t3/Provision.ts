@@ -420,7 +420,10 @@ export const provision = Effect.fn("engine.provision")(function* (input: Provisi
     yield* input.files.write(file, `${text}\n`);
   });
 
-  const { userdata, secrets } = engineFolders(path, input.home);
+  const { j3, userdata, secrets } = engineFolders(path, input.home);
+  /** The links made in an instance's home, in the adapter's own folder rather than the home. */
+  const skillLinkRecord = (instanceId: string) =>
+    path.join(j3, "skill-links", `${instanceId}.json`);
   yield* input.files.folder(secrets);
   yield* fs.chmod(secrets, 0o700);
 
@@ -463,6 +466,7 @@ export const provision = Effect.fn("engine.provision")(function* (input: Provisi
           files: input.files,
           home: spec.home,
           shared: input.sharedSkills,
+          record: skillLinkRecord(spec.instanceId),
         });
         return;
       }
@@ -477,6 +481,7 @@ export const provision = Effect.fn("engine.provision")(function* (input: Provisi
           files: input.files,
           home: spec.home,
           shared: input.sharedSkills,
+          record: skillLinkRecord(spec.instanceId),
         });
         return;
       }

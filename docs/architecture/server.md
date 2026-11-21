@@ -53,6 +53,8 @@ providers/
     skills/          a link to each shared skill, made at every engine start
   codex/             Codex's home for every bot (`CODEX_HOME`)
     skills/          the same
+state/
+  shipped-skills.json  the SHA-256 of each shipped skill text the server wrote
 ```
 
 Generated files are written by the server from the database and the memory files. A bot never edits them by hand, and the server rewrites them whenever their inputs change.

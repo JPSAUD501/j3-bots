@@ -39,6 +39,8 @@ export class Layout extends Context.Service<
     readonly botMemory: (botId: BotId) => string;
     readonly sharedMemory: string;
     readonly sharedSkills: string;
+    /** Which texts in `sharedSkills` the server installed: its own record, outside them. */
+    readonly shippedSkills: string;
     readonly attachments: string;
     /**
      * `location`, once where it really is, links resolved (through its nearest
@@ -106,6 +108,7 @@ export const layer = Layer.effect(
       botMemory: layout.botMemory,
       sharedMemory: layout.sharedMemory,
       sharedSkills: layout.sharedSkills,
+      shippedSkills: layout.shippedSkills,
       attachments: layout.attachments,
       writable,
       writeFile,

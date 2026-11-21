@@ -5,6 +5,8 @@
   // other export, type or not, must be used.
   // T3 Code's contracts, vendored as is: typechecked here, not ours to prune.
   "ignoreWorkspaces": ["packages/engine-t3/vendor/t3-contracts"],
+  // A system tool a test runs: Node cannot make a FIFO itself.
+  "ignoreBinaries": ["mkfifo"],
   "workspaces": {
     "apps/server": {
       // The `j3` bridge: the engine starts it as a process, by a path

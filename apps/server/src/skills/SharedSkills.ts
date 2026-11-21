@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @effect-diagnostics nodeBuiltinImport:off -- a shipped skill's copies are recognized by their SHA-256, from node:crypto.
 import * as NodeCrypto from "node:crypto";
-import { sharedSkills } from "@j3-bots/prompts";
+import { type SharedSkill, sharedSkills } from "@j3-bots/prompts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import { Layout } from "../Layout.ts";
 
@@ -13,26 +14,51 @@ import { Layout } from "../Layout.ts";
 const SKILL_FILE = "SKILL.md";
 
 /**
- * Beside a shipped skill's `SKILL.md`: the SHA-256 of each text J3 Bots wrote
- * there and has not yet seen replaced, so a later start can tell its own copy
- * from a skill the operator put under the same name.
+ * The record at `Layout.shippedSkills`: by shipped skill, the SHA-256 of each
+ * text the server wrote as its `SKILL.md` and has not yet seen replaced, so a
+ * later start can tell its own copy from a skill the operator put under the
+ * same name. It is kept outside the shared skills, so nothing put in a skill's
+ * folder can claim a copy as the server's.
  */
-const RECORD_FILE = ".j3-shipped.json";
-
-const ShippedRecord = Schema.fromJsonString(Schema.Struct({ sha256: Schema.Array(Schema.String) }));
+const ShippedRecord = Schema.fromJsonString(
+  Schema.Record(Schema.String, Schema.Array(Schema.String)),
+);
 const decodeRecord = Schema.decodeUnknownOption(ShippedRecord);
 const encodeRecord = Schema.encodeEffect(ShippedRecord);
 
-/** What is at a shipped skill's `SKILL.md`. */
-type Current =
+/**
+ * Texts a release installed before the server kept its record, by skill, as
+ * their SHA-256: `j3-routines` as #27 shipped it. A copy that still holds one
+ * is the server's, and a later text replaces it.
+ */
+const SHIPPED_BEFORE_THE_RECORD: Partial<Record<SharedSkill["name"], ReadonlyArray<string>>> = {
+  "j3-routines": ["ee729ac25824581ebc0a3b2ef3182444ebc203cb838200f3139a986a387ed241"],
+};
+
+/** What is at a file the installer reads, checked with `lstat` before it is opened. */
+type Found =
   | { readonly _tag: "absent" }
   | { readonly _tag: "text"; readonly text: string }
-  /** Not a file the server can read: a folder, say. */
-  | { readonly _tag: "unreadable" };
-const ABSENT: Current = { _tag: "absent" };
-const UNREADABLE: Current = { _tag: "unreadable" };
+  /** A link, a folder, a FIFO, or a file that cannot be read: never opened, or not read. */
+  | { readonly _tag: "other" };
+const ABSENT: Found = { _tag: "absent" };
+const OTHER: Found = { _tag: "other" };
 
 const digest = (text: string) => NodeCrypto.createHash("sha256").update(text).digest("hex");
+
+/** Reads `file` only when it is a regular file, so a link is never followed and a FIFO never opened. */
+const readRegular = Effect.fnUntraced(function* (file: string) {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* fs.lstat(file).pipe(
+    Effect.flatMap((info): Effect.Effect<Found, PlatformError.PlatformError> =>
+      info.type === "File"
+        ? Effect.map(fs.readFileString(file), (text) => ({ _tag: "text", text }))
+        : Effect.succeed(OTHER),
+    ),
+    Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(ABSENT)),
+    Effect.catchTag("PlatformError", () => Effect.succeed(OTHER)),
+  );
+});
 
 /**
  * Writes the skills J3 Bots ships into the home's shared skills, as
@@ -41,16 +67,18 @@ const digest = (text: string) => NodeCrypto.createHash("sha256").update(text).di
  * the copy an earlier one installed; a skill under any other name is left
  * alone.
  *
- * A `SKILL.md` already at a shipped name that is not a copy J3 Bots installed
- * (its digest is not in the folder's record) is the operator's: it is kept,
- * with a warning, and the shipped text is not installed. So is one that
- * cannot be read as a file.
+ * A `SKILL.md` already at a shipped name is the server's when it holds the
+ * shipped text or a text the server recorded writing there (or one installed
+ * before it kept that record). Anything else is the operator's: it is kept,
+ * with a warning, and the shipped text is not installed. So is a `SKILL.md`
+ * that is not a regular file (a link, a folder, a FIFO), which is never read.
  *
  * A shipped skill's folder must be a real folder directly in the shared
  * skills, links resolved. One that is a link to another skill's folder, or to
  * anywhere else, or is not a folder at all, is skipped with a warning, so the
  * install never writes over a skill under another name. So is every skill
- * when the shared skills folder itself has left private state.
+ * when the shared skills folder has left private state or is not a folder,
+ * and when the record is not a regular file.
  */
 export const install = Effect.fn("SharedSkills.install")(function* () {
   const layout = yield* Layout;
@@ -63,10 +91,32 @@ export const install = Effect.fn("SharedSkills.install")(function* () {
     Effect.catchTags({
       PrivateLocationExposed: (error) =>
         Effect.as(Effect.logWarning(`${error.message} No skill was installed.`), undefined),
-      PlatformError: Effect.die,
+      PlatformError: (error) =>
+        Effect.as(
+          Effect.logWarning(
+            `${layout.sharedSkills} cannot be used as a folder (${error.message}), so no skill was installed.`,
+          ),
+          undefined,
+        ),
     }),
   );
   if (realRoot === undefined) return;
+
+  const saved = yield* readRegular(layout.shippedSkills);
+  if (saved._tag === "other") {
+    return yield* Effect.logWarning(
+      `${layout.shippedSkills} is not a regular file, so no shipped skill was installed or replaced. Move it aside.`,
+    );
+  }
+  const record: Record<string, ReadonlyArray<string>> = {};
+  if (saved._tag === "text") {
+    const decoded = decodeRecord(saved.text);
+    if (Option.isSome(decoded)) Object.assign(record, decoded.value);
+    else
+      yield* Effect.logWarning(
+        `${layout.shippedSkills} could not be decoded, so only the shipped texts are recognized as the server's.`,
+      );
+  }
 
   const write = (file: string, text: string) =>
     layout.writeFile(file, text).pipe(
@@ -77,8 +127,15 @@ export const install = Effect.fn("SharedSkills.install")(function* () {
         PlatformError: Effect.die,
       }),
     );
-  const writeRecord = Effect.fnUntraced(function* (file: string, digests: ReadonlyArray<string>) {
-    return yield* write(file, yield* encodeRecord({ sha256: digests }).pipe(Effect.orDie));
+  /** Records `digests` as the texts of `name` the server wrote, unless they are recorded already. */
+  const recordAs = Effect.fnUntraced(function* (name: string, digests: ReadonlyArray<string>) {
+    const before = record[name];
+    if (before?.length === digests.length && before.every((each, i) => each === digests[i])) {
+      return true;
+    }
+    record[name] = digests;
+    const text = yield* encodeRecord(record).pipe(Effect.orDie);
+    return yield* write(layout.shippedSkills, text);
   });
 
   for (const skill of sharedSkills) {
@@ -101,44 +158,33 @@ export const install = Effect.fn("SharedSkills.install")(function* () {
     }
 
     const skillFile = path.join(folder, SKILL_FILE);
-    const recordFile = path.join(folder, RECORD_FILE);
-    const current = yield* fs.readFileString(skillFile).pipe(
-      Effect.map((text): Current => ({ _tag: "text", text })),
-      Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(ABSENT)),
-      // A folder at its name, or a file the server cannot read: not one it wrote.
-      Effect.catchTag("PlatformError", () => Effect.succeed(UNREADABLE)),
-    );
-    const recorded = yield* fs.readFileString(recordFile).pipe(
-      Effect.map((text) =>
-        Option.match(decodeRecord(text), {
-          onNone: (): ReadonlyArray<string> => [],
-          onSome: (record) => record.sha256,
-        }),
-      ),
-      Effect.orElseSucceed((): ReadonlyArray<string> => []),
-    );
+    const current = yield* readRegular(skillFile);
+    if (current._tag === "other") {
+      yield* Effect.logWarning(
+        `${skillFile} is not a regular file the server can read, so it was kept and the ${skill.name} skill J3 Bots ships was not installed. Move it aside to get the shipped one.`,
+      );
+      continue;
+    }
     const shipped = digest(skill.text);
-
-    const installed =
-      current._tag === "absent" ||
-      (current._tag === "text" &&
-        (current.text === skill.text || recorded.includes(digest(current.text))));
-    if (!installed) {
+    const ours = new Set([
+      shipped,
+      ...(record[skill.name] ?? []),
+      ...(SHIPPED_BEFORE_THE_RECORD[skill.name] ?? []),
+    ]);
+    if (current._tag === "text" && !ours.has(digest(current.text))) {
       yield* Effect.logWarning(
         `${skillFile} is not a copy J3 Bots installed, so it was kept and the ${skill.name} skill J3 Bots ships was not installed. Move it aside to get the shipped one.`,
       );
       continue;
     }
 
-    if (current._tag !== "text" || current.text !== skill.text) {
+    if (current._tag === "absent" || current.text !== skill.text) {
       // Both, until the new text is in place, so a start cut short between
       // the two writes still recognizes the copy it leaves.
       const before = current._tag === "text" ? [digest(current.text)] : [];
-      if (!(yield* writeRecord(recordFile, [...before, shipped]))) continue;
+      if (!(yield* recordAs(skill.name, [...before, shipped]))) continue;
       if (!(yield* write(skillFile, skill.text))) continue;
     }
-    if (recorded.length !== 1 || recorded[0] !== shipped) {
-      yield* writeRecord(recordFile, [shipped]);
-    }
+    yield* recordAs(skill.name, [shipped]);
   }
 });
