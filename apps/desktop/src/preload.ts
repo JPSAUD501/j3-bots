@@ -9,7 +9,7 @@ import { contextBridge, ipcRenderer } from "electron";
 const bridge: DesktopBridge = {
   // Read once, before any script of the page runs, so the page knows its server as it starts.
   state: ipcRenderer.sendSync(IPC_CHANNELS.state),
-  connect: (address) => ipcRenderer.invoke(IPC_CHANNELS.connect, { address }),
+  connect: (request) => ipcRenderer.invoke(IPC_CHANNELS.connect, request),
   forgetServer: () => ipcRenderer.invoke(IPC_CHANNELS.forgetServer),
   sealToken: (token) => ipcRenderer.invoke(IPC_CHANNELS.sealToken, { token }),
   openToken: (sealed) => ipcRenderer.invoke(IPC_CHANNELS.openToken, { sealed }),
@@ -40,6 +40,15 @@ const bridge: DesktopBridge = {
     ipcRenderer.on(IPC_CHANNELS.notificationClicked, forward);
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.notificationClicked, forward);
+    };
+  },
+  onAppLink: (listener) => {
+    const forward = (_event: unknown, link: unknown) => listener(link);
+    ipcRenderer.on(IPC_CHANNELS.appLinkOpened, forward);
+    // Listening now: the main process sends the link that waited, if one did.
+    ipcRenderer.send(IPC_CHANNELS.appLinksWanted);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.appLinkOpened, forward);
     };
   },
 };

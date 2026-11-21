@@ -488,6 +488,17 @@ const sentences = {
   "server.change.cancel": "Manter este servidor",
   "pairing.server": "Servidor: {address}",
 
+  "links.pairingServer":
+    "Este link de pareamento é para {address}. Confira se é o seu servidor e continue: a próxima tela já traz o código.",
+  "links.nameServerFirst":
+    "Conecte ao seu servidor e pareie este dispositivo primeiro, depois abra esse link de novo.",
+  "links.pairFirst": "Pareie este dispositivo primeiro. O link abre assim que ele estiver pareado.",
+  "links.otherServer":
+    "Esse link de pareamento é de outro servidor, {address}. Para parear com ele, troque de servidor primeiro e abra o link de novo.",
+  "links.alreadyPaired": "Este dispositivo já está pareado com {address}.",
+  "links.noBot": "Esse link é de um bot que este servidor não tem.",
+  "links.noRoom": "Esse link é de uma sala que este servidor não tem.",
+
   "gate.incompatible.title": "Esta página está desatualizada",
   "gate.incompatible.body":
     "O servidor do J3 Bots foi atualizado e fala uma versão mais nova. Recarregue para pegar a página certa.",

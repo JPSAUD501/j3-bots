@@ -481,6 +481,17 @@ export const en = {
   "server.change.cancel": "Keep this server",
   "pairing.server": "Server: {address}",
 
+  "links.pairingServer":
+    "This pairing link is for {address}. Check that it’s your server, then continue: the next screen has its code.",
+  "links.nameServerFirst":
+    "Connect to your server and pair this device first, then open that link again.",
+  "links.pairFirst": "Pair this device first. The link opens once it’s paired.",
+  "links.otherServer":
+    "That pairing link is for another server, {address}. To pair with it, change server first, then open the link again.",
+  "links.alreadyPaired": "This device is already paired with {address}.",
+  "links.noBot": "That link is for a bot this server doesn’t have.",
+  "links.noRoom": "That link is for a room this server doesn’t have.",
+
   "gate.incompatible.title": "This page is out of date",
   "gate.incompatible.body":
     "The J3 Bots server was updated and speaks a newer version. Reload to get the matching page.",
