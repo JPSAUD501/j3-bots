@@ -10,8 +10,10 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import rootPackage from "../../../../package.json" with { type: "json" };
 import { AdminClient } from "../admin/AdminClient.ts";
-import { type AdminStatus, CONNECT_RESTARTS } from "../admin/protocol.ts";
+import type { AdminStatus } from "../admin/protocol.ts";
 import * as ServerConfig from "../config.ts";
+import { type Harness, HARNESSES } from "../engine/harnesses.ts";
+import { PROVIDER_HOMES } from "../home/entries.ts";
 import * as Home from "../home/Home.ts";
 import * as Installation from "../installation.ts";
 import { socketOwner } from "../service/owner.ts";
@@ -20,26 +22,20 @@ import { Host } from "../system/Host.ts";
 import { type PortUse, portAdvice } from "../system/Ports.ts";
 import { lingerAdvice, Systemd } from "../system/Systemd.ts";
 import { isBuilt } from "../web/built.ts";
+import { type Check, check } from "./check.ts";
+import {
+  engineDownloadCheck,
+  missingHarnessCheck,
+  noWayToModels,
+  runningUserCheck,
+  userManagerCheck,
+} from "./newInstall.ts";
 
 // `j3-bots doctor`: everything the server needs from this machine, checked
 // one by one, each answer a plain sentence and, when something is wrong, the
 // fix. It reads and asks; it changes nothing and never starts the engine.
 
-export type CheckStatus = "ok" | "warning" | "problem" | "skipped";
-
-export interface Check {
-  readonly name: string;
-  readonly status: CheckStatus;
-  readonly summary: string;
-  readonly fix: Option.Option<string>;
-}
-
-const check = (name: string, status: CheckStatus, summary: string, fix?: string): Check => ({
-  name,
-  status,
-  summary,
-  fix: Option.fromNullishOr(fix),
-});
+export type { Check, CheckStatus } from "./check.ts";
 
 const GIB = 1024 ** 3;
 /** Below this the engine's download, the database and the bots' work may not fit. */
@@ -52,11 +48,6 @@ const majorOf = (version: string) => version.split(".")[0] ?? "";
 
 const formatBytes = (bytes: number) =>
   bytes >= GIB ? `${(bytes / GIB).toFixed(1)} GB` : `${Math.round(bytes / 1024 ** 2)} MB`;
-
-const HARNESSES = [
-  { harness: "claude-code", name: "Claude Code", executable: "claude" },
-  { harness: "codex", name: "Codex", executable: "codex" },
-] as const;
 
 const nodeCheck = (version: string) =>
   majorOf(version) === majorOf(TESTED_NODE)
@@ -249,12 +240,7 @@ const engineCheck = Effect.fn("doctor.engine")(function* (
       );
     }
     if (install._tag === "missing" && Option.isNone(status)) {
-      return check(
-        "Engine",
-        "warning",
-        `T3 Code ${install.version} is not installed yet. The server downloads it, about 200 MB, on its first start.`,
-        "Make sure this machine can reach github.com when the server first starts, or download it now with `j3-bots engine fetch`.",
-      );
+      return yield* engineDownloadCheck(install);
     }
   }
   if (Option.isNone(status)) {
@@ -289,25 +275,17 @@ const engineCheck = Effect.fn("doctor.engine")(function* (
 });
 
 const providerCheck = Effect.fn("doctor.provider")(function* (
-  harness: (typeof HARNESSES)[number],
+  id: Harness,
   status: Option.Option<AdminStatus>,
   servicePath: Option.Option<string>,
 ) {
   const host = yield* Host;
+  const harness = HARNESSES[id];
   const found = yield* host.findExecutable(
     harness.executable,
     Option.getOrElse(servicePath, () => host.searchPath),
   );
-  if (Option.isNone(found)) {
-    return check(
-      harness.name,
-      "warning",
-      Option.isSome(servicePath)
-        ? `\`${harness.executable}\` is not on the service's PATH, so bots cannot run on ${harness.name}.`
-        : `\`${harness.executable}\` is not on PATH, so bots cannot run on ${harness.name}.`,
-      `Install ${harness.name}, or add its folder to PATH, then run \`j3-bots service install\` again so the service gets that PATH.`,
-    );
-  }
+  if (Option.isNone(found)) return yield* missingHarnessCheck(id, servicePath);
   if (Option.isNone(status)) {
     return check(
       harness.name,
@@ -316,7 +294,7 @@ const providerCheck = Effect.fn("doctor.provider")(function* (
     );
   }
   const providers = status.value.engine.providers.filter(
-    (provider: ProviderStatus) => provider.harness === harness.harness,
+    (provider: ProviderStatus) => provider.harness === id,
   );
   if (providers.length === 0) {
     return check(
@@ -328,12 +306,7 @@ const providerCheck = Effect.fn("doctor.provider")(function* (
   }
   for (const provider of providers) {
     if (provider.status._tag === "sign-in-required") {
-      return check(
-        harness.name,
-        "problem",
-        `${provider.name} has no way to reach its models yet.`,
-        `Run \`${provider.status.command}\` as this user. ${CONNECT_RESTARTS}`,
-      );
+      return noWayToModels(id, provider.status.command);
     }
   }
   const unavailable = providers.find((provider) => provider.status._tag === "unavailable");
@@ -442,17 +415,11 @@ const installedUnit = Effect.gen(function* () {
 
 const serviceChecks = Effect.fn("doctor.service")(function* (unitText: Option.Option<string>) {
   const systemd = yield* Systemd;
-  if (!(yield* systemd.available)) {
-    return [
-      check(
-        "Service",
-        "warning",
-        "There is no systemd user manager to run the server as a service.",
-        "Run `j3-bots serve` yourself, or log in to a systemd session as this user.",
-      ),
-    ];
+  const manager = yield* userManagerCheck;
+  if (manager.status !== "ok") {
+    return [manager, check("Service", "skipped", "It needs this user's systemd manager.")];
   }
-  const checks: Array<Check> = [];
+  const checks: Array<Check> = [manager];
   if (Option.isNone(unitText)) {
     checks.push(
       check(
@@ -668,7 +635,7 @@ const serverCheck = (live: LiveServer) => {
 export const diagnose = Effect.gen(function* () {
   const installation = yield* Installation.installation;
   const host = yield* Host;
-  const checks: Array<Check> = [nodeCheck(host.nodeVersion)];
+  const checks: Array<Check> = [nodeCheck(host.nodeVersion), yield* runningUserCheck];
 
   const unitText = yield* installedUnit;
   const described = yield* describedConfiguration(unitText);
@@ -741,7 +708,9 @@ export const diagnose = Effect.gen(function* () {
   const servicePath = Option.flatMapNullishOr(unitText, (text) =>
     Unit.environmentOf(text).get("PATH"),
   );
-  for (const harness of HARNESSES) checks.push(yield* providerCheck(harness, status, servicePath));
+  for (const harness of PROVIDER_HOMES) {
+    checks.push(yield* providerCheck(harness, status, servicePath));
+  }
   checks.push(yield* webClientCheck(config, live, installation));
   checks.push(pairingCheck(status, live._tag === "outside"));
   checks.push(...(yield* serviceChecks(unitText)));

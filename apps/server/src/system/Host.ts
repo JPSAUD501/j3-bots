@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- Free space, a trial listen and the user name have no Effect API.
+// @effect-diagnostics nodeBuiltinImport:off -- Free space, a trial listen and the user's name, home and groups have no Effect API.
 import * as NodeFs from "node:fs/promises";
 import * as NodeNet from "node:net";
 import * as NodeOs from "node:os";
@@ -11,6 +11,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { type PortState, portStateOf } from "./Ports.ts";
 
 /** The facts about this machine that `j3-bots doctor` and `service` read. */
@@ -44,6 +46,18 @@ export class Host extends Context.Service<
       pid: number,
       socketPath: string,
     ) => Effect.Effect<Option.Option<boolean>>;
+    /**
+     * The files directly in this user's `~/.ssh` that hold a private key,
+     * told by their first line alone; nothing past it is read.
+     */
+    readonly sshPrivateKeys: Effect.Effect<ReadonlyArray<string>>;
+    /** The names of the groups this user is in, as `/etc/group` names them. */
+    readonly groups: Effect.Effect<ReadonlyArray<string>>;
+    /**
+     * Whether `url` answers a `HEAD` request with success, following
+     * redirects, within fifteen seconds. Nothing is downloaded.
+     */
+    readonly reachable: (url: string) => Effect.Effect<boolean>;
   }
 >()("@j3-bots/server/system/Host") {}
 
@@ -78,12 +92,31 @@ const listeningInodes = (table: string, socketPath: string) => {
   return inodes;
 };
 
+/** The first line of a PEM or OpenSSH private key, whatever its algorithm and whether or not encrypted. */
+const PRIVATE_KEY_HEADER = /^-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----/;
+/** Enough of a file to hold the longest such line. */
+const KEY_HEADER_BYTES = 64;
+
+/** Group names by id, from the text of `/etc/group`: `name:password:gid:members`. */
+const groupNames = (table: string) => {
+  const names = new Map<number, string>();
+  for (const line of table.split("\n")) {
+    const [name = "", , gid = ""] = line.split(":");
+    if (name !== "" && /^\d+$/.test(gid)) names.set(Number(gid), name);
+  }
+  return names;
+};
+
+const REACHABLE_WITHIN = "15 seconds";
+
 export const layer = Layer.effect(
   Host,
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const searchPath = yield* Config.String("PATH").pipe(Config.withDefault(""));
+    const client = (yield* HttpClient.HttpClient).pipe(HttpClient.followRedirects(5));
+    const user = NodeOs.userInfo();
 
     const nearestExisting = Effect.fn("Host.nearestExisting")(function* (start: string) {
       let folder = path.resolve(start);
@@ -100,7 +133,7 @@ export const layer = Layer.effect(
       platform: process.platform,
       arch: process.arch,
       totalMemoryBytes: NodeOs.totalmem(),
-      userName: NodeOs.userInfo().username,
+      userName: user.username,
       searchPath,
       freeSpace: Effect.fn("Host.freeSpace")(function* (target: string) {
         const folder = yield* nearestExisting(target);
@@ -145,6 +178,40 @@ export const layer = Layer.effect(
         }
         return Option.some(false);
       }),
+      sshPrivateKeys: Effect.gen(function* () {
+        const folder = path.join(user.homedir, ".ssh");
+        const entries = yield* fs.readDirectory(folder).pipe(Effect.orElseSucceed(() => []));
+        const keys: Array<string> = [];
+        for (const entry of entries.toSorted()) {
+          const file = path.join(folder, entry);
+          const info = yield* fs.stat(file).pipe(Effect.option);
+          // Only regular files: opening a pipe or a device could block or have effects.
+          if (Option.isNone(info) || info.value.type !== "File") continue;
+          const head = yield* Effect.scoped(
+            fs.open(file).pipe(Effect.flatMap((handle) => handle.readAlloc(KEY_HEADER_BYTES))),
+          ).pipe(Effect.option);
+          const text = Option.flatten(head).pipe(
+            Option.map((bytes) => new TextDecoder().decode(bytes)),
+          );
+          if (Option.isSome(text) && PRIVATE_KEY_HEADER.test(text.value)) keys.push(file);
+        }
+        return keys;
+      }),
+      groups: Effect.gen(function* () {
+        const table = yield* fs.readFileString("/etc/group").pipe(Effect.orElseSucceed(() => ""));
+        const names = groupNames(table);
+        return (process.getgroups?.() ?? []).flatMap((gid) => {
+          const name = names.get(gid);
+          return name === undefined ? [] : [name];
+        });
+      }),
+      reachable: Effect.fn("Host.reachable")((url: string) =>
+        client.execute(HttpClientRequest.head(url)).pipe(
+          Effect.map((response) => response.status >= 200 && response.status < 300),
+          Effect.timeout(REACHABLE_WITHIN),
+          Effect.orElseSucceed(() => false),
+        ),
+      ),
     });
   }),
 );

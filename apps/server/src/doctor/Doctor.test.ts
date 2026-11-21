@@ -26,7 +26,7 @@ const provider = (harness: "claude-code" | "codex", status: string) => ({
   status: {
     _tag: status,
     ...(status === "limited" ? { resetsAt: null } : {}),
-    ...(status === "sign-in-required" ? { command: "claude auth login" } : {}),
+    ...(status === "sign-in-required" ? { command: "j3-bots provider connect" } : {}),
   },
   models: [],
   usage: [],
@@ -73,6 +73,13 @@ interface World {
   /** Whether the kernel says the unit's main process holds the admin socket, if it can say. */
   readonly holder: Option.Option<boolean>;
   readonly systemd: boolean;
+  /** systemd started the machine. */
+  readonly booted: boolean;
+  /** Files in this user's `~/.ssh` that hold a private key. */
+  readonly sshPrivateKeys: ReadonlyArray<string>;
+  readonly groups: ReadonlyArray<string>;
+  /** Whether a `HEAD` request to a URL succeeds. */
+  readonly reachable: boolean;
   readonly unitInstalled: boolean;
   readonly unit: UnitState;
   readonly linger: Linger;
@@ -98,6 +105,10 @@ const HEALTHY: World = {
   server: Option.some(running()),
   holder: Option.none(),
   systemd: true,
+  booted: true,
+  sshPrivateKeys: [],
+  groups: ["pi", "users"],
+  reachable: true,
   unitInstalled: true,
   unit: { enabled: true, active: "active", mainPid: Option.some(4242) },
   linger: "yes",
@@ -111,6 +122,8 @@ const HEALTHY: World = {
 const diagnoseIn = (changes: Partial<World> = {}) =>
   Effect.gen(function* () {
     const world = { ...HEALTHY, ...changes };
+    /** Every URL the report asked about. */
+    const requests: Array<string> = [];
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const root = yield* fs.makeTempDirectoryScoped();
@@ -163,6 +176,13 @@ const diagnoseIn = (changes: Partial<World> = {}) =>
           freeSpace: () => Effect.succeed(world.freeBytes),
           portState: (host, port) => Effect.succeed({ _tag: world.ports(host, port) }),
           holdsSocket: () => Effect.succeed(world.holder),
+          sshPrivateKeys: Effect.succeed(world.sshPrivateKeys),
+          groups: Effect.succeed(world.groups),
+          reachable: (url) =>
+            Effect.sync(() => {
+              requests.push(url);
+              return world.reachable;
+            }),
           findExecutable: (name, searchPath) =>
             Effect.succeed(
               Option.fromNullishOr(
@@ -189,6 +209,7 @@ const diagnoseIn = (changes: Partial<World> = {}) =>
         Systemd,
         Systemd.of({
           available: Effect.succeed(world.systemd),
+          booted: Effect.succeed(world.booted),
           linger: Effect.succeed(world.linger),
           unitState: () => Effect.succeed(world.unit),
           memoryControllerDelegated: Effect.succeed(world.memoryDelegated),
@@ -219,7 +240,7 @@ const diagnoseIn = (changes: Partial<World> = {}) =>
       Effect.provide(fakes),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
     );
-    return { checks, home, web };
+    return { checks, home, web, requests };
   }).pipe(Effect.scoped);
 
 const named = (checks: ReadonlyArray<Check>, name: string) => {
@@ -240,12 +261,13 @@ const assertFlagged = (check: Check, status: "warning" | "problem", mentions?: s
 it.layer(NodeServices.layer)("doctor", (it) => {
   it.effect("finds nothing to fix on a machine that has everything", () =>
     Effect.gen(function* () {
-      const { checks } = yield* diagnoseIn();
+      const { checks, requests } = yield* diagnoseIn();
       const flagged = checks.filter((check) => check.status !== "ok");
       assert.deepStrictEqual(
         flagged.map((check) => `${check.name}: ${check.summary}`),
         [],
       );
+      assert.deepStrictEqual(requests, []);
     }),
   );
 
@@ -343,10 +365,23 @@ it.layer(NodeServices.layer)("doctor", (it) => {
 
   it.effect("checks the engine install and that the running engine is the pinned one", () =>
     Effect.gen(function* () {
+      // Not installed yet: the server downloads it on its first start, if GitHub answers.
       const notInstalled = yield* diagnoseIn({ server: Option.none() });
-      assertFlagged(named(notInstalled.checks, "Engine"), "warning");
+      assert.strictEqual(named(notInstalled.checks, "Engine").status, "ok");
+      assert.include(named(notInstalled.checks, "Engine").summary, "downloads it from GitHub");
+      assert.lengthOf(notInstalled.requests, 1);
+      const [download = ""] = notInstalled.requests;
+      assert.match(download, /^https:\/\/github\.com\/.+-linux-arm64\.tar\.gz$/);
+      const offline = yield* diagnoseIn({ server: Option.none(), reachable: false });
+      const unreachable = named(offline.checks, "Engine");
+      assertFlagged(unreachable, "problem", "does not answer");
+      assert.include(
+        Option.getOrElse(unreachable.fix, () => ""),
+        `curl -sSIL ${download}`,
+      );
       const unsupported = yield* diagnoseIn({ server: Option.none(), platform: "win32" });
       assertFlagged(named(unsupported.checks, "Engine"), "problem", "win32");
+      assert.deepStrictEqual(unsupported.requests, []);
 
       const other = yield* diagnoseIn({
         server: Option.some(
@@ -377,16 +412,37 @@ it.layer(NodeServices.layer)("doctor", (it) => {
 
   it.effect("checks each harness is found and signed in, from the engine's provider status", () =>
     Effect.gen(function* () {
+      // Nowhere on this machine: the fix names where its maker says how to install it.
       const missing = yield* diagnoseIn({ executables: ["/usr/bin/codex"] });
-      assertFlagged(named(missing.checks, "Claude Code"), "warning", "claude");
+      const absent = named(missing.checks, "Claude Code");
+      assertFlagged(absent, "warning", "claude");
+      assert.include(
+        Option.getOrElse(absent.fix, () => ""),
+        "https://code.claude.com/docs/en/setup",
+      );
       assert.strictEqual(named(missing.checks, "Codex").status, "ok");
+      const noCodex = yield* diagnoseIn({ executables: ["/usr/bin/claude"] });
+      assert.include(
+        Option.getOrElse(named(noCodex.checks, "Codex").fix, () => ""),
+        "https://developers.openai.com/codex/cli",
+      );
 
       // With the service installed, a harness counts where the service looks.
       const shellOnly = yield* diagnoseIn({
         executables: ["/usr/bin/codex", "/run/user/1000/fnm_multishells/1_2/bin/claude"],
         searchPath: "/run/user/1000/fnm_multishells/1_2/bin:/usr/bin",
       });
-      assertFlagged(named(shellOnly.checks, "Claude Code"), "warning", "service's PATH");
+      const shellOnlyClaude = named(shellOnly.checks, "Claude Code");
+      assertFlagged(shellOnlyClaude, "warning", "service's PATH");
+      // It is installed: the service only needs this shell's PATH.
+      assert.include(
+        Option.getOrElse(shellOnlyClaude.fix, () => ""),
+        "`j3-bots service install`",
+      );
+      assert.notInclude(
+        Option.getOrElse(shellOnlyClaude.fix, () => ""),
+        "https://",
+      );
       const noService = yield* diagnoseIn({
         unitInstalled: false,
         executables: ["/usr/bin/codex", "/opt/claude/bin/claude"],
@@ -406,12 +462,11 @@ it.layer(NodeServices.layer)("doctor", (it) => {
         ),
       });
       const claude = named(signedOut.checks, "Claude Code");
-      assertFlagged(claude, "problem");
-      // The fix is the command the server says signs the provider in on the host.
-      assert.include(
-        Option.getOrElse(claude.fix, () => ""),
-        "`claude auth login`",
-      );
+      assertFlagged(claude, "problem", "no way to reach its models");
+      // The two ways: the connection command the server names, or the harness's own sign-in.
+      const ways = Option.getOrElse(claude.fix, () => "");
+      assert.include(ways, "`j3-bots provider connect`");
+      assert.include(ways, "`j3-bots provider login claude-code`");
       // Found, but the server runs no Codex provider at all.
       assertFlagged(named(signedOut.checks, "Codex"), "warning", "no Codex provider");
     }),
@@ -529,10 +584,79 @@ it.layer(NodeServices.layer)("doctor", (it) => {
 
       const unlimited = yield* diagnoseIn({ memoryDelegated: false });
       assertFlagged(named(unlimited.checks, "Memory limit"), "warning");
-
-      const noManager = yield* diagnoseIn({ systemd: false });
-      assertFlagged(named(noManager.checks, "Service"), "warning");
     }),
+  );
+
+  it.effect("says why this user has no systemd manager, and does not check the service then", () =>
+    Effect.gen(function* () {
+      const healthy = yield* diagnoseIn();
+      assert.strictEqual(named(healthy.checks, "User manager").status, "ok");
+
+      // A shell opened with `su` or `sudo -u` on a systemd machine.
+      const unreachable = yield* diagnoseIn({ systemd: false });
+      const fromSu = named(unreachable.checks, "User manager");
+      assertFlagged(fromSu, "problem", "does not answer from this shell");
+      assert.include(
+        Option.getOrElse(fromSu.fix, () => ""),
+        "XDG_RUNTIME_DIR",
+      );
+      assert.include(
+        Option.getOrElse(fromSu.fix, () => ""),
+        "enable-linger pi",
+      );
+      assert.strictEqual(named(unreachable.checks, "Service").status, "skipped");
+      assert.isUndefined(unreachable.checks.find((check) => check.name === "Start at boot"));
+
+      // A container, or WSL without systemd.
+      const container = yield* diagnoseIn({ systemd: false, booted: false });
+      const noSystemd = named(container.checks, "User manager");
+      assertFlagged(noSystemd, "problem", "systemd did not start this machine");
+      assert.include(
+        Option.getOrElse(noSystemd.fix, () => ""),
+        "/etc/wsl.conf",
+      );
+      assert.strictEqual(named(container.checks, "Service").status, "skipped");
+    }),
+  );
+
+  it.effect(
+    "warns when this user holds SSH keys or can become root, with the steps to a user of its own",
+    () =>
+      Effect.gen(function* () {
+        const plain = yield* diagnoseIn({ groups: ["pi", "users", "docker"] });
+        assert.strictEqual(named(plain.checks, "This user").status, "ok");
+
+        const keys = yield* diagnoseIn({ sshPrivateKeys: ["/home/pi/.ssh/id_ed25519"] });
+        const withKeys = named(keys.checks, "This user");
+        assertFlagged(withKeys, "warning", "/home/pi/.ssh/id_ed25519");
+        assert.include(
+          Option.getOrElse(withKeys.fix, () => ""),
+          "useradd",
+        );
+
+        const admin = yield* diagnoseIn({ groups: ["pi", "sudo"] });
+        assertFlagged(
+          named(admin.checks, "This user"),
+          "warning",
+          "is in sudo, so it can become root",
+        );
+        const both = yield* diagnoseIn({
+          sshPrivateKeys: ["/home/pi/.ssh/id_rsa", "/home/pi/.ssh/deploy"],
+          groups: ["wheel"],
+        });
+        assertFlagged(
+          named(both.checks, "This user"),
+          "warning",
+          "keeps SSH private keys (/home/pi/.ssh/id_rsa, /home/pi/.ssh/deploy) and is in wheel",
+        );
+
+        // Reported even when the configuration is broken.
+        const broken = yield* diagnoseIn({
+          configFile: Option.some('{ "prot": 3737 }'),
+          groups: ["sudo"],
+        });
+        assertFlagged(named(broken.checks, "This user"), "warning");
+      }),
   );
 
   it.effect("warns that this shell's overrides do not reach the installed service", () =>
