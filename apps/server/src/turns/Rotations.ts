@@ -172,13 +172,9 @@ export const layer = Layer.effect(
 
     /**
      * Live bots whose main session is missing, not opened yet, or not brought
-     * to the bot's settings. A lost session, and one on a provider the bot
-     * left, are replaced instead.
-     */
-    /**
-     * Live bots whose main session is missing, unopened or not aligned;
-     * `opened` when it is opened, on the bot's provider, and only its
-     * alignment is due.
+     * to the bot's settings; `opened` when it is opened and only its
+     * alignment is due. A lost session, and one on a provider the bot left,
+     * are replaced instead.
      */
     const unprovisioned = SqlSchema.findAll({
       Request: Schema.Void,
