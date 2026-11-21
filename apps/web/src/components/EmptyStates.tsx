@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Bot, EngineStatus, ProviderStatus } from "@j3-bots/contracts";
+import { canRunBots, connectCommand } from "@j3-bots/client-runtime/presentation";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 import { useI18n, usePresentation } from "../app/context";
-import type { I18n } from "@j3-bots/i18n";
 import { cn } from "../lib/cn";
-import { usageLimitText } from "@j3-bots/client-runtime/wording";
+import { engineProblem, providerLine, type ProviderTone } from "@j3-bots/client-runtime/wording";
 import { BotAvatar } from "./BotAvatar";
 import { useConnectionLineShown } from "./ConnectionBanner";
 import { NewBotForm } from "./NewBotForm";
@@ -54,9 +54,10 @@ interface FirstRunProps {
  * then asks for a name. No settings form; the bot asks the rest itself.
  */
 export function FirstRun({ engine, onCreateBot }: FirstRunProps) {
-  const { t } = useI18n();
+  const i18n = useI18n();
+  const { t } = i18n;
   if (engine === null) return <Connecting />;
-  const problem = engineProblem(engine, t);
+  const problem = engineProblem(engine, i18n);
   if (problem !== null) {
     return (
       <Centered>
@@ -70,7 +71,7 @@ export function FirstRun({ engine, onCreateBot }: FirstRunProps) {
     return (
       <Centered>
         <Ensemble />
-        {connect === undefined ? (
+        {connect === null ? (
           <Heading title={t("firstRun.unavailable.title")} body={t("firstRun.unavailable.body")} />
         ) : (
           <>
@@ -89,45 +90,6 @@ export function FirstRun({ engine, onCreateBot }: FirstRunProps) {
     );
   }
   return <CreateFirstBot onCreateBot={onCreateBot} />;
-}
-
-/**
- * What keeps the engine from running bots, and what the operator can do about
- * it; null when it is ready.
- */
-export function engineProblem(
-  engine: EngineStatus,
-  t: I18n["t"],
-): { readonly title: string; readonly body: string } | null {
-  const { state } = engine;
-  switch (state._tag) {
-    case "ready":
-      return null;
-    case "starting":
-      return { title: t("engine.starting.title"), body: t("engine.starting.body") };
-    case "incompatible":
-      return {
-        title: t("firstRun.incompatible.title"),
-        body: t("firstRun.incompatible.body", {
-          running: state.runningVersion,
-          pinned: engine.pinnedVersion,
-        }),
-      };
-    case "unavailable":
-      switch (state.reason) {
-        case "down":
-          return { title: t("engine.down.title"), body: t("engine.down.body") };
-        case "port-in-use":
-          return { title: t("engine.portInUse.title"), body: t("engine.portInUse.body") };
-        case "install-failed":
-          return { title: t("engine.installFailed.title"), body: t("engine.installFailed.body") };
-        case "credential-refused":
-          return {
-            title: t("engine.credentialRefused.title"),
-            body: t("engine.credentialRefused.body"),
-          };
-      }
-  }
 }
 
 /** Before the first roster arrives: the server has not answered yet. */
@@ -156,23 +118,20 @@ export function ConversationGone({ onBack }: { onBack: () => void }) {
   );
 }
 
-/** A provider a bot can be created on: ready, with a model to pick. */
-const canRunBots = (provider: ProviderStatus) =>
-  provider.status._tag === "ready" && provider.models.length > 0;
-
-/** The one command that connects every provider that needs it; undefined when none does. */
-const connectCommand = (engine: EngineStatus): string | undefined =>
-  engine.providers.flatMap((p) =>
-    p.status._tag === "sign-in-required" ? [p.status.command] : [],
-  )[0];
-
 /** The command that connects the providers, when one needs it, ready to copy. */
 export function ConnectProviders({ engine }: { engine: EngineStatus }) {
   const { t } = useI18n();
   const connect = connectCommand(engine);
-  if (connect === undefined) return null;
+  if (connect === null) return null;
   return <CommandLine command={connect} copyLabel={t("firstRun.connect.copy")} />;
 }
+
+const providerToneClass = {
+  ready: "text-success",
+  waiting: "text-waiting",
+  blocked: "text-blocked",
+  muted: "text-muted-foreground",
+} as const satisfies Record<ProviderTone, string>;
 
 /**
  * One provider: its name, and its state in words. `stale` mutes a state
@@ -185,27 +144,15 @@ export function ProviderRow({
   provider: ProviderStatus;
   stale?: boolean;
 }) {
-  const ctx = usePresentation();
-  const { t } = ctx.i18n;
-  const { status } = provider;
-  const [label, tone] = ((): readonly [string, string] => {
-    switch (status._tag) {
-      case "ready":
-        return provider.models.length > 0
-          ? [t("provider.ready"), "text-success"]
-          : [t("provider.noModels"), "text-waiting"];
-      case "sign-in-required":
-        return [t("provider.notConnected"), "text-waiting"];
-      case "limited":
-        return [usageLimitText(status.resetsAt, ctx), "text-blocked"];
-      case "unavailable":
-        return [t("provider.unavailable"), "text-muted-foreground"];
-    }
-  })();
+  const line = providerLine(provider, usePresentation());
   return (
     <li className="flex flex-wrap items-baseline justify-between gap-x-3 rounded-md border border-border px-3 py-2">
       <span>{provider.name}</span>
-      <span className={cn("text-xs", stale ? "text-muted-foreground" : tone)}>{label}</span>
+      <span
+        className={cn("text-xs", stale ? "text-muted-foreground" : providerToneClass[line.tone])}
+      >
+        {line.text}
+      </span>
     </li>
   );
 }

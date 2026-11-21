@@ -34,6 +34,8 @@ const buttonLook = {
   outline: { box: "border border-input bg-surface", text: "text-foreground" },
   /** An action that says no, such as Dismiss, quieter than the rest. */
   quiet: { box: "", text: "text-muted-foreground" },
+  /** An action that cannot be undone, such as Delete. Its callers ask before they act. */
+  destructive: { box: "border border-blocked", text: "text-blocked" },
 } as const;
 
 /**

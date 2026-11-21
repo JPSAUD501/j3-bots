@@ -12,6 +12,7 @@ const sentences = {
   "roster.newBot": "Novo bot",
   "roster.newRoom": "Nova sala",
   "roster.newRoom.needsBots": "Uma sala precisa de dois bots. Crie outro bot antes.",
+  "roster.new.cancel": "Cancelar",
   "roster.empty": "Nenhum bot ainda.",
   "roster.noMatch": "Nada corresponde a “{query}”.",
   "roster.noMessages": "Nenhuma mensagem ainda",
@@ -576,6 +577,10 @@ const sentences = {
   "details.loading": "Carregando…",
   "details.deleteFailed": "O bot não foi excluído. Tente de novo.",
   "memory.close": "Fechar",
+  "form.discard.title": "Descartar as alterações?",
+  "form.discard.body": "O que você mudou aqui ainda não foi salvo.",
+  "form.discard.keep": "Continuar editando",
+  "form.discard": "Descartar",
   "memory.readFailed": "Não deu para ler este arquivo. Feche e tente de novo.",
 
   "editBot.title": "Editar {name}",

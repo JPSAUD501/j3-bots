@@ -2,6 +2,10 @@
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useLayoutEffect } from "react";
 import { View } from "react-native";
+import { Connecting } from "../components/ConnectionLine.tsx";
+import { Gone } from "../conversation/ConversationView.tsx";
+import { BotDetails } from "../details/BotDetails.tsx";
+import { RoomDetails } from "../details/RoomDetails.tsx";
 import type { Screens } from "../navigation.tsx";
 import { itemName, useRosterItem } from "./rosterItem.ts";
 
@@ -12,5 +16,17 @@ export function DetailsScreen({ navigation, route }: NativeStackScreenProps<Scre
   useLayoutEffect(() => {
     navigation.setOptions({ title: name });
   }, [navigation, name]);
-  return <View className="flex-1 bg-background" />;
+  if (found._tag === "loading") return <Connecting />;
+  if (found._tag === "gone") {
+    return (
+      <View className="flex-1 bg-background">
+        <Gone onBack={() => navigation.popTo("roster")} />
+      </View>
+    );
+  }
+  return found.item._tag === "bot" ? (
+    <BotDetails bot={found.item.bot} />
+  ) : (
+    <RoomDetails room={found.item.room} />
+  );
 }

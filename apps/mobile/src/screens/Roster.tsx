@@ -1,18 +1,30 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { rosterKeyOf, rosterKeyText } from "@j3-bots/client-runtime/presentation";
-import { useRoster } from "@j3-bots/client-runtime/react";
+import {
+  filterRoster,
+  orderRoster,
+  ROOM_MEMBERS,
+  rosterKeyOf,
+  rosterKeyText,
+} from "@j3-bots/client-runtime/presentation";
+import { useJ3Client, useReadable, useRoster } from "@j3-bots/client-runtime/react";
 import type { RosterItemKey } from "@j3-bots/contracts";
 import { layout } from "@j3-bots/design-tokens";
+import { useNavigation } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { useEffect } from "react";
-import { FlatList, Text, View } from "react-native";
+import { Plus, Search } from "lucide-react-native";
+import { useEffect, useState } from "react";
+import { Alert, FlatList, Pressable, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Connecting, ConnectionLine } from "../components/ConnectionLine.tsx";
+import { FirstRun } from "../components/FirstRun.tsx";
+import { Icon } from "../components/Icon.tsx";
 import { RosterRow } from "../components/RosterRow.tsx";
 import { ConversationView, Gone } from "../conversation/ConversationView.tsx";
 import { useI18n } from "../i18n.ts";
 import { useSideBySide } from "../layout.ts";
-import { asItWas, type Screens, useOpenConversation } from "../navigation.tsx";
+import { asItWas, type Navigation, type Screens, useOpenConversation } from "../navigation.tsx";
+import { useBots } from "../presentation.tsx";
+import { useColor } from "../theme.ts";
 import { Body, Centered, Title } from "../ui.tsx";
 import { useRosterItem } from "./rosterItem.ts";
 
@@ -63,28 +75,86 @@ export function RosterScreen({ navigation, route }: Props) {
   );
 }
 
-/** The roster's own header and its rows, under the status bar. */
+/**
+ * The roster's own header, with its search and New, and its rows, under the
+ * status bar. Before the first bot, the first run in their place.
+ */
 function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
   const { t } = useI18n();
+  const client = useJ3Client();
+  const items = useReadable(client.roster);
   const roster = useRoster();
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation<Navigation>();
+  const bots = useBots();
   const openConversation = useOpenConversation();
+  const placeholder = useColor("accent-muted-foreground");
+  const [query, setQuery] = useState("");
   const selectedText = selected === null ? null : rosterKeyText(selected);
-  if (roster === null) return <Connecting />;
+  if (items._tag === "loading" || roster === null) return <Connecting />;
+  if (items.value.length === 0) return <FirstRun />;
+  const searching = query.trim() !== "";
+  // A search finds hidden bots too, in the order the web lists what it finds.
+  const rows = searching ? orderRoster(filterRoster(items.value, query)) : roster.rows;
+  const offerNew = () =>
+    // A room needs two bots: with fewer, New says so and offers only a bot.
+    Alert.alert(
+      t("roster.new"),
+      bots.size >= ROOM_MEMBERS.min ? undefined : t("roster.newRoom.needsBots"),
+      [
+        { text: t("roster.new.cancel"), style: "cancel" },
+        ...(bots.size >= ROOM_MEMBERS.min
+          ? [
+              {
+                text: t("roster.newRoom"),
+                onPress: () => navigation.navigate("roomForm", { form: { _tag: "create" } }),
+              },
+            ]
+          : []),
+        { text: t("roster.newBot"), onPress: () => navigation.navigate("newBot") },
+      ],
+    );
   return (
     <View className="flex-1 bg-background" style={{ paddingTop: insets.top }}>
-      <Text accessibilityRole="header" className="px-4 py-3 text-xl font-semibold text-foreground">
-        {t("roster.label")}
-      </Text>
+      <View className="flex-row items-center gap-2 ps-4 pe-2 pt-3">
+        <Text accessibilityRole="header" className="flex-1 text-xl font-semibold text-foreground">
+          {t("roster.label")}
+        </Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={t("roster.new")}
+          onPress={offerNew}
+          className="size-11 items-center justify-center rounded-md active:bg-muted"
+        >
+          <Icon icon={Plus} size={20} color="accent-foreground" />
+        </Pressable>
+      </View>
+      <View className="mx-4 my-2 min-h-11 flex-row items-center gap-2 rounded-md bg-muted px-3">
+        <Icon icon={Search} size={14} color="accent-muted-foreground" />
+        <TextInput
+          accessibilityLabel={t("roster.search")}
+          value={query}
+          onChangeText={setQuery}
+          placeholder={t("roster.search")}
+          placeholderTextColor={placeholder}
+          autoCorrect={false}
+          returnKeyType="search"
+          className="min-h-11 flex-1 text-base text-foreground"
+        />
+      </View>
       <ConnectionLine loaded />
       <FlatList
         className="flex-1"
         contentContainerStyle={{ paddingBottom: insets.bottom }}
-        data={roster.rows}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        data={rows}
         keyExtractor={(item) => rosterKeyText(rosterKeyOf(item))}
         ListEmptyComponent={
           <View className="items-center px-6 py-12">
-            <Body>{t("roster.empty")}</Body>
+            <Body>
+              {searching ? t("roster.noMatch", { query: query.trim() }) : t("roster.empty")}
+            </Body>
           </View>
         }
         renderItem={({ item }) => {

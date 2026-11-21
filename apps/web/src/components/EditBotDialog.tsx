@@ -19,10 +19,10 @@ import {
   type BotEdits,
   type ProfileField,
 } from "@j3-bots/client-runtime/presentation";
+import { permissionModeText } from "@j3-bots/client-runtime/wording";
 import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
 import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
-import { permissionText } from "./DetailsPanel";
 import { Button } from "./ui/button";
 import { ChoiceIndicator, choiceRow } from "./ui/choice";
 
@@ -70,7 +70,8 @@ export function EditBotForm({
   onUnsavedChange,
   titleId,
 }: EditBotFormProps) {
-  const { t } = useI18n();
+  const i18n = useI18n();
+  const { t } = i18n;
   const ids = {
     name: useId(),
     title: useId(),
@@ -286,7 +287,7 @@ export function EditBotForm({
             className="flex flex-col gap-1.5"
           >
             {modes.map((option) => {
-              const [label, description] = permissionText[option];
+              const text = permissionModeText(option, i18n);
               return (
                 <Radio.Root
                   key={option}
@@ -300,8 +301,8 @@ export function EditBotForm({
                     <Radio.Indicator className="size-2 rounded-pill bg-background" />
                   </ChoiceIndicator>
                   <span className="flex flex-col">
-                    <span>{t(label)}</span>
-                    <span className="text-xs text-muted-foreground">{t(description)}</span>
+                    <span>{text.name}</span>
+                    <span className="text-xs text-muted-foreground">{text.description}</span>
                   </span>
                 </Radio.Root>
               );
