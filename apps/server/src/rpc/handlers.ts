@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { type AttachmentId, type BotId, J3Rpcs, NotFound } from "@j3-bots/contracts";
+import { type AttachmentId, type BotId, J3Rpcs, NotFound, USAGE_PERIOD } from "@j3-bots/contracts";
 import { Engine } from "@j3-bots/engine-t3";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -95,7 +95,7 @@ export const handlers = ServedRpcs.toLayer(
       "memory.read": ({ scope, path }) => memory.read(scope, path),
       "memory.write": (input) => memory.write(input),
       "engine.subscribe": () => engine.status,
-      "usage.turns": (input) => usage.turns(input),
+      "usage.turns": ({ limit }) => usage.turns({ period: USAGE_PERIOD, limit }),
       "settings.get": () => settings.get,
       "settings.update": ({ commandId, ...changes }) => settings.update({ commandId, changes }),
       "client.view": ({ target }) => viewer.view(target),

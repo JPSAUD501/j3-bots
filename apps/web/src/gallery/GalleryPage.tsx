@@ -4,7 +4,13 @@
  * development tool for reviewing the design, so its own headings are not
  * translated; everything it shows is.
  */
-import type { DraftFile, PairingFailure } from "@j3-bots/client-runtime";
+import {
+  type DraftFile,
+  type PairingFailure,
+  type RecentTurns,
+  type RecentTurnsState,
+  turnsNotRead,
+} from "@j3-bots/client-runtime";
 import {
   AttachmentId,
   Conflict,
@@ -14,13 +20,16 @@ import {
   MemoryRevision,
   ModelId,
   ProviderId,
+  type ProviderStatus,
   type RosterItem,
   type RosterItemKey,
+  type UsageWindow,
 } from "@j3-bots/contracts";
 import { avatarShapeNames, botColors, colors, radii, typeScale } from "@j3-bots/design-tokens";
 import * as DateTime from "effect/DateTime";
 import { useId, useState, type ReactNode } from "react";
-import { BotsProvider, ClockProvider, I18nProvider } from "../app/context";
+import { ClockProvider, OperatorTimeZone } from "../app/clock";
+import { BotsProvider, I18nProvider } from "../app/context";
 import { ApprovalCard } from "../components/ApprovalCard";
 import { BotAvatar, RoomAvatar } from "../components/BotAvatar";
 import { Composer } from "../components/Composer";
@@ -39,6 +48,7 @@ import { RosterRow } from "../components/RosterRow";
 import { RoutineChangeCard } from "../components/RoutineChangeCard";
 import { SecretRequestCard } from "../components/SecretRequestCard";
 import { Timeline, type TimelineIntents } from "../components/Timeline";
+import { UsageSection } from "../components/UsageSection";
 import { WorkFold } from "../components/WorkFold";
 import { locales, type Locale } from "../i18n/i18n";
 import { cn } from "../lib/cn";
@@ -61,52 +71,55 @@ export default function GalleryPage() {
   return (
     <I18nProvider locale={locale}>
       <ClockProvider now={SAMPLE_NOW}>
-        <BotsProvider bots={bots}>
-          <div className="min-h-full">
-            <div className="mx-auto flex max-w-[90rem] flex-col gap-12 px-4 py-8 @container">
-              <header className="flex flex-wrap items-end justify-between gap-4">
-                <div>
-                  <h1 className="text-xl font-semibold">Gallery</h1>
-                  <p className="text-sm text-muted-foreground">
-                    Every component and state, in both themes, from the sample team. Development
-                    only.
-                  </p>
-                </div>
-                <div
-                  role="radiogroup"
-                  aria-label="Language"
-                  className="flex gap-1 rounded-md bg-muted p-1"
-                >
-                  {locales.map((l) => (
-                    <button
-                      key={l}
-                      type="button"
-                      role="radio"
-                      aria-checked={l === locale}
-                      onClick={() => setLocale(l)}
-                      className="rounded-sm px-2.5 py-1 text-xs aria-checked:bg-background aria-checked:shadow-sm"
-                    >
-                      {languageNames[l]}
-                    </button>
-                  ))}
-                </div>
-              </header>
-              <TokensSection />
-              <AvatarsSection />
-              <RosterSection />
-              <BubblesSection />
-              <CardsSection />
-              <WorkSection />
-              <NoticesSection />
-              <ComposerSection />
-              <DetailsSection />
-              <EditingSection />
-              <EmptyStatesSection />
-              <ConnectionSection />
-              <ShellSection />
+        <OperatorTimeZone timeZone={team.settings.timeZone}>
+          <BotsProvider bots={bots}>
+            <div className="min-h-full">
+              <div className="mx-auto flex max-w-[90rem] flex-col gap-12 px-4 py-8 @container">
+                <header className="flex flex-wrap items-end justify-between gap-4">
+                  <div>
+                    <h1 className="text-xl font-semibold">Gallery</h1>
+                    <p className="text-sm text-muted-foreground">
+                      Every component and state, in both themes, from the sample team. Development
+                      only.
+                    </p>
+                  </div>
+                  <div
+                    role="radiogroup"
+                    aria-label="Language"
+                    className="flex gap-1 rounded-md bg-muted p-1"
+                  >
+                    {locales.map((l) => (
+                      <button
+                        key={l}
+                        type="button"
+                        role="radio"
+                        aria-checked={l === locale}
+                        onClick={() => setLocale(l)}
+                        className="rounded-sm px-2.5 py-1 text-xs aria-checked:bg-background aria-checked:shadow-sm"
+                      >
+                        {languageNames[l]}
+                      </button>
+                    ))}
+                  </div>
+                </header>
+                <TokensSection />
+                <AvatarsSection />
+                <RosterSection />
+                <BubblesSection />
+                <CardsSection />
+                <WorkSection />
+                <NoticesSection />
+                <ComposerSection />
+                <DetailsSection />
+                <EditingSection />
+                <UsageGallerySection />
+                <EmptyStatesSection />
+                <ConnectionSection />
+                <ShellSection />
+              </div>
             </div>
-          </div>
-        </BotsProvider>
+          </BotsProvider>
+        </OperatorTimeZone>
       </ClockProvider>
     </I18nProvider>
   );
@@ -927,6 +940,168 @@ const engines = {
 } as const;
 
 const created = () => Promise.resolve();
+
+/** The sample engine with Codex signed in again and Claude Code's windows changed by `windows`. */
+const usageEngine = (
+  windows: (usage: ReadonlyArray<UsageWindow>) => ReadonlyArray<UsageWindow>,
+  claudeStatus: ProviderStatus["status"] = { _tag: "ready" },
+): EngineStatus => ({
+  ...team.engine,
+  providers: team.engine.providers.map((p, index) =>
+    index === 0
+      ? { ...p, status: claudeStatus, usage: windows(p.usage) }
+      : { ...p, status: { _tag: "ready" } },
+  ),
+});
+
+/** Claude Code's window at `index` at its limit. */
+const atLimit = (index: number) => (usage: ReadonlyArray<UsageWindow>) =>
+  usage.map((w, i) => (i === index ? { ...w, usedPercent: 100 } : w));
+
+const usageEngines = {
+  /** Claude Code at its five-hour limit; Codex reporting no limit. */
+  atLimit: usageEngine(atLimit(0), {
+    _tag: "limited",
+    resetsAt: team.engine.providers[0]?.usage[0]?.resetsAt ?? null,
+  }),
+  /** One model's weekly window at its limit: the provider still runs its other models. */
+  modelAtLimit: usageEngine(atLimit(2)),
+  /** The five-hour window full when last checked, its reset since passed. */
+  resetPassed: usageEngine((usage) =>
+    usage.map((w, i) =>
+      i === 0
+        ? { ...w, usedPercent: 100, resetsAt: DateTime.subtract(SAMPLE_NOW, { minutes: 3 }) }
+        : w,
+    ),
+  ),
+  /** Through a provider connection: no provider reports a window. */
+  noWindows: usageEngine(() => []),
+  /** Every provider signed out, reporting no window. */
+  signedOut: {
+    ...engines.connect,
+    providers: engines.connect.providers.map((p) => ({ ...p, usage: [] })),
+  },
+};
+
+/** The day's turns, read and current. */
+const turnsRead = (
+  value: RecentTurns,
+  extra: Partial<Omit<RecentTurnsState, "read">> & { readonly stale?: boolean } = {},
+): RecentTurnsState => ({
+  read: { _tag: "ready", value, stale: extra.stale ?? false },
+  loadingMore: extra.loadingMore ?? false,
+  failed: extra.failed ?? false,
+});
+
+/** The day's latest turns, with earlier ones of the day on the server. */
+const firstPage: RecentTurns = {
+  ...team.recentTurns,
+  turns: team.recentTurns.turns.slice(0, 9),
+  hasMore: true,
+  canLoadMore: true,
+};
+
+/** The sample's names, made long enough to wrap on a phone. */
+const longNames = {
+  roster: team.roster.map((item) =>
+    item._tag === "bot" && item.bot.id === ids.atlas
+      ? {
+          ...item,
+          bot: {
+            ...item.bot,
+            profile: { ...item.bot.profile, name: "Atlas, keeper of the release notes" },
+          },
+        }
+      : item,
+  ),
+  turns: {
+    ...team.recentTurns,
+    turns: team.recentTurns.turns.map((turn) =>
+      turn.routine?._tag === "routine"
+        ? {
+            ...turn,
+            routine: { ...turn.routine, name: `${turn.routine.name} for every open branch` },
+          }
+        : turn,
+    ),
+  },
+};
+
+function UsageGallerySection() {
+  const usage = (
+    engine: EngineStatus | null,
+    recent: RecentTurnsState,
+    { engineStale = false, roster = team.roster } = {},
+  ) => (
+    <UsageSection
+      engine={engine}
+      engineStale={engineStale}
+      recent={recent}
+      roster={roster}
+      onLoadMore={nothing}
+      onRetry={nothing}
+    />
+  );
+  return (
+    <Section title="Usage">
+      <div className="flex flex-wrap gap-4">
+        <Frame label="Limits and the day's turns, by provider and bot" width={420} height={640}>
+          {usage(team.engine, turnsRead(team.recentTurns))}
+        </Frame>
+        <Frame
+          label="More turns than one read: the latest, and the oldest shown"
+          width={420}
+          height={520}
+        >
+          {usage(team.engine, turnsRead(firstPage))}
+        </Frame>
+        <Frame label="Loading earlier turns" width={420} height={520}>
+          {usage(team.engine, turnsRead(firstPage, { loadingMore: true }))}
+        </Frame>
+        <Frame label="The most turns shown" width={420} height={520}>
+          {usage(team.engine, turnsRead({ ...firstPage, canLoadMore: false }))}
+        </Frame>
+        <Frame label="A provider at its limit; another reports none" width={420} height={640}>
+          {usage(usageEngines.atLimit, turnsRead(team.recentTurns))}
+        </Frame>
+        <Frame label="One model at its weekly limit" width={420} height={640}>
+          {usage(usageEngines.modelAtLimit, turnsRead(team.recentTurns))}
+        </Frame>
+        <Frame label="A reset passed since the last check" width={420} height={640}>
+          {usage(usageEngines.resetPassed, turnsRead(team.recentTurns))}
+        </Frame>
+        <Frame
+          label="No provider reports limits, as through a provider connection"
+          width={420}
+          height={520}
+        >
+          {usage(usageEngines.noWindows, turnsRead(team.recentTurns))}
+        </Frame>
+        <Frame label="Offline: limits and turns last known" width={420} height={640}>
+          {usage(team.engine, turnsRead(team.recentTurns, { stale: true }), { engineStale: true })}
+        </Frame>
+        <Frame label="Turns loading" width={420} height={320}>
+          {usage(team.engine, turnsNotRead)}
+        </Frame>
+        <Frame label="The turns couldn't be read" width={420} height={320}>
+          {usage(team.engine, { ...turnsNotRead, failed: true })}
+        </Frame>
+        <Frame label="Earlier turns couldn't be read" width={420} height={520}>
+          {usage(team.engine, turnsRead(firstPage, { failed: true }))}
+        </Frame>
+        <Frame label="Long names on a phone" width={320} height={640}>
+          {usage(team.engine, turnsRead(longNames.turns), { roster: longNames.roster })}
+        </Frame>
+        <Frame label="The engine isn't running" width={420} height={120}>
+          {usage(engines.down, turnsRead(team.recentTurns))}
+        </Frame>
+        <Frame label="No provider can run bots yet" width={420} height={200}>
+          {usage(usageEngines.signedOut, turnsRead({ ...team.recentTurns, turns: [] }))}
+        </Frame>
+      </div>
+    </Section>
+  );
+}
 
 /** A bot just created: its first turn has started and nothing is in its conversation yet. */
 const speakingFirst = {

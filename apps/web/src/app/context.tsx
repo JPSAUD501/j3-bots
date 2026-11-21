@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Bot, BotId } from "@j3-bots/contracts";
-import * as DateTime from "effect/DateTime";
-import { createContext, use, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, use, useEffect, useMemo, type ReactNode } from "react";
 import { createI18n, resolveLocale, type I18n, type Locale } from "../i18n/i18n";
 import { usePreferences } from "../preferences/preferences";
 import type { PresentationContext } from "../presentation/roster";
+import { useClock } from "./clock";
 
 const I18nContext = createContext<I18n>(createI18n("en"));
 
@@ -21,33 +21,6 @@ export function I18nProvider({ locale, children }: { locale?: Locale; children: 
 }
 
 export const useI18n = () => use(I18nContext);
-
-interface Clock {
-  readonly now: DateTime.Utc;
-  readonly timeZone: string;
-}
-
-const ClockContext = createContext<Clock>({
-  now: DateTime.makeUnsafe(0),
-  timeZone: "UTC",
-});
-
-const systemTimeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
-
-/** The current time for relative labels, updated every half minute. `now` pins it. */
-export function ClockProvider({ now, children }: { now?: DateTime.Utc; children: ReactNode }) {
-  const [ticking, setTicking] = useState(() => DateTime.makeUnsafe(Date.now()));
-  useEffect(() => {
-    if (now) return;
-    const timer = window.setInterval(() => setTicking(DateTime.makeUnsafe(Date.now())), 30_000);
-    return () => window.clearInterval(timer);
-  }, [now]);
-  const clock = useMemo(
-    () => ({ now: now ?? ticking, timeZone: systemTimeZone() }),
-    [now, ticking],
-  );
-  return <ClockContext value={clock}>{children}</ClockContext>;
-}
 
 const BotsContext = createContext<ReadonlyMap<BotId, Bot>>(new Map());
 
@@ -68,7 +41,7 @@ export const useBots = (): ReadonlyMap<BotId, Bot> => use(BotsContext);
 
 export function usePresentation(): PresentationContext {
   const i18n = use(I18nContext);
-  const { now, timeZone } = use(ClockContext);
+  const { now, timeZone } = useClock();
   const bots = use(BotsContext);
   return useMemo(
     () => ({ i18n, now, timeZone, botName: (id: BotId) => bots.get(id)?.profile.name ?? null }),

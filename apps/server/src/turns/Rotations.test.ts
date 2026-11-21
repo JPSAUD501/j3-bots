@@ -896,11 +896,15 @@ it.effect("reports each turn with its bot and provider, newest first", () =>
     yield* TestClock.adjust("1 second");
     yield* exchange(bia.id, biaSession, "Second.", "Two.");
 
+    // The period reaches back to `since` from the moment the server reads, and that moment is told.
+    const now = yield* DateTime.now;
+    const period = DateTime.distance(since, now);
     const usage = yield* Usage;
-    const page = yield* usage.turns({ since, limit: 1 });
+    const page = yield* usage.turns({ period, limit: 1 });
     assert.isTrue(page.hasMore);
-    const all = yield* usage.turns({ since, limit: 10 });
+    const all = yield* usage.turns({ period, limit: 10 });
     assert.isFalse(all.hasMore);
+    assert.isTrue(DateTime.Equivalence(all.readAt, now));
     // Each turn ran on its bot's provider then, newest first: Bia's last.
     // An `undelivered` follow-up of either may be among them.
     const providerOf = new Map<string, string>([

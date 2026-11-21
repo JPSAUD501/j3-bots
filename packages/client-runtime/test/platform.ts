@@ -49,6 +49,12 @@ export class TestNetwork extends Context.Service<
      * the server, as on a link that fails the other way.
      */
     readonly loseRequests: (lose: boolean) => Effect.Effect<void>;
+    /**
+     * While `true`, what the server sends on the open sockets reaches the
+     * client as text it cannot decode, as from a broken proxy: the sockets
+     * stay open.
+     */
+    readonly corruptReplies: (corrupt: boolean) => Effect.Effect<void>;
     /** Waits until the client sent something the network lost. */
     readonly requestLost: Effect.Effect<void>;
   }
@@ -61,6 +67,7 @@ const network = Layer.effectContext(
     const global = yield* Socket.WebSocketConstructor;
     let losing = false;
     let losingRequests = false;
+    let corrupting = false;
     const lost = yield* Queue.unbounded<void>();
     /** `socket`, whose messages reach the client unless replies are lost, and the server unless requests are. */
     const lossy = (socket: Socket.WebSocketLike): Socket.WebSocketLike => {
@@ -75,7 +82,8 @@ const network = Layer.effectContext(
         addEventListener: (type, listener, options) => {
           if (type !== "message") return socket.addEventListener(type, listener, options);
           const filtered = (event: Socket.WebSocketEvent) => {
-            if (!losing) listener(event);
+            if (losing) return;
+            listener(corrupting ? { ...event, data: "not json" } : event);
           };
           wrapped.set(listener, filtered);
           socket.addEventListener(type, filtered, options);
@@ -116,6 +124,10 @@ const network = Layer.effectContext(
           loseRequests: (lose) =>
             Effect.sync(() => {
               losingRequests = lose;
+            }),
+          corruptReplies: (corrupt) =>
+            Effect.sync(() => {
+              corrupting = corrupt;
             }),
           requestLost: Queue.take(lost),
         }),

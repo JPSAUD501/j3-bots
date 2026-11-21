@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import type { Bot, BotId, Routine, RoutineId } from "@j3-bots/contracts";
+import {
+  type Bot,
+  type BotId,
+  type Routine,
+  type RoutineId,
+  USAGE_PERIOD,
+} from "@j3-bots/contracts";
 import { ENGINE_INPUT_LIMIT, Engine, SessionId, TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as DateTime from "effect/DateTime";
@@ -502,6 +508,39 @@ it.effect("deletes a bot after one of its routines ran", () =>
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("names a routine run's turn by its routine in usage, and as deleted once it is", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const { bot, routine } = yield* ranRoutine;
+    const side = yield* sideTurn(routine.id);
+    yield* control.finishTurn({
+      sessionId: side.engine_session_id,
+      turnId: side.admitted_turn_id,
+      outcome: { _tag: "completed" },
+    });
+    yield* settled(routine);
+
+    const routineTurns = (yield* Usage)
+      .turns({ period: USAGE_PERIOD, limit: 100 })
+      .pipe(
+        Effect.map(({ turns }) =>
+          turns.flatMap((turn) => (turn.routine === null ? [] : [[turn.botId, turn.routine]])),
+        ),
+      );
+    assert.deepStrictEqual(yield* routineTurns, [
+      [bot.id, { _tag: "routine", id: routine.id, name: "Pull requests" }],
+    ]);
+
+    // Its wakes forget it, and its turn still counts as a routine run's, not as the bot's own.
+    yield* (yield* Routines).remove({
+      commandId: command(),
+      routineId: routine.id,
+      author: { _tag: "operator" },
+    });
+    assert.deepStrictEqual(yield* routineTurns, [[bot.id, { _tag: "deleted" }]]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect(
   "retires a side session the engine archived on its own, and tells the conversation nothing",
   () =>
@@ -668,11 +707,10 @@ it.effect(
       assert.strictEqual((yield* settled(routine)).status, "silent");
 
       // Both runs' turns count in the bot's usage, each naming the routine.
-      const { turns } = yield* (yield* Usage).turns({
-        since: DateTime.makeUnsafe(0),
-        limit: 100,
-      });
-      const runs = turns.filter((turn) => turn.routineId === routine.id);
+      const { turns } = yield* (yield* Usage).turns({ period: USAGE_PERIOD, limit: 100 });
+      const runs = turns.filter(
+        (turn) => turn.routine?._tag === "routine" && turn.routine.id === routine.id,
+      );
       assert.deepStrictEqual(
         runs.map((turn) => turn.providerId),
         [TestDomain.OTHER_PROVIDER_MODEL.providerId, "claude"],

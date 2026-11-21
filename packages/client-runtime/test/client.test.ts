@@ -18,11 +18,15 @@ import {
   Invalid,
   NotFound,
   ProviderId,
+  MAX_USAGE_TURNS,
+  USAGE_PERIOD,
+  type UsageTurn,
 } from "@j3-bots/contracts";
 import * as Server from "@j3-bots/server/testing";
 import { assert, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -56,6 +60,7 @@ import { Drafts } from "../src/stores/Drafts.ts";
 import { Presence } from "../src/stores/Presence.ts";
 import { Roster } from "../src/stores/Roster.ts";
 import { Settings } from "../src/stores/Settings.ts";
+import { USAGE_PAGE, Usage } from "../src/stores/Usage.ts";
 import { SignOut } from "../src/intents/SignOut.ts";
 import * as TestPlatform from "./platform.ts";
 
@@ -84,6 +89,12 @@ class Fakes extends Context.Service<
     readonly refusing: Set<string>;
     /** Every view a socket reported, with the device the socket belongs to. */
     readonly views: Queue.Queue<ReportedView>;
+    /** The turns `usage.turns` answers from, newest first, and the moment the server reads them at. */
+    readonly turns: { all: Array<UsageTurn>; readAt: DateTime.Utc };
+    /** How many of the next `usage.turns` reads fail, as the server fails one that breaks. */
+    readonly failingReads: { count: number };
+    /** How many of the next `usage.turns` reads never answer. */
+    readonly silentReads: { count: number };
   }
 >()("@j3-bots/client-runtime/test/client.test/Fakes") {}
 
@@ -97,6 +108,9 @@ const fakes = Layer.effect(
       applied: new Map(),
       refusing: new Set(),
       views: yield* Queue.unbounded<ReportedView>(),
+      turns: { all: [], readAt: DateTime.makeUnsafe(0) },
+      failingReads: { count: 0 },
+      silentReads: { count: 0 },
     });
   }),
 );
@@ -181,7 +195,31 @@ const unserved = Layer.mergeAll(
   J3Rpcs.toLayerHandler("message.retry", notFaked),
   J3Rpcs.toLayerHandler("bot.stop", notFaked),
   J3Rpcs.toLayerHandler("bot.freshStart", notFaked),
-  J3Rpcs.toLayerHandler("usage.turns", notFaked),
+  J3Rpcs.toLayerHandler(
+    "usage.turns",
+    Effect.gen(function* () {
+      const { turns, failingReads, silentReads } = yield* Fakes;
+      return ({ limit }) =>
+        Effect.suspend(() => {
+          if (failingReads.count > 0) {
+            failingReads.count -= 1;
+            return Effect.die("The turns could not be read");
+          }
+          if (silentReads.count > 0) {
+            silentReads.count -= 1;
+            return Effect.never;
+          }
+          const { all, readAt } = turns;
+          const since = DateTime.subtractDuration(readAt, USAGE_PERIOD);
+          const inPeriod = all.filter((turn) => DateTime.isGreaterThan(turn.startedAt, since));
+          return Effect.succeed({
+            turns: inPeriod.slice(0, limit),
+            readAt,
+            hasMore: inPeriod.length > limit,
+          });
+        });
+    }),
+  ),
 ).pipe(Layer.provide(fakes));
 
 const server = Server.layer(unserved).pipe(Layer.provideMerge(fakes));
@@ -417,6 +455,35 @@ const createBot = (name: string) =>
     return bot.id;
   });
 
+/**
+ * What `usage.turns` answers from, in place of what an earlier test left:
+ * `count` turns of a new bot, one a minute back from now, and with
+ * `dayBefore` one more from the day before. The server reads them as of now,
+ * which it returns.
+ */
+const setTurns = (count: number, dayBefore = false) =>
+  Effect.gen(function* () {
+    const botId = yield* createBot("Ana");
+    const now = yield* DateTime.now;
+    const turnAt = (minutesAgo: number): UsageTurn => {
+      const startedAt = DateTime.subtract(now, { minutes: minutesAgo });
+      return {
+        botId,
+        routine: null,
+        providerId: ProviderId.make("claude"),
+        startedAt,
+        finishedAt: startedAt,
+      };
+    };
+    const { turns } = yield* Fakes;
+    turns.all = [
+      ...Array.from({ length: count }, (_, index) => turnAt(index + 1)),
+      ...(dayBefore ? [turnAt(25 * 60)] : []),
+    ];
+    turns.readAt = now;
+    return now;
+  });
+
 const botSays = (botId: BotId, text: string) =>
   Effect.gen(function* () {
     const entries = yield* Server.Entries;
@@ -493,6 +560,160 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         devices._tag === "ready" ? devices.value.find((device) => device.current) : null;
       assert.strictEqual(current?.name, "Test client");
     }).pipe(Effect.provide(client())),
+  );
+
+  it.effect(
+    "reads the day's turns while held, a page more on demand, up to what one read takes",
+    () =>
+      Effect.gen(function* () {
+        yield* pairAndConnect;
+        // More than one read takes within the day, and one turn from the day before.
+        const readAt = yield* setTurns(1_100, true);
+
+        const view = yield* (yield* Usage).open;
+        let state = yield* waitFor(view.state, (next) => next.read._tag === "ready");
+        // The moment the server read them, not the client's.
+        assert.isTrue(
+          state.read._tag === "ready" && DateTime.Equivalence(state.read.value.readAt, readAt),
+        );
+        const steps: Array<[number, boolean]> = [];
+        while (state.read._tag === "ready") {
+          steps.push([state.read.value.turns.length, state.read.value.canLoadMore]);
+          if (!state.read.value.canLoadMore) break;
+          yield* view.loadMore;
+          state = yield* waitFor(view.state, (next) => !next.loadingMore);
+        }
+        assert.deepStrictEqual(steps, [
+          [USAGE_PAGE, true],
+          [2 * USAGE_PAGE, true],
+          [3 * USAGE_PAGE, true],
+          [4 * USAGE_PAGE, true],
+          [MAX_USAGE_TURNS, false],
+        ]);
+        assert.isTrue(state.read._tag === "ready" && state.read.value.hasMore);
+      }).pipe(Effect.scoped, Effect.provide(client())),
+  );
+
+  it.effect("shows a read that gets no answer in time as failed, keeping the turns read", () =>
+    Effect.gen(function* () {
+      const { device, credential } = yield* pairedDevice("Ana");
+      yield* Effect.gen(function* () {
+        yield* waitFor((yield* Connection).state, isConnected);
+        yield* setTurns(USAGE_PAGE + 50);
+        const view = yield* (yield* Usage).open;
+        yield* waitFor(view.state, (state) => state.read._tag === "ready");
+
+        (yield* Fakes).silentReads.count = 1;
+        yield* view.loadMore;
+        const failed = yield* waitFor(view.state, (state) => state.failed);
+        assert.deepStrictEqual(
+          failed.read._tag === "ready" && [failed.read.value.turns.length, failed.loadingMore],
+          [USAGE_PAGE, false],
+        );
+
+        yield* view.retry;
+        const read = yield* waitFor(view.state, (state) => !state.loadingMore && !state.failed);
+        assert.strictEqual(
+          read.read._tag === "ready" && read.read.value.turns.length,
+          USAGE_PAGE + 50,
+        );
+      }).pipe(Effect.scoped, Effect.provide(client(credential, device, undefined, SHORT_TIMEOUT)));
+    }),
+  );
+
+  it.effect(
+    "shows a read whose answer the client cannot decode on an open socket as failed, keeping the turns read",
+    () =>
+      Effect.gen(function* () {
+        yield* pairAndConnect;
+        const network = yield* TestPlatform.TestNetwork;
+        yield* setTurns(USAGE_PAGE + 50);
+        const view = yield* (yield* Usage).open;
+        yield* waitFor(view.state, (state) => state.read._tag === "ready");
+
+        yield* network.corruptReplies(true);
+        yield* view.loadMore;
+        const failed = yield* waitFor(view.state, (state) => state.failed);
+        assert.deepStrictEqual(
+          failed.read._tag === "ready" && [failed.read.value.turns.length, failed.loadingMore],
+          [USAGE_PAGE, false],
+        );
+
+        yield* network.corruptReplies(false);
+        yield* view.retry;
+        const read = yield* waitFor(view.state, (state) => !state.loadingMore && !state.failed);
+        assert.strictEqual(
+          read.read._tag === "ready" && read.read.value.turns.length,
+          USAGE_PAGE + 50,
+        );
+      }).pipe(Effect.scoped, Effect.provide(client())),
+  );
+
+  it.effect("says the first read of the turns failed, and reads them on retry", () =>
+    Effect.gen(function* () {
+      yield* pairAndConnect;
+      yield* setTurns(3);
+      (yield* Fakes).failingReads.count = 1;
+
+      const view = yield* (yield* Usage).open;
+      const failed = yield* waitFor(view.state, (state) => state.failed);
+      assert.strictEqual(failed.read._tag, "loading");
+
+      yield* view.retry;
+      const read = yield* waitFor(view.state, (state) => state.read._tag === "ready");
+      assert.deepStrictEqual(
+        read.read._tag === "ready" && [read.read.value.turns.length, read.failed],
+        [3, false],
+      );
+    }).pipe(Effect.scoped, Effect.provide(client())),
+  );
+
+  it.effect(
+    "keeps the turns read when reading more fails, marks them stale offline, and reads more on the next socket",
+    () =>
+      Effect.gen(function* () {
+        yield* pairAndConnect;
+        const network = yield* TestPlatform.TestNetwork;
+        // Fewer than a page more within the day, and one turn from the day before.
+        yield* setTurns(USAGE_PAGE + 50, true);
+        const view = yield* (yield* Usage).open;
+        yield* waitFor(view.state, (state) => state.read._tag === "ready");
+
+        (yield* Fakes).failingReads.count = 1;
+        yield* view.loadMore;
+        const failed = yield* waitFor(view.state, (state) => state.failed);
+        assert.deepStrictEqual(
+          failed.read._tag === "ready" && [failed.read.value.turns.length, failed.loadingMore],
+          [USAGE_PAGE, false],
+        );
+
+        yield* network.set("offline");
+        yield* network.dropSockets;
+        const offline = yield* waitFor(
+          view.state,
+          (state) => state.read._tag === "ready" && state.read.stale,
+        );
+        assert.strictEqual(
+          offline.read._tag === "ready" && offline.read.value.turns.length,
+          USAGE_PAGE,
+        );
+
+        yield* network.set("online");
+        const reread = yield* waitFor(
+          view.state,
+          (state) => state.read._tag === "ready" && !state.read.stale,
+        );
+        // The day's turns, all of them, and not the one before it.
+        assert.deepStrictEqual(
+          reread.read._tag === "ready" && [
+            reread.read.value.turns.length,
+            reread.read.value.hasMore,
+            reread.read.value.canLoadMore,
+            reread.failed,
+          ],
+          [USAGE_PAGE + 50, false, false, false],
+        );
+      }).pipe(Effect.scoped, Effect.provide(client())),
   );
 
   it.effect("asks to pair again when the ticket route refuses the saved credential", () =>
