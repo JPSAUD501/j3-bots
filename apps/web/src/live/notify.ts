@@ -98,15 +98,25 @@ export async function showNotification(
 /**
  * Closes every notification a pairing other than `pairing` received, so none
  * outlives the pairing it belongs to: once it ends, its bots' names and words
- * leave the screen too.
+ * leave the screen too. `currentPairing` is the pairing the page follows now:
+ * a sweep that a newer pairing overtakes stops, so it never closes what that
+ * pairing showed meanwhile, as when another tab pairs again while the browser
+ * lists its notifications.
  */
-export async function closeNotificationsOutside(pairing: DeviceId | null): Promise<void> {
+export async function closeNotificationsOutside(
+  pairing: DeviceId | null,
+  currentPairing: () => DeviceId | null,
+): Promise<void> {
+  const overtaken = () => currentPairing() !== pairing;
+  if (overtaken()) return;
   for (const entry of shownByPage) {
     if (entry.pairing !== pairing) entry.notification.close();
   }
   const registration = await activeServiceWorker();
   if (registration === null) return;
-  for (const notification of await registration.getNotifications()) {
+  const listed = await registration.getNotifications();
+  if (overtaken()) return;
+  for (const notification of listed) {
     if (!receivedUnder(notification, pairing)) notification.close();
   }
 }
