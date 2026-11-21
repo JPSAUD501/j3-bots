@@ -10,6 +10,7 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as TestClock from "effect/testing/TestClock";
 import {
+  backupsElsewhere,
   listSnapshots,
   markRestoring,
   pruneSnapshots,
@@ -73,6 +74,23 @@ const renamesFailingOnto = (fs: FileSystem.FileSystem, failing: string) =>
             }),
           )
         : fs.rename(from, to),
+  });
+
+/**
+ * A file system that reports the folders `apart`, and what is in them, on
+ * another device, as `stat` does: through links.
+ */
+const devicesApart = (fs: FileSystem.FileSystem, apart: ReadonlyArray<string>) =>
+  FileSystem.FileSystem.of({
+    ...fs,
+    stat: (at) =>
+      Effect.all([fs.stat(at), fs.realPath(at)]).pipe(
+        Effect.map(([info, real]) =>
+          apart.some((folder) => real === folder || real.startsWith(`${folder}/`))
+            ? { ...info, dev: info.dev + 1n }
+            : info,
+        ),
+      ),
   });
 
 const FILES = ["config.json", "j3.sqlite", "engine/userdata/settings.json"] as const;
@@ -320,5 +338,48 @@ it.layer(NodeServices.layer)("a snapshot", (it) => {
       assert.strictEqual(Option.getOrUndefined(chosen)?.folder, toB.folder);
       assert.isTrue(Option.isNone(yield* rollbackSnapshot(home, "D")));
     }),
+  );
+
+  it.effect("finds the data a restore moves aside on another filesystem than backups", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.realPath(yield* fs.makeTempDirectoryScoped());
+      const disk = yield* fs.realPath(yield* fs.makeTempDirectoryScoped());
+      yield* writeAll(home, { "config.json": "a", "engine/userdata/settings.json": "{}" });
+      const backups = path.join(home, "backups");
+      const elsewhere = (apart: ReadonlyArray<string>) =>
+        backupsElsewhere(home).pipe(
+          Effect.provideService(FileSystem.FileSystem, devicesApart(fs, apart)),
+        );
+
+      // No update made it yet, then one beside the data.
+      assert.isTrue(Option.isNone(yield* elsewhere([disk])));
+      yield* fs.makeDirectory(backups);
+      assert.isTrue(Option.isNone(yield* elsewhere([disk])));
+
+      // The engine's state on a disk of its own.
+      const userdata = path.join(home, "engine", "userdata");
+      assert.deepStrictEqual(
+        yield* elsewhere([userdata]),
+        Option.some({
+          folder: userdata,
+          backups,
+          linkTo: Option.none(),
+        }),
+      );
+
+      // backups a link to a folder on another disk.
+      yield* fs.remove(backups, { recursive: true });
+      yield* fs.symlink(disk, backups);
+      assert.deepStrictEqual(
+        yield* elsewhere([disk]),
+        Option.some({
+          folder: home,
+          backups,
+          linkTo: Option.some(disk),
+        }),
+      );
+    }).pipe(Effect.scoped),
   );
 });

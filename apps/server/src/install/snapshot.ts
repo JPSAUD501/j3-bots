@@ -138,6 +138,45 @@ export const snapshotBytes = Effect.fn("snapshot.bytes")(function* (home: string
   return yield* bytesOf(home, snapshotFiles(yield* Path.Path, home));
 });
 
+/** A folder of the home's whose files a restore moves aside, on another filesystem than `backups/`. */
+export interface BackupsElsewhere {
+  /** The folder of the home's. */
+  readonly folder: string;
+  /** `<home>/backups`. */
+  readonly backups: string;
+  /** The folder `backups` is a link to, when it is one. */
+  readonly linkTo: Option.Option<string>;
+}
+
+/**
+ * The first folder of `home` that holds files a restore moves aside and is on
+ * another filesystem than `<home>/backups`, if one is. A restore moves them
+ * into the snapshot's folder by renaming them, which never crosses
+ * filesystems: it would stop with the service disabled, every time it ran.
+ */
+export const backupsElsewhere = Effect.fn("snapshot.backupsElsewhere")(function* (home: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const backups = path.join(home, HOME_ENTRIES.backups);
+  const target = yield* fs.stat(backups).pipe(Effect.option);
+  if (Option.isNone(target)) return Option.none<BackupsElsewhere>();
+  const folders = new Set([
+    home,
+    ...snapshotFiles(path, home).map((file) => path.dirname(path.join(home, file))),
+  ]);
+  for (const folder of folders) {
+    const info = yield* fs.stat(folder).pipe(Effect.option);
+    if (Option.isSome(info) && info.value.dev !== target.value.dev) {
+      const link = yield* fs.lstat(backups).pipe(Effect.option);
+      const linkTo = Option.exists(link, ({ type }) => type === "SymbolicLink")
+        ? yield* fs.realPath(backups).pipe(Effect.option)
+        : Option.none<string>();
+      return Option.some<BackupsElsewhere>({ folder, backups, linkTo });
+    }
+  }
+  return Option.none<BackupsElsewhere>();
+});
+
 /**
  * How many more bytes a rollback to `snapshot` copies into `home`: none once
  * its copies are made, and otherwise the snapshot's files less the copies a

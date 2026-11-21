@@ -625,29 +625,33 @@ it.layer(NodeServices.layer)("doctor", (it) => {
 
   it.effect("gives running `--rollback` as the one fix while a rollback has not finished", () =>
     Effect.gen(function* () {
-      // As a rollback cut off after it disabled the service leaves it.
-      const { checks } = yield* diagnoseIn({
-        rollbackUnfinished: true,
-        server: Option.none(),
-        unit: { enabled: false, active: "inactive", mainPid: Option.none() },
-      });
-      assertFlagged(named(checks, "Snapshot"), "problem", "0.1.0");
-      assert.include(
-        Option.getOrElse(named(checks, "Snapshot").fix, () => ""),
-        "`j3-bots update --rollback`",
-      );
-      for (const name of ["Server", "Service"]) {
-        assert.strictEqual(named(checks, name).status, "skipped", name);
+      // As a rollback cut off after it disabled the service leaves it, with
+      // a valid configuration and with one the next start would refuse.
+      for (const configFile of [Option.none(), Option.some('{ "prot": 3737 }')]) {
+        const { checks } = yield* diagnoseIn({
+          configFile,
+          rollbackUnfinished: true,
+          server: Option.none(),
+          unit: { enabled: false, active: "inactive", mainPid: Option.none() },
+        });
+        assertFlagged(named(checks, "Snapshot"), "problem", "0.1.0");
+        assert.include(
+          Option.getOrElse(named(checks, "Snapshot").fix, () => ""),
+          "`j3-bots update --rollback`",
+        );
+        for (const name of ["Server", "Service"]) {
+          assert.strictEqual(named(checks, name).status, "skipped", name);
+        }
+        const starts = checks.filter(({ fix }) =>
+          Option.exists(fix, (text) =>
+            /systemctl --user (start|restart|enable)|j3-bots serve/.test(text),
+          ),
+        );
+        assert.deepStrictEqual(
+          starts.map(({ name }) => name),
+          [],
+        );
       }
-      const starts = checks.filter(({ fix }) =>
-        Option.exists(fix, (text) =>
-          /systemctl --user (start|restart|enable)|j3-bots serve/.test(text),
-        ),
-      );
-      assert.deepStrictEqual(
-        starts.map(({ name }) => name),
-        [],
-      );
     }),
   );
 

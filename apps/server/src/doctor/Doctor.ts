@@ -753,6 +753,14 @@ export const diagnose = Effect.gen(function* () {
     yield* ServerConfig.resolveAdminSocket.pipe(Effect.provide(described)),
     Option.isSome(unitText),
   );
+  const releases = yield* installedReleases(installation, unitText);
+  const running = Option.orElse(
+    Option.flatMap(releases, ({ service }) => service),
+    () =>
+      installation.layout._tag === "release"
+        ? Option.some(installation.layout.manifest.version)
+        : Option.none(),
+  );
   const loaded = yield* ServerConfig.load.pipe(Effect.provide(described), Effect.result);
   if (loaded._tag === "Failure") {
     checks.push(
@@ -766,6 +774,7 @@ export const diagnose = Effect.gen(function* () {
     const home = yield* ServerConfig.resolveHome.pipe(Effect.provide(described));
     const rollback = yield* unfinishedRollback(home);
     checks.push(yield* homeCheck(home));
+    checks.push(yield* snapshotCheck(home, running, rollback));
     checks.push(serverCheck(live, rollback));
     checks.push(...(yield* serviceChecks(unitText, rollback)));
     if (Option.isSome(shellSettings)) checks.push(shellSettings.value);
@@ -784,14 +793,6 @@ export const diagnose = Effect.gen(function* () {
   );
   checks.push(yield* homeCheck(config.home));
   checks.push(yield* diskCheck(config.home));
-  const releases = yield* installedReleases(installation, unitText);
-  const running = Option.orElse(
-    Option.flatMap(releases, ({ service }) => service),
-    () =>
-      installation.layout._tag === "release"
-        ? Option.some(installation.layout.manifest.version)
-        : Option.none(),
-  );
   const rollback = yield* unfinishedRollback(config.home);
   checks.push(yield* snapshotCheck(config.home, running, rollback));
 

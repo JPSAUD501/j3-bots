@@ -15,7 +15,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { AdminClient } from "../admin/AdminClient.ts";
 import * as ServerConfig from "../config.ts";
 import { HOME_ENTRIES } from "../home/entries.ts";
-import { holdHome, holdLock } from "../home/Home.ts";
+import { holdHome, holdLock, shellWord } from "../home/Home.ts";
 import * as Installation from "../installation.ts";
 import { isWithin, realLocation } from "../paths.ts";
 import * as Unit from "../service/unit.ts";
@@ -34,6 +34,7 @@ import {
 } from "./layout.ts";
 import { fetchRelease, isRelease, targetVersion } from "./release.ts";
 import {
+  backupsElsewhere,
   listSnapshots,
   markRestoring,
   pruneSnapshots,
@@ -97,6 +98,7 @@ class UpdateRefused extends Schema.TaggedError<UpdateRefused>()("UpdateRefused",
     "release-gone",
     "restore-unfinished",
     "busy",
+    "backups-elsewhere",
   ]),
   detail: Schema.String,
 }) {
@@ -126,6 +128,8 @@ class UpdateRefused extends Schema.TaggedError<UpdateRefused>()("UpdateRefused",
         return `A rollback to the snapshot in ${this.detail} has not finished, so the service stays disabled and no other release may run on the data directory. \`j3-bots update --rollback\` finishes it. Nothing was changed.`;
       case "busy":
         return `Another \`j3-bots update\` or \`j3-bots update --rollback\` is running for ${this.detail}. Wait for it to end, then run this again. Nothing was changed.`;
+      case "backups-elsewhere":
+        return this.detail;
     }
   }
 }
@@ -508,6 +512,32 @@ const checkNoUnfinishedRollback = Effect.fn("update.checkNoUnfinishedRollback")(
 });
 
 /**
+ * Fails when `<home>/backups` is on another filesystem than the data it
+ * would put back, saying how to bring it back beside the data: until then a
+ * rollback cannot move the home's files aside, and one this stopped half way
+ * finishes once it is back.
+ */
+const checkBackupsBeside = Effect.fn("update.checkBackupsBeside")(function* (home: string) {
+  const elsewhere = yield* backupsElsewhere(home);
+  if (Option.isNone(elsewhere)) return;
+  const { folder, backups, linkTo } = elsewhere.value;
+  const where = Option.match(linkTo, {
+    onSome: (target) => `${backups} is a link to ${target}, on another filesystem than ${folder}`,
+    onNone: () => `${backups} is on another filesystem than ${folder}`,
+  });
+  const fix = Option.match(linkTo, {
+    onSome: (target) =>
+      `Put the folder in its place: \`rm ${shellWord(backups)} && mv ${shellWord(target)} ${shellWord(backups)}\``,
+    onNone: () =>
+      `Unmount what is mounted there, then move what it held into ${backups} on the data directory's filesystem`,
+  });
+  return yield* new UpdateRefused({
+    reason: "backups-elsewhere",
+    detail: `${where}. A rollback moves the data directory's files into it, which cannot cross filesystems, so backups must be on the data directory's filesystem. ${fix}, then run this again. Nothing was changed.`,
+  });
+});
+
+/**
  * The install, read once this holds the update lock of its home: what runs
  * and the snapshots cannot change under it then.
  */
@@ -545,6 +575,7 @@ export const update = Effect.fn("update.update")(function* <R>(options: {
     return { _tag: "repointed", version } satisfies UpdateResult;
   }
 
+  yield* checkBackupsBeside(installed.home);
   yield* roomFor(
     installed.home,
     2 * (yield* snapshotBytes(installed.home)) + HOME_ROOM,
@@ -640,6 +671,7 @@ export const rollBack = Effect.fn("update.rollBack")(function* <R>(options: {
 }) {
   const installed = yield* lockedInstall;
   const path = yield* Path.Path;
+  yield* checkBackupsBeside(installed.home);
   const chosen = yield* rollbackSnapshot(installed.home, installed.release.version);
   if (Option.isNone(chosen)) {
     const newest = (yield* listSnapshots(installed.home))[0];

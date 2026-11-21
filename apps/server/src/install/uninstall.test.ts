@@ -11,6 +11,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { AdminClient } from "../admin/AdminClient.ts";
 import { AdminStatus } from "../admin/protocol.ts";
+import { holdLock } from "../home/Home.ts";
 import type { Installation } from "../installation.ts";
 import { Host } from "../system/Host.ts";
 import { Systemd } from "../system/Systemd.ts";
@@ -52,6 +53,8 @@ interface Machine {
   readonly shellHome?: string;
   /** What answers on the admin socket. */
   readonly answering?: Option.Option<AdminStatus>;
+  /** Whether an update or a rollback holds the data directory's update lock meanwhile. */
+  readonly updating?: boolean;
 }
 
 /** A host as install.sh leaves it, with a fake systemd; what an uninstall does there. */
@@ -93,6 +96,10 @@ const uninstallOn = (machine: Machine, options: { readonly deleteData: boolean }
       yield* fs.writeFileString(path.join(home, "j3.sqlite-wal"), "");
     }
     if (machine.dataIsLink === true) yield* fs.symlink(at("linked-data"), at("data"));
+    if (machine.updating === true) {
+      yield* fs.makeDirectory(at("data", "backups"));
+      yield* holdLock(at("data", "backups", "update.lock"), () => "held");
+    }
     for (const file of machine.userFiles ?? []) {
       if (file.endsWith("/")) {
         yield* fs.makeDirectory(at(file), { recursive: true });
@@ -239,7 +246,26 @@ it.layer(NodeServices.layer)("uninstall", (it) => {
         data: true,
         otherData: true,
       });
-      assert.deepStrictEqual(inData, ["bots", "j3.sqlite", "j3.sqlite-wal"]);
+      assert.deepStrictEqual(inData, ["backups", "bots", "j3.sqlite", "j3.sqlite-wal"]);
+    }),
+  );
+
+  it.effect("removes nothing while an update or a rollback runs", () =>
+    Effect.gen(function* () {
+      const { exit, calls, left, inData } = yield* uninstallOn(
+        { unitHome: Option.some("data"), updating: true },
+        { deleteData: true },
+      );
+      assert.deepInclude(failure(exit), { _tag: "UninstallRefused", reason: "busy" });
+      assert.deepStrictEqual(calls, []);
+      assert.deepStrictEqual(left, {
+        unit: true,
+        launcher: true,
+        install: true,
+        data: true,
+        otherData: true,
+      });
+      assert.deepStrictEqual(inData, ["backups", "bots", "j3.sqlite", "j3.sqlite-wal"]);
     }),
   );
 
