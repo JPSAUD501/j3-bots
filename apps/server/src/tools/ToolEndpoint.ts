@@ -26,7 +26,8 @@ const decodeToolCall = Schema.decodeUnknownEffect(Schema.fromJsonString(ToolCall
 /**
  * Whether a request is made the way the bridge makes it: to `127.0.0.1` at
  * the port it arrived on, written as a URL writes it, with a JSON body and no
- * `Origin`. A web page in a browser on this machine can reach loopback too,
+ * `Origin`. Its `Host` holds an absolute request target's authority when it
+ * has one: the adapter puts it there. A web page in a browser on this machine can reach loopback too,
  * and a browser sends a POST's `Origin`, a page on a name rebound to loopback
  * sends that name as `Host`, and a JSON content type from another origin
  * needs a preflight the endpoint never grants.
