@@ -249,7 +249,7 @@ Because the main session does not see what a side session did, the server keeps 
 
 **Rotation.** The server replaces a bot's main session when any of these is true:
 
-- it ran 200 turns, a provisional threshold ([open question 8](../open-questions.md));
+- it ran 200 turns, a provisional threshold ([open question 6](../open-questions.md#6-when-should-a-main-session-rotate-and-what-does-the-digest-contain));
 - the engine ran a turn on recovered context because the provider could not resume its own conversation (the turn ends with `contextRecovered`, [Engine](engine.md#the-adapters-interface));
 - the operator moved the bot to another provider (another model on the same provider stays in the session, aligned as **Settings alignment** below describes);
 - the operator asked for a fresh start (`bot.freshStart`).

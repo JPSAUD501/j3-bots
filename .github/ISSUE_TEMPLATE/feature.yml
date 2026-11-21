@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: Feature request
+description: Something you want to do with your bots that J3 Bots does not let you do.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you want to do
+      description: The situation, what you are trying to get done, and what stops you today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would help
+      description: How you picture it working, from where you would start to what you would see.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do instead
+      description: How you work around it now, or other ways you have thought of.

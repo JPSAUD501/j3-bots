@@ -68,6 +68,7 @@ Two suites matter more than the rest:
 ## Changes
 
 - **One problem per pull request**, including everything that problem needs across layers.
+- **Sign-off.** Every commit carries a `Signed-off-by` line from its author, which certifies the Developer Certificate of Origin ([CONTRIBUTING.md](../../CONTRIBUTING.md#sign-off)). CI refuses a pull request with a commit that lacks one.
 - **License identifiers.** Every first-party source file starts with `SPDX-License-Identifier: AGPL-3.0-or-later` ([decision 0008](../decisions/0008-license.md)). `pnpm lint` checks it; vendored upstream source keeps its own license.
 - **Title:** a conventional-commit prefix and plain language that says what changed for the person using it: `fix(mobile): a held message is sent once after reconnect`.
 - **Body:** the problem in a sentence or two, then how it was fixed, then how it was verified. "Tests pass" is not verification.

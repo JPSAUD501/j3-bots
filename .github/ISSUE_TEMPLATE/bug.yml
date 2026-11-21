@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: Bug report
+description: J3 Bots does something it should not, or does not do something it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A security problem is reported privately, not here: see [SECURITY.md](https://github.com/JPSAUD501/j3-bots/blob/main/SECURITY.md). In everything you paste, replace real hosts, addresses, keys and personal data with made-up ones.
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened
+      description: What you did, and what J3 Bots did.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to make it happen again
+      placeholder: |
+        1.
+        2.
+        3.
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where it happened
+      multiple: true
+      options:
+        - Web
+        - Desktop
+        - Mobile
+        - Server or the j3-bots command
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: What `j3-bots --version` prints, or the commit your checkout is on.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: What `j3-bots doctor` prints
+      description: What J3 Bots finds on the host, and what is missing.
+      render: text

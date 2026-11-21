@@ -5,7 +5,7 @@ import type { DigestMessage } from "@j3-bots/prompts";
 /**
  * How much of the conversation a digest holds: the messages, the characters
  * in all, and the characters of any one message. Provisional, until real
- * conversations tune them (`docs/open-questions.md`, 8).
+ * conversations tune them (`docs/open-questions.md`, 6).
  */
 const DIGEST_MESSAGES = 60;
 const DIGEST_CHARACTERS = 6_000;

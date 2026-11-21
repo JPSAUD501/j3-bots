@@ -3,8 +3,8 @@ import { DESKTOP_APP_ORIGINS } from "@j3-bots/contracts";
 
 /**
  * The app's id for the operating system (Windows notifications, later the
- * package and the Linux desktop entry). A development placeholder, pending the
- * owner's choice of names and ids (open question 6).
+ * package and the Linux desktop entry). A development placeholder, until the
+ * ids of a published build are chosen.
  */
 export const APP_ID = "dev.j3bots.desktop";
 
