@@ -206,7 +206,10 @@ export const layer = Layer.effect(
             at,
           });
           // The bot opens its conversation: its first turn is this wake's,
-          // written once, with the bot, and dispatched like any other.
+          // written once, with the bot, and dispatched like any other. Its
+          // cause is the operator's, as the creation is, also when the primary
+          // bot's `create_bot` carried their word: it follows from no
+          // dispatch's work, so no Stop of earlier work can drop it unwritten.
           yield* wakes.record([
             {
               botId: id,
@@ -251,12 +254,13 @@ export const layer = Layer.effect(
             // Compared with the provider the bot's live main session runs on, in
             // this transaction: an earlier change may not have reached it yet.
             // Moving to another provider is the operator's own action, so it
-            // stops the work in progress before the session is replaced. Moving
-            // back before that keeps the session.
+            // stops the work in progress before the session is replaced, but
+            // leaves a hello the bot has not sent yet to run on the new one.
+            // Moving back before that keeps the session.
             if (change.model !== undefined) {
               const live = yield* liveMainProvider(input.botId);
               if (Option.isSome(live) && live.value !== change.model.providerId) {
-                yield* stops.record(input.botId, { _tag: "bot" });
+                yield* stops.record(input.botId, { _tag: "bot" }, { keepOpening: true });
                 yield* requestBotRotation(input.botId, "provider-changed");
               } else if (Option.isSome(live)) {
                 yield* providerRestored(input.botId);

@@ -322,16 +322,33 @@ export const layer = Layer.effect(
       return files;
     });
 
-    /** The bot's `first-run` wake, while it still waits to open the conversation. */
-    const pendingOpening = (botId: BotId) =>
-      sql<{ readonly id: string }>`
+    /**
+     * The operator wrote in the bot's conversation: a hello the bot has not
+     * sent yet would open a conversation already open, under an envelope
+     * saying they have not written. Its `first-run` wake is cancelled while
+     * it waits, and also once written into a dispatch the engine certainly
+     * does not have (never sent; the send's claim needs it still `intended`
+     * with no attempt). One the engine may have runs, and the base prompt has
+     * the bot answer the operator's message instead of greeting.
+     */
+    const withdrawOpening = Effect.fn("Pipeline.withdrawOpening")(function* (botId: BotId) {
+      const unsent = yield* SqlSchema.findAll({
+        Request: BotId,
+        Result: Named,
+        execute: (id) => sql`
+          SELECT DISTINCT d.id FROM dispatches d JOIN wakes w ON w.dispatch_id = d.id
+          WHERE w.bot_id = ${id} AND json_extract(w.payload_json, '$._tag') = 'first-run'
+            AND d.status = 'intended' AND d.attempts = 0
+        `,
+      })(botId);
+      for (const dispatch of unsent) yield* ledger.release(dispatch.id, { _tag: "cancelled" });
+      const pending = yield* sql<{ readonly id: string }>`
         SELECT id FROM wakes
         WHERE bot_id = ${botId} AND status = 'pending'
           AND json_extract(payload_json, '$._tag') = 'first-run'
-      `.pipe(
-        Effect.orDie,
-        Effect.map((rows) => rows.map((row) => row.id)),
-      );
+      `;
+      yield* ledger.cancelWakes(pending.map((row) => row.id));
+    }, Effect.orDie);
 
     const sendMessage = Effect.fn("Pipeline.sendMessage")(function* (input: {
       readonly commandId: CommandId;
@@ -405,7 +422,7 @@ export const layer = Layer.effect(
               },
             ]);
             // The operator spoke first: there is no conversation left to open.
-            yield* ledger.cancelWakes(yield* pendingOpening(input.target.botId));
+            yield* withdrawOpening(input.target.botId);
           } else if (room !== undefined) {
             yield* routing.operatorMessage({ room, message: entry });
           }
@@ -519,9 +536,14 @@ export const layer = Layer.effect(
           }
           // A failed wake is retried as such, so its message shows the retry;
           // one a message retry already sent again is not sent a third time.
+          // A failed opening is the operator's to retry too: it has no message.
           yield* wakes.record(
             sent
-              .filter((wake) => wake.kind === "user" && !retried.has(wake.id))
+              .filter(
+                (wake) =>
+                  (wake.kind === "user" || wake.payload_json._tag === "first-run") &&
+                  !retried.has(wake.id),
+              )
               .map((wake) => ({
                 botId: wake.bot_id,
                 kind: wake.kind,
@@ -668,6 +690,18 @@ export const layer = Layer.effect(
       return Option.isSome(yield* limitOf(bot.value.bot.model.providerId));
     });
 
+    /**
+     * How the engine last reported the bot's provider, or null when it did
+     * not report it: any state but ready holds the bot's opening.
+     */
+    const providerState = Effect.fn("Pipeline.providerState")(function* (botId: BotId) {
+      const bot = yield* bots.find(botId);
+      if (Option.isNone(bot)) return null;
+      const status = yield* engineState.current;
+      const provider = status.providers.find((p) => p.id === bot.value.bot.model.providerId);
+      return provider?.status._tag ?? null;
+    });
+
     /** The files a wake's message carries, as the engine's limits count them. */
     const filesOfWake = Effect.fn("Pipeline.filesOfWake")(function* (wake: WakeRow) {
       if (wake.payload_json._tag !== "message") return [];
@@ -726,6 +760,12 @@ export const layer = Layer.effect(
       if (work.stopUnsettled) return null;
       if ((head.kind === "routine" || head.kind === "bot") && (yield* providerLimited(botId))) {
         return null;
+      }
+      // The hello waits for a provider that can run it rather than fail
+      // before it starts: nobody asked for it, so nobody waits on it either.
+      if (head.payload_json._tag === "first-run") {
+        const provider = yield* providerState(botId);
+        if (provider !== null && provider !== "ready") return null;
       }
       const audience = audienceOf(head);
       let delivery: Plan["delivery"];
@@ -884,7 +924,9 @@ export const layer = Layer.effect(
         kind: "system",
         event,
       });
-      // The smallest envelope there is: one that cannot carry the item alone never will.
+      // The smallest envelope there is, one that cannot carry the item alone
+      // never will: a system one, whose `first-run` event has the shortest
+      // line (`eventLine` in the prompts package) and carries nothing else.
       const carried: Array<Unseen> = [];
       const dropped: Array<Unseen["source"]> = [];
       for (const one of unseen) {

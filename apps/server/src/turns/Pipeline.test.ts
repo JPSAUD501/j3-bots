@@ -31,6 +31,7 @@ import {
   holdGate,
   nextTurn,
   noticesOf,
+  providerIs,
   received,
   recoverTimes,
   sendToBot,
@@ -105,7 +106,7 @@ it.effect("leaves the opening out when the operator writes before the bot's firs
 );
 
 it.effect(
-  "opens a bot's conversation once: not on a retried creation, a restart or a fresh start",
+  "opens a bot's conversation once: not on a retried creation, a restart, a fresh start, a lost session or a model change",
   () =>
     Effect.gen(function* () {
       const control = yield* TestEngineControl;
@@ -114,7 +115,8 @@ it.effect(
         const commandId = command();
         const draft = { name: "Ana", job: "" };
         const bot = yield* bots.create({ commandId, draft });
-        yield* bots.create({ commandId, draft });
+        const retried = yield* bots.create({ commandId, draft });
+        assert.strictEqual(retried.id, bot.id);
         const session = yield* engineSession(bot.id);
         yield* flushed(bot.id);
         const turnId = yield* nextTurn(bot.id);
@@ -124,18 +126,136 @@ it.effect(
       });
       const { bot, session } = yield* created.pipe(Effect.provide(Domain.layer));
 
-      // The server starts again, and the operator starts the bot fresh.
+      // The server starts again; the operator starts the bot fresh, the
+      // engine loses the next session, and the operator changes the model.
       yield* Effect.gen(function* () {
         yield* flushed(bot.id);
         yield* (yield* Bots).freshStart({ commandId: command(), botId: bot.id });
-        const replacement = yield* sessionAfter(bot.id, session);
+        const fresh = yield* sessionAfter(bot.id, session);
+        // The next send finds the session lost.
+        yield* control.loseSession(fresh);
+        yield* sendToBot(bot.id, "Where were we?");
+        const replaced = yield* sessionAfter(bot.id, fresh);
+        yield* finishRunning(bot.id);
+        yield* turnEnded(bot.id);
+        yield* (yield* Bots).update({
+          commandId: command(),
+          botId: bot.id,
+          changes: { model: TestDomain.OTHER_PROVIDER_MODEL },
+        });
+        const moved = yield* sessionAfter(bot.id, replaced);
         yield* flushed(bot.id);
-        assert.deepStrictEqual(
-          [yield* timesSent(session, FIRST_RUN), yield* timesSent(replacement, FIRST_RUN)],
-          [1, 0],
-        );
+        const sent = [];
+        for (const one of [session, fresh, replaced, moved]) {
+          sent.push(yield* timesSent(one, FIRST_RUN));
+        }
+        assert.deepStrictEqual(sent, [1, 0, 0, 0]);
       }).pipe(Effect.provide(Domain.layer));
     }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
+);
+
+it.effect("keeps a new bot's hello waiting while its provider is not ready", () =>
+  Effect.gen(function* () {
+    const { providerId } = TestDomain.OTHER_PROVIDER_MODEL;
+    yield* providerIs(providerId, { _tag: "sign-in-required", command: "connect" });
+    const bot = yield* createNewBot("Ana", TestDomain.OTHER_PROVIDER_MODEL);
+    const session = yield* engineSession(bot.id);
+    yield* flushed(bot.id);
+    assert.strictEqual(yield* timesSent(session, FIRST_RUN), 0);
+
+    // Signed in: the hello goes without anything else waking the bot.
+    yield* providerIs(providerId, { _tag: "ready" });
+    yield* nextTurn(bot.id);
+    assert.strictEqual(yield* timesSent(session, FIRST_RUN), 1);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("keeps a new bot's hello through a change of provider, for the new one", () =>
+  Effect.gen(function* () {
+    const { providerId } = TestDomain.OTHER_PROVIDER_MODEL;
+    yield* providerIs(providerId, { _tag: "unavailable" });
+    const bot = yield* createNewBot("Ana", TestDomain.OTHER_PROVIDER_MODEL);
+    const first = yield* engineSession(bot.id);
+    yield* flushed(bot.id);
+
+    // The operator moves the bot to a ready provider before it spoke.
+    yield* (yield* Bots).update({
+      commandId: command(),
+      botId: bot.id,
+      changes: { model: TestDomain.DEFAULT_MODEL },
+    });
+    const moved = yield* sessionAfter(bot.id, first);
+    yield* nextTurn(bot.id);
+    assert.deepStrictEqual(
+      [yield* timesSent(first, FIRST_RUN), yield* timesSent(moved, FIRST_RUN)],
+      [0, 1],
+    );
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "offers a retry of a new bot's opening that failed, before or after its turn started",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      // The engine refuses the opening: no turn ever starts.
+      yield* control.rejectNextDispatch;
+      const bot = yield* createNewBot("Ana");
+      const session = yield* engineSession(bot.id);
+      const refused = yield* awaitEntry(bot.id, "notice");
+      assert.deepStrictEqual(refused.notice, { _tag: "turn-failed", failure: "unknown" });
+      assert.isTrue(refused.retryable);
+
+      // The retry's turn starts, and fails.
+      yield* (yield* Pipeline).retryNotice({ commandId: command(), entryId: refused.id });
+      const turnId = yield* nextTurn(bot.id);
+      yield* control.finishTurn({
+        sessionId: session,
+        turnId,
+        outcome: { _tag: "failed", failure: "provider-error", retryAt: null },
+      });
+      yield* until(noticesOf(bot.id).pipe(Effect.map((shown) => shown.length === 2)));
+      const [, failed] = (yield* conversation(bot.id)).flatMap((entry) =>
+        entry._tag === "notice" ? [entry] : [],
+      );
+      assert.isDefined(failed);
+      assert.deepStrictEqual(failed.notice, { _tag: "turn-failed", failure: "provider-error" });
+      assert.isTrue(failed.retryable);
+
+      yield* (yield* Pipeline).retryNotice({ commandId: command(), entryId: failed.id });
+      yield* nextTurn(bot.id, turnId);
+      assert.strictEqual(yield* timesSent(session, FIRST_RUN), 2);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("drops a written opening the engine never got when the operator writes first", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const { providerId } = TestDomain.OTHER_PROVIDER_MODEL;
+    yield* providerIs(providerId, { _tag: "sign-in-required", command: "connect" });
+    const bot = yield* createNewBot("Ana", TestDomain.OTHER_PROVIDER_MODEL);
+    const session = yield* engineSession(bot.id);
+    yield* flushed(bot.id);
+
+    // The opening is written once the provider is ready, and its send waits.
+    const gate = yield* holdGate(bot.id);
+    yield* providerIs(providerId, { _tag: "ready" });
+    yield* until(
+      sql<{ readonly n: number }>`SELECT COUNT(*) AS n FROM dispatches`.pipe(
+        Effect.orDie,
+        Effect.map(([row]) => (row?.n ?? 0) > 0),
+      ),
+    );
+    const message = yield* sendToBot(bot.id, "Book the venue.");
+    yield* gate.release;
+
+    yield* nextTurn(bot.id);
+    yield* deliveryIs(message, "delivered");
+    assert.deepStrictEqual(
+      [yield* timesSent(session, "Book the venue."), yield* timesSent(session, FIRST_RUN)],
+      [1, 0],
+    );
+  }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect("delivers a message once when its send's reply is lost while the session is busy", () =>

@@ -88,15 +88,21 @@ const retiredInEngine = (session: SessionId) =>
     return typeof rows[0]?.engine_retired_at === "string";
   });
 
-/** Gives the bot's main session `ROTATE_AFTER_RUNS` turns long finished, as weeks of work would. */
+/**
+ * Brings the bot's main session to exactly `ROTATE_AFTER_RUNS` turns, its own
+ * (the opening included) and turns long finished, as weeks of work would add.
+ */
 const reachRunLimit = (sessionId: SessionRowId) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const at = DateTime.formatIso(yield* DateTime.now);
+    const [ran] = yield* sql<{ readonly n: number }>`
+      SELECT COUNT(*) AS n FROM turns WHERE session_id = ${sessionId}
+    `;
     // One transaction: a commit per row would take seconds.
     yield* sql.withTransaction(
       Effect.forEach(
-        Array.from({ length: ROTATE_AFTER_RUNS }, (_, n) => n),
+        Array.from({ length: ROTATE_AFTER_RUNS - (ran?.n ?? 0) }, (_, n) => n),
         (n) => sql`
           INSERT INTO turns (
             session_id, engine_turn_id, audience, started_at, last_activity_at, finished_at,

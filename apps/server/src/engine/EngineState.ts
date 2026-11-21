@@ -27,6 +27,8 @@ export class EngineState extends Context.Service<
   EngineState,
   {
     readonly current: Effect.Effect<EngineStatus>;
+    /** Each status as `current` takes it, starting with the one now. */
+    readonly changes: Stream.Stream<EngineStatus>;
     /** The first model of the first ready provider, for a bot created without one. */
     readonly defaultModel: Effect.Effect<Option.Option<ModelChoice>>;
     /**
@@ -88,6 +90,7 @@ export const layer = Layer.effect(
 
     return EngineState.of({
       current,
+      changes: SubscriptionRef.changes(status),
       defaultModel: current.pipe(
         Effect.map((now) => {
           for (const provider of now.providers) {

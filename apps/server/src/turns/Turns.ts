@@ -2,8 +2,10 @@
 import { Engine } from "@j3-bots/engine-t3";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Equivalence from "effect/Equivalence";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import { EngineState } from "../engine/EngineState.ts";
 import { RoutineRunner } from "../routines/RoutineRunner.ts";
 import { BotStates } from "./BotStates.ts";
 import { Cards } from "./Cards.ts";
@@ -31,6 +33,7 @@ import { Stops } from "./Stops.ts";
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     const engine = yield* Engine;
+    const engineState = yield* EngineState;
     const signals = yield* Signals;
     const stops = yield* Stops;
     const observer = yield* Observer;
@@ -91,6 +94,18 @@ export const layer = Layer.effectDiscard(
             Stream.map((status) => status.state._tag === "ready"),
             Stream.changes,
             Stream.runForEach((ready) => (ready ? start : readiness.hold)),
+          ),
+        ),
+        // A provider's state holds some wakes (`Pipeline`): the dispatcher
+        // looks again as soon as it changes, once the state it reads has it.
+        supervised(
+          "Following the providers",
+          engineState.changes.pipe(
+            Stream.map((status) =>
+              status.providers.map((provider) => `${provider.id}:${provider.status._tag}`),
+            ),
+            Stream.changesWith(Equivalence.Array(Equivalence.String)),
+            Stream.runForEach(() => signals.dispatch.fire),
           ),
         ),
         supervised("The dispatcher", pipeline.runDispatcher),

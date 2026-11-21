@@ -445,21 +445,29 @@ export const layer = Layer.effect(
 
     // ---- Notices and work folds ---------------------------------------------------
 
-    /**
-     * What a retry of this turn's failure sends again: the operator's own
-     * dispatch, whose turn (or the turn that followed it up) ran.
-     */
-    const retryOf = (
-      dispatchId: DispatchRowId,
-      carried: ReadonlyArray<WakeRow>,
-    ): NoticeRetry | null => {
-      if (carried.some((wake) => wake.kind === "user")) return { dispatchId, reason: "turn" };
+    /** The operator's dispatch an `undelivered` follow-up among the wakes was for. */
+    const followUpOf = (carried: ReadonlyArray<WakeRow>): NoticeRetry | null => {
       for (const wake of carried) {
         if (wake.payload_json._tag === "undelivered") {
           return { dispatchId: wake.payload_json.dispatchId, reason: "turn" };
         }
       }
       return null;
+    };
+
+    /**
+     * What a retry of this turn's failure sends again: the operator's own
+     * dispatch, whose turn (or the turn that followed it up) ran, or a new
+     * bot's opening, which stands for the operator's creating it.
+     */
+    const retryOf = (
+      dispatchId: DispatchRowId,
+      carried: ReadonlyArray<WakeRow>,
+    ): NoticeRetry | null => {
+      if (carried.some((wake) => wake.kind === "user" || wake.payload_json._tag === "first-run")) {
+        return { dispatchId, reason: "turn" };
+      }
+      return followUpOf(carried);
     };
 
     const foldStatus = (turn: TurnRow) =>
@@ -627,7 +635,9 @@ export const layer = Layer.effect(
         ]);
         return;
       }
-      const followed = retryOf(dispatch.id, carried);
+      // A follow-up that delivered nothing either offers the operator's own
+      // work again; an opening that said nothing is only a quiet bot.
+      const followed = followUpOf(carried);
       if (followed !== null) {
         yield* notify(session.bot_id, audience, { _tag: "undelivered" }, followed);
       }

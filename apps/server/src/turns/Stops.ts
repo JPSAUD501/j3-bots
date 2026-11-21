@@ -40,6 +40,15 @@ export type StopScope =
   | { readonly _tag: "bot" }
   | { readonly _tag: "room"; readonly roomId: RoomId };
 
+/**
+ * `keepOpening`: the bot's `first-run` wake, while the engine has not got it,
+ * waits on instead of being cancelled. A change of provider stops the work in
+ * progress but not the hello a new bot has yet to send.
+ */
+interface StopOptions {
+  readonly keepOpening: boolean;
+}
+
 const Round = Schema.Struct({
   stop_id: Schema.String,
   session_id: SessionRowId,
@@ -91,7 +100,7 @@ export class Stops extends Context.Service<
   Stops,
   {
     /** Records a Stop of the bot's work in scope, in the caller's transaction. */
-    readonly record: (botId: BotId, scope: StopScope) => Effect.Effect<void>;
+    readonly record: (botId: BotId, scope: StopScope, options?: StopOptions) => Effect.Effect<void>;
     /** `bot.stop`. */
     readonly stopBot: (input: {
       readonly commandId: CommandId;
@@ -134,7 +143,14 @@ export const layer = Layer.effect(
         ? sql`1`
         : sql`(audience = 'room' AND audience_room_id = ${scope.roomId})`;
 
-    const record = Effect.fn("Stops.record")(function* (botId: BotId, scope: StopScope) {
+    /** Whether a wake column set is the bot's opening (`StopOptions`). */
+    const opening = sql`json_extract(payload_json, '$._tag') = 'first-run'`;
+
+    const record = Effect.fn("Stops.record")(function* (
+      botId: BotId,
+      scope: StopScope,
+      options: StopOptions = { keepOpening: false },
+    ) {
       const at = timeText(yield* DateTime.now);
       const landing = mayLand(sql);
       // Every session of the bot with work in scope that may be in the engine:
@@ -208,11 +224,17 @@ export const layer = Layer.effect(
         }
         for (const dispatch of fenced) {
           // Never sent: released. Its wakes are cancelled when this Stop
-          // covers them, and wait again when they were private work.
+          // covers them, and wait again when they were private work or an
+          // opening this Stop keeps (a system wake is dispatched alone).
           if (dispatch.status === "intended" && dispatch.attempts === 0) {
+            const kept =
+              options.keepOpening &&
+              (yield* sql`
+                SELECT 1 FROM wakes WHERE dispatch_id = ${dispatch.id} AND ${opening}
+              `).length > 0;
             yield* ledger.release(
               dispatch.id,
-              yield* targets.wakesAfter(dispatch, { _tag: "unsent" }),
+              kept ? { _tag: "pending" } : yield* targets.wakesAfter(dispatch, { _tag: "unsent" }),
             );
           }
         }
@@ -220,6 +242,7 @@ export const layer = Layer.effect(
       const pending = yield* sql<{ readonly id: string; readonly kind: string }>`
         SELECT id, kind FROM wakes
         WHERE bot_id = ${botId} AND status = 'pending' AND ${inScope(scope)}
+          ${options.keepOpening ? sql`AND NOT (${opening})` : sql``}
       `;
       yield* ledger.cancelWakes(pending.map((wake) => wake.id));
       yield* sql.afterCommit(signals.stops.fire);

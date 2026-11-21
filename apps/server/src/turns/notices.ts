@@ -8,7 +8,7 @@ import type { Audience, DispatchRowId } from "./model.ts";
 
 /**
  * What a retryable notice's retry sends again: the operator wakes of
- * `dispatchId`, because its delivery failed (`undelivered`), which a late
+ * `dispatchId`, or the bot's opening it carried, because its delivery failed (`undelivered`), which a late
  * delivery makes moot, or because the turn that ran failed or delivered
  * nothing (`turn`).
  */
