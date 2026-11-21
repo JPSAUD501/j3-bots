@@ -78,7 +78,7 @@ export function HandoffCard({
             accessibilityRole="button"
             accessibilityState={{ expanded }}
             onPress={() => setExpanded((open) => !open)}
-            className="pb-2"
+            className="min-h-11 justify-center"
           >
             <Text
               numberOfLines={expanded ? undefined : 2}

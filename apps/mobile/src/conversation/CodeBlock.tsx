@@ -21,20 +21,20 @@ interface LineBox {
 /**
  * A bounded area that scrolls once its content is taller than 256 px, with
  * its scroll bar always shown on Android, so a touch screen shows that more
- * lies past it. `label` names it for a screen reader.
+ * lies past it. `label` names it for a screen reader, when it has a name.
  */
 export function Scrolling({
   label,
   className,
   children,
 }: {
-  readonly label: string;
+  readonly label: string | null;
   readonly className: string;
   readonly children: ReactNode;
 }) {
   return (
     <ScrollView
-      accessibilityLabel={label}
+      accessibilityLabel={label ?? undefined}
       // Inside the conversation's own list: Android scrolls it only when nested scrolling is on.
       nestedScrollEnabled
       persistentScrollbar
@@ -61,8 +61,8 @@ export function CodeBlock({
   className,
 }: {
   readonly text: string;
-  /** What a screen reader calls the block. */
-  readonly label: string;
+  /** What a screen reader calls the block, when it has a name. */
+  readonly label: string | null;
   readonly tones?: (lines: ReadonlyArray<string>) => ReadonlyArray<CodeLineTone | undefined>;
   /** Set in medium weight, as the path of a change still waiting. */
   readonly strong?: boolean;

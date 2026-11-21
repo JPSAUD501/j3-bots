@@ -28,12 +28,19 @@ const credential: DeviceCredential = {
 const noClient = (): Layer.Layer<Platform> =>
   Layer.effectContext(Effect.die("These tests start no client."));
 
-const sessionOver = (database: SqlDatabase, secure: SecureValue) =>
-  makeSession({
+/** A session over the device's storage; `opened` counts the times it deleted the opened files. */
+const sessionOver = (database: SqlDatabase, secure: SecureValue) => {
+  const opened = { forgotten: 0 };
+  const session = makeSession({
     storedServer: storedServer(secure),
     forget: forgetPairing(database, secure),
+    forgetFiles: Effect.sync(() => {
+      opened.forgotten += 1;
+    }),
     makePlatform: noClient,
   });
+  return { session, opened };
+};
 
 /** A device paired with `server`, with a draft of that pairing. */
 const paired = (server: string) =>
@@ -50,7 +57,7 @@ const paired = (server: string) =>
 describe("the app's session", () => {
   it.effect("shows a stored credential that does not decode as unreadable, not as unpaired", () =>
     Effect.gen(function* () {
-      const session = sessionOver(memoryDatabase(), memorySecure({ held: "{damaged" }));
+      const { session } = sessionOver(memoryDatabase(), memorySecure({ held: "{damaged" }));
       yield* Effect.promise(session.start);
       assert.strictEqual(session.state.get()._tag, "unreadable");
     }),
@@ -60,13 +67,14 @@ describe("the app's session", () => {
     Effect.gen(function* () {
       const { database, secure, storage } = yield* paired("http://192.168.1.20:3737");
       yield* Effect.promise(() => secure.set("{damaged"));
-      const session = sessionOver(database, secure);
+      const { session, opened } = sessionOver(database, secure);
       yield* Effect.promise(session.start);
 
       assert.isTrue(yield* Effect.promise(session.forget));
       assert.strictEqual(session.state.get()._tag, "none");
       assert.isNull(yield* Effect.promise(secure.get));
       assert.strictEqual((yield* storage.readAll("drafts")).size, 0);
+      assert.strictEqual(opened.forgotten, 1);
     }),
   );
 
@@ -74,10 +82,11 @@ describe("the app's session", () => {
     Effect.gen(function* () {
       // Plain HTTP to a public host, which the pairing screen refuses.
       const { database, secure, storage } = yield* paired("http://bots.example.com");
-      const session = sessionOver(database, secure);
+      const { session, opened } = sessionOver(database, secure);
       yield* Effect.promise(session.start);
 
       assert.strictEqual(session.state.get()._tag, "none");
+      assert.strictEqual(opened.forgotten, 1);
       assert.isTrue(Option.isNone(yield* storedServer(secure)));
       assert.strictEqual((yield* storage.readAll("drafts")).size, 0);
       const write = [{ table: "drafts" as const, key: "k", value: "text" }];

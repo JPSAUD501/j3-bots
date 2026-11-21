@@ -76,7 +76,7 @@ export function QuestionCard({ entry }: { readonly entry: QuestionEntry }) {
         </>
       ) : answersOnTap ? (
         <>
-          <View accessibilityRole="list" accessibilityLabel={first.prompt} className="gap-1.5">
+          <View className="gap-1.5">
             <Text className="mb-1 text-sm font-medium text-foreground">{first.prompt}</Text>
             {first.options.map((option) => (
               <Pressable

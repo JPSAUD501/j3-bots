@@ -103,7 +103,8 @@ export function ApprovalCard({ entry }: { readonly entry: ApprovalEntry }) {
     >
       <CodeBlock
         text={entry.action}
-        label={t("approval.action")}
+        // The path is not everything the bot will do: the change under it is part of it.
+        label={null}
         strong={pending}
         className={narrow ? "" : "flex-1"}
       />

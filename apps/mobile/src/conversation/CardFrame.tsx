@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { cardAction } from "@j3-bots/client-runtime";
-import { useJ3Client, useSelected } from "@j3-bots/client-runtime/react";
+import { useCardAction } from "@j3-bots/client-runtime/react";
 import type { EntryId } from "@j3-bots/contracts";
 import { layout } from "@j3-bots/design-tokens";
 import type { LucideIcon } from "lucide-react-native";
@@ -10,13 +9,8 @@ import { Icon } from "../components/Icon.tsx";
 import { EntryWidths } from "./widths.ts";
 
 /** Whether an answer to the card is on its way: it then takes no second one. */
-export const useSubmitting = (entryId: EntryId): boolean => {
-  const client = useJ3Client();
-  return useSelected(
-    client.actions,
-    (actions) => actions.get(cardAction(entryId))?._tag === "submitting",
-  );
-};
+export const useSubmitting = (entryId: EntryId): boolean =>
+  useCardAction(entryId)?._tag === "submitting";
 
 /**
  * Once the card no longer waits, moves a screen reader from the control the
