@@ -172,6 +172,7 @@ export const en = {
   "handoff.urgent": "Urgent",
   "handoff.notDelivered": "Not delivered",
   "handoff.stopped": "Stopped",
+  "handoff.unconfirmed": "Not confirmed",
 
   "routine.change.created": "Routine created",
   "routine.change.updated": "Routine changed",

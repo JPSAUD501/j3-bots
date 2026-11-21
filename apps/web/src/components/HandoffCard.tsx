@@ -53,6 +53,11 @@ export function HandoffCard({ entry, onOpen }: { entry: HandoffEntry; onOpen: ()
               {t("handoff.stopped")}
             </span>
           )}
+          {entry.state === "unconfirmed" && (
+            <span className="text-2xs font-medium text-muted-foreground">
+              {t("handoff.unconfirmed")}
+            </span>
+          )}
         </div>
         <button
           type="button"

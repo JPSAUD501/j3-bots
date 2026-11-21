@@ -653,7 +653,18 @@ const holdMessageFor = (botId: BotId, text: string) =>
     const turnId = yield* nextTurn(sender.id);
     const reply = yield* messageTeammate(session, turnId, { to: botId, text, urgent: false });
     assert.strictEqual(reply._tag, "result");
+    return sender.id;
   });
+
+/** Where the teammate messages each bot's conversation shows stand, oldest first. */
+const handoffStates = (botIds: ReadonlyArray<BotId>) =>
+  Effect.forEach(botIds, (botId) =>
+    conversation(botId).pipe(
+      Effect.map((entries) =>
+        entries.flatMap((entry) => (entry._tag === "handoff" ? [entry.state] : [])),
+      ),
+    ),
+  );
 
 it.effect("delivers a held teammate message in one envelope, again after a refused one", () =>
   Effect.gen(function* () {
@@ -687,18 +698,32 @@ it.effect("keeps a held teammate message with an envelope whose fate is unknown"
     const control = yield* TestEngineControl;
     const bot = yield* createBot("Ana");
     const session = yield* engineSession(bot.id);
-    yield* holdMessageFor(bot.id, "The launch moved to Friday.");
+    const sender = yield* holdMessageFor(bot.id, "The launch moved to Friday.");
 
     // The send carrying it is never answered, and its recovery gives up: it may still land.
-    yield* control.deferNextDispatch;
+    const deferred = yield* control.deferNextDispatch;
     const lost = yield* sendToBot(bot.id, "Any news?");
     yield* flushed(bot.id);
     yield* recoverTimes(MAX_INDETERMINATE_ANSWERS - 1);
     yield* deliveryIs(lost, "failed");
+    // Neither card can tell whether it was read.
+    assert.deepStrictEqual(yield* handoffStates([sender, bot.id]), [
+      ["unconfirmed"],
+      ["unconfirmed"],
+    ]);
 
     yield* sendToBot(bot.id, "And the venue?");
-    yield* finishRunning(bot.id);
+    const turnId = yield* finishRunning(bot.id);
     assert.strictEqual(yield* timesSent(session, "The launch moved to Friday."), 0);
+
+    // It lands after all: the bot read it.
+    yield* deferred.land;
+    yield* nextTurn(bot.id, turnId);
+    yield* until(
+      handoffStates([sender, bot.id]).pipe(
+        Effect.map((states) => states.flat().every((state) => state === "sent")),
+      ),
+    );
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

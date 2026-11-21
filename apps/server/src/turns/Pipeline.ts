@@ -560,6 +560,9 @@ export const layer = Layer.effect(
             `.pipe(Effect.orDie);
             for (const row of rows) retried.add(row.retry_of);
           }
+          // A teammate's message that reached the bot otherwise, by its
+          // original wake landing late, say, does not go again.
+          for (const id of yield* ledger.readHandoffWakes(link.dispatch_id)) retried.add(id);
           // A failed wake is retried as such, so its message shows the retry;
           // one a message retry already sent again is not sent a third time.
           // A failed opening, or a teammate's urgent message, is the

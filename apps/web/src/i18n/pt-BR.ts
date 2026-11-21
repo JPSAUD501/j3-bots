@@ -171,6 +171,7 @@ export const ptBR: Catalog = {
   "handoff.urgent": "Urgente",
   "handoff.notDelivered": "Não entregue",
   "handoff.stopped": "Interrompida",
+  "handoff.unconfirmed": "Não confirmada",
 
   "routine.change.created": "Rotina criada",
   "routine.change.updated": "Rotina alterada",

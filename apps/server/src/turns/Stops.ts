@@ -274,6 +274,8 @@ export const layer = Layer.effect(
           }
         }
       }
+      // A teammate's urgent message among them waits on as a held one: the
+      // Stop ends this bot's work, not what its teammates told it (`Ledger`).
       const pending = yield* sql<{ readonly id: string; readonly kind: string }>`
         SELECT id, kind FROM wakes
         WHERE bot_id = ${botId} AND status = 'pending' AND ${inScope(scope)}

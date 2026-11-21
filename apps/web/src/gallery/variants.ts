@@ -524,6 +524,12 @@ export function galleryVariants(now: DateTime.Utc) {
       urgent: false,
       state: "stopped",
     }),
+    handoff("handoff-unconfirmed", ids.scout, ids.atlas, {
+      direction: "sent",
+      text: "The invoices for March are in the shared folder.",
+      urgent: false,
+      state: "unconfirmed",
+    }),
   ];
 
   const change = (

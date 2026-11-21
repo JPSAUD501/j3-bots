@@ -354,7 +354,7 @@ export const NoticeEntry = Schema.TaggedStruct("notice", {
 export type NoticeEntry = typeof NoticeEntry.Type;
 
 /** Where a teammate message stands (`HandoffEntry.state`). */
-export const HandoffState = Schema.Literals(["sent", "not-delivered", "stopped"]);
+export const HandoffState = Schema.Literals(["sent", "not-delivered", "stopped", "unconfirmed"]);
 export type HandoffState = typeof HandoffState.Type;
 
 /**
@@ -371,13 +371,18 @@ export const HandoffEntry = Schema.TaggedStruct("handoff", {
   urgent: Schema.Boolean,
   /**
    * Where the message stands, the same on both cards. `sent`: on its way or
-   * read, which the cards do not tell apart. `not-delivered`: an urgent
-   * message J3 Bots gave up waking the recipient with; the recipient's
-   * conversation has a `handoff-failed` notice that sends it again, and it is
-   * `sent` again once it is, or when the engine turns out to have taken it
-   * after all. `stopped`: an operator's Stop ended it before the recipient
-   * read it, and nothing sends it again; it is `sent` again only when the
-   * engine turns out to have taken it after all.
+   * read, which the cards do not tell apart; once read, it stays `sent`.
+   * `not-delivered`: an urgent message J3 Bots gave up waking the recipient
+   * with; the recipient's conversation has a `handoff-failed` notice that
+   * sends it again, and it is `sent` again once it is, or when the engine
+   * turns out to have taken it after all. `stopped`: the operator's Stop of
+   * the sender ended it before the recipient read it, and nothing sends it
+   * again. A Stop of the recipient never does: an urgent message it cancels
+   * waits on as one the recipient reads in its next turn, and stays `sent`.
+   * `unconfirmed`: the envelope that carried it was sent, and whether the
+   * engine took it can no longer be learned; it is not carried again. Both
+   * `stopped` and `unconfirmed` become `sent` when the engine turns out to
+   * have taken it after all.
    */
   state: HandoffState,
 });

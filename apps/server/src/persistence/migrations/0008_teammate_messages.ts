@@ -5,20 +5,22 @@ import * as SqlClient from "effect/sql/SqlClient";
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
-  // One teammate message: the `message_bot` call that sent it, which names
-  // the sender's session, turn and audience, and the cards it put in the two
-  // conversations. An urgent message's wakes name the received card as their
-  // source; a held message names it as its handoff. `stop_id` is the Stop that
-  // reached the sending turn while it ran: what the message has not delivered
-  // yet is cancelled then, and wherever it would wait again. The recipient's
-  // id outlives the recipient, as a sender's does.
+  // One teammate message: the cards it put in the two conversations, and the
+  // `message_bot` call that sent it, which names the sender's session, turn
+  // and audience. It lives as long as the received card. An urgent message's
+  // wakes name that card as their source; a held message names it as its
+  // handoff. `stop_id` is the Stop that reached the sending turn while it
+  // ran: what the message has not delivered yet is cancelled then, and
+  // wherever it would wait again. It is only a mark, so that the sender's
+  // deletion, which takes its call and its Stops with it, never undoes it.
+  // The recipient's id outlives the recipient, as a sender's does.
   yield* sql`
     CREATE TABLE handoffs (
-      tool_call_id TEXT PRIMARY KEY REFERENCES tool_calls (id) ON DELETE CASCADE,
+      received_entry_id TEXT PRIMARY KEY REFERENCES entries (id) ON DELETE CASCADE,
+      tool_call_id TEXT UNIQUE REFERENCES tool_calls (id) ON DELETE SET NULL,
       recipient_bot_id TEXT NOT NULL,
       sent_entry_id TEXT REFERENCES entries (id) ON DELETE SET NULL,
-      received_entry_id TEXT UNIQUE REFERENCES entries (id) ON DELETE SET NULL,
-      stop_id TEXT REFERENCES stops (id) ON DELETE SET NULL
+      stop_id TEXT
     )
   `;
   yield* sql`CREATE INDEX handoffs_stopped ON handoffs (stop_id) WHERE stop_id IS NOT NULL`;
