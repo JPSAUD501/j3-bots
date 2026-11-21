@@ -40,6 +40,7 @@ import { isCovered, useCovered } from "../lib/covered";
 import { useNewestSeen } from "../lib/useNewestSeen";
 import { addresseeLine } from "../presentation/mentions";
 import { useShellLayout } from "./layout";
+import { onShellAction, type ShellAction } from "./commands";
 import { isEditable, shellShortcuts } from "./shortcuts";
 
 interface ShellNavigation {
@@ -175,45 +176,86 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
     }
   }, [selectionKey, detailsOpen, detailsModal]);
 
+  /** Does `action`; whether it did anything, so a key that did nothing is left to the page. */
+  const act = useEffectEvent((action: ShellAction): boolean => {
+    switch (action) {
+      case "closeDetails":
+        if (!detailsOpen) return false;
+        navigation.setDetailsOpen(false);
+        return true;
+      case "next":
+      case "previous": {
+        const rows = orderRoster(filterRoster(rosterItems, ""));
+        const forward = action === "next";
+        const index = item === null ? -1 : rows.indexOf(item);
+        // With nothing selected, down starts at the top and up at the bottom.
+        const nextIndex =
+          index === -1
+            ? forward
+              ? 0
+              : rows.length - 1
+            : (index + (forward ? 1 : -1) + rows.length) % rows.length;
+        const next = rows[nextIndex];
+        if (next === undefined) return false;
+        navigation.select(rosterKeyOf(next));
+        return true;
+      }
+      case "composer":
+        if (composerRef.current === null) return false;
+        composerRef.current.focus();
+        return true;
+      case "focus": {
+        // The open conversation's composer, or the roster's search, or the roster.
+        const roster = rosterRef.current;
+        const target =
+          composerRef.current ??
+          roster?.querySelector<HTMLElement>("[data-roster-search]") ??
+          roster;
+        if (target === null || target === undefined || isCovered(target)) return false;
+        target.focus();
+        return true;
+      }
+      case "stop":
+        if (item?._tag !== "bot" || !canStop(item.bot)) return false;
+        intents.stopBot(item.bot.id);
+        return true;
+    }
+  });
   const onKeyDown = useEffectEvent((event: KeyboardEvent) => {
     if (event.defaultPrevented || detailsCover) return;
     // Keys pressed in a dialog over the shell, such as a confirmation, are that dialog's.
     if (event.target instanceof Element && event.target.closest("[role=alertdialog]")) return;
-    if (event.key === "Escape" && detailsOpen) {
-      event.preventDefault();
-      navigation.setDetailsOpen(false);
-    } else if (shortcuts.nextBot.matches(event) || shortcuts.previousBot.matches(event)) {
-      const rows = orderRoster(filterRoster(rosterItems, ""));
-      if (rows.length === 0) return;
-      const forward = shortcuts.nextBot.matches(event);
-      const index = item === null ? -1 : rows.indexOf(item);
-      // With nothing selected, down starts at the top and up at the bottom.
-      const nextIndex =
-        index === -1
-          ? forward
-            ? 0
-            : rows.length - 1
-          : (index + (forward ? 1 : -1) + rows.length) % rows.length;
-      const next = rows[nextIndex];
-      if (next) {
-        event.preventDefault();
-        navigation.select(rosterKeyOf(next));
-      }
-    } else if (shortcuts.focusComposer.matches(event) && !isEditable(event.target)) {
-      event.preventDefault();
-      composerRef.current?.focus();
-    } else if (shortcuts.stop.matches(event) && item?._tag === "bot") {
-      if (canStop(item.bot)) {
-        event.preventDefault();
-        intents.stopBot(item.bot.id);
-      }
-    }
+    const action: ShellAction | null =
+      event.key === "Escape"
+        ? "closeDetails"
+        : shortcuts.nextBot.matches(event)
+          ? "next"
+          : shortcuts.previousBot.matches(event)
+            ? "previous"
+            : shortcuts.focusComposer.matches(event) && !isEditable(event.target)
+              ? "composer"
+              : shortcuts.stop.matches(event)
+                ? "stop"
+                : null;
+    if (action !== null && act(action)) event.preventDefault();
+  });
+  // The same actions asked for from outside, as the desktop app's menus do,
+  // wait for the details' dialog and a confirmation as their keys do; the
+  // details' dialog closes as Escape closes it.
+  const onAction = useEffectEvent((action: ShellAction) => {
+    if (document.querySelector("[role=alertdialog]") !== null) return;
+    if (detailsCover && action !== "closeDetails") return;
+    act(action);
   });
   useEffect(() => {
     if (!keyboard) return;
     const listener = (event: KeyboardEvent) => onKeyDown(event);
     window.addEventListener("keydown", listener);
-    return () => window.removeEventListener("keydown", listener);
+    const stop = onShellAction((action) => onAction(action));
+    return () => {
+      window.removeEventListener("keydown", listener);
+      stop();
+    };
   }, [keyboard]);
 
   // What the operator can see of the open conversation, they have read.

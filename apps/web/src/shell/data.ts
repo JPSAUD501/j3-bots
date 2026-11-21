@@ -26,7 +26,12 @@ import type {
   Settings,
   WorkStep,
 } from "@j3-bots/contracts";
-import type { UpdateStatus } from "@j3-bots/desktop-bridge";
+import type {
+  Accelerator,
+  ShortcutChange,
+  ShortcutStatus,
+  UpdateStatus,
+} from "@j3-bots/desktop-bridge";
 import type { BotDetailsIntents } from "../components/DetailsPanel";
 import type { TimelineIntents } from "../components/Timeline";
 
@@ -186,6 +191,8 @@ export interface ShellIntents extends TimelineIntents {
   readonly server?: DesktopServer;
   /** In the desktop app, updating it. Absent in a browser, whose page is the server's own. */
   readonly update?: DesktopUpdate;
+  /** In the desktop app, the global shortcut that shows it. Absent in a browser. */
+  readonly shortcut?: DesktopShortcut;
 }
 
 /** The server the desktop app talks to, and a way to leave it for another. */
@@ -198,6 +205,14 @@ export interface DesktopServer {
    * when it is still kept.
    */
   readonly forget: () => Promise<boolean>;
+}
+
+/** The desktop app's global shortcut, which shows it with the cursor in the composer. */
+export interface DesktopShortcut {
+  /** The shortcut, and whether it works. */
+  readonly status: ShortcutStatus;
+  /** Changes it; `null` when the app gave no answer the page understands. */
+  readonly change: (accelerator: Accelerator) => Promise<ShortcutChange | null>;
 }
 
 /** Updating the desktop app, which carries its own page. */

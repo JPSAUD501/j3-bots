@@ -78,6 +78,7 @@ import { ServerAddress } from "../components/ServerAddress";
 import { type Notice, Toast } from "../components/Toast";
 import { notificationAccess } from "../preferences/notifications";
 import type { ConversationView, DesktopServer, ShellData, ShellIntents } from "../shell/data";
+import { runShellAction } from "../shell/commands";
 import { ShellSourceProvider } from "../shell/source";
 import {
   closeNotificationsOf,
@@ -89,6 +90,7 @@ import { loadRasterizer, notificationIcon, systemTheme } from "./notificationIco
 import { onAppLink } from "./appLinks";
 import { deliverFile, reserveWindow } from "./openFile";
 import { updatable, useDesktopUpdate, useReportSaving } from "./appUpdate";
+import { useDesktopShortcut, useReportLanguage, useReportTray } from "./desktopMenus";
 import { desktop } from "./desktop";
 import { LinkedPairingCode } from "./pairingLink";
 import { makePlatform, signInUnencrypted } from "./platform";
@@ -128,6 +130,7 @@ const client = (origin: URL) => (started ??= createJ3Client(makePlatform(origin)
  * version, storage the browser refuses.
  */
 export function LiveSourceProvider({ children }: { children: ReactNode }) {
+  useReportLanguage();
   if (server === null) return <AddressScreen />;
   return <Connected origin={server}>{children}</Connected>;
 }
@@ -447,6 +450,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   const memorySaves = useReadable(j3.memorySaves);
   // In the desktop app, a restart into an update waits until no save is under way.
   const update = useDesktopUpdate();
+  const shortcut = useDesktopShortcut();
   useReportSaving(
     savesUnderWay({
       settings: { profile: profileSave, notifications: notificationsSave },
@@ -603,6 +607,21 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
     const waiting = waitingClick.current;
     if (waiting !== null && listedRoster._tag === "ready") openClicked(waiting);
   }, [listedRoster]);
+  // In the desktop app: its tray lists what needs the operator here. A bot
+  // or room chosen there opens as a notification click does, while this
+  // window still follows the pairing whose roster listed it; its menus and
+  // its shortcut ask the shell for the shell's own actions.
+  useReportTray(roster, pairing);
+  useEffect(
+    () =>
+      desktop?.onCommand((command) => {
+        if (command._tag !== "open") runShellAction(command._tag);
+        else if (command.pairing === pairing && j3.pairing.get() === pairing) {
+          openTarget(command.target);
+        }
+      }),
+    [j3, pairing],
+  );
 
   // Another tab sent or changed a draft under this one, and this tab shows it
   // as stored. Text of this tab's that the device never kept is offered back
@@ -965,6 +984,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
       }),
     ...(desktopServer === undefined ? {} : { server: desktopServer }),
     ...(update === undefined ? {} : { update }),
+    ...(shortcut === undefined ? {} : { shortcut }),
   };
 
   return (

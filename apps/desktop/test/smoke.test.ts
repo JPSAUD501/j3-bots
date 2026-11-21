@@ -21,7 +21,8 @@ import { _electron, type ElectronApplication, type Page } from "playwright-core"
 // The development build, launched as the operator launches it, against the
 // server's testing layer (its real routes and socket over the in-memory
 // engine) on loopback: refuse an address that redirects, name the server,
-// pair, open a bot from the roster, send it a message with a file, find the
+// pair, open a bot from the roster, send it a message with a file, show the
+// window from the application menu with the cursor in the composer, find the
 // token nowhere on disk in the clear, launch again still paired, keep a
 // credential the system will not open, read a damaged one as not paired, and
 // change server from Settings; and follow links to the app, given at launch
@@ -265,6 +266,21 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
         );
         assert.isTrue(Option.isSome(arrived));
         assert.strictEqual(new URL(page.url()).protocol, "j3bots-dev:");
+
+        // The application menu's Show, which the global shortcut also runs:
+        // the window comes forward with the cursor in the open conversation's composer.
+        yield* onPage(page, async () => {
+          await page.getByRole("button", { name: "Settings" }).focus();
+          const composer = await page
+            .getByRole("textbox", { name: `Message ${bot.profile.name}` })
+            .elementHandle({ timeout: STEP });
+          await app.evaluate(({ Menu }) => {
+            Menu.getApplicationMenu()?.getMenuItemById("show")?.click();
+          });
+          await page.waitForFunction((element) => element === document.activeElement, composer, {
+            timeout: STEP,
+          });
+        });
 
         // The credential is stored sealed; the token it holds is nowhere on disk in the clear.
         const record = yield* Schema.decodeUnknownEffect(SealedRecord)(

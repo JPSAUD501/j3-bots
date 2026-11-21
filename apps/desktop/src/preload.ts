@@ -51,6 +51,17 @@ const bridge: DesktopBridge = {
       ipcRenderer.removeListener(IPC_CHANNELS.appLinkOpened, forward);
     };
   },
+  reportLanguage: (report) => ipcRenderer.send(IPC_CHANNELS.language, report),
+  reportTray: (report) => ipcRenderer.send(IPC_CHANNELS.tray, report),
+  onCommand: (listener) => {
+    const forward = (_event: unknown, command: unknown) => listener(command);
+    ipcRenderer.on(IPC_CHANNELS.command, forward);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.command, forward);
+    };
+  },
+  shortcutStatus: () => ipcRenderer.invoke(IPC_CHANNELS.shortcut),
+  setShortcut: (accelerator) => ipcRenderer.invoke(IPC_CHANNELS.setShortcut, { accelerator }),
 };
 
 contextBridge.exposeInMainWorld(BRIDGE_KEY, bridge);

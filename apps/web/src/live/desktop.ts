@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { DeviceId, PairingCode, PairingLinkTarget } from "@j3-bots/contracts";
+import type { DeviceId, Language, PairingCode, PairingLinkTarget } from "@j3-bots/contracts";
 import {
   AppLink,
   BRIDGE_KEY,
@@ -9,6 +9,10 @@ import {
   NetworkState,
   NotificationClick,
   type NotificationRequest,
+  ShellCommand,
+  ShortcutChange,
+  ShortcutStatus,
+  type TrayReport,
   OpenResult,
   SealResult,
   type TokenProtection,
@@ -82,6 +86,16 @@ export interface Desktop {
    * with one that arrived before; answers a function that stops it.
    */
   readonly onAppLink: (listener: (link: AppLink) => void) => () => void;
+  /** Tells the app the language the page shows, which its menus follow. */
+  readonly reportLanguage: (language: Language) => void;
+  /** Tells the app what its tray lists. */
+  readonly reportTray: (report: TrayReport) => void;
+  /** Calls `listener` with each command from the app's menus, tray or shortcut; answers a function that stops it. */
+  readonly onCommand: (listener: (command: ShellCommand) => void) => () => void;
+  /** The global shortcut and whether it works; `null` when the app gave no answer the page understands. */
+  readonly shortcutStatus: () => Promise<ShortcutStatus | null>;
+  /** Changes the global shortcut; `null` when the app gave no answer the page understands. */
+  readonly setShortcut: (accelerator: string) => Promise<ShortcutChange | null>;
 }
 
 const decodeBridge = Schema.decodeUnknownOption(HostedBridge);
@@ -93,6 +107,9 @@ const decodeNetwork = Schema.decodeUnknownOption(NetworkState);
 const decodeStatus = Schema.decodeUnknownOption(UpdateStatus);
 const decodeClick = Schema.decodeUnknownOption(NotificationClick);
 const decodeLink = Schema.decodeUnknownOption(AppLink);
+const decodeCommand = Schema.decodeUnknownOption(ShellCommand);
+const decodeShortcut = Schema.decodeUnknownOption(ShortcutStatus);
+const decodeShortcutChange = Schema.decodeUnknownOption(ShortcutChange);
 const hosted: unknown = Reflect.get(window, BRIDGE_KEY);
 
 /** What `call` answers, decoded; `null` when it throws, rejects or answers something else. */
@@ -172,6 +189,22 @@ export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
         if (typeof stop === "function") stop();
       };
     },
+    reportLanguage: (language) => {
+      bridge.reportLanguage({ language });
+    },
+    reportTray: (report) => {
+      bridge.reportTray(report);
+    },
+    onCommand: (listener) => {
+      const stop: unknown = bridge.onCommand((command: unknown) =>
+        Option.map(decodeCommand(command), listener),
+      );
+      return () => {
+        if (typeof stop === "function") stop();
+      };
+    },
+    shortcutStatus: () => ask(() => bridge.shortcutStatus(), decodeShortcut),
+    setShortcut: (accelerator) => ask(() => bridge.setShortcut(accelerator), decodeShortcutChange),
     checkForUpdates: () => {
       bridge.checkForUpdates();
     },

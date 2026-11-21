@@ -40,6 +40,7 @@ import { contentSecurityPolicy, inlineScriptSources, resolveAsset } from "./asse
 import { electronFetch } from "./electronFetch.ts";
 import { APP_ID, appOrigin, schemeOf } from "./identity.ts";
 import * as LinkHandler from "./linkHandler.ts";
+import * as Menus from "./menus.ts";
 import { externalUrl, isAppUrl } from "./navigation.ts";
 import * as Notifier from "./notifier.ts";
 import { restartApp } from "./restart.ts";
@@ -366,6 +367,7 @@ const program = Effect.gen(function* () {
   });
   yield* links.serve({ window, fromApp, bringForward: forward });
   yield* LinkHandler.register(SCHEME).pipe(Effect.forkScoped);
+  yield* Menus.serve({ window, fromApp, bringForward: forward });
   // After sleep the network may have changed under the page: it is told, so
   // the client tries again at once rather than when its backoff ends.
   yield* Effect.acquireRelease(

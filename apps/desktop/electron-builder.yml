@@ -9,6 +9,10 @@
 # a development placeholder until the ids of a published build are chosen;
 # `appId` matches `APP_ID` in src/identity.ts.
 
+# Settling the app id also means setting `desktopName` (under `extraMetadata`)
+# to that reverse-DNS id and `linux.syncDesktopName: true`, so the installed
+# desktop file is named after it: without both, GNOME on Wayland refuses the
+# global shortcut without telling the app.
 appId: dev.j3bots.desktop
 productName: J3 Bots
 copyright: Copyright © J3 Bots contributors
