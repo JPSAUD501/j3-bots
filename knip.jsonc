@@ -13,6 +13,10 @@
       // the window names: built into dist, which knip does not map back.
       "entry": ["src/main.ts", "src/preload.ts"],
     },
+    "apps/mobile": {
+      // The config plugin prebuild loads by the path app.config.ts names.
+      "entry": ["plugins/*.js"],
+    },
     "apps/server": {
       // The `j3` bridge: the engine starts it as a process, by a path
       // `src/installation.ts` names, and the production build bundles it.

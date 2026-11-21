@@ -455,6 +455,8 @@ export const en = {
     "Paired, but this browser wouldn’t keep the sign-in. Allow site data for this page and pair again.",
   "pairing.storageFailed.desktop":
     "Paired, but J3 Bots couldn’t store the sign-in encrypted on this device. Unlock your system’s keychain or keyring, restart J3 Bots, then pair again with a new code.",
+  "pairing.storageFailed.mobile":
+    "Paired, but this device’s secure storage wouldn’t keep the sign-in. Pair again with a new code.",
 
   "server.title": "Where does J3 Bots run?",
   "server.body": "Enter the address of the machine that runs J3 Bots. {command} prints it there.",
@@ -482,8 +484,8 @@ export const en = {
   "gate.incompatible.title": "This page is out of date",
   "gate.incompatible.body":
     "The J3 Bots server was updated and speaks a newer version. Reload to get the matching page.",
-  "gate.incompatible.desktopTitle": "This app doesn’t match the server",
-  "gate.incompatible.desktopBody":
+  "gate.incompatible.appTitle": "This app doesn’t match the server",
+  "gate.incompatible.appBody":
     "The J3 Bots server at {address} speaks a different version than this app. Update the app or the server so they match, or change to another server.",
   "gate.storage.title": "This browser won’t keep the sign-in",
   "gate.storage.body":
@@ -491,6 +493,9 @@ export const en = {
   "gate.storage.desktopTitle": "This device’s sign-in can’t be read",
   "gate.storage.desktopBody":
     "J3 Bots couldn’t read the sign-in it keeps on this device for {address}. If your system’s keychain or keyring is locked, unlock it, then restart J3 Bots. Changing to another server, or to this one again, signs this device out here.",
+  "gate.storage.mobileTitle": "This device can’t read its sign-in",
+  "gate.storage.mobileBody":
+    "J3 Bots keeps this device’s sign-in in its secure storage, and reading it failed. Try again, or restart the app.",
   "gate.reload": "Reload",
   "gate.retry": "Try again",
   "gate.restart": "Restart J3 Bots",
