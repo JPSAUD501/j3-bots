@@ -275,7 +275,7 @@ export const layer = Layer.effect(
     const scope = yield* Effect.scope;
     const stops = stopTargets(sql);
     const { notify } = notices(sql, entries);
-    const spoken = routineSpeech(sql, ids);
+    const spoken = routineSpeech(sql, ids, changes);
     const { sessionLost } = sessionLoss(sql, entries, ledger, workSteps, signals);
     const { requestRotation } = rotationRequests(sql, signals);
     const { finishFold, closeCard } = sessionRecords(sql, entries, workSteps);
@@ -847,7 +847,6 @@ export const layer = Layer.effect(
       `;
       yield* spoken.said({
         sessionId: session.id,
-        turnId: speech.turnId,
         botId: session.bot_id,
         entryId: entry.id,
         text: entry._tag === "message" ? entry.text : speech.text,

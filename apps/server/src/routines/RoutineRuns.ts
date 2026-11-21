@@ -29,6 +29,7 @@ import {
   DispatchSeq,
   DispatchStatus,
   TurnsInvariant,
+  WakeFailure,
   WakeStatus,
 } from "../turns/model.ts";
 import { stopTargets } from "../turns/stopTargets.ts";
@@ -39,8 +40,9 @@ export const RUN_HISTORY = 100;
 
 /**
  * How many times a run is tried at most. An attempt that fails before the bot
- * says anything (the engine refused it, its session was lost, its turn failed
- * or was interrupted by something other than the operator) is tried again.
+ * says anything (the engine could not open its session or lost it, its turn
+ * failed or was interrupted by something other than the operator) is tried
+ * again. One whose envelope the engine refused is not: the next would be too.
  */
 export const RUN_ATTEMPTS = 3;
 
@@ -75,6 +77,7 @@ const Ended = Schema.Struct({
   wake_id: Schema.NullOr(Schema.String),
   attempts: Schema.Int,
   wake_status: Schema.NullOr(WakeStatus),
+  wake_failure: Schema.NullOr(WakeFailure),
   wake_updated_at: Schema.NullOr(Time),
   dispatch_seq: Schema.NullOr(DispatchSeq),
   dispatch_status: Schema.NullOr(DispatchStatus),
@@ -103,7 +106,11 @@ const settlementOf = (run: Ended): Settlement => {
       // A Stop of the bot, or the routine's deletion, ended it.
       return { _tag: "settled", status: "failed" };
     case "failed":
-      return { _tag: "attempt-failed" };
+      // The engine refused its envelope, or the runner found it too long to
+      // send: the next attempt would fare no better.
+      return run.wake_failure === "rejected"
+        ? { _tag: "settled", status: "failed" }
+        : { _tag: "attempt-failed" };
     case "finished":
       if (run.dispatch_status !== null && OPEN_DISPATCH.includes(run.dispatch_status)) {
         return { _tag: "going" };
@@ -149,9 +156,10 @@ const encoder = new TextEncoder();
  * A run settles from its attempt's wake and that wake's dispatch: as
  * `delivered` once the bot said something; as `silent` when its turn
  * completed without a word; as `failed` when a Stop of the bot or the
- * routine's deletion ended it. An attempt that failed before the bot said
- * anything is tried again, after a delay and up to `RUN_ATTEMPTS` attempts,
- * with a new wake; the last one's failure fails the run.
+ * routine's deletion ended it, or the engine refused its envelope. Another
+ * attempt that failed before the bot said anything is tried again, after a
+ * delay and up to `RUN_ATTEMPTS` attempts, with a new wake; the last one's
+ * failure fails the run.
  */
 export class RoutineRuns extends Context.Service<
   RoutineRuns,
@@ -209,7 +217,7 @@ export const layer = Layer.effect(
       Result: Ended,
       execute: (routineId) => sql`
         SELECT r.id, r.routine_id, ro.bot_id, r.wake_id, r.attempts, w.status AS wake_status,
-          w.updated_at AS wake_updated_at, d.seq AS dispatch_seq, d.status AS dispatch_status,
+          w.failure_reason AS wake_failure, w.updated_at AS wake_updated_at, d.seq AS dispatch_seq, d.status AS dispatch_status,
           d.outcome_json,
           EXISTS (
             SELECT 1 FROM entries e
@@ -290,8 +298,9 @@ export const layer = Layer.effect(
 
     /**
      * The run's next attempt: a new routine wake, which the runner gives a
-     * fresh side session once the delay passes. The failed wake is the one
-     * it retries, so an attempt is tried again once.
+     * fresh side session once the delay passes and the failed attempt's
+     * session is out of use. The failed wake is the one it retries, so an
+     * attempt is tried again once. The attempt is counted when it starts.
      */
     const retry = Effect.fn("RoutineRuns.retry")(function* (run: Ended, now: DateTime.Utc) {
       const [wakeId] = yield* wakes.record([
@@ -312,7 +321,7 @@ export const layer = Layer.effect(
         );
       }
       yield* sql`
-        UPDATE routine_runs SET wake_id = ${wakeId}, attempts = attempts + 1,
+        UPDATE routine_runs SET wake_id = ${wakeId},
           retry_at = ${timeText(DateTime.addDuration(now, retryDelay(run.attempts)))}
         WHERE id = ${run.id} AND status = 'running'
       `;

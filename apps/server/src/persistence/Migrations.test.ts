@@ -3,7 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import * as SqliteMigrator from "@effect/sql-sqlite-node/SqliteMigrator";
 import { assert, it } from "@effect/vitest";
-import { Bot } from "@j3-bots/contracts";
+import { Bot, Routine } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -14,6 +14,9 @@ import { ServerConfig } from "../config.ts";
 import * as TestDatabase from "../testing/database.ts";
 import Migration0001 from "./migrations/0001_initial.ts";
 import Migration0002 from "./migrations/0002_operator_name.ts";
+import Migration0003 from "./migrations/0003_turns.ts";
+import Migration0004 from "./migrations/0004_routines.ts";
+import Migration0005 from "./migrations/0005_sessions.ts";
 import { json } from "./columns.ts";
 import * as Sqlite from "./Sqlite.ts";
 
@@ -117,6 +120,61 @@ it.effect("upgrades a database the last release wrote, keeping its rows and thei
       yield* sql`DELETE FROM dispatches WHERE id = 'dispatch-1'`;
       const second = yield* dispatch("dispatch-2");
       assert.deepStrictEqual([...first, ...second], [{ seq: 1 }, { seq: 2 }]);
+    }).pipe(Effect.provide(Sqlite.layer.pipe(Layer.provide(Layer.succeed(ServerConfig, config)))));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("replays a routine's receipt written before runs counted their attempts", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fs.makeTempDirectoryScoped();
+    const config = TestDatabase.configFor(path, home);
+    const lastRun = {
+      id: "run-1",
+      startedAt: now,
+      finishedAt: null,
+      status: "running",
+      delivered: [],
+      note: null,
+    };
+    const routine = {
+      id: "routine-1",
+      botId: "scout",
+      name: "Pull requests",
+      instruction: "Check the open pull requests.",
+      trigger: { _tag: "webhook" },
+      enabled: true,
+      webhookUrl: null,
+      nextRunAt: null,
+      lastRun,
+      runCount: 1,
+    };
+
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* SqliteMigrator.run({
+        loader: SqliteMigrator.fromRecord({
+          "1_initial": Migration0001,
+          "2_operator_name": Migration0002,
+          "3_turns": Migration0003,
+          "4_routines": Migration0004,
+          "5_sessions": Migration0005,
+        }),
+      });
+      yield* sql`
+        INSERT INTO command_receipts (command_id, method, payload_hash, result_json, created_at)
+        VALUES ('command-1', 'routine.update', 'hash', ${JSON.stringify(routine)}, ${now})
+      `;
+    }).pipe(Effect.provide(SqliteClient.layer({ filename: config.databasePath })));
+
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const [row] = yield* sql<{ readonly result_json: string }>`
+        SELECT result_json FROM command_receipts WHERE command_id = 'command-1'
+      `;
+      const replayed = yield* Schema.decodeUnknownEffect(json(Routine))(row?.result_json);
+      assert.strictEqual(replayed.lastRun?.attempts, 0);
     }).pipe(Effect.provide(Sqlite.layer.pipe(Layer.provide(Layer.succeed(ServerConfig, config)))));
   }).pipe(Effect.provide(NodeServices.layer)),
 );

@@ -30,6 +30,7 @@ import { BotStore, type StoredBot } from "../bots/BotStore.ts";
 import { EngineState } from "../engine/EngineState.ts";
 import { Entries } from "../entries/Entries.ts";
 import { Ids } from "../Ids.ts";
+import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { json, Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { SettingsStore } from "../settings/SettingsStore.ts";
@@ -47,6 +48,7 @@ import {
   reconcile,
 } from "../turns/reconciler.ts";
 import { SessionGate } from "../turns/SessionGate.ts";
+import { providerLimit } from "../turns/providerLimit.ts";
 import { isIdle, sessionWork } from "../turns/sessionWork.ts";
 import { Signals } from "../turns/Signals.ts";
 import { RoutineRuns } from "./RoutineRuns.ts";
@@ -91,8 +93,15 @@ const EarlierRun = Schema.Struct({
   started_at: Time,
 });
 
-/** What one item of a pass came to. */
-type Step = "done" | "deferred" | "unavailable";
+/**
+ * What one item of a pass came to: done, or waiting on a signal; left for a
+ * pass shortly; held until a time; or stopped by an engine that is down.
+ */
+type Step =
+  | "done"
+  | "deferred"
+  | "unavailable"
+  | { readonly _tag: "until"; readonly at: DateTime.Utc | null };
 
 const envelopeTrigger = (trigger: RoutineTrigger): EnvelopeTrigger => {
   switch (trigger._tag) {
@@ -117,11 +126,12 @@ const clipped = (text: string) =>
  * sends every first send. The bot's main session is never woken for it.
  *
  * A pass settles the runs whose attempt ended (`RoutineRuns.settle`), which
- * may record a run's next attempt; opens a side session for every attempt
- * that is due, once the bot's provider is not at its usage limit; writes the
- * attempt's dispatch once the session's events are known and a turn slot is
- * free; and retires every side session whose attempt ended, once the engine
- * shows nothing left running there.
+ * may record a run's next attempt; retires every side session whose attempt
+ * ended, once the engine shows nothing left running there; opens a side
+ * session for every attempt that is due, once the attempt it retries has its
+ * session out of use and the bot's provider is not at its usage limit; and
+ * writes the attempt's dispatch once the session's events are known and a
+ * turn slot is free.
  */
 export class RoutineRunner extends Context.Service<
   RoutineRunner,
@@ -151,7 +161,9 @@ export const layer = Layer.effect(
     const gate = yield* SessionGate;
     const settings = yield* SettingsStore;
     const random = yield* SecureRandom.SecureRandom;
+    const changes = yield* ChangeLog;
     const { admitsStart } = admission(sql, settings);
+    const limitOf = providerLimit(sql, engineState);
     const workOf = sessionWork(sql);
     const zoneOf = operatorZone(settings);
 
@@ -173,6 +185,20 @@ export const layer = Layer.effect(
         WHERE side_wake_id = ${wakeId} AND retired_at IS NULL AND lost_at IS NULL
       `,
     });
+
+    /**
+     * Whether the attempt this wake retries still has a side session in use,
+     * where it may yet run: a send of it whose answer was lost may land
+     * there, or work it left may still go on.
+     */
+    const retriedStillLive = (wakeId: string) =>
+      sql`
+        SELECT 1 FROM wakes w JOIN sessions s ON s.side_wake_id = w.retry_of
+        WHERE w.id = ${wakeId} AND s.retired_at IS NULL AND s.lost_at IS NULL
+      `.pipe(
+        Effect.orDie,
+        Effect.map((rows) => rows.length > 0),
+      );
 
     const spentRows = SqlSchema.findAll({
       Request: Schema.Void,
@@ -196,13 +222,6 @@ export const layer = Layer.effect(
         ORDER BY started_at DESC, id DESC
         LIMIT ${RECENT_RUNS}
       `,
-    });
-
-    /** Whether the bot's provider is at its usage limit, which holds automated wakes. */
-    const providerLimited = Effect.fn("RoutineRunner.providerLimited")(function* (bot: StoredBot) {
-      const status = yield* engineState.current;
-      const provider = status.providers.find((p) => p.id === bot.bot.model.providerId);
-      return provider?.status._tag === "limited";
     });
 
     /** What an earlier run said, as one text; empty when its messages are gone. */
@@ -279,7 +298,11 @@ export const layer = Layer.effect(
       return { wake: alone, fits: fitsEngine(alone) };
     });
 
-    /** The attempt's side session, written now if it has none, while its wake still waits. */
+    /**
+     * The attempt's side session, written now if it has none, while its wake
+     * still waits. The first one written for the wake starts the attempt,
+     * which the run counts.
+     */
     const sideSession = Effect.fn("RoutineRunner.sideSession")(function* (attempt: Attempt) {
       return yield* transaction(
         Effect.gen(function* () {
@@ -289,6 +312,15 @@ export const layer = Layer.effect(
             SELECT 1 FROM wakes WHERE id = ${attempt.wake_id} AND status = 'pending'
           `;
           if (pending.length === 0) return Option.none();
+          const earlier =
+            yield* sql`SELECT 1 FROM sessions WHERE side_wake_id = ${attempt.wake_id}`;
+          if (earlier.length === 0) {
+            yield* sql`
+              UPDATE routine_runs SET attempts = attempts + 1
+              WHERE id = ${attempt.run_id} AND status = 'running'
+            `;
+            yield* changes.record({ _tag: "routines", botId: attempt.bot_id }, attempt.routine_id);
+          }
           const id = SessionRowId.make(yield* ids.make("session"));
           yield* sql`
             INSERT INTO sessions (id, bot_id, purpose, prompt_version, created_at, side_wake_id)
@@ -298,6 +330,19 @@ export const layer = Layer.effect(
             )
           `;
           return Option.some({ id, engine_session_id: null });
+        }),
+      ).pipe(Effect.orDie);
+    });
+
+    /** The attempt's wake fails unsent, which settles its run. */
+    const failAttempt = Effect.fn("RoutineRunner.failAttempt")(function* (attempt: Attempt) {
+      yield* transaction(
+        Effect.gen(function* () {
+          yield* sql`
+            UPDATE wakes SET status = 'failed', updated_at = ${timeText(yield* DateTime.now)}
+            WHERE id = ${attempt.wake_id} AND status = 'pending'
+          `;
+          yield* sql.afterCommit(signals.routines.fire);
         }),
       ).pipe(Effect.orDie);
     });
@@ -323,14 +368,26 @@ export const layer = Layer.effect(
         })
         .pipe(Effect.result);
       if (opened._tag === "Failure") {
-        if (opened.failure._tag === "EngineUnavailable") return "unavailable";
-        // Not now: the bot's project is being made again, its model is not
-        // offered, or the engine's answer was lost. The same key is sent again.
-        yield* Effect.logWarning("A routine's side session could not be opened yet", {
-          routineId: attempt.routine_id,
-          reason: opened.failure._tag,
-        });
-        return "deferred";
+        switch (opened.failure._tag) {
+          case "EngineUnavailable":
+            return "unavailable";
+          case "ModelUnavailable":
+            // The engine does not offer the bot's model: the attempt ends, and
+            // the run tries again after its delay, as for a failed turn.
+            yield* Effect.logWarning("A routine's side session was refused its model", {
+              routineId: attempt.routine_id,
+            });
+            yield* failAttempt(attempt);
+            return "done";
+          default:
+            // Not now: the bot's project is being made again, or the engine's
+            // answer was lost. The same key is sent again.
+            yield* Effect.logWarning("A routine's side session could not be opened yet", {
+              routineId: attempt.routine_id,
+              reason: opened.failure._tag,
+            });
+            return "deferred";
+        }
       }
       yield* sql`
         UPDATE sessions SET engine_session_id = ${opened.success}
@@ -394,8 +451,12 @@ export const layer = Layer.effect(
     ): Effect.fn.Return<Step> {
       const found = yield* bots.find(attempt.bot_id);
       if (Option.isNone(found)) return "done";
+      // The attempt it retries may still be running: one attempt at a time.
+      // Its session's retirement nudges the runner.
+      if (yield* retriedStillLive(attempt.wake_id)) return "done";
       // A provider at its usage limit holds automated wakes until its reset.
-      if (yield* providerLimited(found.value)) return "deferred";
+      const limit = yield* limitOf(found.value.bot.model.providerId);
+      if (Option.isSome(limit)) return { _tag: "until", at: limit.value.resetsAt };
       const session = yield* sideSession(attempt);
       if (Option.isNone(session)) return "done";
       const { id } = session.value;
@@ -437,7 +498,18 @@ export const layer = Layer.effect(
       if (!isIdle(work) || work.continuations > 0 || work.stopUnsettled) return "done";
       const synced = yield* observer.synchronize(session.id, engineSessionId).pipe(Effect.result);
       if (synced._tag === "Failure") {
-        return synced.failure._tag === "EngineUnavailable" ? "unavailable" : "deferred";
+        switch (synced.failure._tag) {
+          case "EngineUnavailable":
+            return "unavailable";
+          case "SessionNotFound":
+            // Already retired in the engine: an archive whose answer was lost,
+            // or that the server stopped before recording.
+            yield* record;
+            yield* observer.close(session.id);
+            return "done";
+          default:
+            return "deferred";
+        }
       }
       // Background work the run left running, a dev server say, keeps its
       // session until it ends: retiring would stop it.
@@ -462,6 +534,14 @@ export const layer = Layer.effect(
       );
     });
 
+    /** What the pass makes of one item's step; whether the engine is down. */
+    const noted = (step: Step, outcome: ReturnType<typeof passOutcome>) => {
+      if (step === "unavailable") return true;
+      if (step === "deferred") outcome.defer();
+      else if (step !== "done") outcome.until(step.at);
+      return false;
+    };
+
     /** A defect in one item is logged; the item waits, and the pass goes on. */
     const guarded = (what: string, effect: Effect.Effect<Step>): Effect.Effect<Step> =>
       effect.pipe(
@@ -475,6 +555,14 @@ export const layer = Layer.effect(
       Effect.gen(function* () {
         const outcome = passOutcome();
         yield* transaction(runs.settle);
+        // Retired first: an attempt that retries waits for the one before it to be out of use.
+        for (const session of yield* spentRows) {
+          const step = yield* guarded(
+            "A routine's side session could not be retired; it is tried again later",
+            retire(session),
+          );
+          if (noted(step, outcome)) return { _tag: "unavailable" } as const;
+        }
         const now = yield* DateTime.now;
         for (const raw of yield* attemptRows) {
           const attempt = Schema.decodeUnknownOption(Attempt)(raw);
@@ -492,16 +580,7 @@ export const layer = Layer.effect(
             "A routine run could not be started; it is tried again later",
             advance(attempt.value),
           );
-          if (step === "unavailable") return { _tag: "unavailable" } as const;
-          if (step === "deferred") outcome.defer();
-        }
-        for (const session of yield* spentRows) {
-          const step = yield* guarded(
-            "A routine's side session could not be retired; it is tried again later",
-            retire(session),
-          );
-          if (step === "unavailable") return { _tag: "unavailable" } as const;
-          if (step === "deferred") outcome.defer();
+          if (noted(step, outcome)) return { _tag: "unavailable" } as const;
         }
         return outcome.done();
       }).pipe(Effect.withSpan("RoutineRunner.pass")),
