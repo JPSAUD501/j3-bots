@@ -145,20 +145,53 @@ export const checkWritable = Effect.fn("Home.checkWritable")(function* (home: st
   );
 });
 
+/** A rollback has not finished, so the home is not one this release may run on. */
+class RollbackUnfinished extends Schema.TaggedError<RollbackUnfinished>()("RollbackUnfinished", {
+  home: Schema.String,
+  release: Schema.String,
+  snapshot: Schema.String,
+}) {
+  override get message(): string {
+    return `A rollback of ${this.home} to J3 Bots ${this.release}, from ${this.snapshot}, has not finished, so no server may start on it. Run \`j3-bots update --rollback\`, which finishes it.`;
+  }
+}
+
+/**
+ * Refuses `home` while a rollback has not finished: it holds the data of
+ * another release, or part of a snapshot. Only the release the rollback ends
+ * on may start, and only once the snapshot is back whole.
+ */
+const checkNoUnfinishedRollback = Effect.fn("Home.checkNoUnfinishedRollback")(function* (
+  home: string,
+) {
+  const rollback = yield* unfinishedRollback(home);
+  if (Option.isNone(rollback)) return;
+  const { snapshot, mark } = rollback.value;
+  if (mark.stage !== "restored" || mark.release !== packageJson.version) {
+    return yield* new RollbackUnfinished({
+      home,
+      release: mark.release,
+      snapshot: snapshot.folder,
+    });
+  }
+});
+
 /**
  * The configuration for a server about to start, with its home ready. Nothing
  * is written until all pass their checks: the configuration, as `load`
- * checks it (where the home is included), and the home's privacy and
- * writability. Then the home is created, readable by the operator only, and
- * on first run, with no `config.json` yet, one is published whole with every
- * setting at its default. An existing file is never rewritten, and a start
- * that finds one writes nothing there.
+ * checks it (where the home is included), the home's privacy and
+ * writability, and that no rollback of it has been left unfinished, whose
+ * `config.json` may be the one moved aside. Then the home is created,
+ * readable by the operator only, and on first run, with no `config.json`
+ * yet, one is published whole with every setting at its default. An existing
+ * file is never rewritten, and a start that finds one writes nothing there.
  */
 export const initialize = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const config = yield* load;
   yield* checkPrivate(config.home);
   yield* checkWritable(config.home);
+  yield* checkNoUnfinishedRollback(config.home);
   yield* fs.makeDirectory(config.home, { recursive: true, mode: 0o700 });
   if (!(yield* fs.exists(config.configFile))) {
     // Two first starts may both get here: the publication keeps the first file.
@@ -177,17 +210,6 @@ class ServerAlreadyRunning extends Schema.TaggedError<ServerAlreadyRunning>()(
 ) {
   override get message(): string {
     return `A J3 Bots server, or \`j3-bots update\` copying its databases, already holds ${this.home}. Stop that server, or wait for the update to end, before starting another.`;
-  }
-}
-
-/** A rollback has not finished, so the home is not one this release may run on. */
-class RollbackUnfinished extends Schema.TaggedError<RollbackUnfinished>()("RollbackUnfinished", {
-  home: Schema.String,
-  release: Schema.String,
-  snapshot: Schema.String,
-}) {
-  override get message(): string {
-    return `A rollback of ${this.home} to J3 Bots ${this.release}, from ${this.snapshot}, has not finished, so no server may start on it. Run \`j3-bots update --rollback\`, which finishes it.`;
   }
 }
 
@@ -276,28 +298,15 @@ export const holdHome = Effect.fn("Home.holdHome")(function* (home: string) {
  * removes an admin socket a stopped server left behind.
  *
  * Holding the lock, the server is the only one that may remove or create the
- * admin socket, and no update copies or puts back the databases under it. A
- * rollback that has not finished leaves the home holding the data of another
- * release, or part of a snapshot: only the release it ends on may start, and
- * only once the snapshot is back whole.
+ * admin socket, and no update copies or puts back the databases under it.
  */
 export const reserve = Effect.gen(function* () {
   const { home, adminSocket } = yield* ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   yield* checkPrivate(home);
   yield* holdHome(home);
-
-  const rollback = yield* unfinishedRollback(home);
-  if (Option.isSome(rollback)) {
-    const { snapshot, mark } = rollback.value;
-    if (mark.stage !== "restored" || mark.release !== packageJson.version) {
-      return yield* new RollbackUnfinished({
-        home,
-        release: mark.release,
-        snapshot: snapshot.folder,
-      });
-    }
-  }
+  // Again under the lock: a rollback may have started since `initialize`.
+  yield* checkNoUnfinishedRollback(home);
 
   const socket = yield* Socket.probe(adminSocket);
   switch (socket) {
