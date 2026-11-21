@@ -172,14 +172,15 @@ installed_version() {
   printf '%s' "$found"
 }
 
-# Refuses the folder $1 when another account could change what is in it, as
-# ssh does for its own files: it must be this user's, and not writable by its
-# group or by others. What is in these folders runs as this user.
+# Refuses the folder $1 when another account could change what is in it: it
+# must be this user's, and not writable by everyone. Its group may write, as a
+# folder made under umask 002 lets the user's own group. What is in these
+# folders runs as this user.
 private_folder() {
   [ -n "$(find -H "$1" -prune -user "$(id -u)")" ] ||
     fail "$1 belongs to another account, which could change what runs from it. Choose a folder of your own, such as one under $HOME."
-  [ -n "$(find -H "$1" -prune ! -perm -g+w ! -perm -o+w)" ] ||
-    fail "$1 can be written by other accounts (its group or everyone), which could change what runs from it. Make it yours alone with \`chmod go-w $1\`, then run this again."
+  [ -n "$(find -H "$1" -prune ! -perm -o+w)" ] ||
+    fail "$1 can be written by every account, which could change what runs from it. Take that away with \`chmod o-w $1\`, then run this again."
 }
 
 recorded=

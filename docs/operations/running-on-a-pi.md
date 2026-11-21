@@ -48,7 +48,7 @@ curl -fsSL https://github.com/JPSAUD501/j3-bots/releases/download/v0.1.0-rc.1/in
 - runs `j3-bots doctor`, then `j3-bots service install` ([First run](#first-run) says what both do), unless `--no-service`;
 - says what is next: connect the providers, then pair.
 
-`J3_INSTALL_DIR` and `J3_BIN_DIR` move the first two folders, and `J3_HOME` the data directory. The install folder, its `versions/` and the folder of the command must be yours and writable by no other account, as `ssh` requires of its own files: what is in them runs as you, so `install.sh` refuses any other, and says which and why. It writes its folders with no write access for others, whatever your `umask`.
+`J3_INSTALL_DIR` and `J3_BIN_DIR` move the first two folders, and `J3_HOME` the data directory. The install folder, its `versions/` and the folder of the command must be yours and not writable by every account: what is in them runs as you, so `install.sh` refuses any other, and says which and why. A folder your own group may write, as `umask 002` makes them, is accepted. It writes its own folders with no write access for group or others, whatever your `umask`.
 
 Run it again with the same version to restore the command, its record and the service. It uses the release already in `versions/<version>/` as it is, so a damaged release there is fixed by `j3-bots uninstall`, then the command above again. It never removes a folder it did not make: a `versions/<version>/` that is not a release, with no `release.json`, is refused and kept. It refuses to install another version over an installed one: to change version, run `j3-bots uninstall` (your data is kept), then the command above again.
 
