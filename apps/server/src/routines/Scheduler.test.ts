@@ -12,7 +12,7 @@ import * as Domain from "../domain.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { timeText } from "../persistence/columns.ts";
 import * as TestDomain from "../testing/domain.ts";
-import { command, createBot } from "../testing/turns.ts";
+import { command, createBot, noticesOf, until } from "../testing/turns.ts";
 import { Stops } from "../turns/Stops.ts";
 import { RUN_HISTORY } from "./RoutineRuns.ts";
 import { Routines } from "./Routines.ts";
@@ -87,7 +87,10 @@ it.effect("records a run that came due with its routine wake, and moves on to th
       runs.map((run) => [run.status, run.finishedAt]),
       [["running", null]],
     );
-    assert.deepStrictEqual(yield* wakesOf(routine.id), [{ kind: "routine", status: "pending" }]);
+    assert.deepStrictEqual(
+      (yield* wakesOf(routine.id)).map((wake) => wake.kind),
+      ["routine"],
+    );
     const after = yield* current(routine);
     assert.deepStrictEqual(after.nextRunAt, at("1970-01-02T00:10:00.000Z"));
     assert.strictEqual(after.runCount, 1);
@@ -160,11 +163,10 @@ it.effect(
       // Only the run that ran counts.
       assert.strictEqual((yield* current(routine)).runCount, 1);
 
-      // Stopping the bot cancels the wake still waiting: the run ends as failed.
+      // Stopping the bot ends the run, which is not tried again: it ends as failed.
       yield* (yield* Stops).stopBot({ commandId: command(), botId: bot.id });
-      yield* pass;
+      yield* until(history(routine.id).pipe(Effect.map((runs) => runs[1]?.status === "failed")));
       const [, stopped] = yield* history(routine.id);
-      assert.strictEqual(stopped?.status, "failed");
       assert.notStrictEqual(stopped?.finishedAt, null);
 
       yield* TestClock.adjust("1 second");
@@ -209,7 +211,7 @@ it.effect("tells clients of the later try when a routine's run cannot be recorde
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
-it.effect("pauses a routine whose trigger cannot be read, and tells clients", () =>
+it.effect("pauses a routine whose trigger cannot be read, and tells clients and the operator", () =>
   Effect.gen(function* () {
     const bot = yield* createBot("Ana");
     const routine = yield* createRoutine(bot.id, {
@@ -237,6 +239,7 @@ it.effect("pauses a routine whose trigger cannot be read, and tells clients", ()
     }>`SELECT enabled, next_run_at FROM routines WHERE id = ${routine.id}`;
     assert.deepStrictEqual([row?.enabled, row?.next_run_at], [0, null]);
     assert.deepStrictEqual(yield* wakesOf(routine.id), []);
+    assert.deepStrictEqual(yield* noticesOf(bot.id), ["routine-paused"]);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
@@ -310,7 +313,9 @@ it.effect("keeps a routine's newest settled runs and the one going", () =>
 
     // Once the run going settles it is a settled run too, and the cap still holds.
     yield* (yield* Stops).stopBot({ commandId: command(), botId: bot.id });
-    yield* pass;
+    yield* until(
+      history(routine.id).pipe(Effect.map((runs) => runs.every((run) => run.status !== "running"))),
+    );
     assert.strictEqual((yield* history(routine.id)).length, RUN_HISTORY);
   }).pipe(Effect.provide(TestDomain.layer)),
 );

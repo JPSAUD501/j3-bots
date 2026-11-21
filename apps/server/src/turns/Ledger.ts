@@ -20,6 +20,7 @@ import * as SqlSchema from "effect/sql/SqlSchema";
 import { Entries } from "../entries/Entries.ts";
 import { json, Time, timeText } from "../persistence/columns.ts";
 import { notices } from "./notices.ts";
+import { fromBeforeFreshStartSql } from "./rotationRequests.ts";
 import {
   AudienceColumn,
   audienceOf,
@@ -168,12 +169,15 @@ export class Ledger extends Context.Service<
      * A Stop ended it in the engine before delivery: a cancelled waiting turn
      * (`turnId`), a dropped steer (the turn it was to ride). The bot never
      * read its envelope, so its catch-up notes and held messages go to the
-     * next one. Whether it was still the engine's to drop.
+     * next one. Also a turn the engine ended before it started for another
+     * reason, a provider's failure say, whose `outcome` the dispatch keeps.
+     * Whether it was still the engine's to drop.
      */
     readonly drop: (
       dispatchId: DispatchRowId,
       turnId: TurnId,
       wakes: WakesAfter,
+      outcome: TurnOutcome | null,
     ) => Effect.Effect<boolean>;
     /**
      * The engine certainly applied nothing: it may be sent again as new
@@ -418,7 +422,8 @@ export const layer = Layer.effect(
      * its dispatch was written into: once
      * that session is lost or retired, the rotation that replaces it writes
      * the digest for the next one (or, for a fresh start, none), so the one
-     * carried here is dropped, and a bot never has two waiting.
+     * carried here is dropped, and a bot never has two waiting. A note of what
+     * was said before the bot's latest fresh start is dropped too.
      */
     const returnConsumed = Effect.fn("Ledger.returnConsumed")(function* (
       dispatchId: DispatchRowId,
@@ -431,6 +436,10 @@ export const layer = Layer.effect(
             SELECT 1 FROM dispatches d JOIN sessions s ON s.id = d.session_id
             WHERE d.id = ${dispatchId} AND (s.retired_at IS NOT NULL OR s.lost_at IS NOT NULL)
           )
+      `;
+      yield* sql`
+        DELETE FROM catch_up_notes
+        WHERE consumed_dispatch_id = ${dispatchId} AND ${fromBeforeFreshStartSql(sql)}
       `;
       yield* sql`UPDATE catch_up_notes SET consumed_dispatch_id = NULL WHERE consumed_dispatch_id = ${dispatchId}`;
       yield* sql`UPDATE held_messages SET consumed_dispatch_id = NULL WHERE consumed_dispatch_id = ${dispatchId}`;
@@ -545,10 +554,12 @@ export const layer = Layer.effect(
       dispatchId: DispatchRowId,
       turnId: TurnId,
       wakes: WakesAfter,
+      outcome: TurnOutcome | null,
     ) {
+      const encoded = outcome === null ? null : yield* encodeOutcome(outcome);
       const dropped = yield* sql`
         UPDATE dispatches SET status = 'dropped', engine_turn_id = COALESCE(engine_turn_id, ${turnId}),
-          next_attempt_at = NULL, updated_at = ${yield* now}
+          outcome_json = ${encoded}, next_attempt_at = NULL, updated_at = ${yield* now}
         WHERE id = ${dispatchId} AND status IN ('accepted', 'delivered')
         RETURNING id
       `;

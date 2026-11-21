@@ -19,6 +19,7 @@ import * as Presence from "./presence/Presence.ts";
 import * as RoomRouting from "./rooms/RoomRouting.ts";
 import * as Rooms from "./rooms/Rooms.ts";
 import * as Roster from "./roster/Roster.ts";
+import * as RoutineRunner from "./routines/RoutineRunner.ts";
 import * as RoutineRuns from "./routines/RoutineRuns.ts";
 import * as Routines from "./routines/Routines.ts";
 import * as Scheduler from "./routines/Scheduler.ts";
@@ -61,6 +62,7 @@ export const layer = Layer.mergeAll(BotTools.layer, Turns.layer).pipe(
       Cards.layer,
       Rotations.layer,
       RunningWork.layer,
+      RoutineRunner.layer,
     ),
   ),
   Layer.provideMerge(

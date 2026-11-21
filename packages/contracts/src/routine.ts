@@ -25,12 +25,19 @@ export const RoutineRun = Schema.Struct({
     "running",
     /** It said something: see `delivered`. */
     "delivered",
-    /** It finished without saying anything; `note` holds its result. */
+    /** It finished without saying anything; `note` holds its result, when it left one. */
     "silent",
+    /** Its last attempt failed before it said anything, or a Stop or a deletion ended it. */
     "failed",
     /** It came due while the previous run was still going. */
     "skipped",
   ]),
+  /**
+   * How many of its attempts started: none for a skipped run, or one whose
+   * first attempt still waits. An attempt that fails before the bot says
+   * anything is tried again, a bounded number of times.
+   */
+  attempts: NonNegativeInt,
   delivered: Schema.Array(EntryId),
   note: Schema.NullOr(Schema.String.check(Schema.isMaxLength(10_000))),
 });

@@ -198,6 +198,11 @@ export const layer = Layer.effect(
       `,
     });
 
+    /**
+     * Sessions retired and not yet archived in the engine: main sessions the
+     * rotator replaced, and side sessions the routine runner retired once
+     * their attempt ended (`routines/RoutineRunner.ts`).
+     */
     const retiredInUse = SqlSchema.findAll({
       Request: Schema.Void,
       Result: Retired,
@@ -472,7 +477,7 @@ export const layer = Layer.effect(
             }
             if (Option.isNone(error)) {
               yield* Effect.logWarning(
-                "A replaced session could not be retired; it is tried again",
+                "A retired session could not be archived; it is tried again",
                 {
                   cause: retired.cause,
                 },

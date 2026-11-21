@@ -163,6 +163,8 @@ export function noticeText(
       return t("notice.observationFailed");
     case "too-long":
       return t("notice.tooLong");
+    case "routine-paused":
+      return t("notice.routinePaused", { name: notice.name });
   }
 }
 

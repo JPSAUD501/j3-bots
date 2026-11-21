@@ -217,11 +217,17 @@ export const layer = Layer.effect(
           }
         }
       }
-      const pending = yield* sql<{ readonly id: string }>`
-        SELECT id FROM wakes WHERE bot_id = ${botId} AND status = 'pending' AND ${inScope(scope)}
+      const pending = yield* sql<{ readonly id: string; readonly kind: string }>`
+        SELECT id, kind FROM wakes
+        WHERE bot_id = ${botId} AND status = 'pending' AND ${inScope(scope)}
       `;
       yield* ledger.cancelWakes(pending.map((wake) => wake.id));
       yield* sql.afterCommit(signals.stops.fire);
+      // A routine run whose attempt waited is settled now, and its side
+      // session retired.
+      if (pending.some((wake) => wake.kind === "routine")) {
+        yield* sql.afterCommit(signals.routines.fire);
+      }
     }, Effect.orDie);
 
     const stopBot = Effect.fn("Stops.stopBot")(function* (input: {
@@ -337,10 +343,16 @@ export const layer = Layer.effect(
 
     /**
      * A Stop of a session was confirmed: what it held back may go, a rotation
-     * waiting on it included.
+     * waiting on it and a spent side session's retirement included.
      */
     const settledSession = Effect.all(
-      [signals.dispatch.fire, signals.recovery.fire, signals.resumes.fire, signals.rotations.fire],
+      [
+        signals.dispatch.fire,
+        signals.recovery.fire,
+        signals.resumes.fire,
+        signals.rotations.fire,
+        signals.routines.fire,
+      ],
       { discard: true },
     );
 

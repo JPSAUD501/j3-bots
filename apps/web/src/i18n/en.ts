@@ -158,6 +158,8 @@ export const en = {
   "notice.observationFailed":
     "Couldn’t keep up with this bot’s work. What shows here may be behind.",
   "notice.tooLong": "Something meant for this bot was too long to pass on, so it was left out.",
+  "notice.routinePaused":
+    "{name} was paused: its schedule couldn’t be read. Edit it to turn it back on.",
   "notice.retry": "Try again",
   "notice.openConversation": "Open",
 

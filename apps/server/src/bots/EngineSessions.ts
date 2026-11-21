@@ -154,8 +154,10 @@ export class EngineSessions extends Context.Service<
     ) => Effect.Effect<A, Exclude<E, MainSessionMoved>, R>;
     /**
      * Records that the bot's model or permission mode changed: its main
-     * session takes no work until the rotator aligned it. Runs in the
-     * caller's transaction, the one that saves the change, inside
+     * session takes no work until the rotator aligned it, and a side session
+     * with nothing sent yet none until the routine runner replaced it
+     * (`settings_revision`). Runs
+     * in the caller's transaction, the one that saves the change, inside
      * `inMainSessionGate`, whose session it checks is still the bot's.
      */
     readonly settingsChanged: (held: HeldMainSession) => Effect.Effect<void, MainSessionMoved>;
@@ -255,6 +257,16 @@ export const layer = Layer.effect(
     ) {
       const rowId = yield* mainRowId(held.botId);
       if (rowId !== held.rowId) return yield* new MainSessionMoved();
+      // Every side session of the bot is now behind it: a first send's claim
+      // refuses one from now on, also a send claimed before this committed
+      // and given back unsent, and the routine runner replaces it with one
+      // opened with the new settings. One whose send was claimed and not
+      // given back runs its turn with the settings it started with, as a
+      // running turn does.
+      yield* sql`
+        UPDATE bots SET settings_revision = settings_revision + 1 WHERE id = ${held.botId}
+      `.pipe(Effect.orDie);
+      yield* sql.afterCommit(signals.routines.fire);
       if (rowId === null) return;
       // A new change is told of again if it waits for background work.
       yield* sql`

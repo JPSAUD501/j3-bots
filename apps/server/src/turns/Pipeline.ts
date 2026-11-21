@@ -11,6 +11,7 @@ import {
   type Mentions,
   type MessageEntry,
   NotFound,
+  ProviderId,
   type QuestionEntry,
   RoomId,
 } from "@j3-bots/contracts";
@@ -70,6 +71,7 @@ import { Sender, type SendOwner, type SendResult } from "./Sender.ts";
 import { notices } from "./notices.ts";
 import { isIdle, sessionWork } from "./sessionWork.ts";
 import { Observer } from "./Observer.ts";
+import { providerLimit } from "./providerLimit.ts";
 import { Readiness } from "./Readiness.ts";
 import { DEFECT_RETRY, type Pass, onePassAtATime, passOutcome, reconcile } from "./reconciler.ts";
 import { takesNewWorkSql } from "./rotationRequests.ts";
@@ -95,6 +97,10 @@ const Unsent = Schema.Struct({
   session_id: SessionRowId,
   delivery: Schema.Literals(["start", "steer"]),
   next_attempt_at: Schema.NullOr(Time),
+  /** It carries a routine's wake, the least urgent kind, in a side session. */
+  routine: Schema.BooleanFromBit,
+  /** The provider its session runs on. */
+  provider_id: ProviderId,
 });
 const Due = Schema.Struct({ id: DispatchRowId, next_attempt_at: Schema.NullOr(Time) });
 
@@ -237,6 +243,7 @@ export const layer = Layer.effect(
     const observer = yield* Observer;
     const random = yield* SecureRandom.SecureRandom;
     const { admitsStart } = admission(sql, settings);
+    const limitOf = providerLimit(sql, engineState);
     const { notify } = notices(sql, entries);
 
     const zoneOf = operatorZone(settings);
@@ -609,7 +616,12 @@ export const layer = Layer.effect(
      * budget.
      */
     const unsentRows = sql`
-      SELECT id, session_id, delivery, next_attempt_at FROM dispatches d
+      SELECT id, session_id, delivery, next_attempt_at,
+        EXISTS (
+          SELECT 1 FROM wakes w WHERE w.dispatch_id = d.id AND w.kind = 'routine'
+        ) AS routine,
+        (SELECT s.provider_id FROM sessions s WHERE s.id = d.session_id) AS provider_id
+      FROM dispatches d
       WHERE status = 'intended' AND attempts = 0 AND fenced_by_stop_id IS NULL
         AND NOT EXISTS (
           SELECT 1 FROM stop_targets t WHERE t.session_id = d.session_id AND t.stopped_at IS NULL
@@ -622,9 +634,7 @@ export const layer = Layer.effect(
     const providerLimited = Effect.fn("Pipeline.providerLimited")(function* (botId: BotId) {
       const bot = yield* bots.find(botId);
       if (Option.isNone(bot)) return false;
-      const status = yield* engineState.current;
-      const provider = status.providers.find((p) => p.id === bot.value.bot.model.providerId);
-      return provider?.status._tag === "limited";
+      return Option.isSome(yield* limitOf(bot.value.bot.model.providerId));
     });
 
     /** The files a wake's message carries, as the engine's limits count them. */
@@ -1014,27 +1024,55 @@ export const layer = Layer.effect(
       );
 
     /**
+     * Sends the dispatches written and not yet sent: a start is admitted when
+     * it is sent, like a new one. Whether the engine refused a command.
+     */
+    const sendUnsent = Effect.fn("Pipeline.sendUnsent")(function* (
+      rows: ReadonlyArray<typeof Unsent.Type>,
+      now: DateTime.Utc,
+      outcome: ReturnType<typeof passOutcome>,
+    ) {
+      for (const row of rows) {
+        if (row.next_attempt_at !== null && DateTime.isGreaterThan(row.next_attempt_at, now)) {
+          continue;
+        }
+        if (row.delivery === "start" && !(yield* admitsStart(row.session_id))) continue;
+        // A routine's start is automated work: a provider that reached its
+        // usage limit since it was written holds it until the reset.
+        if (row.routine) {
+          const limit = yield* limitOf(row.provider_id);
+          if (Option.isSome(limit)) {
+            if (limit.value.resetsAt !== null) outcome.until(limit.value.resetsAt);
+            continue;
+          }
+        }
+        const result = yield* sendOne(row.id, "dispatcher", outcome);
+        if (result === "engine-unavailable") return true;
+        if (result === "skipped") outcome.defer();
+      }
+      return false;
+    });
+
+    /**
      * A pass of the dispatcher, which makes every first send. A session that
      * is not ready only defers its own dispatch; only the engine refusing a
      * command ends the pass. The free slots are read again before each send:
      * what holds one is what the engine may have, never what a send returned.
+     * A slot goes to the most urgent work that can take it now: a routine's
+     * start, the least urgent kind, is sent only after every bot's waiting
+     * wakes were planned, so it never takes the slot an operator's message
+     * would have.
      */
     const dispatchPass: Effect.Effect<Pass> = yield* onePassAtATime(
       Effect.gen(function* () {
         const outcome = passOutcome();
         const now = yield* DateTime.now;
         // A dispatch written before a crash, while the engine was down, or
-        // whose files failed to stage goes first: a start is admitted when it
-        // is sent, like a new one.
-        for (const row of yield* unsent) {
-          if (row.next_attempt_at !== null && DateTime.isGreaterThan(row.next_attempt_at, now)) {
-            continue;
-          }
-          if (row.delivery === "start" && !(yield* admitsStart(row.session_id))) continue;
-          const result = yield* sendOne(row.id, "dispatcher", outcome);
-          if (result === "engine-unavailable") return { _tag: "unavailable" } as const;
-          if (result === "skipped") outcome.defer();
-        }
+        // whose files failed to stage goes first.
+        const written = yield* unsent;
+        const routineStarts = written.filter((row) => row.routine);
+        const others = written.filter((row) => !row.routine);
+        if (yield* sendUnsent(others, now, outcome)) return { _tag: "unavailable" } as const;
         for (const { bot_id: botId } of yield* waitingBots) {
           const planned = yield* planOne(
             Effect.gen(function* () {
@@ -1057,6 +1095,7 @@ export const layer = Layer.effect(
           if (result === "engine-unavailable") return { _tag: "unavailable" } as const;
           if (result === "skipped") outcome.defer();
         }
+        if (yield* sendUnsent(routineStarts, now, outcome)) return { _tag: "unavailable" } as const;
         // A session refused as busy is looked at again once its deadline
         // passes, and so is a dispatch whose files failed to stage.
         for (const row of yield* busyDeadlines(timeText(now)).pipe(Effect.orDie)) {

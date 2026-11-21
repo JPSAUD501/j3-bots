@@ -95,6 +95,10 @@ export const layer = Layer.effect(
         written.push(id);
       }
       if (written.length > 0) yield* sql.afterCommit(signals.dispatch.fire);
+      // A routine's wake waits for the routine runner, which opens its side session.
+      if (wakes.some((wake) => wake.kind === "routine") && written.length > 0) {
+        yield* sql.afterCommit(signals.routines.fire);
+      }
       return written;
     }, Effect.orDie);
 

@@ -21,6 +21,8 @@ import { workspaceReader } from "../attachments/workspaceFile.ts";
 import { BotStore } from "../bots/BotStore.ts";
 import type { BotSession } from "../bots/EngineSessions.ts";
 import { Entries } from "../entries/Entries.ts";
+import { Ids } from "../Ids.ts";
+import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { json, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { RoomRouting } from "../rooms/RoomRouting.ts";
@@ -35,6 +37,7 @@ import {
 import { Ledger } from "./Ledger.ts";
 import { liveTarget } from "./liveTarget.ts";
 import { mediaTypeOf } from "./mediaTypes.ts";
+import { routineSpeech } from "./routineSpeech.ts";
 import {
   ADMISSION_DEADLINE,
   type Audience,
@@ -119,6 +122,7 @@ export const layer = Layer.effect(
     const routing = yield* RoomRouting;
     const readWorkspaceFile = yield* workspaceReader;
     const targetOf = liveTarget(sql);
+    const spoken = routineSpeech(sql, yield* Ids, yield* ChangeLog);
 
     const engineSessionOf = SqlSchema.findOneOption({
       Request: Schema.String,
@@ -126,6 +130,12 @@ export const layer = Layer.effect(
       execute: (id) => sql`
         SELECT engine_session_id FROM sessions WHERE id = ${id} AND engine_session_id IS NOT NULL
       `,
+    });
+
+    const purposeOf = SqlSchema.findOneOption({
+      Request: SessionRowId,
+      Result: Schema.Struct({ purpose: Schema.Literals(["main", "side"]) }),
+      execute: (id) => sql`SELECT purpose FROM sessions WHERE id = ${id}`,
     });
 
     const storedResult = SqlSchema.findOneOption({
@@ -389,6 +399,12 @@ export const layer = Layer.effect(
               )}
             `.pipe(Effect.orDie);
             }
+            yield* spoken.said({
+              sessionId: found.sessionId,
+              botId: found.botId,
+              entryId: entry.id,
+              text: input.text,
+            });
             if (target._tag === "room" && entry._tag === "message") {
               yield* routing.botMessage({
                 roomId: target.roomId,
@@ -410,6 +426,15 @@ export const layer = Layer.effect(
     });
 
     const ask = Effect.fn("Speech.ask")(function* (found: Pin, input: ToolInput<"ask">) {
+      // An answer wakes the bot's main session, which never saw a routine's
+      // question: a routine's turn says what it needs instead.
+      const session = yield* purposeOf(found.sessionId).pipe(Effect.orDie);
+      if (Option.isSome(session) && session.value.purpose === "side") {
+        return yield* new TurnToolRefused({
+          reason:
+            "A routine runs where the operator cannot answer a question card. Put the question in your say message instead.",
+        });
+      }
       const options = input.options.map((option, index) => ({
         id: `option-${index + 1}`,
         label: option.label,

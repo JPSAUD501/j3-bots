@@ -330,6 +330,11 @@ export const Notice = Schema.Union([
    * message, what a routine said) was too long to pass on, and was left out.
    */
   Schema.TaggedStruct("too-long", {}),
+  /**
+   * J3 Bots paused one of the bot's routines because it could not read when
+   * the routine runs next. The operator edits it to turn it back on.
+   */
+  Schema.TaggedStruct("routine-paused", { routineId: RoutineId, name: Label }),
 ]);
 export type Notice = typeof Notice.Type;
 

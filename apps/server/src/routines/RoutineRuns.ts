@@ -8,6 +8,7 @@ import {
   RoutineRunId,
   RoutineTrigger,
 } from "@j3-bots/contracts";
+import { TurnOutcome } from "@j3-bots/engine-t3";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -23,11 +24,36 @@ import { Ids } from "../Ids.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { Flag, json, Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
-import { conversation, TurnsInvariant, WakeStatus } from "../turns/model.ts";
+import {
+  conversation,
+  DispatchSeq,
+  DispatchStatus,
+  TurnsInvariant,
+  WakeFailure,
+  WakeStatus,
+} from "../turns/model.ts";
+import { stopTargets } from "../turns/stopTargets.ts";
 import { Wakes } from "../turns/Wakes.ts";
 
 /** How many settled runs each routine keeps, newest first, beside the one still going. */
 export const RUN_HISTORY = 100;
+
+/**
+ * How many times a run is tried at most. An attempt that fails before the bot
+ * says anything (the engine could not open its session or lost it, its turn
+ * failed, also before it started, or was interrupted by something other than
+ * the operator) is tried again. One whose envelope the engine refused is not:
+ * the next would be too.
+ */
+export const RUN_ATTEMPTS = 3;
+
+/**
+ * How long a run waits after its `n`th attempt failed before the next one
+ * starts: 2 minutes, then 4. Long enough for a provider's passing error or an
+ * engine restart to clear; a provider at its usage limit holds the attempt
+ * until the reset anyway.
+ */
+export const retryDelay = (n: number): Duration.Duration => Duration.minutes(2 ** n);
 
 /**
  * How many runs, skipped ones included, a routine's webhook may record in a
@@ -45,14 +71,70 @@ const RoutineRow = Schema.Struct({
 
 const RunStatus = RoutineRun.fields.status;
 
-const Ended = Schema.Struct({
+/** What settling a run needs of its row, also when the rest of it cannot be read. */
+const Identified = Schema.Struct({
   id: RoutineRunId,
   routine_id: RoutineId,
   bot_id: BotId,
+});
+
+const Ended = Schema.Struct({
+  ...Identified.fields,
+  wake_id: Schema.NullOr(Schema.String),
+  attempts: Schema.Int,
   wake_status: Schema.NullOr(WakeStatus),
+  wake_failure: Schema.NullOr(WakeFailure),
   wake_updated_at: Schema.NullOr(Time),
+  dispatch_seq: Schema.NullOr(DispatchSeq),
+  dispatch_status: Schema.NullOr(DispatchStatus),
+  outcome_json: Schema.NullOr(json(TurnOutcome)),
   spoke: Flag,
 });
+type Ended = typeof Ended.Type;
+
+/** What becomes of a run whose attempt's wake ended. */
+type Settlement =
+  | { readonly _tag: "settled"; readonly status: "delivered" | "silent" | "failed" }
+  /** The attempt failed before the bot said anything: tried again, while attempts are left. */
+  | { readonly _tag: "attempt-failed" }
+  /** Its turn is still going: a `say` with `done` finished its wake early. */
+  | { readonly _tag: "going" };
+
+/** A dispatch the engine may still be working on. */
+const OPEN_DISPATCH: ReadonlyArray<DispatchStatus> = ["intended", "accepted", "delivered"];
+
+/** The engine took the dispatch, and its turn ended before it started. */
+const endedBeforeStart = (run: Ended) =>
+  run.dispatch_status === "dropped" && run.outcome_json !== null;
+
+const settlementOf = (run: Ended): Settlement => {
+  // What the bot said reached the operator: the run delivered, whatever came after.
+  if (run.spoke) return { _tag: "settled", status: "delivered" };
+  switch (run.wake_status) {
+    case null:
+    case "cancelled":
+      // A Stop of the bot, or the routine's deletion, ended it.
+      return { _tag: "settled", status: "failed" };
+    case "failed":
+      // The engine refused its envelope, or the runner found it too long to
+      // send: the next attempt would fare no better. A turn the engine took
+      // and ended before it started, a provider's passing failure say, keeps
+      // its outcome on the dropped dispatch, and is tried again.
+      return run.wake_failure === "rejected" && !endedBeforeStart(run)
+        ? { _tag: "settled", status: "failed" }
+        : { _tag: "attempt-failed" };
+    case "finished":
+      if (run.dispatch_status !== null && OPEN_DISPATCH.includes(run.dispatch_status)) {
+        return { _tag: "going" };
+      }
+      return run.outcome_json?._tag === "completed"
+        ? { _tag: "settled", status: "silent" }
+        : { _tag: "attempt-failed" };
+    case "pending":
+    case "dispatched":
+      return { _tag: "going" };
+  }
+};
 
 /** A run as a webhook caller is told of it. */
 export interface RunReceipt {
@@ -80,12 +162,16 @@ const encoder = new TextEncoder();
  * previous run is still going is recorded as skipped, with no wake.
  *
  * A run's wake waits for a side session of its own: the dispatcher never
- * plans a routine's wake into the bot's main session. The side-session
- * runner (M2, part 2) opens that session, dispatches the wake into it, and
- * tags what the run says with its wake. A run settles from its wake: when
- * the wake finished, as `delivered` if the bot said something in the run and
- * `silent` otherwise; when it failed, was cancelled (a Stop of the bot), or
- * is gone, as `failed`.
+ * plans a routine's wake into the bot's main session. The routine runner
+ * (`RoutineRunner.ts`) opens that session and dispatches the wake into it,
+ * and what the run says is tagged with its wake (`turns/routineSpeech.ts`).
+ * A run settles from its attempt's wake and that wake's dispatch: as
+ * `delivered` once the bot said something; as `silent` when its turn
+ * completed without a word; as `failed` when a Stop of the bot or the
+ * routine's deletion ended it, or the engine refused its envelope. Another
+ * attempt that failed before the bot said anything is tried again, after a
+ * delay and up to `RUN_ATTEMPTS` attempts, with a new wake; the last one's
+ * failure fails the run.
  */
 export class RoutineRuns extends Context.Service<
   RoutineRuns,
@@ -111,7 +197,10 @@ export class RoutineRuns extends Context.Service<
       readonly body: string;
       readonly requestKey: string | null;
     }) => Effect.Effect<RunReceipt, WebhookRefused | RateLimited>;
-    /** Settles every run whose wake ended, in the caller's transaction. */
+    /**
+     * Settles every run whose attempt ended, or records its next attempt, in
+     * the caller's transaction.
+     */
     readonly settle: Effect.Effect<void>;
   }
 >()("@j3-bots/server/routines/RoutineRuns") {}
@@ -121,6 +210,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const transaction = transactional(sql);
+    const stops = stopTargets(sql);
     const ids = yield* Ids;
     const wakes = yield* Wakes;
     const changes = yield* ChangeLog;
@@ -134,12 +224,10 @@ export const layer = Layer.effect(
       `,
     });
 
-    const endedRows = SqlSchema.findAll({
-      Request: Schema.NullOr(RoutineId),
-      Result: Ended,
-      execute: (routineId) => sql`
-        SELECT r.id, r.routine_id, ro.bot_id, w.status AS wake_status,
-          w.updated_at AS wake_updated_at,
+    const endedRows = (routineId: RoutineId | null) => sql`
+        SELECT r.id, r.routine_id, ro.bot_id, r.wake_id, r.attempts, w.status AS wake_status,
+          w.failure_reason AS wake_failure, w.updated_at AS wake_updated_at, d.seq AS dispatch_seq, d.status AS dispatch_status,
+          d.outcome_json,
           EXISTS (
             SELECT 1 FROM entries e
             WHERE e.wake_id = r.wake_id AND e.author_kind = 'bot' AND e.kind = 'message'
@@ -147,12 +235,12 @@ export const layer = Layer.effect(
         FROM routine_runs r
         JOIN routines ro ON ro.id = r.routine_id
         LEFT JOIN wakes w ON w.id = r.wake_id
+        LEFT JOIN dispatches d ON d.id = w.dispatch_id
         WHERE r.status = 'running'
           AND (w.id IS NULL OR w.status IN ('finished', 'cancelled', 'failed'))
           ${routineId === null ? sql`` : sql`AND r.routine_id = ${routineId}`}
         ORDER BY r.started_at, r.id
-      `,
-    });
+      `;
 
     const runWithKey = SqlSchema.findOneOption({
       Request: Schema.Struct({ routineId: RoutineId, key: Schema.String }),
@@ -185,24 +273,95 @@ export const layer = Layer.effect(
         )
     `;
 
-    /** Settles the runs whose wake ended: every routine's, or one routine's. */
+    /** Settles the run, which then joins the routine's kept history. */
+    const finish = Effect.fn("RoutineRuns.finish")(function* (
+      run: typeof Identified.Type,
+      status: "delivered" | "silent" | "failed",
+      at: DateTime.Utc,
+    ) {
+      yield* sql`
+        UPDATE routine_runs SET status = ${status}, finished_at = ${timeText(at)}, retry_at = NULL
+        WHERE id = ${run.id} AND status = 'running'
+      `;
+      // The cap on the kept history holds there too.
+      yield* prune(run.routine_id);
+      yield* recordChange(run.bot_id, run.routine_id);
+    });
+
+    /**
+     * Settles the runs whose wake ended: every routine's, or one routine's. A
+     * row that cannot be read whole, its dispatch's outcome written by
+     * another version of the server say, fails its run, which is logged, so
+     * the routine's later runs are not all skipped behind it.
+     */
     const settleEnded = Effect.fn("RoutineRuns.settleEnded")(function* (
       routineId: RoutineId | null,
     ) {
       const now = yield* DateTime.now;
-      for (const run of yield* endedRows(routineId)) {
-        const status =
-          run.wake_status === "finished" ? (run.spoke ? "delivered" : "silent") : "failed";
-        yield* sql`
-          UPDATE routine_runs SET status = ${status},
-            finished_at = ${timeText(run.wake_updated_at ?? now)}
-          WHERE id = ${run.id} AND status = 'running'
-        `;
-        // The run just settled joins the routine's kept history: the cap holds there too.
-        yield* prune(run.routine_id);
-        yield* recordChange(run.bot_id, run.routine_id);
+      for (const raw of yield* endedRows(routineId)) {
+        const decoded = Schema.decodeUnknownOption(Ended)(raw);
+        if (Option.isNone(decoded)) {
+          const identified = Schema.decodeUnknownOption(Identified)(raw);
+          if (Option.isNone(identified)) {
+            yield* Effect.logError("A routine run could not be read to settle it");
+            continue;
+          }
+          yield* Effect.logError("A routine run could not be read to settle it; it fails", {
+            runId: identified.value.id,
+          });
+          yield* finish(identified.value, "failed", now);
+          continue;
+        }
+        const run = decoded.value;
+        let settlement = settlementOf(run);
+        if (settlement._tag === "going") continue;
+        if (settlement._tag === "attempt-failed") {
+          // What the operator stopped is not tried again, also when its turn
+          // ended on its own before the Stop's interrupt reached it.
+          const stopped =
+            run.dispatch_seq !== null &&
+            (yield* stops.covers(run.bot_id, conversation, run.dispatch_seq));
+          if (!stopped && run.attempts < RUN_ATTEMPTS && run.wake_id !== null) {
+            yield* retry(run, now);
+            continue;
+          }
+          settlement = { _tag: "settled", status: "failed" };
+        }
+        yield* finish(run, settlement.status, run.wake_updated_at ?? now);
       }
     }, Effect.orDie);
+
+    /**
+     * The run's next attempt: a new routine wake, which the runner gives a
+     * fresh side session once the delay passes and the failed attempt's
+     * session is out of use. The failed wake is the one it retries, so an
+     * attempt is tried again once. The attempt is counted when it starts.
+     */
+    const retry = Effect.fn("RoutineRuns.retry")(function* (run: Ended, now: DateTime.Utc) {
+      const [wakeId] = yield* wakes.record([
+        {
+          botId: run.bot_id,
+          kind: "routine",
+          audience: conversation,
+          payload: { _tag: "routine", routineId: run.routine_id, runId: run.id },
+          sourceEntryId: null,
+          hops: 0,
+          retryOf: run.wake_id,
+          cause: { _tag: "routine" },
+        },
+      ]);
+      if (wakeId === undefined) {
+        return yield* Effect.die(
+          new TurnsInvariant({ invariant: "A routine's wake is always written" }),
+        );
+      }
+      yield* sql`
+        UPDATE routine_runs SET wake_id = ${wakeId},
+          retry_at = ${timeText(DateTime.addDuration(now, retryDelay(run.attempts)))}
+        WHERE id = ${run.id} AND status = 'running'
+      `;
+      yield* recordChange(run.bot_id, run.routine_id);
+    });
 
     /**
      * Records a run of the routine, in the caller's transaction: skipped

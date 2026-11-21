@@ -467,6 +467,11 @@ export function galleryVariants(now: DateTime.Utc) {
     notice("notice-settings", { _tag: "settings-held" }),
     notice("notice-behind", { _tag: "observation-failed" }),
     notice("notice-too-long", { _tag: "too-long" }),
+    notice("notice-routine-paused", {
+      _tag: "routine-paused",
+      routineId: RoutineId.make("routine-digest"),
+      name: "Morning digest",
+    }),
   ];
 
   const handoffs: ReadonlyArray<HandoffEntry> = [

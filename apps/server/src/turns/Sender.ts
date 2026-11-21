@@ -247,7 +247,22 @@ export const layer = Layer.effect(
         }),
       );
 
-    /** The claimed attempt was never sent: it is given back, and a fenced dispatch is released. */
+    /**
+     * Whether the dispatch's session is a side session written before its
+     * bot's model or permission mode last changed: a first send there is
+     * refused, and the routine runner replaces the session
+     * (`EngineSessions.settingsChanged`).
+     */
+    const behindItsBot = sql`
+      SELECT 1 FROM sessions s JOIN bots b ON b.id = s.bot_id
+      WHERE s.id = dispatches.session_id AND s.settings_revision < b.settings_revision
+    `;
+
+    /**
+     * The claimed attempt was never sent: it is given back, and a fenced
+     * dispatch is released. A first send given back into a side session its
+     * bot's settings moved past meanwhile is the routine runner's to replace.
+     */
     const notSent = (dispatchId: DispatchRowId) =>
       transaction(
         Effect.gen(function* () {
@@ -255,6 +270,11 @@ export const layer = Layer.effect(
             UPDATE dispatches SET attempts = attempts - 1
             WHERE id = ${dispatchId} AND status = 'intended' AND attempts > 0
           `.pipe(Effect.orDie);
+          const behind = yield* sql`
+            SELECT 1 FROM dispatches
+            WHERE id = ${dispatchId} AND attempts = 0 AND EXISTS (${behindItsBot})
+          `.pipe(Effect.orDie);
+          if (behind.length > 0) yield* sql.afterCommit(signals.routines.fire);
           const row = yield* ledger.find(dispatchId);
           if (
             Option.isSome(row) &&
@@ -484,6 +504,7 @@ export const layer = Layer.effect(
                     SELECT 1 FROM sessions s WHERE s.id = dispatches.session_id
                       AND (s.retired_at IS NOT NULL OR s.lost_at IS NOT NULL)
                   )
+                  AND NOT EXISTS (${behindItsBot})
                 )
               )
             RETURNING attempts
