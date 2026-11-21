@@ -154,7 +154,21 @@ On the new device, open J3 Bots at one of these addresses and enter the code.
 
 On the new device, open one of those addresses in a browser: the server serves the web client there, which asks for the code. A code typed in lower case, or with spaces or dashes, works too. `j3-bots doctor` says whether the server serves the web client.
 
-A browser treats a plain-HTTP address other than `localhost` as insecure, and on such an address it does not install J3 Bots as an app (a PWA). To install it on a phone, serve HTTPS: put a certificate and key in `tls` (paths relative to the data directory work). With Tailscale, `tailscale cert <machine>.<tailnet>.ts.net` issues one for the Pi's tailnet name. Over HTTPS, `pair` prints the names on the certificate, such as `https://<machine>.<tailnet>.ts.net:3737`, and no bare addresses, which the browser would not accept. A wildcard name names no one host, so it is not printed; for a certificate with only wildcards, open a name it covers.
+A browser treats a plain-HTTP address other than `localhost` as insecure, and on such an address it does not install J3 Bots as an app (a PWA). To install it on a phone, serve HTTPS: put a certificate and key in `tls` (paths relative to the data directory work), or serve it through a platform that holds the certificate ([Serve it through a container](#serve-it-through-a-container)). With Tailscale, `tailscale cert <machine>.<tailnet>.ts.net` issues one for the Pi's tailnet name. Over HTTPS, `pair` prints the names on the certificate, such as `https://<machine>.<tailnet>.ts.net:3737`, and no bare addresses, which the browser would not accept. A wildcard name names no one host, so it is not printed; for a certificate with only wildcards, open a name it covers.
+
+## Serve it through a container
+
+Some platforms publish only containers, behind a proxy of their own that holds the certificate: Coolify, for one, or a tunnel that does the same. For them, [`deploy/container-proxy/compose.yaml`](../../deploy/container-proxy/compose.yaml) runs a small Caddy container that forwards HTTP and WebSocket traffic, unchanged, to the server on the host. The server keeps running as its systemd user service.
+
+1. Leave `host` at `"lan"` and `tls` at `null` ([Configuration](#configuration)). The container reaches the server at `host.docker.internal`, which Docker points at the host's address on its bridge network. That address is private, so `lan` serves it.
+2. On the platform, create a Docker Compose app from this repository, with `deploy/container-proxy/compose.yaml`, on the machine that runs J3 Bots. Give its `proxy` service your domain on port 8080, such as `https://bots.example.com:8080`. If the server listens on a port other than 3737, set `J3_PORT` to it.
+3. Deploy. The container counts as healthy while the server answers, so the platform routes to it only then.
+
+On a new device, open your domain and pair as usual. `j3-bots pair` prints the server's own addresses, not the domain.
+
+The server authenticates every request itself, with the device's token, and sets no cookies, so the proxy needs no settings for cookies, origins or WebSockets. A proxy that asks for a sign-in first, such as a single sign-on gate, works in front of it too. The web client sends credentials when it asks for its manifest, so the browser still offers to install it.
+
+Bots run with full access to the user that runs J3 Bots. On an address the internet can reach, anyone can open the pairing page. A pairing code is made only on this machine and works once, for five minutes, but a sign-in gate in front adds a second lock that does not depend on this release's code. Use one if your platform has it.
 
 ## Logs
 

@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Serves a J3 Bots server that runs on the host, as its systemd user service,
+# from a container: for platforms that publish containers only, such as
+# Coolify. It forwards HTTP and WebSocket traffic unchanged to the server's
+# port on the host. TLS ends at the platform's proxy in front of it. See
+# docs/operations/running-on-a-pi.md, "Serve it through a container".
+services:
+  proxy:
+    image: caddy:2.10.2-alpine
+    command:
+      - caddy
+      - reverse-proxy
+      - --from
+      - :8080
+      - --to
+      - host.docker.internal:${J3_PORT:-3737}
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    expose:
+      - "8080"
+    restart: unless-stopped
+    healthcheck:
+      # Healthy only while the server answers, so the platform routes to it
+      # only then.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/api/server"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
