@@ -155,6 +155,15 @@ export class TestEngineControl extends Context.Service<
       sessionId: SessionId,
     ) => Effect.Effect<{ readonly release: Effect.Effect<void> }>;
     /**
+     * The session's open streams stall: every event, and every
+     * `synchronize`'s marker, waits for them, in order, until `release`, as
+     * when the engine's connection stops delivering. A stream opened
+     * meanwhile reads the history as usual.
+     */
+    readonly stallEvents: (
+      sessionId: SessionId,
+    ) => Effect.Effect<{ readonly release: Effect.Effect<void> }>;
+    /**
      * While set, every `dispatch` and `redispatch` dies before anything of it
      * is applied, as a bug in the adapter would.
      */
@@ -547,6 +556,8 @@ const make = Effect.gen(function* () {
   >();
   /** Sessions whose new streams stall until released. */
   const withheld = new Map<SessionId, Deferred.Deferred<void>>();
+  /** What the stalled streams of a session have not been given yet, in order. */
+  const stalled = new Map<SessionId, Array<readonly [Subscriber, SessionEvent]>>();
   /** While set, every dispatch and redispatch dies before it is applied. */
   let brokenDispatches = false;
   /** Dispatches waiting in the startup queue, by key, until they land. */
@@ -663,10 +674,17 @@ const make = Effect.gen(function* () {
         : misuse(`key ${key} reused for ${command}`);
     });
 
+  /** Hands an event to a stream of the session, or holds it while its streams stall. */
+  const offer = (session: SessionRecord, subscriber: Subscriber, event: SessionEvent) => {
+    const backlog = stalled.get(session.id);
+    if (backlog === undefined) Queue.offerUnsafe(subscriber, event);
+    else backlog.push([subscriber, event]);
+  };
+
   const deliver = (session: SessionRecord, event: SessionEvent) => {
     for (const [subscriber, state] of session.subscribers) {
       state.lastCursor = event.cursor;
-      Queue.offerUnsafe(subscriber, event);
+      offer(session, subscriber, event);
     }
   };
 
@@ -1480,7 +1498,7 @@ const make = Effect.gen(function* () {
                 ? [...session.waiting]
                 : [session.running, ...session.waiting];
             for (const [subscriber, state] of session.subscribers) {
-              Queue.offerUnsafe(subscriber, {
+              offer(session, subscriber, {
                 _tag: "synchronized",
                 cursor: state.lastCursor,
                 at,
@@ -1557,6 +1575,19 @@ const make = Effect.gen(function* () {
             Effect.andThen(Effect.yieldNow),
             Effect.asVoid,
           ),
+        };
+      }),
+
+    stallEvents: (sessionId) =>
+      Effect.gen(function* () {
+        const session = yield* existingSession(sessionId);
+        stalled.set(session.id, []);
+        return {
+          release: Effect.sync(() => {
+            const backlog = stalled.get(session.id) ?? [];
+            stalled.delete(session.id);
+            for (const [subscriber, event] of backlog) Queue.offerUnsafe(subscriber, event);
+          }).pipe(Effect.andThen(Effect.yieldNow)),
         };
       }),
 

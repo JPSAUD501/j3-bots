@@ -865,6 +865,123 @@ it.effect(
 );
 
 it.effect(
+  "judges a room's Stop on the engine's report, not on events a stalled stream left stale",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
+      const members = [hal, ana];
+      const room = yield* roomWith(hal, [ana]);
+      yield* sendToBot(hal.bot.id, "Watch the deploy.");
+      const deploying = yield* nextTurn(hal.bot.id);
+      yield* control.startBackgroundWork({ sessionId: hal.session, turnId: deploying });
+      yield* finish(hal, deploying, members);
+      yield* operatorWrites(room.id, members, "Plan the launch.", nobody);
+      const planning = yield* nextTurn(hal.bot.id, deploying);
+
+      // Hal's stream stalls. The room's turn ends, and the deploy's
+      // completion starts a private turn: the events still show the room's
+      // turn running, so only the engine's report tells.
+      const stall = yield* control.stallEvents(hal.session);
+      yield* control.finishTurn({
+        sessionId: hal.session,
+        turnId: planning,
+        outcome: { _tag: "completed" },
+      });
+      yield* control.endBackgroundWork(hal.session);
+      yield* control.startEngineTurn(hal.session, deploying);
+      const asked = yield* control.holdNext("synchronize");
+      yield* (yield* Rooms).stop({ commandId: command(), roomId: room.id });
+      yield* asked.entered;
+      assert.strictEqual(yield* issuedRounds, 0);
+
+      // The stream catches up: the private turn runs to its end, and nothing
+      // of the room is left.
+      yield* asked.release;
+      yield* stall.release;
+      const completing = yield* nextTurn(hal.bot.id, planning);
+      yield* finish(hal, completing, members);
+      yield* stopSettled;
+      assert.strictEqual(yield* issuedRounds, 0);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "holds a room's Stop while a private turn no event shows starts ahead of the room's queued turn",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
+      const members = [hal, ana];
+      const room = yield* roomWith(hal, [ana]);
+      yield* sendToBot(hal.bot.id, "Watch the deploy.");
+      const deploying = yield* nextTurn(hal.bot.id);
+      yield* control.startBackgroundWork({ sessionId: hal.session, turnId: deploying });
+      yield* finish(hal, deploying, members);
+
+      // The deploy's completion wakes the session as the room's message
+      // goes: its turn starts ahead of the room's, and no event shows it yet.
+      const startup = yield* control.holdNextStartup(hal.session);
+      yield* control.endBackgroundWork(hal.session);
+      yield* control.startEngineTurnDuringNextDispatch(hal.session, deploying);
+      yield* operatorWrites(room.id, members, "Plan the launch.", nobody);
+      yield* (yield* Rooms).stop({ commandId: command(), roomId: room.id });
+      yield* (yield* Stops).runPending;
+      assert.strictEqual(yield* issuedRounds, 0);
+
+      // The private turn shows and runs to its end; the round then ends the
+      // room's turn.
+      yield* startup.release;
+      const completing = yield* nextTurn(hal.bot.id, deploying);
+      yield* finish(hal, completing, members);
+      yield* stopSettled;
+      assert.strictEqual(yield* issuedRounds, 1);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "waits, bounded, on the wake of a room's background command queued behind a held queue, then cancels it",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
+      const members = [hal, ana];
+      const room = yield* roomWith(hal, [ana]);
+      yield* operatorWrites(room.id, members, "Run the migration.", nobody);
+      const migrating = yield* nextTurn(hal.bot.id);
+      yield* control.startBackgroundWork({ sessionId: hal.session, turnId: migrating });
+      yield* finish(hal, migrating, members);
+
+      // The operator talks to Hal in private; the room's Stop waits for it.
+      yield* sendToBot(hal.bot.id, "What is left today?");
+      const privately = yield* nextTurn(hal.bot.id, migrating);
+      yield* (yield* Rooms).stop({ commandId: command(), roomId: room.id });
+
+      // The migration completes, and its wake, which names no turn, waits
+      // behind the private turn. That turn fails, and the engine holds the
+      // queue: the wake may be the room's work, and the Stop waits on it.
+      yield* control.endBackgroundWork(hal.session);
+      yield* control.startEngineTurn(hal.session);
+      yield* control.finishTurn({
+        sessionId: hal.session,
+        turnId: privately,
+        outcome: { _tag: "failed", failure: "provider-error", retryAt: null },
+      });
+      yield* turnEnded(hal.bot.id);
+      yield* (yield* Stops).runPending;
+      assert.strictEqual(yield* unsettledTargets, 1);
+      assert.strictEqual(yield* issuedRounds, 0);
+
+      // At the bound the round goes, and cancels the wake.
+      yield* TestClock.adjust(ROOM_ROUND_HOLD_BOUND);
+      yield* stopSettled;
+      assert.strictEqual(yield* issuedRounds, 1);
+      yield* until(queueResumed(hal));
+      assert.isTrue(Option.isNone(yield* admittedTurn(hal.bot.id)));
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
   "counts a harness's wake from a room chain's pending work, also once the operator's turn left work",
   () =>
     Effect.gen(function* () {

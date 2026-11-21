@@ -41,9 +41,10 @@ export type Ending =
  * turn, where it cannot start: the Stop then cancels it. (A `new-turn` is
  * **Assumed** not to start while the engine holds the queue.) A wait on a
  * turn no event shows is bounded (`ROOM_ROUND_HOLD_BOUND`), counted again
- * from each turn of another audience admitted (`admitted`); past it, the
- * round is judged on events caught up with the engine, and settles unsent
- * when nothing of the room is left.
+ * from each turn of another audience admitted (`admitted`). Every room round
+ * is judged on a report of the engine's taken in that pass: past the bound it
+ * goes while the room's work runs or is flagged, and it settles unsent when
+ * nothing of the room is left.
  * `steerRoom` is the steer's room column, NULL for the conversation, and
  * `null` for a send that is no steer. The planner, a send and its claim read
  * it with the same rule. `sessionId` is often a caller's column, so the tables
