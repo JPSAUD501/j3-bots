@@ -4,7 +4,7 @@ import { PairingCode } from "@j3-bots/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { Pairing } from "../components/Pairing";
-import { linkedCodeAfter, takePairingCode } from "./pairingLink";
+import { linkedCode, takePairingCode } from "./pairingLink";
 
 // The stored preferences follow the system's theme, which a page reads off `window` as it loads.
 vi.mock("../preferences/preferences", () => ({
@@ -68,8 +68,11 @@ describe("a page opened from a pairing link", () => {
 });
 
 describe("a pairing link's code as the browser connects", () => {
-  const after = (states: ReadonlyArray<ConnectionState>) =>
-    states.reduce<PairingCode | null>(linkedCodeAfter, CODE);
+  const after = (states: ReadonlyArray<ConnectionState>) => {
+    const linked = linkedCode(CODE, new EventTarget());
+    for (const state of states) linked.follow(state);
+    return linked.current();
+  };
 
   it("stays for the pairing screen when a stored credential is refused", () => {
     expect(
@@ -90,5 +93,21 @@ describe("a pairing link's code as the browser connects", () => {
         { _tag: "unpaired", reason: "signed-out" },
       ]),
     ).toBeNull();
+  });
+});
+
+describe("a page opened from a pairing link, left and restored with Back", () => {
+  it("holds no code once restored from the back/forward cache", () => {
+    const page = new EventTarget();
+    const linked = linkedCode(CODE, page);
+    // What the pairing screen reads each time it is told the code changed.
+    const read: Array<PairingCode | null> = [];
+    linked.subscribe(() => read.push(linked.current()));
+
+    page.dispatchEvent(new Event("pagehide"));
+    page.dispatchEvent(new Event("pageshow"));
+
+    expect(read).toEqual([null]);
+    expect(linked.current()).toBeNull();
   });
 });
