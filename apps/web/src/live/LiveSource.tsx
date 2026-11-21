@@ -313,10 +313,19 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   });
   const notify = useEffectEvent((notification: Notification) => {
     if (notificationAccess() !== "granted") return;
-    const content = notificationContent(notification, presentation, (id) => {
-      const room = roster?.rows.find((row) => row._tag === "room" && row.room.id === id);
-      return room?._tag === "room" ? room.room.name : null;
-    });
+    // Names come from the whole roster, hidden bots included: the shell lists
+    // bots for what it draws, below this source.
+    const listed = j3.roster.get();
+    const rows = listed._tag === "ready" ? listed.value : [];
+    const botName = (id: BotId) =>
+      rows.flatMap((row) =>
+        row._tag === "bot" && row.bot.id === id ? [row.bot.profile.name] : [],
+      )[0] ?? null;
+    const roomName = (id: RoomId) =>
+      rows.flatMap((row) =>
+        row._tag === "room" && row.room.id === id ? [row.room.name] : [],
+      )[0] ?? null;
+    const content = notificationContent(notification, { ...presentation, botName }, roomName);
     if (content === null) return;
     const { target: about } = notification;
     const url =
