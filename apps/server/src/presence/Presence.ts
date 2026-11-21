@@ -100,8 +100,18 @@ export class Presence extends Context.Service<
   {
     /** A socket of the device, in place for as long as the scope lives. */
     readonly connect: (deviceId: DeviceId) => Effect.Effect<Viewer, never, Scope.Scope>;
-    /** Who would hear of the entry now, or `null` when nobody would. */
+    /**
+     * Who would hear of the entry now, or `null` when nobody would. Its
+     * reads go through the current transaction, so it can run in the one that
+     * adds the entry.
+     */
     readonly recipients: (target: EntryTarget, entry: Entry) => Effect.Effect<Recipients | null>;
+    /**
+     * Tells the live recipients of one `recipients` result on each socket
+     * they still have open. A device that connected since is not told: it
+     * was a device to push, and stays one, so no device is told both ways.
+     */
+    readonly tell: (recipients: Recipients) => Effect.Effect<void>;
     /** Tells the devices with a socket open about an entry just committed, unless someone has its target in view. */
     readonly entryAdded: (target: EntryTarget, entry: Entry) => Effect.Effect<void>;
   }
@@ -121,14 +131,22 @@ export const layer = Layer.effect(
         PubSub.shutdown,
       );
       const socket: Socket = { target: null, pubsub };
-      const own = sockets.get(deviceId) ?? new Set<Socket>();
-      own.add(socket);
-      sockets.set(deviceId, own);
-      yield* Effect.addFinalizer(() =>
+      // One step that cannot be interrupted halfway: a socket in the map
+      // always leaves it, or its device would count as live, and never be
+      // pushed to, for good.
+      yield* Effect.acquireRelease(
         Effect.sync(() => {
-          own.delete(socket);
-          if (own.size === 0) sockets.delete(deviceId);
+          const own = sockets.get(deviceId) ?? new Set<Socket>();
+          own.add(socket);
+          sockets.set(deviceId, own);
         }),
+        () =>
+          Effect.sync(() => {
+            const own = sockets.get(deviceId);
+            if (own === undefined) return;
+            own.delete(socket);
+            if (own.size === 0) sockets.delete(deviceId);
+          }),
       );
       return {
         view: (target) =>
@@ -139,11 +157,10 @@ export const layer = Layer.effect(
       } satisfies Viewer;
     });
 
-    const inView = (target: EntryTarget): boolean => {
-      for (const own of sockets.values()) {
-        for (const socket of own) {
-          if (socket.target !== null && sameTarget(socket.target, target)) return true;
-        }
+    /** Whether a socket of `deviceId` has `target` in view. */
+    const inView = (deviceId: DeviceId, target: EntryTarget): boolean => {
+      for (const socket of sockets.get(deviceId) ?? []) {
+        if (socket.target !== null && sameTarget(socket.target, target)) return true;
       }
       return false;
     };
@@ -153,10 +170,14 @@ export const layer = Layer.effect(
       entry: Entry,
     ) {
       const made = kindOf(entry);
-      if (made === null || inView(target)) return null;
+      if (made === null) return null;
       const { notifications } = yield* settings.get;
       if (!notifications.enabled) return null;
       const paired = yield* devices.paired;
+      // From here on, one synchronous step over the sockets as they are now:
+      // what is in view and who has a socket open are read together. A
+      // revoked device's socket, until it closes, counts for neither.
+      if (paired.some((deviceId) => inView(deviceId, target))) return null;
       return {
         notification: {
           target,
@@ -170,12 +191,7 @@ export const layer = Layer.effect(
       } satisfies Recipients;
     });
 
-    const entryAdded = Effect.fn("Presence.entryAdded")(function* (
-      target: EntryTarget,
-      entry: Entry,
-    ) {
-      const told = yield* recipients(target, entry);
-      if (told === null) return;
+    const tell = Effect.fn("Presence.tell")(function* (told: Recipients) {
       for (const deviceId of told.live) {
         for (const socket of sockets.get(deviceId) ?? []) {
           yield* PubSub.publish(socket.pubsub, told.notification);
@@ -183,6 +199,14 @@ export const layer = Layer.effect(
       }
     });
 
-    return Presence.of({ connect, recipients, entryAdded });
+    const entryAdded = Effect.fn("Presence.entryAdded")(function* (
+      target: EntryTarget,
+      entry: Entry,
+    ) {
+      const told = yield* recipients(target, entry);
+      if (told !== null) yield* tell(told);
+    });
+
+    return Presence.of({ connect, recipients, tell, entryAdded });
   }),
 );

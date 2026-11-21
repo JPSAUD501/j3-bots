@@ -150,7 +150,11 @@ export const layer = Layer.effect(
       Effect.orDie,
     );
 
-    const paired = deviceRows(undefined).pipe(
+    const paired = SqlSchema.findAll({
+      Request: Schema.Void,
+      Result: Schema.Struct({ id: DeviceId }),
+      execute: () => sql`SELECT id FROM devices WHERE revoked_at IS NULL ORDER BY paired_at, id`,
+    })(undefined).pipe(
       Effect.map((rows) => rows.map((row) => row.id)),
       Effect.orDie,
     );

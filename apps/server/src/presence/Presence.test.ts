@@ -2,7 +2,9 @@
 import { assert, it } from "@effect/vitest";
 import { type BotId, CommandId, type EntryTarget, type Notification } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Queue from "effect/Queue";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { DeviceAuth } from "../auth/DeviceAuth.ts";
 import { Bots } from "../bots/Bots.ts";
@@ -159,7 +161,10 @@ it.effect(
         yield* listen(yield* presence.connect(laptop)),
         yield* listen(yield* presence.connect(laptop)),
       ];
-      yield* presence.connect(tablet);
+      // The tablet's socket outlives its revocation for a moment, its
+      // target in view: it neither hears nor keeps anyone else from hearing.
+      const revoked = yield* presence.connect(tablet);
+      yield* revoked.view(conversation(scout.id));
       yield* (yield* DeviceAuth).revoke(tablet);
 
       const entry = yield* says(scout.id, "Done");
@@ -167,6 +172,27 @@ it.effect(
       assert.deepStrictEqual([recipients?.live, recipients?.push], [[laptop], [phone]]);
       for (const queue of queues) assert.strictEqual((yield* Queue.take(queue)).entryId, entry.id);
     }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
+);
+
+it.effect("keeps a device live until its last socket closes, then leaves it to a push", () =>
+  Effect.gen(function* () {
+    const presence = yield* Presence;
+    const scout = yield* createBot("Scout");
+    const laptop = yield* pairDevice("Laptop");
+    const first = yield* Scope.make();
+    const second = yield* Scope.make();
+    yield* presence.connect(laptop).pipe(Scope.provide(first));
+    yield* presence.connect(laptop).pipe(Scope.provide(second));
+    const entry = yield* says(scout.id, "Done");
+    const sets = presence
+      .recipients(conversation(scout.id), entry)
+      .pipe(Effect.map((recipients) => [recipients?.live, recipients?.push]));
+
+    yield* Scope.close(first, Exit.void);
+    assert.deepStrictEqual(yield* sets, [[laptop], []]);
+    yield* Scope.close(second, Exit.void);
+    assert.deepStrictEqual(yield* sets, [[], [laptop]]);
+  }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
 );
 
 it.effect("tells nobody, by socket or push, of what one device has in view", () =>
