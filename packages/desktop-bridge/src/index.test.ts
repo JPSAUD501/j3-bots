@@ -7,6 +7,8 @@ import {
   ConnectResult,
   DesktopState,
   HostedBridge,
+  NotificationClick,
+  NotificationRequest,
   OpenRequest,
   SavingReport,
   UpdateStatus,
@@ -109,11 +111,54 @@ describe("the desktop bridge", () => {
       checkForUpdates: call,
       restartToUpdate: call,
       reportSaving: call,
+      notify: call,
+      closeNotifications: call,
+      onNotificationClick: call,
     };
     const state = { server: null };
     assert.isTrue(decodes(HostedBridge, { state, ...calls }));
     assert.isFalse(decodes(HostedBridge, undefined));
     assert.isFalse(decodes(HostedBridge, { state: { ...state, server: "nowhere" }, ...calls }));
     assert.isFalse(decodes(HostedBridge, { state, ...calls, connect: "yes" }));
+    const { notify: _notify, ...withoutNotify } = calls;
+    assert.isFalse(decodes(HostedBridge, { state, ...withoutNotify }));
+  });
+
+  it("shows a notification only as a page could ask for one: text, a PNG and what it is about", () => {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
+    const request = {
+      entryId: "entry-1",
+      title: "Wren",
+      body: "The draft is ready.",
+      icon: png,
+      target: { _tag: "conversation", botId: "bot-wren" },
+      pairing: "device-1",
+    };
+    assert.isTrue(decodes(NotificationRequest, request));
+    assert.isTrue(decodes(NotificationRequest, { ...request, icon: null }));
+    // Not a PNG: a JPEG's first bytes, a PNG's signature cut short, text.
+    assert.isFalse(
+      decodes(NotificationRequest, { ...request, icon: new Uint8Array([0xff, 0xd8, 0xff, 0xe0]) }),
+    );
+    assert.isFalse(decodes(NotificationRequest, { ...request, icon: png.slice(0, 7) }));
+    assert.isFalse(
+      decodes(NotificationRequest, { ...request, icon: "data:image/png;base64,iVBO" }),
+    );
+    const huge = new Uint8Array(1024 * 1024 + 1);
+    huge.set(png);
+    assert.isFalse(decodes(NotificationRequest, { ...request, icon: huge }));
+    assert.isFalse(decodes(NotificationRequest, { ...request, title: "" }));
+    assert.isFalse(decodes(NotificationRequest, { ...request, body: "x".repeat(4097) }));
+    assert.isFalse(decodes(NotificationRequest, { ...request, target: { _tag: "settings" } }));
+    const { pairing: _pairing, ...unpaired } = request;
+    assert.isFalse(decodes(NotificationRequest, unpaired));
+  });
+
+  it("hands the page a click only with what it was about and the pairing that received it", () => {
+    const click = { target: { _tag: "room", roomId: "room-launch" }, pairing: "device-1" };
+    assert.isTrue(decodes(NotificationClick, click));
+    assert.isFalse(decodes(NotificationClick, { ...click, target: { _tag: "room" } }));
+    assert.isFalse(decodes(NotificationClick, { target: click.target }));
+    assert.isFalse(decodes(NotificationClick, "j3:notification-click"));
   });
 });

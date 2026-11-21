@@ -72,7 +72,7 @@ import { UsageSection } from "../components/UsageSection";
 import { WorkFold } from "../components/WorkFold";
 import { notificationText } from "@j3-bots/i18n";
 import { cn } from "../lib/cn";
-import { notificationIcon } from "../live/notificationIcon";
+import { iconUrl, notificationIcon } from "../live/notificationIcon";
 import { addresseeLine } from "../presentation/mentions";
 import { Shell } from "../shell/Shell";
 import { shellShortcuts } from "../shell/shortcuts";
@@ -372,8 +372,8 @@ function NotificationPreview({
   const [icon, setIcon] = useState<string | null>(null);
   useEffect(() => {
     let current = true;
-    void notificationIcon(notification, team.roster, theme).then((url) => {
-      if (current) setIcon(url);
+    void notificationIcon(notification, team.roster, theme).then((png) => {
+      if (current) setIcon(iconUrl(png));
     });
     return () => {
       current = false;

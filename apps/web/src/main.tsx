@@ -28,7 +28,7 @@ if (import.meta.env.PROD && desktop === null && "serviceWorker" in navigator) {
 
 // Before the page finishes loading: a window the service worker opened for a
 // notification click is handed the click then.
-listenForNotificationClicks();
+listenForNotificationClicks(desktop);
 
 // A build replaced while this page was open has deleted the scripts it would load
 // next; loading the page again picks up the new build.

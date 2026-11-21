@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { DeviceId, EntryTarget } from "@j3-bots/contracts";
+import { DeviceId, type EntryId, EntryTarget } from "@j3-bots/contracts";
 import type { NotificationText } from "@j3-bots/i18n";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { NOTIFICATION_CLICK } from "../../pwa/notificationClick";
+import type { Desktop } from "./desktop";
+import { iconUrl } from "./notificationIcon";
 
 /** A click on a notification: what it was about, and the pairing that received it. */
 interface NotificationClick {
@@ -13,12 +15,12 @@ interface NotificationClick {
 
 interface ShownNotification extends NotificationText, NotificationClick {
   /**
-   * One per entry: every window of the browser shows the notifications the
-   * server sends, and the browser keeps one notification per tag.
+   * The entry it is about, its tag: every window of the browser shows the
+   * notifications the server sends, and the browser keeps one per tag.
    */
-  readonly tag: string;
-  /** The icon's URL: the still avatar of what it is about (`notificationIcon`). */
-  readonly icon: string;
+  readonly entryId: EntryId;
+  /** The still avatar of what it is about as a PNG, or `null` for the app's icon (`notificationIcon`). */
+  readonly icon: Uint8Array | null;
 }
 
 /**
@@ -79,24 +81,41 @@ export function closeReceivedOutside(notifications: Iterable<Shown>, pairing: De
 }
 
 /**
- * Shows a notification through the service worker where there is one, since
- * some browsers (Android's) show none otherwise, and from the page where
- * there is not. A click focuses a window of the app and hands it the click:
- * the service worker's window through its message, this one directly.
+ * Shows a notification. The desktop app (`app`) shows it with the system's
+ * own notifications, and hands a click back to this window. Elsewhere it goes
+ * through the service worker where there is one, since some browsers
+ * (Android's) show none otherwise, and from the page where there is not. A
+ * click focuses a window of the app and hands it the click: the service
+ * worker's window through its message, this one directly.
  *
  * `currentPairing` is the pairing the page follows now. Showing takes a while,
  * and a pairing that ends meanwhile closes what it received before this one
- * shows, so the pairing is checked again before showing and once shown.
+ * shows, so the pairing is checked again before showing and once shown. The
+ * desktop app takes requests in the order they are sent, so one sent before
+ * the pairing ended is closed by the request that closes that pairing's.
  */
 export async function showNotification(
   shown: ShownNotification,
   currentPairing: () => DeviceId | null,
+  app: Desktop | null,
 ): Promise<void> {
   const ended = () => currentPairing() !== shown.pairing;
+  if (app !== null) {
+    if (ended()) return;
+    app.notify({
+      entryId: shown.entryId,
+      title: shown.title,
+      body: shown.body,
+      icon: shown.icon,
+      target: shown.target,
+      pairing: shown.pairing,
+    });
+    return;
+  }
   const options: NotificationOptions = {
     body: shown.body,
-    tag: shown.tag,
-    icon: shown.icon,
+    tag: shown.entryId,
+    icon: iconUrl(shown.icon),
     data: { target: shown.target, pairing: shown.pairing },
   };
   const registration = await activeServiceWorker();
@@ -104,7 +123,7 @@ export async function showNotification(
   if (registration !== null) {
     await registration.showNotification(shown.title, options);
     if (!ended()) return;
-    closeReceivedUnder(await registration.getNotifications({ tag: shown.tag }), shown.pairing);
+    closeReceivedUnder(await registration.getNotifications({ tag: shown.entryId }), shown.pairing);
     return;
   }
   // Shown from the page at once, and listed before a pairing that ends could look.
@@ -126,7 +145,8 @@ export async function showNotification(
  * right however late it runs, and a newer pairing keeps what it showed, even
  * one this window has not heard of yet, as when another tab pairs again.
  */
-export async function closeNotificationsOf(ended: DeviceId): Promise<void> {
+export async function closeNotificationsOf(ended: DeviceId, app: Desktop | null): Promise<void> {
+  app?.closeNotifications(ended);
   for (const entry of shownByPage) {
     if (entry.pairing === ended) entry.notification.close();
   }
@@ -162,12 +182,13 @@ const decodeClick = Schema.decodeUnknownOption(
 );
 
 /**
- * Listens for the notification clicks the service worker hands to this
- * window. Called once, as the page starts: a window the service worker opens
- * for a click gets the click as soon as it loads, before the app is ready to
- * act on it, and it waits until then.
+ * Listens for the notification clicks the service worker, or the desktop app
+ * (`app`), hands to this window. Called once, as the page starts: a window the
+ * service worker opens for a click gets the click as soon as it loads, before
+ * the app is ready to act on it, and it waits until then.
  */
-export function listenForNotificationClicks(): void {
+export function listenForNotificationClicks(app: Desktop | null): void {
+  app?.onNotificationClick(clicked);
   if (!("serviceWorker" in navigator)) return;
   navigator.serviceWorker.addEventListener("message", (event: MessageEvent<unknown>) => {
     const click = decodeClick(event.data);

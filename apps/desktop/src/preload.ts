@@ -33,6 +33,15 @@ const bridge: DesktopBridge = {
   checkForUpdates: () => ipcRenderer.send(IPC_CHANNELS.checkForUpdates),
   restartToUpdate: () => ipcRenderer.send(IPC_CHANNELS.restartToUpdate),
   reportSaving: (saving) => ipcRenderer.send(IPC_CHANNELS.saving, { saving }),
+  notify: (request) => ipcRenderer.send(IPC_CHANNELS.notify, request),
+  closeNotifications: (request) => ipcRenderer.send(IPC_CHANNELS.closeNotifications, request),
+  onNotificationClick: (listener) => {
+    const forward = (_event: unknown, click: unknown) => listener(click);
+    ipcRenderer.on(IPC_CHANNELS.notificationClicked, forward);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.notificationClicked, forward);
+    };
+  },
 };
 
 contextBridge.exposeInMainWorld(BRIDGE_KEY, bridge);

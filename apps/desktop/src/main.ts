@@ -39,6 +39,7 @@ import { contentSecurityPolicy, inlineScriptSources, resolveAsset } from "./asse
 import { electronFetch } from "./electronFetch.ts";
 import { APP_ID, appOrigin, schemeOf } from "./identity.ts";
 import { externalUrl, isAppUrl } from "./navigation.ts";
+import * as Notifier from "./notifier.ts";
 import { restartApp } from "./restart.ts";
 import * as ServerChoice from "./serverChoice.ts";
 import { checkServer } from "./serverCheck.ts";
@@ -340,12 +341,19 @@ const program = Effect.gen(function* () {
     });
   });
 
-  bringForward = () => {
+  const forward = () => {
     if (window.isDestroyed()) return;
     if (window.isMinimized()) window.restore();
     window.show();
     window.focus();
   };
+  bringForward = forward;
+  yield* Notifier.listen({
+    window,
+    fromApp,
+    bringForward: forward,
+    appIcon: path.join(webRoot, "icon-192.png"),
+  });
   // After sleep the network may have changed under the page: it is told, so
   // the client tries again at once rather than when its backoff ends.
   yield* Effect.acquireRelease(
