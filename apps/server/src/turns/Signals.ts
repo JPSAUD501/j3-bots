@@ -32,7 +32,8 @@ const makeTrigger = Effect.gen(function* () {
  * dispatches whose answer was lost, the Stop runner, the responder that sends
  * the operator's answers to engine requests, the resumer of held queues, the
  * rotator of main sessions, and the routine runner (a routine's wake was
- * written, or a run's work ended).
+ * written, or a run's work ended); and, outside the turn machinery, the push
+ * delivery worker (a notification to push was written).
  */
 export class Signals extends Context.Service<
   Signals,
@@ -44,6 +45,7 @@ export class Signals extends Context.Service<
     readonly resumes: Trigger;
     readonly rotations: Trigger;
     readonly routines: Trigger;
+    readonly push: Trigger;
   }
 >()("@j3-bots/server/turns/Signals") {}
 
@@ -58,6 +60,7 @@ export const layer = Layer.effect(
       resumes: yield* makeTrigger,
       rotations: yield* makeTrigger,
       routines: yield* makeTrigger,
+      push: yield* makeTrigger,
     });
   }),
 );

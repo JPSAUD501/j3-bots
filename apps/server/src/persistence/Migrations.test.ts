@@ -19,6 +19,7 @@ import Migration0004 from "./migrations/0004_routines.ts";
 import Migration0005 from "./migrations/0005_sessions.ts";
 import Migration0006 from "./migrations/0006_notifications.ts";
 import { json } from "./columns.ts";
+import { migrate } from "./Migrations.ts";
 import * as Sqlite from "./Sqlite.ts";
 
 const now = "2026-11-20T09:00:00.000Z";
@@ -191,5 +192,32 @@ it.effect("replays a routine's receipt written before runs counted their attempt
       const replayed = yield* Schema.decodeUnknownEffect(json(Routine))(row?.result_json);
       assert.strictEqual(replayed.lastRun?.attempts, 0);
     }).pipe(Effect.provide(Sqlite.layer.pipe(Layer.provide(Layer.succeed(ServerConfig, config)))));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("refuses a database that recorded a later migration than one it lacks", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fs.makeTempDirectoryScoped();
+    const config = TestDatabase.configFor(path, home);
+    const fixture = Effect.void;
+
+    const refused = yield* Effect.gen(function* () {
+      // A release that had migration 12 but not 11 opened it.
+      yield* SqliteMigrator.run({
+        loader: SqliteMigrator.fromRecord({ "10_fixture": fixture, "12_fixture": fixture }),
+      });
+      return yield* migrate(
+        SqliteMigrator.fromRecord({
+          "10_fixture": fixture,
+          "11_fixture": fixture,
+          "12_fixture": fixture,
+        }),
+      ).pipe(Effect.flip);
+    }).pipe(Effect.provide(SqliteClient.layer({ filename: config.databasePath })));
+
+    assert.strictEqual(refused._tag, "MigrationError");
+    assert.include(refused.message, "11_fixture");
   }).pipe(Effect.provide(NodeServices.layer)),
 );

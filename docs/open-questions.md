@@ -30,6 +30,8 @@ A self-hosted server cannot send to Apple's and Google's push services without c
 
 **Matters because** it is the only place where a hosted component enters the path. **Constraint:** whatever is chosen must work with previews turned off, carrying no message text.
 
+**Recommended:** Expo's push service, behind an interface any of the others can replace ([decision 0014](decisions/0014-push-goes-through-a-push-sender.md), proposed). The server sends through it today.
+
 ## 5. How are contributions licensed, and can the mobile app ship through app stores?
 
 The license is AGPL-3.0-or-later ([decision 0008](decisions/0008-license.md)). Apple's App Store terms have conflicted with GPL-family licenses in the past: the copyright holders can still distribute their own work there, but only if they hold the rights to all of it. That makes the terms for outside contributions (a contributor agreement or a sign-off with an added permission) something to settle before the first outside contribution is merged.

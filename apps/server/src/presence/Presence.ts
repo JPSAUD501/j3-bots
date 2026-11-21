@@ -115,8 +115,6 @@ export class Presence extends Context.Service<
      * disconnected, the roster shows the entry unread.
      */
     readonly tell: (recipients: Recipients) => Effect.Effect<void>;
-    /** Tells the devices with a socket open about an entry just committed, unless someone has its target in view. */
-    readonly entryAdded: (target: EntryTarget, entry: Entry) => Effect.Effect<void>;
   }
 >()("@j3-bots/server/presence/Presence") {}
 
@@ -204,14 +202,6 @@ export const layer = Layer.effect(
       }
     });
 
-    const entryAdded = Effect.fn("Presence.entryAdded")(function* (
-      target: EntryTarget,
-      entry: Entry,
-    ) {
-      const told = yield* recipients(target, entry);
-      if (told !== null) yield* tell(told);
-    });
-
-    return Presence.of({ connect, recipients, tell, entryAdded });
+    return Presence.of({ connect, recipients, tell });
   }),
 );

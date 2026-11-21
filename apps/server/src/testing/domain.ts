@@ -12,9 +12,11 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import type { ListenerStatus } from "../admin/protocol.ts";
 import * as Domain from "../domain.ts";
 import * as Listener from "../listener.ts";
+import type { PushSender } from "../push/PushSender.ts";
 import * as BasePrompt from "../settings/BasePrompt.ts";
 import * as SettingsStore from "../settings/SettingsStore.ts";
 import * as TestDatabase from "./database.ts";
+import * as TestPush from "./push.ts";
 
 /** The model a bot gets by default: the first the test engine offers. */
 export const DEFAULT_MODEL = {
@@ -112,13 +114,20 @@ const listener = Layer.effect(
 );
 
 /**
- * What outlives a server restart: the database, the home, the engine and
- * where clients reach it. A restart test builds this once and `Domain.layer`
- * over it twice.
+ * What outlives a server restart, with `push` as the push sender: the
+ * database, the home, the engine, the push service and where clients reach
+ * it. A restart test builds this once and `Domain.layer` over it twice.
  */
-export const machine = Layer.merge(stores, listener);
+export const machineWith = <A, R>(push: Layer.Layer<A | PushSender, never, R>) =>
+  Layer.mergeAll(stores, listener, push);
 
-/** The whole domain over a fresh database, a temporary home and the in-memory engine. */
+/** What outlives a server restart, with the in-memory push service. */
+export const machine = machineWith(TestPush.layer);
+
+/**
+ * The whole domain over a fresh database, a temporary home, the in-memory
+ * engine and the in-memory push service.
+ */
 export const layer = Domain.layer.pipe(Layer.provideMerge(machine));
 
 /**
@@ -126,5 +135,5 @@ export const layer = Domain.layer.pipe(Layer.provideMerge(machine));
  * (`Listener.layer`), which reports where it bound.
  */
 export const servedLayer = Domain.layer.pipe(
-  Layer.provideMerge(Layer.merge(stores, Listener.unbound)),
+  Layer.provideMerge(Layer.mergeAll(stores, Listener.unbound, TestPush.layer)),
 );
