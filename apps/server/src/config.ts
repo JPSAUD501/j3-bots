@@ -53,9 +53,10 @@ export interface ServerConfigShape {
   /** An engine executable to use instead of the pinned one J3 Bots installs. */
   readonly engineBinary: Option.Option<string>;
   /**
-   * The scripted agent's entry point (`packages/engine-t3/scripted-agent/agent.ts`),
-   * offered as one more provider: a development aid that drives a bot with
-   * no model and no allowance.
+   * The scripted agent's entry point (`packages/engine-t3/scripted-agent/agent.ts`
+   * in a source checkout), offered as the first provider, so a new bot runs
+   * on it: turns with no model and no allowance, for development and test
+   * installs. Never for real use; `j3-bots doctor` warns while it is set.
    */
   readonly scriptedAgent: Option.Option<string>;
   /**
@@ -98,6 +99,7 @@ class ConfigRefused extends Schema.TaggedError<ConfigRefused>()("ConfigRefused",
     "web-client-in-home",
     "web-client-in-state",
     "state-outside-home",
+    "scripted-agent-missing",
     "port-zero",
     "port-conflict",
   ]),
@@ -128,6 +130,8 @@ class ConfigRefused extends Schema.TaggedError<ConfigRefused>()("ConfigRefused",
         return `${this.setting} is inside ${this.subject}, which the server keeps private. Point it at the built client's own folder.`;
       case "state-outside-home":
         return `${this.subject} leads out of the data directory, or to nowhere, through a symbolic link. Everything the server keeps there must stay inside it: replace the link with the folder or file itself, or set ${this.setting} to a folder on the disk you want.`;
+      case "scripted-agent-missing":
+        return `${this.setting} (${this.subject}) is not a file. It names the scripted agent of a J3 Bots source checkout, which only test installs use: remove the setting.`;
       case "port-zero":
         return `${this.setting} is 0, but this port is dialed at the number set here. Choose a fixed free port.`;
       case "port-conflict":
@@ -179,10 +183,19 @@ const ConfigFile = Schema.Struct({
   webClient: Schema.optionalKey(Schema.NullOr(Schema.NonEmptyString)),
   tls: Schema.optionalKey(Schema.NullOr(Tls)),
   publicOrigin: Schema.optionalKey(Schema.NullOr(HttpsOrigin)),
+  /**
+   * The scripted agent's entry point, for a test install that drives the
+   * service's bots with no model (`ServerConfigShape.scriptedAgent`).
+   */
+  scriptedAgent: Schema.optionalKey(Schema.NullOr(Schema.NonEmptyString)),
 });
 type ConfigFile = typeof ConfigFile.Type;
 
-/** What a new `config.json` holds: every setting, at its default, for the operator to edit. */
+/**
+ * What a new `config.json` holds: every setting, at its default, for the
+ * operator to edit. All but `scriptedAgent`, which is for test installs and
+ * which a new file does not offer.
+ */
 export const DEFAULTS = {
   host: LAN,
   port: 3737,
@@ -191,7 +204,7 @@ export const DEFAULTS = {
   webClient: null,
   tls: null,
   publicOrigin: null,
-} satisfies Required<ConfigFile>;
+} satisfies Required<Omit<ConfigFile, "scriptedAgent">>;
 
 const decodeConfigFile = Schema.decodeUnknownEffect(Schema.fromJsonString(ConfigFile));
 
@@ -201,9 +214,9 @@ export const DEFAULTS_TEXT = `${Schema.encodeSync(Schema.fromJsonString(ConfigFi
 /**
  * The variables that override a setting of the file. A service does not
  * inherit them from the shell that installs it: it runs with the file.
- * `J3_ENGINE_BINARY` and `J3_SCRIPTED_AGENT` have no setting in the file;
- * they are for testing an engine build and for development, and a service
- * never uses them.
+ * `J3_ENGINE_BINARY` has no setting in the file: it is for testing an engine
+ * build, and a service never uses it. `J3_SCRIPTED_AGENT` is for development,
+ * and overrides `scriptedAgent`.
  */
 export const SHELL_OVERRIDES = [
   "J3_HOST",
@@ -223,7 +236,7 @@ export const overrideNote = (name: (typeof SHELL_OVERRIDES)[number], configFile:
     case "J3_ENGINE_BINARY":
       return "J3_ENGINE_BINARY is set in this shell. It is for testing an engine build, and the service never uses it: it runs the pinned engine.";
     case "J3_SCRIPTED_AGENT":
-      return "J3_SCRIPTED_AGENT is set in this shell. It is for development, and the service never uses it: it offers no scripted agent.";
+      return "J3_SCRIPTED_AGENT is set in this shell. It is for development, and the service never uses it.";
     default:
       return `${name} is set in this shell, but the service does not get it. Put the setting in ${configFile} instead.`;
   }
@@ -543,6 +556,32 @@ export const load = Effect.gen(function* () {
     }
   }
 
+  // A path from the environment resolves as a shell's does, one in the file
+  // against the home. A missing agent stops the start: the engine would
+  // offer bots a provider that cannot run.
+  const scriptedAgent = Option.orElse(
+    Option.map(env.scriptedAgent, (agent) => ({
+      setting: "J3_SCRIPTED_AGENT",
+      file: path.resolve(agent),
+    })),
+    () =>
+      Option.map(Option.fromNullishOr(file.scriptedAgent), (agent) => ({
+        setting: fileSetting("scriptedAgent"),
+        file: path.resolve(home, agent),
+      })),
+  );
+  if (Option.isSome(scriptedAgent)) {
+    const fs = yield* FileSystem.FileSystem;
+    const info = yield* fs.stat(scriptedAgent.value.file).pipe(Effect.option);
+    if (Option.isNone(info) || info.value.type !== "File") {
+      return yield* new ConfigRefused({
+        setting: scriptedAgent.value.setting,
+        reason: "scripted-agent-missing",
+        subject: scriptedAgent.value.file,
+      });
+    }
+  }
+
   return {
     home,
     configFile,
@@ -554,7 +593,7 @@ export const load = Effect.gen(function* () {
     tls,
     enginePort: ports.enginePort,
     engineBinary: Option.map(env.engineBinary, (binary) => path.resolve(binary)),
-    scriptedAgent: Option.map(env.scriptedAgent, (agent) => path.resolve(agent)),
+    scriptedAgent: Option.map(scriptedAgent, ({ file }) => file),
     toolPort: ports.toolPort,
     webClient,
     adminSocket,
