@@ -1,0 +1,100 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: Upgrade check
+
+# The upgrade check, run by hand (docs/operations/releasing.md, "The upgrade
+# check"): two release archives of this commit, A as 0.0.1 and B as 0.0.2,
+# A pinned to the engine of the commit `from-engine` names when it names one.
+# A is installed as a systemd user service from a local mirror, then updated
+# to B, rolled back to A and updated to B again, with a bot's turns on the
+# scripted agent before and after each step. It builds and runs this commit's
+# code only, reads the repository and uses no secret.
+on:
+  workflow_dispatch:
+    inputs:
+      from-engine:
+        description: "A commit whose engine.json A is pinned to, so the update moves the engine too (empty: this commit's pin)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Upgrade check (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            runner: ubuntu-24.04
+          - platform: linux-arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+          # A's engine.json may come from an earlier commit.
+          fetch-depth: 0
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      # The server reads its version from its package.json, and the engine it
+      # pins from engine.json, which only this run's copy changes. Both
+      # archives carry this runner's platform.
+      - name: Build A and B
+        env:
+          FROM_ENGINE: ${{ inputs.from-engine }}
+        run: |
+          if [ -n "$FROM_ENGINE" ]; then
+            if ! printf '%s' "$FROM_ENGINE" | grep -Eqx '[0-9a-f]{40}'; then
+              echo "::error::from-engine must be a full commit SHA."
+              exit 1
+            fi
+            git show "$FROM_ENGINE:engine.json" > engine.json
+          fi
+          (cd apps/server && npm pkg set version=0.0.1)
+          node scripts/build-release.ts --out "$RUNNER_TEMP/releases"
+          git checkout -- engine.json
+          (cd apps/server && npm pkg set version=0.0.2)
+          node scripts/build-release.ts --out "$RUNNER_TEMP/releases"
+
+      # A runner's user has no systemd user manager until it lingers; the
+      # service and the engine's provider scopes run in it.
+      - name: Start a systemd user manager
+        run: |
+          sudo loginctl enable-linger "$(id -un)"
+          runtime="/run/user/$(id -u)"
+          for _ in $(seq 60); do
+            if [ -S "$runtime/bus" ]; then break; fi
+            sleep 1
+          done
+          if [ ! -S "$runtime/bus" ]; then
+            echo "::error::The systemd user manager did not start."
+            exit 1
+          fi
+          echo "XDG_RUNTIME_DIR=$runtime" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=$runtime/bus" >> "$GITHUB_ENV"
+
+      - name: Check
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          export J3_UPGRADE_FROM="$RUNNER_TEMP/releases/j3-bots-0.0.1-$PLATFORM.tar.gz"
+          export J3_UPGRADE_TO="$RUNNER_TEMP/releases/j3-bots-0.0.2-$PLATFORM.tar.gz"
+          vp run --filter @j3-bots/server upgrade-check
+
+      - name: The service's log
+        if: ${{ failure() }}
+        run: journalctl --user -u j3-bots --no-pager -n 300 || true

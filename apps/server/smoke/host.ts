@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// @effect-diagnostics nodeBuiltinImport:off -- a free port is found by listening on port 0, which only node:net does.
+import * as NodeNet from "node:net";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -51,4 +53,14 @@ export const searchPathWithoutNode = Effect.fn("smoke.searchPathWithoutNode")(fu
     }
   }
   return folder;
+});
+
+/** A port no one listens on now: every port setting names a fixed one. */
+export const freePort = Effect.callback<number>((resume) => {
+  const server = NodeNet.createServer();
+  server.listen(0, "127.0.0.1", () => {
+    const address = server.address();
+    const port = address !== null && typeof address === "object" ? address.port : 0;
+    server.close(() => resume(Effect.succeed(port)));
+  });
 });
