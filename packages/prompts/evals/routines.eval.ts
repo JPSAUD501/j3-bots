@@ -99,9 +99,20 @@ const created = (calls: ReadonlyArray<Call>) =>
 const BACK_REFERENCE =
   /\b(as (we|you|I) (discussed|said|agreed)|as discussed|mentioned (above|earlier|before)|(the|that) (repo|repository|build|one) (above|we discussed)|this conversation|earlier today)\b/i;
 
-/** Wording that tells a run to end without speaking. */
+/**
+ * Wording that tells a run to end without speaking: "end silently", "finish
+ * the run quietly", "end without a message", "stay silent", "say nothing",
+ * "do not send anything".
+ */
 const SILENCE =
-  /\b(end(s)?( \w+){0,3} without|(don't|do not) (send|say|message|tell|notify)|stay (quiet|silent)|say nothing|send nothing)\b/i;
+  /\b((end|finish|stop)s?( \w+){0,3} (silently|quietly|without)|(stay|remain|keep)s? (quiet|silent)|(say|send|report)s? nothing|(don['’]t|do not|never) (send|say|message|tell|notify|reply|report|speak|call))\b/i;
+
+/** A clause about the case with nothing wrong: the build passed or nothing changed. */
+const NOTHING_WRONG =
+  /\b(otherwise|passing|passes|succeed(s|ed)?|(has|did) not fail(ed)?|not (failing|broken|red)|nothing (is )?(new|wrong))\b/i;
+
+/** A clause that delivers something to the user. */
+const SENDS = /\b(send|tell|message|notify)/i;
 
 /** Problems with how an instruction's last lines handle the case with nothing to report. */
 const quietDeliveryProblems = (instruction: string): ReadonlyArray<string> => {
@@ -112,12 +123,7 @@ const quietDeliveryProblems = (instruction: string): ReadonlyArray<string> => {
   }
   const speaksAnyway = tail
     .split(/[.;]/)
-    .some(
-      (clause) =>
-        /\b(otherwise|passing)\b/i.test(clause) &&
-        /\b(send|tell|message)/i.test(clause) &&
-        !SILENCE.test(clause),
-    );
+    .some((clause) => NOTHING_WRONG.test(clause) && SENDS.test(clause) && !SILENCE.test(clause));
   if (speaksAnyway) problems.push("the instruction sends a message when the build is passing");
   return problems;
 };

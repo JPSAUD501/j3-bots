@@ -97,13 +97,13 @@ Two PRs merged overnight, CI is green.
 what changed since friday?
 </message>
 </j3-wake>
-Reply with `say`; nothing else reaches them.
+Reply with `say`; nothing else reaches them. Your last call is a `say` with the result and `done: true`, or an `ask`.
 ```
 
 Rules:
 
 - `kind` is one of `user`, `room`, `bot`, `routine`, `system`. The base prompt says what each means and how to respond.
-- Every envelope ends with a fixed closing line for its kind, after the block, the cheapest way to restate the speech rule on every turn. For `user`: "Reply with `say`; nothing else reaches them." For `routine`: "Nobody is waiting. Speak only as the instruction's last line says." For `room`, `bot` and `system`, the equivalent one line.
+- Every envelope ends with a fixed closing line for its kind, after the block, the cheapest way to restate the speech rule on every turn. For `user`: "Reply with `say`; nothing else reaches them. Your last call is a `say` with the result and `done: true`, or an `ask`." For `routine`: "Nobody is waiting. Call `say` only if the instruction's last line asks for a message about what you found; otherwise end with no `say` at all, not even to say all is well." For `room`, `bot` and `system`, the equivalent one line.
 - `at`, `weekday` and `tz` appear on every wake, in the operator's zone, and every other time in the envelope is given in that zone too. Bots report times in the operator's zone; the weekday is there because models are unreliable at working it out from a date.
 - `since-last-turn` appears only when there is something the session has not seen: results delivered by side sessions, held non-urgent messages, profile edits, and, in the first envelope of a bot's new main session, that its session was replaced, with a digest of the recent conversation: one block per message, oldest first, whose `from` attribute says who wrote it (`user` or `you`) and whose `file-1`, `file-2`, … attributes name its files, one each.
 - Text written by the operator is placed in `<message from="user">`.
@@ -123,7 +123,7 @@ and skip the migrations
 </message>
 </answer>
 </j3-wake>
-Reply with `say`; nothing else reaches them.
+Reply with `say`; nothing else reaches them. Your last call is a `say` with the result and `done: true`, or an `ask`.
 ```
 
 - `room` names the room whose turn asked the question; `say` in this turn delivers there. Without it, the question was asked in the bot's own conversation, and the answer continues there. An answer that continues a room is dispatched on its own, never together with the operator's private messages.

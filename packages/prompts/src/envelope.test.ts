@@ -202,7 +202,7 @@ describe("renderWake", () => {
       <attachment name="notes.md" type="text/markdown" path="files/inbox/notes.md"/>
       </message>
       </j3-wake>
-      Reply with \`say\`; nothing else reaches them.
+      Reply with \`say\`; nothing else reaches them. Your last call is a \`say\` with the result and \`done: true\`, or an \`ask\`.
       "
     `);
   });
@@ -236,7 +236,7 @@ describe("renderWake", () => {
       </message>
       </answer>
       </j3-wake>
-      Reply with \`say\`; nothing else reaches them.
+      Reply with \`say\`; nothing else reaches them. Your last call is a \`say\` with the result and \`done: true\`, or an \`ask\`.
       "
     `);
     expect(
@@ -263,7 +263,7 @@ describe("renderWake", () => {
       and tell Ana
       </message>
       </j3-wake>
-      Reply with \`say\`; nothing else reaches them.
+      Reply with \`say\`; nothing else reaches them. Your last call is a \`say\` with the result and \`done: true\`, or an \`ask\`.
       "
     `);
   });
@@ -389,7 +389,7 @@ describe("renderWake", () => {
       {"action":"completed","conclusion":"failure"}
       </data-7f3a9c01b2d4>
       </j3-wake>
-      Nobody is waiting. Speak only as the instruction's last line says.
+      Nobody is waiting. Call \`say\` only if the instruction's last line asks for a message about what you found; otherwise end with no \`say\` at all, not even to say all is well.
       "
     `);
     expect(
@@ -414,7 +414,7 @@ describe("renderWake", () => {
       </recent-runs>
       </routine>
       </j3-wake>
-      Nobody is waiting. Speak only as the instruction's last line says.
+      Nobody is waiting. Call \`say\` only if the instruction's last line asks for a message about what you found; otherwise end with no \`say\` at all, not even to say all is well.
       "
     `);
   });

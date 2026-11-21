@@ -221,10 +221,10 @@ export type Wake = UserWake | RoomWake | BotWake | RoutineWake | SystemWake;
  * Exported so the versioning hash and the docs can name them.
  */
 export const CLOSING_LINES: { readonly [K in WakeKind]: string } = {
-  user: "Reply with `say`; nothing else reaches them.",
+  user: "Reply with `say`; nothing else reaches them. Your last call is a `say` with the result and `done: true`, or an `ask`.",
   room: "In this room, `say` reaches everyone. Speak if you were addressed or have something new; otherwise end your turn without a word.",
   bot: "`say` reaches your user, not the sender. Answer the sender with `message_bot`, and only if you were asked something or have a result.",
-  routine: "Nobody is waiting. Speak only as the instruction's last line says.",
+  routine: "Nobody is waiting. Call `say` only if the instruction's last line asks for a message about what you found; otherwise end with no `say` at all, not even to say all is well.",
   system:
     "This is an event, not a message from your user. Respond only as your instructions say for it.",
 };

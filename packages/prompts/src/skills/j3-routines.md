@@ -85,7 +85,7 @@ The delivery line decides whether a run speaks. Write it explicitly, because the
 - **Reminders:** always speak; the message is the point.
 - **Digests:** speak only when there is something to list, unless your user asked for a message every time. Say which you chose in your confirmation.
 
-When a run speaks, it sends one short message, phrased the way you would mention something you took care of, not as an alert. When it has nothing to say, it ends its turn without calling `say`. A run cannot use `ask`: a question goes inside its message, and the answer arrives in your main conversation. If a run cannot do its work (access lost, a source gone), it tells your user in one sentence what broke.
+When a run speaks, it sends one short message, phrased the way you would mention something you took care of, not as an alert. When there is nothing to report, it ends its turn without calling `say` at all: no "all clear", no summary of what it checked. A silent run is a successful run. A run cannot use `ask`: a question goes inside its message, and the answer arrives in your main conversation. If a run cannot do its work (access lost, a source gone), it tells your user in one sentence what broke.
 
 ## What needs your user's approval
 
