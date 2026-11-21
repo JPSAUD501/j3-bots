@@ -85,7 +85,7 @@ import {
 import { loadRasterizer, notificationIcon, systemTheme } from "./notificationIcon";
 import { deliverFile, reserveWindow } from "./openFile";
 import { desktop } from "./desktop";
-import { LinkedPairingCode } from "./pairingLink";
+import { LinkedPairingCode, linkedCodeAfter } from "./pairingLink";
 import { makePlatform, signInUnencrypted } from "./platform";
 
 let started: Promise<J3Client> | null = null;
@@ -184,13 +184,9 @@ function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
   const j3 = useJ3Client();
   const connection = useConnection();
   const pairing = useReadable(j3.pairing);
-  // A pairing link's code is for pairing this device now. Once it is paired,
-  // as already when the link was opened, the code is dropped unasked.
-  const linkedCode = use(LinkedPairingCode);
-  const [linkSpent, setLinkSpent] = useState(linkedCode === null);
-  if (!linkSpent && connection._tag !== "starting" && connection._tag !== "unpaired") {
-    setLinkSpent(true);
-  }
+  const [linkedCode, setLinkedCode] = useState(use(LinkedPairingCode));
+  const keptCode = linkedCodeAfter(linkedCode, connection);
+  if (keptCode !== linkedCode) setLinkedCode(keptCode);
   const [everConnected, setEverConnected] = useState(false);
   if (connection._tag === "connected" && !everConnected) setEverConnected(true);
   // A pairing this window followed ends, signed out or revoked, here or in
@@ -221,7 +217,7 @@ function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
           <Pairing
             reason={connection.reason}
             defaultName={guessDeviceName(navigator.userAgent)}
-            initialCode={linkSpent ? null : linkedCode}
+            initialCode={linkedCode}
             address={origin.origin}
             onPair={j3.pair}
             server={desktopServer}

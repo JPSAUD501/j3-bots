@@ -109,7 +109,8 @@ it.layer(NodeServices.layer)("web client", (it) => {
   it.effect("serves the app at its root and at every path it routes itself", () =>
     serving(
       Effect.gen(function* () {
-        for (const url of ["/", "/bots/b1/conversation"]) {
+        // `/pair` is a pairing link's page, which the client reads as it loads.
+        for (const url of ["/", "/bots/b1/conversation", "/pair"]) {
           const response = yield* get(url, "text/html,application/xhtml+xml");
           assert.strictEqual(response.status, 200, url);
           assert.strictEqual(yield* response.text, INDEX);
@@ -221,7 +222,8 @@ it.layer(NodeServices.layer)("web client", (it) => {
   it.effect("never serves an index.html that links outside the client's folder", () =>
     serving(
       Effect.gen(function* () {
-        for (const url of ["/", "/bots/b1/conversation"]) {
+        // `/pair` is a pairing link's page, which the client reads as it loads.
+        for (const url of ["/", "/bots/b1/conversation", "/pair"]) {
           const response = yield* get(url, "text/html");
           assert.strictEqual(response.status, 404, url);
           assert.notInclude(yield* response.text, "private");

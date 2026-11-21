@@ -5,7 +5,7 @@ import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { PairingCode } from "./device.ts";
-import { PairingLink, pairingOrigins, ServerOrigin } from "./link.ts";
+import { bareServerOrigin, PairingLink, pairingOrigins, ServerOrigin } from "./link.ts";
 import { PairingStarted } from "./rpc.ts";
 
 const origin = Schema.decodeSync(ServerOrigin);
@@ -16,56 +16,62 @@ const code = PairingCode.make("7KQ2M9XH4D");
 const refused = (link: string) => Exit.isFailure(decode(link));
 
 describe("a pairing link", () => {
-  it("is the server's own address with the code in the fragment, there and back", () => {
+  it("is the server's own address at /pair with the code as the fragment, there and back", () => {
     for (const server of [
       "http://192.0.2.10:3737",
       "https://j3.example.test",
       "http://[fd00::10]:3737",
     ]) {
       const link = encode({ server: origin(server), code });
-      assert.strictEqual(link, `${server}/#pair=${code}`);
+      assert.strictEqual(link, `${server}/pair#${code}`);
       assert.deepStrictEqual(Schema.decodeSync(PairingLink)(link), { server, code });
     }
   });
 
-  it("refuses a base that is not a bare http or https origin at /", () => {
+  it("refuses a base that is not a bare http or https origin at /pair", () => {
     for (const link of [
-      `ftp://192.0.2.10/#pair=${code}`,
-      `j3bots://app/#pair=${code}`,
-      `http://192.0.2.10:3737/api#pair=${code}`,
-      `http://192.0.2.10:3737/?x=1#pair=${code}`,
-      `http://192.0.2.10:3737#pair=${code}`,
-      `https://operator:secret@j3.example.test/#pair=${code}`,
-      `https://operator@j3.example.test/#pair=${code}`,
-      `HTTP://J3.EXAMPLE.TEST/#pair=${code}`,
-      `https://j3.example.test:443/#pair=${code}`,
-      `192.0.2.10:3737/#pair=${code}`,
-      `/#pair=${code}`,
+      `ftp://192.0.2.10/pair#${code}`,
+      `j3bots://app/pair#${code}`,
+      `http://192.0.2.10:3737/#${code}`,
+      `http://192.0.2.10:3737#${code}`,
+      `http://192.0.2.10:3737/pair/#${code}`,
+      `http://192.0.2.10:3737/PAIR#${code}`,
+      `http://192.0.2.10:3737/api/pair#${code}`,
+      `http://192.0.2.10:3737//pair#${code}`,
+      `http://192.0.2.10:3737/pair?x=1#${code}`,
+      `http://192.0.2.10:3737/pair?#${code}`,
+      `https://operator:secret@j3.example.test/pair#${code}`,
+      `https://operator@j3.example.test/pair#${code}`,
+      `HTTP://J3.EXAMPLE.TEST/pair#${code}`,
+      `https://j3.example.test:443/pair#${code}`,
+      `192.0.2.10:3737/pair#${code}`,
+      `/pair#${code}`,
+      `http://192.0.2.10:3737/#pair=${code}`,
       `j3bots://pair?server=http%3A%2F%2F192.0.2.10%3A3737&code=${code}`,
     ]) {
       assert.isTrue(refused(link), link);
     }
   });
 
-  it("refuses a fragment other than one pair code", () => {
-    const base = "http://192.0.2.10:3737/";
-    assert.isFalse(refused(`${base}#pair=${code}`));
+  it("refuses a fragment that is not exactly one code", () => {
+    const base = "http://192.0.2.10:3737/pair";
+    assert.isFalse(refused(`${base}#${code}`));
     for (const fragment of [
       "",
       "#",
-      "#pair=",
-      `#code=${code}`,
-      `#pair=${code}&pair=${code}`,
-      `#pair=${code}&extra=1`,
-      `#pair=${code}#more`,
-      "#pair=7KQ2M9XH4",
-      "#pair=7kq2m9xh4d",
-      "#pair=7KQ2M-9XH4D",
-      "#pair=7KQ2M9XH4I",
+      `#pair=${code}`,
+      `#${code}${code}`,
+      `#${code}&extra=1`,
+      `#${code}#more`,
+      "#7KQ2M9XH4",
+      "#7kq2m9xh4d",
+      "#7KQ2M-9XH4D",
+      "#7KQ2M9XH4I",
+      "#7KQ2M%399XH4D",
     ]) {
       assert.isTrue(refused(`${base}${fragment}`), fragment);
     }
-    assert.isTrue(refused(`http://192.0.2.10:3737/?pair=${code}`));
+    assert.isTrue(refused(`${base}?code=${code}`));
   });
 });
 
@@ -83,10 +89,43 @@ describe("without URL.parse, as in Safari 17", () => {
     const server = "http://192.0.2.10:3737";
     assert.deepStrictEqual(Schema.decodeOption(ServerOrigin)(server), Option.some(origin(server)));
     assert.isTrue(Option.isNone(Schema.decodeOption(ServerOrigin)("not an origin")));
-    assert.deepStrictEqual(Schema.decodeSync(PairingLink)(`${server}/#pair=${code}`), {
+    assert.deepStrictEqual(Schema.decodeSync(PairingLink)(`${server}/pair#${code}`), {
       server,
       code,
     });
+  });
+});
+
+describe("an address typed as a server's origin", () => {
+  it("takes a bare http or https origin, with or without its slash", () => {
+    for (const [typed, expected] of [
+      ["http://192.0.2.10:3737", "http://192.0.2.10:3737"],
+      [" https://j3.example.test/ ", "https://j3.example.test"],
+      ["HTTPS://J3.Example.Test:443", "https://j3.example.test"],
+    ] as const) {
+      assert.deepStrictEqual(bareServerOrigin(typed), Option.some(origin(expected)), typed);
+    }
+  });
+
+  it("refuses a path, query, fragment, user name or another scheme", () => {
+    for (const typed of [
+      "http://192.0.2.10:3737/pair",
+      "http://192.0.2.10:3737//",
+      "http://192.0.2.10:3737/?",
+      "http://192.0.2.10:3737/?x=1",
+      "http://192.0.2.10:3737#",
+      `http://192.0.2.10:3737/#${code}`,
+      "https://operator@j3.example.test",
+      "https://operator:secret@j3.example.test",
+      "blob:https://j3.example.test/1b4e28ba-2fa1-11d2-883f-0016d3cca427",
+      "ws://192.0.2.10:3737",
+      "ftp://192.0.2.10",
+      "file:///",
+      "192.0.2.10:3737",
+      "j3.example.test",
+    ]) {
+      assert.isTrue(Option.isNone(bareServerOrigin(typed)), typed);
+    }
   });
 });
 
@@ -106,7 +145,8 @@ describe("the origins a pairing link can carry", () => {
     assert.deepStrictEqual(pairingOrigins([lan, tailnet], forwarded), [lan, tailnet]);
   });
 
-  // IPv4-mapped addresses as a browser writes them: ::ffff:127.0.0.1 and ::ffff:0.0.0.0.
+  // IPv4-mapped addresses as a browser writes them: ::ffff:127.0.0.1 and ::ffff:0.0.0.0. A
+  // name may end in the DNS root's dot.
   it("never carries an origin that names the reading device itself", () => {
     for (const self of [
       "http://127.0.0.1:3737",
@@ -120,6 +160,8 @@ describe("the origins a pairing link can carry", () => {
       "https://[::ffff:7f00:1]",
       "https://[::ffff:0:0]",
       "https://j3.localhost",
+      "http://localhost.:3737",
+      "https://j3.localhost.",
     ]) {
       const loopback = origin(self);
       assert.deepStrictEqual(pairingOrigins([lan], loopback), [lan], self);

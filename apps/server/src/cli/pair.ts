@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
+  bareServerOrigin,
   type PairingCode,
   PairingLink,
   pairingOrigins,
-  parseUrl,
-  ServerOrigin,
+  type ServerOrigin,
 } from "@j3-bots/contracts";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
@@ -49,28 +49,33 @@ const whereToOpen = (listener: ListenerStatus, origins: ReadonlyArray<ServerOrig
 };
 
 const encodeLink = Schema.encodeSync(PairingLink);
-const decodeOrigin = Schema.decodeUnknownOption(ServerOrigin);
 
 const addressFlag = Flag.String("address").pipe(
   Flag.withDescription(
-    "The address the QR code carries, for the phone to open J3 Bots at: one of those the command lists, or an https address the server is reached at, such as a domain a proxy serves. The first one listed when left out.",
+    "The address the QR code carries, for the phone to open J3 Bots at: a bare http or https origin (scheme, host and port, no path), which the phone must reach exactly as given; https only if the server, or a proxy in front of it, serves https there. One of those the command lists, or an https address the server is reached at, such as a domain a proxy serves. The first one listed when left out.",
   ),
   Flag.optional,
 );
 
 /**
- * The origin the QR code carries: the one the operator chose, which must be
- * one the server lists or `https:`, else the first it lists. None when
- * there is no such origin, as on a server that listens on loopback only.
+ * The origin the QR code carries: the one the operator chose, which must be a
+ * bare origin the server lists or an `https:` one, else the first it lists.
+ * None when there is no such origin, as on a server that listens on loopback
+ * only. A choice that does not qualify is refused before a code is made.
  */
 const carriedOrigin = Effect.fn("pair.carriedOrigin")(function* (
   origins: ReadonlyArray<ServerOrigin>,
   chosen: Option.Option<string>,
 ) {
   if (Option.isNone(chosen)) return Option.fromUndefinedOr(pairingOrigins(origins)[0]);
-  const origin = Option.flatMap(parseUrl(chosen.value.trim()), (url) => decodeOrigin(url.origin));
+  const origin = bareServerOrigin(chosen.value);
+  if (Option.isNone(origin)) {
+    return yield* refuse(
+      "--address takes a bare http or https address: scheme, host and port, with no path, query, fragment or user name. No code was made.",
+    );
+  }
   // `pairingOrigins` puts an origin first only when it may carry it.
-  if (Option.isNone(origin) || pairingOrigins(origins, origin.value)[0] !== origin.value) {
+  if (pairingOrigins(origins, origin.value)[0] !== origin.value) {
     return yield* refuse(
       "--address must be one of the addresses the server listens at, as `j3-bots pair` lists them, or an https address another device reaches it at. No code was made.",
     );
@@ -79,37 +84,39 @@ const carriedOrigin = Effect.fn("pair.carriedOrigin")(function* (
 });
 
 /**
- * A QR code of the pairing link to `server`, for a phone's camera, and which
- * address it carries. Where the terminal cannot show it, the link as text and
- * why there is no QR code.
+ * A QR code of the pairing link to `server`, for a phone's camera, under the
+ * lines that say which address it carries. Where the terminal cannot show
+ * it, the link as text and why there is no QR code.
  */
 const scanToPair = Effect.fn("pair.scanToPair")(function* (
   server: ServerOrigin,
   code: PairingCode,
 ) {
   const link = encodeLink({ server, code });
+  const otherAddress = "For another address, run `j3-bots pair --address <address>`.";
   const terminal = yield* Terminal.Terminal;
-  const qr = terminalQr(link, {
-    isTerminal: yield* (yield* Stdio.Stdio).stdoutIsTerminal,
-    columns: yield* terminal.columns,
-    rows: yield* terminal.rows,
-  });
-  const goesTo = `It opens J3 Bots at ${server}; for another address, run \`j3-bots pair --address <address>\`.`;
+  const qr = terminalQr(
+    link,
+    [
+      "",
+      `Scan this with a phone's camera to open J3 Bots at ${server} with the code filled in.`,
+      otherAddress,
+    ],
+    {
+      isTerminal: yield* (yield* Stdio.Stdio).stdoutIsTerminal,
+      columns: yield* terminal.columns,
+      rows: yield* terminal.rows,
+    },
+  );
+  const asText = ["", `On a phone, open ${link} to pair it with the code filled in.`, otherAddress];
   switch (qr._tag) {
     case "shown":
-      return [
-        "",
-        "Scan this with a phone's camera to open J3 Bots there with the code filled in:",
-        qr.lines,
-        goesTo,
-      ];
+      return [qr.lines];
     case "not-a-terminal":
-      return ["", `On a phone, open ${link} to pair it with the code filled in.`, goesTo];
+      return asText;
     case "too-small":
       return [
-        "",
-        `On a phone, open ${link} to pair it with the code filled in.`,
-        goesTo,
+        ...asText,
         `For a QR code of it, enlarge this terminal to ${qr.columns} columns by ${qr.rows} rows and run \`j3-bots pair\` again.`,
       ];
   }

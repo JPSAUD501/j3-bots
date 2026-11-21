@@ -34,9 +34,9 @@ listenForNotificationClicks();
 // next; loading the page again picks up the new build.
 window.addEventListener("vite:preloadError", () => window.location.reload());
 
-// A pairing link's code leaves the address bar before the router reads it. The
-// desktop app's page is its own, never a link's.
-const linkedCode = desktop === null ? takePairingCode(window.location, window.history) : null;
+// A pairing link's page (`/pair`) leaves the address bar before the router reads
+// it. The desktop app's page is its own, never a link's.
+const linkedCode = desktop === null ? takePairingCode(window.location.href, window.history) : null;
 const router = makeRouter();
 
 createRoot(root).render(

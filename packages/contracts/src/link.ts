@@ -25,29 +25,45 @@ export const ServerOrigin = Schema.String.check(
 ).pipe(Schema.brand("ServerOrigin"));
 export type ServerOrigin = typeof ServerOrigin.Type;
 
+const decodeOrigin = Schema.decodeUnknownOption(ServerOrigin);
+
+/**
+ * An address typed as a bare http or https origin, as the origin, or none. A
+ * trailing `/` is the only path it may have, and it has no query, fragment or
+ * user name, not even an empty one: a URL writes back exactly as its origin
+ * and `/` only then. Letter case and a default port are a browser's to write.
+ */
+export const bareServerOrigin = (text: string): Option.Option<ServerOrigin> =>
+  Option.flatMap(parseUrl(text.trim()), (url) =>
+    url.href === `${url.origin}/` ? decodeOrigin(url.origin) : Option.none(),
+  );
+
 /** What a pairing link carries: where the server is, and the code to pair with there. */
 export const PairingLinkTarget = Schema.Struct({ server: ServerOrigin, code: PairingCode });
 export type PairingLinkTarget = typeof PairingLinkTarget.Type;
 
-const FRAGMENT = "#pair=";
+/** The path a pairing link opens, which only the web client's loading page reads. */
+export const PAIRING_PATH = "/pair";
 
 /**
- * `<origin>/#pair=<code>` exactly: the origin as a browser writes it, the path
- * `/`, no query, user name or other fragment. Whether the code has a code's
- * form is the target's to check.
+ * `<origin>/pair#<code>` exactly: the origin as a browser writes it, the path
+ * `/pair`, no query or user name, and a fragment that is the code alone.
+ * Whether the code has a code's form is the target's to check.
  */
 const isPairingLinkText = (text: string) =>
   Option.exists(
     parseUrl(text),
-    (url) => isHttp(url) && url.hash.startsWith(FRAGMENT) && text === `${url.origin}/${url.hash}`,
-  ) || "an http: or https: origin, then /#pair= and a code";
+    (url) => isHttp(url) && text === `${url.origin}${PAIRING_PATH}${url.hash}`,
+  ) || "an http: or https: origin, then /pair# and a code";
 
 /**
- * A link that pairs a new client: the server's own address with the pairing
- * code in the fragment, as a QR code carries them to a phone's camera. A
- * camera opens it in the browser, where the web client takes the code from
- * the fragment; a native client's scanner reads the same link. The fragment
- * never reaches the server, so the code stays out of its logs and of
+ * A link that pairs a new client: the server's own address at `/pair`, with
+ * the pairing code as the fragment, as a QR code carries them to a phone's
+ * camera. A camera opens it in the browser, where the web client takes the
+ * code from the fragment; a native client's scanner reads the same link. The
+ * path is the link's own so that opening one always loads the page, even in
+ * a tab already showing the app, where a new fragment alone would not. The
+ * fragment never reaches the server, so the code stays out of its logs and of
  * `Referer`. A link only fills in the pairing screen: a client never pairs
  * from one by itself. The code still works once and expires as any code does.
  */
@@ -55,11 +71,11 @@ export const PairingLink = Schema.String.check(Schema.makeFilter(isPairingLinkTe
   Schema.decodeTo(PairingLinkTarget, {
     decode: SchemaGetter.transform((text: string) => {
       const url = new URL(text);
-      return { server: url.origin, code: url.hash.slice(FRAGMENT.length) };
+      return { server: url.origin, code: url.hash.slice(1) };
     }),
     encode: SchemaGetter.transform(
       ({ server, code }: { readonly server: string; readonly code: string }) =>
-        `${server}/${FRAGMENT}${code}`,
+        `${server}${PAIRING_PATH}#${code}`,
     ),
   }),
 );
@@ -74,10 +90,11 @@ const mappedIpv4 = (hostname: string) => {
 
 /**
  * Hosts that name the machine reading them, so never another device's way to
- * the server: loopback, and the unspecified address, which reaches it too.
+ * the server: loopback, and the unspecified address, which reaches it too. A
+ * name's one final dot, as in `localhost.`, names the same host.
  */
 const isSelf = (hostname: string) => {
-  const host = mappedIpv4(hostname);
+  const host = mappedIpv4(hostname.endsWith(".") ? hostname.slice(0, -1) : hostname);
   return (
     host === "localhost" ||
     host.endsWith(".localhost") ||
