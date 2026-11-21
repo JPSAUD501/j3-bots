@@ -9,6 +9,7 @@ import {
   RoutineTrigger,
 } from "@j3-bots/contracts";
 import { TurnOutcome } from "@j3-bots/engine-t3";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -60,6 +61,18 @@ export const retryDelay = (n: number): Duration.Duration => Duration.minutes(2 *
  * minute. A caller past it is told when to try again, and nothing is recorded.
  */
 export const WEBHOOK_RUNS_PER_MINUTE = 10;
+
+/**
+ * How many webhook calls, across every routine and every caller, may name no
+ * webhook (an unknown routine or a wrong secret) within a minute. The one that
+ * reaches it closes every webhook for `WEBHOOK_LOCKOUT`, so calls are refused
+ * before any routine is looked up. A limit per caller would mean nothing behind
+ * a proxy, where every call comes from the proxy.
+ */
+export const WEBHOOK_FAILURES_PER_MINUTE = 20;
+
+/** How long every webhook stays closed once `WEBHOOK_FAILURES_PER_MINUTE` is reached. */
+export const WEBHOOK_LOCKOUT = Duration.minutes(1);
 
 const RoutineRow = Schema.Struct({
   id: RoutineId,
@@ -187,9 +200,22 @@ export class RoutineRuns extends Context.Service<
     /** Runs the routine now at the operator's request, as a test: also a paused one. */
     readonly runNow: (routineId: RoutineId) => Effect.Effect<RunReceipt, NotFound>;
     /**
-     * A call of a routine's webhook. `secret` is compared in constant time;
-     * `body` reaches the bot as data. A `requestKey` already recorded for the
-     * routine records nothing and answers the run it recorded.
+     * Whether a webhook call names a webhook, checked before anything else of
+     * the call is read: `unknown` for a routine that does not exist, has
+     * another trigger or another secret, and `RateLimited` while webhooks are
+     * closed after too many of those (`WEBHOOK_FAILURES_PER_MINUTE`), before
+     * the routine is looked up. `secret` is compared in constant time.
+     */
+    readonly admitWebhook: (input: {
+      readonly routineId: string;
+      readonly secret: string;
+    }) => Effect.Effect<void, WebhookRefused | RateLimited>;
+    /**
+     * A call of a routine's webhook, once admitted. The address is checked
+     * again, in the transaction that records the run, against a routine
+     * deleted or given a new secret since. `body` reaches the bot as data. A
+     * `requestKey` already recorded for the routine records nothing and
+     * answers the run it recorded.
      */
     readonly webhook: (input: {
       readonly routineId: string;
@@ -445,26 +471,59 @@ export const layer = Layer.effect(
       return Mac.timingSafeEqual(a, b);
     });
 
+    /**
+     * The webhook routine `routineId` names, if `secret` is its secret. The
+     * secret is compared even when there is no routine to compare it with.
+     */
+    const webhookRoutine = Effect.fn("RoutineRuns.webhookRoutine")(function* (input: {
+      readonly routineId: string;
+      readonly secret: string;
+    }) {
+      const id = Schema.decodeOption(RoutineId)(input.routineId);
+      const row = Option.isSome(id)
+        ? yield* routineRow(id.value).pipe(Effect.orDie)
+        : Option.none<typeof RoutineRow.Type>();
+      const secret = Option.match(row, {
+        onNone: () => null,
+        onSome: (found) => (found.trigger_json._tag === "webhook" ? found.webhook_secret : null),
+      });
+      const matches = yield* sameSecret(input.secret, secret ?? "");
+      return secret !== null && matches ? row : Option.none<typeof RoutineRow.Type>();
+    });
+
+    // Webhook calls that named no webhook, within the last minute, and until
+    // when every webhook is closed. In memory: a restart forgets both.
+    let failures: ReadonlyArray<number> = [];
+    let closedUntil = 0;
+
+    const admitWebhook = Effect.fn("RoutineRuns.admitWebhook")(function* (input: {
+      readonly routineId: string;
+      readonly secret: string;
+    }) {
+      const now = yield* Clock.currentTimeMillis;
+      if (closedUntil > now) {
+        return yield* new RateLimited({ retryAt: DateTime.makeUnsafe(closedUntil) });
+      }
+      if (Option.isSome(yield* webhookRoutine(input))) return;
+      const window = Duration.toMillis(Duration.minutes(1));
+      failures = [...failures.filter((at) => at > now - window), now];
+      if (failures.length >= WEBHOOK_FAILURES_PER_MINUTE) {
+        failures = [];
+        closedUntil = now + Duration.toMillis(WEBHOOK_LOCKOUT);
+      }
+      return yield* new WebhookRefused({ reason: "unknown" });
+    });
+
     const webhook = Effect.fn("RoutineRuns.webhook")(function* (input: {
       readonly routineId: string;
       readonly secret: string;
       readonly body: string;
       readonly requestKey: string | null;
     }) {
-      const unknown = new WebhookRefused({ reason: "unknown" });
-      const id = Schema.decodeOption(RoutineId)(input.routineId);
-      if (Option.isNone(id)) return yield* unknown;
       return yield* transaction(
         Effect.gen(function* () {
-          const row = yield* routineRow(id.value).pipe(Effect.orDie);
-          // The secret is compared even when there is no routine to compare it with.
-          const secret = Option.match(row, {
-            onNone: () => null,
-            onSome: (found) =>
-              found.trigger_json._tag === "webhook" ? found.webhook_secret : null,
-          });
-          const matches = yield* sameSecret(input.secret, secret ?? "");
-          if (Option.isNone(row) || secret === null || !matches) return yield* unknown;
+          const row = yield* webhookRoutine(input);
+          if (Option.isNone(row)) return yield* new WebhookRefused({ reason: "unknown" });
           const routine = row.value;
           if (input.requestKey !== null) {
             const earlier = yield* runWithKey({
@@ -502,6 +561,6 @@ export const layer = Layer.effect(
       );
     });
 
-    return RoutineRuns.of({ due, runNow, webhook, settle: settleEnded(null) });
+    return RoutineRuns.of({ due, runNow, admitWebhook, webhook, settle: settleEnded(null) });
   }),
 ).pipe(Layer.provide(Digest.layerWebCrypto));

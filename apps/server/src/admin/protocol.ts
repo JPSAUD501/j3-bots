@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { EngineStatus, PairingCode } from "@j3-bots/contracts";
+import { EngineStatus, PairingCode, ServerOrigin } from "@j3-bots/contracts";
 import * as Schema from "effect/Schema";
 
 // What `j3-bots` commands ask the running server over its admin socket
@@ -47,6 +47,11 @@ export const AdminStatus = Schema.Struct({
   pairedDevices: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   /** Whether the server found a built web client to serve when it started. */
   webClient: Schema.Literals(["served", "not-built"]),
+  /**
+   * The `publicOrigin` the server runs with, absent when none is set. Optional
+   * so that a command reads the status of a server from before the setting.
+   */
+  publicOrigin: Schema.optionalKey(ServerOrigin),
 });
 export type AdminStatus = typeof AdminStatus.Type;
 

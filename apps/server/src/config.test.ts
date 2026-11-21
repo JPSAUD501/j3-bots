@@ -99,6 +99,31 @@ it.layer(NodeServices.layer)("server configuration", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect(
+    "takes a public origin only as a bare https origin, written as a browser writes it",
+    () =>
+      Effect.gen(function* () {
+        const home = yield* freshHome;
+        yield* writeConfigFile(home, JSON.stringify({ publicOrigin: "https://bots.example.com" }));
+        const config = yield* withEnvironment(load, { J3_HOME: home });
+        assert.deepStrictEqual(config.publicOrigin, Option.some("https://bots.example.com"));
+
+        for (const publicOrigin of [
+          "http://bots.example.com",
+          "https://bots.example.com/",
+          "https://bots.example.com/j3",
+          "https://bots.example.com:443",
+          "https://Bots.example.com",
+          "https://user@bots.example.com",
+          "bots.example.com",
+        ]) {
+          yield* writeConfigFile(home, JSON.stringify({ publicOrigin }));
+          const refused = yield* withEnvironment(load, { J3_HOME: home }).pipe(Effect.exit);
+          assert.deepInclude(failure(refused), { _tag: "ConfigFileInvalid" }, publicOrigin);
+        }
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("writes every default on first run, and never rewrites the operator's file", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

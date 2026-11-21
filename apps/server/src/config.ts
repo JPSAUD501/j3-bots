@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { ServerOrigin } from "@j3-bots/contracts";
 import * as EngineLive from "@j3-bots/engine-t3/live";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
@@ -69,6 +70,13 @@ export interface ServerConfigShape {
    * running server. A Unix socket, so only the operator's user can connect.
    */
   readonly adminSocket: string;
+  /**
+   * The `https` origin other machines reach the server at, when it differs
+   * from where it listens, as behind a proxy or a tunnel: a routine's
+   * `webhookUrl` names it, and `j3-bots pair` offers it first. It changes
+   * nothing about where or how the server listens.
+   */
+  readonly publicOrigin: Option.Option<ServerOrigin>;
 }
 
 export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShape>()(
@@ -149,6 +157,17 @@ const LAN = "lan";
 const Tls = Schema.Struct({ cert: Schema.NonEmptyString, key: Schema.NonEmptyString });
 
 /**
+ * An `https` origin written as a browser writes it: no path, query, fragment
+ * or user name, a lower-case host and no default port.
+ */
+const HttpsOrigin = ServerOrigin.check(
+  Schema.makeFilter((origin) => origin.startsWith("https://"), {
+    expected:
+      "an https origin such as https://bots.example.com, in lower case, with no path, not even a trailing /",
+  }),
+);
+
+/**
  * `<J3_HOME>/config.json`. Every setting is optional; a missing one takes its
  * default. Unknown keys are refused, so a misspelt setting is never ignored.
  */
@@ -159,6 +178,7 @@ const ConfigFile = Schema.Struct({
   enginePort: Schema.optionalKey(Schema.Port),
   webClient: Schema.optionalKey(Schema.NullOr(Schema.NonEmptyString)),
   tls: Schema.optionalKey(Schema.NullOr(Tls)),
+  publicOrigin: Schema.optionalKey(Schema.NullOr(HttpsOrigin)),
 });
 type ConfigFile = typeof ConfigFile.Type;
 
@@ -170,6 +190,7 @@ export const DEFAULTS = {
   enginePort: 3738,
   webClient: null,
   tls: null,
+  publicOrigin: null,
 } satisfies Required<ConfigFile>;
 
 const decodeConfigFile = Schema.decodeUnknownEffect(Schema.fromJsonString(ConfigFile));
@@ -537,5 +558,6 @@ export const load = Effect.gen(function* () {
     toolPort: ports.toolPort,
     webClient,
     adminSocket,
+    publicOrigin: Option.fromNullishOr(file.publicOrigin),
   } satisfies ServerConfigShape;
 });
