@@ -9,8 +9,13 @@ import * as Schema from "effect/Schema";
 export const ADMIN_PATHS = {
   /** `GET`. Answers `AdminStatus`. */
   status: "/status",
-  /** `POST`, no body. Answers a `PairingGrant`: a fresh code for a new device. */
+  /**
+   * `POST`, no body. Answers a `PairingOffer`: a fresh code for a new device,
+   * or, while pairing is locked after failed attempts, until when, and no code.
+   */
   pairing: "/pairing",
+  /** `POST`, no body. Lifts a lock on pairing, then answers as `pairing` does. */
+  unlockPairing: "/pairing/unlock",
   /**
    * `POST`, a `ProviderConnectionRequest`. Answers a `ProviderConnectionOutcome`
    * once the engine restarted with the connection, or it could not.
@@ -55,11 +60,12 @@ export const AdminStatus = Schema.Struct({
 });
 export type AdminStatus = typeof AdminStatus.Type;
 
-export const PairingGrant = Schema.Struct({
-  code: PairingCode,
-  expiresAt: Schema.DateTimeUtc,
-});
-export type PairingGrant = typeof PairingGrant.Type;
+export const PairingOffer = Schema.Union([
+  Schema.TaggedStruct("granted", { code: PairingCode, expiresAt: Schema.DateTimeUtc }),
+  /** No code: one made now could not pair before `until`. */
+  Schema.TaggedStruct("locked", { until: Schema.DateTimeUtc }),
+]);
+export type PairingOffer = typeof PairingOffer.Type;
 
 /**
  * What `j3-bots provider connect` does beyond storing the connection, as the

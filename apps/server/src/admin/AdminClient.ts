@@ -14,7 +14,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import {
   ADMIN_PATHS,
   AdminStatus,
-  PairingGrant,
+  PairingOffer,
   ProviderConnectionOutcome,
   ProviderConnectionRequest,
 } from "./protocol.ts";
@@ -26,7 +26,7 @@ export class AdminRequestFailed extends Schema.TaggedError<AdminRequestFailed>()
   { path: Schema.String, cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return `The running server did not answer ${this.path} as expected. Check its log with \`journalctl --user -u j3-bots\`.`;
+    return `The running server did not answer ${this.path} as expected. If \`j3-bots\` was just updated, restart the service with \`systemctl --user restart j3-bots\`; otherwise check its log with \`journalctl --user -u j3-bots\`.`;
   }
 }
 
@@ -44,9 +44,14 @@ export class AdminClient extends Context.Service<
     readonly status: (
       socket: string,
     ) => Effect.Effect<Option.Option<AdminStatus>, AdminRequestFailed>;
+    /**
+     * A code for a new device, or until when pairing is locked. With `unlock`,
+     * the lock is lifted first, so the answer is always a code.
+     */
     readonly startPairing: (
       socket: string,
-    ) => Effect.Effect<Option.Option<PairingGrant>, AdminRequestFailed>;
+      options: { readonly unlock: boolean },
+    ) => Effect.Effect<Option.Option<PairingOffer>, AdminRequestFailed>;
     readonly connectProviders: (
       socket: string,
       request: ProviderConnectionRequest,
@@ -63,6 +68,8 @@ export const layer = Layer.effect(
         path: string,
         method: "GET" | "POST",
         schema: Schema.Codec<A, unknown>,
+        /** Whether the answer carries a secret, such as a pairing code. */
+        secretAnswer: boolean,
         body: Option.Option<
           (
             request: HttpClientRequest.HttpClientRequest,
@@ -86,12 +93,17 @@ export const layer = Layer.effect(
             Effect.flatMap(HttpClientResponse.schemaBodyJson(schema)),
             Effect.timeout(timeout),
             Effect.asSome,
-            // A failure with a body may hold the request, and a body may hold a key.
+            // A failure may hold the request or the answer: a request's body
+            // may hold a key, and an answer that did not decode may hold a code.
             Effect.mapError(
               (cause) =>
                 new AdminRequestFailed({
                   path,
-                  cause: Option.isSome(body) ? "Left out: the request carried a body." : cause,
+                  cause: Option.isSome(body)
+                    ? "Left out: the request carried a body."
+                    : secretAnswer
+                      ? "Left out: the answer carries a secret."
+                      : cause,
                 }),
             ),
           );
@@ -104,8 +116,14 @@ export const layer = Layer.effect(
           Effect.provideService(FileSystem.FileSystem, fs),
         );
     return AdminClient.of({
-      status: ask(ADMIN_PATHS.status, "GET", AdminStatus),
-      startPairing: ask(ADMIN_PATHS.pairing, "POST", PairingGrant),
+      status: ask(ADMIN_PATHS.status, "GET", AdminStatus, false),
+      startPairing: Effect.fn("AdminClient.startPairing")(function* (
+        socket: string,
+        options: { readonly unlock: boolean },
+      ) {
+        const path = options.unlock ? ADMIN_PATHS.unlockPairing : ADMIN_PATHS.pairing;
+        return yield* ask(path, "POST", PairingOffer, true)(socket);
+      }),
       connectProviders: Effect.fn("AdminClient.connectProviders")(function* (
         socket: string,
         request: ProviderConnectionRequest,
@@ -114,6 +132,7 @@ export const layer = Layer.effect(
           ADMIN_PATHS.providerConnection,
           "POST",
           ProviderConnectionOutcome,
+          false,
           Option.some(HttpClientRequest.schemaBodyJson(ProviderConnectionRequest)(request)),
           CONNECT_TIMEOUT,
         )(socket);
