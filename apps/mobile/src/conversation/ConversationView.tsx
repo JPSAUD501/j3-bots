@@ -59,6 +59,16 @@ function useAppActive(): boolean {
   return active;
 }
 
+/**
+ * Whether the operator can see the conversation: its screen has the focus
+ * and the app is in the foreground.
+ */
+function useInView(): boolean {
+  const focused = useIsFocused();
+  const active = useAppActive();
+  return focused && active;
+}
+
 /** The order of the entry a row shows; none for a divider or a message still on its way. */
 const orderOf = (row: TimelineItem): EntryOrder | null => {
   switch (row.kind) {
@@ -80,19 +90,17 @@ const SEEN_PERCENT = 50;
 
 /**
  * Marks read the newest entry the operator can see, and tells the server the
- * conversation is in view, while its screen has the focus and the app is in
- * the foreground. Otherwise what arrives notifies and stays unread. Returns
- * the list's viewability pairs, which never change.
+ * conversation is in view, while it is `inView`. Otherwise what arrives
+ * notifies and stays unread. Returns the list's viewability pairs, which
+ * never change.
  */
 function useReadMark(
   target: EntryTarget,
   rows: ReadonlyArray<TimelineItem>,
   markRead: (order: EntryOrder) => void,
+  inView: boolean,
 ): ViewabilityConfigCallbackPairs<TimelineItem> {
   const client = useJ3Client();
-  const focused = useIsFocused();
-  const active = useAppActive();
-  const inView = focused && active;
   // The list reads its viewability callbacks once: they reach what is current through here.
   const latest = useRef({ inView, rows, markRead });
   useLayoutEffect(() => {
@@ -178,7 +186,8 @@ export function ConversationView({
   const [target] = useState(() => rosterTarget(rosterKeyOf(item)));
   const { state, loadOlder, markRead } = useConversation(target);
   const rows = useMemo(() => buildTimeline(state?.items ?? []), [state?.items]);
-  const pairs = useReadMark(target, rows, markRead);
+  const inView = useInView();
+  const pairs = useReadMark(target, rows, markRead, inView);
 
   const list = useRef<LegendListRef>(null);
   const composer = useRef<ComponentRef<typeof View>>(null);
@@ -331,6 +340,7 @@ export function ConversationView({
                     {...(mentionable === undefined ? {} : { mentionable })}
                     {...(addressee === null ? {} : { addressee })}
                     onSend={send}
+                    inView={inView}
                   />
                 )}
               </View>

@@ -7,22 +7,17 @@
 export type RecognitionPlace = "device" | "online";
 
 /**
- * Recognition runs on the device when it has an on-device recognizer and,
- * where the platform lists them, the model for `language` is installed; a
- * language that would first need a download is recognized online.
- * `installed` is null where the platform does not list installed languages.
+ * Recognition runs on the device when the on-device recognizer has the model
+ * for `language` installed; a language that would first need a download is
+ * recognized online.
  */
 export const recognitionPlace = (
   language: string | undefined,
-  onDevice: {
-    readonly recognizer: boolean;
-    readonly installed: ReadonlyArray<string> | null;
-  },
+  installed: ReadonlyArray<string>,
 ): RecognitionPlace => {
-  if (!onDevice.recognizer || language === undefined) return "online";
-  if (onDevice.installed === null) return "device";
+  if (language === undefined) return "online";
   const wanted = language.toLowerCase();
-  return onDevice.installed.some((tag) => tag.toLowerCase() === wanted) ? "device" : "online";
+  return installed.some((tag) => tag.toLowerCase() === wanted) ? "device" : "online";
 };
 
 /**

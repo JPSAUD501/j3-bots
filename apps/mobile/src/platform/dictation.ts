@@ -13,21 +13,21 @@ export const dictationLanguage = (): string | undefined => getLocales()[0]?.lang
 
 /**
  * Where recognition of `language` would run now. Android lists the languages
- * its on-device recognizer has installed (13 and later; earlier, none);
- * iOS says whether its recognizer for the device's language runs on the
- * device.
+ * its on-device recognizer has installed (13 and later; earlier, none). iOS
+ * is taken to recognize online: the module's check there asks about the
+ * recognizer of the system's language, not of `language`, and none of it has
+ * been run on iOS.
  */
 export const whereRecognitionRuns = async (
   language: string | undefined,
 ): Promise<RecognitionPlace> => {
-  const recognizer = ExpoSpeechRecognitionModule.supportsOnDeviceRecognition();
-  if (!recognizer || Platform.OS !== "android") {
-    return recognitionPlace(language, { recognizer, installed: null });
+  if (Platform.OS !== "android" || !ExpoSpeechRecognitionModule.supportsOnDeviceRecognition()) {
+    return "online";
   }
   // A recognizer that cannot list its languages has none it can be taken to have installed.
   const installed = await ExpoSpeechRecognitionModule.getSupportedLocales({}).then(
     (locales) => locales.installedLocales,
     () => [],
   );
-  return recognitionPlace(language, { recognizer, installed });
+  return recognitionPlace(language, installed);
 };

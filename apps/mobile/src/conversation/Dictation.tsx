@@ -6,7 +6,7 @@ import {
 } from "expo-speech-recognition";
 import { Mic, Square } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
-import { Linking, Pressable, Text, View } from "react-native";
+import { AccessibilityInfo, Linking, Platform, Pressable, Text, View } from "react-native";
 import { Icon } from "../components/Icon.tsx";
 import { useI18n } from "../i18n.ts";
 import {
@@ -44,7 +44,7 @@ export interface Dictation {
   readonly problem: DictationProblem | null;
   readonly start: () => void;
   readonly stop: () => void;
-  /** Stops listening without a final result; what was heard so far stays in the draft. */
+  /** Stops listening with no final result; what was heard so far stays in the draft. */
   readonly abort: () => void;
   /** Forgets the last problem, as the operator moves on. */
   readonly dismiss: () => void;
@@ -92,32 +92,41 @@ interface Session {
 }
 
 /**
- * Cancels a press being prepared, and stops taking what the recognizer hears.
- * The recognizer answers its abort with an `aborted` error, which ends the
- * session as any other end does.
+ * Stops a session this composer started, and taking what it hears.
+ * `expo-speech-recognition` answers `abort()` with an `aborted` error event,
+ * on Android and iOS alike, which ends the session as any other end does.
  */
-const interrupt = (session: Session) => {
-  session.preparing = false;
+const stopTaking = (session: Session) => {
   if (!session.owned || !session.taking) return;
   session.taking = false;
   ExpoSpeechRecognitionModule.abort();
+};
+
+/** Cancels a press being prepared too. */
+const interrupt = (session: Session) => {
+  session.preparing = false;
+  stopTaking(session);
 };
 
 /**
  * Dictation into the draft with the platform's speech recognizer, preferring
  * recognition on the device. The first press asks for the microphone. What
  * is heard goes to `onHeard` as it is heard, the whole text each time; it is
- * never sent. Listening stops once the draft is `frozen`. Null where the
- * platform has no recognizer. The recognizer is one for the app: this
- * composer only follows a session it started, and stops it when it unmounts.
+ * never sent. Listening stops once the draft is `frozen`, or the conversation
+ * is no longer `inView`. Null where the platform has no recognizer. The
+ * recognizer is one for the app: this composer only follows a session it
+ * started, and stops it when it unmounts.
  */
 export function useDictation({
   onHeard,
   frozen,
+  inView,
 }: {
   readonly onHeard: (text: string) => void;
   /** The draft takes no change. */
   readonly frozen: boolean;
+  /** The operator can see the conversation. */
+  readonly inView: boolean;
 }): Dictation | null {
   const [available] = useState(dictationAvailable);
   const [state, setState] = useState<DictationState>({ _tag: "idle" });
@@ -136,6 +145,11 @@ export function useDictation({
   useEffect(() => {
     if (frozen) interrupt(session.current);
   }, [frozen]);
+  // Not a press being prepared: Android reports the app in the background
+  // while its permission dialog is open.
+  useEffect(() => {
+    if (!inView) stopTaking(session.current);
+  }, [inView]);
 
   const finish = (next: DictationProblem | null) => {
     Object.assign(session.current, { preparing: false, owned: false, taking: false });
@@ -149,10 +163,6 @@ export function useDictation({
     if (!current.owned || !current.taking || best === undefined) return;
     current.heard = hear(current.heard, best.transcript, event.isFinal);
     onHeard(heardText(current.heard));
-  });
-  useSpeechRecognitionEvent("nomatch", () => {
-    const current = session.current;
-    if (current.taking && heardText(current.heard) === "") setProblem("noSpeech");
   });
   useSpeechRecognitionEvent("error", (event) => {
     const current = session.current;
@@ -260,22 +270,32 @@ const problemKey = {
 export function DictationLine({ dictation }: { readonly dictation: Dictation }) {
   const { t } = useI18n();
   const { state, problem } = dictation;
-  if (state._tag === "listening") {
-    return (
-      <Text accessibilityLiveRegion="polite" className="px-3 text-xs text-muted-foreground">
-        {t(
+  const line =
+    state._tag === "listening"
+      ? t(
           state.place === "device"
             ? "composer.dictation.listening"
             : "composer.dictation.listeningOnline",
-        )}
+        )
+      : problem === null
+        ? null
+        : t(problemKey[problem]);
+  // Android reads the line through its live region; iOS has none.
+  useEffect(() => {
+    if (Platform.OS === "ios" && line !== null) AccessibilityInfo.announceForAccessibility(line);
+  }, [line]);
+  if (line === null) return null;
+  if (state._tag === "listening") {
+    return (
+      <Text accessibilityLiveRegion="polite" className="px-3 text-xs text-muted-foreground">
+        {line}
       </Text>
     );
   }
-  if (problem === null) return null;
   return (
     <View className="flex-row items-center justify-between gap-2 ps-3">
       <Text accessibilityLiveRegion="polite" className="flex-1 text-xs text-muted-foreground">
-        {t(problemKey[problem])}
+        {line}
       </Text>
       {problem === "blocked" && (
         <Pressable

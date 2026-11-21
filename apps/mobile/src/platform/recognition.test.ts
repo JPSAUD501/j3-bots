@@ -4,17 +4,9 @@ import { hear, heardText, nothingHeard, recognitionPlace } from "./recognition.t
 
 describe("recognitionPlace", () => {
   it("runs on the device only when the language's model is installed there", () => {
-    const onDevice = { recognizer: true, installed: ["en-US", "pt-BR"] };
-    assert.strictEqual(recognitionPlace("pt-br", onDevice), "device");
-    assert.strictEqual(recognitionPlace("pt-PT", onDevice), "online");
-    assert.strictEqual(
-      recognitionPlace("en-US", { recognizer: false, installed: ["en-US"] }),
-      "online",
-    );
-  });
-
-  it("trusts the recognizer where the platform lists no installed languages", () => {
-    assert.strictEqual(recognitionPlace("en-US", { recognizer: true, installed: null }), "device");
+    const installed = ["en-US", "pt-BR"];
+    assert.strictEqual(recognitionPlace("pt-br", installed), "device");
+    assert.strictEqual(recognitionPlace("pt-PT", installed), "online");
   });
 });
 

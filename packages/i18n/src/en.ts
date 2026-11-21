@@ -429,12 +429,12 @@ export const en = {
   "composer.dictation.stop": "Stop dictation",
   "composer.dictation.listening": "Listening…",
   "composer.dictation.listeningOnline":
-    "Listening… Your phone’s speech service recognizes this online.",
+    "Listening… This device’s speech service may recognize this online.",
   "composer.dictation.denied": "Dictation needs the microphone.",
   "composer.dictation.settings": "Settings",
   "composer.dictation.noSpeech": "Nothing was heard. Try again.",
-  "composer.dictation.network": "Dictation needs a connection on this phone.",
-  "composer.dictation.language": "Dictation isn’t available in this phone’s language.",
+  "composer.dictation.network": "Dictation needs a connection on this device.",
+  "composer.dictation.language": "Dictation isn’t available in this device’s language.",
   "composer.dictation.failed": "Dictation stopped. Try again.",
 
   "share.title": "Send to",

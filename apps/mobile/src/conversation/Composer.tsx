@@ -54,7 +54,8 @@ export interface MentionCandidate extends Mentionable {
  * says who the message wakes. While there is nothing to send, the trailing
  * button dictates where the platform has a speech recognizer: what is heard
  * becomes the draft's text as it is heard, and waits there for Send. Typing
- * stops it. Mount one per conversation.
+ * stops it, and so does the conversation leaving the operator's view. Mount
+ * one per conversation.
  */
 export function Composer({
   target,
@@ -62,6 +63,7 @@ export function Composer({
   mentionable,
   addressee,
   onSend,
+  inView,
 }: {
   readonly target: EntryTarget;
   /** Who the message goes to: a bot's or a room's name. */
@@ -71,6 +73,8 @@ export function Composer({
   /** In a room, who the message wakes as it stands. */
   readonly addressee?: string;
   readonly onSend: () => void;
+  /** The operator can see the conversation: its screen has the focus, and the app is in front. */
+  readonly inView: boolean;
 }) {
   const i18n = useI18n();
   const { t } = i18n;
@@ -91,6 +95,7 @@ export function Composer({
   const dictation = useDictation({
     onHeard: (heard) => client.setDraftText(target, heard),
     frozen,
+    inView,
   });
   const listening = dictation?.state._tag === "listening";
   const ready = !frozen && sendable;

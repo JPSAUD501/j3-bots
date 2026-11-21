@@ -435,12 +435,12 @@ const sentences = {
   "composer.dictation.stop": "Parar o ditado",
   "composer.dictation.listening": "Ouvindo…",
   "composer.dictation.listeningOnline":
-    "Ouvindo… O serviço de voz do celular reconhece isto online.",
+    "Ouvindo… O serviço de voz deste aparelho pode reconhecer isto online.",
   "composer.dictation.denied": "O ditado precisa do microfone.",
   "composer.dictation.settings": "Configurações",
   "composer.dictation.noSpeech": "Nada foi ouvido. Tente de novo.",
-  "composer.dictation.network": "O ditado precisa de conexão neste celular.",
-  "composer.dictation.language": "O ditado não está disponível no idioma deste celular.",
+  "composer.dictation.network": "O ditado precisa de conexão neste aparelho.",
+  "composer.dictation.language": "O ditado não está disponível no idioma deste aparelho.",
   "composer.dictation.failed": "O ditado parou. Tente de novo.",
 
   "share.title": "Enviar para",
