@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { IntentFailure, Save } from "@j3-bots/client-runtime";
+import type { IntentFailure } from "../intents/Actions.ts";
+import type { Save } from "../stores/Details.ts";
 
 /** Why a save failed, as the form says it. */
 export type SaveProblem =

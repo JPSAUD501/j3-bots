@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { BotId, CommandId, EntryId, EntryOrder } from "@j3-bots/contracts";
-import type { OutgoingMessage } from "@j3-bots/client-runtime";
+import type { OutgoingMessage } from "../stores/Conversations.ts";
 import { describe, expect, it } from "vite-plus/test";
-import { at, message } from "../test/fixtures";
-import { buildTimeline } from "./timeline";
+import { at, message } from "../../test/fixtures.ts";
+import { buildTimeline } from "./timeline.ts";
 
 const scout = { _tag: "bot", botId: BotId.make("scout") } as const;
 const wren = { _tag: "bot", botId: BotId.make("wren") } as const;

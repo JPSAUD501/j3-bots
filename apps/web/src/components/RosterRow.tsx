@@ -2,19 +2,14 @@
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
 import type { Avatar, RosterItem } from "@j3-bots/contracts";
+import { needsOperator } from "@j3-bots/client-runtime";
+import { avatarAppearance, rosterKeyOf, rosterKeyText } from "@j3-bots/client-runtime/presentation";
 import { useI18n, usePresentation } from "../app/context";
 import type { ComponentProps } from "react";
 import { cn } from "../lib/cn";
 import type { DataAttributes } from "../lib/dataAttributes";
 import { activityTime } from "../lib/time";
-import { avatarAppearance } from "../presentation/avatar";
-import {
-  needsOperator,
-  rosterKeyOf,
-  rosterKeyText,
-  rosterLine,
-  type LineTone,
-} from "../presentation/roster";
+import { rosterLine, type LineTone } from "../presentation/roster";
 import { BotAvatar, RoomAvatar } from "./BotAvatar";
 
 export const toneClass: Record<LineTone, string> = {

@@ -1,20 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
-  type ActionState,
-  type BotChanges,
-  cardAction,
-  createJ3Client,
-  type Draft,
-  type DraftChangedElsewhere,
-  type IntentFailure,
-  type J3Client,
-  type Loaded,
-  type MemoryEdit,
-  memorySaveKey,
-  retryAction,
-  targetKey,
-} from "@j3-bots/client-runtime";
-import {
   J3ClientProvider,
   useActions,
   useBotFiles,
@@ -56,6 +41,22 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import {
+  cardAction,
+  createJ3Client,
+  memorySaveKey,
+  retryAction,
+  targetKey,
+  type ActionState,
+  type BotChanges,
+  type Draft,
+  type DraftChangedElsewhere,
+  type IntentFailure,
+  type J3Client,
+  type Loaded,
+  type MemoryEdit,
+} from "@j3-bots/client-runtime";
+import { handoffPeer, type RoomFormMode } from "@j3-bots/client-runtime/presentation";
 import { useI18n, usePresentation } from "../app/context";
 import { ConnectionBanner } from "../components/ConnectionBanner";
 import { memoryLabel } from "../components/DetailsPanel";
@@ -68,8 +69,6 @@ import { ServerAddress } from "../components/ServerAddress";
 import { type Notice, Toast } from "../components/Toast";
 import { notificationAccess } from "../preferences/notifications";
 import { notificationContent } from "../presentation/notification";
-import type { RoomFormMode } from "../presentation/roomForm";
-import { handoffPeer } from "../presentation/timeline";
 import type { ConversationView, DesktopServer, ShellData, ShellIntents } from "../shell/data";
 import { ShellSourceProvider } from "../shell/source";
 import {

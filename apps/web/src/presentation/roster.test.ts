@@ -2,7 +2,7 @@
 import { EntryId, RoomId, type Bot, type EntryPreview, type RosterItem } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { at, bot, context, plain, preview } from "../test/fixtures";
-import { filterRoster, orderRoster, presenceLine, rosterLine } from "./roster";
+import { presenceLine, rosterLine } from "./roster";
 
 const ctx = context("2026-11-20T15:00:00Z", "en", { scout: "Scout", wren: "Wren" });
 
@@ -29,61 +29,6 @@ const room = (lastEntry: EntryPreview | null): RosterItem => ({
   lastEntry,
   lastActivityAt: lastEntry?.createdAt ?? null,
   unread: false,
-});
-
-const names = (items: ReadonlyArray<RosterItem>) =>
-  items.map((i) => (i._tag === "bot" ? i.bot.profile.name : i.room.name));
-
-describe("orderRoster", () => {
-  it("puts pinned rows first, then rows that need the operator, then the most recent", () => {
-    const items = [
-      row(bot("Quiet")),
-      row(bot("Recent"), preview("2026-11-20T14:00:00Z")),
-      row(bot("Older"), preview("2026-11-20T09:00:00Z")),
-      row(bot("Unread"), preview("2026-11-19T09:00:00Z"), true),
-      row(bot("Asking", { _tag: "waiting", entryId: EntryId.make("ask") })),
-      row(bot("Pinned", { _tag: "idle" }, { pinned: true })),
-    ];
-    expect(names(orderRoster(items))).toEqual([
-      "Pinned",
-      "Unread",
-      "Asking",
-      "Recent",
-      "Older",
-      "Quiet",
-    ]);
-  });
-});
-
-describe("filterRoster", () => {
-  const items = [
-    row(
-      bot(
-        "João",
-        { _tag: "idle" },
-        {
-          profile: {
-            name: "João",
-            title: "Research",
-            avatar: { shape: "circle", color: "red" },
-            job: "",
-          },
-        },
-      ),
-    ),
-    row(bot("Pip", { _tag: "idle" }, { hidden: true })),
-    room(null),
-  ];
-
-  it("keeps hidden bots out until searched for", () => {
-    expect(names(filterRoster(items, ""))).toEqual(["João", "Launch"]);
-    expect(names(filterRoster(items, "pi"))).toEqual(["Pip"]);
-  });
-
-  it("matches names and titles regardless of case and accents", () => {
-    expect(names(filterRoster(items, " joao "))).toEqual(["João"]);
-    expect(names(filterRoster(items, "RESEARCH"))).toEqual(["João"]);
-  });
 });
 
 describe("rosterLine", () => {

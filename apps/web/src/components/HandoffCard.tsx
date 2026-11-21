@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { HandoffEntry } from "@j3-bots/contracts";
 import { useState } from "react";
+import { handoffPeer } from "@j3-bots/client-runtime/presentation";
 import { useBot, useI18n } from "../app/context";
 import { cn } from "../lib/cn";
-import { handoffPeer } from "../presentation/timeline";
 import { AvatarShape } from "./BotAvatar";
 
 const focusRing = "rounded-sm focus-visible:outline-2 focus-visible:outline-accent";

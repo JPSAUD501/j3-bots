@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Dialog } from "@base-ui/react/dialog";
-import type { SettingsSaves } from "@j3-bots/client-runtime";
 import {
   type Device,
   type DeviceId,
@@ -12,6 +11,14 @@ import {
 import type * as DateTime from "effect/DateTime";
 import { SettingsIcon, XIcon } from "lucide-react";
 import { useId, useState } from "react";
+import type { SettingsSaves } from "@j3-bots/client-runtime";
+import {
+  clockTime,
+  editsAfterFailedSave,
+  noEdits,
+  settingsPatch,
+  type SettingsEdits,
+} from "@j3-bots/client-runtime/presentation";
 import { useI18n, usePresentation } from "../app/context";
 import type { KeyWith } from "../i18n/i18n";
 import {
@@ -26,15 +33,9 @@ import {
   useNotificationAccess,
   type NotificationAccess,
 } from "../preferences/notifications";
-import {
-  editsAfterFailedSave,
-  noEdits,
-  settingsPatch,
-  type SettingsEdits,
-} from "../presentation/settings";
 import type { DesktopServer, ShellData, ShellIntents } from "../shell/data";
 import { cn } from "../lib/cn";
-import { activityTime, clockTime } from "../lib/time";
+import { activityTime } from "../lib/time";
 import { ConnectProviders, engineProblem, ProviderRow } from "./EmptyStates";
 import { ChangeServer } from "./ServerAddress";
 import { Loading, Section } from "./SettingsSection";

@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { type EngineStatus, ModelId, ProviderId } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { bot } from "../test/fixtures";
+import { bot } from "../../test/fixtures.ts";
 import {
   botPatch,
   editsAfterFailedBotSave,
   modelChoices,
   noBotEdits,
   withProfileEdit,
-} from "./botEdit";
+} from "./botEdit.ts";
 
 const claude = { providerId: ProviderId.make("claude"), modelId: ModelId.make("sonnet") };
 const codex = { providerId: ProviderId.make("codex"), modelId: ModelId.make("gpt") };

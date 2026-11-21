@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { ProfileChanges } from "@j3-bots/client-runtime";
+import type { ProfileChanges } from "../stores/Settings.ts";
 import { Label, type Settings, TimeZone } from "@j3-bots/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";

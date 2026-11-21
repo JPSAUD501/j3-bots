@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vite-plus/test";
-import { diffTones } from "./diff";
+import { diffTones } from "./diff.ts";
 
 describe("diffTones", () => {
   it("quiets file headers before a hunk, but tints a removed `---` line inside one", () => {

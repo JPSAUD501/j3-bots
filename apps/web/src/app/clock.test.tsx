@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { clockTime } from "@j3-bots/client-runtime/presentation";
 import { createI18n } from "../i18n/i18n";
-import { clockTime } from "../lib/time";
 import { at } from "../test/fixtures";
 import { ClockProvider, OperatorTimeZone, useClock } from "./clock";
 

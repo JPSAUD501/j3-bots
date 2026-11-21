@@ -7,8 +7,12 @@ import {
   type BotColor,
 } from "@j3-bots/design-tokens";
 import type { CSSProperties } from "react";
+import {
+  avatarAppearance,
+  type AvatarBadge,
+  type AvatarMark,
+} from "@j3-bots/client-runtime/presentation";
 import { useChanges } from "../lib/useChanges";
-import { avatarAppearance, type AvatarBadge, type AvatarMark } from "../presentation/avatar";
 
 const isShape = (token: string): token is AvatarShapeName => Object.hasOwn(avatarShapes, token);
 const isColor = (token: string): token is BotColor => Object.hasOwn(botPalette, token);

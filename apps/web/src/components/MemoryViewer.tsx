@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Dialog } from "@base-ui/react/dialog";
-import type { MemoryEdit, Save } from "@j3-bots/client-runtime";
 import { MEMORY_TEXT_LIMIT, type MemoryDocument, MemoryText } from "@j3-bots/contracts";
 import * as Schema from "effect/Schema";
 import { XIcon } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
+import type { MemoryEdit, Save } from "@j3-bots/client-runtime";
+import { shownSaveProblem } from "@j3-bots/client-runtime/presentation";
 import { useI18n } from "../app/context";
 import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
-import { shownSaveProblem } from "../presentation/saves";
 import { Button } from "./ui/button";
 
 /** A memory file as the viewer has it: still reading, read, or not readable. */

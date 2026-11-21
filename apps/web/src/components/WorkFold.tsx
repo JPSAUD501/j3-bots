@@ -15,10 +15,10 @@ import {
   XIcon,
 } from "lucide-react";
 import { useEffect, useEffectEvent, useState } from "react";
+import { millisBetween, shortDuration } from "@j3-bots/client-runtime/presentation";
 import { usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
 import { touchTarget } from "../lib/touchTarget";
-import { millisBetween, shortDuration } from "../lib/time";
 import { workFoldTitle } from "../presentation/roster";
 import { CodeLines } from "./CodeLines";
 

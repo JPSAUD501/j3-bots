@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vite-plus/test";
-import { firstSeen, see } from "./changes";
+import { firstSeen, see } from "./changes.ts";
 
 describe("see", () => {
   it("counts changes from the first value seen, which is not one", () => {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { BotId, Entry, HandoffEntry, MessageEntry } from "@j3-bots/contracts";
-import type { ConversationItem, OutgoingMessage } from "@j3-bots/client-runtime";
+import type { ConversationItem, OutgoingMessage } from "../stores/Conversations.ts";
 import * as DateTime from "effect/DateTime";
 
 export type GroupPosition = "single" | "first" | "middle" | "last";

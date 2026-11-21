@@ -1,8 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { RoutineTrigger } from "@j3-bots/contracts";
-import * as DateTime from "effect/DateTime";
+import {
+  fullTime,
+  minuteText,
+  readCron,
+  timeOfDayText,
+  weekdayList,
+  zoneName,
+} from "@j3-bots/client-runtime/presentation";
 import type { I18n } from "../i18n/i18n";
-import { formatMoment, fullTime, type TimeContext } from "./time";
+import type { TimeContext } from "./time";
 
 /**
  * A routine's trigger written out, as the operator would say it: "Weekdays at
@@ -27,126 +34,57 @@ export function scheduleInWords(trigger: RoutineTrigger, ctx: TimeContext): stri
   }
 }
 
-/**
- * A time zone as the language names it today, such as "Western European
- * Time" (a zone's name follows its rules, which change over the years); its
- * id if this runtime does not know it.
- */
-function zoneName(timeZone: string, { i18n, now }: TimeContext): string {
-  let parts: Intl.DateTimeFormatPart[];
-  try {
-    parts = new Intl.DateTimeFormat(i18n.locale, {
-      timeZone,
-      timeZoneName: "longGeneric",
-    }).formatToParts(DateTime.toEpochMillis(now));
-  } catch (error) {
-    // An id this runtime does not know: say it as saved.
-    if (error instanceof RangeError) return timeZone;
-    throw error;
-  }
-  return parts.find((part) => part.type === "timeZoneName")?.value ?? timeZone;
-}
-
 /** `zone` is null when the schedule runs in the operator's own time zone. */
 function cronInWords(cron: string, i18n: I18n, zone: string | null): string | null {
-  const fields = cron.trim().split(/\s+/);
-  if (fields.length !== 5) return null;
-  const [minute = "", hour = "", dayOfMonth = "", month = "", dayOfWeek = ""] = fields;
-  if (month !== "*") return null;
-
-  const daily = dayOfMonth === "*" && dayOfWeek === "*";
-  const everyMinutes = step(minute, 60);
-  if (everyMinutes !== null && hour === "*" && daily) {
-    return i18n.plural("schedule.everyMinutes", everyMinutes);
+  const schedule = readCron(cron);
+  if (schedule === null) return null;
+  switch (schedule._tag) {
+    case "everyMinutes":
+      return i18n.plural("schedule.everyMinutes", schedule.minutes);
+    case "hourly": {
+      // A zone whose offset is not whole hours moves the minute too, so it is named here as well.
+      const minute = minuteText(schedule.minute);
+      return zone === null
+        ? i18n.t("schedule.hourly", { minute })
+        : i18n.t("schedule.hourly.zoned", { minute, zone });
+    }
+    case "everyHours": {
+      const minute = minuteText(schedule.minute);
+      return zone === null
+        ? i18n.plural("schedule.everyHours", schedule.hours, { minute })
+        : i18n.plural("schedule.everyHours.zoned", schedule.hours, { minute, zone });
+    }
+    case "monthly": {
+      const { day } = schedule;
+      const time = timeOfDayText(schedule.at, { i18n });
+      return zone === null
+        ? i18n.t("schedule.monthly", { day, time })
+        : i18n.t("schedule.monthly.zoned", { day, time, zone });
+    }
+    case "daily": {
+      const time = timeOfDayText(schedule.at, { i18n });
+      return zone === null
+        ? i18n.t("schedule.daily", { time })
+        : i18n.t("schedule.daily.zoned", { time, zone });
+    }
+    case "weekdays": {
+      const time = timeOfDayText(schedule.at, { i18n });
+      return zone === null
+        ? i18n.t("schedule.weekdays", { time })
+        : i18n.t("schedule.weekdays.zoned", { time, zone });
+    }
+    case "weekends": {
+      const time = timeOfDayText(schedule.at, { i18n });
+      return zone === null
+        ? i18n.t("schedule.weekends", { time })
+        : i18n.t("schedule.weekends.zoned", { time, zone });
+    }
+    case "onDays": {
+      const time = timeOfDayText(schedule.at, { i18n });
+      const days = weekdayList(schedule.days, { i18n });
+      return zone === null
+        ? i18n.t("schedule.onDays", { days, time })
+        : i18n.t("schedule.onDays.zoned", { days, time, zone });
+    }
   }
-
-  const m = number(minute, 59);
-  if (m === null) return null;
-  // A zone whose offset is not whole hours moves the minute too, so it is named here as well.
-  const at = String(m).padStart(2, "0");
-  if (hour === "*" && daily) {
-    return zone === null
-      ? i18n.t("schedule.hourly", { minute: at })
-      : i18n.t("schedule.hourly.zoned", { minute: at, zone });
-  }
-  const everyHours = step(hour, 24);
-  if (everyHours !== null && daily) {
-    return zone === null
-      ? i18n.plural("schedule.everyHours", everyHours, { minute: at })
-      : i18n.plural("schedule.everyHours.zoned", everyHours, { minute: at, zone });
-  }
-
-  const h = number(hour, 23);
-  if (h === null) return null;
-  const time = formatMoment(
-    new Intl.DateTimeFormat(i18n.locale, { timeStyle: "short", timeZone: "UTC" }),
-    Date.UTC(2000, 0, 1, h, m),
-  );
-
-  if (dayOfMonth !== "*") {
-    const day = number(dayOfMonth, 31);
-    if (day === null || day === 0 || dayOfWeek !== "*") return null;
-    return zone === null
-      ? i18n.t("schedule.monthly", { day, time })
-      : i18n.t("schedule.monthly.zoned", { day, time, zone });
-  }
-  if (dayOfWeek === "*")
-    return zone === null
-      ? i18n.t("schedule.daily", { time })
-      : i18n.t("schedule.daily.zoned", { time, zone });
-
-  const days = weekdays(dayOfWeek);
-  if (days === null) return null;
-  const key = days.join(",");
-  if (key === "1,2,3,4,5")
-    return zone === null
-      ? i18n.t("schedule.weekdays", { time })
-      : i18n.t("schedule.weekdays.zoned", { time, zone });
-  if (key === "0,6")
-    return zone === null
-      ? i18n.t("schedule.weekends", { time })
-      : i18n.t("schedule.weekends.zoned", { time, zone });
-  const names = days.map((d) =>
-    new Intl.DateTimeFormat(i18n.locale, { weekday: "long", timeZone: "UTC" }).format(
-      // 2000-01-02 was a Sunday.
-      Date.UTC(2000, 0, 2 + d),
-    ),
-  );
-  const list = new Intl.ListFormat(i18n.locale, { type: "conjunction" }).format(names);
-  return zone === null
-    ? i18n.t("schedule.onDays", { days: list, time })
-    : i18n.t("schedule.onDays.zoned", { days: list, time, zone });
-}
-
-/**
- * The step of a `*\/N` field over a cycle of `cycle` units, when N divides the
- * cycle evenly: only then does it run at the same spacing all the way round.
- * `*\/7` minutes runs at :56 and again at :00, which "every 7 minutes" would
- * misstate.
- */
-function step(field: string, cycle: number): number | null {
-  const match = /^\*\/(\d{1,2})$/.exec(field);
-  if (match?.[1] === undefined) return null;
-  const n = Number(match[1]);
-  return n > 0 && cycle % n === 0 ? n : null;
-}
-
-function number(field: string, max: number): number | null {
-  if (!/^\d{1,2}$/.test(field)) return null;
-  const n = Number(field);
-  return n <= max ? n : null;
-}
-
-/** Sorted, distinct days 0-6 (Sunday is 0; cron's 7 is Sunday too), or null if not a plain list. */
-function weekdays(field: string): number[] | null {
-  const days = new Set<number>();
-  for (const part of field.split(",")) {
-    const range = /^(\d)(?:-(\d))?$/.exec(part);
-    if (range?.[1] === undefined) return null;
-    const from = Number(range[1]);
-    const to = range[2] === undefined ? from : Number(range[2]);
-    if (from > 7 || to > 7 || to < from) return null;
-    for (let d = from; d <= to; d++) days.add(d % 7);
-  }
-  return [...days].sort((a, b) => a - b);
 }

@@ -2,8 +2,8 @@
 import type { BotState } from "@j3-bots/contracts";
 import { EntryId } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { at } from "../test/fixtures";
-import { avatarAppearance } from "./avatar";
+import { at } from "../../test/fixtures.ts";
+import { avatarAppearance } from "./avatar.ts";
 
 const since = at("2026-11-20T10:00:00Z");
 const states: ReadonlyArray<readonly [BotState, boolean]> = [

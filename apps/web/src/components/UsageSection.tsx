@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { RecentTurnsState } from "@j3-bots/client-runtime";
 import {
   type Bot,
   type BotId,
@@ -9,16 +8,17 @@ import {
   type UsageWindow,
 } from "@j3-bots/contracts";
 import * as Duration from "effect/Duration";
-import { useI18n, usePresentation } from "../app/context";
-import { cn } from "../lib/cn";
-import { timeInSentence } from "../lib/time";
+import type { RecentTurnsState } from "@j3-bots/client-runtime";
 import {
   coverage,
   providerUsage,
-  windowText,
   type BotSpend,
   type ProviderUsage,
-} from "../presentation/usage";
+} from "@j3-bots/client-runtime/presentation";
+import { useI18n, usePresentation } from "../app/context";
+import { cn } from "../lib/cn";
+import { timeInSentence } from "../lib/time";
+import { windowText } from "../presentation/usage";
 import { AvatarShape } from "./BotAvatar";
 import { Loading, Section } from "./SettingsSection";
 import { Button } from "./ui/button";

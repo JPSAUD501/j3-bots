@@ -5,14 +5,6 @@
  * translated; everything it shows is.
  */
 import {
-  type DraftFile,
-  type DraftMention,
-  type PairingFailure,
-  type RecentTurns,
-  type RecentTurnsState,
-  turnsNotRead,
-} from "@j3-bots/client-runtime";
-import {
   AttachmentId,
   type BotId,
   Conflict,
@@ -31,6 +23,15 @@ import {
 import { avatarShapeNames, botColors, colors, radii, typeScale } from "@j3-bots/design-tokens";
 import * as DateTime from "effect/DateTime";
 import { useId, useState, type ReactNode } from "react";
+import {
+  turnsNotRead,
+  type DraftFile,
+  type DraftMention,
+  type PairingFailure,
+  type RecentTurns,
+  type RecentTurnsState,
+} from "@j3-bots/client-runtime";
+import { addressed, addresseeOf, mentionOptions } from "@j3-bots/client-runtime/presentation";
 import { ClockProvider, OperatorTimeZone } from "../app/clock";
 import { BotsProvider, I18nProvider, useI18n } from "../app/context";
 import { ApprovalCard } from "../components/ApprovalCard";
@@ -56,7 +57,7 @@ import { UsageSection } from "../components/UsageSection";
 import { WorkFold } from "../components/WorkFold";
 import { locales, type Locale } from "../i18n/i18n";
 import { cn } from "../lib/cn";
-import { addressed, addresseeOf, addresseeLine, mentionOptions } from "../presentation/mentions";
+import { addresseeLine } from "../presentation/mentions";
 import { Shell } from "../shell/Shell";
 import { shellShortcuts } from "../shell/shortcuts";
 import { SAMPLE_NOW, ids, sampleTeam } from "./sample";

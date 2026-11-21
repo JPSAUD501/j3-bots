@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BotChanges } from "@j3-bots/client-runtime";
+import type { BotChanges } from "../stores/Details.ts";
 import {
   type Bot,
   type EngineStatus,
