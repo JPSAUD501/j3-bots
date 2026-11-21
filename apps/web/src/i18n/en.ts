@@ -475,7 +475,7 @@ export const en = {
     "The J3 Bots server was updated and speaks a newer version. Reload to get the matching page.",
   "gate.incompatible.desktopTitle": "This app doesn’t match the server",
   "gate.incompatible.desktopBody":
-    "The J3 Bots server at {address} speaks a different version than this app. Update the app to match the server, or change to another server.",
+    "The J3 Bots server at {address} speaks a different version than this app. Update the app or the server so they match, or change to another server.",
   "gate.storage.title": "This browser won’t keep the sign-in",
   "gate.storage.body":
     "J3 Bots keeps this device’s sign-in in the browser’s site data, and the browser refused. Allow site data for this page, then try again.",

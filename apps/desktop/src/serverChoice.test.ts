@@ -32,8 +32,8 @@ const setUp = (file: string, answer: ConnectRefusal | null = null) =>
       clearStorage: Effect.gen(function* () {
         done.push(`clear (server ${(yield* settings.get).server ?? "none"})`);
       }),
-      reload: Effect.gen(function* () {
-        done.push(`reload (server ${(yield* settings.get).server ?? "none"})`);
+      openHome: Effect.gen(function* () {
+        done.push(`open home (server ${(yield* settings.get).server ?? "none"})`);
       }),
     };
     return { choice, page, done, checked, settings };
@@ -110,7 +110,7 @@ describe("forgetting the server", () => {
       const file = yield* settingsFile(JSON.stringify({ server: SERVER, window: null }));
       const { choice, page, done } = yield* setUp(file);
       assert.strictEqual(yield* choice.forget(page), "forgotten");
-      assert.deepStrictEqual(done, ["clear (server none)", "reload (server none)"]);
+      assert.deepStrictEqual(done, ["clear (server none)", "open home (server none)"]);
       const written = yield* (yield* FileSystem.FileSystem).readFileString(file);
       assert.include(written, `"server":null`);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

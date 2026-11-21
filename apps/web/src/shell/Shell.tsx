@@ -22,6 +22,7 @@ import {
   QuietConversation,
 } from "../components/EmptyStates";
 import { Roster } from "../components/Roster";
+import { ChangeServer } from "../components/ServerAddress";
 import { SettingsButton, SignOutDevice } from "../components/SettingsDialog";
 import { Button } from "../components/ui/button";
 import { Timeline } from "../components/Timeline";
@@ -236,8 +237,19 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
             }
           />
         )}
-        {/* Settings live in the roster's footer; before there is a roster, this is the way out. */}
-        <div className="flex shrink-0 justify-center px-4 pb-3">
+        {/*
+          Settings live in the roster's footer; before there is a roster, these are the way out:
+          in the desktop app, to another server too, as when the one it names has moved.
+        */}
+        <div className="flex shrink-0 flex-wrap items-start justify-center gap-2 px-4 pb-3">
+          {intents.server !== undefined && (
+            <ChangeServer
+              address={intents.server.address}
+              onChange={intents.server.forget}
+              paired
+              className="items-center"
+            />
+          )}
           <SignOutDevice onSignOut={intents.signOut} quiet />
         </div>
       </div>

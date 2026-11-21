@@ -18,7 +18,7 @@ import {
   type UploadResponse,
   WindowLocks,
 } from "@j3-bots/client-runtime";
-import { DeviceId, DeviceToken } from "@j3-bots/contracts";
+import type { DeviceId } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -30,18 +30,8 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Socket from "effect/socket/Socket";
 import * as Idb from "./idb";
+import { type CredentialRecord, credentialRecord } from "./storedCredential";
 
-/**
- * The device credential, as IndexedDB keeps it. A non-extractable WebCrypto
- * key would not help: the server is also served over plain HTTP on a local
- * network, where WebCrypto's subtle API does not exist, and a script running
- * on this origin could use such a key as freely as read the token.
- */
-const StoredCredential = Schema.fromJsonString(
-  Schema.Struct({ deviceId: DeviceId, token: DeviceToken }),
-);
-const decodeCredential = Schema.decodeUnknownOption(StoredCredential);
-const encodeCredential = Schema.encodeSync(StoredCredential);
 const CREDENTIAL_KEY = "device";
 
 /**
@@ -50,68 +40,72 @@ const CREDENTIAL_KEY = "device";
  */
 const CREDENTIAL_CHANNEL = "j3-bots-credential";
 
-const credentials = Layer.effect(
-  CredentialStore,
-  Effect.gen(function* () {
-    const channel = yield* Effect.acquireRelease(
-      Effect.sync(() => new BroadcastChannel(CREDENTIAL_CHANNEL)),
-      (opened) => Effect.sync(() => opened.close()),
+/** Whether what is stored is `credential`, as issued by `record`'s server. */
+const sameCredential =
+  (record: CredentialRecord, credential: DeviceCredential) => (stored: unknown) =>
+    Option.exists(
+      record.read(stored),
+      (found) =>
+        found.deviceId === credential.deviceId &&
+        Redacted.value(found.token) === Redacted.value(credential.token),
     );
-    // oxlint-disable-next-line unicorn/require-post-message-target-origin -- a BroadcastChannel stays within its origin and takes no target
-    const announce = Effect.sync(() => channel.postMessage(null));
-    const stored = (credential: DeviceCredential) =>
-      encodeCredential({ deviceId: credential.deviceId, token: Redacted.value(credential.token) });
-    const load = Effect.tryPromise({
-      try: () => Idb.get("credentials", CREDENTIAL_KEY),
-      catch: () => new CredentialStorageError({ operation: "load" }),
-    }).pipe(
-      Effect.map((value) =>
-        value === undefined
-          ? Option.none()
-          : decodeCredential(value).pipe(
-              Option.map(({ deviceId, token }) => ({ deviceId, token: Redacted.make(token) })),
-            ),
-      ),
-    );
-    return CredentialStore.of({
-      load,
-      save: Effect.fn("CredentialStore.save")((credential: DeviceCredential) =>
-        Effect.tryPromise({
-          try: () => Idb.put("credentials", CREDENTIAL_KEY, stored(credential)),
-          catch: () => new CredentialStorageError({ operation: "save" }),
-        }).pipe(Effect.andThen(announce)),
-      ),
-      clear: Effect.fn("CredentialStore.clear")((credential: DeviceCredential) =>
-        Effect.tryPromise({
-          try: () =>
-            Idb.commit(
-              [{ store: "credentials", key: CREDENTIAL_KEY, value: null }],
-              [
-                Idb.holding({
-                  store: "credentials",
-                  key: CREDENTIAL_KEY,
-                  value: stored(credential),
-                }),
-              ],
-            ),
-          catch: () => new CredentialStorageError({ operation: "clear" }),
-        }).pipe(
-          Effect.tap((cleared) => (cleared ? announce : Effect.void)),
-          Effect.andThen(load),
+
+const credentials = (record: CredentialRecord) =>
+  Layer.effect(
+    CredentialStore,
+    Effect.gen(function* () {
+      const channel = yield* Effect.acquireRelease(
+        Effect.sync(() => new BroadcastChannel(CREDENTIAL_CHANNEL)),
+        (opened) => Effect.sync(() => opened.close()),
+      );
+      // oxlint-disable-next-line unicorn/require-post-message-target-origin -- a BroadcastChannel stays within its origin and takes no target
+      const announce = Effect.sync(() => channel.postMessage(null));
+      const load = Effect.tryPromise({
+        try: () => Idb.get("credentials", CREDENTIAL_KEY),
+        catch: () => new CredentialStorageError({ operation: "load" }),
+      }).pipe(Effect.map(record.read));
+      return CredentialStore.of({
+        load,
+        save: Effect.fn("CredentialStore.save")((credential: DeviceCredential) =>
+          Effect.tryPromise({
+            try: () => Idb.put("credentials", CREDENTIAL_KEY, record.write(credential)),
+            catch: () => new CredentialStorageError({ operation: "save" }),
+          }).pipe(Effect.andThen(announce)),
         ),
-      ),
-      changes: Stream.fromEventListener(channel, "message").pipe(Stream.as(undefined)),
-    });
-  }),
-);
+        clear: Effect.fn("CredentialStore.clear")((credential: DeviceCredential) =>
+          Effect.tryPromise({
+            try: () =>
+              Idb.commit(
+                [{ store: "credentials", key: CREDENTIAL_KEY, value: null }],
+                [
+                  {
+                    store: "credentials",
+                    key: CREDENTIAL_KEY,
+                    holds: sameCredential(record, credential),
+                  },
+                ],
+              ),
+            catch: () => new CredentialStorageError({ operation: "clear" }),
+          }).pipe(
+            Effect.tap((cleared) => (cleared ? announce : Effect.void)),
+            Effect.andThen(load),
+          ),
+        ),
+        changes: Stream.fromEventListener(channel, "message").pipe(Stream.as(undefined)),
+      });
+    }),
+  );
 
 const idbRecord = ({ table, key, value }: LocalRecord) => ({ store: table, key, value });
 
-/** The expectation that the device's credential is `pairing`'s, read in the transaction it guards. */
-const credentialOf = (pairing: DeviceId): Idb.IdbExpectation => ({
+/**
+ * The expectation that the device's credential, issued by `record`'s server,
+ * is `pairing`'s, read in the transaction it guards.
+ */
+const credentialOf = (record: CredentialRecord, pairing: DeviceId): Idb.IdbExpectation => ({
   store: "credentials",
   key: CREDENTIAL_KEY,
-  holds: (stored) => Option.exists(decodeCredential(stored), (found) => found.deviceId === pairing),
+  holds: (stored) => Option.exists(record.read(stored), (found) => found.deviceId === pairing),
 });
 
 /**
@@ -121,84 +115,86 @@ const credentialOf = (pairing: DeviceId): Idb.IdbExpectation => ({
 const STORAGE_CHANNEL = "j3-bots-storage";
 const decodeTable = Schema.decodeUnknownOption(LocalTable);
 
-const storage = Layer.effect(
-  ClientStorage,
-  Effect.gen(function* () {
-    const channel = yield* Effect.acquireRelease(
-      Effect.sync(() => new BroadcastChannel(STORAGE_CHANNEL)),
-      (opened) => Effect.sync(() => opened.close()),
-    );
-    const announce = (tables: Iterable<LocalTable>) =>
-      Effect.sync(() => {
-        // oxlint-disable-next-line unicorn/require-post-message-target-origin -- a BroadcastChannel stays within its origin and takes no target
-        for (const table of new Set(tables)) channel.postMessage(table);
-      });
-    return ClientStorage.of({
-      readAll: Effect.fn("ClientStorage.readAll")((table: LocalTable) =>
-        Effect.tryPromise({
-          try: () => Idb.getAll(table),
-          catch: () => new LocalStorageError({ operation: "read" }),
-        }).pipe(
-          Effect.map((records) => {
-            const text = new Map<string, string>();
-            for (const [key, value] of records) if (typeof value === "string") text.set(key, value);
-            return text;
-          }),
-        ),
-      ),
-      write: Effect.fn("ClientStorage.write")((table: LocalTable, key: string, value: string) =>
-        Effect.tryPromise({
-          try: () => Idb.put(table, key, value),
-          catch: () => new LocalStorageError({ operation: "write" }),
-        }).pipe(Effect.andThen(announce([table]))),
-      ),
-      remove: Effect.fn("ClientStorage.remove")((table: LocalTable, key: string) =>
-        Effect.tryPromise({
-          try: () => Idb.remove(table, key),
-          catch: () => new LocalStorageError({ operation: "remove" }),
-        }).pipe(Effect.andThen(announce([table]))),
-      ),
-      clear: Effect.fn("ClientStorage.clear")((table: LocalTable) =>
-        Effect.tryPromise({
-          try: () => Idb.clear(table),
-          catch: () => new LocalStorageError({ operation: "remove" }),
-        }).pipe(Effect.andThen(announce([table]))),
-      ),
-      commit: Effect.fn("ClientStorage.commit")(
-        (
-          changes: ReadonlyArray<LocalRecord>,
-          expected: ReadonlyArray<LocalRecord> = [],
-          pairing?: DeviceId,
-        ) =>
+const storage = (record: CredentialRecord) =>
+  Layer.effect(
+    ClientStorage,
+    Effect.gen(function* () {
+      const channel = yield* Effect.acquireRelease(
+        Effect.sync(() => new BroadcastChannel(STORAGE_CHANNEL)),
+        (opened) => Effect.sync(() => opened.close()),
+      );
+      const announce = (tables: Iterable<LocalTable>) =>
+        Effect.sync(() => {
+          // oxlint-disable-next-line unicorn/require-post-message-target-origin -- a BroadcastChannel stays within its origin and takes no target
+          for (const table of new Set(tables)) channel.postMessage(table);
+        });
+      return ClientStorage.of({
+        readAll: Effect.fn("ClientStorage.readAll")((table: LocalTable) =>
           Effect.tryPromise({
-            try: () =>
-              Idb.commit(changes.map(idbRecord), [
-                ...expected.map((record) => Idb.holding(idbRecord(record))),
-                ...(pairing === undefined ? [] : [credentialOf(pairing)]),
-              ]),
-            catch: () => new LocalStorageError({ operation: "write" }),
+            try: () => Idb.getAll(table),
+            catch: () => new LocalStorageError({ operation: "read" }),
           }).pipe(
-            Effect.tap((applied) =>
-              applied ? announce(changes.map((change) => change.table)) : Effect.void,
-            ),
+            Effect.map((records) => {
+              const text = new Map<string, string>();
+              for (const [key, value] of records)
+                if (typeof value === "string") text.set(key, value);
+              return text;
+            }),
           ),
-      ),
-      changes: Stream.callback<LocalTable>((queue) =>
-        Effect.acquireRelease(
-          Effect.sync(() => {
-            const listener = (event: MessageEvent) => {
-              const table = decodeTable(event.data);
-              if (Option.isSome(table)) Queue.offerUnsafe(queue, table.value);
-            };
-            channel.addEventListener("message", listener);
-            return listener;
-          }),
-          (listener) => Effect.sync(() => channel.removeEventListener("message", listener)),
         ),
-      ),
-    });
-  }),
-);
+        write: Effect.fn("ClientStorage.write")((table: LocalTable, key: string, value: string) =>
+          Effect.tryPromise({
+            try: () => Idb.put(table, key, value),
+            catch: () => new LocalStorageError({ operation: "write" }),
+          }).pipe(Effect.andThen(announce([table]))),
+        ),
+        remove: Effect.fn("ClientStorage.remove")((table: LocalTable, key: string) =>
+          Effect.tryPromise({
+            try: () => Idb.remove(table, key),
+            catch: () => new LocalStorageError({ operation: "remove" }),
+          }).pipe(Effect.andThen(announce([table]))),
+        ),
+        clear: Effect.fn("ClientStorage.clear")((table: LocalTable) =>
+          Effect.tryPromise({
+            try: () => Idb.clear(table),
+            catch: () => new LocalStorageError({ operation: "remove" }),
+          }).pipe(Effect.andThen(announce([table]))),
+        ),
+        commit: Effect.fn("ClientStorage.commit")(
+          (
+            changes: ReadonlyArray<LocalRecord>,
+            expected: ReadonlyArray<LocalRecord> = [],
+            pairing?: DeviceId,
+          ) =>
+            Effect.tryPromise({
+              try: () =>
+                Idb.commit(changes.map(idbRecord), [
+                  ...expected.map((entry) => Idb.holding(idbRecord(entry))),
+                  ...(pairing === undefined ? [] : [credentialOf(record, pairing)]),
+                ]),
+              catch: () => new LocalStorageError({ operation: "write" }),
+            }).pipe(
+              Effect.tap((applied) =>
+                applied ? announce(changes.map((change) => change.table)) : Effect.void,
+              ),
+            ),
+        ),
+        changes: Stream.callback<LocalTable>((queue) =>
+          Effect.acquireRelease(
+            Effect.sync(() => {
+              const listener = (event: MessageEvent) => {
+                const table = decodeTable(event.data);
+                if (Option.isSome(table)) Queue.offerUnsafe(queue, table.value);
+              };
+              channel.addEventListener("message", listener);
+              return listener;
+            }),
+            (listener) => Effect.sync(() => channel.removeEventListener("message", listener)),
+          ),
+        ),
+      });
+    }),
+  );
 
 /**
  * Asks for the lock `name` and resolves once this tab holds it. `release`
@@ -288,13 +284,17 @@ const network = Layer.succeed(
  * page's own origin: the server serves this app, and the browser sends nothing
  * anywhere else. In the desktop app it is the server the operator named, which
  * answers CORS for the app's pages (decision 0012); the page is a secure
- * context there, so everything below works as on an HTTPS origin.
+ * context there, so everything below works as on an HTTPS origin. The
+ * credential is kept with the server that issued it, and is absent for any
+ * other: clearing the page's storage on a change of server cannot be relied on
+ * alone to keep a token from reaching a server that did not issue it.
  */
-export const makePlatform = (server: URL): Layer.Layer<Platform> =>
-  Layer.mergeAll(
+export const makePlatform = (server: URL): Layer.Layer<Platform> => {
+  const record = credentialRecord(server, window.location.origin);
+  return Layer.mergeAll(
     Layer.succeed(ServerAddress, { origin: server }),
-    credentials,
-    storage,
+    credentials(record),
+    storage(record),
     locks,
     transfer,
     network,
@@ -302,3 +302,4 @@ export const makePlatform = (server: URL): Layer.Layer<Platform> =>
     Socket.layerWebSocketConstructorGlobal,
     SecureRandom.layerWebCrypto,
   );
+};

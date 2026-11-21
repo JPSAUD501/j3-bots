@@ -13,8 +13,8 @@ export interface Desktop {
    */
   readonly connect: (address: string) => Promise<ConnectResult | null>;
   /**
-   * Forgets the server, with everything this page kept for it, and loads the
-   * page again. Resolves `false` when the server is still kept.
+   * Forgets the server, with everything this page kept for it, and opens the
+   * app's first page. Resolves `false` when the server is still kept.
    */
   readonly forgetServer: () => Promise<boolean>;
 }

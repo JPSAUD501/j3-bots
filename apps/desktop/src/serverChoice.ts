@@ -22,8 +22,11 @@ export class StorageNotCleared extends Schema.TaggedError<StorageNotCleared>()(
 export interface Page {
   /** Empties the storage where the page keeps what belongs to a server: the credential, drafts, unsent messages. */
   readonly clearStorage: Effect.Effect<void, StorageNotCleared>;
-  /** Loads the page again. */
-  readonly reload: Effect.Effect<void>;
+  /**
+   * Loads the app's first page, not the page again: a path such as a bot's
+   * id belongs to the server just forgotten.
+   */
+  readonly openHome: Effect.Effect<void>;
 }
 
 /**
@@ -83,7 +86,7 @@ export const make = Effect.fn("ServerChoice.make")(function* (
         yield* page.clearStorage.pipe(
           Effect.catch((error) => Effect.logWarning("Clearing the page's storage failed", error)),
         );
-        yield* page.reload;
+        yield* page.openHome;
         return "forgotten" satisfies ForgetResult;
       }),
     );

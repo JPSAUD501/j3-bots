@@ -482,7 +482,7 @@ export const ptBR: Catalog = {
     "O servidor do J3 Bots foi atualizado e fala uma versão mais nova. Recarregue para pegar a página certa.",
   "gate.incompatible.desktopTitle": "Este app não combina com o servidor",
   "gate.incompatible.desktopBody":
-    "O servidor do J3 Bots em {address} fala uma versão diferente da deste app. Atualize o app para a versão do servidor ou troque para outro servidor.",
+    "O servidor do J3 Bots em {address} fala uma versão diferente da deste app. Atualize o app ou o servidor para que combinem, ou troque para outro servidor.",
   "gate.storage.title": "Este navegador não guarda o acesso",
   "gate.storage.body":
     "O J3 Bots guarda o acesso deste dispositivo nos dados de site do navegador, e o navegador recusou. Permita dados de site para esta página e tente de novo.",

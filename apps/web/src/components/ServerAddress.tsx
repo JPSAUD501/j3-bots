@@ -113,10 +113,12 @@ export function ServerAddress({ onConnect }: ServerAddressProps) {
 interface ChangeServerProps {
   /** The server this app talks to. */
   readonly address: string;
-  /** Resolves `false` when the server is still kept; otherwise the page loads again on the server address screen. */
+  /** Resolves `false` when the server is still kept; otherwise the app opens the server address screen. */
   readonly onChange: () => Promise<boolean>;
   /** This device is signed in on the server: ask first, since that sign-in goes. */
   readonly paired: boolean;
+  /** Something else is under way that changing server would undo. */
+  readonly disabled?: boolean;
   readonly className?: string;
 }
 
@@ -125,24 +127,31 @@ interface ChangeServerProps {
  * with this device's sign-in there and everything kept for it, and returns
  * to the server address screen.
  */
-export function ChangeServer({ address, onChange, paired, className }: ChangeServerProps) {
+export function ChangeServer({
+  address,
+  onChange,
+  paired,
+  disabled = false,
+  className,
+}: ChangeServerProps) {
   const { t } = useI18n();
   // Success loads the page again, so only a failure is ever shown here.
   const [state, setState] = useState<"idle" | "pending" | "failed">("idle");
   const pending = state === "pending";
+  const unavailable = pending || disabled;
   const change = () => {
-    if (pending) return;
+    if (unavailable) return;
     setState("pending");
     onChange().then((forgotten) => setState(forgotten ? "pending" : "failed"));
   };
   const label = pending ? t("server.change.pending") : t("server.change");
-  const trigger = <Button size="sm" variant="ghost-muted" aria-disabled={pending} />;
+  const trigger = <Button size="sm" variant="ghost-muted" aria-disabled={unavailable} />;
   return (
     <div className={cn("flex flex-col gap-1.5", className)}>
       {paired ? (
         <Confirm
           trigger={trigger}
-          busy={pending}
+          busy={unavailable}
           title={t("server.change.title")}
           body={t("server.change.body", { address })}
           cancel={t("server.change.cancel")}
@@ -152,7 +161,7 @@ export function ChangeServer({ address, onChange, paired, className }: ChangeSer
           {label}
         </Confirm>
       ) : (
-        <Button size="sm" variant="ghost-muted" aria-disabled={pending} onClick={change}>
+        <Button size="sm" variant="ghost-muted" aria-disabled={unavailable} onClick={change}>
           {label}
         </Button>
       )}

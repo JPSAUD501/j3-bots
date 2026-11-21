@@ -187,7 +187,7 @@ export interface DesktopServer {
   readonly address: string;
   /**
    * Forgets it, with this device's sign-in there and everything kept for it,
-   * and loads the page again on the server address screen. Resolves `false`
+   * and opens the app's first page, the server address screen. Resolves `false`
    * when it is still kept.
    */
   readonly forget: () => Promise<boolean>;

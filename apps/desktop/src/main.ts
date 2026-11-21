@@ -87,7 +87,8 @@ const pageOf = (event: IpcMainInvokeEvent): ServerChoice.Page => ({
     try: () => event.sender.session.clearStorageData({ storages: ["indexdb"] }),
     catch: (cause) => new ServerChoice.StorageNotCleared({ cause }),
   }),
-  reload: Effect.sync(() => event.sender.reload()),
+  // A load the page cuts short by navigating first leaves it where it went.
+  openHome: Effect.sync(() => void event.sender.loadURL(`${APP_ORIGIN}/`).catch(() => undefined)),
 });
 
 /**

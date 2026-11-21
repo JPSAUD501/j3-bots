@@ -75,6 +75,8 @@ export function Pairing({ reason, onPair, defaultName, server }: PairingProps) {
     | { readonly _tag: "pairing" }
     | { readonly _tag: "failed"; readonly reason: PairingFailure }
   >({ _tag: "editing" });
+  // Pairing and changing server never run together: one would undo the other.
+  const [changingServer, setChangingServer] = useState(false);
   const lockedUntil =
     state._tag === "failed" && state.reason._tag === "rate-limited" ? state.reason.retryAt : null;
   // Pairing opens again by itself once the lockout ends.
@@ -84,7 +86,7 @@ export function Pairing({ reason, onPair, defaultName, server }: PairingProps) {
     const timer = window.setTimeout(() => setState({ _tag: "editing" }), Math.max(0, wait));
     return () => window.clearTimeout(timer);
   }, [lockedUntil]);
-  const busy = state._tag === "pairing" || lockedUntil !== null;
+  const busy = state._tag === "pairing" || lockedUntil !== null || changingServer;
   const ready = code.trim() !== "" && name.trim() !== "" && !busy;
   const error = state._tag === "failed" ? failureText(state.reason) : null;
 
@@ -97,7 +99,10 @@ export function Pairing({ reason, onPair, defaultName, server }: PairingProps) {
       case "unreachable":
         return t("pairing.unreachable");
       case "incompatible-server":
-        return t("pairing.incompatible");
+        // The desktop app carries its page: reloading it changes nothing.
+        return server === undefined
+          ? t("pairing.incompatible")
+          : t("gate.incompatible.desktopBody", { address: server.address });
       case "storage-failed":
         return t("pairing.storageFailed");
     }
@@ -172,9 +177,11 @@ export function Pairing({ reason, onPair, defaultName, server }: PairingProps) {
         <p id={errorId} role="alert" className="text-xs text-blocked empty:hidden">
           {error}
         </p>
-        {state._tag === "failed" && state.reason._tag === "incompatible-server" && (
-          <Button onClick={() => window.location.reload()}>{t("gate.reload")}</Button>
-        )}
+        {server === undefined &&
+          state._tag === "failed" &&
+          state.reason._tag === "incompatible-server" && (
+            <Button onClick={() => window.location.reload()}>{t("gate.reload")}</Button>
+          )}
       </form>
       {server !== undefined && (
         <div className="flex max-w-xs flex-col items-center gap-1 text-xs text-muted-foreground">
@@ -183,8 +190,15 @@ export function Pairing({ reason, onPair, defaultName, server }: PairingProps) {
           </span>
           <ChangeServer
             address={server.address}
-            onChange={server.forget}
+            onChange={() => {
+              setChangingServer(true);
+              return server.forget().then((forgotten) => {
+                if (!forgotten) setChangingServer(false);
+                return forgotten;
+              });
+            }}
             paired={false}
+            disabled={state._tag === "pairing"}
             className="items-center"
           />
         </div>
@@ -196,7 +210,8 @@ export function Pairing({ reason, onPair, defaultName, server }: PairingProps) {
 /**
  * The server speaks another version of the protocol: this page is older or
  * newer than it. A browser reloads to get the server's own page; the desktop
- * app carries its page, so it needs updating, or another server.
+ * app carries its page, so the app or the server needs updating, or the app
+ * another server.
  */
 export function Incompatible({ server }: { server?: DesktopServer | undefined }) {
   const { t } = useI18n();
@@ -207,12 +222,12 @@ export function Incompatible({ server }: { server?: DesktopServer | undefined })
           title={t("gate.incompatible.desktopTitle")}
           body={t("gate.incompatible.desktopBody", { address: server.address })}
         />
-        <ChangeServer
-          address={server.address}
-          onChange={server.forget}
-          paired
-          className="items-center"
-        />
+        <div className="flex flex-wrap items-start justify-center gap-2">
+          <Button variant="primary" onClick={() => window.location.reload()}>
+            {t("gate.retry")}
+          </Button>
+          <ChangeServer address={server.address} onChange={server.forget} paired />
+        </div>
       </Centered>
     );
   }
