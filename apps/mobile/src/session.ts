@@ -54,10 +54,12 @@ export interface SessionDevice {
   readonly forgetFiles: Effect.Effect<void>;
   readonly makePlatform: (origin: URL) => Layer.Layer<Platform>;
   /**
-   * Ends the phone's pushes for a pairing it left, even one the server still
-   * lists, and clears the notifications that pairing received. Never fails.
+   * Starts ending the phone's pushes for a pairing it left, even one the
+   * server still lists, and clearing the notifications that pairing
+   * received. It waits on the push service, so the session does not wait for
+   * it: a pairing made next is not held up. Never fails.
    */
-  readonly endPush: () => Promise<void>;
+  readonly endPush: () => void;
 }
 
 export interface Session {
@@ -147,7 +149,7 @@ export const makeSession = (device: SessionDevice): Session => {
   const left = async () => {
     await Effect.runPromise(device.forgetFiles);
     await close();
-    await device.endPush();
+    device.endPush();
   };
 
   /** Whether `effect` succeeded. */
@@ -210,7 +212,7 @@ export const makeSession = (device: SessionDevice): Session => {
               await Effect.runPromise(device.forgetFiles);
               await current.client.dispose();
               state.set({ _tag: "none" });
-              await device.endPush();
+              device.endPush();
               return true;
           }
         } finally {

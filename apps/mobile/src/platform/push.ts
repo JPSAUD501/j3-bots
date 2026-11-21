@@ -12,15 +12,17 @@ import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import Constants from "expo-constants";
+import * as Crypto from "expo-crypto";
 import * as Notifications from "expo-notifications";
 import { AppState, Platform } from "react-native";
 import { deviceLanguage } from "../i18n.ts";
 import type { Session } from "../session.ts";
 
-// Push notifications through Expo's push service (decision 0014): this
-// phone's Expo push token, registered with the server it is paired with, in
-// the language the phone shows. The server pushes to a device with no socket
-// open, which is this app in the background (`Lifecycle`). What a tap opens is
+// Push notifications through Expo's push service (decision 0014): an Expo
+// push token of this phone's own for each pairing, registered with the server
+// it is paired with, in the language the phone shows. The server pushes to a
+// device with no socket open: this app in the background (`Lifecycle`), or in
+// the foreground while it cannot reach the server. What a tap opens is
 // `useNotificationTaps`.
 
 /**
@@ -96,44 +98,79 @@ const createChannels = async (language: Language) => {
   }
 };
 
+/** Whether the app has a socket open now, which tells it what a push would. */
+const connected = (session: Session): boolean => {
+  const state = session.state.get();
+  return state._tag === "open" && state.client.connection.get()._tag === "connected";
+};
+
 /**
  * What the app does about notifications before anything else: the channels
- * a push shows in, and nothing shown while the app is in the foreground. The
- * server pushes only to a device with no socket open, so a push that reaches
- * the app in the foreground raced the socket's opening, and the roster
- * already shows its entry unread.
+ * a push shows in, and how one shows while the app is in the foreground. The
+ * server pushes only to a device with no socket open, so one that arrives
+ * while the app is open but not connected shows as it would in the
+ * background. One that arrives once it is connected raced the socket's
+ * opening, and the roster already shows its entry unread: it shows nothing.
  */
-export const setUpNotifications = (): void => {
+export const setUpNotifications = (session: Session): void => {
   Notifications.setNotificationHandler({
-    handleNotification: () =>
-      Promise.resolve({
-        shouldShowBanner: false,
-        shouldShowList: false,
-        shouldPlaySound: false,
+    handleNotification: () => {
+      const shown = !connected(session);
+      return Promise.resolve({
+        shouldShowBanner: shown,
+        shouldShowList: shown,
+        shouldPlaySound: shown,
         shouldSetBadge: false,
-      }),
+      });
+    },
   });
   createChannels(deviceLanguage()).catch((error: unknown) =>
     warn("The notification channels could not be created.", error),
   );
 };
 
-/** The phone's Expo push token, fetched once, and again after a failure or a change. */
-let token: Promise<PushToken> | null = null;
+/**
+ * The id Expo keeps this phone's push token under for `pairing`: a UUID
+ * (version 8, its own kind) shaped from a hash of the pairing's id, so each
+ * pairing has a token of its own, the same each time, with nothing stored.
+ * When the device's token changes, Expo moves by itself only the token kept
+ * under the app's installation id, which no server holds: never one a
+ * pairing registered.
+ */
+const pushDeviceId = async (pairing: DeviceId): Promise<string> => {
+  const hex = await Crypto.digestStringAsync(
+    Crypto.CryptoDigestAlgorithm.SHA256,
+    `j3-bots push ${pairing}`,
+  );
+  const variant = ((Number.parseInt(hex.charAt(16), 16) & 0x3) | 0x8).toString(16);
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    `8${hex.slice(13, 16)}`,
+    `${variant}${hex.slice(17, 20)}`,
+    hex.slice(20, 32),
+  ].join("-");
+};
+
+/** The phone's Expo push token for a pairing, fetched once, and again after a failure or a change. */
+let token: { readonly pairing: DeviceId; readonly fetched: Promise<PushToken> } | null = null;
 const decodeToken = Schema.decodeUnknownOption(PushToken);
 
-const pushToken = (project: string): Promise<PushToken> => {
-  if (token !== null) return token;
-  const fetched = Notifications.getExpoPushTokenAsync({ projectId: project }).then(({ data }) =>
-    // The error names no token: a log is no place for one.
-    Option.getOrThrowWith(
-      decodeToken(data),
-      () => new Error("The push service gave a token the server would refuse."),
-    ),
-  );
-  token = fetched;
+const pushToken = (project: string, pairing: DeviceId): Promise<PushToken> => {
+  if (token?.pairing === pairing) return token.fetched;
+  const fetched = pushDeviceId(pairing)
+    .then((deviceId) => Notifications.getExpoPushTokenAsync({ projectId: project, deviceId }))
+    .then(({ data }) =>
+      // The error names no token: a log is no place for one.
+      Option.getOrThrowWith(
+        decodeToken(data),
+        () => new Error("The push service gave a token the server would refuse."),
+      ),
+    );
+  const cached = { pairing, fetched };
+  token = cached;
   fetched.catch(() => {
-    if (token === fetched) token = null;
+    if (token === cached) token = null;
   });
   return fetched;
 };
@@ -160,17 +197,18 @@ const serially = (work: () => Promise<void>, failed: string): Promise<void> => {
  * Tells the server what it should know of this phone's pushes: its token and
  * language while notifications are allowed, and no registration once the
  * operator refused them. What this run of the app already told it is not
- * sent again. Never asks for the permission. Waits for a socket, so in the
- * background it goes once the app returns.
+ * sent again, unless `again`. Never asks for the permission. Waits for a
+ * socket, so in the background it goes once the app returns.
  */
-const reconcile = (client: J3Client): Promise<void> =>
+const reconcile = (client: J3Client, again = false): Promise<void> =>
   serially(async () => {
+    if (again) told = null;
     const pairing = client.pairing.get();
     const project = pushProject();
     if (pairing === null || project === null || pushPlatform === null) return;
     const access = accessOf(await Notifications.getPermissionsAsync());
     if (access === "granted") {
-      const registered = { token: await pushToken(project), language: deviceLanguage() };
+      const registered = { token: await pushToken(project, pairing), language: deviceLanguage() };
       const known = told?.pairing === pairing ? told.registered : undefined;
       if (known?.token === registered.token && known.language === registered.language) return;
       const commandId = await client.commandId();
@@ -192,34 +230,52 @@ const reconcile = (client: J3Client): Promise<void> =>
     }
   }, "This phone's push registration could not be brought up to date.");
 
+/** Clears the notifications this phone shows. Never fails: what fails is logged. */
+const dismissShown = (): void => {
+  Notifications.dismissAllNotificationsAsync().catch((error: unknown) =>
+    warn("The notifications shown could not be cleared.", error),
+  );
+};
+
 /**
  * Keeps the server's registration of this phone current for as long as the
- * app runs: for each pairing as it starts, when the app returns to the
- * foreground (the operator may have allowed or refused notifications in the
- * system's settings meanwhile, or changed the phone's language), and when the
- * push service gives the app a new token.
+ * app runs: for each pairing as it starts; when the app returns to the
+ * foreground, all of it sent again, since the operator may have allowed or
+ * refused notifications in the system's settings meanwhile, or changed the
+ * phone's language, and the server may have dropped the registration; and
+ * when the push service gives the app a new token. A pairing that ends, as
+ * when another device revokes this one, takes the notifications it showed.
  */
 export const keepPushRegistered = (session: Session): void => {
   const current = (): J3Client | null => {
     const state = session.state.get();
     return state._tag === "open" ? state.client : null;
   };
-  const refresh = () => {
+  const refresh = (again = false) => {
     const client = current();
-    if (client !== null) void reconcile(client);
+    if (client !== null) void reconcile(client, again);
+  };
+  const watch = (client: J3Client) => {
+    let pairing = client.pairing.get();
+    return client.pairing.subscribe(() => {
+      const ended = pairing !== null && client.pairing.get() === null;
+      pairing = client.pairing.get();
+      if (ended) dismissShown();
+      refresh();
+    });
   };
   let followed: { readonly client: J3Client; readonly stop: () => void } | null = null;
   const follow = () => {
     const client = current();
     if (followed?.client === client) return;
     followed?.stop();
-    followed = client === null ? null : { client, stop: client.pairing.subscribe(refresh) };
+    followed = client === null ? null : { client, stop: watch(client) };
     refresh();
   };
   session.state.subscribe(follow);
   follow();
   AppState.addEventListener("change", (status) => {
-    if (status === "active") refresh();
+    if (status === "active") refresh(true);
   });
   Notifications.addPushTokenListener(() => {
     token = null;
@@ -244,14 +300,17 @@ export const allowNotifications = async (client: J3Client): Promise<Notification
 };
 
 /**
- * Ends this phone's pushes for a pairing it left: clears the notifications it
- * shows, and has the push service forget the app's token, so a server that
- * still lists the pairing, as after a sign-out it never confirmed, reaches
- * the phone no more (`DeviceNotRegistered`). A later registration gets a new
- * token. Never fails: what fails is logged.
+ * Starts ending this phone's pushes for a pairing it left: clears the
+ * notifications it shows, and has the push service forget the device's token
+ * (on Android, Firebase deletes it), so a server that still lists the
+ * pairing, as after a sign-out it never confirmed, reaches the phone no more
+ * (`DeviceNotRegistered`). The token the next pairing registers is its own,
+ * for the device's next token. Returns at once, for this waits on the push
+ * service; a registration asked for later waits for it. Never fails: what
+ * fails is logged.
  */
-export const endPush = (): Promise<void> =>
-  serially(async () => {
+export const endPush = (): void => {
+  void serially(async () => {
     told = null;
     token = null;
     if (pushPlatform === null || pushProject() === null) return;
@@ -260,3 +319,4 @@ export const endPush = (): Promise<void> =>
       Notifications.unregisterForNotificationsAsync(),
     ]);
   }, "This phone's pushes could not be ended here.");
+};

@@ -14,7 +14,7 @@ import { receiveShares } from "./src/share/incoming.ts";
 // kept, it hides as the app first renders: nothing to handle.
 SplashScreen.preventAutoHideAsync().catch(() => undefined);
 applyAppearance();
-setUpNotifications();
+setUpNotifications(session);
 void session.start();
 keepPushRegistered(session);
 receiveShares();

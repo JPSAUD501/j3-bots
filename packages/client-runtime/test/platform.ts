@@ -15,7 +15,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Socket from "effect/socket/Socket";
-import { ReconnectPolicy } from "../src/connection/Connection.ts";
+import { ReconnectPolicy, type ReconnectSettings } from "../src/connection/Connection.ts";
 import { OutboxSweep } from "../src/stores/Conversations.ts";
 import {
   ClientStorage,
@@ -423,14 +423,15 @@ const REQUEST_TIMEOUT = Duration.seconds(10);
  * A platform for tests: the device's credential in memory, `stored` when given, a network the test turns
  * off and on, an app the test puts in the background and back, Node's own `fetch` and `WebSocket`, and retries in milliseconds.
  * `http` stands between the client and the server, as a reverse proxy would,
- * for every HTTP request and upload.
+ * for every HTTP request and upload. `reconnect` replaces the test's pacing
+ * where a test needs another.
  */
 export const layer = (
   origin: URL,
   stored: Option.Option<DeviceCredential> = Option.none(),
   device: TestDevice = makeDevice(),
   http: Layer.Layer<HttpClient.HttpClient> = FetchHttpClient.layer,
-  requestTimeout: Duration.Duration = REQUEST_TIMEOUT,
+  reconnect: Partial<ReconnectSettings> = {},
 ) =>
   Layer.mergeAll(
     Layer.succeed(ServerAddress, { origin }),
@@ -451,7 +452,8 @@ export const layer = (
       initialDelay: Duration.millis(5),
       maxDelay: Duration.millis(20),
       openTimeout: Duration.seconds(5),
-      requestTimeout,
+      requestTimeout: REQUEST_TIMEOUT,
       pingTimeout: Duration.seconds(15),
+      ...reconnect,
     }),
   );

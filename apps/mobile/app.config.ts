@@ -114,7 +114,9 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
         "android.permission.RECEIVE_BOOT_COMPLETED",
       ],
     },
-    ...(pushProjectId === undefined ? {} : { extra: { eas: { projectId: pushProjectId } } }),
+    ...(pushProjectId === undefined
+      ? {}
+      : { extra: { ...config.extra, eas: { projectId: pushProjectId } } }),
     // No over-the-air updates: a build runs the JavaScript it was built with.
     updates: { enabled: false },
     plugins: [

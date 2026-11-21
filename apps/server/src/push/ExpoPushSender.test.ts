@@ -6,6 +6,7 @@ import {
   type DeviceId,
   type Language,
   PushData,
+  type PushPlatform,
   PushToken,
 } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
@@ -135,7 +136,7 @@ const createBot = (name: string) =>
     return yield* bots.create({ commandId: CommandId.make(`create-${name}`), draft: { name } });
   });
 
-const pushDevice = (name: string, language: Language = "en") =>
+const pushDevice = (name: string, language: Language = "en", platform: PushPlatform = "android") =>
   Effect.gen(function* () {
     const devices = yield* Devices;
     const { code } = yield* devices.startPairing;
@@ -146,7 +147,7 @@ const pushDevice = (name: string, language: Language = "en") =>
       registration: {
         provider: "expo",
         token: PushToken.make(`ExponentPushToken[fixture-${name}]`),
-        platform: "android",
+        platform,
         language,
       },
     });
@@ -263,6 +264,20 @@ it.effect("sends again after a 5xx, then reads the receipt and lets the delivery
     yield* deliverPending;
     // Handed on: nothing is asked about it again.
     assert.strictEqual(expo.asked.length, 1);
+  }).pipe(Effect.provide(domain)),
+);
+
+it.effect("sends to an iPhone with the delivery as its collapse id, in no Android channel", () =>
+  Effect.gen(function* () {
+    const expo = yield* ExpoWire;
+    const scout = yield* createBot("Scout");
+    yield* pushDevice("iPhone", "en", "ios");
+    yield* says(scout.id, "Done");
+    yield* deliverPending;
+    const [sent] = expo.sends;
+    assert.isString(sent?.collapseId);
+    assert.isUndefined(sent?.tag);
+    assert.isUndefined(sent?.channelId);
   }).pipe(Effect.provide(domain)),
 );
 

@@ -4,6 +4,7 @@ import {
   type CommandId,
   DeviceId,
   DeviceToken,
+  type Entry,
   type EntryId,
   type EntryTarget,
   HTTP_PATHS,
@@ -18,6 +19,7 @@ import {
   Invalid,
   NotFound,
   ProviderId,
+  PushToken,
   RoomId,
   MAX_USAGE_TURNS,
   USAGE_PERIOD,
@@ -45,7 +47,11 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ClientRuntime from "../src/client.ts";
-import { Connection, type ConnectionState } from "../src/connection/Connection.ts";
+import {
+  Connection,
+  type ConnectionState,
+  type ReconnectSettings,
+} from "../src/connection/Connection.ts";
 import { Actions, cardAction } from "../src/intents/Actions.ts";
 import { type ClientStorage, CredentialStore, type DeviceCredential } from "../src/ports.ts";
 import { waitFor } from "../src/Store.ts";
@@ -250,20 +256,20 @@ const client = (
   stored: Option.Option<DeviceCredential> = Option.none(),
   device = TestPlatform.makeDevice(),
   http?: Layer.Layer<HttpClient.HttpClient>,
-  requestTimeout?: Duration.Duration,
+  reconnect?: Partial<ReconnectSettings>,
 ) =>
   Layer.unwrap(
     Effect.map(Server.origin, (origin) =>
       Layer.fresh(
         ClientRuntime.layer.pipe(
-          Layer.provideMerge(TestPlatform.layer(origin, stored, device, http, requestTimeout)),
+          Layer.provideMerge(TestPlatform.layer(origin, stored, device, http, reconnect)),
         ),
       ),
     ),
   );
 
 /** For a test of a request that never answers: it gives up soon. */
-const SHORT_TIMEOUT = Duration.seconds(1);
+const SHORT_TIMEOUT: Partial<ReconnectSettings> = { requestTimeout: Duration.seconds(1) };
 
 /**
  * A reverse proxy in front of the server whose own login has expired: it
@@ -470,6 +476,19 @@ const createBot = (name: string) =>
     const commandId = yield* (yield* Actions).commandId;
     const bot = yield* connection.call((rpc) => rpc["bot.create"]({ commandId, name }));
     return bot.id;
+  });
+
+/**
+ * How the server would tell the device of `entry` in `target` now: on the
+ * socket it has open (`live`), with a push, since it has none (`push`), or not
+ * at all.
+ */
+const reachedBy = (deviceId: DeviceId, target: EntryTarget, entry: Entry) =>
+  Effect.gen(function* () {
+    const recipients = yield* (yield* Server.Presence).recipients(target, entry);
+    if (recipients?.live.includes(deviceId)) return "live";
+    if (recipients?.push.includes(deviceId)) return "push";
+    return "none";
   });
 
 /**
@@ -1097,21 +1116,108 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
     }).pipe(Effect.provide(client())),
   );
 
-  it.effect("closes its socket in the background and opens another when the app returns", () =>
-    Effect.gen(function* () {
-      const { views } = yield* Fakes;
-      const connection = yield* Connection;
-      const lifecycle = yield* TestPlatform.TestLifecycle;
-      yield* pairAndConnect;
-      // Each socket reports the view as it opens.
-      yield* Queue.take(views);
+  it.effect(
+    "has no socket open on the server in the background, so it is pushed to, and opens one when the app returns",
+    () =>
+      Effect.gen(function* () {
+        const { views } = yield* Fakes;
+        const connection = yield* Connection;
+        const lifecycle = yield* TestPlatform.TestLifecycle;
+        yield* pairAndConnect;
+        const deviceId = yield* connection.deviceId;
+        const commandId = yield* (yield* Actions).commandId;
+        yield* connection.call((rpc) =>
+          rpc["push.register"]({
+            commandId,
+            provider: "expo",
+            token: PushToken.make("ExponentPushToken[background]"),
+            platform: "android",
+            language: "en",
+          }),
+        );
+        const courier = yield* createBot("Courier");
+        const target: EntryTarget = { _tag: "conversation", botId: courier };
+        const said = yield* botSays(courier, "Back soon");
+        assert.strictEqual(yield* reachedBy(deviceId, target, said), "live");
+        // Each socket reports the view as it opens.
+        yield* Queue.take(views);
 
+        yield* lifecycle.set("background");
+        yield* reachedBy(deviceId, target, said).pipe(
+          Effect.repeat({ until: (way) => way === "push", schedule: Schedule.spaced("5 millis") }),
+        );
+        assert.deepStrictEqual(connection.state.get(), { _tag: "background" });
+
+        yield* lifecycle.set("foreground");
+        yield* waitFor(connection.state, isConnected);
+        yield* Queue.take(views);
+        assert.strictEqual(yield* reachedBy(deviceId, target, said), "live");
+      }).pipe(Effect.provide(client())),
+  );
+
+  it.effect(
+    "goes to the background from offline, and back to offline while the network is out",
+    () =>
+      Effect.gen(function* () {
+        yield* pairAndConnect;
+        const connection = yield* Connection;
+        const network = yield* TestPlatform.TestNetwork;
+        const lifecycle = yield* TestPlatform.TestLifecycle;
+        yield* network.set("offline");
+        yield* waitFor(connection.state, (state) => state._tag === "offline");
+
+        yield* lifecycle.set("background");
+        yield* waitFor(connection.state, (state) => state._tag === "background");
+        yield* lifecycle.set("foreground");
+        yield* waitFor(connection.state, (state) => state._tag === "offline");
+        yield* network.set("online");
+        yield* waitFor(connection.state, isConnected);
+      }).pipe(Effect.provide(client())),
+  );
+
+  it.effect(
+    "goes to the background while it waits to reconnect, and connects when the app returns",
+    () =>
+      Effect.gen(function* () {
+        yield* pairAndConnect;
+        const connection = yield* Connection;
+        const network = yield* TestPlatform.TestNetwork;
+        const lifecycle = yield* TestPlatform.TestLifecycle;
+        yield* network.dropSockets;
+        yield* waitFor(connection.state, (state) => state._tag === "waiting");
+
+        yield* lifecycle.set("background");
+        yield* waitFor(connection.state, (state) => state._tag === "background");
+        yield* lifecycle.set("foreground");
+        // Long before the wait it was in would have ended.
+        yield* waitFor(connection.state, isConnected);
+      }).pipe(
+        Effect.provide(
+          client(Option.none(), TestPlatform.makeDevice(), undefined, {
+            initialDelay: Duration.minutes(10),
+            maxDelay: Duration.minutes(10),
+          }),
+        ),
+      ),
+  );
+
+  it.effect("signs out in the background without waiting for the app to return", () =>
+    Effect.gen(function* () {
+      yield* pairAndConnect;
+      const connection = yield* Connection;
+      const deviceId = yield* connection.deviceId;
+      const lifecycle = yield* TestPlatform.TestLifecycle;
       yield* lifecycle.set("background");
       yield* waitFor(connection.state, (state) => state._tag === "background");
 
-      yield* lifecycle.set("foreground");
-      yield* waitFor(connection.state, (state) => state._tag === "connected");
-      yield* Queue.take(views);
+      // With no socket, the server is not asked.
+      assert.deepStrictEqual(yield* (yield* SignOut).run, { _tag: "still-listed" });
+
+      const unpaired = yield* waitFor(connection.state, (state) => state._tag === "unpaired");
+      assert.deepStrictEqual(unpaired, { _tag: "unpaired", reason: "still-listed" });
+      assert.isTrue(Option.isNone(yield* (yield* CredentialStore).load));
+      const listed = yield* (yield* Server.Devices).list(deviceId);
+      assert.isTrue(listed.some((device) => device.id === deviceId));
     }).pipe(Effect.provide(client())),
   );
 
