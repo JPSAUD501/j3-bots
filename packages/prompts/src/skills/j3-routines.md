@@ -48,7 +48,7 @@ Fill a gap with a sensible default and state it in your confirmation ("every wee
 | "every half hour during work hours" | `4,34 9-16 * * 1-5` (9:04 to 16:34) |
 | "first of the month" | `17 9 1 * *` |
 
-**`at`: once,** at a local time in your user's zone, such as `2026-11-21T09:00`. It must lie ahead, and the routine pauses itself after it runs. "Remind me tomorrow at nine" is an `at`, not a schedule.
+**`at`: once,** at a local time in your user's zone, such as `2027-03-04T09:00`. It must lie ahead, and the server pauses it after it runs; you do not need to. To run it again later, `update` it with a new future `at`; `resume` would leave it with a time already past. "Remind me tomorrow at nine" is an `at`, not a schedule.
 
 **`webhook`: when another system calls in.** Use it when the sender can reach this server's address; a hosted service usually cannot reach a server on a home network. In your confirmation, tell your user the routine is waiting for its first delivery. The sender's own delivery result (a repository webhook lists its recent deliveries and their responses) proves the address is reachable; a run in `list_routines` alone does not, since a run started on demand is recorded too. Whether the work then ran shows in that run's status: a delivery that arrives while the previous run is still going is `skipped`. Use a schedule instead only when the sender cannot reach this server and checking on a schedule does the job.
 
@@ -71,14 +71,14 @@ The run will know only what the instruction says, plus your memory and files. Wr
 
 **Make every step safe to run twice.** A run that fails before it says anything is retried in a fresh session, up to three attempts in all; an envelope the engine refuses, or a Stop, ends it at once. A retry does not know what the failed attempt already did, and cannot tell that it is a retry at all. For each send, publish, purchase or other change the instruction asks for, say how the run makes repeating it harmless:
 
-- an idempotency key the destination honors, built from a stable id that every attempt of the same occurrence sees: the id of the event that triggered the run, or of the business record the step is about (an invoice number, an issue number). Never the routine's id alone, which would suppress every later occurrence, and never a date or time: a run sees the current time, not the time it was scheduled for, and a routine that runs twice a day would repeat a date;
+- an idempotency key the destination honors. Use a stable source id that identifies this intended action, such as the id of the event that triggered the run or of the business record the step is about (an invoice number, an issue number): retries reuse it, and each separately requested send gets its own. Never the routine's id alone, which would suppress every later occurrence, and never a date or time: a run sees the current time, not the time it was scheduled for, and a routine that runs twice a day would repeat a date;
 - or a look at the destination for that exact action first (the message in the sent folder, an open issue with that title).
 
-A note the run keeps for itself is no proof: when it is missing, the attempt may still have acted. When the destination offers neither, settle it before you save, not in the run: tell your user that a retried run could repeat that step, and save the step only if they accept.
+A note the run keeps for itself is no proof: when it is missing, the attempt may still have acted. If you cannot identify the action or check the destination, get your user's consent before saving, not in the run: tell them that a retried run could repeat that step, and save the step only if they accept.
 
 Leave out anything that points back at the conversation: "as discussed", "the repo above", "that PR", "this Friday". A run computes its own date; give dates absolutely when they matter.
 
-A run sees what the last few runs said, not what they saw, and a silent run leaves nothing behind. So when a run must know what it already looked at (the items it reported, a previous value), the instruction names a file under `files/` that each run reads first. The file holds observations, not proof of actions, and the run updates it as its last step, after any message is sent, even one with `done: true`: a later run may then repeat a report, but never lose one.
+A run sees what the last few runs said, not what they saw, and a silent run leaves nothing behind. So when a run must know what it already looked at (the items it reported, a previous value), the instruction names a file under `files/` that each run reads first. The file holds observations, not proof of actions. The run updates it as its last step: it waits for its `say` to return, even one with `done: true`, then updates the file in a later call; if the message could not be delivered, it keeps the previous state. A later run may then repeat a report, but never lose one.
 
 An example, for "every weekday at 8, tell me if the docs build is broken":
 
@@ -92,8 +92,9 @@ The delivery line decides whether a run speaks. Write it explicitly, because the
 - **Reports your user wants every time** (a daily summary, a morning all-clear they asked for): speak when due.
 - **Conditional reports** (watching, checks, "tell me if"): speak only when the condition holds. When it does not, the run ends without calling `say` at all: no "all clear", no summary of what it checked. This is the usual case, and a silent run is a successful run.
 - **Digests:** speak only when there is something to list, unless your user asked for one every time. Say which you chose in your confirmation.
+- **Until an event:** for "let me know when X", the delivery line says to tell your user once X has happened and then `pause` this routine. The pause waits until the message has returned; during a run, `pause` of the current routine is the only `set_routine` action available.
 
-Whatever the delivery line says, a run that could not do its work (access lost, a source gone) tells your user in one sentence what blocked it; otherwise lost access would look like a quiet week. When one of the recent runs already said so, the run ends silently. A wake lists at most the five newest settled runs, so a blocker that lasts is restated about once every six runs, which for a frequent check is often, so that one sentence also says it will come back until the blocker is fixed, and your user can pause the routine.
+Whatever the delivery line says, a run that could not do its work (access lost, a source gone) tells your user in one sentence what blocked it; otherwise lost access would look like a quiet week. When one of the recent runs already said so, the run ends silently. A wake lists at most the five newest settled runs, so a lasting blocker is reported again about once every six runs. For a frequent check that is often, so the sentence also says the report will return until the blocker is fixed and that your user can pause the routine.
 
 When a run speaks, it sends one short message after the work, phrased the way you would mention something you took care of, not as an alert. It never opens with a progress note: nobody is waiting, and a run that has said anything counts as delivered and is not retried if it then fails. A run cannot use `ask`: a question goes inside its message, and the answer arrives in your main conversation.
 
@@ -104,7 +105,7 @@ A routine your user asked for needs nothing further, as long as its instruction 
 - a routine you are proposing yourself;
 - a send to anyone your user did not name;
 - spending money, deleting, publishing, or changing accounts or settings, when their request did not name that step;
-- a step a retried run could repeat, because the destination offers neither a key nor a check (see above);
+- a step a retried run could repeat, because you cannot identify the action or check the destination (see above);
 - changing or deleting a routine they did not ask about. Pausing is the cautious choice when one misbehaves.
 
 ## Steps

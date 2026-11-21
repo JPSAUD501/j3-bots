@@ -18,7 +18,9 @@ import {
   tools,
   type Wake,
 } from "../src/index.ts";
+import type { FixtureEvent, GhEvent } from "./fixtures.ts";
 import { complete, type FunctionTool, type Message } from "./model.ts";
+import type { Workspace } from "./shell.ts";
 
 /**
  * One bot turn against a real model, with the bot's tools answered by stubs.
@@ -27,8 +29,9 @@ import { complete, type FunctionTool, type Message } from "./model.ts";
  * profile and pinned memory, one wake envelope, and the `j3` tools as MCP
  * lists them. Two things stand in for the harness: the shipped skills, given
  * as already read when a run includes them (the harness's own listing and
- * reading of them is not what is measured), and `run_command`, a shell whose
- * answers the scenario fixes.
+ * reading of them is not what is measured), and `run_command`, a stand-in
+ * shell whose workspace and programs the scenario fixes (`shell.ts`,
+ * `fixtures.ts`).
  *
  * Every case runs with the skills and without them. Nothing links them into a
  * harness yet, and a session that never reads one still has to behave, so a
@@ -62,7 +65,8 @@ const systemPrompt = (model: string, skills: Skills): string =>
 
 const HOST_TOOL = "run_command";
 
-const functionTools: ReadonlyArray<FunctionTool> = [
+/** The `j3` tools, and a `run_command` that names what the workspace has. */
+const functionTools = (commands: ReadonlyArray<string>): ReadonlyArray<FunctionTool> => [
   ...toolList.map((tool): FunctionTool => ({
     type: "function",
     function: { name: tool.name, description: tool.description, parameters: tool.inputSchema },
@@ -71,8 +75,7 @@ const functionTools: ReadonlyArray<FunctionTool> = [
     type: "function",
     function: {
       name: HOST_TOOL,
-      description:
-        "Run a shell command in your workspace and return its output. The GitHub CLI, gh, is signed in.",
+      description: `Run a shell command in your workspace and return its output. The GitHub CLI, gh, is signed in. The workspace has only these commands: ${commands.join(", ")}.`,
       parameters: {
         type: "object",
         properties: { command: { type: "string" } },
@@ -91,6 +94,10 @@ export interface Call {
   readonly input: unknown;
   /** For a `set_routine` call the schema accepted, its arguments as decoded: what the server would save. */
   readonly routine?: ToolInput<"set_routine">;
+  /** What the call answered. */
+  readonly output: string;
+  /** For a `run_command` call, what the command did in the workspace; empty for any other call. */
+  readonly events: ReadonlyArray<FixtureEvent>;
 }
 
 /** Reply text the model wrote beside or instead of its calls. It reaches nobody. */
@@ -119,7 +126,7 @@ export const transcript = ({ calls, text }: Turn): string =>
     })),
     ...calls.map((call) => ({
       step: call.step,
-      line: `${call.name} ${JSON.stringify(call.input)}`,
+      line: `${call.name} ${JSON.stringify(call.input)} → ${JSON.stringify(call.output.length > 300 ? `${call.output.slice(0, 300)}…` : call.output)}`,
     })),
   ]
     // A stable sort: within a message, its text comes before its calls, as the model wrote them.
@@ -135,13 +142,10 @@ class TurnUnfinished extends Schema.TaggedError<TurnUnfinished>()("TurnUnfinishe
 const unfinished = (reason: string, turn: Turn) =>
   new TurnUnfinished({ message: `The turn did not finish: ${reason}.\n${transcript(turn)}` });
 
-/** What `run_command` prints for a command. */
-export type Shell = (command: string) => string;
-
 export interface Scenario {
   readonly wake: Wake;
-  /** A fresh shell for each turn, so what one turn writes another never reads. */
-  readonly shell: () => Shell;
+  /** A fresh workspace for each turn, so what one turn writes another never reads. */
+  readonly workspace: () => Workspace<GhEvent>;
 }
 
 /** Model calls in one turn at most; a turn that needs more is a failure in itself. */
@@ -152,13 +156,6 @@ const decodeSetRoutine = Schema.decodeUnknownOption(tools.set_routine.input, DEC
 const decodeAsk = Schema.decodeUnknownOption(tools.ask.input, DECODE_OPTIONS);
 const decodeShellInput = Schema.decodeUnknownOption(Schema.Struct({ command: Schema.String }));
 
-/** The command of a `run_command` call; `undefined` for any other call. */
-export const commandOf = (call: Call): string | undefined => {
-  if (call.name !== HOST_TOOL) return undefined;
-  const input = decodeShellInput(call.input);
-  return input._tag === "Some" ? input.value.command : undefined;
-};
-
 const json = (value: unknown): string => JSON.stringify(value);
 
 /**
@@ -166,7 +163,7 @@ const json = (value: unknown): string => JSON.stringify(value);
  * the schedule's next time after the wake, a one-time run's own time, or none
  * for a webhook. `undefined` for a schedule that never names a date.
  */
-const nextRunAt = (
+export const nextRunAt = (
   routine: ToolInput<"set_routine">,
   wake: Wake,
 ): DateTime.Utc | null | undefined => {
@@ -189,16 +186,30 @@ const nextRunAt = (
   return null;
 };
 
-/** What `set_routine` answers to a call its schema accepted. */
+/** The id the `set_routine` stub gives a routine it creates. */
+export const CREATED_ROUTINE_ID = "routine-1";
+
+/**
+ * What `set_routine` answers to a call its schema accepted. During a routine
+ * run, as on the server, only a `pause` of that routine is taken.
+ */
 const savedRoutine = (routine: ToolInput<"set_routine">, wake: Wake): string => {
-  if (routine.action !== "create") return json({ routine: { ...routine, enabled: true } });
+  if (wake.kind === "routine" && !(routine.action === "pause" && routine.id === wake.routine.id)) {
+    return json({
+      error:
+        "During a routine run, the only call allowed is `pause` of the routine that is running.",
+    });
+  }
+  if (routine.action !== "create") {
+    return json({ routine: { ...routine, enabled: routine.action !== "pause" } });
+  }
   const next = nextRunAt(routine, wake);
   if (next === undefined) {
     return json({ error: "The schedule names no time that exists. Nothing was saved." });
   }
   return json({
     routine: {
-      id: "routine-1",
+      id: CREATED_ROUTINE_ID,
       name: routine.name,
       instruction: routine.instruction,
       trigger: routine.schedule ?? routine.at ?? "webhook",
@@ -208,38 +219,47 @@ const savedRoutine = (routine: ToolInput<"set_routine">, wake: Wake): string => 
   });
 };
 
-/** What the server would answer, as far as these scenarios need. */
-const answer = (scenario: Scenario, shell: Shell, call: Call): string => {
-  switch (call.name) {
+type Request = Pick<Call, "step" | "name" | "input" | "routine">;
+
+/** What the server would answer, as far as these scenarios need, and what a command did. */
+const answer = (
+  scenario: Scenario,
+  workspace: Workspace<GhEvent>,
+  request: Request,
+): Pick<Call, "output" | "events"> => {
+  const reply = (output: string) => ({ output, events: [] });
+  switch (request.name) {
     case "say":
-      return json({ status: "recorded" });
+      return reply(json({ status: "recorded" }));
     case "ask":
-      return json({ asked: true });
+      return reply(json({ asked: true }));
     case "list_routines":
-      return json({ routines: [] });
+      return reply(json({ routines: [] }));
     case "set_routine":
-      return call.routine === undefined
-        ? json({ error: "The call was refused as invalid." })
-        : savedRoutine(call.routine, scenario.wake);
+      return reply(
+        request.routine === undefined
+          ? json({ error: "The call was refused as invalid." })
+          : savedRoutine(request.routine, scenario.wake),
+      );
     case "recall":
-      return json({ facts: [] });
+      return reply(json({ facts: [] }));
     case "remember":
     case "forget":
-      return json({ recorded: true });
+      return reply(json({ recorded: true }));
     case "list_teammates":
-      return json({ bots: [], rooms: [] });
+      return reply(json({ bots: [], rooms: [] }));
     case HOST_TOOL: {
-      const command = commandOf(call);
-      return command === undefined
-        ? json({ error: "`command` must be a string." })
-        : shell(command);
+      const input = decodeShellInput(request.input);
+      return input._tag === "Some"
+        ? workspace.run(input.value.command)
+        : reply(json({ error: "`command` must be a string." }));
     }
     default:
-      return json({ error: `${call.name} is not available here.` });
+      return reply(json({ error: `${request.name} is not available here.` }));
   }
 };
 
-const toCall = (step: number, name: string, input: unknown): Call => {
+const toRequest = (step: number, name: string, input: unknown): Request => {
   if (name !== "set_routine") return { step, name, input };
   const decoded = decodeSetRoutine(input);
   return decoded._tag === "Some"
@@ -256,7 +276,8 @@ const toCall = (step: number, name: string, input: unknown): Call => {
 export const runTurn = Effect.fn("evals.runTurn")(
   function* (model: string, skills: Skills, scenario: Scenario) {
     const envelope = yield* renderWake(scenario.wake);
-    const shell = scenario.shell();
+    const workspace = scenario.workspace();
+    const tools = functionTools(workspace.commands);
     const messages: Array<Message> = [
       { role: "system", content: systemPrompt(model, skills) },
       { role: "user", content: envelope },
@@ -265,7 +286,7 @@ export const runTurn = Effect.fn("evals.runTurn")(
     const text: Array<ReplyText> = [];
     const turn: Turn = { calls, text };
     for (let step = 1; step <= MAX_STEPS; step++) {
-      const reply = yield* complete(model, messages, functionTools);
+      const reply = yield* complete(model, messages, tools);
       if (reply.content !== null && reply.content.trim() !== "") {
         text.push({ step, text: reply.content });
       }
@@ -283,17 +304,14 @@ export const runTurn = Effect.fn("evals.runTurn")(
       messages.push({ role: "assistant", content: reply.content, tool_calls: reply.toolCalls });
       for (const toolCall of reply.toolCalls) {
         const parsed = decodeJson(toolCall.function.arguments);
-        const call = toCall(
+        const request = toRequest(
           step,
           toolCall.function.name,
           parsed._tag === "Some" ? parsed.value : toolCall.function.arguments,
         );
+        const call: Call = { ...request, ...answer(scenario, workspace, request) };
         calls.push(call);
-        messages.push({
-          role: "tool",
-          tool_call_id: toolCall.id,
-          content: answer(scenario, shell, call),
-        });
+        messages.push({ role: "tool", tool_call_id: toolCall.id, content: call.output });
       }
       // An `ask` the server would accept ends the turn.
       if (calls.some((call) => call.name === "ask" && decodeAsk(call.input)._tag === "Some"))

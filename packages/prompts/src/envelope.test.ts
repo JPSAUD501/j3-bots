@@ -389,7 +389,7 @@ describe("renderWake", () => {
       {"action":"completed","conclusion":"failure"}
       </data-7f3a9c01b2d4>
       </j3-wake>
-      Nobody is waiting, so send no progress message. Only \`say\` reaches your user: a message is one \`say\` with \`done: true\`, sent once, after the work; after it comes only an update of the state file the instruction names, and no second \`say\`. Follow the instruction's delivery line: a reminder or a report asked for every time is sent when due; when a report's condition is not met, end with no \`say\` at all, not even to say all is well. If you could not do the work and no run in \`recent-runs\` already said what blocks it, tell your user in one \`say\` of one sentence; if one did, end with no \`say\`.
+      Nobody is waiting, so send no progress message. Only \`say\` reaches your user, never reply text: a message is one \`say\` with \`done: true\`, sent once, after the work; once it returns, the only calls left are the state-file update the instruction names, or a \`pause\` of this routine the instruction asks for, and no second \`say\`. Follow the instruction's delivery line: a reminder or a report asked for every time is sent when due; when a report's condition is not met, end with no \`say\` at all, not even to say all is well. If you could not do the work (access refused, a source gone): when a run in \`recent-runs\` already said what blocks it, end with no \`say\`; when none did, tell your user in one \`say\` of one sentence, whatever the delivery line says.
       "
     `);
     expect(
@@ -414,7 +414,7 @@ describe("renderWake", () => {
       </recent-runs>
       </routine>
       </j3-wake>
-      Nobody is waiting, so send no progress message. Only \`say\` reaches your user: a message is one \`say\` with \`done: true\`, sent once, after the work; after it comes only an update of the state file the instruction names, and no second \`say\`. Follow the instruction's delivery line: a reminder or a report asked for every time is sent when due; when a report's condition is not met, end with no \`say\` at all, not even to say all is well. If you could not do the work and no run in \`recent-runs\` already said what blocks it, tell your user in one \`say\` of one sentence; if one did, end with no \`say\`.
+      Nobody is waiting, so send no progress message. Only \`say\` reaches your user, never reply text: a message is one \`say\` with \`done: true\`, sent once, after the work; once it returns, the only calls left are the state-file update the instruction names, or a \`pause\` of this routine the instruction asks for, and no second \`say\`. Follow the instruction's delivery line: a reminder or a report asked for every time is sent when due; when a report's condition is not met, end with no \`say\` at all, not even to say all is well. If you could not do the work (access refused, a source gone): when a run in \`recent-runs\` already said what blocks it, end with no \`say\`; when none did, tell your user in one \`say\` of one sentence, whatever the delivery line says.
       "
     `);
   });

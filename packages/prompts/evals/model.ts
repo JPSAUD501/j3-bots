@@ -52,15 +52,17 @@ export interface FunctionTool {
 const ChatRequest = Schema.Struct({
   model: Schema.String,
   messages: Schema.Array(Message),
-  tools: Schema.Array(
-    Schema.Struct({
-      type: Schema.Literal("function"),
-      function: Schema.Struct({
-        name: Schema.String,
-        description: Schema.String,
-        parameters: Schema.Record(Schema.String, Schema.Unknown),
+  tools: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        type: Schema.Literal("function"),
+        function: Schema.Struct({
+          name: Schema.String,
+          description: Schema.String,
+          parameters: Schema.Record(Schema.String, Schema.Unknown),
+        }),
       }),
-    }),
+    ),
   ),
 });
 
@@ -90,7 +92,7 @@ interface Reply {
   readonly finishReason: string | null;
 }
 
-/** Sends a conversation to `model` and returns its next message. */
+/** Sends a conversation to `model` and returns its next message; with no tools, it can only answer in text. */
 export const complete = Effect.fn("evals.complete")(function* (
   model: string,
   messages: ReadonlyArray<Message>,
@@ -107,7 +109,9 @@ export const complete = Effect.fn("evals.complete")(function* (
     `${baseUrl.replace(/\/+$/, "")}/v1/chat/completions`,
   ).pipe(
     HttpClientRequest.bearerToken(apiKey),
-    HttpClientRequest.schemaBodyJson(ChatRequest)({ model, messages, tools }),
+    HttpClientRequest.schemaBodyJson(ChatRequest)(
+      tools.length === 0 ? { model, messages } : { model, messages, tools },
+    ),
   );
   const response = yield* client.execute(request);
   const body = yield* HttpClientResponse.schemaBodyJson(ChatResponse)(response);
