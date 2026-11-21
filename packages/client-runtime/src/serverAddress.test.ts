@@ -23,6 +23,20 @@ describe("the server address the operator types", () => {
     assert.strictEqual(parsed("http://192.168.1.20:3737"), "http://192.168.1.20:3737");
   });
 
+  it("takes plain HTTP only inside the private ranges, however the address is written", () => {
+    assert.strictEqual(parsed("172.31.0.9:3737"), "http://172.31.0.9:3737");
+    assert.strictEqual(parsed("172.32.0.9:3737"), "https://172.32.0.9:3737");
+    assert.strictEqual(parsed("100.127.0.1:3737"), "http://100.127.0.1:3737");
+    assert.strictEqual(parsed("100.128.0.1:3737"), "https://100.128.0.1:3737");
+    assert.strictEqual(parsed("169.254.3.4:3737"), "http://169.254.3.4:3737");
+    assert.strictEqual(parsed("[fe80::1]:3737"), "http://[fe80::1]:3737");
+    assert.strictEqual(parsed("[0:0:0:0:0:0:0:1]:3737"), "http://[::1]:3737");
+    assert.strictEqual(parsed("[::ffff:192.168.1.20]:3737"), "http://[::ffff:c0a8:114]:3737");
+    assert.strictEqual(parsed("[::ffff:192.0.2.10]:3737"), "https://[::ffff:c000:20a]:3737");
+    assert.strictEqual(parsed("[2001:db8::1]:3737"), "https://[2001:db8::1]:3737");
+    assert.strictEqual(parsed("0x7f.1:3737"), "http://127.0.0.1:3737");
+  });
+
   it("refuses plain HTTP that would cross a network the operator does not own", () => {
     assert.strictEqual(parsed("http://j3.example.test"), "refused: needs-https");
     assert.strictEqual(parsed("http://192.0.2.10:3737"), "refused: needs-https");

@@ -1,0 +1,5 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* In this order: the theme from the tokens replaces Tailwind's default palette and sizes. */
+@import "tailwindcss";
+@import "uniwind";
+@import "@j3-bots/design-tokens/uniwind.css";

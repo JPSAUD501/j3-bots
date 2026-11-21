@@ -461,6 +461,8 @@ const sentences = {
     "Pareado, mas o navegador não guardou o acesso. Permita dados de site para esta página e pareie de novo.",
   "pairing.storageFailed.desktop":
     "Pareado, mas o J3 Bots não conseguiu guardar o acesso com criptografia neste dispositivo. Desbloqueie o chaveiro do sistema, reinicie o J3 Bots e pareie de novo com um código novo.",
+  "pairing.storageFailed.mobile":
+    "Pareado, mas o armazenamento seguro deste dispositivo não guardou o acesso. Pareie de novo com um código novo.",
 
   "server.title": "Onde o J3 Bots está rodando?",
   "server.body":
@@ -482,15 +484,15 @@ const sentences = {
   "server.change.failed": "O app não conseguiu esquecer o servidor. Tente de novo.",
   "server.change.title": "Trocar de servidor?",
   "server.change.body":
-    "O app esquece {address} e o acesso deste dispositivo lá, com os rascunhos e as mensagens não enviadas. O dispositivo continua na lista desse servidor até você removê-lo de outro dispositivo.",
+    "O app esquece {address} e o acesso deste dispositivo lá, com os rascunhos e as mensagens não enviadas. O dispositivo pode continuar em Dispositivos nesse servidor, e outro dispositivo pode removê-lo de lá.",
   "server.change.cancel": "Manter este servidor",
   "pairing.server": "Servidor: {address}",
 
   "gate.incompatible.title": "Esta página está desatualizada",
   "gate.incompatible.body":
     "O servidor do J3 Bots foi atualizado e fala uma versão mais nova. Recarregue para pegar a página certa.",
-  "gate.incompatible.desktopTitle": "Este app não combina com o servidor",
-  "gate.incompatible.desktopBody":
+  "gate.incompatible.appTitle": "Este app não combina com o servidor",
+  "gate.incompatible.appBody":
     "O servidor do J3 Bots em {address} fala uma versão diferente da deste app. Atualize o app ou o servidor para que combinem, ou troque para outro servidor.",
   "gate.storage.title": "Este navegador não guarda o acesso",
   "gate.storage.body":
@@ -498,6 +500,9 @@ const sentences = {
   "gate.storage.desktopTitle": "Não deu para ler o acesso deste dispositivo",
   "gate.storage.desktopBody":
     "O J3 Bots não conseguiu ler o acesso que guarda neste dispositivo para {address}. Se o chaveiro do sistema estiver bloqueado, desbloqueie-o e reinicie o J3 Bots. Trocar para outro servidor, ou para este de novo, desconecta este dispositivo aqui.",
+  "gate.storage.mobileTitle": "Este dispositivo não consegue ler o acesso",
+  "gate.storage.mobileBody":
+    "O J3 Bots guarda o acesso deste dispositivo no armazenamento seguro, e a leitura falhou. Tente de novo ou reinicie o app.",
   "gate.reload": "Recarregar",
   "gate.retry": "Tentar de novo",
   "gate.restart": "Reiniciar o J3 Bots",

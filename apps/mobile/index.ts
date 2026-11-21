@@ -1,0 +1,9 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// First, so every module after it finds what the shared packages use.
+import "./src/polyfills.ts";
+import { registerRootComponent } from "expo";
+import { App } from "./src/App.tsx";
+import { session } from "./src/session.ts";
+
+void session.start();
+registerRootComponent(App);
