@@ -73,7 +73,7 @@ Recommended for any such host, and set out step by step in [Running on a Raspber
 - Give that user its own provider sign-ins.
 - If a bot needs access to something outside its workspace, grant that one thing.
 
-This is a deployment recommendation, not something J3 Bots enforces. See [open question 3](../open-questions.md).
+This is a deployment recommendation, not something J3 Bots enforces. `j3-bots doctor` warns when the user it runs as keeps an SSH private key in `~/.ssh` or is in `sudo` or `wheel`, and gives the steps to a dedicated user. It does not look for keys elsewhere, nor at other ways the user can reach other machines, such as an SSH agent or stored cloud credentials. See [open question 3](../open-questions.md).
 
 ## The engine's credentials
 

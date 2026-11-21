@@ -51,6 +51,12 @@ export class Systemd extends Context.Service<
   {
     /** The user manager answers: there is a `systemctl --user` to talk to. */
     readonly available: Effect.Effect<boolean>;
+    /**
+     * systemd started this machine, so each user can have a manager of their
+     * own: `/run/systemd/system` exists, as `sd_booted` checks. False in most
+     * containers and on WSL without systemd turned on.
+     */
+    readonly booted: Effect.Effect<boolean>;
     readonly linger: Effect.Effect<Linger>;
     readonly unitState: (unit: string) => Effect.Effect<UnitState>;
     /**
@@ -110,6 +116,7 @@ export const layer = Layer.effect(
       available: systemctl(["show-environment"]).pipe(
         Effect.map((result) => Option.isSome(result) && result.value.exitCode === 0),
       ),
+      booted: fs.exists("/run/systemd/system").pipe(Effect.orElseSucceed(() => false)),
       linger: run("loginctl", ["show-user", String(uid), "--property=Linger", "--value"]).pipe(
         Effect.map((result) => {
           if (Option.isNone(result) || result.value.exitCode !== 0) return "unknown";

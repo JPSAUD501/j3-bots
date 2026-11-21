@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
 import { providerBaseUrlProblem } from "../admin/protocol.ts";
-import { normalizeBaseUrl } from "./provider.ts";
+import { normalizeBaseUrl, signInCommand } from "./provider.ts";
 
 it("takes the endpoint's root from what the operator typed, and refuses what is no base URL", () => {
   assert.deepStrictEqual(normalizeBaseUrl(" http://127.0.0.1:8317/v1/ "), {
@@ -57,4 +57,35 @@ it("refuses plain http to another machine, which would send the key in clear", (
     assert.strictEqual(normalized._tag, "problem", remote);
     if (normalized._tag === "problem") assert.include(normalized.problem, "https");
   }
+});
+
+it("runs each harness's own sign-in with its configuration folder set to J3 Bots' home for it", () => {
+  // The operator's shell points the harnesses at their own folders.
+  const shell = {
+    PATH: "/usr/local/bin:/usr/bin",
+    HOME: "/home/ada",
+    CLAUDE_CONFIG_DIR: "/home/ada/.claude-work",
+    CODEX_HOME: "/home/ada/.codex-work",
+  };
+  assert.deepStrictEqual(
+    signInCommand(
+      "claude-code",
+      "/usr/local/bin/claude",
+      "/home/ada/.j3-bots/providers/claude-code",
+      shell,
+    ),
+    {
+      command: "/usr/local/bin/claude",
+      args: ["auth", "login"],
+      env: { ...shell, CLAUDE_CONFIG_DIR: "/home/ada/.j3-bots/providers/claude-code" },
+    },
+  );
+  assert.deepStrictEqual(
+    signInCommand("codex", "/usr/local/bin/codex", "/home/ada/.j3-bots/providers/codex", shell),
+    {
+      command: "/usr/local/bin/codex",
+      args: ["login"],
+      env: { ...shell, CODEX_HOME: "/home/ada/.j3-bots/providers/codex" },
+    },
+  );
 });
