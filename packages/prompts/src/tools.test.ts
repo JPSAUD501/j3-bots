@@ -84,6 +84,7 @@ describe("j3 tools", () => {
       true,
     );
     expect(accepts("set_routine", { action: "update", schedule: "7 9 * * *" })).toBe(false);
+    expect(accepts("set_routine", { action: "update", id: "r1" })).toBe(false);
     expect(accepts("set_routine", { action: "pause", id: "r1" })).toBe(true);
     expect(accepts("set_routine", { action: "pause", id: "r1", name: "Renamed" })).toBe(false);
     expect(accepts("set_routine", { action: "delete", id: "r1", at: "2026-11-21T09:00" })).toBe(

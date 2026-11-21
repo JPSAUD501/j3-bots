@@ -212,10 +212,13 @@ const routineCallProblem = (input: SetRoutineFields): string | undefined => {
     return undefined;
   }
   if (input.id === undefined) return `${input.action} needs the routine's id`;
-  if (input.action !== "update") {
-    const extra = input.name ?? input.instruction;
-    if (extra !== undefined || triggerCount(input) > 0) return `${input.action} takes only an id`;
+  const changes = [input.name, input.instruction].filter((field) => field !== undefined).length;
+  if (input.action === "update") {
+    return changes + triggerCount(input) === 0
+      ? "update needs a name, an instruction or a trigger to change"
+      : undefined;
   }
+  if (changes > 0 || triggerCount(input) > 0) return `${input.action} takes only an id`;
   return undefined;
 };
 
@@ -333,6 +336,7 @@ export const tools = {
       "Check `list_routines` first and change an existing routine rather than adding a second.",
       "`create` takes a name, an instruction and exactly one of `schedule`, `at` or `webhook`; the other actions take the routine's id, and `update` also takes the fields that change.",
       "Times are in your user's zone, and a schedule runs at most every five minutes.",
+      "During a routine run the only call allowed is `pause` of that routine, so it can stop itself once its job is done.",
       "Each run starts in a fresh session without this conversation, so the instruction must stand alone: what to look at, what counts as worth reporting, the names, places and thresholds involved, and a last line saying what to send your user and what to do when there is nothing new.",
       "Returns the routine as saved, with its id and next run; tell your user the exact schedule.",
     ],
