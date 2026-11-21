@@ -18,16 +18,16 @@ services:
       - |
         cat > /tmp/Caddyfile <<'CADDYFILE'
         {
-          admin off
-          log default {
-            format filter {
-              request delete
-              wrap json
-            }
-          }
+        	admin off
+        	log default {
+        		format filter {
+        			request delete
+        			wrap json
+        		}
+        	}
         }
         :8080 {
-          reverse_proxy host.docker.internal:${J3_PORT:-3737}
+        	reverse_proxy host.docker.internal:${J3_PORT:-3737}
         }
         CADDYFILE
         exec caddy run --adapter caddyfile --config /tmp/Caddyfile

@@ -81,14 +81,13 @@ const retryAfter = (limited: RateLimited) =>
  * it, so Node does not go on to read the rest of the body to keep it open:
  * what the caller already sent is discarded as it closes.
  */
-const refusedUnread = (status: number) =>
-  HttpServerResponse.empty({ status, headers: { connection: "close" } });
+const refusedUnread = HttpServerResponse.empty({ status: 404, headers: { connection: "close" } });
 
 /**
  * A routine's webhook (`docs/architecture/server.md`, Routines): `POST` with
  * any body of UTF-8 text, which reaches the bot as data. The secret in the
- * path is the credential, checked before anything else of the request is
- * read. Answers 202 with the run it recorded, `running` or `skipped`; 200
+ * path is the credential, checked before the body or a header it acts on
+ * is read. Answers 202 with the run it recorded, `running` or `skipped`; 200
  * with the earlier run for a repeated `Idempotency-Key`; 404 for an address
  * that names no webhook, a wrong secret included; 409 while the routine is
  * paused; 413 past `WEBHOOK_BODY_LIMIT`; 400 for a body that is not UTF-8 or
@@ -100,10 +99,10 @@ export const route = HttpRouter.add(
   `${WEBHOOK_PATH}/:routineId/:secret`,
   Effect.gen(function* () {
     const params = yield* HttpRouter.schemaPathParams(Params).pipe(Effect.option);
-    if (Option.isNone(params)) return refusedUnread(404);
+    if (Option.isNone(params)) return refusedUnread;
     const runs = yield* RoutineRuns;
     const admitted = yield* runs.admitWebhook(params.value).pipe(Effect.result);
-    if (admitted._tag === "Failure") return refusedUnread(404);
+    if (admitted._tag === "Failure") return refusedUnread;
     const request = yield* HttpServerRequest.HttpServerRequest;
     const key = request.headers["idempotency-key"];
     if (key !== undefined && (key.trim() === "" || key.length > REQUEST_KEY_LIMIT)) {
