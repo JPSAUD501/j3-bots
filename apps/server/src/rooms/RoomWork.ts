@@ -20,7 +20,9 @@ export class RoomWork extends Context.Service<
      * and their room dispatches never sent released with their wakes
      * cancelled, in the caller's transaction, so none of them reads what is
      * said there after it left. The operator's messages they never received
-     * count them no more, as for a deleted bot.
+     * count them no more, as for a deleted bot: no wake of theirs for the room
+     * that did not finish, failed ones included. When anything was cancelled
+     * or released, the dispatcher is nudged once the transaction commits.
      */
     readonly leave: (roomId: RoomId, botIds: ReadonlyArray<BotId>) => Effect.Effect<void>;
   }

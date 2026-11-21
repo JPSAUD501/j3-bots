@@ -81,7 +81,7 @@ import { Sender, type SendOwner, type SendResult } from "./Sender.ts";
 import { notices } from "./notices.ts";
 import { isIdle, sessionWork } from "./sessionWork.ts";
 import { Observer } from "./Observer.ts";
-import { providerLimit } from "./providerLimit.ts";
+import { automatedSql, providerLimit } from "./providerLimit.ts";
 import { Readiness } from "./Readiness.ts";
 import { roomLiveSql } from "./roomLive.ts";
 import { DEFECT_RETRY, type Pass, onePassAtATime, passOutcome, reconcile } from "./reconciler.ts";
@@ -110,6 +110,10 @@ const Unsent = Schema.Struct({
   next_attempt_at: Schema.NullOr(Time),
   /** It carries a routine's wake, the least urgent kind, in a side session. */
   routine: Schema.BooleanFromBit,
+  /** It is automated work, which a usage limit holds (`automatedSql`). */
+  automated: Schema.BooleanFromBit,
+  /** It is addressed to a room. */
+  room: Schema.BooleanFromBit,
   /** The provider its session runs on. */
   provider_id: ProviderId,
   /** The bot whose opening the dispatch carries, if it carries one. */
@@ -239,6 +243,9 @@ const catchUpItem = (note: CatchUpNote): CatchUpItem => {
       return { type: "session-rotated", digest: note.digest };
   }
 };
+
+/** What a pass of the dispatcher collects: work it left, and its earliest deadline. */
+type Outcome = ReturnType<typeof passOutcome>;
 
 /** One planned dispatch: the wakes it carries, into which session, and how. */
 interface Plan {
@@ -768,6 +775,8 @@ export const layer = Layer.effect(
         EXISTS (
           SELECT 1 FROM wakes w WHERE w.dispatch_id = d.id AND w.kind = 'routine'
         ) AS routine,
+        ${automatedSql(sql, sql.literal("d.id"))} AS automated,
+        d.audience_room_id IS NOT NULL AS room,
         (SELECT s.provider_id FROM sessions s WHERE s.id = d.session_id) AS provider_id,
         (
           SELECT w.bot_id FROM wakes w
@@ -783,11 +792,20 @@ export const layer = Layer.effect(
     `.pipe(Effect.orDie);
     const unsent = Effect.flatMap(unsentRows, (rows) => readEach(rows, Unsent));
 
-    /** Whether the bot's provider is at its usage limit, which holds automated wakes. */
-    const providerLimited = Effect.fn("Pipeline.providerLimited")(function* (botId: BotId) {
+    /**
+     * Whether the bot's provider is at its usage limit, which holds automated
+     * wakes: the dispatcher looks again at the reset, when it is known.
+     */
+    const providerLimited = Effect.fn("Pipeline.providerLimited")(function* (
+      botId: BotId,
+      outcome: Outcome,
+    ) {
       const bot = yield* bots.find(botId);
       if (Option.isNone(bot)) return false;
-      return Option.isSome(yield* limitOf(bot.value.bot.model.providerId));
+      const limit = yield* limitOf(bot.value.bot.model.providerId);
+      if (Option.isNone(limit)) return false;
+      outcome.until(limit.value.resetsAt);
+      return true;
     });
 
     /**
@@ -925,7 +943,11 @@ export const layer = Layer.effect(
      * for now, or a session whose events are not known yet, which is looked
      * at again on a later pass.
      */
-    const planFor = Effect.fn("Pipeline.planFor")(function* (botId: BotId, now: DateTime.Utc) {
+    const planFor = Effect.fn("Pipeline.planFor")(function* (
+      botId: BotId,
+      now: DateTime.Utc,
+      outcome: Outcome,
+    ) {
       const session = yield* mainSession({ botId, now: timeText(now) }).pipe(Effect.orDie);
       if (Option.isNone(session)) return null;
       const pending = yield* pendingOf(botId).pipe(Effect.orDie);
@@ -965,7 +987,7 @@ export const layer = Layer.effect(
         if (yield* openingHeld(botId)) return null;
       } else if (head.priority !== PRIORITY.user) {
         // Every automated wake waits for the reset, a bot's room message too.
-        if (yield* providerLimited(botId)) return null;
+        if (yield* providerLimited(botId, outcome)) return null;
       }
       // A pending continuation holds back every wake but the operator's,
       // also in a room: the engine then drops the continuation.
@@ -1590,11 +1612,7 @@ export const layer = Layer.effect(
      * defer is logged here, and the pass goes on with the others and looks
      * again later.
      */
-    const sendOne = (
-      dispatchId: DispatchRowId,
-      owner: SendOwner,
-      outcome: ReturnType<typeof passOutcome>,
-    ) =>
+    const sendOne = (dispatchId: DispatchRowId, owner: SendOwner, outcome: Outcome) =>
       sender.send(dispatchId, owner).pipe(
         Effect.catchCauseIf(
           (cause) => !Cause.hasInterruptsOnly(cause),
@@ -1611,22 +1629,27 @@ export const layer = Layer.effect(
 
     /**
      * Sends the dispatches written and not yet sent: a start is admitted when
-     * it is sent, like a new one. Whether the engine refused a command.
+     * it is sent, like a new one. A room start that cannot be sent now, for
+     * want of a turn slot or held by a usage limit, goes to its send all the
+     * same, which releases it rather than let it hold the room (`Sender`).
+     * Whether the engine refused a command.
      */
     const sendUnsent = Effect.fn("Pipeline.sendUnsent")(function* (
       rows: ReadonlyArray<typeof Unsent.Type>,
       now: DateTime.Utc,
-      outcome: ReturnType<typeof passOutcome>,
+      outcome: Outcome,
     ) {
       for (const row of rows) {
         if (row.next_attempt_at !== null && DateTime.isGreaterThan(row.next_attempt_at, now)) {
           continue;
         }
-        if (row.delivery === "start" && !(yield* admitsStart(row.session_id))) continue;
+        const heldStart = row.delivery === "start" && !row.room;
+        if (heldStart && !(yield* admitsStart(row.session_id))) continue;
         if (row.opening_bot_id !== null && (yield* openingHeld(row.opening_bot_id))) continue;
-        // A routine's start is automated work: a provider that reached its
-        // usage limit since it was written holds it until the reset.
-        if (row.routine) {
+        // Automated work, a routine's start or a teammate's: a provider that
+        // reached its usage limit since it was written holds it until the
+        // reset, as planning would.
+        if (heldStart && row.automated) {
           const limit = yield* limitOf(row.provider_id);
           if (Option.isSome(limit)) {
             if (limit.value.resetsAt !== null) outcome.until(limit.value.resetsAt);
@@ -1665,7 +1688,7 @@ export const layer = Layer.effect(
             Effect.gen(function* () {
               // Planned again, once, when its session changed under the plan.
               for (let attempt = 0; attempt < 2; attempt++) {
-                const plan = yield* planFor(botId, now);
+                const plan = yield* planFor(botId, now, outcome);
                 if (plan === null || plan === "not-ready") return plan;
                 const dispatchId = yield* writeDispatch(plan);
                 if (dispatchId !== "stale") {

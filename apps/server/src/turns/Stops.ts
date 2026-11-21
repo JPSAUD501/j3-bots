@@ -700,24 +700,42 @@ export const roomWorkLayer = Layer.effect(
             AND ${sql.in("bot_id", botIds)}
         `,
       })(undefined);
-      // The operator's messages they never received count them no more,
-      // marked before the wakes are cancelled, which shows those messages.
+      // The operator's messages they never received count them no more, as
+      // for a deleted bot: every wake of theirs for the room not finished,
+      // pending, in a dispatch never sent, or failed, is marked before the
+      // wakes are cancelled, which shows those messages.
       const unsentIds = unsent.map((row) => row.id);
       const inUnsent = unsentIds.length > 0 ? sql.in("dispatch_id", unsentIds) : sql`0`;
-      yield* sql`
-        UPDATE wakes SET recipient_left = 1
-        WHERE audience_room_id = ${roomId} AND ${sql.in("bot_id", botIds)}
-          AND (status = 'pending' OR (status = 'dispatched' AND ${inUnsent}))
-      `;
+      const marked = yield* SqlSchema.findAll({
+        Request: Schema.Void,
+        Result: Schema.Struct({ source_entry_id: Schema.NullOr(EntryId) }),
+        execute: () => sql`
+          UPDATE wakes SET recipient_left = 1
+          WHERE audience_room_id = ${roomId} AND ${sql.in("bot_id", botIds)}
+            AND recipient_left = 0
+            AND (
+              status IN ('pending', 'failed') OR (status = 'dispatched' AND ${inUnsent})
+            )
+          RETURNING source_entry_id
+        `,
+      })(undefined);
       for (const id of unsentIds) yield* ledger.release(id, { _tag: "cancelled" });
-      // The room is free for its next member's wake.
-      if (unsentIds.length > 0) yield* sql.afterCommit(signals.dispatch.fire);
       const pending = yield* sql<{ readonly id: string }>`
         SELECT id FROM wakes
         WHERE status = 'pending' AND audience = 'room' AND audience_room_id = ${roomId}
           AND ${sql.in("bot_id", botIds)}
       `;
       yield* ledger.cancelWakes(pending.map((wake) => wake.id));
+      // A failed wake keeps its status: its message shows the other
+      // recipients' delivery now.
+      yield* ledger.refreshMessages(
+        marked.flatMap((row) => (row.source_entry_id === null ? [] : [row.source_entry_id])),
+      );
+      // The room is free for its next member's wake, which may have waited
+      // behind theirs.
+      if (unsentIds.length > 0 || pending.length > 0) {
+        yield* sql.afterCommit(signals.dispatch.fire);
+      }
     }, Effect.orDie);
 
     return RoomWork.of({ end, leave });
