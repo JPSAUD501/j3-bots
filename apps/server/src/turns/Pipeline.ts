@@ -22,6 +22,7 @@ import type {
   OperatorMessage,
   SystemEvent,
   TeammateMessage,
+  TeammateRef,
   Wake,
 } from "@j3-bots/prompts";
 import { renderWake } from "@j3-bots/prompts";
@@ -131,10 +132,11 @@ const longestFitting = (max: number, fits: (count: number) => boolean): number =
   return low;
 };
 
-/** A planned wake's part of a user envelope; `null` when its message or card is gone. */
+/** A planned wake's part of a user or bot envelope; `null` when its message or card is gone. */
 type WakePart =
   | { readonly _tag: "message"; readonly message: OperatorMessage }
   | { readonly _tag: "answer"; readonly answer: AskAnswer }
+  | { readonly _tag: "teammate"; readonly message: TeammateMessage }
   | null;
 
 /** Something the session has not seen, with the row the dispatch consumes for it. */
@@ -162,6 +164,19 @@ const userWake = (
   return { ...wake, answer: null, messages: [first, ...rest] } satisfies Wake;
 };
 
+/** A bot envelope of the teammates' messages; `null` when none of them is left to deliver. */
+const botWake = (
+  base: { readonly at: DateTime.Utc; readonly timeZone: DateTime.TimeZone.Named },
+  since: ReadonlyArray<CatchUpItem>,
+  parts: ReadonlyArray<WakePart>,
+): Wake | null => {
+  const [first, ...rest] = parts.flatMap((part) =>
+    part?._tag === "teammate" ? [part.message] : [],
+  );
+  if (first === undefined) return null;
+  return { ...base, sinceLastTurn: since, kind: "bot", messages: [first, ...rest] };
+};
+
 /** The event a system wake reports; any other payload on one is a bug. */
 const systemEventOf = (payload: WakePayload): Effect.Effect<SystemEvent> => {
   switch (payload._tag) {
@@ -172,6 +187,7 @@ const systemEventOf = (payload: WakePayload): Effect.Effect<SystemEvent> => {
     case "message":
     case "answer":
     case "routine":
+    case "teammate":
       return Effect.die(
         new TurnsInvariant({ invariant: `A system wake carries no ${payload._tag} payload` }),
       );
@@ -842,6 +858,32 @@ export const layer = Layer.effect(
       });
     });
 
+    /** A teammate as an envelope names them, also once they were deleted. */
+    const teammateRef = Effect.fn("Pipeline.teammateRef")(function* (botId: BotId) {
+      return Option.match(yield* bots.find(botId), {
+        onNone: (): TeammateRef => ({ id: botId, name: "A former teammate", title: "" }),
+        onSome: ({ bot }): TeammateRef => ({
+          id: bot.id,
+          name: bot.profile.name,
+          title: bot.profile.title,
+        }),
+      });
+    });
+
+    /** An urgent message, from the handoff card it put in the recipient's conversation. */
+    const teammateMessageOf = Effect.fn("Pipeline.teammateMessageOf")(function* (entryId: EntryId) {
+      const found = yield* entries.find(entryId);
+      if (Option.isNone(found) || found.value.entry._tag !== "handoff") return null;
+      const card = found.value.entry;
+      if (card.author._tag !== "bot") return null;
+      return {
+        from: yield* teammateRef(card.author.botId),
+        at: card.createdAt,
+        text: card.text,
+        urgent: card.urgent,
+      } satisfies TeammateMessage;
+    });
+
     const notesOf = (botId: BotId) =>
       SqlSchema.findAll({
         Request: Schema.String,
@@ -873,13 +915,8 @@ export const layer = Layer.effect(
         });
       }
       for (const message of yield* heldOf(botId)) {
-        const sender = yield* bots.find(message.sender_bot_id);
-        const from = Option.match(sender, {
-          onNone: () => ({ id: message.sender_bot_id, name: "A former teammate", title: "" }),
-          onSome: ({ bot }) => ({ id: bot.id, name: bot.profile.name, title: bot.profile.title }),
-        });
         const teammate: TeammateMessage = {
-          from,
+          from: yield* teammateRef(message.sender_bot_id),
           at: message.created_at,
           text: message.text,
           urgent: false,
@@ -901,6 +938,10 @@ export const layer = Layer.effect(
       if (payload._tag === "answer") {
         const answer = yield* answerOf(payload.cardId);
         return answer === null ? null : ({ _tag: "answer", answer } satisfies WakePart);
+      }
+      if (payload._tag === "teammate") {
+        const message = yield* teammateMessageOf(payload.entryId);
+        return message === null ? null : ({ _tag: "teammate", message } satisfies WakePart);
       }
       return null;
     });
@@ -927,10 +968,10 @@ export const layer = Layer.effect(
       if (head === undefined) {
         return yield* Effect.die(new TurnsInvariant({ invariant: "A plan carries a wake" }));
       }
-      if (head.kind !== "system" && head.kind !== "user") {
-        // Routine envelopes come with their wakes in M2, room and teammate ones in M3.
+      if (head.kind === "room" || head.kind === "routine") {
+        // A routine's envelope is the routine runner's; room envelopes come with room routing.
         return yield* Effect.die(
-          new TurnsInvariant({ invariant: `No envelope for ${head.kind} wakes yet` }),
+          new TurnsInvariant({ invariant: `No envelope for ${head.kind} wakes here` }),
         );
       }
       const system = (event: SystemEvent, since: ReadonlyArray<CatchUpItem>): Wake => ({
@@ -950,10 +991,13 @@ export const layer = Layer.effect(
         } else dropped.push(one.source);
       }
       const event = head.kind === "system" ? yield* systemEventOf(head.payload_json) : null;
-      const parts = head.kind === "user" ? yield* Effect.forEach(plan.wakes, partOf) : [];
+      const parts = head.kind === "system" ? [] : yield* Effect.forEach(plan.wakes, partOf);
       const render = (wakes: number, seen: number): Wake | null => {
         const since = carried.slice(0, seen).flatMap(({ item }) => (item === null ? [] : [item]));
-        return event !== null ? system(event, since) : userWake(base, since, parts.slice(0, wakes));
+        if (event !== null) return system(event, since);
+        return head.kind === "bot"
+          ? botWake(base, since, parts.slice(0, wakes))
+          : userWake(base, since, parts.slice(0, wakes));
       };
       // Nothing left to render takes no room.
       const fits = (wake: Wake | null) => wake === null || fitsEngine(wake);

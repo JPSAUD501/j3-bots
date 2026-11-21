@@ -96,8 +96,8 @@ export const PRIORITY: { readonly [K in WakeKind]: number } = {
 };
 
 /**
- * What a wake carries, read when its envelope is rendered. The kinds a later
- * milestone adds (room and teammate wakes in M3) add their own variants here.
+ * What a wake carries, read when its envelope is rendered. Room wakes add
+ * their own variant with room routing.
  */
 export const WakePayload = Schema.Union([
   /** An operator message, read from its entry. */
@@ -110,6 +110,8 @@ export const WakePayload = Schema.Union([
   Schema.TaggedStruct("first-run", {}),
   /** A run of a routine; for a webhook, the run holds the request's body. */
   Schema.TaggedStruct("routine", { routineId: RoutineId, runId: RoutineRunId }),
+  /** A teammate's urgent message, read from the handoff card it put in this bot's conversation. */
+  Schema.TaggedStruct("teammate", { entryId: EntryId }),
 ]);
 export type WakePayload = typeof WakePayload.Type;
 

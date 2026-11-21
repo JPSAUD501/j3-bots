@@ -451,20 +451,6 @@ describe("renderWake", () => {
       This is an event, not a message from your user. Respond only as your instructions say for it.
       "
     `);
-    expect(system({ name: "budget-stopped", limit: "hops" })).toMatchInlineSnapshot(`
-      "<j3-wake kind="system" event="budget-stopped" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
-      A chain of messages between bots reached its limit since your user last spoke, so it stopped.
-      </j3-wake>
-      This is an event, not a message from your user. Respond only as your instructions say for it.
-      "
-    `);
-    expect(system({ name: "budget-stopped", limit: "fan-out" })).toMatchInlineSnapshot(`
-      "<j3-wake kind="system" event="budget-stopped" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
-      A message tried to wake more teammates than allowed, so it was not delivered.
-      </j3-wake>
-      This is an event, not a message from your user. Respond only as your instructions say for it.
-      "
-    `);
     expect(system({ name: "undelivered" })).toMatchInlineSnapshot(`
       "<j3-wake kind="system" event="undelivered" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
       Your last turn for your user ended without delivering an answer.

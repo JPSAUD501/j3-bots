@@ -21,7 +21,7 @@ export class RoomRouting extends Context.Service<
       readonly room: Room;
       readonly message: MessageEntry;
     }) => Effect.Effect<void>;
-    /** A bot spoke in a room, in a turn whose wake had come `hops` hops from the operator. */
+    /** A bot spoke in a room; a wake it causes is `hops` hops from the operator (Budgets). */
     readonly botMessage: (input: {
       readonly roomId: RoomId;
       readonly botId: BotId;

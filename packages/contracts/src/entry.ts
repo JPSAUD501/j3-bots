@@ -346,10 +346,15 @@ export const NoticeEntry = Schema.TaggedStruct("notice", {
 });
 export type NoticeEntry = typeof NoticeEntry.Type;
 
-/** A bot sent a teammate a message. The reply arrives later, as its own turn. */
+/**
+ * A bot sent a teammate a message. Both conversations show it: the sender's
+ * as `sent`, the recipient's as `received`. Its author is the sender either
+ * way. The reply arrives later, as its own turn.
+ */
 export const HandoffEntry = Schema.TaggedStruct("handoff", {
   ...entry,
   recipientId: BotId,
+  direction: Schema.Literals(["sent", "received"]),
   text: MessageText,
   urgent: Schema.Boolean,
 });

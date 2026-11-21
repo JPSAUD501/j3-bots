@@ -29,6 +29,7 @@ import {
   flushed,
   gateSettled,
   holdGate,
+  messageTeammate,
   nextTurn,
   noticesOf,
   providerIs,
@@ -640,6 +641,64 @@ it.effect("leaves out, visibly, what the session has not seen and no envelope ca
       ["note-after"],
     );
     assert.include(yield* noticesOf(bot.id), "too-long");
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+/** A teammate, in a turn the operator started, leaves the bot a message that is not urgent. */
+const holdMessageFor = (botId: BotId, text: string) =>
+  Effect.gen(function* () {
+    const sender = yield* createBot("Cy");
+    const session = yield* engineSession(sender.id);
+    yield* sendToBot(sender.id, "Let Ana know.");
+    const turnId = yield* nextTurn(sender.id);
+    const reply = yield* messageTeammate(session, turnId, { to: botId, text, urgent: false });
+    assert.strictEqual(reply._tag, "result");
+  });
+
+it.effect("delivers a held teammate message in one envelope, again after a refused one", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* holdMessageFor(bot.id, "The launch moved to Friday.");
+    // It wakes nobody.
+    yield* flushed(bot.id);
+    assert.deepStrictEqual(yield* received(session), []);
+
+    // The envelope that carried it was refused: the next one carries it.
+    yield* control.rejectNextDispatch;
+    yield* deliveryIs(yield* sendToBot(bot.id, "Any news?"), "failed");
+    yield* gateSettled(bot.id);
+    yield* sendToBot(bot.id, "Any news now?");
+    const first = yield* finishRunning(bot.id);
+    yield* sendToBot(bot.id, "And the venue?");
+    yield* finishRunning(bot.id, first);
+
+    const sent = yield* received(session);
+    assert.deepStrictEqual(
+      sent.map(({ text }) => text.includes("The launch moved to Friday.")),
+      [true, false],
+    );
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("keeps a held teammate message with an envelope whose fate is unknown", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* holdMessageFor(bot.id, "The launch moved to Friday.");
+
+    // The send carrying it is never answered, and its recovery gives up: it may still land.
+    yield* control.deferNextDispatch;
+    const lost = yield* sendToBot(bot.id, "Any news?");
+    yield* flushed(bot.id);
+    yield* recoverTimes(MAX_INDETERMINATE_ANSWERS - 1);
+    yield* deliveryIs(lost, "failed");
+
+    yield* sendToBot(bot.id, "And the venue?");
+    yield* finishRunning(bot.id);
+    assert.strictEqual(yield* timesSent(session, "The launch moved to Friday."), 0);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

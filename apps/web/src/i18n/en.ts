@@ -164,6 +164,7 @@ export const en = {
   "notice.openConversation": "Open",
 
   "handoff.asked": "Asked {name}",
+  "handoff.from": "{name} asked",
   "handoff.urgent": "Urgent",
 
   "routine.change.created": "Routine created",

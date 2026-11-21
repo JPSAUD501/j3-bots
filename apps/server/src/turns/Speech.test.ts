@@ -9,7 +9,9 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as SqlClient from "effect/sql/SqlClient";
 import { Attachments } from "../attachments/Attachments.ts";
+import { Bots } from "../bots/Bots.ts";
 import { BotStore } from "../bots/BotStore.ts";
 import { Layout } from "../Layout.ts";
 import { Rooms } from "../rooms/Rooms.ts";
@@ -17,13 +19,17 @@ import * as TestDomain from "../testing/domain.ts";
 import {
   admittedTurn,
   awaitEntry,
+  chainLimits,
   command,
   conversation,
   createBot,
   deliveryIs,
   engineSession,
   flushed,
+  holdGate,
+  messageTeammate,
   nextTurn,
+  noticesOf,
   received,
   roomOf,
   sendInRoom,
@@ -33,8 +39,10 @@ import {
   until,
 } from "../testing/turns.ts";
 import { BotTools } from "../tools/BotTools.ts";
+import type { ToolCallResponse } from "../tools/protocol.ts";
 import { BotStates } from "./BotStates.ts";
 import { Cards } from "./Cards.ts";
+import { Stops } from "./Stops.ts";
 
 /** What the bot said in its conversation, oldest first. */
 const botSaid = (botId: BotId) =>
@@ -507,4 +515,178 @@ it.effect("refuses a say whose files together pass the limit", () =>
     assert.deepStrictEqual(yield* botSaid(bot.id), []);
     assert.deepStrictEqual(yield* storedBlobs, []);
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+/** The teammate messages the bot's conversation shows, oldest first. */
+const handoffs = (botId: BotId) =>
+  conversation(botId).pipe(
+    Effect.map((entries) =>
+      entries.flatMap((entry) =>
+        entry._tag === "handoff" ? [`${entry.direction}: ${entry.text}`] : [],
+      ),
+    ),
+  );
+
+/** How many teammate wakes and held teammate messages were written for the bot. */
+const teammateMessagesFor = (botId: BotId) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const [row] = yield* sql<{ readonly wakes: number; readonly held: number }>`
+      SELECT
+        (SELECT COUNT(*) FROM wakes WHERE bot_id = ${botId} AND kind = 'bot') AS wakes,
+        (SELECT COUNT(*) FROM held_messages WHERE recipient_bot_id = ${botId}) AS held
+    `.pipe(Effect.orDie);
+    return { wakes: row?.wakes ?? 0, held: row?.held ?? 0 };
+  });
+
+/** What a refused call tells the bot; empty for a call that was not refused. */
+const refusal = (reply: ToolCallResponse) => (reply._tag === "refused" ? reply.message : "");
+
+it.effect("wakes a teammate once with an urgent message, shown in both conversations", () =>
+  Effect.gen(function* () {
+    const tools = yield* BotTools;
+    const { bot: ana, session, turnId } = yield* working("Ask Bo for the launch date.");
+    const bo = yield* createBot("Bo");
+    const boSession = yield* engineSession(bo.id);
+    const args = { to: bo.id, text: "When is the launch?", urgent: true };
+
+    yield* (yield* TestEngineControl).toolCall({
+      sessionId: session,
+      turnId,
+      tool: "message_bot",
+      input: args,
+      recorded: "now",
+    });
+    const forward = {
+      requestId: "call-1",
+      sessionId: session,
+      tool: "message_bot",
+      arguments: args,
+    };
+    const reply = yield* tools.call(forward);
+    assert.deepStrictEqual(reply, {
+      _tag: "result",
+      value: { status: "sent", note: "It wakes them now." },
+    });
+    // The bridge forwarding the request again gets the same answer, and nothing more is sent.
+    assert.deepStrictEqual(yield* tools.call(forward), reply);
+
+    yield* nextTurn(bo.id);
+    yield* flushed(bo.id);
+    const sent = yield* received(boSession);
+    assert.deepStrictEqual(
+      sent.map(({ text }) => [text.includes('kind="bot"'), text.includes("When is the launch?")]),
+      [[true, true]],
+    );
+    assert.deepStrictEqual(yield* handoffs(ana.id), ["sent: When is the launch?"]);
+    assert.deepStrictEqual(yield* handoffs(bo.id), ["received: When is the launch?"]);
+    assert.deepStrictEqual(yield* teammateMessagesFor(bo.id), { wakes: 1, held: 0 });
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("refuses a message to itself, to an unknown id and to a deleted teammate", () =>
+  Effect.gen(function* () {
+    const { bot: ana, session, turnId } = yield* working("Ask the others.");
+    const bo = yield* createBot("Bo");
+    yield* (yield* Bots).remove({ commandId: command(), botId: bo.id, deleteFiles: true });
+
+    for (const to of [ana.id, "nobody", bo.id]) {
+      const reply = yield* messageTeammate(session, turnId, { to, text: "Hello?", urgent: true });
+      assert.include(refusal(reply), "Nothing was sent");
+    }
+    assert.deepStrictEqual(yield* handoffs(ana.id), []);
+    assert.deepStrictEqual(yield* teammateMessagesFor(bo.id), { wakes: 0, held: 0 });
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("sends nothing for work the operator stopped", () =>
+  Effect.gen(function* () {
+    const { bot: ana, session, turnId } = yield* working("Ask Bo to deploy.");
+    const bo = yield* createBot("Bo");
+    // The Stop is recorded; its round has not reached the engine yet.
+    const gate = yield* holdGate(ana.id);
+    yield* (yield* Stops).stopBot({ commandId: command(), botId: ana.id });
+
+    const reply = yield* messageTeammate(session, turnId, {
+      to: bo.id,
+      text: "Deploy now.",
+      urgent: true,
+    });
+    assert.include(refusal(reply), "Your user stopped this work");
+    yield* gate.release;
+    assert.deepStrictEqual(yield* handoffs(bo.id), []);
+    assert.deepStrictEqual(yield* teammateMessagesFor(bo.id), { wakes: 0, held: 0 });
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("refuses a second teammate in one turn past the fan-out limit, writing nothing", () =>
+  Effect.gen(function* () {
+    const { bot: ana, session, turnId } = yield* working("Tell Bo and Cy.");
+    const bo = yield* createBot("Bo");
+    const cy = yield* createBot("Cy");
+
+    yield* messageTeammate(session, turnId, {
+      to: bo.id,
+      text: "The launch moved.",
+      urgent: false,
+    });
+    const refused = yield* messageTeammate(session, turnId, {
+      to: cy.id,
+      text: "The launch moved.",
+      urgent: false,
+    });
+    assert.include(refusal(refused), "at most 1 teammate");
+    // The same teammate again is no wider.
+    const again = yield* messageTeammate(session, turnId, {
+      to: bo.id,
+      text: "To Friday.",
+      urgent: false,
+    });
+    assert.strictEqual(again._tag, "result");
+
+    assert.deepStrictEqual(yield* handoffs(ana.id), [
+      "sent: The launch moved.",
+      "sent: To Friday.",
+    ]);
+    assert.deepStrictEqual(yield* handoffs(cy.id), []);
+    assert.deepStrictEqual(yield* teammateMessagesFor(cy.id), { wakes: 0, held: 0 });
+    assert.deepStrictEqual(yield* teammateMessagesFor(bo.id), { wakes: 0, held: 2 });
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "stops a chain between bots at the hop limit with one notice, until the operator speaks",
+  () =>
+    Effect.gen(function* () {
+      yield* chainLimits({ hops: 1, fanOut: 1 });
+      const { bot: ana, session, turnId } = yield* working("Ask Bo for the date.");
+      const bo = yield* createBot("Bo");
+      const boSession = yield* engineSession(bo.id);
+
+      yield* messageTeammate(session, turnId, { to: bo.id, text: "The date?", urgent: true });
+      const boTurn = yield* nextTurn(bo.id);
+      for (const text of ["Friday.", "Friday, I mean."]) {
+        const reply = yield* messageTeammate(boSession, boTurn, { to: ana.id, text, urgent: true });
+        assert.include(refusal(reply), "reached your user's limit of 1");
+      }
+      assert.deepStrictEqual(yield* noticesOf(bo.id), ["chain-stopped"]);
+      assert.deepStrictEqual(yield* teammateMessagesFor(ana.id), { wakes: 0, held: 0 });
+
+      // The operator writes to Bo: the chain starts again from them.
+      yield* (yield* TestEngineControl).finishTurn({
+        sessionId: boSession,
+        turnId: boTurn,
+        outcome: { _tag: "completed" },
+      });
+      yield* turnEnded(bo.id);
+      yield* sendToBot(bo.id, "Tell Ana it is Friday.");
+      const asked = yield* nextTurn(bo.id, boTurn);
+      const reply = yield* messageTeammate(boSession, asked, {
+        to: ana.id,
+        text: "Friday.",
+        urgent: false,
+      });
+      assert.strictEqual(reply._tag, "result");
+      assert.deepStrictEqual(yield* teammateMessagesFor(ana.id), { wakes: 0, held: 1 });
+    }).pipe(Effect.provide(TestDomain.layer)),
 );

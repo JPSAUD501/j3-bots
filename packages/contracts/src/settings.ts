@@ -13,7 +13,7 @@ export type TimeZone = typeof TimeZone.Type;
 export const Budgets = Schema.Struct({
   /** Consecutive bot-caused wakes in one chain since the operator last spoke. */
   hops: PositiveInt,
-  /** Bots a single bot message may wake, unless the operator asked for more. */
+  /** Teammates one bot turn may message, and bots one bot message in a room may mention. */
   fanOut: PositiveInt,
   /** Turns running at once across all bots. */
   concurrentTurns: PositiveInt,

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   type Attachment,
-  type BotId,
+  BotId,
   Conflict,
+  type EntryTarget,
   MAX_ATTACHMENT_SIZE,
   RoomId,
 } from "@j3-bots/contracts";
@@ -26,13 +27,13 @@ import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { json, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { RoomRouting } from "../rooms/RoomRouting.ts";
+import { SettingsStore } from "../settings/SettingsStore.ts";
 import {
   TurnEnded,
   type TurnToolCall,
   TurnToolRefused,
   TurnToolRetry,
   TurnTools,
-  TurnToolUnavailable,
 } from "../tools/TurnTools.ts";
 import { Ledger } from "./Ledger.ts";
 import { liveTarget } from "./liveTarget.ts";
@@ -47,9 +48,13 @@ import {
   audienceOf,
   conversation,
   DispatchRowId,
+  DispatchSeq,
   SessionRowId,
 } from "./model.ts";
+import { notices } from "./notices.ts";
 import { Observer } from "./Observer.ts";
+import { stopTargets } from "./stopTargets.ts";
+import { Wakes } from "./Wakes.ts";
 
 /**
  * The most bytes the files of one `say` take together. The operator's own
@@ -93,6 +98,23 @@ const CallKey = Schema.Struct({
 
 const StoredResult = Schema.Struct({ result_json: json(Schema.Json) });
 
+/**
+ * A refusal that committed something, as a `message_bot` past the hop limit
+ * commits its notice: stored as the request's result like any other, so a
+ * replayed forward refuses the same way.
+ */
+const StoredRefusal = Schema.Struct({ refused: Schema.String });
+const storedRefusal = Schema.decodeUnknownOption(StoredRefusal);
+
+/** The answer a stored result gives the bot: a refusal fails, anything else is the result. */
+const answer = (result: Schema.Json) =>
+  Option.match(storedRefusal(result), {
+    onNone: () => Effect.succeed(result),
+    onSome: ({ refused }) => Effect.fail(new TurnToolRefused({ reason: refused })),
+  });
+
+const Hops = Schema.Struct({ operator: Schema.BooleanFromBit, furthest: Schema.Int });
+
 /** A request as its stored result is looked up: under its id, for its caller and its tool. */
 const RequestKey = Schema.Struct({
   requestId: Schema.String,
@@ -110,7 +132,7 @@ interface WorkspaceFile {
 }
 
 /** The turn tools a request is pinned for. */
-type PinnedTool = "say" | "ask" | "set_routine";
+type PinnedTool = "say" | "ask" | "message_bot" | "set_routine";
 
 /** A request matched to its call, or one a forward of it already committed. */
 type Matched =
@@ -125,11 +147,11 @@ const keyOf = (call: TurnToolCall) => ({
 
 /**
  * The turn tools (`docs/architecture/server.md`, Bot tools): `say` and `ask`,
- * which speak, and `set_routine` (`routineTool.ts`). Each request is matched
- * to the engine's record of its call in the session's running admitted turn
- * and pinned to it, in the transaction that applies it, so a request acts
- * once, for the turn and the audience that made it. `message_bot` comes with
- * teammates in M3 (`docs/roadmap.md`).
+ * which speak, `message_bot`, which reaches a teammate (Teammate messages),
+ * and `set_routine` (`routineTool.ts`). Each request is matched to the
+ * engine's record of its call in the session's running admitted turn and
+ * pinned to it, in the transaction that applies it, so a request acts once,
+ * for the turn and the audience that made it.
  */
 export const layer = Layer.effect(
   TurnTools,
@@ -142,9 +164,14 @@ export const layer = Layer.effect(
     const attachments = yield* Attachments;
     const bots = yield* BotStore;
     const routing = yield* RoomRouting;
+    const settings = yield* SettingsStore;
+    const wakes = yield* Wakes;
+    const ids = yield* Ids;
+    const stops = stopTargets(sql);
+    const { notify } = notices(sql, entries);
     const readWorkspaceFile = yield* workspaceReader;
     const targetOf = liveTarget(sql);
-    const spoken = routineSpeech(sql, yield* Ids, yield* ChangeLog);
+    const spoken = routineSpeech(sql, ids, yield* ChangeLog);
     const setRoutine = yield* routineTool;
 
     const engineSessionOf = SqlSchema.findOneOption({
@@ -342,14 +369,92 @@ export const layer = Layer.effect(
     const deliveredBy = (found: Pin) =>
       turnDispatches({ sessionId: found.sessionId, turnId: found.turnId }).pipe(Effect.orDie);
 
-    /** How far from the operator the wake behind the turn came. */
-    const hopsOf = (found: Pin) =>
-      sql<{ readonly hops: number | null }>`
-        SELECT MAX(w.hops) AS hops FROM wakes w JOIN dispatches d ON d.id = w.dispatch_id
-        WHERE d.session_id = ${found.sessionId} AND d.engine_turn_id = ${found.turnId}
+    /**
+     * The hop count of a wake the pinned turn causes (`docs/architecture/server.md`,
+     * Budgets): 1 when the turn carries the operator's word, as a wake or a
+     * steer, so the chain starts again whenever they speak; otherwise one more
+     * than the furthest wake or held message the turn delivers. A turn the
+     * engine started on its own, for background work that finished, carries
+     * none of either and counts as 1, until such a turn is tied to the turn
+     * whose work woke it.
+     */
+    const nextHops = (found: Pin) =>
+      SqlSchema.findAll({
+        Request: Schema.Struct({ sessionId: SessionRowId, turnId: TurnId }),
+        Result: Hops,
+        execute: ({ sessionId, turnId }) => sql`
+          WITH delivered AS (
+            SELECT id FROM dispatches
+            WHERE session_id = ${sessionId} AND engine_turn_id = ${turnId}
+              AND status IN ('accepted', 'delivered')
+          ),
+          carried AS (
+            SELECT w.kind, w.hops, w.source_entry_id FROM wakes w
+            WHERE w.dispatch_id IN (SELECT id FROM delivered)
+          )
+          SELECT
+            EXISTS (
+              SELECT 1 FROM carried c
+              WHERE c.kind = 'user' OR EXISTS (
+                SELECT 1 FROM entries e
+                WHERE e.id = c.source_entry_id AND e.author_kind = 'operator'
+              )
+            ) AS operator,
+            MAX(
+              COALESCE((SELECT MAX(hops) FROM carried), 0),
+              COALESCE((
+                SELECT MAX(hops) FROM held_messages
+                WHERE consumed_dispatch_id IN (SELECT id FROM delivered)
+              ), 0)
+            ) AS furthest
+        `,
+      })({ sessionId: found.sessionId, turnId: found.turnId }).pipe(
+        Effect.orDie,
+        Effect.map(([row]) => (row === undefined || row.operator ? 1 : row.furthest + 1)),
+      );
+
+    /**
+     * The dispatch that began the pinned turn's work, which decides whether a
+     * Stop covers it: the first one written of those the turn delivers.
+     * `null` for a turn the engine started on its own.
+     */
+    const workOf = (found: Pin) =>
+      SqlSchema.findAll({
+        Request: Schema.Struct({ sessionId: SessionRowId, turnId: TurnId }),
+        Result: Schema.Struct({ seq: Schema.NullOr(DispatchSeq) }),
+        execute: ({ sessionId, turnId }) => sql`
+          SELECT MIN(seq) AS seq FROM dispatches
+          WHERE session_id = ${sessionId} AND engine_turn_id = ${turnId}
+        `,
+      })({ sessionId: found.sessionId, turnId: found.turnId }).pipe(
+        Effect.orDie,
+        Effect.map(([row]) => row?.seq ?? null),
+      );
+
+    /** The teammates the pinned turn has messaged, each once. */
+    const messagedBy = (found: Pin) =>
+      SqlSchema.findAll({
+        Request: Schema.Struct({ sessionId: SessionRowId, turnId: TurnId }),
+        Result: Schema.Struct({ recipient_bot_id: BotId }),
+        execute: ({ sessionId, turnId }) => sql`
+          SELECT DISTINCT recipient_bot_id FROM tool_calls
+          WHERE session_id = ${sessionId} AND engine_turn_id = ${turnId}
+            AND tool = 'message_bot' AND recipient_bot_id IS NOT NULL
+        `,
+      })({ sessionId: found.sessionId, turnId: found.turnId }).pipe(
+        Effect.orDie,
+        Effect.map((rows) => rows.map((row) => row.recipient_bot_id)),
+      );
+
+    /** Whether a `message_bot` of the pinned turn was already refused at the hop limit. */
+    const chainStopped = (found: Pin) =>
+      sql`
+        SELECT 1 FROM tool_calls
+        WHERE session_id = ${found.sessionId} AND engine_turn_id = ${found.turnId}
+          AND tool = 'message_bot' AND json_extract(result_json, '$.refused') IS NOT NULL
       `.pipe(
         Effect.orDie,
-        Effect.map(([row]) => row?.hops ?? 0),
+        Effect.map((rows) => rows.length > 0),
       );
 
     /** Where the pinned turn's speech goes, unless its room was archived. */
@@ -486,7 +591,7 @@ export const layer = Layer.effect(
                 roomId: target.roomId,
                 botId: found.botId,
                 message: entry,
-                hops: yield* hopsOf(found),
+                hops: yield* nextHops(found),
               });
             }
             if (input.done === true) {
@@ -566,6 +671,112 @@ export const layer = Layer.effect(
       );
     });
 
+    /**
+     * A message to a teammate (`docs/architecture/server.md`, Teammate
+     * messages): a handoff card in each of the two conversations, and an
+     * urgent message's `bot` wake or a held one for the teammate's next
+     * envelope, all in the transaction that pins the request. Refused, with
+     * nothing written, for a recipient that is not a teammate, for work the
+     * operator stopped, and past the fan-out limit; past the hop limit, the
+     * refusal is stored with one quiet notice per turn in the sender's
+     * conversation. A refusal never wakes anyone.
+     */
+    const messageBot = Effect.fn("Speech.messageBot")(function* (
+      found: Pin,
+      input: ToolInput<"message_bot">,
+    ) {
+      const refuse = (reason: string) => new TurnToolRefused({ reason });
+      return yield* once(
+        "message_bot",
+        found,
+      )(
+        Effect.gen(function* () {
+          const recipientId = Option.getOrNull(Schema.decodeOption(BotId)(input.to));
+          if (recipientId === found.botId) {
+            return yield* refuse(
+              "That id is your own. Nothing was sent: `message_bot` reaches a teammate, by an id from `list_teammates`.",
+            );
+          }
+          const recipient = recipientId === null ? Option.none() : yield* bots.find(recipientId);
+          if (recipientId === null || Option.isNone(recipient)) {
+            return yield* refuse(
+              `No teammate has the id ${input.to}; they may have been deleted. Nothing was sent. \`list_teammates\` shows your teammates now.`,
+            );
+          }
+          const seq = yield* workOf(found);
+          if (seq !== null && (yield* stops.covers(found.botId, found.audience, seq))) {
+            return yield* refuse("Your user stopped this work, so nothing was sent.");
+          }
+          const { budgets } = yield* settings.get;
+          const messaged = yield* messagedBy(found);
+          if (!messaged.includes(recipientId) && messaged.length >= budgets.fanOut) {
+            return yield* refuse(
+              `Nothing was sent: your user allows one turn to message at most ${budgets.fanOut} ${budgets.fanOut === 1 ? "teammate" : "teammates"}, and this turn already has. If someone else needs to know, tell your user.`,
+            );
+          }
+          const hops = yield* nextHops(found);
+          if (hops > budgets.hops) {
+            if (!(yield* chainStopped(found))) {
+              yield* notify(
+                found.botId,
+                conversation,
+                { _tag: "chain-stopped", limit: "hops" },
+                null,
+              );
+            }
+            return {
+              refused: `Nothing was sent: this chain of messages between bots reached your user's limit of ${budgets.hops} since they last spoke. Do not try again. If your user is waiting on it, tell them with \`say\`.`,
+            } satisfies Schema.Json;
+          }
+          const card = (target: EntryTarget, direction: "sent" | "received") =>
+            entries.append({
+              target,
+              entry: {
+                _tag: "handoff",
+                author: { _tag: "bot", botId: found.botId },
+                recipientId,
+                direction,
+                text: input.text,
+                urgent: input.urgent,
+              },
+            });
+          yield* card({ _tag: "conversation", botId: found.botId }, "sent");
+          const received = yield* card({ _tag: "conversation", botId: recipientId }, "received");
+          if (input.urgent) {
+            yield* wakes.record([
+              {
+                botId: recipientId,
+                kind: "bot",
+                audience: conversation,
+                payload: { _tag: "teammate", entryId: received.id },
+                sourceEntryId: null,
+                hops,
+                retryOf: null,
+                cause: { _tag: "teammate", senderId: found.botId, audience: found.audience, seq },
+              },
+            ]);
+          } else {
+            yield* sql`
+              INSERT INTO held_messages (
+                id, recipient_bot_id, sender_bot_id, handoff_entry_id, text, hops, created_at
+              ) VALUES (
+                ${yield* ids.make("held")}, ${recipientId}, ${found.botId}, ${received.id},
+                ${input.text}, ${hops}, ${timeText(received.createdAt)}
+              )
+            `.pipe(Effect.orDie);
+          }
+          yield* sql`
+            UPDATE tool_calls SET recipient_bot_id = ${recipientId} WHERE id = ${found.requestId}
+          `.pipe(Effect.orDie);
+          return (
+            input.urgent
+              ? { status: "sent", note: "It wakes them now." }
+              : { status: "held", note: "They read it at the start of their next turn." }
+          ) satisfies Schema.Json;
+        }),
+      );
+    });
+
     const encodeValues = Schema.encodeEffect(
       json(Schema.Record(Schema.String, Schema.NullOr(Schema.String))),
     );
@@ -577,8 +788,7 @@ export const layer = Layer.effect(
       `;
     }, Effect.orDie);
 
-    const call = Effect.fn("TurnTools.call")(function* (call: TurnToolCall) {
-      if (call.tool === "message_bot") return yield* new TurnToolUnavailable({ tool: call.tool });
+    const apply = Effect.fn("TurnTools.apply")(function* (call: TurnToolCall) {
       // A forward retried under the same id returns what the first one did.
       const stored = yield* storedResult(keyOf(call)).pipe(Effect.orDie);
       if (Option.isSome(stored)) return stored.value.result_json;
@@ -590,10 +800,14 @@ export const layer = Layer.effect(
           return yield* say(found, call.input);
         case "ask":
           return yield* ask(found, call.input);
+        case "message_bot":
+          return yield* messageBot(found, call.input);
         case "set_routine":
           return yield* setRoutine(found, call.input, once("set_routine", found));
       }
     });
+
+    const call = (request: TurnToolCall) => Effect.flatMap(apply(request), answer);
 
     /**
      * Admission has an end-to-end deadline: past it nothing was admitted (an

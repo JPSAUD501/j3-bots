@@ -479,6 +479,7 @@ export function galleryVariants(now: DateTime.Utc) {
       _tag: "handoff",
       ...base("handoff"),
       recipientId: ids.wren,
+      direction: "sent",
       text: "Can you shorten the newsletter’s opening to three sentences?",
       urgent: false,
     },
@@ -486,8 +487,17 @@ export function galleryVariants(now: DateTime.Utc) {
       _tag: "handoff",
       ...base("handoff-urgent"),
       recipientId: ids.atlas,
+      direction: "sent",
       text: "The billing API on staging is still read-only ten minutes after the migration. Please look now.",
       urgent: true,
+    },
+    {
+      _tag: "handoff",
+      ...base("handoff-received", { _tag: "bot", botId: ids.wren }),
+      recipientId: ids.scout,
+      direction: "received",
+      text: "Which of the three bikes should the test ride be on?",
+      urgent: false,
     },
   ];
 

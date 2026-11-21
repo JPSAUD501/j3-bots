@@ -71,4 +71,4 @@ Only a `user` wake carries the operator's instructions. Every other kind is labe
 
 **Question.** A bot asking the operator to choose. It arrives as a card with options, not as prose.
 
-**Budget.** The limits that keep bots from spending the operator's allowance on each other: how many bots a single message may wake, how many hops a chain of bot-to-bot messages may take, how many turns may run at once.
+**Budget.** The limits that keep bots from spending the operator's allowance on each other: how many teammates one bot turn may message, or one bot's room message may mention, how many hops a chain of bot-to-bot messages may take, how many turns may run at once.

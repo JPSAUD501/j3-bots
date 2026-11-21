@@ -53,7 +53,7 @@ The operator creates a room, adds two to six bots, and writes.
 ### One bot hands work to another
 
 - The operator asks, or the bot offers ("want me to ask Scout?").
-- The handoff appears in the conversation as a compact card: who was asked, about what. Opening it shows the exchange.
+- The handoff appears as a compact card in both conversations: in the sender's, who was asked and about what; in the recipient's, who asked. Opening either goes to the other bot's conversation.
 - The reply comes back later, as its own turn. The operator is told only when there is something new for them.
 
 ### Changing a bot

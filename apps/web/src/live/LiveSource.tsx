@@ -63,6 +63,7 @@ import { guessDeviceName, Incompatible, Pairing, StorageFailed } from "../compon
 import { type Notice, Toast } from "../components/Toast";
 import { notificationAccess } from "../preferences/notifications";
 import { notificationContent } from "../presentation/notification";
+import { handoffPeer } from "../presentation/timeline";
 import type { ConversationView, ShellData, ShellIntents } from "../shell/data";
 import { ShellSourceProvider } from "../shell/source";
 import {
@@ -576,7 +577,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
     },
     openHandoff: (entryId) => {
       const handoff = view.items.find((item) => item._tag === "handoff" && item.id === entryId);
-      if (handoff?._tag === "handoff") goToBot(handoff.recipientId);
+      if (handoff?._tag === "handoff") goToBot(handoffPeer(handoff));
     },
     // A routine has no screen of its own yet: its bot's details list it.
     openRoutine: () => void navigate({ to: ".", search: (prev) => ({ ...prev, details: true }) }),

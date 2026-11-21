@@ -401,6 +401,24 @@ export const concurrentTurns = (n: number) =>
     );
   });
 
+/** Bot-caused wakes stop after `hops` in a chain; one bot turn messages at most `fanOut` teammates. */
+export const chainLimits = (limits: { readonly hops: number; readonly fanOut: number }) =>
+  Effect.gen(function* () {
+    const store = yield* SettingsStore;
+    const settings = yield* store.get;
+    yield* store.save(
+      {
+        ...settings,
+        budgets: {
+          ...settings.budgets,
+          hops: PositiveInt.make(limits.hops),
+          fanOut: PositiveInt.make(limits.fanOut),
+        },
+      },
+      yield* DateTime.now,
+    );
+  });
+
 /** Runs the recovery once each backoff passes, `times` times. */
 export const recoverTimes = (times: number) =>
   Effect.gen(function* () {
@@ -466,6 +484,31 @@ export const askRegion = (
       arguments: args,
     });
     return yield* awaitEntry(botId, "question");
+  });
+
+/**
+ * The bot, in its running turn, sends the teammate `to` a message: the
+ * response the tool gives it.
+ */
+export const messageTeammate = (
+  sessionId: SessionId,
+  turnId: TurnId,
+  message: { readonly to: string; readonly text: string; readonly urgent: boolean },
+) =>
+  Effect.gen(function* () {
+    yield* (yield* TestEngineControl).toolCall({
+      sessionId,
+      turnId,
+      tool: "message_bot",
+      input: message,
+      recorded: "now",
+    });
+    return yield* (yield* BotTools).call({
+      requestId: `call-${++calls}`,
+      sessionId,
+      tool: "message_bot",
+      arguments: { ...message },
+    });
   });
 
 /** The operator answers the card with its first option. */

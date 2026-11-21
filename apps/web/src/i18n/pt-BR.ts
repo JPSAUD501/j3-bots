@@ -163,6 +163,7 @@ export const ptBR: Catalog = {
   "notice.openConversation": "Abrir",
 
   "handoff.asked": "Perguntou a {name}",
+  "handoff.from": "{name} perguntou",
   "handoff.urgent": "Urgente",
 
   "routine.change.created": "Rotina criada",

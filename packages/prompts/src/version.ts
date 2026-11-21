@@ -94,8 +94,6 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
     kind: "system",
     event: { name: "profile-changed", changes: [{ field: "name", value: "text" }] },
   },
-  { ...base, kind: "system", event: { name: "budget-stopped", limit: "hops" } },
-  { ...base, kind: "system", event: { name: "budget-stopped", limit: "fan-out" } },
   { ...base, kind: "system", event: { name: "undelivered" } },
 ];
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Entry, MessageEntry } from "@j3-bots/contracts";
+import type { BotId, Entry, HandoffEntry, MessageEntry } from "@j3-bots/contracts";
 import type { ConversationItem, OutgoingMessage } from "@j3-bots/client-runtime";
 import * as DateTime from "effect/DateTime";
 
@@ -76,4 +76,11 @@ export function buildTimeline(entries: ReadonlyArray<ConversationItem>): Timelin
     previous = entry;
   }
   return items;
+}
+
+/** The other bot of a teammate message: the recipient of one sent, the sender of one received. */
+export function handoffPeer(entry: HandoffEntry): BotId {
+  return entry.direction === "sent" || entry.author._tag !== "bot"
+    ? entry.recipientId
+    : entry.author.botId;
 }

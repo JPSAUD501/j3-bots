@@ -86,13 +86,16 @@ function failureText(
 /**
  * The latest entry in one line, as a roster row says it. `current` is true
  * while the bot waits on that very entry, so a card it still needs reads in
- * the present tense.
+ * the present tense. `owner` is the bot whose conversation it is, `null` in
+ * a room: a teammate message in its conversation from another bot is one it
+ * received.
  */
 function previewSummary(
   preview: EntryPreview,
   ctx: PresentationContext,
-  { inRoom, current }: { readonly inRoom: boolean; readonly current: boolean },
+  { owner, current }: { readonly owner: BotId | null; readonly current: boolean },
 ): string {
+  const inRoom = owner === null;
   const { t } = ctx.i18n;
   const text = firstLine(preview.text);
   switch (preview.kind) {
@@ -116,6 +119,10 @@ function previewSummary(
     case "notice":
       return t("summary.notice");
     case "handoff":
+      if (preview.author._tag === "bot" && preview.author.botId !== owner) {
+        const name = ctx.botName(preview.author.botId) ?? t("bot.unknown");
+        return t("summary.fromBot", { name, text });
+      }
       return t("summary.handoff", { text });
     case "routine-change":
       return text === "" ? t("summary.routineChanged") : t("summary.routine", { name: text });
@@ -188,7 +195,7 @@ export function rosterLine(item: RosterItem, ctx: PresentationContext): StatusLi
         return {
           text:
             lastEntry?.entryId === state.entryId
-              ? previewSummary(lastEntry, ctx, { inRoom: false, current: true })
+              ? previewSummary(lastEntry, ctx, { owner: item.bot.id, current: true })
               : t("roster.needsYou"),
           tone: "waiting",
         };
@@ -214,7 +221,10 @@ export function rosterLine(item: RosterItem, ctx: PresentationContext): StatusLi
   }
   return lastEntry
     ? {
-        text: previewSummary(lastEntry, ctx, { inRoom: item._tag === "room", current: false }),
+        text: previewSummary(lastEntry, ctx, {
+          owner: item._tag === "bot" ? item.bot.id : null,
+          current: false,
+        }),
         tone: "default",
       }
     : { text: t("roster.noMessages"), tone: "empty" };
