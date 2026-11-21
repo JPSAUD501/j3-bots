@@ -4,7 +4,9 @@ import { useSyncExternalStore } from "react";
 /**
  * Whether something lies over `element`: a modal dialog, a confirmation
  * included, hides what it covers from assistive technology, and the details
- * as a sheet make the regions under them inert.
+ * as a sheet make the regions under them inert. A modal leaves out every
+ * `[aria-live]` element and what holds it, so `element` must hold none: its
+ * live regions belong outside it, as the shell's announcer and the toast are.
  */
 export const isCovered = (element: Element) =>
   element.closest('[inert], [aria-hidden="true"]') !== null;

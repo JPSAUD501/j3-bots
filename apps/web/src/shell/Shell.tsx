@@ -106,6 +106,17 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
   // covered, notifies when something arrives there.
   const [conversationRegion, setConversationRegion] = useState<HTMLElement | null>(null);
   const covered = useCovered(conversationRegion);
+  // What the conversation's header announces, spoken by a region outside the
+  // conversation: a modal hides from assistive technology everything but live
+  // regions and what holds them, so one inside would keep the conversation
+  // uncovered under any dialog. Each announcement belongs to the conversation
+  // that made it, and a new one replaces the last, so it is spoken even when
+  // the words repeat.
+  const [announcement, setAnnouncement] = useState<{
+    readonly selectionKey: string;
+    readonly id: number;
+    readonly text: string;
+  } | null>(null);
   const { setShown } = intents;
   const visibleBot = !covered && item?._tag === "bot" ? item.bot.id : null;
   const visibleRoom = !covered && item?._tag === "room" ? item.room.id : null;
@@ -269,6 +280,13 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
           onGoToWaiting={goToEntry}
           stopShortcut={shortcuts.stop}
           titleRef={titleRef}
+          onAnnounce={(text) =>
+            setAnnouncement((previous) => ({
+              selectionKey: rosterKeyText(key),
+              id: (previous?.id ?? 0) + 1,
+              text,
+            }))
+          }
         />
         {view.phase === "not-found" ? (
           <ConversationGone onBack={() => navigation.select(null)} />
@@ -388,6 +406,11 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
         conversationRef={setConversationRegion}
         onCloseDetails={() => navigation.setDetailsOpen(false)}
       />
+      <span className="sr-only" aria-live="polite">
+        {announcement !== null && announcement.selectionKey === selectionKey && (
+          <span key={announcement.id}>{announcement.text}</span>
+        )}
+      </span>
     </BotsProvider>
   );
 }
