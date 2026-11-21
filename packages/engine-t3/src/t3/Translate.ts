@@ -3,7 +3,9 @@ import type { FailureClass, Question, QuestionAnswers, WorkStep } from "@j3-bots
 import { MAX_CARD_QUESTIONS, MAX_QUESTION_OPTIONS, WorkStepId } from "@j3-bots/contracts";
 import {
   isOrchestrationV2WorkActive,
+  isQueuedProviderThreadPlaceholder,
   OrchestrationV2AppThread,
+  type OrchestrationV2ConversationMessage,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProviderFailureClass,
@@ -68,6 +70,7 @@ type Item = OrchestrationV2TurnItem;
 type RuntimeRequest = OrchestrationV2RuntimeRequest;
 type Thread = OrchestrationV2AppThread;
 type ProviderThread = OrchestrationV2ProviderThread;
+type Message = OrchestrationV2ConversationMessage;
 
 /** The engine's state of one thread, as far as J3 Bots reads it. */
 export interface Mirror {
@@ -82,11 +85,18 @@ export interface Mirror {
    */
   readonly providerThreads: Map<string, ProviderThread>;
   /**
-   * The run each delegated task's completion message names as the one that
-   * delegated it, by message id: the origin of the `background` turn the
-   * message starts (`causeOf`). Only messages that carry one are kept.
+   * The message each run opened with, by run id, as its first record carried
+   * it: a steering restart moves the run's `userMessageId` to the steer, on
+   * the same run (`openingMessageOf`).
    */
-  readonly delegatedOrigins: Map<string, string>;
+  readonly openings: Map<string, string>;
+  /**
+   * The run each run's opening message names as the one that delegated the
+   * task whose completion it reports, or `null` for a message that names
+   * none, by run id, once the mirror has the message: the origin of the
+   * `background` turn the run is (`causeOf`).
+   */
+  readonly origins: Map<string, string | null>;
   /**
    * `toolInputDigest` of each `j3` tool call's input, by item id, with the
    * input it was taken of. Kept by `digestToolCalls`, which `diff` relies on.
@@ -114,7 +124,8 @@ export const emptyMirror = (): Mirror => ({
   items: new Map(),
   requests: new Map(),
   providerThreads: new Map(),
-  delegatedOrigins: new Map(),
+  openings: new Map(),
+  origins: new Map(),
   toolDigests: new Map(),
   fetched: new Map(),
   toolPersistence: new Map(),
@@ -127,7 +138,8 @@ export const copyMirror = (mirror: Mirror): Mirror => ({
   items: new Map(mirror.items),
   requests: new Map(mirror.requests),
   providerThreads: new Map(mirror.providerThreads),
-  delegatedOrigins: new Map(mirror.delegatedOrigins),
+  openings: new Map(mirror.openings),
+  origins: new Map(mirror.origins),
   toolDigests: new Map(mirror.toolDigests),
   fetched: new Map(mirror.fetched),
   toolPersistence: new Map(mirror.toolPersistence),
@@ -143,18 +155,27 @@ export const mirrorOf = (
   before: Pick<Mirror, "fetched" | "toolPersistence"> = emptyMirror(),
 ): Mirror => {
   const items: Map<string, Item> = new Map(projection.turnItems.map((item) => [item.id, item]));
+  const messages = new Map<string, Message>(
+    projection.messages.map((message) => [message.id, message]),
+  );
+  const openings = new Map(
+    projection.runs.flatMap((run) => {
+      const opening = snapshotOpening(run, runItems(items.values(), run), projection.messages);
+      return opening === undefined ? [] : [[run.id, opening]];
+    }),
+  );
   const mirror: Mirror = {
     thread: projection.thread,
     runs: new Map(projection.runs.map((run) => [run.id, run])),
     items,
     requests: new Map(projection.runtimeRequests.map((request) => [request.id, request])),
     providerThreads: new Map(projection.providerThreads.map((thread) => [thread.id, thread])),
-    delegatedOrigins: new Map(
-      projection.messages.flatMap((message) =>
-        message.delegatedCompletion === undefined
-          ? []
-          : [[message.id, message.delegatedCompletion.parentRunId]],
-      ),
+    openings,
+    origins: new Map(
+      [...openings].map(([runId, messageId]) => [
+        runId,
+        delegatedOriginOf(messages.get(messageId)),
+      ]),
     ),
     toolDigests: new Map(),
     fetched: new Map(before.fetched),
@@ -166,11 +187,23 @@ export const mirrorOf = (
 
 const isThread = Schema.is(OrchestrationV2AppThread);
 
+/** The run a delegated task's completion message names as the one that delegated it. */
+const delegatedOriginOf = (message: Message | undefined): string | null =>
+  message?.delegatedCompletion?.parentRunId ?? null;
+
 /** Applies one engine event. Returns whether it touched what the session's events are made of. */
 export const applyEvent = (mirror: Mirror, event: OrchestrationV2DomainEvent): boolean => {
   switch (event.type) {
     case "run.created":
     case "run.updated":
+      // The first record of a run carries the message it opened with: the
+      // engine creates it with that message (**Read** at `db51b67`,
+      // `Orchestrator.ts`, L8019, L8458, L9270) and a steering restart moves
+      // `userMessageId` to the steer later, on the same run (L6805-6815). A
+      // run the mirror had from a snapshot already has its opening, if any.
+      if (!mirror.runs.has(event.payload.id)) {
+        mirror.openings.set(event.payload.id, event.payload.userMessageId);
+      }
       mirror.runs.set(event.payload.id, event.payload);
       return true;
     case "turn-item.updated":
@@ -186,19 +219,37 @@ export const applyEvent = (mirror: Mirror, event: OrchestrationV2DomainEvent): b
       // only `backgroundWorkOf`, which the Stop runner reads afresh on
       // its periodic synchronize while a Stop waits on that work. A task
       // starting is read at its run's end (`hasBackgroundWork`).
+      //
+      // The provider thread the event reports becomes the thread's active
+      // one, unless it only reserves a seat for a queued run, as the engine's
+      // projection applies it (**Read** at `db51b67`, `ProjectionStore.ts`,
+      // L1142-1150): a fresh-context start switches it so, with no thread
+      // event, and `backgroundWorkOf` reads only the active one.
+      if (
+        mirror.thread !== undefined &&
+        event.payload.appThreadId === mirror.thread.id &&
+        !isQueuedProviderThreadPlaceholder(event.payload)
+      ) {
+        mirror.thread = { ...mirror.thread, activeProviderThreadId: event.payload.id };
+      }
       mirror.providerThreads.set(
         event.payload.id,
         attributeTasks(event.payload, mirror.providerThreads.get(event.payload.id), event.runId),
       );
       return false;
-    case "message.updated":
-      // The engine records a delegated completion's message in the same
-      // command as the run it starts (**Read** at `db51b67`, `Orchestrator.ts`:
-      // the message at L8114 and L8538, emitted in the run's command at L8184
-      // and L8669), so its origin is known before the run's turn starts.
-      if (event.payload.delegatedCompletion === undefined) return false;
-      mirror.delegatedOrigins.set(event.payload.id, event.payload.delegatedCompletion.parentRunId);
+    case "message.updated": {
+      // The engine records a run's opening message in the command that
+      // creates the run, right after `run.created` (**Read** at `db51b67`,
+      // `Orchestrator.ts`: the queued run at L8128 and its message at L8184,
+      // a start at L8617 and L8669, L9643 and L9691), so a turn's origin is
+      // known before it can start, though not yet when the run is created
+      // queued. Only the run's opening message counts: a delegated
+      // completion steered into a running run is not that run's cause.
+      const { id, runId } = event.payload;
+      if (runId === null || mirror.openings.get(runId) !== id) return false;
+      mirror.origins.set(runId, delegatedOriginOf(event.payload));
       return true;
+    }
     default:
       // Every thread event carries the whole thread record.
       if (event.type.startsWith("thread.") && isThread(event.payload)) {
@@ -283,10 +334,10 @@ const turnIdOf = (run: Run) => TurnId.make(run.id);
 const runsInOrder = (mirror: Mirror) =>
   [...mirror.runs.values()].sort((a, b) => a.ordinal - b.ordinal);
 
-const itemsOf = (mirror: Mirror, run: Run) =>
-  [...mirror.items.values()]
-    .filter((item) => item.runId === run.id)
-    .sort((a, b) => a.ordinal - b.ordinal);
+const runItems = (items: Iterable<Item>, run: Run) =>
+  [...items].filter((item) => item.runId === run.id).sort((a, b) => a.ordinal - b.ordinal);
+
+const itemsOf = (mirror: Mirror, run: Run) => runItems(mirror.items.values(), run);
 
 type UserMessage = Extract<Item, { type: "user_message" }>;
 
@@ -298,21 +349,53 @@ const STEER_INTENTS: ReadonlySet<UserMessage["inputIntent"]> = new Set([
 const isSteerItem = (item: Item): item is UserMessage =>
   item.type === "user_message" && STEER_INTENTS.has(item.inputIntent);
 
-const userMessagesOf = (mirror: Mirror, run: Run) =>
-  itemsOf(mirror, run).filter((item): item is UserMessage => item.type === "user_message");
+const userMessagesIn = (items: ReadonlyArray<Item>) =>
+  items.filter((item): item is UserMessage => item.type === "user_message");
+
+const userMessagesOf = (mirror: Mirror, run: Run) => userMessagesIn(itemsOf(mirror, run));
 
 /**
- * The message a run was started for: what its first attempt ran. Not
- * `run.userMessageId`, which the engine moves to a steer it restarts the run
- * with (**Verified**). The run's own message items keep the message it opened
- * with; a run with none yet opened with `userMessageId`.
+ * The message a run opened with, from its items: its first message item that
+ * is not a steer, or `userMessageId` while it has no message item. A run that
+ * opened with a notification, as a wake does, has only steer items once
+ * steered, and the item tells nothing then.
  */
-const openingMessageOf = (mirror: Mirror, run: Run): string | undefined => {
-  const messages = userMessagesOf(mirror, run);
+const openingFromItems = (items: ReadonlyArray<Item>, run: Run): string | undefined => {
+  const messages = userMessagesIn(items);
   const opening = messages.find((item) => !STEER_INTENTS.has(item.inputIntent));
   if (opening !== undefined) return opening.messageId;
   return messages.length === 0 ? run.userMessageId : undefined;
 };
+
+/**
+ * The message a run opened with, in a snapshot, where the run's first record
+ * is not to be had: from its items, or else the user message the engine
+ * records under the run that none of its message items carries, the one a
+ * notification item stands for (**Read** at `db51b67`, `notification.ts`,
+ * `notificationTurnItem`, L229-253).
+ */
+const snapshotOpening = (
+  run: Run,
+  items: ReadonlyArray<Item>,
+  messages: ReadonlyArray<Message>,
+): string | undefined => {
+  const fromItems = openingFromItems(items, run);
+  if (fromItems !== undefined) return fromItems;
+  const carried = new Set(userMessagesIn(items).map((item) => item.messageId));
+  return messages.find(
+    (message) => message.runId === run.id && message.role === "user" && !carried.has(message.id),
+  )?.id;
+};
+
+/**
+ * The message a run was started for: what its first attempt ran. Not
+ * `run.userMessageId`, which the engine moves to a steer it restarts the run
+ * with (**Verified**), but the message its first record carried
+ * (`Mirror.openings`), or, for a run the mirror had from a snapshot without
+ * one, what its items tell.
+ */
+const openingMessageOf = (mirror: Mirror, run: Run): string | undefined =>
+  mirror.openings.get(run.id) ?? openingFromItems(itemsOf(mirror, run), run);
 
 /**
  * Whether the engine queued the run behind another turn rather than starting
@@ -355,18 +438,43 @@ const isSteerCarrier = (mirror: Mirror, run: Run) => {
   );
 };
 
-const causeOf = (mirror: Mirror, run: Run): TurnCause => {
-  const continued =
-    run.restartContinuationOfRunId ??
-    run.usageLimitContinuationOfRunId ??
-    run.manualContinuationOfRunId;
-  if (continued !== undefined) return { _tag: "continuation", turnId: TurnId.make(continued) };
+const dispatchOfRun = (mirror: Mirror, run: Run) => {
   const opening = openingMessageOf(mirror, run);
-  const dispatch = opening === undefined ? Option.none() : dispatchOfMessage(opening);
-  if (Option.isSome(dispatch)) return { _tag: "dispatch", key: dispatch.value.key };
-  const origin = opening === undefined ? undefined : mirror.delegatedOrigins.get(opening);
-  return { _tag: "background", origin: origin === undefined ? null : TurnId.make(origin) };
+  return opening === undefined ? Option.none() : dispatchOfMessage(opening);
 };
+
+const continuedRunOf = (run: Run) =>
+  run.restartContinuationOfRunId ??
+  run.usageLimitContinuationOfRunId ??
+  run.manualContinuationOfRunId;
+
+/**
+ * The run's cause, the same in each of its turn's events, also through a
+ * steer that restarts it (`openingMessageOf`). The engine records a run's
+ * opening message, which names a wake's origin, in the command that creates
+ * the run, before the run can start or end (`applyEvent`): of the turn's
+ * events only `turn-queued` can come before it, and waits for it
+ * (`isCauseTold`).
+ */
+const causeOf = (mirror: Mirror, run: Run): TurnCause => {
+  const continued = continuedRunOf(run);
+  if (continued !== undefined) return { _tag: "continuation", turnId: TurnId.make(continued) };
+  const dispatch = dispatchOfRun(mirror, run);
+  if (Option.isSome(dispatch)) return { _tag: "dispatch", key: dispatch.value.key };
+  const origin = mirror.origins.get(run.id) ?? null;
+  return { _tag: "background", origin: origin === null ? null : TurnId.make(origin) };
+};
+
+/**
+ * Whether the mirror can tell the run's cause: it can unless the engine
+ * started the run on its own and the mirror has its first record but not yet
+ * the message it opened with. A run the mirror had from a snapshot is told.
+ */
+const isCauseTold = (mirror: Mirror, run: Run) =>
+  continuedRunOf(run) !== undefined ||
+  Option.isSome(dispatchOfRun(mirror, run)) ||
+  !mirror.openings.has(run.id) ||
+  mirror.origins.has(run.id);
 
 const FAILURES: Record<OrchestrationV2ProviderFailureClass, FailureClass> = {
   usage_limit: "usage-limit",
@@ -1536,20 +1644,16 @@ export const diff = (mirror: Mirror, view: View, now: DateTime.Utc): ReadonlyArr
     };
     view.turns.set(run.id, turn);
     if (isSteerCarrier(mirror, run)) continue;
+    const cause = causeOf(mirror, run);
     if (!turn.finished) {
       const waiting = !turn.started && !hasStarted(run) && !isEnded(run);
-      if (waiting && !turn.queued && wasQueued(mirror, run)) {
+      if (waiting && !turn.queued && wasQueued(mirror, run) && isCauseTold(mirror, run)) {
         turn.queued = true;
-        events.push({ _tag: "turn-queued", turnId, cause: causeOf(mirror, run) });
+        events.push({ _tag: "turn-queued", turnId, cause });
       }
       if (!turn.started && hasStarted(run)) {
         turn.started = true;
-        events.push({
-          _tag: "turn-started",
-          turnId,
-          cause: causeOf(mirror, run),
-          startedAt: startedAtOf(run),
-        });
+        events.push({ _tag: "turn-started", turnId, cause, startedAt: startedAtOf(run) });
       }
       const ended = isEnded(run);
       for (const state of requestsOf(mirror, run)) {
@@ -1630,7 +1734,7 @@ export const diff = (mirror: Mirror, view: View, now: DateTime.Utc): ReadonlyArr
           _tag: "turn-finished",
           turnId,
           finishedAt: finishedAtOf(run),
-          cause: causeOf(mirror, run),
+          cause,
           outcome: outcomeOf(mirror, run),
           backgroundWork: hasBackgroundWork(mirror, run),
           continuation,
@@ -1690,10 +1794,11 @@ export const replacement = (
     const turnId = turnIdOf(run);
     const ended = isEnded(run);
     if ((ended && !history) || isSteerCarrier(mirror, run)) continue;
+    const cause = causeOf(mirror, run);
     if (!ended) {
       openTurns.push({
         turnId,
-        cause: causeOf(mirror, run),
+        cause,
         startedAt: hasStarted(run) ? startedAtOf(run) : null,
         steps: stepsOf(mirror, run),
         toolCalls: itemsOf(mirror, run).flatMap((item) => {
@@ -1704,7 +1809,7 @@ export const replacement = (
     } else {
       endedTurns.push({
         turnId,
-        cause: causeOf(mirror, run),
+        cause,
         startedAt: hasStarted(run) ? startedAtOf(run) : null,
         finishedAt: finishedAtOf(run),
         outcome: outcomeOf(mirror, run),

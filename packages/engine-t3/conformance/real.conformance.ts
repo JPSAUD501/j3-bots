@@ -260,7 +260,11 @@ describe("Engine conformance, real engine only", () => {
           attachments: [],
           delivery: { _tag: "start", freshContext: false },
         });
-        yield* until(queue, "turn-finished", (event) => event.turnId === turnOf(delegating));
+        const delegated = yield* until(
+          queue,
+          "turn-finished",
+          (event) => event.turnId === turnOf(delegating),
+        );
         const synchronized = Effect.fnUntraced(function* (name: string) {
           const token = SyncToken.make(bench.key(name));
           yield* engine.synchronize({ sessionId, token });
@@ -272,18 +276,22 @@ describe("Engine conformance, real engine only", () => {
         let stopped = yield* synchronized("delegated-work-stopped-0");
         for (
           let round = 1;
-          isBackgroundWorkPending(stopped.backgroundWork) && round < 20;
+          (isBackgroundWorkPending(stopped.backgroundWork) || stopped.runnableTurns.length > 0) &&
+          round < 20;
           round++
         ) {
           yield* Effect.sleep("500 millis");
           stopped = yield* synchronized(`delegated-work-stopped-${round}`);
         }
 
+        assert.isTrue(delegated.backgroundWork);
         assert.deepStrictEqual(running.backgroundWork, {
           turns: [turnOf(delegating)],
           unattributed: false,
         });
+        // Stop ended the task, and left nothing to run in its place.
         assert.deepStrictEqual(stopped.backgroundWork, { turns: [], unattributed: false });
+        assert.deepStrictEqual(stopped.runnableTurns, []);
       }).pipe(
         Effect.provide(bench.pipe(Layer.provideMerge(realEngine), Layer.provideMerge(platform))),
       ),

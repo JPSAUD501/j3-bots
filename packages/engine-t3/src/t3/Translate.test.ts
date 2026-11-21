@@ -11,6 +11,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import type { TurnCause } from "../events.ts";
 import { EventCursor, IdempotencyKey, SessionId, TurnId } from "../ids.ts";
 import { toolInputDigest } from "../toolCaller.ts";
 import { makeBatches } from "./Batches.ts";
@@ -209,7 +210,7 @@ const decodeEvent = Schema.decodeUnknownSync(OrchestrationV2DomainEvent);
 const event = (type: string, payload: unknown) =>
   decodeEvent({ id: `event-${type}`, threadId: "thread-1", occurredAt: at, type, payload });
 const LIVE_RUN = new Set(["queued", "preparing", "starting", "running", "waiting"]);
-const run = (status: string, ordinal: number) =>
+const run = (status: string, ordinal: number, fields: Record<string, unknown> = {}) =>
   event("run.updated", {
     id: `run-${ordinal}`,
     ordinal,
@@ -226,6 +227,7 @@ const run = (status: string, ordinal: number) =>
     completedAt: LIVE_RUN.has(status) ? null : at,
     checkpointId: null,
     contextHandoffId: null,
+    ...fields,
   });
 const item = (fields: Record<string, unknown>) =>
   event("turn-item.updated", {
@@ -245,7 +247,7 @@ const item = (fields: Record<string, unknown>) =>
   });
 const command = (status: string) =>
   item({ id: "item-command", type: "command_execution", input: "npm run dev", status });
-/** The active provider thread, reporting these background tasks, in an event of `runId`. */
+/** A provider thread of the session, reporting these background tasks, in an event of `runId`. */
 const providerThread = (
   taskIds: ReadonlyArray<string>,
   tasks: ReadonlyArray<Record<string, unknown>> = taskIds.map((taskId) => ({
@@ -253,6 +255,7 @@ const providerThread = (
     kind: "command",
   })),
   runId?: string,
+  fields: Record<string, unknown> = {},
 ) =>
   decodeEvent({
     id: "event-provider-thread",
@@ -277,8 +280,30 @@ const providerThread = (
       pendingBackgroundTasks: tasks,
       createdAt: at,
       updatedAt: at,
+      ...fields,
     },
   });
+/** The session's engine thread, as a thread event carries it. */
+const appThread = {
+  id: "thread-1",
+  createdBy: "system",
+  creationSource: "server",
+  projectId: "project-1",
+  title: "Ana",
+  providerInstanceId: "codex",
+  modelSelection: { instanceId: "codex", model: "gpt-5" },
+  runtimeMode: "full-access",
+  interactionMode: "default",
+  branch: null,
+  worktreePath: null,
+  activeProviderThreadId: null,
+  lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: "thread-1" },
+  forkedFrom: null,
+  createdAt: at,
+  updatedAt: at,
+  archivedAt: null,
+  deletedAt: null,
+};
 /** What each `turn-finished` among the events `diff` made says of background work. */
 const backgroundAtEnd = (events: ReadonlyArray<{ readonly _tag: string }>) =>
   events.flatMap((event) =>
@@ -478,6 +503,35 @@ describe("backgroundWorkOf", () => {
     ]);
   });
 
+  // A fresh-context start reports its new provider thread with no thread
+  // event; the engine's projection makes it the active one unless it only
+  // reserves a seat (**Read** at `db51b67`, `ProjectionStore.ts`, L1142-1150).
+  it("follows the active provider thread as the engine switches it", () => {
+    const mirror = emptyMirror();
+    applyEvent(
+      mirror,
+      event("thread.created", { ...appThread, activeProviderThreadId: "provider-thread-1" }),
+    );
+    applyEvent(mirror, run("completed", 1));
+    applyEvent(mirror, providerThread([]));
+    applyEvent(mirror, run("completed", 2));
+    const fresh = { id: "provider-thread-2", firstRunOrdinal: 2 };
+    applyEvent(mirror, providerThread(["task-fresh"], undefined, "run-2", fresh));
+    assert.deepStrictEqual(backgroundWorkOf(mirror).pending, pendingIn(["run-2"]));
+
+    // A thread that only reserves a seat for a queued run does not take over.
+    applyEvent(
+      mirror,
+      providerThread(["task-seat"], undefined, undefined, {
+        id: "provider-thread-3",
+        status: "not_loaded",
+        firstRunOrdinal: null,
+        lastRunOrdinal: null,
+      }),
+    );
+    assert.deepStrictEqual(backgroundWorkOf(mirror).pending, pendingIn(["run-2"]));
+  });
+
   it("leaves a monitor the agent does not await to wake the session on its own", () => {
     const mirror = emptyMirror();
     applyEvent(mirror, run("running", 1));
@@ -531,9 +585,9 @@ describe("backgroundWorkOf", () => {
 // A wake's run opens with a message the engine records in the same command
 // (**Read** at `db51b67`, `Orchestrator.ts`, L8114 with L8184).
 describe("the cause of a turn the engine started on its own", () => {
-  const wakeMessage = (id: string, delegatedBy?: string) =>
+  const wakeMessage = (delegatedBy?: string) =>
     event("message.updated", {
-      id,
+      id: "message-2",
       threadId: "thread-1",
       runId: "run-2",
       nodeId: null,
@@ -549,26 +603,116 @@ describe("the cause of a turn the engine started on its own", () => {
         ? {}
         : { delegatedCompletion: { parentRunId: delegatedBy, generation: 1, taskIds: [] } }),
     });
-  const causeOfWake = (delegatedBy?: string) => {
+  /** The item a delegated completion's run opens with, in place of a message item. */
+  const notice = item({
+    id: "item-notice",
+    runId: "run-2",
+    type: "notification",
+    status: "completed",
+    source: { kind: "delegated_task", taskIds: [] },
+    outcome: "completed",
+    summary: "Delegated task finished",
+  });
+  const steer = messageIdFor("steer", IdempotencyKey.make("steer-1"));
+  const steerItem = item({
+    id: "item-steer",
+    runId: "run-2",
+    ordinal: 20,
+    type: "user_message",
+    messageId: steer,
+    createdBy: "user",
+    creationSource: "server",
+    inputIntent: "steer",
+    text: "Also check the logs.",
+    attachments: [],
+    status: "completed",
+  });
+  const DELEGATED: TurnCause = { _tag: "background", origin: TurnId.make("run-1") };
+  /** The cause each event of the wake's turn tells. */
+  const causes = (events: ReadonlyArray<EventBody>) =>
+    events.flatMap((body) =>
+      (body._tag === "turn-queued" ||
+        body._tag === "turn-started" ||
+        body._tag === "turn-finished") &&
+      body.turnId === TurnId.make("run-2")
+        ? [{ _tag: body._tag, cause: body.cause }]
+        : [],
+    );
+  /**
+   * A wake the engine starts at once, in the order it sends it: the run, its
+   * message and its opening item in one command, then the run running.
+   */
+  const startedWake = (delegatedBy?: string) => {
     const mirror = emptyMirror();
     applyEvent(mirror, run("completed", 1));
     const { view } = replacement(mirror, false, at);
-    applyEvent(mirror, wakeMessage("message-2", delegatedBy));
+    applyEvent(mirror, run("starting", 2));
+    applyEvent(mirror, wakeMessage(delegatedBy));
+    applyEvent(mirror, notice);
     applyEvent(mirror, run("running", 2));
-    return diff(mirror, view, at).flatMap((body) =>
-      body._tag === "turn-started" ? [body.cause] : [],
-    );
+    return { mirror, view, started: diff(mirror, view, at) };
   };
 
   it("names the turn that delegated the task whose completion woke the session", () => {
-    assert.deepStrictEqual(causeOfWake("run-1"), [
-      { _tag: "background", origin: TurnId.make("run-1") },
+    assert.deepStrictEqual(causes(startedWake("run-1").started), [
+      { _tag: "turn-started", cause: DELEGATED },
     ]);
   });
 
   // A harness's wake names no run or task (**Read**, `ProviderContinuationService.ts`, L247-264).
   it("names no origin for a wake that does not say", () => {
-    assert.deepStrictEqual(causeOfWake(), [{ _tag: "background", origin: null }]);
+    assert.deepStrictEqual(causes(startedWake().started), [
+      { _tag: "turn-started", cause: { _tag: "background", origin: null } },
+    ]);
+  });
+
+  // The engine creates the queued run before it records the run's message
+  // (**Read** at `db51b67`, `Orchestrator.ts`, L8128 and L8184).
+  it("tells a wake queued behind another turn by its origin from the queue on", () => {
+    const mirror = emptyMirror();
+    applyEvent(mirror, run("running", 1));
+    const { view } = replacement(mirror, false, at);
+    applyEvent(mirror, run("queued", 2));
+    assert.deepStrictEqual(diff(mirror, view, at), []);
+    applyEvent(mirror, wakeMessage("run-1"));
+    assert.deepStrictEqual(causes(diff(mirror, view, at)), [
+      { _tag: "turn-queued", cause: DELEGATED },
+    ]);
+
+    applyEvent(mirror, run("completed", 1));
+    applyEvent(mirror, run("running", 2));
+    applyEvent(mirror, notice);
+    assert.deepStrictEqual(causes(diff(mirror, view, at)), [
+      { _tag: "turn-started", cause: DELEGATED },
+    ]);
+  });
+
+  it("keeps its origin when a steer joins the turn", () => {
+    const { mirror, view } = startedWake("run-1");
+    applyEvent(mirror, steerItem);
+    applyEvent(mirror, run("completed", 2));
+    assert.deepStrictEqual(causes(diff(mirror, view, at)), [
+      { _tag: "turn-finished", cause: DELEGATED },
+    ]);
+  });
+
+  // A steering restart moves the run's `userMessageId` to the steer, on the
+  // same run (**Read** at `db51b67`, `Orchestrator.ts`, L6805-6815).
+  it("keeps its origin when a steer restarts the turn", () => {
+    const { mirror, view } = startedWake("run-1");
+    applyEvent(mirror, steerItem);
+    applyEvent(mirror, run("running", 2, { userMessageId: steer }));
+    applyEvent(mirror, run("completed", 2, { userMessageId: steer }));
+    assert.deepStrictEqual(causes(diff(mirror, view, at)), [
+      { _tag: "turn-finished", cause: DELEGATED },
+    ]);
+    const { event: replaced } = replacement(mirror, true, at);
+    assert.deepStrictEqual(
+      replaced.endedTurns.flatMap((turn) =>
+        turn.turnId === TurnId.make("run-2") ? [turn.cause] : [],
+      ),
+      [DELEGATED],
+    );
   });
 });
 
@@ -652,30 +796,10 @@ describe("what a Stop leaves to run", () => {
   });
 
   it("counts a thread the engine deleted as gone, though its record stays", () => {
-    const thread = {
-      id: "thread-1",
-      createdBy: "system",
-      creationSource: "server",
-      projectId: "project-1",
-      title: "Ana",
-      providerInstanceId: "codex",
-      modelSelection: { instanceId: "codex", model: "gpt-5" },
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      branch: null,
-      worktreePath: null,
-      activeProviderThreadId: null,
-      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: "thread-1" },
-      forkedFrom: null,
-      createdAt: at,
-      updatedAt: at,
-      archivedAt: null,
-      deletedAt: null,
-    };
     const mirror = emptyMirror();
-    applyEvent(mirror, event("thread.created", thread));
+    applyEvent(mirror, event("thread.created", appThread));
     assert.isFalse(isDeleted(mirror));
-    applyEvent(mirror, event("thread.deleted", { ...thread, deletedAt: at }));
+    applyEvent(mirror, event("thread.deleted", { ...appThread, deletedAt: at }));
     assert.isTrue(isDeleted(mirror));
   });
 });

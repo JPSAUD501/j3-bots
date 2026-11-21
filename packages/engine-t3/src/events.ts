@@ -47,10 +47,13 @@ export const TurnCause = Schema.Union([
    * it, which at `db51b67` it does only for the engine's own delegated tasks:
    * their completion's message carries the run that delegated them
    * (`delegatedCompletion.parentRunId`). A harness's wake (a background
-   * command, a monitor, a subagent) names no run or task, so its turn has
-   * `null`, as does a turn another client started. **Read** at `db51b67`:
-   * `ProviderContinuationService.ts` L177-192 and L247-264,
+   * command, a monitor, a subagent) carries no run id: its notice says what
+   * kind of work reported and, for a single native subagent, may name the
+   * child thread it ran in (`childThreadId`), never the run that started it.
+   * Its turn has `null`, as does a turn another client started. **Read** at
+   * `db51b67`: `ProviderContinuationService.ts` L177-192 and L247-264,
    * `ProviderContinuationRequests.ts` L15-35, `notification.ts` L136-170.
+   * The origin is the same in each of the turn's events, also after a steer.
    */
   Schema.TaggedStruct("background", { origin: Schema.NullOr(TurnId) }),
 ]);
