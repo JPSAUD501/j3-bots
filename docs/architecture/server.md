@@ -64,6 +64,7 @@ state/
   shipped-skills.json  the SHA-256 of each shipped skill text the server wrote
 backups/
   <snapshot>/        the databases and settings `j3-bots update` copied before it changed release
+  update.lock        held by the one `j3-bots update` or `--rollback` running
 ```
 
 Generated files are written by the server from the database and the memory files. A bot never edits them by hand, and the server rewrites them whenever their inputs change.

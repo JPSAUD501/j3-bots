@@ -11,6 +11,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import { AdminClient, AdminRequestFailed } from "../admin/AdminClient.ts";
 import { AdminStatus } from "../admin/protocol.ts";
+import { markRestoring, takeSnapshot } from "../install/snapshot.ts";
 import { Host } from "../system/Host.ts";
 import type { PortState } from "../system/Ports.ts";
 import { Network } from "../system/Network.ts";
@@ -90,6 +91,8 @@ interface World {
   readonly homeUnreadable: boolean;
   /** A regular file where the admin socket goes. */
   readonly socketBlocked: boolean;
+  /** A rollback to a snapshot in the home that has not finished. */
+  readonly rollbackUnfinished: boolean;
 }
 
 const HEALTHY: World = {
@@ -117,6 +120,7 @@ const HEALTHY: World = {
   homeMode: 0o700,
   homeUnreadable: false,
   socketBlocked: false,
+  rollbackUnfinished: false,
 };
 
 const diagnoseIn = (changes: Partial<World> = {}) =>
@@ -139,6 +143,11 @@ const diagnoseIn = (changes: Partial<World> = {}) =>
       Option.getOrElse(world.configFile, () => JSON.stringify({ webClient: web })),
     );
     if (world.socketBlocked) yield* fs.writeFileString(path.join(home, "admin.sock"), "");
+    if (world.rollbackUnfinished) {
+      yield* markRestoring(
+        yield* takeSnapshot({ home, from: { version: "0.1.0" }, to: { version: "0.2.0" } }),
+      );
+    }
     if (world.unitInstalled) {
       yield* fs.makeDirectory(path.join(configHome, "systemd", "user"), { recursive: true });
       yield* fs.writeFileString(
@@ -611,6 +620,34 @@ it.layer(NodeServices.layer)("doctor", (it) => {
 
       const unlimited = yield* diagnoseIn({ memoryDelegated: false });
       assertFlagged(named(unlimited.checks, "Memory limit"), "warning");
+    }),
+  );
+
+  it.effect("gives running `--rollback` as the one fix while a rollback has not finished", () =>
+    Effect.gen(function* () {
+      // As a rollback cut off after it disabled the service leaves it.
+      const { checks } = yield* diagnoseIn({
+        rollbackUnfinished: true,
+        server: Option.none(),
+        unit: { enabled: false, active: "inactive", mainPid: Option.none() },
+      });
+      assertFlagged(named(checks, "Snapshot"), "problem", "0.1.0");
+      assert.include(
+        Option.getOrElse(named(checks, "Snapshot").fix, () => ""),
+        "`j3-bots update --rollback`",
+      );
+      for (const name of ["Server", "Service"]) {
+        assert.strictEqual(named(checks, name).status, "skipped", name);
+      }
+      const starts = checks.filter(({ fix }) =>
+        Option.exists(fix, (text) =>
+          /systemctl --user (start|restart|enable)|j3-bots serve/.test(text),
+        ),
+      );
+      assert.deepStrictEqual(
+        starts.map(({ name }) => name),
+        [],
+      );
     }),
   );
 

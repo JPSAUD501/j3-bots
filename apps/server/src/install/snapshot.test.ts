@@ -11,10 +11,14 @@ import * as PlatformError from "effect/PlatformError";
 import * as TestClock from "effect/testing/TestClock";
 import {
   listSnapshots,
+  markRestoring,
   pruneSnapshots,
+  restoreBytes,
   restoreSnapshot,
   rollbackSnapshot,
+  type Snapshot,
   takeSnapshot,
+  unmarkRestoring,
 } from "./snapshot.ts";
 
 /** Every file and folder under `folder`, by path relative to it, with its permission bits. */
@@ -73,6 +77,30 @@ const renamesFailingOnto = (fs: FileSystem.FileSystem, failing: string) =>
 
 const FILES = ["config.json", "j3.sqlite", "engine/userdata/settings.json"] as const;
 
+/** How far the rollback to the newest snapshot in `home` got, or none when it is not marked. */
+const stageIn = (home: string) =>
+  listSnapshots(home).pipe(
+    Effect.map(([newest]) =>
+      newest === undefined ? undefined : Option.getOrUndefined(newest.restoring)?.stage,
+    ),
+  );
+
+/** The copies a rollback left beside the files of `home`. */
+const copiesIn = (home: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return (yield* fs.readDirectory(home, { recursive: true }))
+      .filter((entry) => entry.endsWith(".j3-restoring"))
+      .sort();
+  });
+
+/** Marks, puts back and unmarks `snapshot`, as a rollback that is not cut off does. */
+const rollBack = (home: string, snapshot: Snapshot) =>
+  markRestoring(snapshot).pipe(
+    Effect.andThen(restoreSnapshot(home, snapshot)),
+    Effect.andThen(unmarkRestoring(snapshot)),
+  );
+
 it.layer(NodeServices.layer)("a snapshot", (it) => {
   it.effect("copies the databases and settings privately, and puts them back whole", () =>
     Effect.gen(function* () {
@@ -128,7 +156,8 @@ it.layer(NodeServices.layer)("a snapshot", (it) => {
       yield* fs.writeFileString(at("j3.sqlite-wal"), "a newer release's log");
       yield* fs.writeFileString(at("bots/scout/memory/profile.md"), "Scout, after");
 
-      yield* restoreSnapshot(home, taken);
+      yield* rollBack(home, taken);
+      assert.isUndefined(yield* stageIn(home));
       assert.strictEqual(yield* fs.readFileString(at("config.json")), '{"port":3737}');
       assert.strictEqual(
         yield* fs.readFileString(at("engine/userdata/settings.json")),
@@ -160,33 +189,33 @@ it.layer(NodeServices.layer)("a snapshot", (it) => {
     }),
   );
 
-  it.effect("that cannot be copied back leaves the home as it was, and unmarked", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const home = yield* fs.makeTempDirectoryScoped();
-      yield* writeAll(home, { "config.json": "before", "j3.sqlite": "before" });
-      const taken = yield* takeSnapshot({
-        home,
-        from: { version: "0.1.0" },
-        to: { version: "0.2.0" },
-      });
-      yield* writeAll(home, { "config.json": "after", "j3.sqlite": "after" });
-      // A file of the snapshot that is gone: copying it back fails.
-      yield* fs.remove(path.join(taken.folder, "j3.sqlite"));
+  it.effect(
+    "that cannot be copied back leaves the home as it was, its rollback still to copy",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped();
+        yield* writeAll(home, { "config.json": "before", "j3.sqlite": "before" });
+        const taken = yield* takeSnapshot({
+          home,
+          from: { version: "0.1.0" },
+          to: { version: "0.2.0" },
+        });
+        yield* writeAll(home, { "config.json": "after", "j3.sqlite": "after" });
+        // A file of the snapshot that is gone: copying it back fails.
+        yield* fs.remove(path.join(taken.folder, "j3.sqlite"));
 
-      assert.strictEqual((yield* Effect.exit(restoreSnapshot(home, taken)))._tag, "Failure");
-      assert.deepStrictEqual(yield* readAll(home, ["config.json", "j3.sqlite"]), {
-        "config.json": "after",
-        "j3.sqlite": "after",
-      });
-      assert.deepStrictEqual((yield* fs.readDirectory(home)).sort(), [
-        "backups",
-        "config.json",
-        "j3.sqlite",
-      ]);
-      assert.isFalse((yield* listSnapshots(home))[0]?.restoring);
-    }),
+        yield* markRestoring(taken);
+        assert.strictEqual((yield* Effect.exit(restoreSnapshot(home, taken)))._tag, "Failure");
+        assert.deepStrictEqual(yield* readAll(home, ["config.json", "j3.sqlite"]), {
+          "config.json": "after",
+          "j3.sqlite": "after",
+        });
+        assert.deepStrictEqual(yield* copiesIn(home), []);
+        // Still marked: only `--rollback` may change the home until it finishes.
+        assert.strictEqual(yield* stageIn(home), "copying");
+      }),
   );
 
   it.effect(
@@ -215,6 +244,7 @@ it.layer(NodeServices.layer)("a snapshot", (it) => {
         });
 
         // The live files are moved aside, then putting the database back fails.
+        yield* markRestoring(taken);
         const cut = yield* Effect.exit(
           restoreSnapshot(home, taken).pipe(
             Effect.provideService(
@@ -224,39 +254,56 @@ it.layer(NodeServices.layer)("a snapshot", (it) => {
           ),
         );
         assert.strictEqual(cut._tag, "Failure");
+        assert.strictEqual(yield* stageIn(home), "swapping");
+        // Marking it again, as the next rollback does, keeps how far it got.
+        yield* markRestoring(taken);
+        assert.strictEqual(yield* stageIn(home), "swapping");
+        // Its copies are made: none is left to count against free space.
         const [marked] = yield* listSnapshots(home);
-        assert.isTrue(marked?.restoring);
+        assert.strictEqual(marked && (yield* restoreBytes(home, marked)), 0);
         // Pruning keeps it, with what the restore moved aside.
         assert.deepStrictEqual(yield* pruneSnapshots(home, 0), []);
         // And it is the one `--rollback` puts back, whatever runs.
         const chosen = yield* rollbackSnapshot(home, "0.9.0");
         assert.strictEqual(Option.getOrUndefined(chosen)?.folder, taken.folder);
 
+        // The next restore uses the copies it made, not the snapshot's files.
+        yield* fs.remove(path.join(taken.folder, "j3.sqlite"));
         yield* restoreSnapshot(home, taken);
         assert.deepStrictEqual(yield* readAll(home, FILES), before);
         assert.isFalse(yield* fs.exists(path.join(home, "j3.sqlite-wal")));
-        assert.isFalse((yield* listSnapshots(home))[0]?.restoring);
-        assert.deepStrictEqual(
-          (yield* fs.readDirectory(home, { recursive: true })).filter((entry) =>
-            entry.endsWith(".j3-restoring"),
-          ),
-          [],
-        );
-        // Nothing the home held is lost: what each restore moved out is kept.
+        assert.deepStrictEqual(yield* copiesIn(home), []);
+        // Back whole, and marked until the release it ends on runs.
+        assert.strictEqual(yield* stageIn(home), "restored");
+        yield* unmarkRestoring(taken);
+        assert.isUndefined(yield* stageIn(home));
+        // Nothing the home held is lost: what the restore moved out is kept.
         const replaced = (yield* fs.readDirectory(taken.folder)).filter((entry) =>
           entry.startsWith("replaced-"),
         );
-        assert.strictEqual(replaced.length, 2);
-        const kept: Array<string | null> = [];
-        for (const folder of replaced) {
-          const texts = yield* readAll(path.join(taken.folder, folder), [
-            ...FILES,
-            "j3.sqlite-wal",
-          ]);
-          kept.push(...Object.values(texts));
-        }
-        assert.strictEqual(kept.filter((text) => text === "after").length, 4);
+        assert.strictEqual(replaced.length, 1);
+        const kept = yield* readAll(path.join(taken.folder, replaced[0] ?? ""), [
+          ...FILES,
+          "j3.sqlite-wal",
+        ]);
+        assert.strictEqual(Object.values(kept).filter((text) => text === "after").length, 4);
       }),
+  );
+
+  it.effect("to copy back counts only what is left to copy against free space", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      yield* writeAll(home, { "config.json": "12345", "j3.sqlite": "1234567890" });
+      const taken = yield* takeSnapshot({ home, from: { version: "A" }, to: { version: "B" } });
+      assert.strictEqual(yield* restoreBytes(home, taken), 15);
+      // A rollback cut off while copying left the database's copy.
+      yield* markRestoring(taken);
+      yield* fs.writeFileString(path.join(home, "j3.sqlite.j3-restoring"), "1234567890");
+      const [marked] = yield* listSnapshots(home);
+      assert.strictEqual(marked && (yield* restoreBytes(home, marked)), 5);
+    }),
   );
 
   it.effect("for a rollback is the newest taken by an update to the release that runs", () =>

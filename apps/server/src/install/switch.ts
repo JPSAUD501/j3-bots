@@ -10,13 +10,22 @@ import * as Schema from "effect/Schema";
 //   stop → snapshot → start the new release → wait for it → point the command at it
 //
 // A failure before the new release starts leaves the databases untouched, and
-// starts the old release again. A failure after it started stops it, puts the
-// snapshot back and starts the old release again. The unit is only ever
+// starts the old release again. A failure after it started rolls back: the
+// snapshot put back and the old release started again. The unit is only ever
 // written by a release's own `service install`, so it names one release
 // whole, and the command is pointed at the new release only once it is ready.
-// Before any restore the service is disabled as well as stopped, and only a
-// release's `service install` enables it again, after the restore ended: a
-// reboot never starts a server on a home that holds part of a snapshot.
+//
+// A rollback, this one or the one the operator asks for, is one marked state
+// from start to end:
+//
+//   mark → disable → restore → start the old release → wait for it → unmark
+//
+// The mark, in the snapshot's folder, is written before anything changes and
+// removed only once the old release runs. While it is there an update
+// refuses, no server starts on the home but the old release once the
+// snapshot is back whole, and `--rollback` carries on from where it got. The
+// service is disabled from before the restore until the old release's own
+// `service install` enables it.
 
 /** Which of the two releases a step is about. */
 export type Side = "old" | "new";
@@ -28,9 +37,11 @@ export class StepFailed extends Schema.TaggedError<StepFailed>()("StepFailed", {
     "snapshot",
     "start-new",
     "await-new",
+    "mark",
     "restore",
     "start-old",
     "await-old",
+    "unmark",
     "command",
   ]),
   reason: Schema.String,
@@ -46,11 +57,16 @@ export interface SwitchSteps<Snapshot, R> {
   readonly disable: Effect.Effect<void, StepFailed, R>;
   /** Copies the databases and settings; a snapshot that fails leaves nothing behind. */
   readonly snapshot: Effect.Effect<Snapshot, StepFailed, R>;
+  /** Marks a rollback to the snapshot as started; one a cut-off rollback marked stays as it is. */
+  readonly mark: (snapshot: Snapshot) => Effect.Effect<void, StepFailed, R>;
   /** Runs that release's own `service install`, which writes the unit for it and starts it. */
   readonly start: (side: Side) => Effect.Effect<void, StepFailed, R>;
   /** Waits, bounded, for the service's server to answer as that release, its engine ready. */
   readonly ready: (side: Side) => Effect.Effect<void, StepFailed, R>;
+  /** Puts the snapshot back, carrying on from where its mark says a cut-off one got. */
   readonly restore: (snapshot: Snapshot) => Effect.Effect<void, StepFailed, R>;
+  /** Marks the rollback to the snapshot as finished. */
+  readonly unmark: (snapshot: Snapshot) => Effect.Effect<void, StepFailed, R>;
   /** Points the j3-bots command at that release. */
   readonly pointCommand: (side: Side) => Effect.Effect<void, StepFailed, R>;
 }
@@ -83,6 +99,28 @@ export type SwitchOutcome<Snapshot> =
       readonly snapshot: Option.Option<Snapshot>;
     };
 
+/** What a rollback does, given to it: everything but stopping and taking a snapshot. */
+export type RollbackSteps<Snapshot, R> = Omit<SwitchSteps<Snapshot, R>, "stop" | "snapshot">;
+
+/**
+ * Puts `snapshot` back and starts the old release, as one marked state
+ * (above). Stops at the first step that fails; the mark stays, so the next
+ * `--rollback` carries on. It never points the command.
+ */
+const rollBackTo = Effect.fn("switch.rollBackTo")(function* <Snapshot, R>(
+  steps: RollbackSteps<Snapshot, R>,
+  snapshot: Snapshot,
+) {
+  yield* steps.mark(snapshot);
+  if (steps.service) yield* steps.disable;
+  yield* steps.restore(snapshot);
+  if (steps.service) {
+    yield* steps.start("old");
+    yield* steps.ready("old");
+  }
+  yield* steps.unmark(snapshot);
+});
+
 /** Runs the switch to its end. Not interruptible: it always leaves one release in place. */
 export const switchOver = <Snapshot, R>(
   steps: SwitchSteps<Snapshot, R>,
@@ -92,10 +130,8 @@ export const switchOver = <Snapshot, R>(
     const back = (failed: StepFailed, snapshot: Option.Option<Snapshot>) =>
       Effect.gen(function* () {
         if (Option.isSome(snapshot)) {
-          if (steps.service) yield* steps.disable;
-          yield* steps.restore(snapshot.value);
-        }
-        if (steps.service) {
+          yield* rollBackTo(steps, snapshot.value);
+        } else if (steps.service) {
           yield* steps.start("old");
           yield* steps.ready("old");
         }
@@ -130,22 +166,17 @@ export const switchOver = <Snapshot, R>(
   }).pipe(Effect.uninterruptible);
 
 /**
- * What `j3-bots update --rollback` does once the operator agreed: puts
- * `snapshot` back and starts the old release, then points the command at it.
- * Not interruptible. Stops at the first step that fails, which it answers; a
- * restore that fails leaves the service disabled.
+ * What `j3-bots update --rollback` does once the operator agreed: the
+ * rollback to `snapshot` (above), then the command pointed at the old
+ * release. Not interruptible. Stops at the first step that fails, which it
+ * answers.
  */
 export const rollBackOver = <Snapshot, R>(
-  steps: Omit<SwitchSteps<Snapshot, R>, "stop" | "snapshot">,
+  steps: RollbackSteps<Snapshot, R>,
   snapshot: Snapshot,
 ): Effect.Effect<Option.Option<StepFailed>, never, R> =>
   Effect.gen(function* () {
-    if (steps.service) yield* steps.disable;
-    yield* steps.restore(snapshot);
-    if (steps.service) {
-      yield* steps.start("old");
-      yield* steps.ready("old");
-    }
+    yield* rollBackTo(steps, snapshot);
     yield* steps.pointCommand("old");
   }).pipe(
     Effect.as(Option.none<StepFailed>()),

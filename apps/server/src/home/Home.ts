@@ -9,9 +9,11 @@ import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
+import packageJson from "../../package.json" with { type: "json" };
 import * as Socket from "../admin/socket.ts";
 import { DEFAULTS_TEXT, load, ServerConfig } from "../config.ts";
 import { publishFile } from "../files.ts";
+import { unfinishedRollback } from "../install/snapshot.ts";
 import { HOME_ENTRIES } from "./entries.ts";
 
 // The home holds the database, the bots' files, the engine's credential and
@@ -168,13 +170,24 @@ export const initialize = Effect.gen(function* () {
 /** The configuration for a server about to start: `initialize`, as a layer. */
 export const configLayer = Layer.effect(ServerConfig, initialize);
 
-/** Another server already uses this home. */
+/** Another server, or an update copying or putting back its files, already holds this home. */
 class ServerAlreadyRunning extends Schema.TaggedError<ServerAlreadyRunning>()(
   "ServerAlreadyRunning",
   { home: Schema.String },
 ) {
   override get message(): string {
-    return `A J3 Bots server is already running for ${this.home}. Stop it before starting another.`;
+    return `A J3 Bots server, or \`j3-bots update\` copying its databases, already holds ${this.home}. Stop that server, or wait for the update to end, before starting another.`;
+  }
+}
+
+/** A rollback has not finished, so the home is not one this release may run on. */
+class RollbackUnfinished extends Schema.TaggedError<RollbackUnfinished>()("RollbackUnfinished", {
+  home: Schema.String,
+  release: Schema.String,
+  snapshot: Schema.String,
+}) {
+  override get message(): string {
+    return `A rollback of ${this.home} to J3 Bots ${this.release}, from ${this.snapshot}, has not finished, so no server may start on it. Run \`j3-bots update --rollback\`, which finishes it.`;
   }
 }
 
@@ -222,27 +235,16 @@ const isBusy = (error: unknown) =>
   Predicate.hasProperty(error, "errcode") && error.errcode === SQLITE_BUSY;
 
 /**
- * Takes the home for this process, before anything else touches it: checks
- * that it is private, holds an exclusive lock on `<home>/server.lock` for as
- * long as the scope lives, and then removes an admin socket a stopped server
- * left behind.
- *
- * The lock is SQLite's, which the kernel releases when its process ends, so a
- * server that crashed never leaves the home held, and two servers that start
- * at once cannot both take it. Holding it, the server is the only one that
- * may remove or create the admin socket.
+ * Holds an exclusive lock on `file` for as long as the scope lives, or fails
+ * with `held()` at once while another process holds it. The lock is SQLite's,
+ * which the kernel releases when its process ends, so a process that crashed
+ * never leaves it held, and two that take it at once cannot both get it.
  */
-export const reserve = Effect.gen(function* () {
-  const { home, adminSocket } = yield* ServerConfig;
-  const path = yield* Path.Path;
-  const fs = yield* FileSystem.FileSystem;
-  yield* checkPrivate(home);
-
-  const lockFile = path.join(home, LOCK_FILE);
-  yield* Effect.acquireRelease(
+export const holdLock = <E>(file: string, held: () => E) =>
+  Effect.acquireRelease(
     Effect.try({
       try: () => {
-        const database = new NodeSqlite.DatabaseSync(lockFile, { timeout: 0 });
+        const database = new NodeSqlite.DatabaseSync(file, { timeout: 0 });
         try {
           // No journal file: the lock never writes, and a crash then leaves nothing beside it.
           database.exec("PRAGMA journal_mode = MEMORY; BEGIN EXCLUSIVE");
@@ -253,12 +255,49 @@ export const reserve = Effect.gen(function* () {
         return database;
       },
       catch: (error) =>
-        isBusy(error)
-          ? new ServerAlreadyRunning({ home })
-          : new HomeBlocked({ path: lockFile, reason: "lock-unusable" }),
+        isBusy(error) ? held() : new HomeBlocked({ path: file, reason: "lock-unusable" }),
     }),
     (database) => Effect.sync(() => database.close()),
   );
+
+/**
+ * Holds `<home>/server.lock`, which one server holds while it runs, and an
+ * update while it copies the databases or puts them back.
+ */
+export const holdHome = Effect.fn("Home.holdHome")(function* (home: string) {
+  const path = yield* Path.Path;
+  yield* holdLock(path.join(home, LOCK_FILE), () => new ServerAlreadyRunning({ home }));
+});
+
+/**
+ * Takes the home for this process, before anything else touches it: checks
+ * that it is private, holds `<home>/server.lock` for as long as the scope
+ * lives (`holdHome`), refuses it while a rollback has not finished, and then
+ * removes an admin socket a stopped server left behind.
+ *
+ * Holding the lock, the server is the only one that may remove or create the
+ * admin socket, and no update copies or puts back the databases under it. A
+ * rollback that has not finished leaves the home holding the data of another
+ * release, or part of a snapshot: only the release it ends on may start, and
+ * only once the snapshot is back whole.
+ */
+export const reserve = Effect.gen(function* () {
+  const { home, adminSocket } = yield* ServerConfig;
+  const fs = yield* FileSystem.FileSystem;
+  yield* checkPrivate(home);
+  yield* holdHome(home);
+
+  const rollback = yield* unfinishedRollback(home);
+  if (Option.isSome(rollback)) {
+    const { snapshot, mark } = rollback.value;
+    if (mark.stage !== "restored" || mark.release !== packageJson.version) {
+      return yield* new RollbackUnfinished({
+        home,
+        release: mark.release,
+        snapshot: snapshot.folder,
+      });
+    }
+  }
 
   const socket = yield* Socket.probe(adminSocket);
   switch (socket) {

@@ -52,13 +52,17 @@ const carryingOnAfterHangup = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     (ignore) => Effect.sync(() => process.off("SIGHUP", ignore)),
   );
 
-/** What a failed restore leaves, when the step that failed was the restore. */
-const unfinishedRestore = (step: StepFailed) =>
-  step.step === "restore"
-    ? [
-        "The service is disabled until the restore finishes: `j3-bots update --rollback` finishes it.",
-      ]
-    : [];
+/**
+ * What a rollback that stopped at `step` leaves: from its mark until the old
+ * release runs, the rollback is unfinished until `--rollback` carries it on.
+ * Pointing the command comes after.
+ */
+const unfinishedRollback = (step: StepFailed) =>
+  step.step === "mark" || step.step === "command"
+    ? []
+    : [
+        "The rollback has not finished, so the service stays disabled and no other release may run on the data directory: `j3-bots update --rollback` finishes it.",
+      ];
 
 /** Asks `question` on a terminal, or answers no without one. */
 const ask = Effect.fn("update.ask")(function* (question: string) {
@@ -74,8 +78,9 @@ const bots = (count: Option.Option<number>) =>
     onSome: (n) => (n === 1 ? "1 bot has work running" : `${n} bots have work running`),
   });
 
-/** What a failed step leaves, in a sentence for the operator. */
-const failure = (step: StepFailed) => `${step.reason}.`;
+/** Why a step failed, as a sentence for the operator: a reason that already ends one keeps its stop. */
+const failure = (step: StepFailed) =>
+  /[.!?]$/.test(step.reason) ? step.reason : `${step.reason}.`;
 
 const runUpdate = Effect.fn("update.run")(function* (version: Option.Option<string>, yes: boolean) {
   const result = yield* userFacing(
@@ -142,12 +147,13 @@ const runUpdate = Effect.fn("update.run")(function* (version: Option.Option<stri
         [
           `The update to J3 Bots ${to} did not finish: ${failure(outcome.failed)}`,
           `Bringing J3 Bots ${from} back failed too: ${failure(outcome.rollback)}`,
-          Option.match(outcome.snapshot, {
-            onNone: () => "The databases were not changed.",
-            onSome: (snapshot) =>
+          ...Option.match(outcome.snapshot, {
+            onNone: () => ["The databases were not changed."],
+            onSome: (snapshot) => [
               `The databases as they were before the update are in ${snapshot.folder}.`,
+              ...unfinishedRollback(outcome.rollback),
+            ],
           }),
-          ...unfinishedRestore(outcome.rollback),
           LOG,
         ].join("\n"),
       );
@@ -159,7 +165,10 @@ const runRollback = Effect.fn("update.runRollback")(function* (yes: boolean) {
     rollBack({
       confirm: (snapshot) => {
         const { from, to } = snapshot.manifest;
-        const warning = `This puts back J3 Bots ${from.version} and the databases as they were at ${takenAt(snapshot)}, when ${to.version} was installed. What the databases recorded since then is lost: conversations, rooms, routines, settings, paired devices and the engine's threads. Bots' files on disk, their memory included, stay as they are.`;
+        const resumed = Option.isSome(snapshot.restoring)
+          ? `A rollback to J3 Bots ${from.version} did not finish; this finishes it. `
+          : "";
+        const warning = `${resumed}This puts back J3 Bots ${from.version} and the databases as they were at ${takenAt(snapshot)}, when ${to.version} was installed. What the databases recorded since then is lost: conversations, rooms, routines, settings, paired devices and the engine's threads. Bots' files on disk, their memory included, stay as they are.`;
         if (yes) return Console.log(warning).pipe(Effect.as(true));
         return Console.log(warning).pipe(Effect.andThen(ask("Roll back now?")));
       },
@@ -171,12 +180,17 @@ const runRollback = Effect.fn("update.runRollback")(function* (yes: boolean) {
     );
   }
   const { from } = result.snapshot.manifest;
+  if (Option.isSome(result.failed) && result.failed.value.step === "command") {
+    return yield* refuse(
+      `The rollback to J3 Bots ${from.version} finished, but ${failure(result.failed.value)} \`j3-bots update --version ${from.version}\` points the command at it.`,
+    );
+  }
   if (Option.isSome(result.failed)) {
     return yield* refuse(
       [
         `The rollback to J3 Bots ${from.version} did not finish: ${failure(result.failed.value)}`,
         `The snapshot is in ${result.snapshot.folder}; what it replaced is beside it, in its replaced-* folder.`,
-        ...unfinishedRestore(result.failed.value),
+        ...unfinishedRollback(result.failed.value),
         LOG,
       ].join("\n"),
     );

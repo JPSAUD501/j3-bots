@@ -2,7 +2,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- SHA-256 of a 190 MB archive needs an incremental hash; Effect has none.
 import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -13,21 +12,20 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { boundedCommand } from "./Command.ts";
+import { holdExclusive } from "./Lock.ts";
 import { archiveName, pin, releaseUrl } from "./Pin.ts";
 import { engineFolders, makePrivateFiles, type PrivateFiles } from "./PrivateFiles.ts";
 
 // Installs the pinned engine release into the J3-owned engine home:
 //
-//   <home>/j3/runtime/<version>/t3               the standalone server
-//   <home>/j3/runtime/<version>.partial          an interrupted download, resumed next time
-//   <home>/j3/runtime/<version>.work-<random>/   one install's download and unpacking
+//   <home>/j3/runtime/<version>/t3       the standalone server
+//   <home>/j3/runtime/<version>.partial  an interrupted download, resumed next time
+//   <home>/j3/runtime/<version>.staging  where it is unpacked
+//   <home>/j3/runtime/<version>.lock     held by the one install of that version running
 //
-// Two installs of one pin can run at once, as the server's first start and
-// `j3-bots engine fetch` during an update do. Each works in a folder of its
-// own, takes an interrupted download over by renaming it into that folder,
-// so only one resumes it, and publishes by renaming what it unpacked into
-// place. An install that finds the release published by another uses it and
-// never removes it.
+// Two installs of one version can be started at once, as the server's first
+// start and `j3-bots engine fetch` during an update are. The second waits for
+// the first's lock, then finds the version installed.
 //
 // The engine's own `runtime/` folder belongs to its service launcher and
 // updater, so J3 Bots keeps its copy under `j3/`, which the engine never reads.
@@ -130,10 +128,11 @@ export const inspectInstall = Effect.fn("engine.inspectInstall")(function* (inpu
 
 /**
  * The pinned engine executable, installed if missing. Idempotent: a finished
- * install is detected by its marker, and an interrupted download left beside
- * it is removed. Resumable: a download that was interrupted, or whose
- * install failed after it, continues from where it stopped next time. Safe
- * to run twice at once (above).
+ * install is detected by its marker, and what an install cut off after it was
+ * published left beside it (its download, its unpacking folder) is removed.
+ * Resumable: an interrupted download continues from where it stopped. One
+ * install of the version runs at a time, under its lock (above); another
+ * waits for it.
  *
  * `sha256` holds the archive digest for each release platform: the pin's own,
  * `pin.sha256`. The archive is installed only if it has that digest, and a
@@ -156,18 +155,26 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
   const target = runtimeDirectory(path, input.home);
   const executable = path.join(target, "t3");
   const partial = `${target}.partial`;
+  const staging = `${target}.staging`;
+  const lock = `${target}.lock`;
   const published = fs
     .exists(path.join(target, INSTALLED_MARKER))
     .pipe(Effect.orElseSucceed(() => false));
-  if (yield* published) {
-    // A leftover only takes space: the installed engine runs whether or not it goes.
-    yield* input.files
-      .remove(partial)
-      .pipe(
-        Effect.catch((cause) =>
-          Effect.logWarning(`Removing ${partial}, left by an earlier install, failed`, cause),
+  // A leftover only takes space: the installed engine runs whether or not it goes.
+  const clearLeftovers = Effect.forEach(
+    [partial, staging],
+    (leftover) =>
+      input.files
+        .remove(leftover)
+        .pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning(`Removing ${leftover}, left by an earlier install, failed`, cause),
+          ),
         ),
-      );
+    { discard: true },
+  );
+  if (yield* published) {
+    yield* clearLeftovers;
     return executable;
   }
 
@@ -175,33 +182,28 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
   if (Option.isNone(pinned)) return yield* fail("unsupported-platform");
   const { name: archive, digest: expected } = pinned.value;
 
-  const client = (yield* HttpClient.HttpClient).pipe(HttpClient.followRedirects(5));
-  const download = (cause: unknown) =>
-    Effect.logWarning("Engine download failed", cause).pipe(
-      Effect.andThen(Effect.fail(fail("download"))),
-    );
-
-  // Checked before anything is fetched, so a link or a folder there fails at
-  // once rather than after a large download; each write checks again.
-  yield* input.files.writable(partial).pipe(Effect.mapError(storage));
-  const work = yield* fs
-    .makeTempDirectory({ directory: path.dirname(target), prefix: `${pin.version}.work-` })
-    .pipe(Effect.mapError(storage));
-  const downloaded = path.join(work, "archive");
-
-  /** Leaves the download where the next install resumes it, unless the runtime folder fails its check. */
-  const keepDownload = Effect.gen(function* () {
-    if (!(yield* input.files.contains(path.dirname(partial)))) return;
-    yield* fs.rename(downloaded, partial);
-  }).pipe(Effect.ignore);
-
+  // Checked as the download is: a link or a folder there fails at once.
+  yield* input.files.writable(lock).pipe(Effect.mapError(storage));
   return yield* Effect.gen(function* () {
-    // Only one install can rename it away: two never write one file.
-    yield* fs.rename(partial, downloaded).pipe(
-      Effect.catchReason("PlatformError", "NotFound", () => Effect.void),
+    yield* holdExclusive(lock).pipe(
+      Effect.tapError((cause) => Effect.logWarning(`Locking ${lock} failed`, cause)),
       Effect.mapError(storage),
     );
-    const have = yield* input.files.writable(downloaded).pipe(Effect.mapError(storage));
+    // Another install may have finished while this one waited for the lock.
+    if (yield* published) {
+      yield* clearLeftovers;
+      return executable;
+    }
+
+    const client = (yield* HttpClient.HttpClient).pipe(HttpClient.followRedirects(5));
+    const download = (cause: unknown) =>
+      Effect.logWarning("Engine download failed", cause).pipe(
+        Effect.andThen(Effect.fail(fail("download"))),
+      );
+
+    // Checked before anything is fetched, so a link or a folder there fails at
+    // once rather than after a large download; the write itself checks again.
+    const have = yield* input.files.writable(partial).pipe(Effect.mapError(storage));
 
     // Resume with a range request; a server that ignores it sends the whole file again.
     const response = yield* client
@@ -218,7 +220,7 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
     if (response.status !== 416) {
       yield* input.files
         .writeStream(
-          downloaded,
+          partial,
           appending,
           response.stream.pipe(Stream.catch((cause) => Stream.fromEffect(download(cause)))),
         )
@@ -226,29 +228,31 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
     }
 
     // Checked again before it is read: the download may have taken long.
-    yield* input.files.writable(downloaded).pipe(Effect.mapError(storage));
+    yield* input.files.writable(partial).pipe(Effect.mapError(storage));
     const hash = NodeCrypto.createHash("sha256");
-    yield* fs.stream(downloaded).pipe(
+    yield* fs.stream(partial).pipe(
       Stream.runForEach((chunk) => Effect.sync(() => hash.update(chunk))),
       Effect.mapError(storage),
     );
     if (hash.digest("hex") !== expected) {
-      // A corrupt download would fail the same way forever; start over next time.
-      yield* remove(downloaded);
+      // A corrupt partial would fail the same way forever; start over next time.
+      yield* remove(partial);
       return yield* fail("checksum");
     }
 
-    // The work folder is checked again, and the folder to unpack into made
-    // only if nothing is there, so a link put there is never followed into.
-    const unpacked = path.join(work, "unpacked");
-    yield* input.files.folder(work).pipe(Effect.mapError(storage));
-    yield* fs.makeDirectory(unpacked, { mode: 0o700 }).pipe(Effect.mapError(storage));
+    // The runtime folder is checked again: the download may have taken long.
+    // Whatever is at the staging name is removed (a link itself, never what it
+    // leads to), and the folder is then created only if nothing is there, so a
+    // link planted in between is never followed into.
+    yield* input.files.folder(path.dirname(staging)).pipe(Effect.mapError(storage));
+    yield* remove(staging);
+    yield* fs.makeDirectory(staging, { mode: 0o700 }).pipe(Effect.mapError(storage));
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     // tar says why it failed, such as a full disk, on the server's stderr,
     // which the journal keeps; a tar that could not run is logged here.
     const exit = yield* spawner
       .exitCode(
-        boundedCommand("tar", ["-xzf", downloaded, "-C", unpacked], {
+        boundedCommand("tar", ["-xzf", partial, "-C", staging], {
           stdin: "ignore",
           stdout: "ignore",
           stderr: "inherit",
@@ -263,28 +267,23 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
     if (exit !== 0) return yield* fail("extract");
 
     // The archive holds the server either at its root or in one top-level folder.
-    const entries = yield* fs.readDirectory(unpacked).pipe(Effect.mapError(storage));
+    const entries = yield* fs.readDirectory(staging).pipe(Effect.mapError(storage));
     const root =
       entries.includes("t3") || entries.length !== 1 || entries[0] === undefined
-        ? unpacked
-        : path.join(unpacked, entries[0]);
+        ? staging
+        : path.join(staging, entries[0]);
     if (!(yield* fs.exists(path.join(root, "t3")).pipe(Effect.orElseSucceed(() => false)))) {
       return yield* fail("extract");
     }
     yield* fs
       .writeFileString(path.join(root, INSTALLED_MARKER), `${expected}\n`)
       .pipe(Effect.mapError(storage));
-    // A release is only ever renamed into place with its marker, so one
-    // without it is no install's, and goes.
-    if ((yield* fs.rename(root, target).pipe(Effect.result))._tag === "Success") return executable;
-    if (yield* published) return executable;
     yield* remove(target);
     yield* fs.rename(root, target).pipe(Effect.mapError(storage));
+    yield* remove(staging);
+    yield* remove(partial);
     return executable;
-  }).pipe(
-    Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : keepDownload)),
-    Effect.ensuring(remove(work).pipe(Effect.ignore)),
-  );
+  }).pipe(Effect.scoped);
 });
 
 /**

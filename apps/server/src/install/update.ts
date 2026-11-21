@@ -15,9 +15,9 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { AdminClient } from "../admin/AdminClient.ts";
 import * as ServerConfig from "../config.ts";
 import { HOME_ENTRIES } from "../home/entries.ts";
+import { holdHome, holdLock } from "../home/Home.ts";
 import * as Installation from "../installation.ts";
 import { isWithin, realLocation } from "../paths.ts";
-import { socketOwner } from "../service/owner.ts";
 import * as Unit from "../service/unit.ts";
 import { Host } from "../system/Host.ts";
 import { Systemd } from "../system/Systemd.ts";
@@ -35,6 +35,7 @@ import {
 import { fetchRelease, isRelease, targetVersion } from "./release.ts";
 import {
   listSnapshots,
+  markRestoring,
   pruneSnapshots,
   restoreBytes,
   restoreSnapshot,
@@ -43,6 +44,9 @@ import {
   type SnapshotRelease,
   snapshotBytes,
   takeSnapshot,
+  unfinishedRollback,
+  unmarkRestoring,
+  UPDATE_LOCK,
 } from "./snapshot.ts";
 import { rollBackOver, type Side, StepFailed, switchOver, type SwitchOutcome } from "./switch.ts";
 
@@ -58,6 +62,13 @@ import { rollBackOver, type Side, StepFailed, switchOver, type SwitchOutcome } f
 // release's `service install` leaves the unit on the new release and the
 // command on the old one, and the next `update` to that release only points
 // the command at it.
+//
+// An update or a rollback holds `<home>/backups/update.lock` from start to
+// end, so a second one is refused, and reads what runs and whether a
+// rollback is unfinished only once it holds it. It holds the home's
+// `server.lock`, which a running server holds, while it copies the databases
+// or puts them back, so no server, in or outside the service, runs on them
+// then.
 
 /** How long a started release has to answer as itself with its engine ready. Its engine is fetched already. */
 const READY_WITHIN = Duration.minutes(5);
@@ -85,6 +96,7 @@ class UpdateRefused extends Schema.TaggedError<UpdateRefused>()("UpdateRefused",
     "snapshot-elsewhere",
     "release-gone",
     "restore-unfinished",
+    "busy",
   ]),
   detail: Schema.String,
 }) {
@@ -111,7 +123,9 @@ class UpdateRefused extends Schema.TaggedError<UpdateRefused>()("UpdateRefused",
       case "release-gone":
         return `J3 Bots ${this.detail}, the release the snapshot to roll back to was taken from, is no longer in this install. Install it with install.sh --version ${this.detail} after \`j3-bots uninstall\`, or put the snapshot back by hand.`;
       case "restore-unfinished":
-        return `A restore from the snapshot in ${this.detail} did not finish, so the data directory holds part of it and the service stays disabled. \`j3-bots update --rollback\` finishes it. Nothing was changed.`;
+        return `A rollback to the snapshot in ${this.detail} has not finished, so the service stays disabled and no other release may run on the data directory. \`j3-bots update --rollback\` finishes it. Nothing was changed.`;
+      case "busy":
+        return `Another \`j3-bots update\` or \`j3-bots update --rollback\` is running for ${this.detail}. Wait for it to end, then run this again. Nothing was changed.`;
     }
   }
 }
@@ -251,16 +265,41 @@ const runRelease = Effect.fn("update.runRelease")(function* (
 });
 
 /**
- * Fails unless no server outside the service runs for the home: the files
- * are copied and put back with no server on them.
+ * Holds `<home>/backups/update.lock` for the scope, or fails while another
+ * update or rollback holds it.
  */
-const checkNoOutsideServer = Effect.fn("update.checkNoOutsideServer")(function* (
-  installed: Installed,
-) {
+const holdUpdate = Effect.fn("update.holdUpdate")(function* (home: string) {
+  const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const { owner } = yield* socketOwner(path.join(installed.home, HOME_ENTRIES.adminSocket));
-  if (owner === "nobody" || (owner === "service" && installed.service)) return owner;
-  return yield* new UpdateRefused({ reason: "server-outside", detail: installed.home });
+  const backups = path.join(home, HOME_ENTRIES.backups);
+  yield* fs.makeDirectory(backups, { recursive: true, mode: 0o700 });
+  yield* holdLock(
+    path.join(backups, UPDATE_LOCK),
+    () => new UpdateRefused({ reason: "busy", detail: home }),
+  );
+});
+
+/** Runs `effect` holding the home's `server.lock`, which a server outside the service may hold. */
+const withHome = <A, E, R>(home: string, effect: Effect.Effect<A, E, R>) =>
+  Effect.scoped(Effect.andThen(holdHome(home), effect)).pipe(
+    Effect.catchTag("ServerAlreadyRunning", () =>
+      Effect.fail(new UpdateRefused({ reason: "server-outside", detail: home })),
+    ),
+  );
+
+/**
+ * Whether the service's server runs, before anything is stopped. With none
+ * running, the home's `server.lock` is tried: a server outside the service
+ * that holds it fails this, since its files are copied and put back with no
+ * server on them.
+ */
+const serviceRunning = Effect.fn("update.serviceRunning")(function* (installed: Installed) {
+  if (installed.service) {
+    const unit = yield* (yield* Systemd).unitState(Unit.UNIT_NAME);
+    if (unit.active === "active") return true;
+  }
+  yield* withHome(installed.home, Effect.void);
+  return false;
 });
 
 /**
@@ -353,9 +392,17 @@ const releaseSteps = (
     ),
   ready: (side: Side) =>
     awaitReady(installed, releases[side].version, side === "new" ? "await-new" : "await-old"),
+  mark: (snapshot: Snapshot) =>
+    markRestoring(snapshot).pipe(
+      Effect.mapError((cause) => new StepFailed({ step: "mark", reason: cause.message })),
+    ),
   restore: (snapshot: Snapshot) =>
-    restoreSnapshot(installed.home, snapshot).pipe(
+    withHome(installed.home, restoreSnapshot(installed.home, snapshot)).pipe(
       Effect.mapError((cause) => new StepFailed({ step: "restore", reason: cause.message })),
+    ),
+  unmark: (snapshot: Snapshot) =>
+    unmarkRestoring(snapshot).pipe(
+      Effect.mapError((cause) => new StepFailed({ step: "unmark", reason: cause.message })),
     ),
   pointCommand: (side: Side) =>
     writeLauncher({
@@ -447,14 +494,27 @@ type UpdateResult =
       readonly pruning: Option.Option<string>;
     };
 
-/** Fails while a restore from a snapshot has not finished: the home holds part of it. */
-const checkNoUnfinishedRestore = Effect.fn("update.checkNoUnfinishedRestore")(function* (
+/** Fails while a rollback has not finished: only `--rollback` may change the home then. */
+const checkNoUnfinishedRollback = Effect.fn("update.checkNoUnfinishedRollback")(function* (
   home: string,
 ) {
-  const unfinished = (yield* listSnapshots(home)).find(({ restoring }) => restoring);
-  if (unfinished !== undefined) {
-    return yield* new UpdateRefused({ reason: "restore-unfinished", detail: unfinished.folder });
+  const unfinished = yield* unfinishedRollback(home);
+  if (Option.isSome(unfinished)) {
+    return yield* new UpdateRefused({
+      reason: "restore-unfinished",
+      detail: unfinished.value.snapshot.folder,
+    });
   }
+});
+
+/**
+ * The install, read once this holds the update lock of its home: what runs
+ * and the snapshots cannot change under it then.
+ */
+const lockedInstall = Effect.gen(function* () {
+  // The home the lock is in comes from the install; it does not change with the release that runs.
+  yield* holdUpdate((yield* located).home);
+  return yield* located;
 });
 
 /**
@@ -468,9 +528,9 @@ export const update = Effect.fn("update.update")(function* <R>(options: {
   readonly confirm: (bots: Option.Option<number>) => Effect.Effect<boolean, never, R>;
   readonly say: (line: string) => Effect.Effect<void, never, R>;
 }) {
-  const installed = yield* located;
+  const installed = yield* lockedInstall;
   const path = yield* Path.Path;
-  yield* checkNoUnfinishedRestore(installed.home);
+  yield* checkNoUnfinishedRollback(installed.home);
   const from = installed.release;
   const version = yield* targetVersion(options.version);
   if (version === from.version) {
@@ -507,7 +567,7 @@ export const update = Effect.fn("update.update")(function* <R>(options: {
   }
   const to = Option.getOrUndefined(yield* releaseOf(fetched.root));
 
-  if ((yield* checkNoOutsideServer(installed)) === "service") {
+  if (yield* serviceRunning(installed)) {
     const socket = path.join(installed.home, HOME_ENTRIES.adminSocket);
     const work = yield* (yield* AdminClient).runningWork(socket).pipe(
       Effect.map(Option.map(({ bots }) => bots)),
@@ -532,9 +592,10 @@ export const update = Effect.fn("update.update")(function* <R>(options: {
   const outcome = yield* switchOver<Snapshot, SwitchServices>({
     ...steps,
     service: installed.service,
-    snapshot: takeSnapshot({ home: installed.home, from: fromRelease, to: toRelease }).pipe(
-      Effect.mapError((cause) => new StepFailed({ step: "snapshot", reason: cause.message })),
-    ),
+    snapshot: withHome(
+      installed.home,
+      takeSnapshot({ home: installed.home, from: fromRelease, to: toRelease }),
+    ).pipe(Effect.mapError((cause) => new StepFailed({ step: "snapshot", reason: cause.message }))),
   });
   const pruning =
     outcome._tag === "updated"
@@ -551,7 +612,7 @@ export const update = Effect.fn("update.update")(function* <R>(options: {
     outcome,
     pruning,
   } satisfies UpdateResult;
-});
+}, Effect.scoped);
 
 const engineOf = (release: Installation.ReleaseManifest) =>
   release.engine === undefined ? {} : { engine: release.engine };
@@ -568,15 +629,16 @@ type RollbackResult =
 
 /**
  * Puts back `rollbackSnapshot` and starts the release it was taken from, once
- * `confirm` agrees: what the operator asks for with `--rollback`. Before
- * anything changes, the install folder, its `versions/` and that release's
- * folder must be this user's alone to change, as an update checks them, and
- * there must be room for the copies the restore makes.
+ * `confirm` agrees: what the operator asks for with `--rollback`, which also
+ * finishes a rollback that was cut off, from where it got. Before anything
+ * changes, the install folder, its `versions/` and that release's folder must
+ * be this user's alone to change, as an update checks them, and there must be
+ * room for the copies the restore has still to make.
  */
 export const rollBack = Effect.fn("update.rollBack")(function* <R>(options: {
   readonly confirm: (snapshot: Snapshot) => Effect.Effect<boolean, never, R>;
 }) {
-  const installed = yield* located;
+  const installed = yield* lockedInstall;
   const path = yield* Path.Path;
   const chosen = yield* rollbackSnapshot(installed.home, installed.release.version);
   if (Option.isNone(chosen)) {
@@ -599,10 +661,10 @@ export const rollBack = Effect.fn("update.rollBack")(function* <R>(options: {
   for (const folder of [installed.install, versions, oldRoot]) yield* checkOwnFolder(folder);
   yield* roomFor(
     installed.home,
-    (yield* restoreBytes(snapshot)) + HOME_ROOM,
+    (yield* restoreBytes(installed.home, snapshot)) + HOME_ROOM,
     "Putting the snapshot back",
   );
-  yield* checkNoOutsideServer(installed);
+  yield* serviceRunning(installed);
   if (!(yield* options.confirm(snapshot))) return { _tag: "declined" } satisfies RollbackResult;
 
   const steps = releaseSteps(installed, {
@@ -619,4 +681,4 @@ export const rollBack = Effect.fn("update.rollBack")(function* <R>(options: {
     service: installed.service,
     failed,
   } satisfies RollbackResult;
-});
+}, Effect.scoped);

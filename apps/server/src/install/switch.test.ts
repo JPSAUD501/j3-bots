@@ -11,7 +11,9 @@ type Step = StepFailed["step"];
  * unit is enabled (a reboot starts it), the release that runs, the release
  * the command runs, and the databases. A release that starts migrates them,
  * as a newer one would; a failing start does so too before it fails, the
- * worst case. A failing restore leaves them half put back. Each step fails
+ * worst case. A failing restore leaves them half put back. `marked`: a
+ * rollback has not finished, so a server refuses the home unless it is the
+ * old release on the databases put back whole. Each step fails
  * when `failing` names it, or names its nth call as `step@n`. `running` is
  * the side the rollback starts from: with `"new"`, the update succeeded.
  */
@@ -22,6 +24,7 @@ const hostWith = (failing: ReadonlyArray<string>, service = true, running: Side 
     running: service ? Option.some<Side>(running) : Option.none<Side>(),
     command: running,
     data: (running === "old" ? "as-before" : "migrated") as "as-before" | "migrated" | "half",
+    marked: false,
     log: [] as Array<Step>,
   };
   const calls = new Map<Step, number>();
@@ -40,6 +43,13 @@ const hostWith = (failing: ReadonlyArray<string>, service = true, running: Side 
     const step = side === "new" ? "start-new" : "start-old";
     // `service install` writes the unit, enables it and starts the server before it can fail.
     assert.notStrictEqual(host.data, "half", "no release starts on a half-restored home");
+    if (host.marked) {
+      assert.deepStrictEqual(
+        [side, host.data],
+        ["old", "as-before"],
+        "only the old release starts on a home whose rollback has not finished, once it is put back",
+      );
+    }
     host.unit = side;
     host.enabled = true;
     host.running = Option.some(side);
@@ -51,11 +61,28 @@ const hostWith = (failing: ReadonlyArray<string>, service = true, running: Side 
     stop: attempt("stop", () => {
       host.running = Option.none();
     }),
-    disable: attempt("stop", () => {
-      host.running = Option.none();
-      host.enabled = false;
+    disable: Effect.suspend(() => {
+      assert.isTrue(host.marked, "a rollback is marked before it stops anything");
+      return attempt("stop", () => {
+        host.running = Option.none();
+        host.enabled = false;
+      });
     }),
     snapshot: attempt("snapshot", () => {}).pipe(Effect.as("snapshot" as const)),
+    mark: () =>
+      attempt("mark", () => {
+        host.marked = true;
+      }),
+    unmark: () =>
+      Effect.suspend(() => {
+        assert.isTrue(
+          Option.contains(host.running, "old"),
+          "the mark stays until the old release runs",
+        );
+        return attempt("unmark", () => {
+          host.marked = false;
+        });
+      }),
     start: (side) => Effect.suspend(() => start(side)),
     ready: (side) =>
       attempt(side === "new" ? "await-new" : "await-old", () => {
@@ -80,6 +107,7 @@ const hostWith = (failing: ReadonlyArray<string>, service = true, running: Side 
 
 /** The old release runs again from the unit and the command, on the databases as they were. */
 const assertBackToOld = (host: ReturnType<typeof hostWith>["host"]) => {
+  assert.isFalse(host.marked);
   assert.strictEqual(host.unit, "old");
   assert.isTrue(host.enabled);
   assert.isTrue(Option.contains(host.running, "old"));
@@ -129,7 +157,14 @@ describe("an update's switch", () => {
         if (outcome._tag !== "rolled-back") return;
         assert.strictEqual(outcome.failed.step, step);
         assert.isTrue(Option.contains(outcome.restored, "snapshot"));
-        assert.deepStrictEqual(host.log.slice(-4), ["stop", "restore", "start-old", "await-old"]);
+        assert.deepStrictEqual(host.log.slice(-6), [
+          "mark",
+          "stop",
+          "restore",
+          "start-old",
+          "await-old",
+          "unmark",
+        ]);
         assertBackToOld(host);
       }),
     );
@@ -160,10 +195,11 @@ describe("an update's switch", () => {
         ["await-new", "restore"],
       );
       assert.isTrue(Option.contains(outcome.snapshot, "snapshot"));
-      assert.deepStrictEqual(host.log.slice(-2), ["stop", "restore"]);
+      assert.deepStrictEqual(host.log.slice(-3), ["mark", "stop", "restore"]);
       assert.strictEqual(host.command, "old");
-      // Half put back, and nothing starts the service until a restore finishes.
+      // Half put back, and nothing starts the service until the rollback finishes.
       assert.strictEqual(host.data, "half");
+      assert.isTrue(host.marked);
       assert.isFalse(host.enabled);
       assert.isTrue(Option.isNone(host.running));
     }),
@@ -213,14 +249,24 @@ describe("an update's switch", () => {
   });
 
   describe("a rollback the operator asks for", () => {
-    it.effect("puts the databases back, then starts the old release and points the command", () =>
-      Effect.gen(function* () {
-        const { host, steps } = hostWith([], true, "new");
-        const failed = yield* rollBackOver(steps, "snapshot");
-        assert.isTrue(Option.isNone(failed));
-        assert.deepStrictEqual(host.log, ["stop", "restore", "start-old", "await-old", "command"]);
-        assertBackToOld(host);
-      }),
+    it.effect(
+      "puts the databases back, starts the old release, unmarks, then points the command",
+      () =>
+        Effect.gen(function* () {
+          const { host, steps } = hostWith([], true, "new");
+          const failed = yield* rollBackOver(steps, "snapshot");
+          assert.isTrue(Option.isNone(failed));
+          assert.deepStrictEqual(host.log, [
+            "mark",
+            "stop",
+            "restore",
+            "start-old",
+            "await-old",
+            "unmark",
+            "command",
+          ]);
+          assertBackToOld(host);
+        }),
     );
 
     it.effect("leaves the service disabled and stopped when the restore fails", () =>
@@ -228,21 +274,51 @@ describe("an update's switch", () => {
         const { host, steps } = hostWith(["restore"], true, "new");
         const failed = yield* rollBackOver(steps, "snapshot");
         assert.strictEqual(Option.getOrThrow(failed).step, "restore");
-        assert.deepStrictEqual(host.log, ["stop", "restore"]);
+        assert.deepStrictEqual(host.log, ["mark", "stop", "restore"]);
+        assert.isTrue(host.marked);
         assert.isFalse(host.enabled);
         assert.isTrue(Option.isNone(host.running));
         assert.strictEqual(host.command, "new");
       }),
     );
 
-    it.effect("finishes a restore a cut-off rollback left, when run again", () =>
+    it.effect("is finished once the old release runs, when only the command fails", () =>
       Effect.gen(function* () {
-        const { host, steps } = hostWith(["restore@1"], true, "new");
-        yield* rollBackOver(steps, "snapshot");
+        const { host, steps } = hostWith(["command"], true, "new");
         const failed = yield* rollBackOver(steps, "snapshot");
-        assert.isTrue(Option.isNone(failed));
-        assertBackToOld(host);
+        assert.strictEqual(Option.getOrThrow(failed).step, "command");
+        assert.isFalse(host.marked);
+        assert.isTrue(Option.contains(host.running, "old"));
+        assert.strictEqual(host.data, "as-before");
       }),
     );
   });
+
+  // A cut, such as a power cut, stops a rollback at a step as a failure there does.
+  const cuts = ["stop@1", "restore@1", "start-old@1", "await-old@1", "unmark@1"];
+  for (const cut of cuts) {
+    it.effect(
+      `leaves the rollback marked when it stops at ${cut}, and --rollback finishes it`,
+      () =>
+        Effect.gen(function* () {
+          const { host, steps } = hostWith([cut], true, "new");
+          assert.isTrue(Option.isSome(yield* rollBackOver(steps, "snapshot")));
+          assert.isTrue(host.marked);
+          assert.isTrue(Option.isNone(yield* rollBackOver(steps, "snapshot")));
+          assertBackToOld(host);
+        }),
+    );
+  }
+  for (const cut of cuts) {
+    it.effect(`leaves an update's own rollback marked when it stops at ${cut}`, () =>
+      Effect.gen(function* () {
+        // The update's `stop` is the first; its rollback's is the second.
+        const { host, steps } = hostWith(["await-new", cut.replace("stop@1", "stop@2")]);
+        assert.strictEqual((yield* switchOver(steps))._tag, "rollback-failed");
+        assert.isTrue(host.marked);
+        assert.isTrue(Option.isNone(yield* rollBackOver(steps, "snapshot")));
+        assertBackToOld(host);
+      }),
+    );
+  }
 });
