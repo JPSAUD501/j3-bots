@@ -89,7 +89,7 @@ export {
   type Save,
   type SaveResult,
 } from "./stores/Details.ts";
-export { Devices, type RevokeResult } from "./stores/Devices.ts";
+export { Devices, type PairingOffer, type RevokeResult } from "./stores/Devices.ts";
 export {
   type Addressing,
   type Draft,

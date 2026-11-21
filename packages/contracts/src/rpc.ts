@@ -30,6 +30,7 @@ import {
   WorkStep,
 } from "./entry.ts";
 import { CommandError, NotFound } from "./errors.ts";
+import { ServerOrigin } from "./link.ts";
 import {
   MemoryDocument,
   MemoryFile,
@@ -523,9 +524,19 @@ export const ClientRpcs = RpcGroup.make(
   /** Notifications for this socket to show. Live only: missed ones are not replayed. */
   Rpc.make("notifications.subscribe", { success: Notification, stream: true }),
   Rpc.make("devices.list", { success: Schema.Array(Device) }),
-  /** A code a new client can pair with, shown on this one. */
+  /**
+   * A code a new client can pair with, shown on this one, and the origins the
+   * server listens at as another device reaches it, best first, as
+   * `j3-bots pair` lists them: what a pairing link (`PairingLink`) can carry.
+   * Empty when the server knows none, as over HTTPS with a certificate that
+   * names no host.
+   */
   Rpc.make("pairing.start", {
-    success: Schema.Struct({ code: PairingCode, expiresAt: Schema.DateTimeUtc }),
+    success: Schema.Struct({
+      code: PairingCode,
+      expiresAt: Schema.DateTimeUtc,
+      origins: Schema.Array(ServerOrigin),
+    }),
   }),
   /**
    * Closes that device's sockets at once, refuses its token from now on and

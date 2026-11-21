@@ -824,9 +824,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
       j3
         .startPairing()
         .then((result) =>
-          result._tag === "done"
-            ? { _tag: "started", code: result.value.code, expiresAt: result.value.expiresAt }
-            : { _tag: "failed" },
+          result._tag === "done" ? { _tag: "started", ...result.value } : { _tag: "failed" },
         ),
     revokeDevice: (deviceId) => j3.revokeDevice(deviceId).then((result) => result._tag === "done"),
     refreshSettings: j3.refreshSettings,

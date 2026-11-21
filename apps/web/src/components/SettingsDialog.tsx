@@ -6,12 +6,14 @@ import {
   type EngineStatus,
   type NotificationSettingsChange,
   type PairingCode,
+  PairingLink,
+  type ServerOrigin,
   type Settings,
 } from "@j3-bots/contracts";
-import type * as DateTime from "effect/DateTime";
+import * as Schema from "effect/Schema";
 import { SettingsIcon, XIcon } from "lucide-react";
 import { useId, useState } from "react";
-import type { SettingsSaves } from "@j3-bots/client-runtime";
+import type { PairingOffer, SettingsSaves } from "@j3-bots/client-runtime";
 import {
   clockTime,
   editsAfterFailedSave,
@@ -38,6 +40,7 @@ import { cn } from "../lib/cn";
 import { activityTime } from "../lib/time";
 import { ConnectProviders, engineProblem, ProviderRow } from "./EmptyStates";
 import { ChangeServer } from "./ServerAddress";
+import { PairingQr } from "./PairingQr";
 import { Loading, Section } from "./SettingsSection";
 import { UsageSection } from "./UsageSection";
 import { Button } from "./ui/button";
@@ -495,8 +498,10 @@ const shownCode = (code: PairingCode) => `${code.slice(0, 5)}-${code.slice(5)}`;
 type Pairing =
   | { readonly _tag: "idle" }
   | { readonly _tag: "starting" }
-  | { readonly _tag: "started"; readonly code: PairingCode; readonly expiresAt: DateTime.Utc }
+  | ({ readonly _tag: "started" } & PairingOffer)
   | { readonly _tag: "failed" };
+
+const encodeLink = Schema.encodeSync(PairingLink);
 
 /** Every paired device, and a code to pair one more, which takes the server. */
 function DevicesSection({
@@ -609,21 +614,74 @@ function DevicesSection({
           </p>
         )}
         <div role="status" className="text-sm">
-          {pairing._tag === "started" && (
-            <div className="flex flex-col gap-1">
-              <p className="text-xs text-muted-foreground">{t("settings.pair.instructions")}</p>
-              <p className="font-mono text-lg tracking-wider">{shownCode(pairing.code)}</p>
-              <p className="text-2xs text-muted-foreground">
-                {t("settings.pair.expires", { time: clockTime(pairing.expiresAt, ctx) })}
-              </p>
-            </div>
-          )}
+          {pairing._tag === "started" && <PairingCodeShown offer={pairing} />}
           {pairing._tag === "failed" && (
             <p className="text-xs text-blocked">{t("settings.pair.failed")}</p>
           )}
         </div>
       </div>
     </Section>
+  );
+}
+
+/**
+ * The code to enter on the other device and, when the server can be reached
+ * from another device, a QR code of the pairing link for a phone's camera. The
+ * link carries the address this device uses unless the operator picks
+ * another the server listens at.
+ */
+function PairingCodeShown({ offer }: { offer: PairingOffer }) {
+  const ctx = usePresentation();
+  const { t } = ctx.i18n;
+  const addressId = useId();
+  const [picked, setPicked] = useState<ServerOrigin | null>(null);
+  // A new code may come with other addresses: the pick holds while it is one of them.
+  const server =
+    picked !== null && offer.origins.includes(picked) ? picked : (offer.origins[0] ?? null);
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-xs text-muted-foreground">
+        {server === null ? t("settings.pair.instructions") : t("settings.pair.scanOrEnter")}
+      </p>
+      <div className="flex flex-wrap items-start gap-4">
+        {server !== null && (
+          <PairingQr
+            text={encodeLink({ server, code: offer.code })}
+            label={t("settings.pair.qr", { address: server })}
+          />
+        )}
+        <div className="flex min-w-0 flex-col gap-1">
+          <p className="font-mono text-lg tracking-wider">{shownCode(offer.code)}</p>
+          <p className="text-2xs text-muted-foreground">
+            {t("settings.pair.expires", { time: clockTime(offer.expiresAt, ctx) })}
+          </p>
+          {server !== null && offer.origins.length > 1 && (
+            <div className="flex flex-col gap-1 pt-2">
+              <label htmlFor={addressId} className="text-xs">
+                {t("settings.pair.address")}
+              </label>
+              <select
+                id={addressId}
+                value={server}
+                onChange={(event) => {
+                  const chosen = offer.origins.find(
+                    (origin) => origin === event.currentTarget.value,
+                  );
+                  if (chosen !== undefined) setPicked(chosen);
+                }}
+                className={fieldClass}
+              >
+                {offer.origins.map((origin) => (
+                  <option key={origin} value={origin}>
+                    {origin}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 

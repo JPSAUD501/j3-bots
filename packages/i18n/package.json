@@ -18,6 +18,7 @@
     "@j3-bots/contracts": "workspace:*"
   },
   "devDependencies": {
+    "@types/node": "catalog:",
     "vite-plus": "catalog:"
   }
 }

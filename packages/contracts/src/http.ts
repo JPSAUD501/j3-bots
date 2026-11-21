@@ -73,7 +73,10 @@ export type ServerInfo = typeof ServerInfo.Type;
 
 export const PairRequest = Schema.Struct({
   code: PairingCode,
-  /** What the operator will see in the device list, such as "Pixel 9". */
+  /**
+   * What the operator will see in the device list, such as "Pixel 9". A native
+   * client offers its platform's name for the device; the operator can change it.
+   */
   name: Label,
 });
 export type PairRequest = typeof PairRequest.Type;

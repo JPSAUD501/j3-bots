@@ -148,11 +148,14 @@ The server listens at:
   http://192.168.1.40:3737
   http://100.101.102.103:3737
 On the new device, open J3 Bots at one of these addresses and enter the code.
+
+With the J3 Bots app on a phone, scan this to fill in http://192.168.1.40:3737 and the code:
+(a QR code, drawn in the terminal)
 ```
 
 `pair` asks the running server for the code over its admin socket, `~/.j3-bots/admin.sock`. Only this user can connect to that socket, so the command works only on the Pi, as the user that runs the service. The addresses come from the server too: the port and scheme it listens on and, with `lan`, the Pi's private addresses, leaving out container and virtual-network interfaces such as `docker0`.
 
-On the new device, open one of those addresses in a browser: the server serves the web client there, which asks for the code. A code typed in lower case, or with spaces or dashes, works too. `j3-bots doctor` says whether the server serves the web client.
+On the new device, open one of those addresses in a browser: the server serves the web client there, which asks for the code. The QR code is for the J3 Bots phone app, still in development: a phone's camera opens it with the first address and the code filled in, and a browser has no use for it. A device already paired shows the same in Settings → Devices, where you can pick another address for the QR code. A code typed in lower case, or with spaces or dashes, works too. `j3-bots doctor` says whether the server serves the web client.
 
 A browser treats a plain-HTTP address other than `localhost` as insecure, and on such an address it does not install J3 Bots as an app (a PWA). To install it on a phone, serve HTTPS: put a certificate and key in `tls` (paths relative to the data directory work), or serve it through a platform that holds the certificate ([Serve it through a container](#serve-it-through-a-container)). With Tailscale, `tailscale cert <machine>.<tailnet>.ts.net` issues one for the Pi's tailnet name. Over HTTPS, `pair` prints the names on the certificate, such as `https://<machine>.<tailnet>.ts.net:3737`, and no bare addresses, which the browser would not accept. A wildcard name names no one host, so it is not printed; for a certificate with only wildcards, open a name it covers.
 
@@ -164,7 +167,7 @@ Some platforms publish only containers, behind a proxy of their own that holds t
 2. On the platform, create a Docker Compose app from this repository, with `deploy/container-proxy/compose.yaml`, on the machine that runs J3 Bots. Give its `proxy` service your domain on port 8080, such as `https://bots.example.com:8080`. If the server listens on a port other than 3737, set `J3_PORT` to it.
 3. Deploy. The container counts as healthy while the server answers, so the platform routes to it only then.
 
-On a new device, open your domain and pair as usual. `j3-bots pair` prints the server's own addresses, not the domain.
+On a new device, open your domain and pair as usual. `j3-bots pair` prints the server's own addresses, not the domain; Devices, opened at the domain, puts the domain in its QR code.
 
 The server authenticates every request itself, with the device's token, and sets no cookies, so the proxy needs no settings for cookies, origins or WebSockets. A proxy that asks for a sign-in first, such as a single sign-on gate, works in front of it too. The web client sends credentials when it asks for its manifest, so the browser still offers to install it.
 
@@ -249,4 +252,3 @@ Each line is ✓ (fine), `!` (a warning: the server runs, but something is missi
 
 - With Claude Code and Codex reaching their models through a CLIProxyAPI endpoint (the provider connection), the engine reads no usage limits for them, so the server reports none. That is the setup tested so far.
 - Bots choose among the models the engine lists for each provider. An endpoint that names its models otherwise cannot be used for them yet.
-- `j3-bots pair` prints the code and the addresses but no QR code.

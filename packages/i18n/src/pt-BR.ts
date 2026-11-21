@@ -653,6 +653,10 @@ const sentences = {
   "settings.pair": "Parear outro dispositivo",
   "settings.pair.again": "Gerar outro código",
   "settings.pair.instructions": "Digite este código no outro dispositivo:",
+  "settings.pair.scanOrEnter":
+    "Escaneie o código QR com o app J3 Bots no celular ou digite o código no outro dispositivo:",
+  "settings.pair.qr": "Código QR que pareia um dispositivo com o J3 Bots em {address}",
+  "settings.pair.address": "Endereço no código QR",
   "settings.pair.expires": "Vale uma vez, até {time}",
   "settings.pair.failed": "Nenhum código foi gerado. Tente de novo.",
   "settings.pair.offline": "Disponível quando este dispositivo voltar a se conectar ao J3 Bots.",

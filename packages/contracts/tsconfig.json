@@ -1,4 +1,9 @@
 {
   "extends": "../../tsconfig.base.json",
+  // The WHATWG URL global, which every client and the server have, is typed by Node's types; no DOM.
+  "compilerOptions": {
+    "types": ["node"],
+    "lib": ["ESNext"]
+  },
   "include": ["src"]
 }

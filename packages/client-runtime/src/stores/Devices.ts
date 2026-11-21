@@ -1,14 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Device, DeviceId, PairingCode } from "@j3-bots/contracts";
+import {
+  type Device,
+  type DeviceId,
+  type PairingCode,
+  pairingOrigins,
+  ServerOrigin,
+} from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import type * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import { Connection, type NotPaired } from "../connection/Connection.ts";
 import { Actions, intentResult, type IntentResult } from "../intents/Actions.ts";
+import { ServerAddress } from "../ports.ts";
 import { Cell, type Readable } from "../Store.ts";
 import { loading, markStale, ready, type Synced } from "./synced.ts";
 
@@ -22,6 +30,20 @@ const REVOKE_WAIT = Duration.seconds(10);
  */
 export type RevokeResult = IntentResult | { readonly _tag: "unanswered" };
 
+/** A code another device can pair with, and where it reaches the server. */
+export interface PairingOffer {
+  readonly code: PairingCode;
+  readonly expiresAt: DateTime.Utc;
+  /**
+   * The origins a pairing link can carry to another device, best first: the
+   * one this client reaches the server at, then those the server offers,
+   * loopback left out (`pairingOrigins`). Empty when there is none.
+   */
+  readonly origins: ReadonlyArray<ServerOrigin>;
+}
+
+const decodeOrigin = Schema.decodeUnknownOption(ServerOrigin);
+
 /**
  * The paired devices. Read when each socket opens and after every change made
  * here; the contract has no subscription for them.
@@ -32,10 +54,7 @@ export class Devices extends Context.Service<
     readonly state: Readable<Synced<ReadonlyArray<Device>>>;
     readonly refresh: Effect.Effect<void, NotPaired>;
     /** A code a new client can pair with, shown on this one. */
-    readonly startPairing: Effect.Effect<
-      { readonly code: PairingCode; readonly expiresAt: DateTime.Utc },
-      NotPaired
-    >;
+    readonly startPairing: Effect.Effect<PairingOffer, NotPaired>;
     /**
      * Revokes a device, waiting at most ten seconds for the server. Unless it
      * did, the list is read again once connected, which shows what happened.
@@ -52,6 +71,7 @@ export const layer = Layer.effect(
     const connection = yield* Connection;
     const actions = yield* Actions;
     const scope = yield* Scope.Scope;
+    const current = Option.getOrUndefined(decodeOrigin((yield* ServerAddress).origin.origin));
     const state = new Cell<Synced<ReadonlyArray<Device>>>(loading);
     const show = (devices: ReadonlyArray<Device>) => Effect.sync(() => state.set(ready(devices)));
 
@@ -93,7 +113,15 @@ export const layer = Layer.effect(
     return Devices.of({
       state,
       refresh,
-      startPairing: connection.call((client) => client["pairing.start"]()),
+      startPairing: connection
+        .call((client) => client["pairing.start"]())
+        .pipe(
+          Effect.map(({ code, expiresAt, origins }) => ({
+            code,
+            expiresAt,
+            origins: pairingOrigins(origins, current),
+          })),
+        ),
       revoke,
     });
   }),

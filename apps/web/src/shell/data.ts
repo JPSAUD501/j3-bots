@@ -4,6 +4,7 @@ import type {
   ConversationItem,
   Draft,
   DraftMention,
+  PairingOffer,
   RecentTurnsState,
   SettingsChange,
   SettingsSaves,
@@ -19,14 +20,12 @@ import type {
   EntryTarget,
   MemoryFile,
   MemoryPath,
-  PairingCode,
   RoomId,
   RosterItem,
   Routine,
   Settings,
   WorkStep,
 } from "@j3-bots/contracts";
-import type * as DateTime from "effect/DateTime";
 import type { BotDetailsIntents } from "../components/DetailsPanel";
 import type { TimelineIntents } from "../components/Timeline";
 
@@ -99,10 +98,8 @@ export interface ShellData {
   readonly signInUnencrypted: boolean;
 }
 
-/** A pairing code for another device, or why there is none. */
-type PairingStart =
-  | { readonly _tag: "started"; readonly code: PairingCode; readonly expiresAt: DateTime.Utc }
-  | { readonly _tag: "failed" };
+/** A pairing code for another device and where it reaches the server, or why there is none. */
+type PairingStart = ({ readonly _tag: "started" } & PairingOffer) | { readonly _tag: "failed" };
 
 /** What the operator can ask for from the shell. Every intent is carried out by the client runtime. */
 export interface ShellIntents extends TimelineIntents {

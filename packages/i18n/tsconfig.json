@@ -1,5 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
-  "compilerOptions": { "lib": ["ESNext"] },
+  // No DOM, as the server and Electron main read it. Node's types give the URL
+  // global the contracts it imports use.
+  "compilerOptions": { "types": ["node"], "lib": ["ESNext"] },
   "include": ["src"]
 }
