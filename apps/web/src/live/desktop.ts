@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { DeviceId } from "@j3-bots/contracts";
+import type { DeviceId, PairingCode, PairingLinkTarget } from "@j3-bots/contracts";
 import {
+  AppLink,
   BRIDGE_KEY,
   ConnectResult,
   ForgetResult,
@@ -27,10 +28,21 @@ export interface Desktop {
   /** The server the operator named, or `null` until they have. */
   readonly server: URL | null;
   /**
-   * Checks the address the operator typed and keeps it if a J3 Bots server
-   * answers there. `null` when the app gave no answer the page understands.
+   * The code of the pairing link the operator followed to `server`, for the
+   * pairing screen to start with, or `null`.
    */
-  readonly connect: (address: string) => Promise<ConnectResult | null>;
+  readonly pairingCode: PairingCode | null;
+  /**
+   * Checks the address the operator typed and keeps it if a J3 Bots server
+   * answers there. `pairing` is the pairing link that filled the address in:
+   * once the server it names is kept, the page that loads next starts the
+   * pairing screen with its code (`pairingCode`). `null` when the app gave no
+   * answer the page understands.
+   */
+  readonly connect: (
+    address: string,
+    pairing: PairingLinkTarget | null,
+  ) => Promise<ConnectResult | null>;
   /**
    * Forgets the server, with everything this page kept for it, and opens the
    * app's first page. Resolves `false` when the server is still kept.
@@ -65,6 +77,11 @@ export interface Desktop {
   readonly closeNotifications: (pairing: DeviceId) => void;
   /** Calls `listener` with each notification the operator clicks; answers a function that stops it. */
   readonly onNotificationClick: (listener: (click: NotificationClick) => void) => () => void;
+  /**
+   * Calls `listener` with each link to the app the operator follows, starting
+   * with one that arrived before; answers a function that stops it.
+   */
+  readonly onAppLink: (listener: (link: AppLink) => void) => () => void;
 }
 
 const decodeBridge = Schema.decodeUnknownOption(HostedBridge);
@@ -75,6 +92,7 @@ const decodeOpen = Schema.decodeUnknownOption(OpenResult);
 const decodeNetwork = Schema.decodeUnknownOption(NetworkState);
 const decodeStatus = Schema.decodeUnknownOption(UpdateStatus);
 const decodeClick = Schema.decodeUnknownOption(NotificationClick);
+const decodeLink = Schema.decodeUnknownOption(AppLink);
 const hosted: unknown = Reflect.get(window, BRIDGE_KEY);
 
 /** What `call` answers, decoded; `null` when it throws, rejects or answers something else. */
@@ -94,7 +112,12 @@ export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
   onNone: () => null,
   onSome: (bridge) => ({
     server: bridge.state.server === null ? null : new URL(bridge.state.server),
-    connect: (address) => ask(() => bridge.connect(address), decodeResult),
+    pairingCode: bridge.state.pairingCode,
+    connect: (address, pairing) =>
+      ask(
+        () => bridge.connect(pairing === null ? { address } : { address, pairing }),
+        decodeResult,
+      ),
     forgetServer: () =>
       ask(() => bridge.forgetServer(), decodeForget).then((answer) => answer === "forgotten"),
     sealToken: (token) =>
@@ -136,6 +159,14 @@ export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
     onNotificationClick: (listener) => {
       const stop: unknown = bridge.onNotificationClick((click: unknown) =>
         Option.map(decodeClick(click), listener),
+      );
+      return () => {
+        if (typeof stop === "function") stop();
+      };
+    },
+    onAppLink: (listener) => {
+      const stop: unknown = bridge.onAppLink((link: unknown) =>
+        Option.map(decodeLink(link), listener),
       );
       return () => {
         if (typeof stop === "function") stop();

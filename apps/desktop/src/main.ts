@@ -35,9 +35,11 @@ import {
   shell,
   type WebContents,
 } from "electron";
+import * as AppLinks from "./appLinks.ts";
 import { contentSecurityPolicy, inlineScriptSources, resolveAsset } from "./assets.ts";
 import { electronFetch } from "./electronFetch.ts";
 import { APP_ID, appOrigin, schemeOf } from "./identity.ts";
+import * as LinkHandler from "./linkHandler.ts";
 import { externalUrl, isAppUrl } from "./navigation.ts";
 import * as Notifier from "./notifier.ts";
 import { restartApp } from "./restart.ts";
@@ -54,6 +56,8 @@ import { MIN_SIZE, openingBounds } from "./window.ts";
 
 const APP_ORIGIN = appOrigin(app.isPackaged);
 const SCHEME = schemeOf(APP_ORIGIN);
+/** Links to the app, taken from as early as the system hands them over. */
+const links = AppLinks.start(SCHEME);
 
 /** What a page may ask for: showing notifications and writing to the clipboard. */
 const PERMISSIONS = new Set(["notifications", "clipboard-sanitized-write"]);
@@ -222,7 +226,10 @@ const program = Effect.gen(function* () {
     const decoded = decodeConnectRequest(request);
     // Only the server address screen connects.
     if (!fromApp(event) || Option.isNone(decoded)) return { _tag: "refused", reason: "invalid" };
-    return yield* choice.connect(decoded.value.address, pageOf(event));
+    const { address, pairing } = decoded.value;
+    const result = yield* choice.connect(address, pageOf(event));
+    if (result._tag === "connected" && pairing !== undefined) links.carry(pairing);
+    return result;
   });
 
   const tokens = makeTokenSeal();
@@ -257,9 +264,12 @@ const program = Effect.gen(function* () {
   yield* Effect.acquireRelease(
     Effect.sync(() => {
       ipcMain.on(IPC_CHANNELS.state, (event) => {
-        event.returnValue = fromApp(event)
-          ? encodeState({ server: runSync(settings.get).server })
-          : null;
+        if (!fromApp(event)) {
+          event.returnValue = null;
+          return;
+        }
+        const { server } = runSync(settings.get);
+        event.returnValue = encodeState({ server, pairingCode: links.takeCarriedCode(server) });
       });
       ipcMain.handle(IPC_CHANNELS.connect, (event, request: unknown) =>
         runPromise(connect(event, request)),
@@ -354,6 +364,8 @@ const program = Effect.gen(function* () {
     bringForward: forward,
     appIcon: path.join(webRoot, "icon-192.png"),
   });
+  yield* links.serve({ window, fromApp, bringForward: forward });
+  yield* LinkHandler.register(SCHEME).pipe(Effect.forkScoped);
   // After sleep the network may have changed under the page: it is told, so
   // the client tries again at once rather than when its backoff ends.
   yield* Effect.acquireRelease(
@@ -386,9 +398,11 @@ const program = Effect.gen(function* () {
 });
 
 // One app per profile: a second launch brings the first one's window forward,
-// or, while the app is still starting, as soon as it has one.
+// or, while the app is still starting, as soon as it has one, and hands over
+// the link it was started with, if any.
 if (app.requestSingleInstanceLock()) {
-  app.on("second-instance", () => {
+  app.on("second-instance", (_event, argv) => {
+    links.receive(argv);
     if (bringForward === null) launchedWhileStarting = true;
     else bringForward();
   });

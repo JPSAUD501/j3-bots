@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, describe, it } from "@effect/vitest";
+import { BotId, PairingCode, RoomId } from "@j3-bots/contracts";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 import {
+  AppLinkUrl,
   ConnectRequest,
   ConnectResult,
   DesktopState,
@@ -11,6 +13,7 @@ import {
   NotificationRequest,
   OpenRequest,
   SavingReport,
+  ServerOrigin,
   UpdateStatus,
 } from "./index.ts";
 
@@ -26,7 +29,7 @@ describe("the desktop bridge", () => {
       "https://j3.example.test",
       "http://[::1]:3737",
     ]) {
-      assert.isTrue(decodes(DesktopState, { server }), server);
+      assert.isTrue(decodes(DesktopState, { server, pairingCode: null }), server);
     }
     for (const server of [
       "http://192.0.2.10:3737/",
@@ -39,9 +42,9 @@ describe("the desktop bridge", () => {
       "192.0.2.10:3737",
       "",
     ]) {
-      assert.isFalse(decodes(DesktopState, { server }), server);
+      assert.isFalse(decodes(DesktopState, { server, pairingCode: null }), server);
     }
-    assert.isTrue(decodes(DesktopState, { server: null }));
+    assert.isTrue(decodes(DesktopState, { server: null, pairingCode: null }));
     assert.isFalse(decodes(DesktopState, {}));
   });
 
@@ -83,6 +86,11 @@ describe("the desktop bridge", () => {
     assert.isFalse(decodes(ConnectRequest, { address: "x".repeat(2049) }));
     assert.isFalse(decodes(ConnectRequest, { address: 3737 }));
     assert.isFalse(decodes(ConnectRequest, null));
+    const pairing = { server: "http://192.0.2.10:3737", code: "7KQ2M9XH4D" };
+    assert.isTrue(decodes(ConnectRequest, { address: "192.0.2.10:3737", pairing }));
+    assert.isFalse(
+      decodes(ConnectRequest, { address: "192.0.2.10:3737", pairing: { ...pairing, code: "x" } }),
+    );
     assert.isTrue(decodes(OpenRequest, { sealed: "djEwAAAA" }));
     assert.isFalse(decodes(OpenRequest, { sealed: "not base64!" }));
     assert.isFalse(decodes(OpenRequest, { sealed: "" }));
@@ -114,8 +122,9 @@ describe("the desktop bridge", () => {
       notify: call,
       closeNotifications: call,
       onNotificationClick: call,
+      onAppLink: call,
     };
-    const state = { server: null };
+    const state = { server: null, pairingCode: null };
     assert.isTrue(decodes(HostedBridge, { state, ...calls }));
     assert.isFalse(decodes(HostedBridge, undefined));
     assert.isFalse(decodes(HostedBridge, { state: { ...state, server: "nowhere" }, ...calls }));
@@ -160,5 +169,66 @@ describe("the desktop bridge", () => {
     assert.isFalse(decodes(NotificationClick, { ...click, target: { _tag: "room" } }));
     assert.isFalse(decodes(NotificationClick, { target: click.target }));
     assert.isFalse(decodes(NotificationClick, "j3:notification-click"));
+  });
+});
+
+describe("a link to the app", () => {
+  const decodeLink = Schema.decodeUnknownExit(AppLinkUrl("j3bots"));
+  const opened = (text: string) =>
+    Exit.match(decodeLink(text), { onFailure: () => null, onSuccess: (link) => link });
+
+  it("opens a bot's conversation or a room by its id", () => {
+    assert.deepStrictEqual(opened("j3bots://bot/bot_4kq2m9xh"), {
+      _tag: "open",
+      target: { _tag: "conversation", botId: BotId.make("bot_4kq2m9xh") },
+    });
+    assert.deepStrictEqual(opened("j3bots://room/room%20one/"), {
+      _tag: "open",
+      target: { _tag: "room", roomId: RoomId.make("room one") },
+    });
+  });
+
+  it("fills in pairing with a server and a code read as a typed one is", () => {
+    const server = encodeURIComponent("https://j3.example.test/");
+    assert.deepStrictEqual(opened(`j3bots://pair?server=${server}&code=7kq2-m9xh-4d`), {
+      _tag: "pair",
+      server: ServerOrigin.make("https://j3.example.test"),
+      code: PairingCode.make("7KQ2M9XH4D"),
+    });
+  });
+
+  it("refuses what is not a link to this build", () => {
+    const code = "code=7KQ2M9XH4D";
+    for (const text of [
+      // Another scheme: a development build's link, the app's own pages, the web.
+      "j3bots-dev://bot/bot_1",
+      "j3bots://app/bots/bot_1",
+      "https://j3.example.test/bots/bot_1",
+      // A path beyond the id, an empty id, one too long, one that does not decode.
+      "j3bots://bot/bot_1/details",
+      "j3bots://bot/",
+      "j3bots://bot",
+      `j3bots://bot/${"b".repeat(129)}`,
+      "j3bots://room/%E0%A4%A",
+      // Anything else in the link.
+      "j3bots://bot/bot_1?details=true",
+      "j3bots://bot/bot_1#top",
+      "j3bots://user@bot/bot_1",
+      "j3bots://bot:80/bot_1",
+      "j3bots://settings",
+      // A server that is not an http: or https: origin.
+      `j3bots://pair?server=${encodeURIComponent("ftp://j3.example.test")}&${code}`,
+      `j3bots://pair?server=${encodeURIComponent("https://j3.example.test/api")}&${code}`,
+      `j3bots://pair?server=j3.example.test&${code}`,
+      // A code missing, repeated or not a code; a parameter the link does not take.
+      `j3bots://pair?server=${encodeURIComponent("https://j3.example.test")}`,
+      `j3bots://pair?server=${encodeURIComponent("https://j3.example.test")}&code=12345`,
+      `j3bots://pair?server=${encodeURIComponent("https://j3.example.test")}&${code}&${code}`,
+      `j3bots://pair?server=${encodeURIComponent("https://j3.example.test")}&${code}&now=1`,
+      `j3bots://pair/x?server=${encodeURIComponent("https://j3.example.test")}&${code}`,
+      "not a link",
+    ]) {
+      assert.isNull(opened(text), text);
+    }
   });
 });

@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { DeviceId, EntryId, EntryTarget, ServerOrigin } from "@j3-bots/contracts";
+import {
+  DeviceId,
+  EntryId,
+  EntryTarget,
+  PairingCode,
+  PairingLinkTarget,
+  ServerOrigin,
+} from "@j3-bots/contracts";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
@@ -10,6 +17,7 @@ import * as Schema from "effect/Schema";
 // asks, and the page decodes what the main process answers.
 
 export { BRIDGE_KEY, type DesktopBridge, IPC_CHANNELS } from "./channels.ts";
+export { AppLink, AppLinkUrl } from "./link.ts";
 // The server, as the desktop app keeps it: the origin the contract defines.
 export { ServerOrigin } from "@j3-bots/contracts";
 
@@ -27,12 +35,23 @@ export type TokenProtection = typeof TokenProtection.Type;
 export const DesktopState = Schema.Struct({
   /** The server the operator named, or `null` until they have. */
   server: Schema.NullOr(ServerOrigin),
+  /**
+   * The code of the pairing link the operator followed to `server`, for the
+   * pairing screen to start with: given once, to the page that loads right
+   * after the server address screen kept that server (`ConnectRequest`).
+   */
+  pairingCode: Schema.NullOr(PairingCode),
 });
 export type DesktopState = typeof DesktopState.Type;
 
-/** The address the operator typed on the server address screen, as typed. */
+/**
+ * The address the operator typed on the server address screen, as typed, and
+ * the pairing link that filled it in, if one did: once the server the link
+ * names is kept, its code goes to the page that loads next (`DesktopState`).
+ */
 export const ConnectRequest = Schema.Struct({
   address: Schema.String.check(Schema.isMaxLength(2048)),
+  pairing: Schema.optionalKey(PairingLinkTarget),
 });
 export type ConnectRequest = typeof ConnectRequest.Type;
 
@@ -237,5 +256,6 @@ export const HostedBridge = Schema.Struct({
   notify: Callable,
   closeNotifications: Callable,
   onNotificationClick: Callable,
+  onAppLink: Callable,
 });
 export type HostedBridge = typeof HostedBridge.Type;

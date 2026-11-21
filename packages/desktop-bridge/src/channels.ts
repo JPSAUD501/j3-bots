@@ -40,12 +40,17 @@ export const IPC_CHANNELS = {
   closeNotifications: "j3bots:close-notifications",
   /** From the main process, as the operator clicks a notification: `NotificationClick`. */
   notificationClicked: "j3bots:notification-clicked",
+  /** The page listens for links now: the main process sends what waited. Not answered. */
+  appLinksWanted: "j3bots:app-links-wanted",
+  /** From the main process, as the operator follows a link to the app: `AppLink`. */
+  appLinkOpened: "j3bots:app-link-opened",
 } as const;
 
 /** What the preload script puts on `window[BRIDGE_KEY]`. Its answers are decoded by the page. */
 export interface DesktopBridge {
   readonly state: unknown;
-  readonly connect: (address: string) => Promise<unknown>;
+  /** Connects to a server (a `ConnectRequest`). */
+  readonly connect: (request: unknown) => Promise<unknown>;
   readonly forgetServer: () => Promise<unknown>;
   readonly sealToken: (token: string) => Promise<unknown>;
   readonly openToken: (sealed: string) => Promise<unknown>;
@@ -66,4 +71,9 @@ export interface DesktopBridge {
   readonly closeNotifications: (request: unknown) => void;
   /** Calls `listener` with each notification the operator clicks; answers a function that stops it. */
   readonly onNotificationClick: (listener: (click: unknown) => void) => () => void;
+  /**
+   * Calls `listener` with each link to the app the operator follows, starting
+   * with any that arrived before; answers a function that stops it.
+   */
+  readonly onAppLink: (listener: (link: unknown) => void) => () => void;
 }

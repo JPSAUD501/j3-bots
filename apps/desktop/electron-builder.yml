@@ -31,6 +31,14 @@ extraResources:
     to: web/dist
 npmRebuild: false
 
+# Links to the app (`j3bots://bot/<id>`, `room/<id>`, `pair?…`): declared in
+# the macOS app's Info.plist and the Linux packages' desktop entries. The app
+# also names itself their handler as it starts (src/linkHandler.ts), which is
+# what registers them on Windows: the NSIS installer does not.
+protocols:
+  - name: J3 Bots
+    schemes: [j3bots]
+
 # The update feed: draft releases on GitHub, which a maintainer publishes.
 publish:
   provider: github

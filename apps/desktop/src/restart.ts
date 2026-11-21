@@ -3,6 +3,7 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodePath from "node:path";
 import { app } from "electron";
+import { appOrigin, schemeOf } from "./identity.ts";
 
 // Restarting the app: after a keyring is unlocked, and into an update.
 
@@ -42,6 +43,16 @@ const START_ONCE_GONE = [
 ].join("\n");
 
 /**
+ * The arguments the app was started with, such as `--no-sandbox`, without a
+ * link to the app it was started to follow (`appLinks.ts`): a restart opens
+ * nothing by itself.
+ */
+const restartArgs = (): Array<string> => {
+  const scheme = schemeOf(appOrigin(app.isPackaged));
+  return process.argv.slice(1).filter((arg) => !arg.toLowerCase().startsWith(`${scheme}:`));
+};
+
+/**
  * Starts the app again once this process has exited, and quits. Quitting
  * closes the window as the operator would, so its place is saved and
  * IndexedDB is flushed.
@@ -60,7 +71,7 @@ const START_ONCE_GONE = [
  * unpacked again. Anything else is restarted by Electron.
  */
 export const restartApp = (appImage: string | null = runningAppImage): void => {
-  if (appImage === null) app.relaunch();
+  if (appImage === null) app.relaunch({ args: restartArgs() });
   else {
     NodeChildProcess.spawn(
       "bash",
@@ -71,8 +82,7 @@ export const restartApp = (appImage: string | null = runningAppImage): void => {
         "j3-bots-restart",
         String(process.pid),
         appImage,
-        // The arguments the app was started with, such as `--no-sandbox`.
-        ...process.argv.slice(1),
+        ...restartArgs(),
       ],
       { detached: true, stdio: "ignore" },
     ).unref();

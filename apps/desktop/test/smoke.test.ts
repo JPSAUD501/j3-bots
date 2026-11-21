@@ -2,8 +2,8 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Electron's package answers its executable's path only to require(), and the redirecting address is a plain node:http server.
 import * as NodeHttp from "node:http";
 import * as NodeModule from "node:module";
-import { CommandId } from "@j3-bots/contracts";
-import { BRIDGE_KEY, OpenResult, TokenProtection } from "@j3-bots/desktop-bridge";
+import { BotId, CommandId, ServerOrigin } from "@j3-bots/contracts";
+import { AppLinkUrl, BRIDGE_KEY, OpenResult, TokenProtection } from "@j3-bots/desktop-bridge";
 import * as Server from "@j3-bots/server/testing";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -14,6 +14,8 @@ import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Schema from "effect/Schema";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { _electron, type ElectronApplication, type Page } from "playwright-core";
 
 // The development build, launched as the operator launches it, against the
@@ -22,8 +24,9 @@ import { _electron, type ElectronApplication, type Page } from "playwright-core"
 // pair, open a bot from the roster, send it a message with a file, find the
 // token nowhere on disk in the clear, launch again still paired, keep a
 // credential the system will not open, read a damaged one as not paired, and
-// change server from Settings. Needs
-// the web client built and a display (`xvfb-run`).
+// change server from Settings; and follow links to the app, given at launch
+// and handed over by a second launch. Needs the web client built and a display
+// (`xvfb-run`).
 
 /** How long one step may take before the smoke fails, a cold Electron start included. */
 const STEP = 30_000;
@@ -34,22 +37,57 @@ const electronPath = (): string => {
   return path;
 };
 
-const launch = (profile: string) =>
+// Linux CI runners do not allow the Chromium sandbox's user namespaces (as T3 Code's smoke).
+// The page's language follows the system's; the steps below read English.
+const ARGS = [`${import.meta.dirname}/..`, "--no-sandbox", "--lang=en-US"];
+
+/**
+ * A fresh profile: Electron keeps userData under XDG_CONFIG_HOME on Linux. The
+ * app's handler of its links, a desktop entry and the default it names, is
+ * kept under the same folder, away from the session running the smoke.
+ */
+const environment = (profile: string) => ({
+  ...process.env,
+  XDG_CONFIG_HOME: profile,
+  XDG_DATA_HOME: `${profile}/data`,
+  LANGUAGE: "en_US",
+  LC_ALL: "en_US.UTF-8",
+});
+
+/** The app on `profile`, started with `links` as a link to the app is handed to it. */
+const launch = (profile: string, links: ReadonlyArray<string> = []) =>
   Effect.acquireRelease(
     Effect.promise(() =>
       _electron.launch({
         executablePath: electronPath(),
-        // Linux CI runners do not allow the Chromium sandbox's user namespaces (as T3 Code's smoke).
-        // The page's language follows the system's; the steps below read English.
-        args: [`${import.meta.dirname}/..`, "--no-sandbox", "--lang=en-US"],
-        // A fresh profile: Electron keeps userData under XDG_CONFIG_HOME on Linux.
-        env: { ...process.env, XDG_CONFIG_HOME: profile, LANGUAGE: "en_US", LC_ALL: "en_US.UTF-8" },
+        args: [...ARGS, ...links],
+        env: environment(profile),
         timeout: STEP,
       }),
     ),
     // A no-op once the test has closed it.
     (app: ElectronApplication) => Effect.promise(() => app.close()),
   );
+
+/**
+ * A second launch on `profile` with `link`, as the system starts the app for a
+ * link while it runs: it hands the link to the running app and exits.
+ */
+const launchAgainWith = (profile: string, link: string) =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const handle = yield* spawner.spawn(
+      ChildProcess.make(electronPath(), [...ARGS, link], {
+        env: environment(profile),
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "ignore",
+      }),
+    );
+    return Number(yield* handle.exitCode);
+  }).pipe(Effect.scoped, Effect.timeout(STEP));
+
+const linkTo = Schema.encodeSync(AppLinkUrl("j3bots-dev"));
 
 /** The page's stored credential record, as JSON. */
 const storedCredential = (page: Page) =>
@@ -333,5 +371,73 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
         assert.include(saved, `"window":{`);
       }),
     180_000,
+  );
+
+  it.effect(
+    "follows a pairing link to the screens it fills in, and a second launch's link to a bot",
+    () =>
+      Effect.gen(function* () {
+        const origin = yield* Server.origin;
+        const bot = yield* (yield* Server.Bots).create({
+          commandId: CommandId.make("link-bot"),
+          draft: { name: "Link Bot", job: "" },
+        });
+        const { code } = yield* (yield* Server.Devices).startPairing;
+        const fs = yield* FileSystem.FileSystem;
+        const profile = yield* fs.makeTempDirectoryScoped({ prefix: "j3-desktop-links-" });
+        const server = yield* Schema.decodeEffect(ServerOrigin)(origin.origin);
+
+        // Launched for a pairing link before any server is named: the address
+        // screen shows the link's server, and continuing to it brings the
+        // pairing screen with the link's code. Nothing pairs until Pair: the
+        // code, which works once, still pairs then.
+        const app = yield* launch(profile, [linkTo({ _tag: "pair", server, code })]);
+        const page = yield* Effect.promise(() => app.firstWindow({ timeout: STEP }));
+        yield* Effect.promise(async () => {
+          const address = page.getByLabel("Server address");
+          await page.getByText("This pairing link is for").waitFor({ timeout: STEP });
+          assert.strictEqual(await address.inputValue(), origin.origin);
+          await page.getByRole("button", { name: "Continue" }).click();
+          const field = page.getByLabel("Pairing code");
+          await field.waitFor({ timeout: STEP });
+          assert.strictEqual(await field.inputValue(), code);
+          await page.getByRole("button", { name: "Pair", exact: true }).click();
+          await page.getByText(bot.profile.name).first().waitFor({ timeout: STEP });
+        });
+
+        // A second launch with a link to the bot hands it to the running app,
+        // which opens the bot's conversation; one to a bot this server does
+        // not have leaves the screen as it is, and says so.
+        assert.strictEqual(
+          yield* launchAgainWith(
+            profile,
+            linkTo({ _tag: "open", target: { _tag: "conversation", botId: bot.id } }),
+          ),
+          0,
+        );
+        yield* Effect.promise(async () => {
+          await page.waitForURL(`j3bots-dev://app/bots/${bot.id}`, { timeout: STEP });
+          await page
+            .getByRole("textbox", { name: `Message ${bot.profile.name}` })
+            .waitFor({ timeout: STEP });
+        });
+        assert.strictEqual(
+          yield* launchAgainWith(
+            profile,
+            linkTo({
+              _tag: "open",
+              target: { _tag: "conversation", botId: BotId.make("bot_gone") },
+            }),
+          ),
+          0,
+        );
+        yield* Effect.promise(async () => {
+          await page
+            .getByText("That link is for a bot this server doesn’t have.")
+            .waitFor({ timeout: STEP });
+          assert.strictEqual(page.url(), `j3bots-dev://app/bots/${bot.id}`);
+        });
+      }),
+    120_000,
   );
 });

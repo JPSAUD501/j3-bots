@@ -31,14 +31,17 @@ export function takePairingCode(
 }
 
 /**
- * The code a pairing link opened this page with, for the pairing screen to
- * start with. It never pairs by itself: the operator still presses Pair.
+ * The code a pairing link opened this page with, or, in the desktop app, the
+ * latest one the operator followed, for the pairing screen to start with. It
+ * never pairs by itself: the operator still presses Pair.
  */
 export interface LinkedCode {
   /** The code, or null once it was dropped or when the page had none. */
   readonly current: () => PairingCode | null;
-  /** Calls `listener` when the code is dropped; returns what stops that. */
+  /** Calls `listener` when the code changes; returns what stops that. */
   readonly subscribe: (listener: () => void) => () => void;
+  /** Starts the pairing screen with `code` instead, as when a later link brings one. */
+  readonly offer: (code: PairingCode) => void;
   /**
    * Drops the code once the connection is `connected`: the code is for pairing
    * this browser, and it is connected, paired already when the link was opened
@@ -51,9 +54,10 @@ export interface LinkedCode {
 }
 
 /**
- * `code` until it is dropped: once the browser is connected (`follow`), and
- * once the page is put aside (`pagehide`), as when the operator leaves it for
- * another page before pressing Pair. A page the back/forward cache restores
+ * `code`, or the one `offer` gives later, until it is dropped: once the
+ * browser is connected (`follow`), and once the page is put aside
+ * (`pagehide`), as when the operator leaves it for another page before
+ * pressing Pair. A page the back/forward cache restores
  * keeps everything it held, so without this, Back would bring the unused code
  * back into the form. Listeners are told at once, and React commits what
  * they change in the microtask that runs as the event's listener returns,
@@ -63,17 +67,20 @@ export function linkedCode(
   code: PairingCode | null,
   page: Pick<EventTarget, "addEventListener" | "removeEventListener">,
 ): LinkedCode {
-  let current = code;
+  let current: PairingCode | null = null;
   const listeners = new Set<() => void>();
-  const drop = () => {
-    if (current === null) return;
-    current = null;
-    page.removeEventListener("pagehide", drop);
+  const set = (next: PairingCode | null) => {
+    if (current === next) return;
+    if (current === null) page.addEventListener("pagehide", drop);
+    if (next === null) page.removeEventListener("pagehide", drop);
+    current = next;
     for (const listener of listeners) listener();
   };
-  if (current !== null) page.addEventListener("pagehide", drop);
+  const drop = () => set(null);
+  set(code);
   return {
     current: () => current,
+    offer: set,
     subscribe: (listener) => {
       listeners.add(listener);
       return () => listeners.delete(listener);

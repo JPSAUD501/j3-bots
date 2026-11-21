@@ -13,17 +13,25 @@ const fieldClass =
 interface ServerAddressProps {
   /** Resolves with the app's answer; once connected, the page loads again on that server. */
   readonly onConnect: (address: string) => Promise<ConnectResult | null>;
+  /** The address the field starts with, as from a pairing link; the operator still continues. */
+  readonly initialAddress?: string;
+  /** A sentence about a link that led here, said above the form. */
+  readonly notice?: string | null;
 }
 
 /**
  * The desktop app's first screen: where the server runs. A browser never
  * shows it, since the server serves the page. Pairing comes next.
  */
-export function ServerAddress({ onConnect }: ServerAddressProps) {
+export function ServerAddress({
+  onConnect,
+  initialAddress = "",
+  notice = null,
+}: ServerAddressProps) {
   const { t, parts } = useI18n();
   const fieldId = useId();
   const errorId = useId();
-  const [address, setAddress] = useState("");
+  const [address, setAddress] = useState(initialAddress);
   const [state, setState] = useState<
     | { readonly _tag: "editing" }
     | { readonly _tag: "checking" }
@@ -64,6 +72,11 @@ export function ServerAddress({ onConnect }: ServerAddressProps) {
         title={t("server.title")}
         body={parts<"server.body", ReactElement>("server.body", { command })}
       />
+      {notice !== null && (
+        <p role="status" className="max-w-sm rounded-md bg-muted px-3 py-2 text-sm break-words">
+          {notice}
+        </p>
+      )}
       <form
         className="flex w-full max-w-xs flex-col gap-3 text-start"
         onSubmit={(event) => {

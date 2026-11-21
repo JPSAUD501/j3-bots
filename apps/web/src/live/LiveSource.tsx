@@ -64,6 +64,7 @@ import {
   type RoomFormMode,
   roomStopFailed,
 } from "@j3-bots/client-runtime/presentation";
+import type { AppLink } from "@j3-bots/desktop-bridge";
 import { notificationText } from "@j3-bots/i18n";
 import { useI18n } from "../app/context";
 import { ConnectionBanner } from "../components/ConnectionBanner";
@@ -85,6 +86,7 @@ import {
   showNotification,
 } from "./notify";
 import { loadRasterizer, notificationIcon, systemTheme } from "./notificationIcon";
+import { onAppLink } from "./appLinks";
 import { deliverFile, reserveWindow } from "./openFile";
 import { updatable, useDesktopUpdate, useReportSaving } from "./appUpdate";
 import { desktop } from "./desktop";
@@ -126,16 +128,46 @@ const client = (origin: URL) => (started ??= createJ3Client(makePlatform(origin)
  * version, storage the browser refuses.
  */
 export function LiveSourceProvider({ children }: { children: ReactNode }) {
-  if (server === null) {
-    return (
-      <Screen>
-        <ServerAddress
-          onConnect={(address) => desktop?.connect(address) ?? Promise.resolve(null)}
-        />
-      </Screen>
-    );
-  }
+  if (server === null) return <AddressScreen />;
   return <Connected origin={server}>{children}</Connected>;
+}
+
+/**
+ * The desktop app's server address screen. A link to the app that arrives
+ * before a server is named lands here: a pairing link fills in its server,
+ * for the operator to check, and once that server is kept its code starts the
+ * pairing screen; a link to a conversation or a room cannot open yet, which
+ * the screen says.
+ */
+function AddressScreen() {
+  const { t } = useI18n();
+  const [link, setLink] = useState<AppLink | null>(null);
+  useEffect(
+    () =>
+      onAppLink((arrived) => {
+        setLink(arrived);
+        return true;
+      }),
+    [],
+  );
+  const pairing = link?._tag === "pair" ? { server: link.server, code: link.code } : null;
+  return (
+    <Screen>
+      <ServerAddress
+        // The field starts over with each pairing link.
+        key={pairing === null ? "" : `${pairing.server} ${pairing.code}`}
+        initialAddress={pairing?.server ?? ""}
+        notice={
+          link === null
+            ? null
+            : pairing === null
+              ? t("links.nameServerFirst")
+              : t("links.pairingServer", { address: pairing.server })
+        }
+        onConnect={(address) => desktop?.connect(address, pairing) ?? Promise.resolve(null)}
+      />
+    </Screen>
+  );
 }
 
 function Connected({ origin, children }: { origin: URL; children: ReactNode }) {
@@ -186,6 +218,8 @@ function Screen({ children }: { children: ReactNode }) {
 
 function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
   const j3 = useJ3Client();
+  const { t } = useI18n();
+  const say = useSay();
   const connection = useConnection();
   // An update offered beside what the app cannot do with this server.
   const update = updatable(useDesktopUpdate());
@@ -193,6 +227,26 @@ function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
   const linked = use(LinkedPairingCode);
   const linkedCode = useSyncExternalStore(linked.subscribe, linked.current);
   useEffect(() => linked.follow(connection), [linked, connection]);
+  // In the desktop app, a pairing link fills in the pairing screen with its
+  // code, for this server only; the operator still presses Pair. A device
+  // that holds a pairing here keeps it and is told so, whether it is
+  // connected yet or not; one whose pairing the server refused is unpaired.
+  const takePairingLink = useEffectEvent((link: AppLink) => {
+    if (link._tag !== "pair") return false;
+    if (link.server !== origin.origin) say(t("links.otherServer", { address: link.server }));
+    else if (connection._tag === "unpaired" || pairing === null) linked.offer(link.code);
+    else say(t("links.alreadyPaired", { address: origin.origin }));
+    return true;
+  });
+  useEffect(() => onAppLink(takePairingLink), []);
+  // A link to a conversation or a room waits until this device is paired,
+  // then opens (`LiveShell`); the pairing screen says so.
+  const unpaired = connection._tag === "unpaired";
+  const sayPairFirst = useEffectEvent((link: AppLink) => {
+    if (link._tag === "open") say(t("links.pairFirst"));
+    return false;
+  });
+  useEffect(() => (unpaired ? onAppLink(sayPairFirst) : undefined), [unpaired]);
   const [everConnected, setEverConnected] = useState(false);
   if (connection._tag === "connected" && !everConnected) setEverConnected(true);
   // A pairing this window followed ends, signed out or revoked, here or in
@@ -464,6 +518,26 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
       void navigate({ to: "/rooms/$roomId", params: { roomId: opened.roomId } });
     }
   });
+  // A link to a conversation or a room opens it as a notification click does,
+  // once the roster says whether this server has it: one it does not have
+  // leaves the screen as it is, and says so.
+  const takeOpenLink = useEffectEvent((link: AppLink, rows: NonNullable<typeof roster>) => {
+    if (link._tag !== "open") return false;
+    const { target } = link;
+    const listed = rows.some((row) =>
+      target._tag === "conversation"
+        ? row._tag === "bot" && row.bot.id === target.botId
+        : row._tag === "room" && row.room.id === target.roomId,
+    );
+    if (listed) openTarget(target);
+    else say(t(target._tag === "conversation" ? "links.noBot" : "links.noRoom"));
+    return true;
+  });
+  useEffect(
+    () => (roster === null ? undefined : onAppLink((link) => takeOpenLink(link, roster))),
+    [roster],
+  );
+
   const notify = useEffectEvent((notification: Notification) => {
     if (pairing === null || !stillPaired() || notificationAccess() !== "granted") return;
     // What is on screen here never notifies, even when the server sent it
