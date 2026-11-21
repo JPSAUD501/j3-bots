@@ -155,6 +155,15 @@ export class TestEngineControl extends Context.Service<
       sessionId: SessionId,
     ) => Effect.Effect<{ readonly release: Effect.Effect<void> }>;
     /**
+     * The session's open streams stall: every event, and every
+     * `synchronize`'s marker, waits for them, in order, until `release`, as
+     * when the engine's connection stops delivering. A stream opened
+     * meanwhile reads the history as usual.
+     */
+    readonly stallEvents: (
+      sessionId: SessionId,
+    ) => Effect.Effect<{ readonly release: Effect.Effect<void> }>;
+    /**
      * While set, every `dispatch` and `redispatch` dies before anything of it
      * is applied, as a bug in the adapter would.
      */
@@ -214,9 +223,13 @@ export class TestEngineControl extends Context.Service<
     /**
      * Background work wakes the session while the next `start` dispatch is on
      * its way: the adapter's busy check passes, and the engine then queues the
-     * start behind that turn.
+     * start behind that turn. `origin` is the turn the engine names as the one
+     * whose work woke it, as for `startEngineTurn`.
      */
-    readonly startEngineTurnDuringNextDispatch: (sessionId: SessionId) => Effect.Effect<void>;
+    readonly startEngineTurnDuringNextDispatch: (
+      sessionId: SessionId,
+      origin?: TurnId | null,
+    ) => Effect.Effect<void>;
     /**
      * The next `synchronize` is answered, and its marker never reaches the
      * session's streams, as when the stream stalls. `requested` succeeds once
@@ -484,8 +497,8 @@ interface SessionRecord {
   readonly secretAnswers: Array<{ readonly requestId: RequestId; readonly answer: SecretAnswer }>;
   /** Each open stream, with the cursor of the last event it was given. */
   readonly subscribers: Map<Subscriber, { lastCursor: EventCursor }>;
-  /** Set by `startEngineTurnDuringNextDispatch`. */
-  raceNextStart: boolean;
+  /** Set by `startEngineTurnDuringNextDispatch`: the turn it names, if any. */
+  raceNextStart: { readonly origin: TurnId | null } | null;
   /** Set by `failNextStart`. */
   failNextStart: FailureClass | null;
   /** Set by `holdNextStartup`, until the next turn starts. */
@@ -543,6 +556,8 @@ const make = Effect.gen(function* () {
   >();
   /** Sessions whose new streams stall until released. */
   const withheld = new Map<SessionId, Deferred.Deferred<void>>();
+  /** What the stalled streams of a session have not been given yet, in order. */
+  const stalled = new Map<SessionId, Array<readonly [Subscriber, SessionEvent]>>();
   /** While set, every dispatch and redispatch dies before it is applied. */
   let brokenDispatches = false;
   /** Dispatches waiting in the startup queue, by key, until they land. */
@@ -659,10 +674,17 @@ const make = Effect.gen(function* () {
         : misuse(`key ${key} reused for ${command}`);
     });
 
+  /** Hands an event to a stream of the session, or holds it while its streams stall. */
+  const offer = (session: SessionRecord, subscriber: Subscriber, event: SessionEvent) => {
+    const backlog = stalled.get(session.id);
+    if (backlog === undefined) Queue.offerUnsafe(subscriber, event);
+    else backlog.push([subscriber, event]);
+  };
+
   const deliver = (session: SessionRecord, event: SessionEvent) => {
     for (const [subscriber, state] of session.subscribers) {
       state.lastCursor = event.cursor;
-      Queue.offerUnsafe(subscriber, event);
+      offer(session, subscriber, event);
     }
   };
 
@@ -916,9 +938,10 @@ const make = Effect.gen(function* () {
     key: IdempotencyKey,
     at: DateTime.Utc,
   ): DispatchDisposition => {
-    if (session.raceNextStart) {
-      session.raceNextStart = false;
-      addTurn(session, { _tag: "background", origin: null }, at);
+    if (session.raceNextStart !== null) {
+      const { origin } = session.raceNextStart;
+      session.raceNextStart = null;
+      addTurn(session, { _tag: "background", origin }, at);
     }
     const turn = addTurn(session, { _tag: "dispatch", key }, at);
     return session.waiting.includes(turn.turnId)
@@ -1181,7 +1204,7 @@ const make = Effect.gen(function* () {
             responses: [],
             secretAnswers: [],
             subscribers: new Map(),
-            raceNextStart: false,
+            raceNextStart: null,
             failNextStart: null,
             holdStartup: false,
             heldStartup: null,
@@ -1475,7 +1498,7 @@ const make = Effect.gen(function* () {
                 ? [...session.waiting]
                 : [session.running, ...session.waiting];
             for (const [subscriber, state] of session.subscribers) {
-              Queue.offerUnsafe(subscriber, {
+              offer(session, subscriber, {
                 _tag: "synchronized",
                 cursor: state.lastCursor,
                 at,
@@ -1552,6 +1575,19 @@ const make = Effect.gen(function* () {
             Effect.andThen(Effect.yieldNow),
             Effect.asVoid,
           ),
+        };
+      }),
+
+    stallEvents: (sessionId) =>
+      Effect.gen(function* () {
+        const session = yield* existingSession(sessionId);
+        stalled.set(session.id, []);
+        return {
+          release: Effect.sync(() => {
+            const backlog = stalled.get(session.id) ?? [];
+            stalled.delete(session.id);
+            for (const [subscriber, event] of backlog) Queue.offerUnsafe(subscriber, event);
+          }).pipe(Effect.andThen(Effect.yieldNow)),
         };
       }),
 
@@ -1635,10 +1671,10 @@ const make = Effect.gen(function* () {
         };
       }),
 
-    startEngineTurnDuringNextDispatch: (sessionId) =>
+    startEngineTurnDuringNextDispatch: (sessionId, origin = null) =>
       Effect.gen(function* () {
         const session = yield* existingSession(sessionId);
-        session.raceNextStart = true;
+        session.raceNextStart = { origin };
       }),
 
     dropNextMarker: Effect.gen(function* () {

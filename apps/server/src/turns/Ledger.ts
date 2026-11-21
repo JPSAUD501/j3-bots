@@ -31,7 +31,6 @@ import {
   DispatchRowId,
   DispatchSeq,
   DispatchStatus,
-  PRIORITY,
   SessionRowId,
   WakeFailure,
   WakeKind,
@@ -251,10 +250,11 @@ export class Ledger extends Context.Service<
     readonly abandon: (dispatchId: DispatchRowId, wakes: WakesAfter) => Effect.Effect<boolean>;
     /**
      * Whether a notice that the dispatch was not delivered may send its answer,
-     * or the bot's opening, again: the engine has not got the dispatch and
-     * never delivered it (it failed, or the engine dropped it before its turn
-     * started), and that wake failed and was not sent again yet. An opening
-     * is not sent again once the operator has written.
+     * the bot's opening, or a member's room wakes, again: the engine has not
+     * got the dispatch and never delivered it (it failed, or the engine
+     * dropped it before its turn started), and that wake failed and was not
+     * sent again yet. An opening is not sent again once the operator has
+     * written, nor a room wake once its member left the room.
      */
     readonly undeliveredRetryable: (dispatchId: DispatchRowId) => Effect.Effect<boolean>;
     /**
@@ -609,6 +609,7 @@ export const layer = Layer.effect(
             WHERE w.dispatch_id = d.id AND w.status = 'failed'
               AND (
                 json_extract(w.payload_json, '$._tag') = 'answer'
+                OR (w.kind = 'room' AND w.recipient_left = 0)
                 OR (
                   json_extract(w.payload_json, '$._tag') = 'teammate'
                   AND NOT ${handoffReadSql(sql, sql.literal("w.source_entry_id"))}
@@ -786,12 +787,20 @@ export const layer = Layer.effect(
           if (unread) yield* holdUnread(sql`w.dispatch_id = ${dispatchId}`);
           break;
         case "failed": {
-          // A member a bot's room message woke has no message of the
-          // operator's to show the failure on, and a room offers no retry:
-          // the room shows, once, that the member's turn did not run. One
-          // that failed before, when the engine took it late, showed it then.
-          // When the dispatch carries the operator's room message too, that
-          // message shows the failure, with its Retry, and the room nothing.
+          // A member woken by a room entry that is not the operator's
+          // message (a bot's mention, also one the operator retried) has no
+          // message of the operator's to show the failure on: the room shows,
+          // once, that the member's turn did not run, with a Retry that sends
+          // its wakes again while the room is live. One that failed before,
+          // when the engine took it late, showed it then. When the dispatch
+          // carries the operator's room message too, that message shows the
+          // failure, with its Retry, and the room nothing. What decides is the
+          // entry that caused the wake, never the wake's priority.
+          const operatorMessage = (source: Statement.Fragment) => sql`EXISTS (
+            SELECT 1 FROM entries om_entry
+            WHERE om_entry.id = ${source} AND om_entry.kind = 'message'
+              AND om_entry.author_kind = 'operator'
+          )`;
           const [roomWake] = yield* SqlSchema.findAll({
             Request: DispatchRowId,
             Result: FailedWake,
@@ -799,11 +808,11 @@ export const layer = Layer.effect(
               SELECT id, bot_id, audience, audience_room_id, payload_json, source_entry_id
               FROM wakes
               WHERE dispatch_id = ${id} AND status = 'dispatched' AND kind = 'room'
-                AND priority <> ${PRIORITY.user}
+                AND NOT ${operatorMessage(sql`wakes.source_entry_id`)}
                 AND NOT EXISTS (
                   SELECT 1 FROM wakes fo_wake
                   WHERE fo_wake.dispatch_id = ${id} AND fo_wake.kind = 'room'
-                    AND fo_wake.priority = ${PRIORITY.user}
+                    AND ${operatorMessage(sql`fo_wake.source_entry_id`)}
                 )
               ORDER BY rowid LIMIT 1
             `,
@@ -813,7 +822,7 @@ export const layer = Layer.effect(
               roomWake.bot_id,
               audienceOf(roomWake),
               { _tag: "turn-failed", failure: unshownFailure[after.reason] },
-              null,
+              { dispatchId, reason: "undelivered" },
             );
           }
           // Wakes the dispatch failed with before, when the engine took it

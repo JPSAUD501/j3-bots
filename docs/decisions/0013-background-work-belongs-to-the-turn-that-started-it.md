@@ -1,0 +1,50 @@
+# 0013: Background work belongs to the turn that started it
+
+**Status:** Accepted
+
+## Context
+
+A bot's turn can leave work running after it ends: a delegated task, a subagent, a command whose completion wakes the session. When that work finishes, the engine starts a turn nobody dispatched. A room's turn can do this as much as a private one, and all of a bot's work, private or for any room, runs in its one main session.
+
+What the engine tells J3 Bots about that work, and what it cannot:
+
+- It reports a session's pending background work by the run that started it, only while no run is active, and also as pending work it attributes to no run (`BackgroundWork.unattributed`) (**Read** at `db51b67`, `orchestrationV2PendingBackgroundWork.ts:261`, `derivePendingBackgroundWork`).
+- Its stop is the session's: `thread.stop` interrupts the active run, or the latest run's pending background work, and holds every queued run, whichever turn they belong to (**Read** at `db51b67`, `Orchestrator.ts`, the thread stop path, `dispatchThreadStop`). J3 Bots runs the engine unmodified, so it has no stop of one run.
+- A turn the engine starts names the earlier turn it continues only for a usage limit's continuation (`usageLimitContinuationOfRunId`, **Read** at `db51b67`) and a delegated task's completion (`delegatedCompletion.parentRunId`, **Read** at `db51b67`, `ProviderContinuationService.ts:177-192`; **Verified** on release `4969` by the conformance suite). A harness's own wake, such as a background command's notice, names none (**Read**, `ProviderContinuationService.ts:247-264`) ([Engine](../architecture/engine.md#behaviors-j3-bots-designs-around)).
+
+Without a link between a turn and the turn whose work started it, three rules break. A room's Stop cannot find the work a room turn left running once that turn ended. A turn the engine starts for a room turn's work speaks in the bot's conversation instead of the room. And its hops start again at 0, as if the operator had spoken, so a chain of bots can outrun the room's hop limit through background work.
+
+## Decision
+
+Background work belongs to the turn that started it, never to the session.
+
+- Each turn records the turn of its session it continues, when the engine names one. It takes that turn's audience, and counts its hops and its Stops with that turn and the chain behind it. It does not take the operator's word from it: a continuation or a completion of the operator's turn counts its chain's teammates against the fan-out limit. Only a steer the engine took into a turn (`steered`) is the operator's word in that turn; one it made a turn of its own (`new-turn`) is not, in that turn's continuation.
+- Each turn records whether background work it started may still be pending: set when the turn ends handing off to such work, then kept or cleared by each report of the session's pending work taken while nothing runs. While any turn of a session has it set, each turn's end makes such a report due, and the Stop runner asks for it once nothing runs there. A report taken while nothing runs or waits makes it due no more, and the end of a turn that ran or waited makes it due again.
+- A room's Stop targets a session while one of the room's turns there may have background work pending, as it targets the room's turns and dispatches. It sends no round without a report of the engine's taken in that pass, judged inside the session's gate: each runnable turn the report lists is attributed by the server's turns and the dispatches that name it, and one that is not the room's holds the round, within the bound, unless a dispatch of another audience names it whose turn cannot start; so an engine-queued run no dispatch names, such as a background command's wake, holds it also behind a held queue, since its work may be the room's. Otherwise the round goes while the room's work runs, or the report lists a runnable turn of the room's or the background work its turns started, and the Stop settles with no round when it lists neither: a flag alone never sends it.
+- A room's Stop waits, unsent, while its session has work for another audience: a turn running, a dispatch the engine took whose turn the events do not show ended, or the operator's steer the engine has not settled yet. A dispatch whose turn the events have not shown start does not hold it while that turn cannot start: the room's own turn runs ahead of it, or the engine holds the queue. The Stop judges this again inside the session's gate, right before it sends. Meanwhile the operator's steer may still reach the turn it waits for, and is the only send the dispatcher makes there. The engine may make it a turn of its own: a new turn (`new-turn`) when the turn it was for has already ended, or a follow-up (`steer-requeued`) when that turn ends without taking it. The Stop waits for that turn too, unless the engine holds the queue, as after a failed turn: then it cannot start, and the Stop cancels it.
+- A turn the engine started that names no turn never counts as the operator's word. When it is admitted, it takes its hop count from every other turn of the session whose work is flagged, the furthest of them, counting a flagged turn that no dispatch began by the count that turn took in its turn. It keeps that count for the turns that go on with its own work; with none to trace it to, it wakes no teammate.
+
+## Consequences
+
+- A room turn's background work reports in the room, and reaches nobody once the room is archived or the bot has left it.
+- A room's Stop, archival or deletion, and a member's removal, end the background work the room's turns started, once nothing the server sees of another audience runs in the session.
+- The engine's stop is still the session's. A room's Stop ends private background work pending in the same session, without a notice, and private work waiting in the engine behind the room's turn, which it does not cover: a dispatch it drops fails as `stopped`, visibly and retryable, as before.
+- A window remains in which a room's Stop ends the operator's private work. The check in the gate covers everything J3 Bots sends, since every send into the session is claimed in that gate. It cannot cover what the engine starts on its own: a harness's wake, a delegated task's completion or a usage limit's continuation that starts between the check and the engine applying the stop is interrupted with the room's work. With an unmodified engine this window cannot be closed, only kept to the time between one gate check and the engine's answer.
+- A room's Stop also disarms a usage-limit continuation pending for private work in the session, which the server does not see run: that dispatch finishes with its last outcome and shows a `turn-failed` notice, retryable.
+- Private work waiting behind the room's turn is cancelled only as far as the server sees it waiting. When the room's turn has ended in the engine but its end is not applied yet, the engine may already have started the private turn queued behind it, and the room's Stop ends it: its dispatch fails as `stopped`, retryable, the same outcome as the cancel.
+- A dispatch the engine answered as `started` holds a room's Stop before any event shows its turn. A steer the engine makes a `new-turn` while it holds the queue is assumed not to start until the queue is resumed.
+- A room's Stop can wait as long as the bot visibly runs private turns. The operator can stop the bot, which ends everything at once. Work the server cannot see run, a dispatch the engine took whose turn no event shows or a runnable turn the engine's report lists that no event told of, holds it for at most two minutes, counted again from each turn of another audience the server admits. Past that, it goes as a bot Stop's would while the room's work still runs or is flagged, and what it ends fails as `stopped`, retryable. With nothing of the room left, it settles with no round. A run stuck in startup cannot hold it for good.
+- Background work the engine attributes to no turn (`unattributed`) is not reached by a room's Stop: nothing ties it to the room. A bot Stop reaches it, as it reaches every live session.
+- A harness's own wake cannot be tied to the turn whose work it reports. It speaks in the bot's conversation, a Stop covers it only if recorded while it runs, and its hops are bounded by the pending work it might report. Every flagged turn counts, so it fails high, never low: an older chain whose work has ended, but whose flag no report has cleared yet, can make its count too high and refuse a teammate it could have reached, while a room chain's work that may be what woke it is never skipped. The report due at each turn's end keeps such a stale flag short.
+- The flag follows the engine's reports, which come only while nothing runs. A turn that ended handing off work stays flagged until such a report omits it: the report due at each turn's end, or the one a room's Stop asks for, keeps that short.
+- Turns that handed off work before this decision shipped are not flagged, so a room's Stop does not reach their work. No installation ran a release before it.
+
+## Rejected
+
+**A flag kept for the whole session.** One column, set when any turn hands off work. The engine's rule for pending work does not ask which run started it, so the flag would make a room's Stop reach private work the room never started, and stay set after the room's own work ended.
+
+**A room's Stop that ends whatever runs.** Simpler and never waits. The operator's private turn, or another room's, would end because a room they were not looking at was archived.
+
+**Holding the operator's steer behind a room's Stop that waits.** The rule every other first send follows. The Stop waits for the very turn the operator is talking to, so their word would wait for that turn to end, for no reason of the turn's own.
+
+**Treating an engine-started turn as the operator's word, as before.** No tracking needed. Background work would restart every chain, so the hop limit would not bound bots that keep each other busy through it.

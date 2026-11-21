@@ -10,7 +10,7 @@ The engine applies a command id once and keeps its receipts for good, but its re
 
 A wake goes back to pending only when the engine certainly applied nothing: the first send of its dispatch was refused locally, before anything was sent (`SessionBusy`, `SessionNotFound`), or a Stop fenced the dispatch before it was ever sent.
 
-Every other uncertainty is resolved by recovery, a separate call (`redispatch`) that sends the same key and skips every local check. A recovery that succeeds means accepted, with the disposition unknown; delivery comes from the events. A refusal counts only when the engine's reply names it. A recovery that gets no answer within its bound, before its session is retired or lost, or within a day fails the dispatch, and its wakes fail visibly and are never re-queued. The operator retries a failed message as new wakes under a new key. If the engine turns out to have applied a failed dispatch after all, it is shown delivered.
+Every other uncertainty is resolved by recovery, a separate call (`redispatch`) that sends the same key and skips every local check. A recovery that succeeds means accepted, with the disposition unknown; delivery comes from the events. A refusal counts only when the engine's reply names it. A recovery that gets no answer within its bound, before its session is retired or lost, or within a day fails the dispatch, and its wakes fail visibly and are never re-queued. The operator retries a failed message, or a member's failed room turn, as new wakes under a new key, and only into a room that is still active, to a bot still its member: a failed wake survives its room's archival. If the engine turns out to have applied a failed dispatch after all, it is shown delivered.
 
 ## Consequences
 

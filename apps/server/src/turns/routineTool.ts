@@ -35,7 +35,7 @@ interface Request {
  */
 export type Once = <E, R>(
   apply: Effect.Effect<Schema.Json, E, R>,
-) => Effect.Effect<Schema.Json, E | TurnEnded | Conflict, R>;
+) => Effect.Effect<Schema.Json, E | TurnEnded | TurnToolRefused | Conflict, R>;
 
 type SetRoutineInput = ToolInput<"set_routine">;
 

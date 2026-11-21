@@ -261,9 +261,10 @@ it.effect("sends the latest round of a Stop again after a restart, and confirms 
   }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
 );
 
-it.effect("ends the private work in a session when its room is archived", () =>
+it.effect("ends a room's turn waiting behind a private one only once the private one ended", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;
+    const sql = yield* SqlClient.SqlClient;
     const bot = yield* createBot("Ana");
     const session = yield* engineSession(bot.id);
     const room = yield* roomOf(bot.id);
@@ -271,7 +272,7 @@ it.effect("ends the private work in a session when its room is archived", () =>
     // Background work starts a private turn while the room's message is on
     // its way: the engine queues the room's turn behind it.
     yield* control.startEngineTurnDuringNextDispatch(session);
-    const inRoom = yield* sendInRoom(bot.id, room.id, "Plan the launch.");
+    yield* sendInRoom(bot.id, room.id, "Plan the launch.");
     const background = yield* nextTurn(bot.id);
     yield* gateSettled(bot.id);
 
@@ -280,21 +281,38 @@ it.effect("ends the private work in a session when its room is archived", () =>
       roomId: room.id,
       changes: { archived: true },
     });
+    // The engine's stop would end the whole session: the room's Stop sends
+    // nothing while the private turn runs, and the operator's word reaches
+    // that turn meanwhile.
     const meanwhile = yield* sendToBot(bot.id, "What is left today?");
+    yield* until(
+      Effect.map(deliveriesOf(session, "What is left today?"), (sent) => sent.length > 0),
+    );
+    assert.deepStrictEqual(yield* deliveriesOf(session, "What is left today?"), ["steer"]);
+    yield* (yield* Stops).runPending;
+    const issued = sql<{ readonly n: number }>`
+        SELECT COUNT(*) AS n FROM stop_targets WHERE issued_at IS NOT NULL
+      `.pipe(Effect.orDie);
+    assert.deepStrictEqual(yield* issued, [{ n: 0 }]);
+    assert.deepStrictEqual(yield* admittedTurn(bot.id), Option.some(background));
 
-    // The engine's Stop ends the whole session: the room's turn is cancelled
-    // and the private turn is interrupted, and the private message goes after.
-    yield* deliveryIs(inRoom, "cancelled");
-    const started = yield* nextTurn(bot.id, background);
-    yield* deliveryIs(meanwhile, "delivered");
-    assert.deepStrictEqual(yield* deliveriesOf(session, "What is left today?"), ["start"]);
-    assert.isFalse(yield* control.backgroundWorkRunning(session));
+    // The turn takes it and ends: the room's turn the engine starts next is
+    // stopped, with nothing in the room's name to show.
+    yield* control.readSteers({ sessionId: session, turnId: background });
     yield* control.finishTurn({
       sessionId: session,
-      turnId: started,
+      turnId: background,
       outcome: { _tag: "completed" },
     });
+    yield* deliveryIs(meanwhile, "delivered");
+    yield* stopSettled;
     yield* turnEnded(bot.id);
+    const roomTurns = yield* sql<{ readonly outcome: string }>`
+        SELECT json_extract(outcome_json, '$._tag') AS outcome FROM turns
+        WHERE audience_room_id = ${room.id}
+      `.pipe(Effect.orDie);
+    assert.deepStrictEqual(roomTurns, [{ outcome: "interrupted" }]);
+    assert.notInclude(yield* noticesOf(bot.id), "turn-failed");
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
@@ -655,8 +673,9 @@ it.effect("cancels a private message a bot Stop dropped after the room's archiva
     yield* gateSettled(bot.id);
 
     // The operator stops the bot, whose interrupt is slow, then archives the
-    // room, whose Stop drops the waiting turn.
-    yield* control.delayNextStopEffects;
+    // room, whose Stop waits for the private turn; the bot's Stop then drops
+    // the waiting turn.
+    const slow = yield* control.delayNextStopEffects;
     yield* stops.stopBot({ commandId: command(), botId: bot.id });
     yield* stops.runPending;
     yield* (yield* Rooms).update({
@@ -664,6 +683,7 @@ it.effect("cancels a private message a bot Stop dropped after the room's archiva
       roomId: room.id,
       changes: { archived: true },
     });
+    yield* slow.release;
 
     // The operator stopped it: cancelled, not failed and offered again.
     yield* deliveryIs(message, "cancelled");
@@ -687,20 +707,24 @@ it.effect("names a room's Stop on the retryable notice of an answer it dropped",
     });
     yield* turnEnded(bot.id);
 
-    // A room message whose recovery gave up: its key may still land, so the
-    // room's archival stops the session too.
-    yield* control.deferNextDispatch;
-    const inRoom = yield* sendInRoom(bot.id, room.id, "Tag the release.");
-    yield* flushed(bot.id);
-    yield* recoverTimes(MAX_INDETERMINATE_ANSWERS - 1);
-    yield* deliveryIs(inRoom, "failed");
-
-    // The answer waits in the engine behind a turn of the engine's own, and
-    // the room's Stop drops it: no Stop of the bot's own work covers it.
-    yield* control.startEngineTurnDuringNextDispatch(session);
+    // The room's turn leaves background work, which wakes the session with a
+    // turn of the room's while the answer is on its way: the answer waits in
+    // the engine behind it.
+    yield* sendInRoom(bot.id, room.id, "Watch the build.");
+    const watching = yield* nextTurn(bot.id, asking);
+    yield* control.startBackgroundWork({ sessionId: session, turnId: watching });
+    yield* control.finishTurn({
+      sessionId: session,
+      turnId: watching,
+      outcome: { _tag: "completed" },
+    });
+    yield* turnEnded(bot.id);
+    yield* control.startEngineTurnDuringNextDispatch(session, watching);
     yield* answerFirstOption(card);
-    yield* nextTurn(bot.id, asking);
+    yield* nextTurn(bot.id);
     yield* gateSettled(bot.id);
+
+    // The room's Stop drops the answer: no Stop of the bot's own work covers it.
     yield* (yield* Rooms).update({
       commandId: command(),
       roomId: room.id,
@@ -729,8 +753,18 @@ it.effect("cancels a deleted room's message that waited in the engine", () =>
     const session = yield* engineSession(bot.id);
     const room = yield* roomOf(bot.id);
 
-    // The room's turn waits in the engine behind a turn of the engine's own.
-    yield* control.startEngineTurnDuringNextDispatch(session);
+    // The room's turn waits in the engine behind one its background work
+    // started.
+    yield* sendInRoom(bot.id, room.id, "Watch the build.");
+    const watching = yield* nextTurn(bot.id);
+    yield* control.startBackgroundWork({ sessionId: session, turnId: watching });
+    yield* control.finishTurn({
+      sessionId: session,
+      turnId: watching,
+      outcome: { _tag: "completed" },
+    });
+    yield* turnEnded(bot.id);
+    yield* control.startEngineTurnDuringNextDispatch(session, watching);
     yield* sendInRoom(bot.id, room.id, "Plan the launch.");
     yield* nextTurn(bot.id);
     yield* gateSettled(bot.id);
@@ -738,7 +772,7 @@ it.effect("cancels a deleted room's message that waited in the engine", () =>
     // The room's Stop drops it after the room is gone: the operator stopped it.
     yield* (yield* Rooms).remove({ commandId: command(), roomId: room.id });
     yield* stopSettled;
-    assert.deepStrictEqual(yield* roomWakes, ["cancelled"]);
+    assert.deepStrictEqual(yield* roomWakes, ["finished", "cancelled"]);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

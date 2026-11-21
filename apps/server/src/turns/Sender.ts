@@ -47,7 +47,7 @@ import { SessionGate } from "./SessionGate.ts";
 import { sessionLoss } from "./sessionRecords.ts";
 import { Signals } from "./Signals.ts";
 import { roomLiveSql } from "./roomLive.ts";
-import { stopTargets } from "./stopTargets.ts";
+import { stopHoldsSql, stopTargets } from "./stopTargets.ts";
 import { WorkSteps } from "./WorkSteps.ts";
 
 /** What a send did. */
@@ -87,7 +87,6 @@ const SessionState = Schema.Struct({
   admitted_turn_id: Schema.NullOr(TurnId),
   lost: Schema.BooleanFromBit,
   gone: Schema.BooleanFromBit,
-  stop_unsettled: Schema.BooleanFromBit,
   unaligned: Schema.BooleanFromBit,
 });
 
@@ -180,13 +179,27 @@ export const layer = Layer.effect(
       execute: (sessionId) => sql`
         SELECT s.engine_session_id, s.admitted_turn_id, s.lost_at IS NOT NULL AS lost,
           (s.retired_at IS NOT NULL OR s.lost_at IS NOT NULL) AS gone,
-          EXISTS (
-            SELECT 1 FROM stop_targets t WHERE t.session_id = s.id AND t.stopped_at IS NULL
-          ) AS stop_unsettled,
           s.settings_pending > 0 AS unaligned
         FROM sessions s WHERE s.id = ${sessionId}
       `,
     });
+
+    /**
+     * Whether an unsettled Stop of the dispatch's session holds its first
+     * send (`stopHoldsSql`), read where `dispatches` is the dispatch's row.
+     */
+    const stopHolds = sql`(CASE WHEN dispatches.delivery = 'steer'
+      THEN ${stopHoldsSql(sql, sql`dispatches.session_id`, sql`dispatches.audience_room_id`)}
+      ELSE ${stopHoldsSql(sql, sql`dispatches.session_id`, null)}
+    END)`;
+
+    const heldByStop = (dispatchId: DispatchRowId) =>
+      sql<{ readonly id: string }>`
+        SELECT id FROM dispatches WHERE id = ${dispatchId} AND ${stopHolds}
+      `.pipe(
+        Effect.orDie,
+        Effect.map((rows) => rows.length > 0),
+      );
 
     /** The engine certainly applied nothing: the wakes wait again, unless the operator stopped them. */
     const unsentWakes = (row: DispatchRow) => targets.wakesAfter(row, { _tag: "unsent" });
@@ -625,10 +638,7 @@ export const layer = Layer.effect(
                 attempts > 0
                 OR (
                   fenced_by_stop_id IS NULL
-                  AND NOT EXISTS (
-                    SELECT 1 FROM stop_targets t
-                    WHERE t.session_id = dispatches.session_id AND t.stopped_at IS NULL
-                  )
+                  AND NOT ${stopHolds}
                   AND NOT EXISTS (
                     SELECT 1 FROM sessions s WHERE s.id = dispatches.session_id
                       AND (s.retired_at IS NOT NULL OR s.lost_at IS NOT NULL)
@@ -710,9 +720,10 @@ export const layer = Layer.effect(
       }
       const session = yield* sessionState(row.session_id).pipe(Effect.orDie);
       // A fenced dispatch never sent was released with its fence; a Stop of
-      // the session holds every other first send. A key already sent is the
-      // recovery's in any case.
-      if (firstSend && (row.fenced_by_stop_id !== null || session.stop_unsettled)) {
+      // the session holds every other first send, but the operator's steer
+      // into a turn a room's Stop waits for (`stopHoldsSql`). A key already
+      // sent is the recovery's in any case.
+      if (firstSend && (row.fenced_by_stop_id !== null || (yield* heldByStop(row.id)))) {
         return "none" as const;
       }
 

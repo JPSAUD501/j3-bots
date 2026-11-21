@@ -82,6 +82,14 @@ export class Rooms extends Context.Service<
       readonly roomId: RoomId;
     }) => Effect.Effect<void, CommandError>;
     /**
+     * `room.stop`: stops the work addressed to an active room, as a bot's
+     * Stop stops a bot's, without archiving it. Its cards stay open.
+     */
+    readonly stop: (input: {
+      readonly commandId: CommandId;
+      readonly roomId: RoomId;
+    }) => Effect.Effect<void, CommandError>;
+    /**
      * Takes `botId` out of every room before it is deleted, in the caller's
      * transaction: a room it hosted passes to the member who joined first
      * among the rest, and an active room left with fewer than two members is
@@ -312,6 +320,24 @@ export const layer = Layer.effect(
       });
     });
 
+    const stop = Effect.fn("Rooms.stop")(function* (input: {
+      readonly commandId: CommandId;
+      readonly roomId: RoomId;
+    }) {
+      yield* receipts.once({
+        commandId: input.commandId,
+        method: "room.stop",
+        payload: input,
+        result: Schema.Void,
+        apply: Effect.gen(function* () {
+          const room = yield* require(input.roomId);
+          // An archived room's work was stopped when it was archived.
+          if (room.status === "archived") return yield* new Conflict({ reason: "room-archived" });
+          yield* work.stop(room.id);
+        }),
+      });
+    });
+
     const releaseBot = Effect.fn("Rooms.releaseBot")(function* (botId: BotId) {
       const now = yield* DateTime.now;
       for (const room of yield* select({ id: null, botId })) {
@@ -342,6 +368,7 @@ export const layer = Layer.effect(
       create,
       update,
       remove,
+      stop,
       releaseBot,
     });
   }),

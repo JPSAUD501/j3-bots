@@ -82,6 +82,7 @@ export const handlers = ServedRpcs.toLayer(
       "room.update": ({ commandId, roomId, ...changes }) =>
         rooms.update({ commandId, roomId, changes }),
       "room.delete": (input) => rooms.remove(input),
+      "room.stop": (input) => rooms.stop(input),
       "routines.subscribe": ({ botId, after }) => routines.subscribe(botId, after),
       "routine.runs": (input) => routines.runs(input),
       "routine.create": ({ commandId, botId, ...draft }) =>

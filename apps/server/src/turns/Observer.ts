@@ -41,6 +41,7 @@ import { Ids } from "../Ids.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { json, Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
+import { hopCounts } from "./hopCounts.ts";
 import { liveTarget as liveTargetOf } from "./liveTarget.ts";
 import { DISPATCH_COLUMNS, DispatchRow, dispatchOfKey, Ledger, type WakeRow } from "./Ledger.ts";
 import {
@@ -274,6 +275,7 @@ export const layer = Layer.effect(
     const workSteps = yield* WorkSteps;
     const scope = yield* Effect.scope;
     const stops = stopTargets(sql);
+    const chains = hopCounts(sql);
     const { notify } = notices(sql, entries);
     const spoken = routineSpeech(sql, ids, changes);
     const { sessionLost } = sessionLoss(sql, entries, ledger, workSteps, signals);
@@ -457,14 +459,20 @@ export const layer = Layer.effect(
 
     /**
      * What a retry of this turn's failure sends again: the operator's own
-     * dispatch, whose turn (or the turn that followed it up) ran, or a new
-     * bot's opening, which stands for the operator's creating it.
+     * dispatch, whose turn (or the turn that followed it up) ran, a new bot's
+     * opening, which stands for the operator's creating it, or a member's room
+     * turn, which the operator may run again while the room is live.
      */
     const retryOf = (
       dispatchId: DispatchRowId,
       carried: ReadonlyArray<WakeRow>,
     ): NoticeRetry | null => {
-      if (carried.some((wake) => wake.kind === "user" || wake.payload_json._tag === "first-run")) {
+      if (
+        carried.some(
+          (wake) =>
+            wake.kind === "user" || wake.kind === "room" || wake.payload_json._tag === "first-run",
+        )
+      ) {
         return { dispatchId, reason: "turn" };
       }
       return followUpOf(carried);
@@ -516,6 +524,9 @@ export const layer = Layer.effect(
       if (Option.isSome(yield* turnOf(session.id, turnId))) return;
       let audience: Audience = conversation;
       let fencedBy: string | null = null;
+      // The turn whose work this one goes on with: it speaks to that turn's
+      // audience, and counts its hops and its Stops with it.
+      let origin: TurnId | null = null;
       if (cause._tag === "dispatch") {
         const dispatch = yield* keyed(session.id, cause.key);
         if (Option.isSome(dispatch)) {
@@ -526,16 +537,29 @@ export const layer = Layer.effect(
       } else if (cause._tag === "continuation") {
         // One link of the chain: the dispatch and its audience move to this turn.
         const previous = yield* turnOf(session.id, cause.turnId);
-        if (Option.isSome(previous)) audience = audienceOf(previous.value);
+        if (Option.isSome(previous)) {
+          audience = audienceOf(previous.value);
+          origin = cause.turnId;
+        }
         yield* followLink(session.id, turnId, cause.turnId);
+      } else if (cause.origin !== null) {
+        // Background work the engine names the turn of: what it reports goes
+        // where that turn spoke, also to a room archived since, where it
+        // reaches nobody. Work it does not name speaks to the operator.
+        const previous = yield* turnOf(session.id, cause.origin);
+        if (Option.isSome(previous)) {
+          audience = audienceOf(previous.value);
+          origin = cause.origin;
+        }
       }
       const columns = audienceColumns(audience);
       yield* sql`
         INSERT INTO turns (
-          session_id, engine_turn_id, audience, audience_room_id, started_at, last_activity_at
+          session_id, engine_turn_id, audience, audience_room_id, origin_turn_id, started_at,
+          last_activity_at
         ) VALUES (
-          ${session.id}, ${turnId}, ${columns.audience}, ${columns.roomId}, ${timeText(at)},
-          ${timeText(at)}
+          ${session.id}, ${turnId}, ${columns.audience}, ${columns.roomId}, ${origin},
+          ${timeText(at)}, ${timeText(at)}
         )
       `;
       // The turn's room may be gone: a deleted room's work keeps its id, which
@@ -546,9 +570,43 @@ export const layer = Layer.effect(
           admitted_room_id = (SELECT id FROM rooms WHERE id = ${columns.roomId})
         WHERE id = ${session.id}
       `;
+      yield* stops.admitted(session.id, columns.roomId);
+      // A harness's wake takes its hop count now, from the flags that show
+      // what may have woken it, before its own work can clear them.
+      if (cause._tag !== "dispatch" && origin === null) yield* chains.borrow(session.id, turnId);
       // A Stop round already sent missed this turn, or the engine applied a
       // key a Stop had fenced: it is stopped on sight.
       if (yield* stops.openRound(session.id, fencedBy)) yield* sql.afterCommit(signals.stops.fire);
+    }, Effect.orDie);
+
+    /**
+     * The engine reported the session's background work by the turn that
+     * started it: each listed turn's work may still run, as of the report.
+     * The report lists work only while no turn runs or waits
+     * (`BackgroundWork`), so only then does a turn it leaves out have none
+     * left, and only then is the session's check done (`Stops`); otherwise
+     * what was known stands, and the check stays due. The end of a turn that
+     * ran or waited makes it due again.
+     */
+    const backgroundReported = Effect.fn("Observer.backgroundReported")(function* (
+      session: Watched,
+      event: Extract<SessionEvent, { readonly _tag: "synchronized" }>,
+    ) {
+      const listed = event.backgroundWork.turns;
+      if (listed.length > 0) {
+        yield* sql`
+          UPDATE turns SET background_pending = 1
+          WHERE session_id = ${session.id} AND ${sql.in("engine_turn_id", listed)}
+        `;
+      }
+      if (event.runnableTurns.length > 0) return;
+      if ((yield* openTurnRows(session.id).pipe(Effect.orDie)).length > 0) return;
+      yield* sql`UPDATE sessions SET background_check_due = 0 WHERE id = ${session.id}`;
+      yield* sql`
+        UPDATE turns SET background_pending = 0
+        WHERE session_id = ${session.id} AND background_pending = 1
+          ${listed.length === 0 ? sql`` : sql`AND NOT ${sql.in("engine_turn_id", listed)}`}
+      `;
     }, Effect.orDie);
 
     /** A dispatch the engine may yet take, or may have taken unseen. */
@@ -564,6 +622,11 @@ export const layer = Layer.effect(
      * held in the queue that Stop left: like a turn that starts after a round,
      * it opens the next round, which cancels it. Only the first sight does:
      * a replacement that lists it again finds it accepted.
+     *
+     * A steer still owning the turn it steered, listed waiting under another
+     * turn, is the follow-up the engine requeued it as, whose `steer-requeued`
+     * a replacement does not carry: it moves to that turn, as
+     * `steerRequeued` moves it. (`startTurn` moves it by delivering it.)
      */
     const queuedTurn = Effect.fn("Observer.queuedTurn")(function* (
       session: Watched,
@@ -575,7 +638,11 @@ export const layer = Layer.effect(
       if (Option.isNone(dispatch) || !undecided(dispatch.value)) return;
       yield* ledger.accept(dispatch.value.id, null);
       yield* sql`
-        UPDATE dispatches SET engine_turn_id = COALESCE(engine_turn_id, ${turnId})
+        UPDATE dispatches SET engine_turn_id = CASE
+          WHEN engine_turn_id IS NULL THEN ${turnId}
+          WHEN delivery = 'steer' AND engine_turn_id = disposition_turn_id THEN ${turnId}
+          ELSE engine_turn_id
+        END
         WHERE id = ${dispatch.value.id}
       `;
       if (
@@ -657,7 +724,24 @@ export const layer = Layer.effect(
         if (turn.value.work_fold_entry_id !== null) {
           yield* finishFold(turn.value.work_fold_entry_id, end.outcome, end.at);
         }
+        // It handed off to work that goes on after it: a room's Stop finds it
+        // by this turn until the engine no longer reports the work.
+        if (end.backgroundWork) {
+          yield* sql`
+            UPDATE turns SET background_pending = 1
+            WHERE session_id = ${session.id} AND engine_turn_id = ${end.turnId}
+          `;
+        }
       }
+      // While turns of the session have work flagged, each turn's end is
+      // followed by a report taken once nothing runs (`Stops`): a flag lasts
+      // no longer than its work.
+      yield* sql`
+        UPDATE sessions SET background_check_due = 1
+        WHERE id = ${session.id} AND EXISTS (
+          SELECT 1 FROM turns WHERE session_id = ${session.id} AND background_pending = 1
+        )
+      `;
       // The provider's conversation could not be resumed: the bot's main
       // session is replaced once it is idle, with a digest of its own. Any
       // turn's end may also have made a session due for rotation idle, or
@@ -689,14 +773,15 @@ export const layer = Layer.effect(
       const dispatch = owner.value;
       if (dispatch.status === "finished" || dispatch.status === "dropped") return;
       if (dispatch.status !== "delivered") {
-        // It ended without starting: a Stop cancelled it while it waited, or it
-        // failed before the provider took it, which the engine refused it with.
-        // The dispatch keeps that outcome: a routine's attempt that failed so
-        // is tried again (`routines/RoutineRuns.ts`).
+        // It ended without starting: a Stop cancelled it while it waited, or
+        // interrupted it while it started, or it failed before the provider
+        // took it, which the engine refused it with. The dispatch keeps that
+        // outcome: a routine's attempt that failed so is tried again
+        // (`routines/RoutineRuns.ts`).
         yield* ledger.accept(dispatch.id, null);
         const after = yield* stops.wakesAfter(
           dispatch,
-          end.outcome._tag === "cancelled"
+          end.outcome._tag === "cancelled" || end.outcome._tag === "interrupted"
             ? { _tag: "dropped" }
             : { _tag: "failed", reason: "rejected" },
         );
@@ -1212,6 +1297,7 @@ export const layer = Layer.effect(
         case "queue-held":
           return yield* queueHeld(session, event.cursor);
         case "synchronized": {
+          yield* backgroundReported(session, event);
           const waiting = follow.tokens.get(event.token);
           if (waiting !== undefined) {
             yield* sql.afterCommit(
