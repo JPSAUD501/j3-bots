@@ -208,17 +208,38 @@ const recordedInputs = (folder: string) => {
 
 /**
  * Packages whose text a compiler writes into a bundle without making it a
- * module, so no bundler records it: Tailwind CSS resolves its own stylesheets
- * (`@import "tailwindcss"`) and writes its base styles into the web client's.
+ * module, so no bundler records it, each found from its part's package through
+ * the packages that install it:
+ *
+ * - Tailwind CSS resolves its own stylesheets (`@import "tailwindcss"`) and
+ *   writes its base styles into the web client's.
+ * - Rolldown, which builds both bundles, writes its runtime helpers into each.
+ *   It ships inside `@voidzero-dev/vite-plus-core`, which `vite-plus` installs
+ *   under the name `vite`, and whose license file carries Rolldown's notice
+ *   among those of the tools it bundles.
  */
-const COMPILED_IN = [{ part: "web", from: WEB, name: "tailwindcss" }] as const;
+const COMPILED_IN = [
+  { part: "web", from: WEB, through: ["tailwindcss"] },
+  { part: "server", from: SERVER, through: ["vite-plus", "vite"] },
+  { part: "web", from: WEB, through: ["vite-plus", "vite"] },
+] as const;
+
+/** The folder, links resolved, of package `name` as Node finds it from `folder`. */
+const installedFrom = (folder: string, name: string): string => {
+  for (let at = folder; ; at = NodePath.dirname(at)) {
+    const candidate = NodePath.join(at, "node_modules", name);
+    if (NodeFS.existsSync(NodePath.join(candidate, "package.json"))) {
+      return NodeFS.realpathSync(candidate);
+    }
+    if (NodePath.dirname(at) === at) throw new Error(`${name} is not installed for ${folder}.`);
+  }
+};
 
 const compiledIn = () =>
-  COMPILED_IN.map(({ part, from, name }) => {
-    const manifest = NodePath.join(from, "node_modules", name, "package.json");
-    if (!NodeFS.existsSync(manifest)) throw new Error(`${name} is not installed in ${from}.`);
-    return { part, file: NodeFS.realpathSync(manifest) };
-  });
+  COMPILED_IN.map(({ part, from, through }) => ({
+    part,
+    file: NodePath.join(through.reduce(installedFrom, from), "package.json"),
+  }));
 
 const thirdParties = (inputs: ReadonlyArray<{ readonly part: string; readonly file: string }>) => {
   const found = new Map<string, ThirdParty>();

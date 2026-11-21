@@ -36,7 +36,10 @@ export type ReleaseManifest = typeof ReleaseManifest.Type;
 
 const decodeManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(ReleaseManifest));
 
-/** A release archive whose manifest does not decode: nothing can run from it. */
+/**
+ * A release archive whose manifest does not decode: nothing can run from it.
+ * Every command that needs this copy's files fails with it, and says only that.
+ */
 class ReleaseDamaged extends Schema.TaggedError<ReleaseDamaged>()("ReleaseDamaged", {
   manifest: Schema.String,
 }) {
@@ -49,7 +52,7 @@ type Layout =
   | { readonly _tag: "checkout" }
   | { readonly _tag: "release"; readonly root: string; readonly manifest: ReleaseManifest };
 
-interface Installation {
+export interface Installation {
   readonly layout: Layout;
   /** The CLI's entry point, which `j3-bots service install` makes the service start. */
   readonly entryPoint: string;
@@ -92,7 +95,6 @@ export const locate = Effect.fn("installation.locate")(function* (moduleUrl: URL
   const manifest = yield* fs.readFileString(manifestFile).pipe(
     Effect.flatMap(decodeManifest),
     Effect.mapError(() => new ReleaseDamaged({ manifest: manifestFile })),
-    Effect.orDie,
   );
   return {
     layout: { _tag: "release", root, manifest },

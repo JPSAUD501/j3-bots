@@ -361,6 +361,7 @@ const providerCheck = Effect.fn("doctor.provider")(function* (
 const webClientCheck = Effect.fn("doctor.webClient")(function* (
   config: ServerConfig.ServerConfigShape,
   live: LiveServer,
+  installation: Installation.Installation,
 ) {
   const directory = config.webClient.directory;
   if (live._tag === "described" && live.status.webClient === "served") {
@@ -368,8 +369,7 @@ const webClientCheck = Effect.fn("doctor.webClient")(function* (
   }
   if (!(yield* isBuilt(directory))) {
     const fromRelease =
-      config.webClient._tag === "bundled" &&
-      (yield* Installation.installation).layout._tag === "release";
+      config.webClient._tag === "bundled" && installation.layout._tag === "release";
     return check(
       "Web client",
       "warning",
@@ -660,8 +660,13 @@ const serverCheck = (live: LiveServer) => {
   }
 };
 
-/** Every check, in the order the report shows them. */
+/**
+ * Every check, in the order the report shows them. A damaged release fails
+ * the report as a whole: it is the one thing to fix, and nothing it would
+ * check runs from it.
+ */
 export const diagnose = Effect.gen(function* () {
+  const installation = yield* Installation.installation;
   const host = yield* Host;
   const checks: Array<Check> = [nodeCheck(host.nodeVersion)];
 
@@ -737,7 +742,7 @@ export const diagnose = Effect.gen(function* () {
     Unit.environmentOf(text).get("PATH"),
   );
   for (const harness of HARNESSES) checks.push(yield* providerCheck(harness, status, servicePath));
-  checks.push(yield* webClientCheck(config, live));
+  checks.push(yield* webClientCheck(config, live, installation));
   checks.push(pairingCheck(status, live._tag === "outside"));
   checks.push(...(yield* serviceChecks(unitText)));
   if (Option.isSome(shellSettings)) checks.push(shellSettings.value);

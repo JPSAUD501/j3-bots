@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { Command } from "effect/cli";
 import { type Check, type CheckStatus, diagnose } from "../doctor/Doctor.ts";
+import { userFacing } from "./errors.ts";
 
 const MARKS: Record<CheckStatus, string> = {
   ok: "✓",
@@ -40,7 +41,7 @@ export const doctorCommand = Command.make("doctor").pipe(
   ),
   Command.withHandler(() =>
     Effect.gen(function* () {
-      const checks = yield* diagnose;
+      const checks = yield* userFacing(diagnose);
       yield* Console.log(formatReport(checks));
       if (checks.some((check) => check.status === "problem")) {
         yield* Effect.sync(() => {

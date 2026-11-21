@@ -12,7 +12,7 @@ import { userFacing } from "./errors.ts";
 
 const fetchCommand = Command.make("fetch").pipe(
   Command.withDescription(
-    "Download and install the engine this release is pinned to, if it is not installed yet, without starting it. The server does this on its first start; fetching first lets a new release start without waiting for the download. Safe while the server runs.",
+    "Download and install the engine this release is pinned to, if it is not installed yet, without starting it. The server does this on its first start; fetching first lets a new release start without waiting for the download.",
   ),
   Command.withHandler(() =>
     Effect.gen(function* () {

@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { locate, RELEASE_MANIFEST } from "./installation.ts";
@@ -68,15 +66,10 @@ it.layer(NodeServices.layer)("where J3 Bots finds its own files", (it) => {
       yield* fs.makeDirectory(at("server"));
       yield* fs.writeFileString(at(RELEASE_MANIFEST), JSON.stringify({ version: "0.1.0" }));
 
-      const exit = yield* Effect.exit(locateFrom("server", "bin.mjs"));
+      const error = yield* Effect.flip(locateFrom("server", "bin.mjs"));
 
-      assert.isTrue(Exit.isFailure(exit));
-      if (Exit.isFailure(exit)) {
-        assert.deepInclude(Cause.squash(exit.cause), {
-          _tag: "ReleaseDamaged",
-          manifest: at(RELEASE_MANIFEST),
-        });
-      }
+      assert.strictEqual(error._tag, "ReleaseDamaged");
+      assert.strictEqual(error.manifest, at(RELEASE_MANIFEST));
     }).pipe(Effect.scoped),
   );
 });

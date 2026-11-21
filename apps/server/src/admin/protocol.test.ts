@@ -6,10 +6,18 @@ import release000 from "./samples/status-0.0.0.json" with { type: "json" };
 
 // During an update the installed release's CLI waits for the new release's
 // server on the admin socket, and a rollback has the new CLI read the old
-// server, so two releases must read each other's status reply. Each sample is
-// a reply as one release sent it, frozen: never edited, and a new one is added
-// when a release changes the reply. A field may be added as optional and never
-// removed, renamed or narrowed.
+// server, so two releases must read each other's status reply.
+//
+// This test checks one direction: this release reads every earlier release's
+// reply. Each sample is a reply as one release sent it, frozen: never edited,
+// and a new one is added when a release changes the reply. The other
+// direction, an older CLI reading this release's reply, cannot be tested here,
+// since that reader is already shipped. It holds only by a rule: a field may
+// be added only as optional, and no field is removed, renamed or changed.
+// Existing unions and literals are closed, because an older reader refuses a
+// value it does not know, so a new value needs a new optional field. The
+// command that waits for an updated server decodes only what it needs from the
+// reply, `version` and `pid`.
 
 const SAMPLES = { "0.0.0": release000 };
 
