@@ -22,6 +22,17 @@ const bridge: DesktopBridge = {
     };
   },
   relaunch: () => ipcRenderer.send(IPC_CHANNELS.relaunch),
+  updateStatus: () => ipcRenderer.invoke(IPC_CHANNELS.update),
+  onUpdate: (listener) => {
+    const forward = (_event: unknown, status: unknown) => listener(status);
+    ipcRenderer.on(IPC_CHANNELS.updateChanged, forward);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.updateChanged, forward);
+    };
+  },
+  checkForUpdates: () => ipcRenderer.send(IPC_CHANNELS.checkForUpdates),
+  restartToUpdate: () => ipcRenderer.send(IPC_CHANNELS.restartToUpdate),
+  reportSaving: (saving) => ipcRenderer.send(IPC_CHANNELS.saving, { saving }),
 };
 
 contextBridge.exposeInMainWorld(BRIDGE_KEY, bridge);

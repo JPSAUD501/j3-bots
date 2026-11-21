@@ -5,7 +5,8 @@ import type { PairingFailure, PairResult, UnpairedReason } from "@j3-bots/client
 import type { PairingCode } from "@j3-bots/contracts";
 import { clockTime } from "@j3-bots/client-runtime/presentation";
 import { useI18n, usePresentation } from "../app/context";
-import type { DesktopServer } from "../shell/data";
+import type { DesktopServer, DesktopUpdate } from "../shell/data";
+import { AppUpdate } from "./AppUpdate";
 import { Centered, Ensemble, Heading } from "./EmptyStates";
 import { ChangeServer } from "./ServerAddress";
 import { Button } from "./ui/button";
@@ -62,6 +63,8 @@ interface PairingProps {
   readonly server?: DesktopServer | undefined;
   /** In the desktop app, restarts it, as once the system's keyring is unlocked. */
   readonly restart?: (() => void) | undefined;
+  /** In the desktop app, updating it, when it can: offered when the server speaks another protocol. */
+  readonly update?: DesktopUpdate | undefined;
 }
 
 /**
@@ -77,6 +80,7 @@ export function Pairing({
   address,
   server,
   restart,
+  update,
 }: PairingProps) {
   const ctx = usePresentation();
   const { t, parts } = ctx.i18n;
@@ -222,6 +226,11 @@ export function Pairing({
           state.reason._tag === "incompatible-server" && (
             <Button onClick={() => window.location.reload()}>{t("gate.reload")}</Button>
           )}
+        {update !== undefined &&
+          state._tag === "failed" &&
+          state.reason._tag === "incompatible-server" && (
+            <AppUpdate update={update} className="items-center text-center" />
+          )}
         {restart !== undefined &&
           state._tag === "failed" &&
           state.reason._tag === "storage-failed" && (
@@ -236,9 +245,15 @@ export function Pairing({
  * The server speaks another version of the protocol: this page is older or
  * newer than it. A browser reloads to get the server's own page; the desktop
  * app carries its page, so the app or the server needs updating, or the app
- * another server.
+ * another server; its `update`, when it can update itself, shows beneath.
  */
-export function Incompatible({ server }: { server?: DesktopServer | undefined }) {
+export function Incompatible({
+  server,
+  update,
+}: {
+  server?: DesktopServer | undefined;
+  update?: DesktopUpdate | undefined;
+}) {
   const { t } = useI18n();
   if (server !== undefined) {
     return (
@@ -253,6 +268,7 @@ export function Incompatible({ server }: { server?: DesktopServer | undefined })
           </Button>
           <ChangeServer address={server.address} onChange={server.forget} paired />
         </div>
+        {update !== undefined && <AppUpdate update={update} className="items-center text-center" />}
       </Centered>
     );
   }

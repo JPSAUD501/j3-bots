@@ -117,6 +117,60 @@ export type OpenResult = typeof OpenResult.Type;
 export const NetworkState = Schema.Struct({ online: Schema.Boolean });
 export type NetworkState = typeof NetworkState.Type;
 
+/** A version of the app, as electron-builder stamps it: semver. */
+export const AppVersion = Schema.String.check(
+  Schema.isMaxLength(64),
+  Schema.isPattern(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/),
+);
+export type AppVersion = typeof AppVersion.Type;
+
+/**
+ * Where updating the app stands. `unavailable`: this build does not check for
+ * updates, as a development build with no feed of its own. `idle`: no check is
+ * under way; `checked` once one found nothing newer. `released`: a newer
+ * version is out, and this build, which does not install updates itself (a
+ * deb, an unsigned Mac build), says where to get it. `available` and
+ * `downloading`: a newer version is on its way, in the background.
+ * `downloaded`: it is ready, and restarting into it is `offered`, or was asked
+ * for and waits until no save is under way (`waiting-for-save`).
+ * `installing`: the app is restarting into it. `failed`: the last check or
+ * download (`check`) or install (`install`) failed; the next check tries again.
+ */
+export const UpdatePhase = Schema.Union([
+  Schema.TaggedStruct("unavailable", {}),
+  Schema.TaggedStruct("idle", { checked: Schema.Boolean }),
+  Schema.TaggedStruct("checking", {}),
+  Schema.TaggedStruct("released", { version: AppVersion }),
+  Schema.TaggedStruct("available", { version: AppVersion }),
+  Schema.TaggedStruct("downloading", {
+    version: AppVersion,
+    percent: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
+  }),
+  Schema.TaggedStruct("downloaded", {
+    version: AppVersion,
+    restart: Schema.Literals(["offered", "waiting-for-save"]),
+  }),
+  Schema.TaggedStruct("installing", { version: AppVersion }),
+  Schema.TaggedStruct("failed", { stage: Schema.Literals(["check", "install"]) }),
+]);
+export type UpdatePhase = typeof UpdatePhase.Type;
+
+/**
+ * The page of the release that carries `version`, where a build that does
+ * not install updates sends the operator: in the repository whose releases
+ * are the update feed (`publish` in `apps/desktop/electron-builder.yml`).
+ */
+export const releasePage = (version: AppVersion): string =>
+  `https://github.com/JPSAUD501/j3-bots/releases/tag/v${version}`;
+
+/** The app's own version, and where updating it stands. */
+export const UpdateStatus = Schema.Struct({ current: AppVersion, phase: UpdatePhase });
+export type UpdateStatus = typeof UpdateStatus.Type;
+
+/** Whether a save is under way in the page, as it reports each change. */
+export const SavingReport = Schema.Struct({ saving: Schema.Boolean });
+export type SavingReport = typeof SavingReport.Type;
+
 /** A function, called only to have its answer decoded. */
 const Callable = Schema.declare(
   (input: unknown): input is (...args: ReadonlyArray<unknown>) => unknown =>
@@ -136,5 +190,10 @@ export const HostedBridge = Schema.Struct({
   networkStatus: Callable,
   onResumed: Callable,
   relaunch: Callable,
+  updateStatus: Callable,
+  onUpdate: Callable,
+  checkForUpdates: Callable,
+  restartToUpdate: Callable,
+  reportSaving: Callable,
 });
 export type HostedBridge = typeof HostedBridge.Type;

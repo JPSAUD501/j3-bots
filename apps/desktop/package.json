@@ -2,6 +2,8 @@
   "name": "@j3-bots/desktop",
   "version": "0.0.0",
   "private": true,
+  "description": "Persistent AI teammates on your own machine.",
+  "homepage": "https://github.com/JPSAUD501/j3-bots",
   "license": "AGPL-3.0-or-later",
   "type": "module",
   "main": "dist/main.mjs",
@@ -10,18 +12,19 @@
     "dev": "vp run --filter @j3-bots/web build && vp pack && node node_modules/electron/install.js && node scripts/launch.ts",
     "typecheck": "effect-tsgo tsrs --noEmit",
     "test": "vp test run --config ../../vite.config.ts --dir src",
-    "smoke": "vp run --filter @j3-bots/web build && vp pack && node node_modules/electron/install.js && vp test run --config ../../vite.config.ts --dir test"
-  },
-  "dependencies": {
-    "@effect/platform-node": "catalog:",
-    "@j3-bots/contracts": "workspace:*",
-    "@j3-bots/desktop-bridge": "workspace:*",
-    "effect": "catalog:"
+    "smoke": "vp run --filter @j3-bots/web build && vp pack && node node_modules/electron/install.js && vp test run --config ../../vite.config.ts --dir test",
+    "package": "vp run --filter @j3-bots/web build && vp pack && electron-builder --publish never"
   },
   "devDependencies": {
+    "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
+    "@j3-bots/contracts": "workspace:*",
+    "@j3-bots/desktop-bridge": "workspace:*",
     "@j3-bots/server": "workspace:*",
+    "effect": "catalog:",
     "electron": "44.10.1",
+    "electron-builder": "26.16.1",
+    "electron-updater": "6.8.9",
     "playwright-core": "1.64.1",
     "vite-plus": "catalog:"
   }

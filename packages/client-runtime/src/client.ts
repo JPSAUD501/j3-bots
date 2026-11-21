@@ -242,6 +242,8 @@ export interface J3Client {
    * in memory only, and saved again until they are.
    */
   readonly draftsNotSaved: Readable<ReadonlySet<string>>;
+  /** Whether a change to a draft made here is not kept on the device yet. */
+  readonly draftsSaving: Readable<boolean>;
   /** Puts back the text this window held, never kept, when another window changed the draft. */
   readonly restoreDraft: (target: EntryTarget) => void;
   /** Lets go of the text on offer for `restoreDraft`. */
@@ -472,6 +474,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     draftsReadFailed: services.drafts.readFailed,
     retryDrafts: () => run.promise(services.drafts.retryRead),
     draftsNotSaved: services.drafts.notSaved,
+    draftsSaving: services.drafts.saving,
     restoreDraft: (target) => fire(services.drafts.restore(target)),
     dismissDraftOffer: (target) => fire(services.drafts.dismiss(target)),
     download: (attachment) =>

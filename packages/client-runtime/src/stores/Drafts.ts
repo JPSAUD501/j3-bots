@@ -321,6 +321,12 @@ export class Drafts extends Context.Service<
      */
     readonly notSaved: Readable<ReadonlySet<string>>;
     /**
+     * Whether a change made here is not kept on the device yet: waiting for
+     * the writer, being written, or to be tried again. A file shows uploaded
+     * before the device keeps it in its draft.
+     */
+    readonly saving: Readable<boolean>;
+    /**
      * Puts back the text this window held when another window changed the
      * draft, as a new change to the draft as it is now.
      */
@@ -498,7 +504,40 @@ export const layer = Layer.effect(
     // key, so a burst of keystrokes costs a few writes, never a queue of them.
     // Each write claims the draft as this window last read or wrote it, as
     // `send` does: a window never writes over what another window sent or changed.
-    const unwritten = new Map<string, EntryTarget>();
+    const queued = new Map<string, EntryTarget>();
+    // The writer is writing the drafts it last took.
+    let writing = false;
+    // A change made here is not kept yet: queued, being written, or to be tried again.
+    const saving = new Cell(false);
+    const settleSaving = () => saving.set(writing || queued.size > 0);
+    /** The drafts the writer has yet to write, by key. Every change to them settles `saving`. */
+    const unwritten = {
+      has: (key: string) => queued.has(key),
+      set: (key: string, target: EntryTarget) => {
+        queued.set(key, target);
+        settleSaving();
+      },
+      delete: (key: string) => {
+        queued.delete(key);
+        settleSaving();
+      },
+      clear: () => {
+        queued.clear();
+        settleSaving();
+      },
+      /** Hands the writer every draft to write; it is writing them until `written`. */
+      take: (): ReadonlyArray<EntryTarget> => {
+        const targets = [...queued.values()];
+        queued.clear();
+        writing = true;
+        settleSaving();
+        return targets;
+      },
+      written: () => {
+        writing = false;
+        settleSaving();
+      },
+    };
     const wake = yield* Queue.sliding<void>(1);
     // The drafts the device could not keep as they show here.
     const unsaved = new Cell<ReadonlySet<string>>(new Set());
@@ -652,8 +691,7 @@ export const layer = Layer.effect(
       let failures = 0;
       while (true) {
         yield* Queue.take(wake);
-        const targets = [...unwritten.values()];
-        unwritten.clear();
+        const targets = unwritten.take();
         let failed = false;
         for (const target of targets) {
           yield* locked(
@@ -675,6 +713,7 @@ export const layer = Layer.effect(
             }),
           );
         }
+        unwritten.written();
         if (!failed) {
           failures = 0;
           continue;
@@ -695,10 +734,12 @@ export const layer = Layer.effect(
       if (before.sending || closed()) return;
       const after = update(before);
       if (after === before) return;
+      // What is left to write is settled before the draft shows, as in
+      // `reload`: a file shown uploaded is a save under way until it is kept.
+      const toKeep = !sameKept(keptOf(before), keptOf(after));
+      if (toKeep) unwritten.set(key, target);
       show(key, after);
-      if (sameKept(keptOf(before), keptOf(after))) return;
-      unwritten.set(key, target);
-      Queue.offerUnsafe(wake, void 0);
+      if (toKeep) Queue.offerUnsafe(wake, void 0);
     };
     const change = (target: EntryTarget, update: (draft: Draft) => Draft) =>
       Effect.sync(() => changeNow(target, update));
@@ -996,6 +1037,7 @@ export const layer = Layer.effect(
       readFailed: visible(unread, false),
       retryRead,
       notSaved: visible(unsaved, noKeys),
+      saving: visible(saving, false),
       restore,
       dismiss,
       discardAll,

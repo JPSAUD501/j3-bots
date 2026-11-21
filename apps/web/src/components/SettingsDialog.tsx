@@ -35,9 +35,10 @@ import {
   useNotificationAccess,
   type NotificationAccess,
 } from "../preferences/notifications";
-import type { DesktopServer, ShellData, ShellIntents } from "../shell/data";
+import type { DesktopServer, DesktopUpdate, ShellData, ShellIntents } from "../shell/data";
 import { cn } from "../lib/cn";
 import { activityTime } from "../lib/time";
+import { AppUpdate } from "./AppUpdate";
 import { ConnectProviders, engineProblem, ProviderRow } from "./EmptyStates";
 import { ChangeServer } from "./ServerAddress";
 import { PairingQr } from "./PairingQr";
@@ -59,6 +60,7 @@ type SettingsIntents = Pick<
   | "retryTurns"
   | "signOut"
   | "server"
+  | "update"
 >;
 
 interface SettingsButtonProps {
@@ -184,6 +186,7 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
                 onSignOut={intents.signOut}
                 server={intents.server}
                 unencrypted={data.signInUnencrypted}
+                update={intents.update}
               />
             </div>
           </Dialog.Popup>
@@ -748,18 +751,21 @@ function ServerSection({ server }: { server: DesktopServer }) {
 
 /**
  * Choices kept in this browser only, and signing this device out. In the
- * desktop app, whose server is `server`, the same for this device, and that
- * its sign-in is stored `unencrypted` when it is, as that is less safe than
- * the operator would expect.
+ * desktop app, whose server is `server`, the same for this device, with the
+ * app's version and its `update`, and that its sign-in is stored
+ * `unencrypted` when it is, as that is less safe than the operator would
+ * expect.
  */
 function BrowserSection({
   onSignOut,
   server,
   unencrypted,
+  update,
 }: {
   onSignOut: SettingsIntents["signOut"];
   server: DesktopServer | undefined;
   unencrypted: boolean;
+  update: DesktopUpdate | undefined;
 }) {
   const { t } = useI18n();
   const { appearance, language } = usePreferences();
@@ -778,6 +784,7 @@ function BrowserSection({
   ];
   return (
     <Section title={t(server === undefined ? "settings.browser" : "settings.thisDevice")}>
+      {update !== undefined && <AppUpdate update={update} className="items-start" />}
       <div className="flex flex-col gap-1">
         <label htmlFor={appearanceId} className="text-xs">
           {t("settings.appearance")}

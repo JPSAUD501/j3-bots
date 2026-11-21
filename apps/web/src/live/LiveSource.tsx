@@ -84,9 +84,11 @@ import {
 } from "./notify";
 import { loadRasterizer, notificationIcon, systemTheme } from "./notificationIcon";
 import { deliverFile, reserveWindow } from "./openFile";
+import { updatable, useDesktopUpdate, useReportSaving } from "./appUpdate";
 import { desktop } from "./desktop";
 import { LinkedPairingCode, linkedCodeAfter } from "./pairingLink";
 import { makePlatform, signInUnencrypted } from "./platform";
+import { savesUnderWay } from "./savesUnderWay";
 
 let started: Promise<J3Client> | null = null;
 
@@ -183,6 +185,8 @@ function Screen({ children }: { children: ReactNode }) {
 function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
   const j3 = useJ3Client();
   const connection = useConnection();
+  // An update offered beside what the app cannot do with this server.
+  const update = updatable(useDesktopUpdate());
   const pairing = useReadable(j3.pairing);
   const [linkedCode, setLinkedCode] = useState(use(LinkedPairingCode));
   const keptCode = linkedCodeAfter(linkedCode, connection);
@@ -222,13 +226,14 @@ function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
             onPair={j3.pair}
             server={desktopServer}
             restart={desktop?.relaunch}
+            update={update}
           />
         </Screen>
       );
     case "incompatible":
       return (
         <Screen>
-          <Incompatible server={desktopServer} />
+          <Incompatible server={desktopServer} update={update} />
         </Screen>
       );
     case "storage-failed":
@@ -353,6 +358,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   const draftsLoading = useReadable(j3.draftsSwitching);
   const draftsFailed = useReadable(j3.draftsReadFailed);
   const draftsNotSaved = useReadable(j3.draftsNotSaved);
+  const draftsSaving = useReadable(j3.draftsSaving);
   const conversation = useConversation(target);
   const files = useBotFiles(detailsBotId);
   const memory = useMemory(detailsBotId === null ? null : { _tag: "bot", botId: detailsBotId });
@@ -380,6 +386,18 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   const [shown, setShown] = useState<EntryTarget | null>(null);
   const botSaves = useReadable(j3.botSaves);
   const memorySaves = useReadable(j3.memorySaves);
+  // In the desktop app, a restart into an update waits until no save is under way.
+  const update = useDesktopUpdate();
+  useReportSaving(
+    savesUnderWay({
+      settings: { profile: profileSave, notifications: notificationsSave },
+      bots: botSaves,
+      memory: memorySaves,
+      actions,
+      drafts,
+      draftsSaving,
+    }),
+  );
   const openMemoryKey =
     memoryView === null ? null : memorySaveKey(memoryScopeOf(memoryView), memoryView.path);
   // What is open now, for a save that ends after its form closed.
@@ -853,6 +871,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
         return result._tag !== "failed";
       }),
     ...(desktopServer === undefined ? {} : { server: desktopServer }),
+    ...(update === undefined ? {} : { update }),
   };
 
   return (

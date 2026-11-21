@@ -26,6 +26,7 @@ import type {
   Settings,
   WorkStep,
 } from "@j3-bots/contracts";
+import type { UpdateStatus } from "@j3-bots/desktop-bridge";
 import type { BotDetailsIntents } from "../components/DetailsPanel";
 import type { TimelineIntents } from "../components/Timeline";
 
@@ -183,6 +184,8 @@ export interface ShellIntents extends TimelineIntents {
   readonly signOut: () => Promise<boolean>;
   /** In the desktop app, the server it talks to. Absent in a browser, whose server is the page's own. */
   readonly server?: DesktopServer;
+  /** In the desktop app, updating it. Absent in a browser, whose page is the server's own. */
+  readonly update?: DesktopUpdate;
 }
 
 /** The server the desktop app talks to, and a way to leave it for another. */
@@ -195,4 +198,13 @@ export interface DesktopServer {
    * when it is still kept.
    */
   readonly forget: () => Promise<boolean>;
+}
+
+/** Updating the desktop app, which carries its own page. */
+export interface DesktopUpdate {
+  readonly status: UpdateStatus;
+  /** Checks for an update now, unless one is on its way or ready. */
+  readonly check: () => void;
+  /** Restarts into the downloaded update, as soon as no save is under way. */
+  readonly restart: () => void;
 }

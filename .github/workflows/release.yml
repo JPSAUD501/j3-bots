@@ -1,0 +1,186 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: Release
+
+# Builds a release when a version tag is pushed: a draft GitHub release for
+# the tag, the desktop app's packages with electron-updater's feed files, and
+# then their upload to the draft. A maintainer reads the draft and publishes
+# it: installed apps are offered only a published release. See
+# docs/operations/releasing-the-desktop-app.md.
+#
+# Only a pushed `v*` tag runs it, never a pull request, so no code from a fork
+# runs here. It uses the run's own GITHUB_TOKEN and no other secret: the
+# builds are unsigned. Only the two jobs that run no code from the repository
+# may write: `draft` creates the release and `publish` uploads to it. The jobs
+# that build read, and hand what they built to `publish` as `release-*`
+# artifacts; a job added later hands its files over the same way and is
+# added to `publish`'s `needs`, or its files are left out.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  draft:
+    name: Draft release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      # The tag names the version the packages carry: v1.2.3 or v1.2.3-beta.1.
+      - name: Version from the tag
+        id: version
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          number='(0|[1-9][0-9]*)'
+          identifier='(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
+          if ! [[ "$version" =~ ^$number\.$number\.$number(-$identifier(\.$identifier)*)?$ ]]; then
+            echo "::error::$GITHUB_REF_NAME is not v followed by a semver version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # A version with a pre-release part (1.2.3-beta.1) is drafted as a
+      # pre-release, so publishing it never makes it the latest release,
+      # which apps on a release version read.
+      - name: Create the draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          wanted=false
+          prerelease=()
+          if [[ "$VERSION" == *-* ]]; then wanted=true; prerelease=(--prerelease); fi
+          # A draft made by hand is used only if it is marked as the tag says.
+          if marked="$(gh release view "$GITHUB_REF_NAME" --json isPrerelease --jq .isPrerelease 2> /dev/null)"; then
+            if [[ "$marked" != "$wanted" ]]; then
+              echo "::error::The release for $GITHUB_REF_NAME exists and is $([[ "$marked" == true ]] || echo "not ")marked as a pre-release, which its version says it $([[ "$wanted" == true ]] && echo "is" || echo "is not")."
+              exit 1
+            fi
+            echo "A release for $GITHUB_REF_NAME exists already; the files are uploaded to it only if it is a draft."
+            exit 0
+          fi
+          gh release create "$GITHUB_REF_NAME" --draft "${prerelease[@]}" --verify-tag \
+            --title "J3 Bots $VERSION" \
+            --notes "Unsigned builds. macOS and Windows warn before opening an unsigned app. A Mac build and the deb say when a newer version is out; the AppImage and the Windows install update themselves. Linux packages need no signature."
+
+  desktop:
+    name: Desktop (${{ matrix.name }})
+    needs: draft
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-24.04
+            targets: --linux --x64
+          - name: mac
+            os: macos-15
+            targets: --mac --x64 --arm64
+          - name: windows
+            os: windows-2025
+            targets: --win --x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
+        with:
+          node-version-file: package.json
+          run-install: true
+
+      - name: Build the web client and the app
+        run: |
+          vp run --filter @j3-bots/web build
+          vp run --filter @j3-bots/desktop build
+
+      # electron-builder signs nothing: no certificate is given, and on macOS
+      # it would otherwise look for one in the keychain. It publishes nothing
+      # either; it still writes the feed files, from its `publish` settings.
+      - name: Package
+        working-directory: apps/desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          VERSION: ${{ needs.draft.outputs.version }}
+          TARGETS: ${{ matrix.targets }}
+        run: vp exec -- electron-builder $TARGETS --publish never -c.extraMetadata.version="$VERSION"
+
+      # The packages, their block maps and the feed files (latest-linux.yml,
+      # latest-mac.yml, latest.yml, or the pre-release channel's), not
+      # electron-builder's own records.
+      - name: Hand the packages to the publish job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-desktop-${{ matrix.name }}
+          path: |
+            apps/desktop/release/*.AppImage
+            apps/desktop/release/*.deb
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/*.yml
+            !apps/desktop/release/builder-debug.yml
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Upload to the draft
+    needs: [draft, desktop]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Download what the jobs built
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-*
+          path: release
+
+      # Each job's files go in a directory of their own: two with the same
+      # name would overwrite each other on the release.
+      - name: Check no two files share a name
+        run: |
+          duplicates="$(find release -type f -printf '%f\n' | sort | uniq -d)"
+          if [[ -n "$duplicates" ]]; then
+            echo "::error::Files built by more than one job share a name: $duplicates"
+            exit 1
+          fi
+
+      # Never onto a published release: what installed apps already read
+      # changes only through a new version.
+      - name: Upload to the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if [[ "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" != "true" ]]; then
+            echo "::error::The release for $GITHUB_REF_NAME is not a draft; nothing is uploaded to it."
+            exit 1
+          fi
+          find release -type f -print0 | xargs -0 gh release upload "$GITHUB_REF_NAME" --clobber

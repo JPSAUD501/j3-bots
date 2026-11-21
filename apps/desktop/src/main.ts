@@ -39,10 +39,12 @@ import { contentSecurityPolicy, inlineScriptSources, resolveAsset } from "./asse
 import { electronFetch } from "./electronFetch.ts";
 import { APP_ID, appOrigin, schemeOf } from "./identity.ts";
 import { externalUrl, isAppUrl } from "./navigation.ts";
+import { restartApp } from "./restart.ts";
 import * as ServerChoice from "./serverChoice.ts";
 import { checkServer } from "./serverCheck.ts";
 import * as Settings from "./settings.ts";
 import { makeTokenSeal } from "./tokenSeal.ts";
+import * as Updater from "./updater.ts";
 import { MIN_SIZE, openingBounds } from "./window.ts";
 
 // The desktop app: a window on the web client's own build, served from a
@@ -271,12 +273,9 @@ const program = Effect.gen(function* () {
       ipcMain.handle(IPC_CHANNELS.network, (event) => (fromApp(event) ? networkState() : null));
       // A restart, as once a keyring is unlocked: Chromium keeps the
       // encryption it set up for the process, so only a new one sees the
-      // unlocked keyring. Quitting closes the window as the operator would,
-      // so its place is saved and IndexedDB is flushed.
+      // unlocked keyring.
       ipcMain.on(IPC_CHANNELS.relaunch, (event) => {
-        if (!fromApp(event)) return;
-        app.relaunch();
-        app.quit();
+        if (fromApp(event)) restartApp();
       });
     }),
     () =>
@@ -320,6 +319,7 @@ const program = Effect.gen(function* () {
     },
   });
   if (placed.maximized) window.maximize();
+  yield* Updater.serve(window, fromApp);
 
   // The window's place is saved as it closes, before it goes.
   let saved = false;

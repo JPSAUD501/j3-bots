@@ -8,6 +8,7 @@ import {
   OpenResult,
   SealResult,
   type TokenProtection,
+  UpdateStatus,
 } from "@j3-bots/desktop-bridge";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -45,6 +46,16 @@ export interface Desktop {
   readonly onResumed: (listener: (online: boolean) => void) => () => void;
   /** Restarts the app, which keeps this page's storage. */
   readonly relaunch: () => void;
+  /** Where updating the app stands; `null` when the app gave no answer the page understands. */
+  readonly updateStatus: () => Promise<UpdateStatus | null>;
+  /** Calls `listener` each time the update's status changes; answers a function that stops it. */
+  readonly onUpdate: (listener: (status: UpdateStatus) => void) => () => void;
+  /** Checks for an update now, unless one is on its way or ready. */
+  readonly checkForUpdates: () => void;
+  /** Restarts into the downloaded update, as soon as no save is under way. */
+  readonly restartToUpdate: () => void;
+  /** Tells the app whether a save is under way, which a restart waits for. */
+  readonly reportSaving: (saving: boolean) => void;
 }
 
 const decodeBridge = Schema.decodeUnknownOption(HostedBridge);
@@ -53,6 +64,7 @@ const decodeForget = Schema.decodeUnknownOption(ForgetResult);
 const decodeSeal = Schema.decodeUnknownOption(SealResult);
 const decodeOpen = Schema.decodeUnknownOption(OpenResult);
 const decodeNetwork = Schema.decodeUnknownOption(NetworkState);
+const decodeStatus = Schema.decodeUnknownOption(UpdateStatus);
 const hosted: unknown = Reflect.get(window, BRIDGE_KEY);
 
 /** What `call` answers, decoded; `null` when it throws, rejects or answers something else. */
@@ -95,6 +107,24 @@ export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
     },
     relaunch: () => {
       bridge.relaunch();
+    },
+    updateStatus: () => ask(() => bridge.updateStatus(), decodeStatus),
+    onUpdate: (listener) => {
+      const stop: unknown = bridge.onUpdate((status: unknown) =>
+        Option.map(decodeStatus(status), listener),
+      );
+      return () => {
+        if (typeof stop === "function") stop();
+      };
+    },
+    checkForUpdates: () => {
+      bridge.checkForUpdates();
+    },
+    restartToUpdate: () => {
+      bridge.restartToUpdate();
+    },
+    reportSaving: (saving) => {
+      bridge.reportSaving(saving);
     },
   }),
 });

@@ -24,6 +24,16 @@ export const IPC_CHANNELS = {
   resumed: "j3bots:resumed",
   /** Restarts the app, its storage kept. Not answered: the page goes with the app. */
   relaunch: "j3bots:relaunch",
+  /** Answers `UpdateStatus`. */
+  update: "j3bots:update",
+  /** From the main process, each time the update's status changes: `UpdateStatus`. */
+  updateChanged: "j3bots:update-changed",
+  /** Checks for an update now, unless one is being checked, downloaded or ready. Not answered. */
+  checkForUpdates: "j3bots:check-for-updates",
+  /** Restarts into the downloaded update once no save is under way. Not answered. */
+  restartToUpdate: "j3bots:restart-to-update",
+  /** `SavingReport`: whether a save is under way in the page. Not answered. */
+  saving: "j3bots:saving",
 } as const;
 
 /** What the preload script puts on `window[BRIDGE_KEY]`. Its answers are decoded by the page. */
@@ -38,4 +48,10 @@ export interface DesktopBridge {
   readonly onResumed: (listener: (state: unknown) => void) => () => void;
   /** Restarts the app; the page's storage is kept. */
   readonly relaunch: () => void;
+  readonly updateStatus: () => Promise<unknown>;
+  /** Calls `listener` each time the update's status changes; answers a function that stops it. */
+  readonly onUpdate: (listener: (status: unknown) => void) => () => void;
+  readonly checkForUpdates: () => void;
+  readonly restartToUpdate: () => void;
+  readonly reportSaving: (saving: boolean) => void;
 }
