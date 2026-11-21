@@ -23,7 +23,9 @@ const LastOutcome = Schema.Struct({ outcome_json: json(TurnOutcome) });
  * saw end on that provider, in any session of any bot, do: the newest one
  * that either completed or failed at the usage limit, when it failed with a
  * reset still ahead. A turn that completed after it shows the limit lifted.
- * A turn ran on its session's provider, which never changes.
+ * A turn ran on its session's provider, which never changes. The query's
+ * filter is the one of the `turns_limit_outcomes` index, word for word, so
+ * the newest such turns are read in order and the first match ends it.
  */
 export const providerLimit = (sql: SqlClient.SqlClient, engineState: EngineState["Service"]) => {
   const lastOutcome = SqlSchema.findOneOption({

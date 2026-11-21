@@ -76,11 +76,13 @@ export const routineSpeech = (
       at: startedAt ?? now,
       text: input.text,
     } as const;
+    // Its message's place in the conversation: a fresh start after it leaves it out.
     yield* sql`
-      INSERT INTO catch_up_notes (id, bot_id, text, created_at, note_json)
+      INSERT INTO catch_up_notes (id, bot_id, text, created_at, note_json, source_position)
       VALUES (
         ${yield* ids.make("note")}, ${input.botId}, ${input.text}, ${timeText(now)},
-        ${yield* encodeNote(note)}
+        ${yield* encodeNote(note)},
+        (SELECT position FROM entries WHERE id = ${input.entryId})
       )
     `;
   }, Effect.orDie);

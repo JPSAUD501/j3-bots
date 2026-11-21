@@ -39,6 +39,17 @@ export const takesNewWorkSql = (sql: SqlClient.SqlClient) =>
   sql`(rotation_reason IS NULL OR rotation_reason = 'runs')`;
 
 /**
+ * Whether a `catch_up_notes` row reports a conversation entry from before its
+ * bot's latest fresh start, which nothing reaches the bot's working context
+ * from (`forgetConversation`).
+ */
+export const fromBeforeFreshStartSql = (sql: SqlClient.SqlClient) => sql`(
+  catch_up_notes.source_position < (
+    SELECT c.digest_from_position FROM conversations c WHERE c.bot_id = catch_up_notes.bot_id
+  )
+)`;
+
+/**
  * Asks for a bot's live main session, lost or not, to be replaced: the rotator
  * replaces it as its reason says. A session already due keeps its reason
  * unless the new one is stronger. Runs in the caller's transaction, or in its
@@ -116,7 +127,9 @@ export const rotationRequests = (sql: SqlClient.SqlClient, signals: Signals["Ser
   /**
    * A fresh start: the digests no envelope carried yet are dropped, and no
    * later digest reaches back past what the conversation holds now, also when
-   * the new session is replaced in its turn.
+   * the new session is replaced in its turn. So are the notes of what routine
+   * runs said until now; one an unsent dispatch carried is dropped when the
+   * dispatch gives it back (`Ledger`).
    */
   const forgetConversation = Effect.fn("rotationRequests.forgetConversation")(function* (
     botId: BotId,
@@ -127,6 +140,10 @@ export const rotationRequests = (sql: SqlClient.SqlClient, signals: Signals["Ser
         SELECT COALESCE(MAX(position) + 1, 0) FROM entries WHERE conversation_bot_id = ${botId}
       )
       WHERE bot_id = ${botId}
+    `;
+    yield* sql`
+      DELETE FROM catch_up_notes
+      WHERE bot_id = ${botId} AND consumed_dispatch_id IS NULL AND ${fromBeforeFreshStartSql(sql)}
     `;
   }, Effect.orDie);
 

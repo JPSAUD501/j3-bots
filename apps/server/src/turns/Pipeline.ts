@@ -11,6 +11,7 @@ import {
   type Mentions,
   type MessageEntry,
   NotFound,
+  ProviderId,
   type QuestionEntry,
   RoomId,
 } from "@j3-bots/contracts";
@@ -98,6 +99,8 @@ const Unsent = Schema.Struct({
   next_attempt_at: Schema.NullOr(Time),
   /** It carries a routine's wake, the least urgent kind, in a side session. */
   routine: Schema.BooleanFromBit,
+  /** The provider its session runs on. */
+  provider_id: ProviderId,
 });
 const Due = Schema.Struct({ id: DispatchRowId, next_attempt_at: Schema.NullOr(Time) });
 
@@ -616,7 +619,8 @@ export const layer = Layer.effect(
       SELECT id, session_id, delivery, next_attempt_at,
         EXISTS (
           SELECT 1 FROM wakes w WHERE w.dispatch_id = d.id AND w.kind = 'routine'
-        ) AS routine
+        ) AS routine,
+        (SELECT s.provider_id FROM sessions s WHERE s.id = d.session_id) AS provider_id
       FROM dispatches d
       WHERE status = 'intended' AND attempts = 0 AND fenced_by_stop_id IS NULL
         AND NOT EXISTS (
@@ -1033,6 +1037,15 @@ export const layer = Layer.effect(
           continue;
         }
         if (row.delivery === "start" && !(yield* admitsStart(row.session_id))) continue;
+        // A routine's start is automated work: a provider that reached its
+        // usage limit since it was written holds it until the reset.
+        if (row.routine) {
+          const limit = yield* limitOf(row.provider_id);
+          if (Option.isSome(limit)) {
+            if (limit.value.resetsAt !== null) outcome.until(limit.value.resetsAt);
+            continue;
+          }
+        }
         const result = yield* sendOne(row.id, "dispatcher", outcome);
         if (result === "engine-unavailable") return true;
         if (result === "skipped") outcome.defer();

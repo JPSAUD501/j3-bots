@@ -19,14 +19,17 @@ import {
   concurrentTurns,
   conversation,
   createBot,
+  deliveryIs,
   engineSession,
   eventually,
   flushed,
+  gateSettled,
   holdGate,
   nextTurn,
   noticesOf,
   recoverTimes,
   sendToBot,
+  sessionAfter,
   stopSettled,
   timesSent,
   turnEnded,
@@ -621,4 +624,147 @@ it.effect(
         [TestDomain.OTHER_PROVIDER_MODEL.providerId, "claude"],
       );
     }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "opens a routine's session again when its bot's permission mode changes before its turn starts",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      yield* concurrentTurns(1);
+      const bot = yield* createBot("Ana");
+      const main = yield* engineSession(bot.id);
+      // The bot's own turn takes the only slot: the routine's session opens and waits.
+      yield* sendToBot(bot.id, "Plan the sprint.");
+      const turn = yield* nextTurn(bot.id);
+      const routine = yield* routineOf(bot.id);
+      yield* (yield* Routines).run({ commandId: command(), routineId: routine.id });
+      yield* until(sideSessions(bot.id).pipe(Effect.map((opened) => opened.length === 1)));
+      const [first] = yield* sideSessions(bot.id);
+      assert.isDefined(first);
+      assert.notStrictEqual(yield* control.sessionPermissionMode(first), "supervised");
+
+      yield* (yield* Bots).update({
+        commandId: command(),
+        botId: bot.id,
+        changes: { permissionMode: "supervised" },
+      });
+      yield* until(sideSessions(bot.id).pipe(Effect.map((opened) => opened.length === 2)));
+      yield* control.finishTurn({ sessionId: main, turnId: turn, outcome: { _tag: "completed" } });
+      yield* turnEnded(bot.id);
+      yield* (yield* RoutineRunner).pass;
+
+      const side = yield* sideTurn(routine.id, first);
+      assert.strictEqual(
+        yield* control.sessionPermissionMode(side.engine_session_id),
+        "supervised",
+      );
+      assert.strictEqual(yield* timesSent(first, INSTRUCTION), 0);
+      yield* control.finishTurn({
+        sessionId: side.engine_session_id,
+        turnId: side.admitted_turn_id,
+        outcome: { _tag: "completed" },
+      });
+      const run = yield* settled(routine);
+      assert.deepStrictEqual([run.status, run.attempts], ["silent", 1]);
+      yield* until(sidesRetired(bot.id));
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("tries an attempt again after its delay when the engine refuses the bot's model", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    yield* engineSession(bot.id);
+    const routine = yield* routineOf(bot.id);
+
+    yield* control.refuseNextOpenSessionModels(1);
+    yield* (yield* Routines).run({ commandId: command(), routineId: routine.id });
+    yield* retryRecorded(routine.id);
+    const [waiting] = yield* history(routine.id);
+    assert.deepStrictEqual([waiting?.status, waiting?.attempts], ["running", 1]);
+    assert.deepStrictEqual(yield* sideSessions(bot.id), []);
+
+    yield* TestClock.adjust(retryDelay(1));
+    const side = yield* sideTurn(routine.id);
+    yield* control.finishTurn({
+      sessionId: side.engine_session_id,
+      turnId: side.admitted_turn_id,
+      outcome: { _tag: "completed" },
+    });
+    const run = yield* settled(routine);
+    assert.deepStrictEqual([run.status, run.attempts], ["silent", 2]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("tells the bot's session after a fresh start nothing routine runs said before it", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const { bot, routine } = yield* ranRoutine;
+    const main = yield* engineSession(bot.id);
+    const first = yield* sideTurn(routine.id);
+    yield* say(first.engine_session_id, first.admitted_turn_id, "The first report.", "call-1");
+    yield* control.finishTurn({
+      sessionId: first.engine_session_id,
+      turnId: first.admitted_turn_id,
+      outcome: { _tag: "completed" },
+    });
+    yield* settled(routine);
+
+    // A second run is going when the operator writes: the message's dispatch
+    // carries the first run's note, and its send waits at the engine's door.
+    yield* TestClock.adjust("1 second");
+    yield* (yield* Routines).run({ commandId: command(), routineId: routine.id });
+    const second = yield* sideTurn(routine.id, first.engine_session_id);
+    const sending = yield* control.holdNext("dispatch");
+    yield* sendToBot(bot.id, "Anything new?");
+    yield* sending.entered;
+    // The second run speaks meanwhile: its note waits for the next envelope.
+    yield* say(second.engine_session_id, second.admitted_turn_id, "The second report.", "call-2");
+    yield* control.finishTurn({
+      sessionId: second.engine_session_id,
+      turnId: second.admitted_turn_id,
+      outcome: { _tag: "completed" },
+    });
+
+    yield* (yield* Bots).freshStart({ commandId: command(), botId: bot.id });
+    // The send never reaches the engine, so its dispatch gives the first note back.
+    yield* control.setReachable(false);
+    yield* sending.release;
+    yield* gateSettled(bot.id);
+    yield* control.setReachable(true);
+
+    const replacement = yield* sessionAfter(bot.id, main);
+    const message = yield* sendToBot(bot.id, "Where were we?");
+    yield* nextTurn(bot.id);
+    yield* deliveryIs(message, "delivered");
+    const sent = (yield* control.dispatches(replacement)).map((dispatch) => dispatch.text);
+    assert.include(sent.join("\n"), "Where were we?");
+    assert.notInclude(sent.join("\n"), "The first report.");
+    assert.notInclude(sent.join("\n"), "The second report.");
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("ends the background work a failed attempt left once its retry is due", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const { routine } = yield* ranRoutine;
+    const first = yield* sideTurn(routine.id);
+    yield* control.startBackgroundWork({
+      sessionId: first.engine_session_id,
+      turnId: first.admitted_turn_id,
+    });
+    yield* control.finishTurn({
+      sessionId: first.engine_session_id,
+      turnId: first.admitted_turn_id,
+      outcome: failed,
+    });
+    yield* retryRecorded(routine.id);
+
+    yield* TestClock.adjust(retryDelay(1));
+    const second = yield* sideTurn(routine.id, first.engine_session_id);
+    assert.strictEqual(yield* timesSent(second.engine_session_id, INSTRUCTION), 1);
+    const [run] = yield* history(routine.id);
+    assert.deepStrictEqual([run?.status, run?.attempts], ["running", 2]);
+  }).pipe(Effect.provide(TestDomain.layer)),
 );

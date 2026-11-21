@@ -34,6 +34,7 @@ import {
   DispatchRejected,
   EngineIndeterminate,
   EngineUnavailable,
+  ModelUnavailable,
   ProjectNotFound,
   RequestClosed,
   SessionBusy,
@@ -190,6 +191,12 @@ export class TestEngineControl extends Context.Service<
      * replayed key.
      */
     readonly loseNextOpenSessionReply: Effect.Effect<void>;
+    /**
+     * The next `count` calls of `openSession` fail with `ModelUnavailable`,
+     * applying nothing, as when the engine no longer offers the model asked
+     * for. A later call under the same key opens the session.
+     */
+    readonly refuseNextOpenSessionModels: (count: number) => Effect.Effect<void>;
     /** The model a session runs, as it was opened or last configured. */
     readonly sessionModel: (sessionId: SessionId) => Effect.Effect<ModelChoice>;
     /** The permission mode a session runs, as it was opened or last configured. */
@@ -504,6 +511,7 @@ const make = Effect.gen(function* () {
   let rejectDispatch = false;
   let failingOpenSessions = 0;
   let losingOpenSessionReply = false;
+  let refusingOpenSessionModels = 0;
   let rejectStop = false;
   const holds = new Map<
     HeldMethod,
@@ -1125,6 +1133,13 @@ const make = Effect.gen(function* () {
             failingOpenSessions--;
             return yield* new EngineIndeterminate();
           }
+          if (refusingOpenSessionModels > 0) {
+            refusingOpenSessionModels--;
+            return yield* new ModelUnavailable({
+              providerId: model.providerId,
+              modelId: model.modelId,
+            });
+          }
           if (![...projects.values()].includes(projectId)) {
             return yield* new ProjectNotFound({ projectId });
           }
@@ -1553,6 +1568,11 @@ const make = Effect.gen(function* () {
     loseNextOpenSessionReply: Effect.sync(() => {
       losingOpenSessionReply = true;
     }),
+
+    refuseNextOpenSessionModels: (count) =>
+      Effect.sync(() => {
+        refusingOpenSessionModels = count;
+      }),
 
     sessionModel: (sessionId) =>
       Effect.suspend(() => {

@@ -31,6 +31,21 @@ export default Effect.gen(function* () {
     WHERE side_wake_id IS NOT NULL AND retired_at IS NULL AND lost_at IS NULL
   `;
 
+  // The position of the conversation entry a catch-up note reports (a
+  // routine run's message), so a fresh start leaves out every note from
+  // before it, also one an unsent dispatch gives back later
+  // (`turns/rotationRequests.ts`). Null for a note that reports no entry.
+  yield* sql`ALTER TABLE catch_up_notes ADD COLUMN source_position INTEGER`;
+
+  // Whether a provider is at its usage limit is read from the newest turn
+  // that completed or met the limit (`turns/providerLimit.ts`), on every pass
+  // that plans automated work: read newest first, it stops at the first one.
+  yield* sql`
+    CREATE INDEX turns_limit_outcomes ON turns (finished_at)
+    WHERE finished_at IS NOT NULL AND (json_extract(outcome_json, '$._tag') = 'completed'
+      OR json_extract(outcome_json, '$.failure') = 'usage-limit')
+  `;
+
   // A routine's receipts written before runs counted their attempts, so a
   // replay of one answers what it answered then: a run that had not started.
   yield* sql`

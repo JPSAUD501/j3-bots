@@ -212,10 +212,7 @@ export const layer = Layer.effect(
       `,
     });
 
-    const endedRows = SqlSchema.findAll({
-      Request: Schema.NullOr(RoutineId),
-      Result: Ended,
-      execute: (routineId) => sql`
+    const endedRows = (routineId: RoutineId | null) => sql`
         SELECT r.id, r.routine_id, ro.bot_id, r.wake_id, r.attempts, w.status AS wake_status,
           w.failure_reason AS wake_failure, w.updated_at AS wake_updated_at, d.seq AS dispatch_seq, d.status AS dispatch_status,
           d.outcome_json,
@@ -231,8 +228,7 @@ export const layer = Layer.effect(
           AND (w.id IS NULL OR w.status IN ('finished', 'cancelled', 'failed'))
           ${routineId === null ? sql`` : sql`AND r.routine_id = ${routineId}`}
         ORDER BY r.started_at, r.id
-      `,
-    });
+      `;
 
     const runWithKey = SqlSchema.findOneOption({
       Request: Schema.Struct({ routineId: RoutineId, key: Schema.String }),
@@ -265,12 +261,23 @@ export const layer = Layer.effect(
         )
     `;
 
-    /** Settles the runs whose wake ended: every routine's, or one routine's. */
+    /**
+     * Settles the runs whose wake ended: every routine's, or one routine's. A
+     * row that cannot be read is logged and left running; the others settle.
+     */
     const settleEnded = Effect.fn("RoutineRuns.settleEnded")(function* (
       routineId: RoutineId | null,
     ) {
       const now = yield* DateTime.now;
-      for (const run of yield* endedRows(routineId)) {
+      for (const raw of yield* endedRows(routineId)) {
+        const decoded = Schema.decodeUnknownOption(Ended)(raw);
+        if (Option.isNone(decoded)) {
+          yield* Effect.logError(
+            "A routine run could not be read to settle it; it is left running",
+          );
+          continue;
+        }
+        const run = decoded.value;
         let settlement = settlementOf(run);
         if (settlement._tag === "going") continue;
         if (settlement._tag === "attempt-failed") {
