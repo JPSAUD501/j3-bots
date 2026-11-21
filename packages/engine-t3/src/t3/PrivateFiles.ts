@@ -53,6 +53,8 @@ type StorageError = StorageExposed | PlatformError.PlatformError;
  * happens.
  */
 export interface PrivateFiles {
+  /** Whether `location`, links resolved, is in private state, by the caller's check. */
+  readonly contains: (location: string) => Effect.Effect<boolean>;
   /** Creates `folder` (mode 0700) if missing. */
   readonly folder: (folder: string) => Effect.Effect<void, StorageError>;
   /**
@@ -90,9 +92,9 @@ export interface PrivateFiles {
   /**
    * Removes the symbolic link at `location`, once the folder that holds it
    * passes the check. Anything else at `location`, or nothing, is left as it
-   * is; true when a link was removed.
+   * is.
    */
-  readonly unlink: (location: string) => Effect.Effect<boolean, StorageError>;
+  readonly unlink: (location: string) => Effect.Effect<void, StorageError>;
   /**
    * Makes a symbolic link at `location` that leads to `target`, a path
    * relative to the real path of `location`'s folder, links resolved, which is
@@ -181,10 +183,9 @@ export const makePrivateFiles = Effect.fnUntraced(function* (
       Effect.asSome,
       Effect.catchReason("PlatformError", "NotFound", () => Effect.succeedNone),
     );
-    if (Option.isNone(existing) || existing.value.type !== "SymbolicLink") return false;
+    if (Option.isNone(existing) || existing.value.type !== "SymbolicLink") return;
     // Not recursive: whatever was put here after the check, no folder is emptied.
     yield* fs.remove(location);
-    return true;
   });
 
   const write = Effect.fnUntraced(function* (file: string, contents: string) {
@@ -243,5 +244,14 @@ export const makePrivateFiles = Effect.fnUntraced(function* (
     yield* fs.symlink(target, location);
   });
 
-  return { folder, write, writable, writeStream, remove, unlink, link } satisfies PrivateFiles;
+  return {
+    contains: isPrivate,
+    folder,
+    write,
+    writable,
+    writeStream,
+    remove,
+    unlink,
+    link,
+  } satisfies PrivateFiles;
 });

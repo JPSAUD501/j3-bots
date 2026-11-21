@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -13,7 +14,15 @@ import * as PlatformError from "effect/PlatformError";
 import { engineFolders, makePrivateFiles, type PrivateFiles } from "./PrivateFiles.ts";
 import { type InstanceSpec, provision, storeConnection, writeBasePrompt } from "./Provision.ts";
 
-const machine = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto);
+/** Every line logged while these tests run, as JSON. */
+const logged: Array<string> = [];
+const recordLogs = Logger.layer([
+  Logger.map(Logger.formatJson, (line) => {
+    logged.push(line);
+  }),
+]);
+
+const machine = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto, recordLogs);
 
 const Settings = Schema.fromJsonString(
   Schema.Struct({
@@ -352,5 +361,30 @@ it.effect("lets the Claude Code and Codex homes list the shared skills", () =>
         text,
       );
     }
+  }).pipe(Effect.scoped, Effect.provide(machine)),
+);
+
+it.effect("provisions a home whose skill folder cannot be written, and keeps its skills", () =>
+  Effect.gen(function* () {
+    const { fs, path, home, input } = yield* setUp;
+    yield* fs.makeDirectory(path.join(input.sharedSkills, "j3-routines"), { recursive: true });
+    yield* fs.writeFileString(path.join(input.sharedSkills, "j3-routines", "SKILL.md"), "shared");
+    const claudeHome = path.join(home, "claude-code");
+    const skills = path.join(claudeHome, "skills");
+    const own = path.join(skills, "expenses", "SKILL.md");
+    yield* fs.makeDirectory(path.dirname(own), { recursive: true });
+    yield* fs.writeFileString(own, "the operator's");
+    yield* fs.chmod(skills, 0o500);
+    yield* Effect.addFinalizer(() => fs.chmod(skills, 0o700).pipe(Effect.ignore));
+    logged.length = 0;
+
+    yield* provision(input);
+
+    assert.deepStrictEqual(yield* fs.readDirectory(skills), ["expenses"]);
+    assert.strictEqual(yield* fs.readFileString(own), "the operator's");
+    assert.isTrue(
+      logged.some((line) => line.includes(`could not be linked in ${claudeHome}`)),
+      "a warning names the home",
+    );
   }).pipe(Effect.scoped, Effect.provide(machine)),
 );

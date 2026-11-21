@@ -78,7 +78,9 @@ const readRegular = Effect.fnUntraced(function* (file: string) {
  * anywhere else, or is not a folder at all, is skipped with a warning, so the
  * install never writes over a skill under another name. So is every skill
  * when the shared skills folder has left private state or is not a folder,
- * and when the record is not a regular file.
+ * and when the record is not a regular file. A write that fails stops the
+ * install with a warning, and the skills already there are kept: shared
+ * skills never stop the server from starting.
  */
 export const install = Effect.fn("SharedSkills.install")(function* () {
   const layout = yield* Layout;
@@ -102,10 +104,18 @@ export const install = Effect.fn("SharedSkills.install")(function* () {
   );
   if (realRoot === undefined) return;
 
+  const state = path.dirname(layout.shippedSkills);
   const saved = yield* readRegular(layout.shippedSkills);
   if (saved._tag === "other") {
+    const stateIsFolder = yield* fs.stat(state).pipe(
+      Effect.map((info) => info.type === "Directory"),
+      Effect.orElseSucceed(() => false),
+    );
+    const [where, what] = stateIsFolder
+      ? [layout.shippedSkills, "a regular file"]
+      : [state, "a folder"];
     return yield* Effect.logWarning(
-      `${layout.shippedSkills} is not a regular file, so no shipped skill was installed or replaced. Move it aside.`,
+      `${where} is not ${what}, so no shipped skill was installed or replaced. Move it aside.`,
     );
   }
   const record: Record<string, ReadonlyArray<string>> = {};
@@ -118,14 +128,13 @@ export const install = Effect.fn("SharedSkills.install")(function* () {
       );
   }
 
+  // A write that fails for any reason but containment stops the install.
   const write = (file: string, text: string) =>
     layout.writeFile(file, text).pipe(
       Effect.as(true),
-      Effect.catchTags({
-        PrivateLocationExposed: (error) =>
-          Effect.as(Effect.logWarning(`${error.message} It was skipped.`), false),
-        PlatformError: Effect.die,
-      }),
+      Effect.catchTag("PrivateLocationExposed", (error) =>
+        Effect.as(Effect.logWarning(`${error.message} It was skipped.`), false),
+      ),
     );
   /** Records `digests` as the texts of `name` the server wrote, unless they are recorded already. */
   const recordAs = Effect.fnUntraced(function* (name: string, digests: ReadonlyArray<string>) {
@@ -138,53 +147,62 @@ export const install = Effect.fn("SharedSkills.install")(function* () {
     return yield* write(layout.shippedSkills, text);
   });
 
-  for (const skill of sharedSkills) {
-    const folder = path.join(layout.sharedSkills, skill.name);
-    const isOwnFolder = yield* fs.makeDirectory(folder, { recursive: true }).pipe(
-      Effect.andThen(fs.realPath(folder)),
-      Effect.flatMap((real) =>
-        real === path.join(realRoot, skill.name)
-          ? Effect.map(fs.stat(real), (info) => info.type === "Directory")
-          : Effect.succeed(false),
+  const installEach = Effect.fnUntraced(function* () {
+    for (const skill of sharedSkills) {
+      const folder = path.join(layout.sharedSkills, skill.name);
+      const isOwnFolder = yield* fs.makeDirectory(folder, { recursive: true }).pipe(
+        Effect.andThen(fs.realPath(folder)),
+        Effect.flatMap((real) =>
+          real === path.join(realRoot, skill.name)
+            ? Effect.map(fs.stat(real), (info) => info.type === "Directory")
+            : Effect.succeed(false),
+        ),
+        // Something that is not a folder, or a link to nowhere, is in the way.
+        Effect.catchTag("PlatformError", () => Effect.succeed(false)),
+      );
+      if (!isOwnFolder) {
+        yield* Effect.logWarning(
+          `${folder} is not a folder of its own in the shared skills, so the ${skill.name} skill was not installed there.`,
+        );
+        continue;
+      }
+
+      const skillFile = path.join(folder, SKILL_FILE);
+      const current = yield* readRegular(skillFile);
+      if (current._tag === "other") {
+        yield* Effect.logWarning(
+          `${skillFile} is not a regular file the server can read, so it was kept and the ${skill.name} skill J3 Bots ships was not installed. Move it aside to get the shipped one.`,
+        );
+        continue;
+      }
+      const shipped = digest(skill.text);
+      const ours = new Set([
+        shipped,
+        ...(record[skill.name] ?? []),
+        ...(SHIPPED_BEFORE_THE_RECORD[skill.name] ?? []),
+      ]);
+      if (current._tag === "text" && !ours.has(digest(current.text))) {
+        yield* Effect.logWarning(
+          `${skillFile} is not a copy J3 Bots installed, so it was kept and the ${skill.name} skill J3 Bots ships was not installed. Move it aside to get the shipped one.`,
+        );
+        continue;
+      }
+
+      if (current._tag === "absent" || current.text !== skill.text) {
+        // Both, until the new text is in place, so a start cut short between
+        // the two writes still recognizes the copy it leaves.
+        const before = current._tag === "text" ? [digest(current.text)] : [];
+        if (!(yield* recordAs(skill.name, [...before, shipped]))) continue;
+        if (!(yield* write(skillFile, skill.text))) continue;
+      }
+      yield* recordAs(skill.name, [shipped]);
+    }
+  });
+  yield* installEach().pipe(
+    Effect.catchTag("PlatformError", (error) =>
+      Effect.logWarning(
+        `The shipped skills could not be installed (${error.message}), so the install stopped and the skills already there were kept.`,
       ),
-      // Something that is not a folder, or a link to nowhere, is in the way.
-      Effect.catchTag("PlatformError", () => Effect.succeed(false)),
-    );
-    if (!isOwnFolder) {
-      yield* Effect.logWarning(
-        `${folder} is not a folder of its own in the shared skills, so the ${skill.name} skill was not installed there.`,
-      );
-      continue;
-    }
-
-    const skillFile = path.join(folder, SKILL_FILE);
-    const current = yield* readRegular(skillFile);
-    if (current._tag === "other") {
-      yield* Effect.logWarning(
-        `${skillFile} is not a regular file the server can read, so it was kept and the ${skill.name} skill J3 Bots ships was not installed. Move it aside to get the shipped one.`,
-      );
-      continue;
-    }
-    const shipped = digest(skill.text);
-    const ours = new Set([
-      shipped,
-      ...(record[skill.name] ?? []),
-      ...(SHIPPED_BEFORE_THE_RECORD[skill.name] ?? []),
-    ]);
-    if (current._tag === "text" && !ours.has(digest(current.text))) {
-      yield* Effect.logWarning(
-        `${skillFile} is not a copy J3 Bots installed, so it was kept and the ${skill.name} skill J3 Bots ships was not installed. Move it aside to get the shipped one.`,
-      );
-      continue;
-    }
-
-    if (current._tag === "absent" || current.text !== skill.text) {
-      // Both, until the new text is in place, so a start cut short between
-      // the two writes still recognizes the copy it leaves.
-      const before = current._tag === "text" ? [digest(current.text)] : [];
-      if (!(yield* recordAs(skill.name, [...before, shipped]))) continue;
-      if (!(yield* write(skillFile, skill.text))) continue;
-    }
-    yield* recordAs(skill.name, [shipped]);
-  }
+    ),
+  );
 });

@@ -7,12 +7,24 @@ import { sharedSkills } from "@j3-bots/prompts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as Layout from "../Layout.ts";
 import * as TestDatabase from "../testing/database.ts";
 import * as SharedSkills from "./SharedSkills.ts";
 
-const home = Layout.layer.pipe(Layer.provideMerge(TestDatabase.layer));
+/** Every line logged while these tests run, as JSON. */
+const logged: Array<string> = [];
+const recordLogs = Logger.layer([
+  Logger.map(Logger.formatJson, (line) => {
+    logged.push(line);
+  }),
+]);
+
+const home = Layout.layer.pipe(
+  Layer.provideMerge(TestDatabase.layer),
+  Layer.provideMerge(recordLogs),
+);
 
 const digest = (text: string) => NodeCrypto.createHash("sha256").update(text).digest("hex");
 
@@ -125,25 +137,6 @@ it.effect("installs over a corrupt record, and writes a readable one", () =>
   }).pipe(Effect.provide(home)),
 );
 
-it.effect("grants nothing to a record put in the skill's own folder", () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const { file } = yield* shippedSkill;
-    const imported = "an imported skill under the shipped name";
-    yield* fs.makeDirectory(path.dirname(file), { recursive: true });
-    yield* fs.writeFileString(file, imported);
-    yield* fs.writeFileString(
-      path.join(path.dirname(file), ".j3-shipped.json"),
-      JSON.stringify({ sha256: [digest(imported)] }),
-    );
-
-    yield* SharedSkills.install();
-
-    assert.strictEqual(yield* fs.readFileString(file), imported);
-  }).pipe(Effect.provide(home)),
-);
-
 it.effect("keeps a SKILL.md that is a link, and never writes through it", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -200,5 +193,42 @@ it.effect("installs nothing while the shared skills are a file, and still starts
     yield* SharedSkills.install();
 
     assert.strictEqual(yield* fs.readFileString(folder), "not a folder");
+  }).pipe(Effect.provide(home)),
+);
+
+it.effect("keeps the skills and still starts when the record cannot be written", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const { shipped, record, file } = yield* shippedSkill;
+    // Installed before the server kept its record, with the shipped text.
+    yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+    yield* fs.writeFileString(file, shipped.text);
+    const state = path.dirname(record);
+    yield* fs.chmod(state, 0o500);
+    yield* Effect.addFinalizer(() => fs.chmod(state, 0o700).pipe(Effect.ignore));
+    logged.length = 0;
+
+    yield* SharedSkills.install();
+
+    assert.strictEqual(yield* fs.readFileString(file), shipped.text);
+    assert.isFalse(yield* fs.exists(record));
+    assert.isTrue(logged.some((line) => line.includes("the install stopped")));
+  }).pipe(Effect.scoped, Effect.provide(home)),
+);
+
+it.effect("names the state folder when it is not a folder", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const { record } = yield* shippedSkill;
+    const state = path.dirname(record);
+    yield* fs.remove(state, { recursive: true });
+    yield* fs.writeFileString(state, "not a folder");
+    logged.length = 0;
+
+    yield* SharedSkills.install();
+
+    assert.isTrue(logged.some((line) => line.includes(`${state} is not a folder`)));
   }).pipe(Effect.provide(home)),
 );

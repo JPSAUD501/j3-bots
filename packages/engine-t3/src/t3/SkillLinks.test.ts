@@ -1,15 +1,26 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// @effect-diagnostics nodeBuiltinImport:off -- a FIFO takes mkfifo.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as SecureRandom from "effect/crypto/SecureRandom";
-import { makePrivateFiles } from "./PrivateFiles.ts";
+import { makePrivateFiles, type PrivateFiles } from "./PrivateFiles.ts";
 import { linkSharedSkills } from "./SkillLinks.ts";
 
-const machine = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto);
+/** Every line logged while these tests run, as JSON. */
+const logged: Array<string> = [];
+const recordLogs = Logger.layer([
+  Logger.map(Logger.formatJson, (line) => {
+    logged.push(line);
+  }),
+]);
+
+const machine = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto, recordLogs);
 
 const skill = (name: string, description: string) =>
   `---\nname: ${name}\ndescription: ${description}\n---\n\nThe steps.\n`;
@@ -51,7 +62,8 @@ const setUp = Effect.gen(function* () {
       .readFileString(path.join(home, "skills", name, "SKILL.md"))
       .pipe(Effect.orElseSucceed(() => undefined));
   const record = path.join(root, "engine", "j3", "skill-links", "claude-code.json");
-  const link = () => linkSharedSkills({ files, home, shared, record });
+  const link = (through: PrivateFiles = files) =>
+    linkSharedSkills({ files: through, home, shared, record });
   /** Where each link in the home's skill folder leads, as the system resolves it. */
   const destinations = Effect.gen(function* () {
     const folder = path.join(home, "skills");
@@ -62,7 +74,20 @@ const setUp = Effect.gen(function* () {
     }
     return found;
   });
-  return { fs, path, root, outside, shared, home, files, addShared, listed, link, destinations };
+  return {
+    fs,
+    path,
+    root,
+    outside,
+    shared,
+    home,
+    files,
+    record,
+    addShared,
+    listed,
+    link,
+    destinations,
+  };
 });
 
 describe("linkSharedSkills", () => {
@@ -278,4 +303,44 @@ describe("linkSharedSkills", () => {
         }).pipe(Effect.scoped, Effect.provide(machine)),
     );
   });
+  it.effect("leaves the home as it is while its record is a FIFO, without opening it", () =>
+    Effect.gen(function* () {
+      const { fs, path, home, record, addShared, listed, link } = yield* setUp;
+      yield* addShared("j3-routines", "Routines");
+      yield* link();
+      yield* fs.makeDirectory(path.dirname(record), { recursive: true });
+      yield* fs.remove(record);
+      NodeChildProcess.execFileSync("mkfifo", [record]);
+      yield* addShared("expenses", "Expenses");
+      logged.length = 0;
+
+      yield* link();
+
+      assert.strictEqual((yield* fs.lstat(record)).type, "FIFO");
+      assert.strictEqual(yield* listed("j3-routines"), skill("j3-routines", "Routines"));
+      assert.isFalse(yield* fs.exists(path.join(home, "skills", "expenses")));
+      assert.isTrue(logged.some((line) => line.includes("is not a regular file")));
+    }).pipe(Effect.scoped, Effect.provide(machine)),
+  );
+
+  it.effect("records no link it was refused, so a link put there later stays", () =>
+    Effect.gen(function* () {
+      const { fs, path, outside, shared, home, files, link } = yield* setUp;
+      // Taken for private when it is checked, refused when the link is made.
+      yield* fs.symlink(outside, path.join(shared, "keys"));
+      yield* fs.writeFileString(path.join(outside, "SKILL.md"), skill("keys", "Elsewhere"));
+      yield* link({ ...files, contains: () => Effect.succeed(true) });
+      assert.isFalse(yield* fs.exists(path.join(home, "skills", "keys")));
+
+      // No longer shared, and the operator links the name by the path J3 Bots would have used.
+      yield* fs.remove(path.join(shared, "keys"));
+      const folder = path.join(home, "skills");
+      const target = path.relative(folder, path.join(shared, "keys"));
+      yield* fs.symlink(target, path.join(folder, "keys"));
+
+      yield* link();
+
+      assert.strictEqual(yield* fs.readLink(path.join(folder, "keys")), target);
+    }).pipe(Effect.scoped, Effect.provide(machine)),
+  );
 });

@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type { PrivateFiles } from "./PrivateFiles.ts";
 
@@ -20,8 +21,9 @@ const HARNESS_SKILLS = "skills";
 /** The file a harness reads in each skill's folder. */
 const SKILL_FILE = "SKILL.md";
 
-/** The links one provisioning made in a home's skill folder: each name, and what its link holds. */
+/** The links J3 Bots made in a home's skill folder: each name, and what its link holds. */
 const LinkRecord = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
+const noLinks = (): Record<string, string> => ({});
 const decodeRecord = Schema.decodeUnknownOption(LinkRecord);
 const encodeRecord = Schema.encodeEffect(LinkRecord);
 
@@ -74,6 +76,38 @@ const sharedSkillNames = Effect.fnUntraced(function* (shared: string) {
 });
 
 /**
+ * The links J3 Bots made in a home, as `record` holds them; `{}` when there is
+ * no record yet, or one that does not decode. `None`, with a warning, when the
+ * record is not a regular file (a link is never followed, a FIFO never
+ * opened) or its folder has left private state: then nothing J3 Bots made can
+ * be told from what the operator put there.
+ */
+const readRecord = Effect.fnUntraced(function* (files: PrivateFiles, record: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const unusable = (reason: string) =>
+    Effect.as(
+      Effect.logWarning(
+        `${record} ${reason}, so the links J3 Bots made cannot be told apart and the home's skills were left as they are. Move it aside.`,
+      ),
+      Option.none<Record<string, string>>(),
+    );
+  const path = yield* Path.Path;
+  if (!(yield* files.contains(path.dirname(record))))
+    return yield* unusable("has left private state");
+  return yield* fs.lstat(record).pipe(
+    Effect.flatMap((info) =>
+      info.type === "File"
+        ? Effect.map(fs.readFileString(record), (text) =>
+            Option.some(Option.getOrElse(decodeRecord(text), noLinks)),
+          )
+        : unusable("is not a regular file"),
+    ),
+    Effect.catchReason("PlatformError", "NotFound", () => Effect.succeedSome(noLinks())),
+    Effect.catchTag("PlatformError", (error) => unusable(`cannot be read (${error.message})`)),
+  );
+});
+
+/**
  * Lets a harness home list the shared skills: one link per skill in the
  * home's `skills` folder, `<name>` leading to `<shared>/<name>` by a relative
  * path from the folder's real path, so the links still hold if the data
@@ -81,26 +115,52 @@ const sharedSkillNames = Effect.fnUntraced(function* (shared: string) {
  * skill added to the shared folder or removed from it reaches the harness at
  * its next start.
  *
- * - The links made last time, as `record` names them, are removed first, each
- *   only while it is still a link holding what was recorded, and made again,
- *   so a skill no longer shared loses its link.
+ * - `record` names only the links J3 Bots made: a link is recorded once it
+ *   exists, and unrecorded before it is removed. A start cut short can leave
+ *   a link unrecorded, which is then the operator's, never a record of a link
+ *   J3 Bots did not make.
+ * - A recorded link that is still a link holding what was recorded, and still
+ *   leads where its skill is now, is kept as it is. One whose skill is no
+ *   longer shared, or now lives elsewhere, is removed.
  * - Nothing else in the home's `skills` (a skill of the home's own, Codex's
  *   `.system`, a link made by someone else) is ever removed or replaced, and
  *   no dot entry is touched. Anything already at a shared skill's name wins:
  *   the shared one is not linked under that name.
- * - Only a shared skill whose `SKILL.md` is a regular file is linked, and each
- *   link is made through `PrivateFiles.link`, so a shared skill whose folder
- *   leads out of private state is not linked; its refusal is logged.
- * - A home whose `skills` is not a folder of its own (a link, a file) is left
- *   as it is, with a warning, and no link is made or removed there.
+ * - Only a shared skill whose `SKILL.md` is a regular file, and whose folder,
+ *   links resolved, is in private state, is linked: one that leads out of it
+ *   is not linked, or loses its link, with a warning.
+ * - A home whose `skills` is not a folder of its own (a link, a file), or
+ *   whose record cannot be used, is left as it is, with a warning.
+ *
+ * Shared skills are a convenience, so this never fails: a write or removal
+ * that fails stops the linking in that home with a warning, after anything
+ * already linked is recorded.
  */
-export const linkSharedSkills = Effect.fnUntraced(function* (input: {
+export const linkSharedSkills = (input: {
   readonly files: PrivateFiles;
   /** The harness home. */
   readonly home: string;
   /** The folder of the skills every bot shares. */
   readonly shared: string;
   /** Where the links made in this home are recorded, in the adapter's own folder. */
+  readonly record: string;
+}) =>
+  linkInHome(input).pipe(
+    Effect.catchTags({
+      StorageExposed: (error) => warnStopped(input.home, error.message),
+      PlatformError: (error) => warnStopped(input.home, error.message),
+    }),
+  );
+
+const warnStopped = (home: string, reason: string) =>
+  Effect.logWarning(
+    `The shared skills could not be linked in ${home} (${reason}); what was already there was kept.`,
+  );
+
+const linkInHome = Effect.fnUntraced(function* (input: {
+  readonly files: PrivateFiles;
+  readonly home: string;
+  readonly shared: string;
   readonly record: string;
 }) {
   const fs = yield* FileSystem.FileSystem;
@@ -118,56 +178,92 @@ export const linkSharedSkills = Effect.fnUntraced(function* (input: {
   }
   yield* input.files.folder(folder);
 
-  const recorded = yield* fs.readFileString(input.record).pipe(
-    Effect.map((text) => Option.getOrElse(decodeRecord(text), () => ({}))),
-    Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed({})),
-    Effect.catchTag("PlatformError", (error) =>
-      Effect.as(
-        Effect.logWarning(
-          `${input.record} cannot be read (${error.message}), so no link made before was removed.`,
-        ),
-        {},
-      ),
-    ),
-  );
-  for (const [name, target] of Object.entries(recorded)) {
-    if (!isSkillName(path, name)) continue;
-    const entry = path.join(folder, name);
-    const isOurs = yield* fs.readLink(entry).pipe(
-      Effect.map((held) => held === target),
-      Effect.orElseSucceed(() => false),
-    );
-    if (isOurs) yield* input.files.unlink(entry);
-  }
+  const recorded = yield* readRecord(input.files, input.record);
+  if (Option.isNone(recorded)) return;
 
+  // Where each shared skill's link leads, from where the home's folder really is.
+  const wanted: Record<string, string> = {};
   const names = yield* sharedSkillNames(input.shared);
   // Gone since its names were read: nothing to link.
   const realShared = yield* fs.realPath(input.shared).pipe(Effect.option);
-  const realFolder = yield* fs.realPath(folder);
-  const planned: Record<string, string> = {};
-  for (const name of names) {
-    if (Option.isNone(realShared)) break;
-    const entry = path.join(folder, name);
-    const taken = yield* fs.lstat(entry).pipe(
-      Effect.as(true),
-      Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(false)),
-      // Whatever it is, it is not a link this made.
-      Effect.catchTag("PlatformError", () => Effect.succeed(true)),
-    );
-    if (taken) {
-      yield* Effect.logInfo(
-        `${entry} already exists and is not a link J3 Bots made, so the shared skill ${name} was not linked there.`,
-      );
-      continue;
+  if (Option.isSome(realShared)) {
+    const realFolder = yield* fs.realPath(folder);
+    for (const name of names) {
+      const skillFolder = path.join(realShared.value, name);
+      if (yield* input.files.contains(skillFolder)) {
+        wanted[name] = path.relative(realFolder, skillFolder);
+      } else {
+        yield* Effect.logWarning(
+          `${skillFolder} leads out of private state, so the shared skill ${name} was not linked.`,
+        );
+      }
     }
-    planned[name] = path.relative(realFolder, path.join(realShared.value, name));
   }
 
-  // Recorded before they are made, so a provisioning cut short still knows them.
-  yield* input.files.write(input.record, yield* encodeRecord(planned).pipe(Effect.orDie));
-  for (const [name, target] of Object.entries(planned)) {
-    yield* input.files
-      .link(path.join(folder, name), target)
-      .pipe(Effect.catchTag("StorageExposed", () => Effect.void));
+  // The recorded links still in place, as they were made: kept when still
+  // wanted as they are, removed otherwise.
+  const kept: Record<string, string> = {};
+  const stale: Array<string> = [];
+  for (const [name, target] of Object.entries(recorded.value)) {
+    if (!isSkillName(path, name)) continue;
+    const isOurs = yield* fs.readLink(path.join(folder, name)).pipe(
+      Effect.map((held) => held === target),
+      Effect.orElseSucceed(() => false),
+    );
+    if (!isOurs) continue;
+    if (wanted[name] === target) kept[name] = target;
+    else stale.push(name);
   }
+
+  // The shared skills to link: those not linked as they are, at a name nothing else holds.
+  const missing: Array<readonly [name: string, target: string]> = [];
+  for (const [name, target] of Object.entries(wanted)) {
+    if (name in kept) continue;
+    const entry = path.join(folder, name);
+    const free = stale.includes(name)
+      ? true
+      : yield* fs.lstat(entry).pipe(
+          Effect.andThen(
+            Effect.logInfo(
+              `${entry} already exists and is not a link J3 Bots made, so the shared skill ${name} was not linked there.`,
+            ),
+          ),
+          Effect.as(false),
+          Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(true)),
+          Effect.catchTag("PlatformError", (error) =>
+            Effect.as(
+              Effect.logWarning(
+                `${entry} cannot be read (${error.message}), so the shared skill ${name} was not linked there.`,
+              ),
+              false,
+            ),
+          ),
+        );
+    if (free) missing.push([name, target]);
+  }
+
+  const save = (links: Record<string, string>) =>
+    encodeRecord(links).pipe(
+      Effect.orDie,
+      Effect.flatMap((text) => input.files.write(input.record, text)),
+    );
+
+  // Unrecorded before they are removed, so a failed write removes nothing.
+  if (Object.keys(kept).length !== Object.keys(recorded.value).length) yield* save(kept);
+  for (const name of stale) yield* input.files.unlink(path.join(folder, name));
+
+  // Recorded once they exist: a link refused or failed leaves no entry, and
+  // the ones made before a failure are still recorded.
+  const made: Record<string, string> = { ...kept };
+  const linked = yield* Effect.forEach(
+    missing,
+    ([name, target]) =>
+      input.files.link(path.join(folder, name), target).pipe(
+        Effect.tap(() => Effect.sync(() => (made[name] = target))),
+        Effect.catchTag("StorageExposed", () => Effect.void),
+      ),
+    { discard: true },
+  ).pipe(Effect.result);
+  if (Object.keys(made).length !== Object.keys(kept).length) yield* save(made);
+  if (Result.isFailure(linked)) return yield* linked.failure;
 });
