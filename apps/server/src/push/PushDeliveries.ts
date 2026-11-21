@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { DeviceId, Language, LANGUAGES } from "@j3-bots/contracts";
 import { createI18n, type I18n, notificationText } from "@j3-bots/i18n";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -14,6 +15,7 @@ import { Ids } from "../Ids.ts";
 import { timeText } from "../persistence/columns.ts";
 import type { Recipients } from "../presence/Presence.ts";
 import { Signals } from "../turns/Signals.ts";
+import { failureTag } from "./failureTag.ts";
 
 /**
  * How long a push may wait to be handed to the push service. Past that, what
@@ -24,14 +26,16 @@ const SEND_WINDOW = Duration.hours(1);
 const Name = Schema.Struct({ name: Schema.String });
 
 const Registered = Schema.Struct({ device_id: DeviceId, language: Language });
+const decodeRegistered = Schema.decodeUnknownEffect(Registered);
 
 /**
  * The pushes to make (`docs/architecture/server.md`, Notifications). Each
  * device to push an entry's notification to gets one delivery, written in the
  * transaction that adds the entry and worded then, in the language the device
  * registered with: the push says what the operator's settings allowed at that
- * moment, a preview included only if they allowed previews. The delivery
- * worker (`PushWorker`) sends them.
+ * moment, a preview included only if they allowed previews, and keeps the
+ * same words without the preview for a send made after previews were turned
+ * off. The delivery worker (`PushWorker`) sends them.
  */
 export class PushDeliveries extends Context.Service<
   PushDeliveries,
@@ -39,7 +43,9 @@ export class PushDeliveries extends Context.Service<
     /**
      * Writes a delivery for each device to push of `recipients`, through the
      * current transaction, and nudges the worker once it commits. None for a
-     * bot or room that has no name to show.
+     * bot or room that has no name to show, nor for a registration that cannot
+     * be read. Never fails: a push that cannot be written is logged, and the
+     * entry is added without it.
      */
     readonly record: (recipients: Recipients) => Effect.Effect<void>;
   }
@@ -65,45 +71,79 @@ export const layer = Layer.effect(
       Result: Name,
       execute: (id) => sql`SELECT name FROM rooms WHERE id = ${id}`,
     });
-    const registrations = SqlSchema.findAll({
-      Request: Schema.Array(DeviceId),
-      Result: Registered,
-      execute: (devices) => sql`
-        SELECT device_id, language FROM push_registrations WHERE ${sql.in("device_id", devices)}
-      `,
-    });
 
-    const record = Effect.fn("PushDeliveries.record")(function* (recipients: Recipients) {
-      if (recipients.push.length === 0) return;
-      const { notification } = recipients;
-      const bot = yield* botName(notification.botId);
-      const { target } = notification;
-      const room = target._tag === "room" ? yield* roomName(target.roomId) : Option.none();
-      const names = {
-        botName: () => Option.getOrNull(Option.map(bot, ({ name }) => name)),
-        roomName: () => Option.getOrNull(Option.map(room, ({ name }) => name)),
-      };
-      const now = yield* DateTime.now;
-      const at = timeText(now);
-      const deadline = timeText(DateTime.addDuration(now, SEND_WINDOW));
-      let written = false;
-      for (const { device_id: deviceId, language } of yield* registrations(recipients.push)) {
-        const catalog = catalogs.get(language);
-        if (catalog === undefined) return yield* Effect.die("Every language has a catalog");
-        const text = notificationText(notification, names, catalog);
-        if (text === null) continue;
-        yield* sql`
-            INSERT INTO push_deliveries (
-              id, entry_id, device_id, status, title, body, due_at, deadline_at, created_at
-            ) VALUES (
-              ${yield* ids.make("push")}, ${notification.entryId}, ${deviceId}, 'pending',
-              ${text.title}, ${text.body}, ${at}, ${deadline}, ${at}
-            )
-          `;
-        written = true;
-      }
-      if (written) yield* sql.afterCommit(signals.push.fire);
-    }, Effect.orDie);
+    const record = Effect.fn("PushDeliveries.record")(
+      function* (recipients: Recipients) {
+        if (recipients.push.length === 0) return;
+        const { notification } = recipients;
+        const bot = yield* botName(notification.botId);
+        const { target } = notification;
+        const room = target._tag === "room" ? yield* roomName(target.roomId) : Option.none();
+        const names = {
+          botName: () => Option.getOrNull(Option.map(bot, ({ name }) => name)),
+          roomName: () => Option.getOrNull(Option.map(room, ({ name }) => name)),
+        };
+        const now = yield* DateTime.now;
+        const at = timeText(now);
+        const deadline = timeText(DateTime.addDuration(now, SEND_WINDOW));
+        // Read one by one, so a registration that cannot be read is skipped alone.
+        const registrations = yield* sql`
+        SELECT device_id, language FROM push_registrations
+        WHERE ${sql.in("device_id", recipients.push)}
+      `;
+        let written = false;
+        for (const row of registrations) {
+          const registered = yield* decodeRegistered(row).pipe(Effect.option);
+          const catalog = Option.flatMap(registered, ({ language }) =>
+            Option.fromNullishOr(catalogs.get(language)),
+          );
+          if (Option.isNone(registered) || Option.isNone(catalog)) {
+            yield* Effect.logWarning(
+              "A push registration cannot be read; it is not pushed to",
+            ).pipe(
+              Effect.annotateLogs({
+                entryId: notification.entryId,
+                deviceId: typeof row["device_id"] === "string" ? row["device_id"] : null,
+              }),
+            );
+            continue;
+          }
+          const text = notificationText(notification, names, catalog.value);
+          if (text === null) continue;
+          const plain =
+            notification.preview === null
+              ? text
+              : notificationText({ ...notification, preview: null }, names, catalog.value);
+          if (plain === null) continue;
+          yield* sql`
+          INSERT INTO push_deliveries (
+            id, entry_id, device_id, status, title, body, plain_body, due_at, deadline_at,
+            created_at
+          ) VALUES (
+            ${yield* ids.make("push")}, ${notification.entryId}, ${registered.value.device_id},
+            'pending', ${text.title}, ${text.body}, ${plain.body}, ${at}, ${deadline}, ${at}
+          )
+        `;
+          if (!written) yield* sql.afterCommit(signals.push.fire);
+          written = true;
+        }
+      },
+      (record, recipients) =>
+        record.pipe(
+          Effect.orDie,
+          // Pushes never cost the entry they are about.
+          Effect.catchCauseIf(
+            (cause) => !Cause.hasInterruptsOnly(cause),
+            (cause) =>
+              Effect.logError("The pushes for an entry could not be written").pipe(
+                Effect.annotateLogs({
+                  entryId: recipients.notification.entryId,
+                  failure: failureTag(cause),
+                }),
+              ),
+          ),
+        ),
+    );
 
     return PushDeliveries.of({ record });
   }),

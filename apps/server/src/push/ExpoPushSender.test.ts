@@ -4,7 +4,9 @@ import { type BotId, CommandId, type DeviceId, type Language, PushToken } from "
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as TestClock from "effect/testing/TestClock";
@@ -15,6 +17,7 @@ import { Entries } from "../entries/Entries.ts";
 import { SettingsService } from "../settings/SettingsService.ts";
 import * as TestDomain from "../testing/domain.ts";
 import * as ExpoPushSender from "./ExpoPushSender.ts";
+import { PushReceiptId, PushSender } from "./PushSender.ts";
 import { PushWorker, RECEIPT_DELAY, sendBackoff } from "./PushWorker.ts";
 
 /** A message as it reached Expo. */
@@ -40,6 +43,12 @@ interface Answer {
 
 const taken = (id: string): Answer => ({ status: 200, body: { data: [{ status: "ok", id }] } });
 
+const refused = (error: string) => ({
+  status: "error",
+  message: "fictional message that would quote the token",
+  details: { error },
+});
+
 const notRegistered = {
   status: "error",
   message: "fictional message that would quote the token",
@@ -60,6 +69,8 @@ class ExpoWire extends Context.Service<
     send: (message: Sent, n: number) => Answer | undefined;
     /** The receipt of `id`; `undefined` reports it handed on. */
     receipt: (id: string) => unknown;
+    /** The answer to the `n`th request for receipts; `undefined` answers each id. */
+    asking: (n: number) => Answer | undefined;
   }
 >()("@j3-bots/server/push/ExpoPushSender.test/ExpoWire") {}
 
@@ -70,6 +81,7 @@ const wire = Layer.effectContext(
       asked: [],
       send: () => undefined,
       receipt: () => undefined,
+      asking: () => undefined,
     });
     const client = HttpClient.make((request, url) =>
       Effect.sync(() => {
@@ -85,6 +97,8 @@ const wire = Layer.effectContext(
           }
           const { ids } = decodeAsked(text);
           state.asked.push(ids);
+          const asking = state.asking(state.asked.length);
+          if (asking !== undefined) return asking;
           return {
             status: 200,
             body: {
@@ -151,6 +165,43 @@ const says = (botId: BotId, text: string) =>
 const deliverPending = Effect.gen(function* () {
   yield* (yield* PushWorker).deliverPending;
 });
+
+const register = (deviceId: DeviceId, name: string, n: number) =>
+  Effect.gen(function* () {
+    const devices = yield* Devices;
+    yield* devices.registerPush({
+      commandId: CommandId.make(`register-again-${n}`),
+      deviceId,
+      registration: {
+        provider: "expo",
+        token: PushToken.make(`ExponentPushToken[fixture-${name}]`),
+        platform: "android",
+        language: "en",
+      },
+    });
+  });
+
+const failuresOf = (deviceId: DeviceId) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql<{ readonly failures: number }>`
+      SELECT failures FROM push_registrations WHERE device_id = ${deviceId}
+    `;
+    return rows[0]?.failures;
+  });
+
+const pending = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  return yield* sql<{ readonly id: string }>`SELECT id FROM push_deliveries`;
+});
+
+/** Every line logged where `recordLogs` is provided, as JSON. */
+const logged: Array<string> = [];
+const recordLogs = Logger.layer([
+  Logger.map(Logger.formatJson, (line) => {
+    logged.push(line);
+  }),
+]);
 
 const pushOn = (deviceId: DeviceId) =>
   Effect.gen(function* () {
@@ -261,4 +312,92 @@ it.effect(
       );
       assert.notInclude(JSON.stringify(expo.sends.slice(0, 2)), "launch codes");
     }).pipe(Effect.provide(domain)),
+);
+
+it.effect(
+  "keeps a registration made again after a send when that send's receipt says the device is gone or failed",
+  () =>
+    Effect.gen(function* () {
+      const expo = yield* ExpoWire;
+      const scout = yield* createBot("Scout");
+      const phone = yield* pushDevice("Phone");
+      const tablet = yield* pushDevice("Tablet");
+      expo.send = (message, n) =>
+        taken(message.to === "ExponentPushToken[fixture-Phone]" ? `phone-${n}` : `tablet-${n}`);
+      expo.receipt = (id) => (id.startsWith("phone-") ? notRegistered : refused("MessageTooBig"));
+
+      yield* says(scout.id, "Done");
+      yield* deliverPending;
+      // Both register again, with the same tokens, before the receipts are read.
+      yield* TestClock.adjust("1 minute");
+      yield* register(phone, "Phone", 1);
+      yield* register(tablet, "Tablet", 2);
+      yield* TestClock.adjust(RECEIPT_DELAY);
+      yield* deliverPending;
+
+      assert.deepStrictEqual(yield* pending, []);
+      assert.isTrue(yield* pushOn(phone));
+      assert.strictEqual(yield* failuresOf(tablet), 0);
+    }).pipe(Effect.provide(domain)),
+);
+
+it.effect(
+  "sends again when Expo's ticket says too many went to the device, and drops a receipt that says so",
+  () =>
+    Effect.gen(function* () {
+      const expo = yield* ExpoWire;
+      const scout = yield* createBot("Scout");
+      const phone = yield* pushDevice("Phone");
+      expo.send = (_, n) =>
+        n === 1 ? { status: 200, body: { data: [refused("MessageRateExceeded")] } } : undefined;
+      expo.receipt = () => refused("MessageRateExceeded");
+
+      yield* says(scout.id, "Done");
+      yield* deliverPending;
+      yield* TestClock.adjust(sendBackoff(1));
+      yield* deliverPending;
+      assert.strictEqual(expo.sends.length, 2);
+
+      yield* TestClock.adjust(RECEIPT_DELAY);
+      yield* deliverPending;
+      // Its words are gone, so it is not sent again, and the device is not counted as failing.
+      assert.deepStrictEqual(yield* pending, []);
+      assert.strictEqual(expo.sends.length, 2);
+      assert.strictEqual(yield* failuresOf(phone), 0);
+    }).pipe(Effect.provide(domain)),
+);
+
+it.effect("logs an error Expo does not document by a fixed reason, never by what Expo sent", () =>
+  Effect.gen(function* () {
+    const expo = yield* ExpoWire;
+    const scout = yield* createBot("Scout");
+    yield* pushDevice("Phone");
+    expo.send = () => ({
+      status: 200,
+      body: { data: [refused("Fictional ExponentPushToken[fixture-Phone]")] },
+    });
+
+    yield* says(scout.id, "Done");
+    yield* deliverPending;
+
+    const lines = logged.join("\n");
+    assert.include(lines, "A push was not delivered");
+    assert.include(lines, "undocumented error");
+    assert.notInclude(lines, "fixture-Phone");
+  }).pipe(Effect.provide(Layer.provideMerge(domain, recordLogs))),
+);
+
+it.effect("keeps the receipts Expo answered when a later request for others fails", () =>
+  Effect.gen(function* () {
+    const expo = yield* ExpoWire;
+    const sender = yield* PushSender;
+    expo.asking = (n) => (n === 2 ? { status: 503, body: {} } : undefined);
+    const ids = Array.from({ length: 1001 }, (_, n) => PushReceiptId.make(`receipt-${n}`));
+
+    const answers = yield* sender.receipts(ids);
+
+    assert.strictEqual(expo.asked.length, 2);
+    assert.strictEqual(answers.size, 1000);
+    assert.isUndefined(answers.get(PushReceiptId.make("receipt-1000")));
+  }).pipe(Effect.provide(ExpoPushSender.layer.pipe(Layer.provideMerge(wire)))),
 );

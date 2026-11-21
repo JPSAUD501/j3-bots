@@ -41,7 +41,11 @@ export interface PushMessage {
   };
 }
 
-/** The service could not be reached or asked to come back later: the same send may work later. */
+/**
+ * The service could not be reached, or asked to come back later, for this
+ * message or for every one: the same send may work later. `reason` is one the
+ * sender chose, never text the service sent.
+ */
 export class PushUnavailable extends Schema.TaggedError<PushUnavailable>()("PushUnavailable", {
   reason: Schema.String,
 }) {}
@@ -52,7 +56,10 @@ export class PushUnregistered extends Schema.TaggedError<PushUnregistered>()(
   {},
 ) {}
 
-/** The service refused the message for good: sending it again would fail the same way. */
+/**
+ * The service refused the message for good: sending it again would fail the
+ * same way. `reason` is one the sender chose, never text the service sent.
+ */
 export class PushRejected extends Schema.TaggedError<PushRejected>()("PushRejected", {
   reason: Schema.String,
 }) {}
@@ -62,6 +69,11 @@ export type PushReceipt =
   /** Handed to Apple's or Google's service. */
   | { readonly _tag: "delivered" }
   | { readonly _tag: "unregistered" }
+  /**
+   * Not handed on because too many went to the device at once. Its words are
+   * gone, so it is not sent again; nor does it say the device is unreachable.
+   */
+  | { readonly _tag: "throttled" }
   | { readonly _tag: "rejected"; readonly reason: string };
 
 /**
@@ -83,10 +95,11 @@ export class PushSender extends Context.Service<
     ) => Effect.Effect<PushReceiptId | null, PushUnavailable | PushUnregistered | PushRejected>;
     /**
      * What became of messages the service took. A receipt the service has no
-     * answer for yet is left out.
+     * answer for yet, or that could not be asked for now, is left out: the
+     * answers it did give stand on their own.
      */
     readonly receipts: (
       ids: ReadonlyArray<PushReceiptId>,
-    ) => Effect.Effect<ReadonlyMap<PushReceiptId, PushReceipt>, PushUnavailable>;
+    ) => Effect.Effect<ReadonlyMap<PushReceiptId, PushReceipt>>;
   }
 >()("@j3-bots/server/push/PushSender") {}

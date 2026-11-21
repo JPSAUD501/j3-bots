@@ -37,7 +37,36 @@ const REQUEST_TIMEOUT = Duration.seconds(30);
  */
 const TIME_TO_LIVE_SECONDS = 24 * 60 * 60;
 
-/** Why Expo refused a message or a request, when it says. */
+/**
+ * The error codes Expo documents for one message, in its ticket or its
+ * receipt. Any other code is logged as undocumented: what Expo sends is never
+ * logged as it came, since its text could quote a push token.
+ */
+const MessageError = Schema.Literals([
+  "DeviceNotRegistered",
+  "MessageTooBig",
+  "MessageRateExceeded",
+  "MismatchSenderId",
+  "InvalidCredentials",
+]);
+type MessageError = typeof MessageError.Type;
+const isMessageError = Schema.is(MessageError);
+
+/** The error codes Expo documents for a request it refused as a whole. */
+const isRequestError = Schema.is(
+  Schema.Literals([
+    "TOO_MANY_REQUESTS",
+    "PUSH_TOO_MANY_EXPERIENCE_IDS",
+    "PUSH_TOO_MANY_NOTIFICATIONS",
+    "PUSH_TOO_MANY_RECEIPTS",
+    "UNAUTHORIZED",
+  ]),
+);
+
+/** The reason logged for a code Expo does not document, or no code. */
+const UNDOCUMENTED = "undocumented error";
+
+/** Why Expo refused a message, when it says. */
 const ErrorDetails = Schema.optional(Schema.Struct({ error: Schema.optional(Schema.String) }));
 
 const Ticket = Schema.Union([
@@ -59,11 +88,11 @@ const RequestErrors = Schema.Struct({
   errors: Schema.Array(Schema.Struct({ code: Schema.String })),
 });
 
-/**
- * Expo's error code, never its message: a message can quote the push token,
- * which is kept out of the logs.
- */
-const codeOf = (details: typeof ErrorDetails.Type): string => details?.error ?? "unknown";
+/** Expo's documented code for a message's error, if it gave one. */
+const codeOf = (details: typeof ErrorDetails.Type): MessageError | null => {
+  const code = details?.error;
+  return code !== undefined && isMessageError(code) ? code : null;
+};
 
 /**
  * The message as Expo takes it. A send that may be repeated replaces, rather
@@ -104,8 +133,11 @@ const post = <A>(
     }
     if (response.status !== 200) {
       const code = yield* HttpClientResponse.schemaBodyJson(RequestErrors)(response).pipe(
-        Effect.map(({ errors }) => errors[0]?.code ?? "unknown"),
-        Effect.orElseSucceed(() => "unknown"),
+        Effect.map(({ errors }) => {
+          const first = errors[0]?.code;
+          return first !== undefined && isRequestError(first) ? first : UNDOCUMENTED;
+        }),
+        Effect.orElseSucceed(() => UNDOCUMENTED),
       );
       return yield* new PushRejected({ reason: `HTTP ${response.status}: ${code}` });
     }
@@ -123,6 +155,20 @@ const post = <A>(
     }),
   );
 
+/** What one receipt says, in the sender's terms. */
+const receiptOf = (receipt: typeof Receipt.Type): PushReceipt => {
+  if (receipt.status === "ok") return { _tag: "delivered" };
+  const code = codeOf(receipt.details);
+  switch (code) {
+    case "DeviceNotRegistered":
+      return { _tag: "unregistered" };
+    case "MessageRateExceeded":
+      return { _tag: "throttled" };
+    default:
+      return { _tag: "rejected", reason: code ?? UNDOCUMENTED };
+  }
+};
+
 export const layer = Layer.effect(
   PushSender,
   Effect.gen(function* () {
@@ -134,8 +180,15 @@ export const layer = Layer.effect(
       } = yield* post(client, SEND_URL, [expoMessage(message)], SendResponse);
       if (ticket.status === "ok") return ticket.id;
       const code = codeOf(ticket.details);
-      if (code === "DeviceNotRegistered") return yield* new PushUnregistered();
-      return yield* new PushRejected({ reason: code });
+      switch (code) {
+        case "DeviceNotRegistered":
+          return yield* new PushUnregistered();
+        case "MessageRateExceeded":
+          // Too many to this device just now: the same send may pass later.
+          return yield* new PushUnavailable({ reason: code });
+        default:
+          return yield* new PushRejected({ reason: code ?? UNDOCUMENTED });
+      }
     });
 
     const receipts = Effect.fn("ExpoPushSender.receipts")(function* (
@@ -144,26 +197,23 @@ export const layer = Layer.effect(
       const found = new Map<PushReceiptId, PushReceipt>();
       for (let start = 0; start < ids.length; start += RECEIPTS_PER_REQUEST) {
         const chunk = ids.slice(start, start + RECEIPTS_PER_REQUEST);
-        const { data } = yield* post(client, RECEIPTS_URL, { ids: chunk }, ReceiptsResponse).pipe(
-          // A request's own refusal is no answer about any message in it.
-          Effect.catchTag("PushRejected", (rejected) =>
-            Effect.fail(new PushUnavailable({ reason: rejected.reason })),
-          ),
+        const answered = yield* post(client, RECEIPTS_URL, { ids: chunk }, ReceiptsResponse).pipe(
+          Effect.result,
         );
+        if (answered._tag === "Failure") {
+          // No answer about any message in it, a refusal of the request
+          // included: they are asked about again, and the other chunks'
+          // answers stand.
+          yield* Effect.logInfo("Push receipts could not be read; they are asked for again").pipe(
+            Effect.annotateLogs({ reason: answered.failure.reason, receipts: chunk.length }),
+          );
+          continue;
+        }
+        const { data } = answered.success;
         for (const id of chunk) {
           const receipt = data[id];
           if (receipt === undefined) continue;
-          if (receipt.status === "ok") {
-            found.set(id, { _tag: "delivered" });
-            continue;
-          }
-          const code = codeOf(receipt.details);
-          found.set(
-            id,
-            code === "DeviceNotRegistered"
-              ? { _tag: "unregistered" }
-              : { _tag: "rejected", reason: code },
-          );
+          found.set(id, receiptOf(receipt));
         }
       }
       return found;
