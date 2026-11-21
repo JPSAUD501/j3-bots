@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vite-plus/test";
-import { at, context, plain } from "@j3-bots/client-runtime/testing";
-import { scheduleInWords } from "./schedule";
+import { at, context, plain } from "../../test/fixtures.ts";
+import { scheduleInWords } from "./schedule.ts";
 
 const en = context("2026-11-20T17:40:00Z");
 const words = (cron: string, ctx = en, timeZone = "America/Sao_Paulo") => {

@@ -84,6 +84,7 @@ export const en = {
   "message.retry.to": "Send to {names}",
 
   "file.open": "Open {name}",
+  "file.opening": "Opening…",
   "file.kindAndSize": "{kind} · {size}",
 
   "question.title": "Question",
@@ -446,6 +447,7 @@ export const en = {
 
   "file.gone": "{name} is no longer on the server.",
   "file.unreachable": "{name} couldn’t be opened. Check the connection and try again.",
+  "file.cannotOpen": "{name} couldn’t be opened on this phone.",
 
   "connection.offline": "You’re offline. What you send goes out when you’re back.",
   "connection.reconnecting": "Reconnecting…",

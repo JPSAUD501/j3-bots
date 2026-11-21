@@ -23,8 +23,12 @@ export const reserveWindow = (attachment: Attachment): Window | null =>
  * Shows a file the browser can show in the window reserved for it, and saves
  * any other, or any the browser kept from opening a window.
  */
-export function deliverFile(attachment: Attachment, body: Blob, reserved: Window | null) {
-  const typed = new Blob([body], {
+export function deliverFile(
+  attachment: Attachment,
+  bytes: Uint8Array<ArrayBuffer>,
+  reserved: Window | null,
+) {
+  const typed = new Blob([bytes], {
     type: SHOWN.has(attachment.mediaType) ? attachment.mediaType : "application/octet-stream",
   });
   const url = URL.createObjectURL(typed);
