@@ -57,6 +57,7 @@ import {
 } from "./model.ts";
 import { type NoticeRetry, notices } from "./notices.ts";
 import { endingOf, sessionLoss, sessionRecords } from "./sessionRecords.ts";
+import { rotationRequests } from "./rotationRequests.ts";
 import { Signals } from "./Signals.ts";
 import { stopTargets } from "./stopTargets.ts";
 import { Wakes } from "./Wakes.ts";
@@ -108,6 +109,8 @@ const reopenAfter = (failures: number) =>
 interface Following {
   readonly _tag: "open";
   readonly opened: Deferred.Deferred<void>;
+  /** Completed by `close`: the stream ends, and is not opened again. */
+  readonly closed: Deferred.Deferred<void>;
   readonly caughtUp: Deferred.Deferred<void, NotObserved>;
   readonly tokens: Map<SyncToken, Deferred.Deferred<Synchronized, NotObserved>>;
 }
@@ -164,7 +167,8 @@ const changesWork = (event: SessionEvent): boolean => {
 };
 
 const SessionNow = Schema.Struct({
-  lost: Schema.BooleanFromBit,
+  /** Lost, or archived by the engine once J3 Bots retired it: nothing of it is applied. */
+  ended: Schema.BooleanFromBit,
   busy: Schema.BooleanFromBit,
 });
 
@@ -200,6 +204,11 @@ interface TurnEnd {
    * lists the continuation as pending, but the chain went on.
    */
   readonly continued: boolean;
+  /**
+   * The engine could not resume the provider's conversation and ran the turn
+   * in a fresh one: the session is due for rotation.
+   */
+  readonly contextRecovered: boolean;
   readonly at: DateTime.Utc;
 }
 
@@ -230,6 +239,12 @@ export class Observer extends Context.Service<
     /** Follows every session that is live or still has work to settle. */
     readonly watchAll: Effect.Effect<void>;
     /**
+     * Stops following a session the engine took out of use: its stream ends,
+     * and nothing opens it again, since a session retired in the engine is no
+     * longer one to watch.
+     */
+    readonly close: (sessionId: SessionRowId) => Effect.Effect<void>;
+    /**
      * Returns once every event the engine had recorded for the session when it
      * was called has been applied. Fails with `NotObserved`, to be retried,
      * when the stream closes first or the deadline passes.
@@ -258,6 +273,7 @@ export const layer = Layer.effect(
     const stops = stopTargets(sql);
     const { notify } = notices(sql, entries);
     const { sessionLost } = sessionLoss(sql, entries, ledger, workSteps, signals);
+    const { requestRotation } = rotationRequests(sql, signals);
     const { finishFold, closeCard } = sessionRecords(sql, entries, workSteps);
 
     /**
@@ -283,6 +299,7 @@ export const layer = Layer.effect(
       execute: (id) => sql`
         SELECT id, bot_id, engine_session_id, events_cursor FROM sessions
         WHERE id = ${id} AND engine_session_id IS NOT NULL AND lost_at IS NULL
+          AND engine_retired_at IS NULL
       `,
     });
 
@@ -291,7 +308,8 @@ export const layer = Layer.effect(
       Result: Schema.Struct({ id: SessionRowId }),
       execute: () => sql`
         SELECT s.id FROM sessions s
-        WHERE s.engine_session_id IS NOT NULL AND s.lost_at IS NULL AND (
+        WHERE s.engine_session_id IS NOT NULL AND s.lost_at IS NULL
+          AND s.engine_retired_at IS NULL AND (
           s.retired_at IS NULL
           OR EXISTS (SELECT 1 FROM stop_targets t WHERE t.session_id = s.id AND t.stopped_at IS NULL)
           OR EXISTS (SELECT 1 FROM turns t WHERE t.session_id = s.id AND t.finished_at IS NULL)
@@ -325,7 +343,8 @@ export const layer = Layer.effect(
       Request: SessionRowId,
       Result: SessionNow,
       execute: (sessionId) => sql`
-        SELECT lost_at IS NOT NULL AS lost, busy_until IS NOT NULL AS busy
+        SELECT lost_at IS NOT NULL OR engine_retired_at IS NOT NULL AS ended,
+          busy_until IS NOT NULL AS busy
         FROM sessions WHERE id = ${sessionId}
       `,
     });
@@ -619,6 +638,14 @@ export const layer = Layer.effect(
           yield* finishFold(turn.value.work_fold_entry_id, end.outcome, end.at);
         }
       }
+      // The provider's conversation could not be resumed: the bot's main
+      // session is replaced once it is idle, with a digest of its own. Any
+      // turn's end may also have made a session due for rotation idle, or
+      // brought it to its run limit.
+      if (end.contextRecovered) {
+        yield* requestRotation(session.id, "context-recovered");
+      }
+      yield* sql.afterCommit(signals.rotations.fire);
       yield* sql`
         UPDATE sessions SET admitted_turn_id = NULL, admitted_audience = NULL,
           admitted_room_id = NULL
@@ -987,6 +1014,7 @@ export const layer = Layer.effect(
           backgroundWork: turn.backgroundWork,
           continuation: turn.continuation,
           continued: continued.has(turn.turnId),
+          contextRecovered: turn.contextRecovered,
           at: turn.finishedAt,
         });
       }
@@ -1020,6 +1048,7 @@ export const layer = Layer.effect(
           backgroundWork: false,
           continuation: null,
           continued: false,
+          contextRecovered: false,
           at: event.at,
         });
       }
@@ -1082,7 +1111,7 @@ export const layer = Layer.effect(
         case "replaced":
           return yield* replaced(session, event);
         case "turn-started":
-          return yield* startTurn(session, event.turnId, event.cause, event.at);
+          return yield* startTurn(session, event.turnId, event.cause, event.startedAt);
         case "turn-queued":
           return yield* queuedTurn(session, event.turnId, event.cause);
         case "steered":
@@ -1117,7 +1146,8 @@ export const layer = Layer.effect(
             backgroundWork: event.backgroundWork,
             continuation: event.continuation,
             continued: false,
-            at: event.at,
+            contextRecovered: event.contextRecovered,
+            at: event.finishedAt,
           });
         case "continuation-dropped":
           return yield* continuationDropped(session, event.turnId);
@@ -1140,8 +1170,9 @@ export const layer = Layer.effect(
 
     /**
      * One event and its cursor, in one transaction, unless the session was
-     * recorded lost meanwhile: then nothing more of its stream is applied, and
-     * this says to stop reading it. Once an event commits the session's state
+     * recorded lost, or archived, meanwhile: what is open there was settled
+     * then, so nothing more of its stream is applied, and this says to stop
+     * reading it. Once an event commits the session's state
      * is known from here: it is marked ready before the change is published,
      * so whoever sees the change finds the session ready. A busy refusal's
      * deadline ends with it. Only then are the workers nudged, and only when
@@ -1160,7 +1191,7 @@ export const layer = Layer.effect(
       const applied = yield* transaction(
         Effect.gen(function* () {
           const now = yield* sessionNow(session.id);
-          if (now.lost) return null;
+          if (now.ended) return null;
           yield* applyEvent(session, follow, event);
           yield* sql`
             UPDATE sessions SET events_cursor = ${event.cursor}, busy_until = NULL,
@@ -1182,6 +1213,8 @@ export const layer = Layer.effect(
       const work = changesWork(event);
       if (work || applied.busyEnded || !wasReady) yield* signals.dispatch.fire;
       if (work) yield* signals.stops.fire;
+      // A session due for rotation is replaced only once its events are known.
+      if (!wasReady) yield* signals.rotations.fire;
       return true;
     });
 
@@ -1341,8 +1374,9 @@ export const layer = Layer.effect(
       // one, the first `replaced` does once it is applied.
       if (session.events_cursor !== null) yield* Deferred.succeed(follow.caughtUp, undefined);
       yield* Stream.fromPull(Effect.succeed(pull)).pipe(
-        // Read until the session is recorded lost: what is buffered after
-        // that is never applied.
+        Stream.interruptWhen(Deferred.await(follow.closed)),
+        // Read until the session is recorded lost or archived: what is
+        // buffered after that is never applied.
         Stream.runForEachWhile((event) => apply(session, follow, event)),
         Effect.onExit((exit) =>
           ended(session, follow, exit).pipe(Effect.ensuring(Scope.close(streamScope, Exit.void))),
@@ -1361,6 +1395,7 @@ export const layer = Layer.effect(
         const follow: Following = {
           _tag: "open",
           opened: Deferred.makeUnsafe<void>(),
+          closed: Deferred.makeUnsafe<void>(),
           caughtUp: Deferred.makeUnsafe<void, NotObserved>(),
           tokens: new Map(),
         };
@@ -1390,6 +1425,16 @@ export const layer = Layer.effect(
       if (Option.isNone(caughtUp)) return false;
       return Exit.isSuccess(yield* Effect.exit(caughtUp.value));
     });
+
+    const close = (sessionId: SessionRowId) =>
+      Effect.suspend(() => {
+        const current = following.get(sessionId);
+        following.delete(sessionId);
+        failures.delete(sessionId);
+        behind.delete(sessionId);
+        shown.delete(sessionId);
+        return current?._tag === "open" ? Deferred.succeed(current.closed, undefined) : Effect.void;
+      }).pipe(Effect.asVoid, Effect.withSpan("Observer.close"));
 
     const watchAll = Effect.gen(function* () {
       for (const { id } of yield* sessionsToWatch(undefined).pipe(Effect.orDie)) yield* watch(id);
@@ -1427,6 +1472,7 @@ export const layer = Layer.effect(
     return Observer.of({
       watch,
       ready,
+      close,
       watchAll,
       synchronize,
     });

@@ -72,6 +72,7 @@ import { isIdle, sessionWork } from "./sessionWork.ts";
 import { Observer } from "./Observer.ts";
 import { Readiness } from "./Readiness.ts";
 import { DEFECT_RETRY, type Pass, onePassAtATime, passOutcome, reconcile } from "./reconciler.ts";
+import { takesNewWorkSql } from "./rotationRequests.ts";
 import { Signals } from "./Signals.ts";
 import { Wakes } from "./Wakes.ts";
 
@@ -149,6 +150,18 @@ const userWake = (
   if (answer !== null) return { ...wake, answer, messages } satisfies Wake;
   if (first === undefined) return null;
   return { ...wake, answer: null, messages: [first, ...rest] } satisfies Wake;
+};
+
+/** A catch-up note as an envelope shows it. */
+const catchUpItem = (note: CatchUpNote): CatchUpItem => {
+  switch (note._tag) {
+    case "routine-delivered":
+      return { type: "routine-delivered", routine: note.routine, at: note.at, text: note.text };
+    case "profile-changed":
+      return { type: "profile-changed", changes: note.changes };
+    case "session-rotated":
+      return { type: "session-rotated", digest: note.digest };
+  }
 };
 
 /** One planned dispatch: the wakes it carries, into which session, and how. */
@@ -494,8 +507,11 @@ export const layer = Layer.effect(
 
     /**
      * The bot's main session, if it can be planned into: live, opened in the
-     * engine, and past the deadline of a busy refusal, which its next applied
-     * event ends sooner.
+     * engine, running its bot's settings (`EngineSessions`), taking new work
+     * (`takesNewWorkSql`), and past the deadline of a busy refusal, which its
+     * next applied event ends sooner. A session due for any rotation but the
+     * run limit's takes nothing new: its bot's wakes wait for the session that
+     * replaces it. One not aligned yet takes nothing until it is.
      */
     const mainSession = SqlSchema.findOneOption({
       Request: Schema.Struct({ botId: Schema.String, now: Schema.String }),
@@ -503,9 +519,27 @@ export const layer = Layer.effect(
       execute: ({ botId, now }) => sql`
         SELECT id, bot_id FROM sessions
         WHERE bot_id = ${botId} AND purpose = 'main' AND retired_at IS NULL
-          AND lost_at IS NULL AND engine_session_id IS NOT NULL
-          AND (busy_until IS NULL OR busy_until <= ${now})
+          AND lost_at IS NULL AND engine_session_id IS NOT NULL AND settings_pending = 0
+          AND ${takesNewWorkSql(sql)} AND (busy_until IS NULL OR busy_until <= ${now})
       `,
+    });
+
+    /** A planned session, if it still takes new work where the dispatch is written. */
+    const plannedSession = SqlSchema.findOneOption({
+      Request: SessionRowId,
+      Result: Schema.Struct({ id: SessionRowId }),
+      execute: (id) => sql`
+        SELECT id FROM sessions
+        WHERE id = ${id} AND retired_at IS NULL AND lost_at IS NULL AND settings_pending = 0
+          AND ${takesNewWorkSql(sql)}
+      `,
+    });
+
+    /** Those of the wakes still pending. */
+    const pendingWakes = SqlSchema.findAll({
+      Request: Schema.Array(Schema.String),
+      Result: Schema.Struct({ id: Schema.String }),
+      execute: (ids) => sql`SELECT id FROM wakes WHERE ${sql.in("id", ids)} AND status = 'pending'`,
     });
 
     /** The busy deadlines still ahead: the dispatcher looks again at the earliest. */
@@ -738,17 +772,7 @@ export const layer = Layer.effect(
       for (const note of yield* notesOf(botId)) {
         const value = note.note_json;
         unseen.push({
-          item:
-            value === null
-              ? null
-              : value._tag === "routine-delivered"
-                ? {
-                    type: "routine-delivered",
-                    routine: value.routine,
-                    at: value.at,
-                    text: value.text,
-                  }
-                : { type: "profile-changed", changes: value.changes },
+          item: value === null ? null : catchUpItem(value),
           source: { _tag: "note", id: note.id },
         });
       }
@@ -808,7 +832,7 @@ export const layer = Layer.effect(
         return yield* Effect.die(new TurnsInvariant({ invariant: "A plan carries a wake" }));
       }
       if (head.kind !== "system" && head.kind !== "user") {
-        // Room, teammate and routine envelopes come with their wakes in part 2b.
+        // Routine envelopes come with their wakes in M2, room and teammate ones in M3.
         return yield* Effect.die(
           new TurnsInvariant({ invariant: `No envelope for ${head.kind} wakes yet` }),
         );
@@ -879,19 +903,17 @@ export const layer = Layer.effect(
     /**
      * Writes the dispatch for a plan, in one transaction: its envelope, its
      * files in order, its wakes linked, and the notes and held messages the
-     * envelope consumed. Nothing changes if the plan no longer holds.
+     * envelope consumed. Nothing changes if the plan no longer holds: its
+     * session was retired, lost, became due for a rotation that takes no new
+     * work, or its bot's settings changed since it was chosen (`stale`,
+     * planned again), or its wakes are no longer pending.
      */
     const writeDispatch = Effect.fn("Pipeline.writeDispatch")(function* (plan: Plan) {
       return yield* transaction(
         Effect.gen(function* () {
-          const still = yield* sql<{ readonly n: number }>`
-            SELECT COUNT(*) AS n FROM wakes
-            WHERE ${sql.in(
-              "id",
-              plan.wakes.map((wake) => wake.id),
-            )} AND status = 'pending'
-          `;
-          if ((still[0]?.n ?? 0) !== plan.wakes.length) return null;
+          if (Option.isNone(yield* plannedSession(plan.sessionId))) return "stale" as const;
+          const still = yield* pendingWakes(plan.wakes.map((wake) => wake.id));
+          if (still.length !== plan.wakes.length) return null;
           const fitted = yield* envelopeOf(plan, yield* sinceLastTurn(plan.botId));
           yield* dropUnseen(plan.botId, fitted.dropped);
           const { wake } = fitted;
@@ -1016,10 +1038,16 @@ export const layer = Layer.effect(
         for (const { bot_id: botId } of yield* waitingBots) {
           const planned = yield* planOne(
             Effect.gen(function* () {
-              const plan = yield* planFor(botId, now);
-              if (plan === null || plan === "not-ready") return plan;
-              const dispatchId = yield* writeDispatch(plan);
-              return dispatchId === null ? null : { plan, dispatchId };
+              // Planned again, once, when its session changed under the plan.
+              for (let attempt = 0; attempt < 2; attempt++) {
+                const plan = yield* planFor(botId, now);
+                if (plan === null || plan === "not-ready") return plan;
+                const dispatchId = yield* writeDispatch(plan);
+                if (dispatchId !== "stale") {
+                  return dispatchId === null ? null : { plan, dispatchId };
+                }
+              }
+              return null;
             }),
             null,
           );

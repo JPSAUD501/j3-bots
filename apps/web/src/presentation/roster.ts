@@ -157,6 +157,8 @@ export function noticeText(
       });
     case "session-lost":
       return t("notice.sessionLost");
+    case "settings-held":
+      return t("notice.settingsHeld");
     case "observation-failed":
       return t("notice.observationFailed");
     case "too-long":
@@ -237,6 +239,13 @@ export function presenceLine(bot: Bot, ctx: PresentationContext): StatusLine | n
       return bot.profile.title === "" ? null : { text: bot.profile.title, tone: "secondary" };
   }
 }
+
+/**
+ * Whether the operator can stop the bot: a turn runs, or background work holds
+ * a change of its settings, which stopping applies.
+ */
+export const canStop = (bot: Bot): boolean =>
+  bot.state._tag === "thinking" || bot.state._tag === "working" || bot.settingsHeld;
 
 /** A room's members by name, as one list in the reader's language. */
 export function memberList(room: Room, ctx: PresentationContext): string {

@@ -147,6 +147,8 @@ export const en = {
   "notice.undelivered": "A reply didn’t arrive",
   "notice.waitingInConversation": "{name} is waiting on you in its own conversation.",
   "notice.sessionLost": "Lost its working context. New messages wait until it has a new one.",
+  "notice.settingsHeld":
+    "Its new settings apply once its background work ends, and messages wait until then. Stop it to apply them now.",
   "notice.observationFailed":
     "Couldn’t keep up with this bot’s work. What shows here may be behind.",
   "notice.tooLong": "Something meant for this bot was too long to pass on, so it was left out.",
@@ -216,6 +218,7 @@ export const en = {
   "details.workingContext": "Working context",
   "details.freshStartHint":
     "A fresh start clears what {name} is holding in mind. Its conversation, memory, routines and files stay.",
+  "details.freshStartStops": "Stops any work {name} has running.",
   "details.freshStart": "Start fresh",
   "details.freshStart.done": "{name} started fresh.",
   "details.freshStart.failed": "The fresh start didn’t happen. Try again.",
@@ -260,17 +263,18 @@ export const en = {
   "firstRun.incompatible.title": "The engine is the wrong version",
   "firstRun.incompatible.body":
     "The engine is version {running}, and this release of J3 Bots needs {pinned}.",
-  "firstRun.signIn.title": "Sign in to a provider",
-  "firstRun.signIn.body":
-    "Bots run on your own subscriptions. Sign in to one on the machine that runs J3 Bots; this page updates when you do.",
-  "firstRun.signIn.copy": "Copy the command that signs in to {name}",
-  "firstRun.signIn.copied": "Copied",
-  "firstRun.signIn.selected": "Command selected. Copy it manually.",
+  "firstRun.connect.title": "Connect your providers",
+  "firstRun.connect.body":
+    "Bots reach their models through an endpoint you run, such as a proxy in front of your subscriptions. Run this on the machine that runs J3 Bots: it asks for the endpoint’s address and key. This page updates when the providers are ready.",
+  "firstRun.connect.copy": "Copy the command that connects your providers",
+  "firstRun.connect.copied": "Copied",
+  "firstRun.connect.selected": "Command selected. Copy it manually.",
   "firstRun.unavailable.title": "No provider can run a bot right now",
   "firstRun.unavailable.body":
     "Each provider’s state is below. This page updates as soon as one is ready.",
   "provider.ready": "Ready",
-  "provider.signInRequired": "Not signed in",
+  "provider.notConnected": "Not connected",
+  "provider.noModels": "Connected, but the engine lists no model for it yet",
   "provider.unavailable": "Not available right now",
   "firstRun.create.title": "Meet your first bot",
   "firstRun.create.body":
@@ -415,6 +419,8 @@ export const en = {
   "editBot.model.unavailable": "The engine no longer offers this model. Choose another to save.",
   "editBot.permissionMode": "Permission mode",
   "editBot.nextTurn": "{name} uses the new settings from its next turn.",
+  "editBot.providerChangeStops":
+    "Moving to another provider stops any work {name} has running. It then starts a new working context, with a summary of your conversation.",
   "editBot.cancel": "Cancel",
   "editBot.save": "Save changes",
   "editBot.saving": "Saving…",

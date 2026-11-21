@@ -11,6 +11,7 @@ import {
   type ModelChoice,
   NotFound,
   type PermissionMode,
+  ProviderId,
 } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -19,6 +20,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlSchema from "effect/sql/SqlSchema";
 import { Attachments } from "../attachments/Attachments.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
 import { EngineState } from "../engine/EngineState.ts";
@@ -26,6 +28,9 @@ import { Ids } from "../Ids.ts";
 import { Layout } from "../Layout.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { Rooms } from "../rooms/Rooms.ts";
+import { rotationRequests } from "../turns/rotationRequests.ts";
+import { Signals } from "../turns/Signals.ts";
+import { Stops } from "../turns/Stops.ts";
 import { freeAvatar } from "./avatars.ts";
 import { type BotChanges, BotStore } from "./BotStore.ts";
 import { EngineSessions } from "./EngineSessions.ts";
@@ -53,11 +58,30 @@ export class Bots extends Context.Service<
       readonly commandId: CommandId;
       readonly draft: BotDraft;
     }) => Effect.Effect<Bot, CommandError>;
+    /**
+     * Succeeds once the change is saved. A model of another provider stops
+     * the bot's work in progress, then replaces its main session, with a
+     * digest of the conversation. Another model of the same provider, or a
+     * permission mode, is applied to the session by the rotator before its
+     * next turn, once a turn running there has ended: the session takes no
+     * work until the engine has it, retried while the engine is unavailable,
+     * and held while it runs background work the change would end, which the
+     * bot's conversation is told (`EngineSessions`).
+     */
     readonly update: (input: {
       readonly commandId: CommandId;
       readonly botId: BotId;
       readonly changes: BotChanges;
     }) => Effect.Effect<Bot, CommandError>;
+    /**
+     * Stops the bot's work in progress, then replaces its main session with
+     * a fresh one, which gets no digest of the conversation. Its memory files
+     * stay.
+     */
+    readonly freshStart: (input: {
+      readonly commandId: CommandId;
+      readonly botId: BotId;
+    }) => Effect.Effect<void, CommandError>;
     /**
      * Retires the bot's engine project first, so nothing runs for a bot that no
      * longer exists, then removes the bot as `docs/architecture/server.md`
@@ -86,6 +110,23 @@ export const layer = Layer.effect(
     const changes = yield* ChangeLog;
     const layout = yield* Layout;
     const ids = yield* Ids;
+    const signals = yield* Signals;
+    const stops = yield* Stops;
+    const { requestBotRotation, providerRestored, forgetConversation } = rotationRequests(
+      sql,
+      signals,
+    );
+
+    /** The provider of the bot's live main session, if it has one. */
+    const liveMainProvider = (botId: BotId) =>
+      SqlSchema.findOneOption({
+        Request: BotIdSchema,
+        Result: Schema.Struct({ provider_id: ProviderId }),
+        execute: (id) => sql`
+          SELECT provider_id FROM sessions
+          WHERE bot_id = ${id} AND purpose = 'main' AND retired_at IS NULL
+        `,
+      })(botId).pipe(Effect.orDie, Effect.map(Option.map((row) => row.provider_id)));
 
     const require = Effect.fn("Bots.require")(function* (botId: BotId) {
       const found = yield* store.find(botId);
@@ -112,8 +153,8 @@ export const layer = Layer.effect(
     });
 
     /**
-     * Opens the bot's engine session now if it can. A failure leaves it for
-     * the reconciliation that runs each time the engine is ready.
+     * Opens the bot's engine session now if it can. A failure leaves it to
+     * the rotator, which opens every live bot's missing main session.
      */
     const provision = (botId: BotId) =>
       sessions.provision(botId).pipe(
@@ -121,7 +162,7 @@ export const layer = Layer.effect(
           Effect.logWarning("A new bot's engine session will be opened later", {
             botId,
             error: error._tag,
-          }),
+          }).pipe(Effect.andThen(signals.rotations.fire)),
         ),
       );
 
@@ -172,43 +213,48 @@ export const layer = Layer.effect(
       readonly changes: BotChanges;
     }) {
       const { changes: change } = input;
-      const before = yield* require(input.botId);
-      const bot = yield* receipts.once({
-        commandId: input.commandId,
-        method: "bot.update",
-        payload: input,
-        result: Bot,
-        apply: Effect.gen(function* () {
-          if (change.model !== undefined) yield* checkModel(change.model);
-          const at = yield* DateTime.now;
-          if (change.primary === true && !before.bot.primary) yield* makePrimary(at);
-          yield* store.update(input.botId, change, at);
-          yield* changes.touch({ _tag: "bot", botId: input.botId });
-          return (yield* require(input.botId).pipe(Effect.orDie)).bot;
-        }),
-      });
+      /** Saves the change; `settingsChanged` records a new model or permission mode. */
+      const save = <E>(settingsChanged: Effect.Effect<void, E>) =>
+        receipts.once({
+          commandId: input.commandId,
+          method: "bot.update",
+          payload: input,
+          result: Bot,
+          apply: Effect.gen(function* () {
+            const before = yield* require(input.botId);
+            if (change.model !== undefined) yield* checkModel(change.model);
+            const at = yield* DateTime.now;
+            if (change.primary === true && !before.bot.primary) yield* makePrimary(at);
+            yield* store.update(input.botId, change, at);
+            yield* settingsChanged;
+            // Compared with the provider the bot's live main session runs on, in
+            // this transaction: an earlier change may not have reached it yet.
+            // Moving to another provider is the operator's own action, so it
+            // stops the work in progress before the session is replaced. Moving
+            // back before that keeps the session.
+            if (change.model !== undefined) {
+              const live = yield* liveMainProvider(input.botId);
+              if (Option.isSome(live) && live.value !== change.model.providerId) {
+                yield* stops.record(input.botId, { _tag: "bot" });
+                yield* requestBotRotation(input.botId, "provider-changed");
+              } else if (Option.isSome(live)) {
+                yield* providerRestored(input.botId);
+              }
+            }
+            yield* changes.touch({ _tag: "bot", botId: input.botId });
+            return (yield* require(input.botId).pipe(Effect.orDie)).bot;
+          }),
+        });
+      // A new model or permission mode is saved in the gate of the bot's main
+      // session, so no send claimed before it reaches the engine after it.
+      const bot =
+        change.model !== undefined || change.permissionMode !== undefined
+          ? yield* sessions.inMainSessionGate(input.botId, (held) =>
+              save(sessions.settingsChanged(held)),
+            )
+          : yield* save(Effect.void);
       if (change.profile !== undefined || change.model !== undefined) {
         yield* workspaces.render(bot.id);
-      }
-      if (change.model !== undefined || change.permissionMode !== undefined) {
-        // Rotating the session when the provider changes is the wake
-        // pipeline's (`docs/architecture/server.md`, Sessions); until then the
-        // main session takes the new settings from its next turn.
-        yield* sessions
-          .configure(bot.id, {
-            ...(change.model === undefined ? {} : { model: change.model }),
-            ...(change.permissionMode === undefined
-              ? {}
-              : { permissionMode: change.permissionMode }),
-          })
-          .pipe(
-            Effect.catch((error) =>
-              Effect.logWarning("A bot's engine session keeps its previous settings", {
-                botId: bot.id,
-                error: error._tag,
-              }),
-            ),
-          );
       }
       return bot;
     });
@@ -222,29 +268,58 @@ export const layer = Layer.effect(
       // first: removing a project already gone succeeds, so a deletion that
       // fails after it is retried whole, while a project left behind by a
       // deletion that committed first would never be removed. A retry after
-      // the deletion finds no bot here and gets the receipt.
-      if (Option.isSome(yield* store.find(input.botId))) {
-        yield* sessions
-          .removeProject(input.botId)
-          .pipe(Effect.catch(() => new Conflict({ reason: "engine-unavailable" })));
-      }
+      // the deletion finds no bot here and gets the receipt. No provisioning
+      // runs from the removal to the commit, or the rotator could open the
+      // bot's session again in a project made anew.
+      yield* sessions.withoutProvisioning(
+        Effect.gen(function* () {
+          if (Option.isSome(yield* store.find(input.botId))) {
+            yield* sessions
+              .removeProject(input.botId)
+              .pipe(Effect.catch(() => new Conflict({ reason: "engine-unavailable" })));
+          }
+          yield* receipts.once({
+            commandId: input.commandId,
+            method: "bot.delete",
+            payload: input,
+            result: Schema.Void,
+            apply: Effect.gen(function* () {
+              yield* require(input.botId);
+              yield* rooms.releaseBot(input.botId);
+              const carried = yield* attachments.ofTarget({
+                _tag: "conversation",
+                botId: input.botId,
+              });
+              yield* store.remove(input.botId);
+              yield* attachments.purge(carried);
+              yield* changes.touch({ _tag: "bot", botId: input.botId });
+              yield* sql.afterCommit(workspaces.remove(input.botId, input.deleteFiles));
+            }),
+          });
+        }),
+      );
+    });
+
+    const freshStart = Effect.fn("Bots.freshStart")(function* (input: {
+      readonly commandId: CommandId;
+      readonly botId: BotId;
+    }) {
       yield* receipts.once({
         commandId: input.commandId,
-        method: "bot.delete",
+        method: "bot.freshStart",
         payload: input,
         result: Schema.Void,
         apply: Effect.gen(function* () {
           yield* require(input.botId);
-          yield* rooms.releaseBot(input.botId);
-          const carried = yield* attachments.ofTarget({ _tag: "conversation", botId: input.botId });
-          yield* store.remove(input.botId);
-          yield* attachments.purge(carried);
-          yield* changes.touch({ _tag: "bot", botId: input.botId });
-          yield* sql.afterCommit(workspaces.remove(input.botId, input.deleteFiles));
+          // A clean slate: the work in progress stops, and nothing of the
+          // conversation so far reaches the new session or its successors.
+          yield* stops.record(input.botId, { _tag: "bot" });
+          yield* forgetConversation(input.botId);
+          yield* requestBotRotation(input.botId, "fresh-start");
         }),
       });
     });
 
-    return Bots.of({ create, update, remove });
+    return Bots.of({ create, update, freshStart, remove });
   }),
 );

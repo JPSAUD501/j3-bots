@@ -44,6 +44,11 @@ export class BotStates extends Context.Service<
   BotStates,
   {
     readonly of: (botId: BotId) => Effect.Effect<BotState>;
+    /**
+     * Whether a change of the bot's settings waits for background work in its
+     * main session, which a Stop ends (`EngineSessions`, Settings alignment).
+     */
+    readonly settingsHeld: (botId: BotId) => Effect.Effect<boolean>;
     /** Tells the roster about turns that just went quiet long enough to look stalled. */
     readonly watchStalls: Effect.Effect<never>;
   }
@@ -116,6 +121,20 @@ export const layer = Layer.effect(
       Result: BotRow,
       execute: (botId) => sql`SELECT id, provider_id FROM bots WHERE id = ${botId}`,
     });
+
+    const heldSession = SqlSchema.findOneOption({
+      Request: BotId,
+      Result: Schema.Struct({ id: Schema.String }),
+      execute: (botId) => sql`
+        SELECT id FROM sessions
+        WHERE bot_id = ${botId} AND purpose = 'main' AND retired_at IS NULL AND lost_at IS NULL
+          AND settings_pending > 0 AND settings_held = 1
+      `,
+    });
+
+    const settingsHeld = Effect.fn("BotStates.settingsHeld")(function* (botId: BotId) {
+      return Option.isSome(yield* heldSession(botId));
+    }, Effect.orDie);
 
     const of = Effect.fn("BotStates.of")(function* (botId: BotId) {
       const card = yield* engineCard(botId);
@@ -201,6 +220,6 @@ export const layer = Layer.effect(
       Effect.andThen(Effect.never),
     );
 
-    return BotStates.of({ of, watchStalls });
+    return BotStates.of({ of, settingsHeld, watchStalls });
   }),
 );

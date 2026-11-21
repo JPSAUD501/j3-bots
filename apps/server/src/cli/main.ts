@@ -10,6 +10,7 @@ import * as Network from "../system/Network.ts";
 import * as Systemd from "../system/Systemd.ts";
 import { doctorCommand } from "./doctor.ts";
 import { pairCommand } from "./pair.ts";
+import { providerCommand } from "./provider.ts";
 import { serveCommand } from "./serve.ts";
 import { serviceCommand } from "./service.ts";
 
@@ -17,7 +18,13 @@ const cli = Command.make("j3-bots").pipe(
   Command.withDescription(
     "J3 Bots: persistent AI teammates on your own machine. Start with `j3-bots doctor`.",
   ),
-  Command.withSubcommands([serveCommand, doctorCommand, pairCommand, serviceCommand]),
+  Command.withSubcommands([
+    serveCommand,
+    doctorCommand,
+    pairCommand,
+    providerCommand,
+    serviceCommand,
+  ]),
 );
 
 const runtime = Layer.mergeAll(Host.layer, Systemd.layer, AdminClient.layer, Network.layer).pipe(

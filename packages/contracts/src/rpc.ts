@@ -265,6 +265,15 @@ export const BotRpcs = RpcGroup.make(
     success: Bot,
     error: CommandError,
   }),
+  /**
+   * Succeeds once the change is saved. A new model or permission mode reaches
+   * the bot's working session before its next turn: until the engine has it,
+   * the bot takes no new work, and the server keeps trying while the engine
+   * is unavailable. A turn already running keeps the settings it started with,
+   * and background work still running holds the change, which a
+   * `settings-held` notice says and the bot's `settingsHeld` shows; a Stop
+   * ends both.
+   */
   Rpc.make("bot.update", {
     payload: {
       ...command,
@@ -284,7 +293,12 @@ export const BotRpcs = RpcGroup.make(
    * received yet. What was already done stays done.
    */
   Rpc.make("bot.stop", { payload: { ...command, botId: BotId }, error: CommandError }),
-  /** Resets the bot's working context. Conversation, memory, routines and files stay. */
+  /**
+   * Resets the bot's working context: stops any work it has running, then
+   * starts it on a new session that carries nothing over from the old one, not
+   * even a digest of the conversation. Conversation, memory, routines and
+   * files stay.
+   */
   Rpc.make("bot.freshStart", { payload: { ...command, botId: BotId }, error: CommandError }),
   /**
    * Removes the bot, its conversation, memory and routines. What it said in rooms

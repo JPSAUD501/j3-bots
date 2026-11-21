@@ -40,6 +40,7 @@ import {
 import { inboxPath } from "./inbox.ts";
 import { Observer } from "./Observer.ts";
 import { DEFECT_RETRY } from "./reconciler.ts";
+import { SendPause } from "./SendPause.ts";
 import { SessionGate } from "./SessionGate.ts";
 import { sessionLoss } from "./sessionRecords.ts";
 import { Signals } from "./Signals.ts";
@@ -84,6 +85,7 @@ const SessionState = Schema.Struct({
   lost: Schema.BooleanFromBit,
   gone: Schema.BooleanFromBit,
   stop_unsettled: Schema.BooleanFromBit,
+  unaligned: Schema.BooleanFromBit,
 });
 
 /** How staging a dispatch's files went. */
@@ -143,6 +145,7 @@ export const layer = Layer.effect(
     const engine = yield* Engine;
     const ledger = yield* Ledger;
     const gate = yield* SessionGate;
+    const pause = yield* SendPause;
     const signals = yield* Signals;
     const observer = yield* Observer;
     const attachments = yield* Attachments;
@@ -170,7 +173,8 @@ export const layer = Layer.effect(
           (s.retired_at IS NOT NULL OR s.lost_at IS NOT NULL) AS gone,
           EXISTS (
             SELECT 1 FROM stop_targets t WHERE t.session_id = s.id AND t.stopped_at IS NULL
-          ) AS stop_unsettled
+          ) AS stop_unsettled,
+          s.settings_pending > 0 AS unaligned
         FROM sessions s WHERE s.id = ${sessionId}
       `,
     });
@@ -464,6 +468,10 @@ export const layer = Layer.effect(
           const claimed = yield* sql<{ readonly attempts: number }>`
             UPDATE dispatches SET attempts = attempts + 1, updated_at = ${at}
             WHERE id = ${row.id} AND status = 'intended' AND attempts = ${row.attempts}
+              AND NOT EXISTS (
+                SELECT 1 FROM sessions s
+                WHERE s.id = dispatches.session_id AND s.settings_pending > 0
+              )
               AND (
                 attempts > 0
                 OR (
@@ -570,6 +578,11 @@ export const layer = Layer.effect(
         return "settled" as const;
       }
       const sessionId = session.engine_session_id;
+
+      // Nothing goes into a session its bot's settings have not reached yet,
+      // not even a resend, which the engine would start as a turn if it never
+      // had the key. Its alignment nudges the workers.
+      if (session.unaligned) return "skipped" as const;
 
       // Nothing new is sent into a session before its events are followed
       // and known from a committed cursor or snapshot; the event that makes
@@ -697,7 +710,11 @@ export const layer = Layer.effect(
       );
 
     const send = Effect.fn("Sender.send")(function* (dispatchId: DispatchRowId, owner: SendOwner) {
-      const result = yield* sendOnce(dispatchId, owner);
+      // A first send waits out a pause (`SendPause`); a key already sent is
+      // work the engine may have, which a pause counts anyway.
+      const result = yield* owner === "dispatcher"
+        ? pause.sending(sendOnce(dispatchId, owner))
+        : sendOnce(dispatchId, owner);
       // Only a change wakes anyone: the session may take its next wake, a
       // Stop may proceed, or the dispatch's owner has a new deadline: the
       // dispatcher for one never sent, the recovery for a claimed one.

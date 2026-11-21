@@ -24,6 +24,7 @@ export const configFor = (path: Path.Path, home: string): ServerConfigShape => (
   tls: Option.none(),
   enginePort: 0,
   engineBinary: Option.none(),
+  scriptedAgent: Option.none(),
   toolPort: 0,
   // No client is built there, so a test server serves none.
   webClient: { _tag: "bundled", directory: path.join(home, "web") },

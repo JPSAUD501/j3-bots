@@ -30,11 +30,11 @@ import {
   sendInRoom,
   sendToBot,
   sendWithFile,
+  sessionAfter,
   stopSettled,
   timesSent,
   turnEnded,
 } from "../testing/turns.ts";
-import { BotStates } from "./BotStates.ts";
 import { MAX_INDETERMINATE_ANSWERS, recoveryBackoff } from "./model.ts";
 import { Pipeline } from "./Pipeline.ts";
 import { Stops } from "./Stops.ts";
@@ -417,7 +417,7 @@ it.effect("sends a dispatch left unsent by a restart, with no wake pending for i
   }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
 );
 
-it.effect("shows a lost session once and plans nothing into it", () =>
+it.effect("shows a lost session once and gives the bot a new one for the message", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;
     const bot = yield* createBot("Ana");
@@ -428,15 +428,17 @@ it.effect("shows a lost session once and plans nothing into it", () =>
     const message = yield* sendToBot(bot.id, "Are you there?");
     const notice = yield* awaitEntry(bot.id, "notice");
     assert.deepStrictEqual(notice.notice, { _tag: "session-lost" });
-    yield* flushed(bot.id);
-    yield* TestClock.adjust(Duration.minutes(5));
-    yield* flushed(bot.id);
 
+    // The message waits for the new main session, and reaches it with a digest.
+    const replacement = yield* sessionAfter(bot.id, session);
+    yield* nextTurn(bot.id);
+    yield* deliveryIs(message, "delivered");
     assert.strictEqual(yield* timesSent(session, "Are you there?"), 0);
+    const [received] = yield* control.dispatches(replacement);
+    assert.include(received?.text, "Are you there?");
+    assert.include(received?.text, "Your working session was replaced.");
     const notices = (yield* conversation(bot.id)).filter((entry) => entry._tag === "notice");
     assert.strictEqual(notices.length, 1);
-    yield* deliveryIs(message, "pending");
-    assert.deepStrictEqual(yield* (yield* BotStates).of(bot.id), { _tag: "idle" });
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

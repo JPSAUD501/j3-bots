@@ -25,7 +25,13 @@ import { Roster } from "../components/Roster";
 import { SettingsButton, SignOutDevice } from "../components/SettingsDialog";
 import { Button } from "../components/ui/button";
 import { Timeline } from "../components/Timeline";
-import { filterRoster, orderRoster, rosterKeyOf, rosterKeyText } from "../presentation/roster";
+import {
+  canStop,
+  filterRoster,
+  orderRoster,
+  rosterKeyOf,
+  rosterKeyText,
+} from "../presentation/roster";
 import type { ShellData, ShellIntents } from "./data";
 import { useNewestSeen } from "../lib/useNewestSeen";
 import { useShellLayout } from "./layout";
@@ -156,8 +162,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
       event.preventDefault();
       composerRef.current?.focus();
     } else if (shortcuts.stop.matches(event) && item?._tag === "bot") {
-      const running = item.bot.state._tag === "thinking" || item.bot.state._tag === "working";
-      if (running) {
+      if (canStop(item.bot)) {
         event.preventDefault();
         intents.stopBot(item.bot.id);
       }

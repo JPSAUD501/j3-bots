@@ -82,10 +82,7 @@ export function sampleTeam(now: DateTime.Utc) {
         id: codex,
         name: "Codex",
         harness: "codex",
-        status: {
-          _tag: "sign-in-required",
-          command: "CODEX_HOME=~/.j3-bots/providers/codex codex login",
-        },
+        status: { _tag: "sign-in-required", command: "j3-bots provider connect" },
         models: [],
         usage: [],
       },
@@ -118,6 +115,7 @@ export function sampleTeam(now: DateTime.Utc) {
       pinned: extra.pinned ?? false,
       hidden: extra.hidden ?? false,
       state,
+      settingsHeld: false,
       createdAt: ago(60 * 24 * 30),
     };
   }

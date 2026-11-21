@@ -8,6 +8,7 @@ import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { engineFolders, type PrivateFiles } from "./PrivateFiles.ts";
+import { editToml, type TomlEdit, type TomlTable } from "./toml.ts";
 
 // Everything J3 Bots writes into the engine's data directory and the provider
 // homes it owns. Every file is written whole to a new file and renamed
@@ -56,7 +57,41 @@ export interface ProvisionInput {
   };
   /** Relative to each workspace folder, as Claude Code resolves it. */
   readonly systemPromptFile: string;
+  /** The base prompt every bot shares, which Codex takes as `developer_instructions`. */
+  readonly basePrompt: string;
 }
+
+/**
+ * The provider connection: its base URL and its key, in one file of the
+ * engine's secret store, written whole and renamed, so a new connection
+ * replaces both at once and a write cut short leaves the one before it whole.
+ * It is the single source of what every provisioning writes. The engine never
+ * reads it: it reads and removes only the secrets its settings name (**Read**
+ * at `db51b67`, `serverSettings.ts`).
+ */
+const StoredConnection = Schema.Struct({ baseUrl: Schema.String, key: Schema.String });
+type StoredConnection = typeof StoredConnection.Type;
+
+const connectionFile = (path: Path.Path, home: string) =>
+  path.join(engineFolders(path, home).secrets, "j3-provider-connection.json");
+
+/**
+ * The variable that carries the connection's key to the harnesses. Each
+ * harness's own configuration names it next to the URL: Codex's model
+ * provider takes it as `env_key`, and Claude Code reads it through an
+ * `apiKeyHelper`, which sends what it prints as the bearer token. **Verified**
+ * with Claude Code 2.1.328 against a CLIProxyAPI endpoint: a turn answered
+ * with the URL in the home's `settings.json` `env` and the key only in the
+ * variable, and failed with the helper's error when the variable was missing.
+ *
+ * One name serves every connection: the engine and its harnesses are
+ * provisioned only while the engine is stopped, so no harness that started
+ * with one connection is still running when the next one is written.
+ */
+const KEY_VARIABLE = "J3_PROVIDER_KEY";
+
+/** Codex's name for the connection's model provider. A dot would not survive TOML's dotted keys. */
+const CODEX_MODEL_PROVIDER = "j3";
 
 /** The engine's name for a J3 Bots provider id: a stable slug the engine accepts. */
 export const instanceIdFor = (providerId: string) =>
@@ -123,6 +158,42 @@ const decodeJsonObject = Schema.decodeUnknownOption(Schema.fromJsonString(JsonOb
 const isJsonObject = Schema.is(JsonObject);
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }));
 
+/** One variable as the engine's settings file keeps it. */
+type SettingsVariable =
+  | { readonly name: string; readonly value: string; readonly sensitive: false }
+  /** The value lives in the engine's secret store; the file says only that it exists. */
+  | {
+      readonly name: string;
+      readonly value: "";
+      readonly sensitive: true;
+      readonly valueRedacted: true;
+    };
+
+const secretVariable = (name: string): SettingsVariable => ({
+  name,
+  value: "",
+  sensitive: true,
+  valueRedacted: true,
+});
+
+/**
+ * The variables the engine gives an instance for the connection: its key,
+ * and for Claude Code tool search turned off, which an endpoint other than
+ * Anthropic's own may not serve (**Assumed** from the operator's proxy setup,
+ * which turns it off for that reason). The URL is not among them: it is in
+ * the harness's own configuration, with the name of its key's variable.
+ */
+const connectionVariables = (
+  spec: InstanceSpec,
+  connected: boolean,
+): ReadonlyArray<SettingsVariable> => {
+  if (spec.kind === "acp-local" || !connected) return [];
+  const key = secretVariable(KEY_VARIABLE);
+  return spec.kind === "claude-code"
+    ? [key, { name: "ENABLE_TOOL_SEARCH", value: "false", sensitive: false }]
+    : [key];
+};
+
 const instanceConfig = (input: ProvisionInput, spec: InstanceSpec) => {
   switch (spec.kind) {
     case "claude-code":
@@ -141,8 +212,18 @@ const instanceConfig = (input: ProvisionInput, spec: InstanceSpec) => {
   }
 };
 
-/** The settings file with J3 Bots' keys and instances merged into what the engine keeps there. */
-const engineSettings = (input: ProvisionInput, existing: Readonly<Record<string, unknown>>) => ({
+/**
+ * The settings file with J3 Bots' keys and instances merged into what the
+ * engine keeps there. An instance whose harness configuration J3 Bots could
+ * not write is turned off, so it never runs with a configuration that
+ * belongs to another connection or lacks the bot tools.
+ */
+const engineSettings = (
+  input: ProvisionInput,
+  connected: boolean,
+  disabled: ReadonlySet<string>,
+  existing: Readonly<Record<string, unknown>>,
+) => ({
   ...existing,
   ...ENGINE_SETTINGS,
   providerInstances: Object.fromEntries(
@@ -151,33 +232,181 @@ const engineSettings = (input: ProvisionInput, existing: Readonly<Record<string,
       {
         driver: DRIVERS[spec.kind],
         displayName: spec.name,
-        enabled: true,
-        // The value lives in the engine's secret store; the file says only that it exists.
-        environment: spec.environment.map((variable) => ({
-          name: variable.name,
-          value: "",
-          sensitive: true,
-          valueRedacted: true,
-        })),
+        enabled: !disabled.has(spec.instanceId),
+        environment: [
+          ...connectionVariables(spec, connected),
+          ...spec.environment.map((variable) => secretVariable(variable.name)),
+        ],
         config: instanceConfig(input, spec),
       },
     ]),
   ),
 });
 
-const tomlString = (value: string) => JSON.stringify(value);
+/**
+ * J3 Bots' part of a Codex instance's `config.toml`: the base prompt, the
+ * connection's model provider, and the bot tools. Codex writes the rest of the
+ * file itself (trusted projects, its own settings), and that is kept.
+ */
+const codexConfig = (input: ProvisionInput, connection: StoredConnection | null): TomlEdit => {
+  const modelProvider: ReadonlyArray<TomlTable> =
+    connection === null
+      ? []
+      : [
+          {
+            path: ["model_providers", CODEX_MODEL_PROVIDER],
+            values: [
+              ["name", "J3 Bots provider connection"],
+              ["base_url", `${connection.baseUrl}/v1`],
+              ["env_key", KEY_VARIABLE],
+              ["wire_api", "responses"],
+            ],
+          },
+        ];
+  const tools: TomlTable = {
+    path: ["mcp_servers", TOOL_SERVER],
+    values: [
+      ["command", input.toolBridge.command],
+      ["args", input.toolBridge.args],
+      ["default_tools_approval_mode", "approve"],
+    ],
+  };
+  return {
+    keys: [
+      ["developer_instructions", input.basePrompt],
+      ["model_provider", connection === null ? undefined : CODEX_MODEL_PROVIDER],
+    ],
+    owns: [
+      ["model_providers", CODEX_MODEL_PROVIDER],
+      ["mcp_servers", TOOL_SERVER],
+    ],
+    tables: [...modelProvider, tools],
+  };
+};
 
-/** The J3-owned `config.toml` of a Codex instance. J3 Bots owns the whole file. */
-const codexConfig = (input: ProvisionInput) =>
-  [
-    "# Written by J3 Bots. Changes here are overwritten.",
-    `[mcp_servers.${TOOL_SERVER}]`,
-    `command = ${tomlString(input.toolBridge.command)}`,
-    `args = [${input.toolBridge.args.map(tomlString).join(", ")}]`,
-    'default_tools_approval_mode = "approve"',
-    "",
-  ].join("\n");
+const decodeConnection = Schema.decodeUnknownOption(Schema.fromJsonString(StoredConnection));
 
+/** A file J3 Bots must read to provision the engine, and could not, which it left as it is. */
+class EngineFileUnreadable extends Schema.TaggedError<EngineFileUnreadable>()(
+  "EngineFileUnreadable",
+  { file: Schema.String, reason: Schema.String },
+) {
+  override get message(): string {
+    return `${this.file} was left as it is: ${this.reason}. The engine does not start until it can be read.`;
+  }
+}
+
+/** A harness configuration file J3 Bots cannot edit safely, which it left as it is. */
+class HarnessConfigUnreadable extends Schema.TaggedError<HarnessConfigUnreadable>()(
+  "HarnessConfigUnreadable",
+  { file: Schema.String, reason: Schema.String },
+) {
+  override get message(): string {
+    return `${this.file} was left as it is: ${this.reason}. Its provider stays off until the file is corrected or moved aside; J3 Bots writes its part when the engine next starts.`;
+  }
+}
+
+/**
+ * A file's text, or null when it does not exist: the first setup. Any other
+ * failure to read it is `unreadable`'s, with the file's path and never its
+ * contents.
+ */
+const readIfPresent = <E>(
+  fs: FileSystem.FileSystem,
+  file: string,
+  unreadable: (reason: string) => E,
+): Effect.Effect<string | null, E> =>
+  fs.readFileString(file).pipe(
+    Effect.map((text): string | null => text),
+    Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(null)),
+    Effect.mapError((error) => unreadable(`it could not be read (${error.reason._tag})`)),
+  );
+
+/** A JSON object file: `{}` when it does not exist, and `unreadable` when it is not a JSON object. */
+const readJsonObject = <E>(
+  fs: FileSystem.FileSystem,
+  file: string,
+  unreadable: (reason: string) => E,
+): Effect.Effect<Readonly<Record<string, unknown>>, E> =>
+  readIfPresent(fs, file, unreadable).pipe(
+    Effect.flatMap((text) =>
+      text === null
+        ? Effect.succeed({})
+        : Effect.fromOption(decodeJsonObject(text)).pipe(
+            Effect.mapError(() => unreadable("it is not a JSON object")),
+          ),
+    ),
+  );
+
+/** The connection, or null when none was ever stored. */
+const readConnection = Effect.fnUntraced(function* (home: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const file = connectionFile(path, home);
+  const unreadable = (reason: string) => new EngineFileUnreadable({ file, reason });
+  const text = yield* readIfPresent(fs, file, unreadable);
+  if (text === null) return null;
+  return yield* Effect.fromOption(decodeConnection(text)).pipe(
+    Effect.mapError(() =>
+      unreadable("it is not a provider connection; run `j3-bots provider connect` again"),
+    ),
+  );
+});
+
+/** The base URL of the stored connection, if one can be read. */
+export const activeConnection = Effect.fn("engine.activeConnection")(function* (home: string) {
+  return yield* readConnection(home).pipe(
+    Effect.map((connection) => connection?.baseUrl ?? null),
+    Effect.orElseSucceed(() => null),
+  );
+});
+
+/**
+ * Claude Code's `settings.json` with J3 Bots' part set: auto-memory off, and
+ * the connection's URL and the variable its key is read from, together, or
+ * neither when there is no connection. The rest is the harness's own.
+ */
+const claudeSettings = (
+  settings: Readonly<Record<string, unknown>>,
+  connection: StoredConnection | null,
+) => {
+  const rest = Object.fromEntries(
+    Object.entries(settings).filter(([key]) => key !== "apiKeyHelper" && key !== "env"),
+  );
+  const env = Object.fromEntries(
+    Object.entries(isJsonObject(settings["env"]) ? settings["env"] : {}).filter(
+      ([key]) => key !== "ANTHROPIC_BASE_URL",
+    ),
+  );
+  return {
+    ...rest,
+    // **Read** in Claude Code 2.1.328: `autoMemoryEnabled: false` turns auto-memory off.
+    autoMemoryEnabled: false,
+    ...(connection === null
+      ? Object.keys(env).length === 0
+        ? {}
+        : { env }
+      : {
+          env: { ...env, ANTHROPIC_BASE_URL: connection.baseUrl },
+          apiKeyHelper: `printenv ${KEY_VARIABLE}`,
+        }),
+  };
+};
+
+/**
+ * Writes the engine's settings, its secret store and each harness's
+ * configuration from the stored connection. Run only while the engine is
+ * stopped, before each start (`Supervisor.beforeStart`): the engine reads its
+ * settings, and each harness its configuration, when they start, so a
+ * connection reaches every harness together with its key, and a provisioning
+ * cut short is completed by the next one, which writes everything again.
+ *
+ * A harness configuration J3 Bots cannot edit safely is left as it is and its
+ * instance is turned off, so the other harnesses still start; each such file
+ * is logged by path, and the provider's status shows it off. A failure to
+ * read the connection or the engine's own settings, or to write anything,
+ * fails the provisioning, and the engine does not start.
+ */
 export const provision = Effect.fn("engine.provision")(function* (input: ProvisionInput) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -187,30 +416,30 @@ export const provision = Effect.fn("engine.provision")(function* (input: Provisi
     yield* input.files.write(file, `${text}\n`);
   });
 
-  const readObject = (file: string) =>
-    fs.readFileString(file).pipe(
-      Effect.map((text) => decodeJsonObject(text)),
-      Effect.map((decoded) => (decoded._tag === "Some" ? decoded.value : {})),
-      Effect.orElseSucceed((): Readonly<Record<string, unknown>> => ({})),
-    );
-
   const { userdata, secrets } = engineFolders(path, input.home);
   yield* input.files.folder(secrets);
   yield* fs.chmod(secrets, 0o700);
 
-  for (const spec of input.instances) {
-    for (const variable of spec.environment) {
-      yield* input.files.write(
-        path.join(secrets, secretFileName(spec.instanceId, variable.name)),
-        Redacted.value(variable.value),
-      );
-    }
+  const connection = yield* readConnection(input.home);
+  const settingsFile = path.join(userdata, "settings.json");
+  const existing = yield* readJsonObject(
+    fs,
+    settingsFile,
+    (reason) => new EngineFileUnreadable({ file: settingsFile, reason }),
+  );
+
+  const harness = Effect.fnUntraced(function* (spec: InstanceSpec) {
+    const unreadable = (file: string) => (reason: string) =>
+      new HarnessConfigUnreadable({ file, reason });
     switch (spec.kind) {
       case "claude-code": {
         yield* input.files.folder(spec.home);
         // Claude Code keeps its own state in `.claude.json`; merge, never replace.
         const stateFile = path.join(spec.home, ".claude.json");
-        const state = yield* readObject(stateFile);
+        const settingsFile = path.join(spec.home, "settings.json");
+        // Both are read before either is written, so a refusal changes neither.
+        const state = yield* readJsonObject(fs, stateFile, unreadable(stateFile));
+        const settings = yield* readJsonObject(fs, settingsFile, unreadable(settingsFile));
         const servers = isJsonObject(state["mcpServers"]) ? state["mcpServers"] : {};
         yield* writeJson(stateFile, {
           ...state,
@@ -225,25 +454,99 @@ export const provision = Effect.fn("engine.provision")(function* (input: Provisi
             },
           },
         });
-        const settingsFile = path.join(spec.home, "settings.json");
-        const settings = yield* readObject(settingsFile);
-        // **Read** in Claude Code 2.1.328: `autoMemoryEnabled: false` turns auto-memory off.
-        yield* writeJson(settingsFile, {
-          ...settings,
-          autoMemoryEnabled: false,
-        });
-        break;
+        yield* writeJson(settingsFile, claudeSettings(settings, connection));
+        return;
       }
       case "codex": {
-        yield* input.files.write(path.join(spec.home, "config.toml"), codexConfig(input));
-        break;
+        yield* input.files.folder(spec.home);
+        const configFile = path.join(spec.home, "config.toml");
+        const text = yield* readIfPresent(fs, configFile, unreadable(configFile));
+        const edited = editToml(text ?? "", codexConfig(input, connection));
+        if (edited._tag === "unreadable") return yield* unreadable(configFile)(edited.reason);
+        yield* input.files.write(configFile, edited.text);
+        return;
       }
       case "acp-local":
-        break;
+        return;
     }
+  });
+
+  const disabled = new Set<string>();
+  for (const spec of input.instances) {
+    const written = yield* harness(spec).pipe(
+      Effect.as(true),
+      Effect.catchTag("HarnessConfigUnreadable", (error) =>
+        Effect.logWarning(error.message).pipe(Effect.as(false)),
+      ),
+    );
+    if (!written) disabled.add(spec.instanceId);
   }
 
-  const settingsFile = path.join(userdata, "settings.json");
-  const existing = yield* readObject(settingsFile);
-  yield* writeJson(settingsFile, engineSettings(input, existing));
+  for (const spec of input.instances) {
+    const secretFile = path.join(secrets, secretFileName(spec.instanceId, KEY_VARIABLE));
+    if (connection !== null && spec.kind !== "acp-local") {
+      yield* input.files.write(secretFile, connection.key);
+    } else {
+      yield* input.files.remove(secretFile);
+    }
+    for (const variable of spec.environment) {
+      yield* input.files.write(
+        path.join(secrets, secretFileName(spec.instanceId, variable.name)),
+        Redacted.value(variable.value),
+      );
+    }
+  }
+  yield* writeJson(settingsFile, engineSettings(input, connection !== null, disabled, existing));
+});
+
+/**
+ * Writes a new base prompt into each Codex instance's `config.toml`, and
+ * nothing else: the rest of the provisioning has not changed. Codex reads it
+ * for each thread it starts or resumes, so this is the one write J3 Bots
+ * makes while the engine runs.
+ */
+export const writeBasePrompt = Effect.fn("engine.writeBasePrompt")(function* (input: {
+  readonly files: PrivateFiles;
+  readonly instances: ReadonlyArray<InstanceSpec>;
+  readonly basePrompt: string;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  for (const spec of input.instances) {
+    if (spec.kind !== "codex") continue;
+    const configFile = path.join(spec.home, "config.toml");
+    const unreadable = (reason: string) =>
+      new HarnessConfigUnreadable({ file: configFile, reason });
+    // Not written yet: the next start writes it whole, with this prompt.
+    const text = yield* readIfPresent(fs, configFile, unreadable);
+    if (text === null) continue;
+    const edited = editToml(text, {
+      keys: [["developer_instructions", input.basePrompt]],
+      owns: [],
+      tables: [],
+    });
+    if (edited._tag === "unreadable") return yield* unreadable(edited.reason);
+    yield* input.files.write(configFile, edited.text);
+  }
+});
+
+/**
+ * Stores a new provider connection, replacing the one before it in one
+ * write. It reaches the harnesses at the engine's next start, which the
+ * caller brings about.
+ */
+export const storeConnection = Effect.fn("engine.storeConnection")(function* (input: {
+  readonly home: string;
+  readonly files: PrivateFiles;
+  readonly connection: { readonly baseUrl: string; readonly key: Redacted.Redacted<string> };
+}) {
+  const path = yield* Path.Path;
+  const { secrets } = engineFolders(path, input.home);
+  yield* input.files.folder(secrets);
+  const record: StoredConnection = {
+    baseUrl: input.connection.baseUrl,
+    key: Redacted.value(input.connection.key),
+  };
+  const text = yield* encodeJson(record).pipe(Effect.orDie);
+  yield* input.files.write(connectionFile(path, input.home), `${text}\n`);
 });

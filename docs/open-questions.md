@@ -10,11 +10,11 @@ In a single direct conflict, J3 Bots' instruction beat T3 Code's on both harness
 
 **Matters because** the product's character depends on it. **Settled by** the first behavior evals in M0, per harness and model, including a forty-turn run and a run across a compaction.
 
-## 2. How do provider sign-ins work with J3-owned provider homes?
+## 2. Does a subscription sign-in work inside a J3-owned provider home?
 
-Giving the engine's Claude and Codex instances their own home directories keeps bots clear of the operator's personal coding setup. It also means the subscription sign-in stored in the usual home is not there. A home reached through an API endpoint needs only the instance's environment and a few lines of configuration ([Engine: provisioning](architecture/engine.md#provisioning)), but a typical user signs in with the provider's own login, and the engine has no sign-in flow for these providers.
+Giving the engine's Claude Code and Codex instances their own homes keeps bots clear of the operator's personal coding setup, and of the subscription sign-in stored there. J3 Bots reaches the models through a provider connection: an endpoint such as CLIProxyAPI in front of the operator's subscriptions, set with `j3-bots provider connect`, which works with no sign-in in the homes ([Engine: reaching the models](architecture/engine.md#reaching-the-models)). An operator without such an endpoint has to sign each harness in inside its J3-owned home, which the docs describe but no run has tested.
 
-**Matters because** it decides the install experience. **Options:** run the provider's own login against the J3-owned home (`CLAUDE_CONFIG_DIR=<home> claude auth login`, `CODEX_HOME=<home> codex login`), driven by the installer; share only the credential file; use the operator's home and accept their global instructions. **Settled by** testing each option on Claude Code and Codex with a subscription account, including what happens when the token refreshes.
+**Matters because** it decides the install experience for an operator who runs no proxy. **Settled by** signing Claude Code and Codex in with a subscription account inside a J3-owned home (`CLAUDE_CONFIG_DIR=<home> claude auth login`, `CODEX_HOME=<home> codex login`), running bots on each for longer than a token lives, and seeing which one a harness uses when a connection is stored too.
 
 ## 3. Should J3 Bots run as a dedicated system user?
 
@@ -46,11 +46,13 @@ On a laptop, a turn under the engine costs about 59,000 input tokens per model c
 
 ## 8. When should a main session rotate, and what does the digest contain?
 
-Rotation trades continuity for cost. The thresholds (runs, tokens, age) and the digest's size and content need real conversations to tune.
+The server rotates a main session after 200 turns and carries a digest of the last delivered messages, up to 60 of them and 6,000 characters ([Server: sessions](architecture/server.md#sessions)). Both numbers are guesses. Rotation trades continuity for cost: tokens or age may be better triggers than turns, and the digest may need the bot's own summary rather than the raw messages. A fresh start carries no digest, as the client promises: the new session starts from the bot's memory files alone.
+
+**Settled by** real conversations: how a session's cost grows with its turns on each provider, and whether bots pick up well after a rotation.
 
 ## 9. How does an operator configure providers without T3 Code's interface?
 
-For M1 the plan is to print a pairing link to the engine's own web interface. J3 Bots' settings need their own provider screen eventually: which providers are signed in, which models each bot may use.
+Today on the host: `j3-bots provider connect` sets the endpoint and its key, and `j3-bots doctor` shows what the engine reports for each provider. J3 Bots' settings need their own provider screen eventually: whether each provider can run bots, which models each bot may use, and a way to change the connection from a client without the key passing through anything but the server.
 
 ## 10. Is non-streamed speech good enough?
 

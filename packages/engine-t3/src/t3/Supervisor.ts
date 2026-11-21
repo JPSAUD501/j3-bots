@@ -5,12 +5,14 @@ import type { EngineStatus } from "@j3-bots/contracts";
 import { ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -18,7 +20,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import { boundedCommand } from "./Command.ts";
+import { boundedCommand, engineEnvironment } from "./Command.ts";
 import type { Access } from "./Credential.ts";
 import { ORCHESTRATION_PROTOCOL, pin } from "./Pin.ts";
 import { engineFolders, type PrivateFiles } from "./PrivateFiles.ts";
@@ -33,6 +35,9 @@ import { engineFolders, type PrivateFiles } from "./PrivateFiles.ts";
 // when it started, and stopped before a new one starts. Any other program on
 // the port, whether or not it answers HTTP, is left alone: the engine waits
 // for the port, as `port-in-use`, instead of being started to fail there.
+//
+// A restart asked for stops the engine and starts it again at once, with
+// `beforeStart` run between, so what it provisions reaches every harness.
 
 type UnavailableReason = Extract<EngineStatus["state"], { readonly _tag: "unavailable" }>["reason"];
 
@@ -49,7 +54,10 @@ export interface SupervisorInput<E> {
   readonly port: number;
   /** Where the supervisor publishes the engine's state. */
   readonly state: SubscriptionRef.SubscriptionRef<ProcessState>;
-  /** Runs before every start, while the engine is down: provisioning, the credential. */
+  /**
+   * Runs before every start, while the engine is down: provisioning, the
+   * credential. A failure keeps the engine down, and the start is tried again.
+   */
   readonly beforeStart: Effect.Effect<void, E>;
   /** What the engine makes of J3 Bots' current credential. */
   readonly checkAccess: Effect.Effect<Access>;
@@ -127,6 +135,18 @@ const EngineProcess = Schema.Struct({ pid: Schema.Int, environmentId: Schema.Str
 const decodeEngineProcess = Schema.decodeUnknownOption(Schema.fromJsonString(EngineProcess));
 const encodeEngineProcess = Schema.encodeEffect(Schema.fromJsonString(EngineProcess));
 
+/** What the running supervision loop can be asked. */
+export interface Supervision {
+  /**
+   * Stops the engine, if it runs, and starts it again at once, whatever the
+   * restart backoff. Returns `true` once the engine it stopped is gone and
+   * the state says so, before the new one starts; `false` at once when the
+   * loop no longer runs, as after the engine was found incompatible, so
+   * nothing will start the engine again.
+   */
+  readonly restart: Effect.Effect<boolean>;
+}
+
 /**
  * Starts the supervision loop in the current scope. Closing the scope stops
  * the engine.
@@ -139,6 +159,7 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
   const { state } = input;
   const check = probe(input.port).pipe(Effect.provideService(HttpClient.HttpClient, http));
   const recordFile = path.join(engineFolders(path, input.home).j3, "engine-process.json");
+  const environment = engineEnvironment(yield* Effect.sync(() => process.env));
 
   const engine = boundedCommand(
     input.executable,
@@ -152,7 +173,7 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
       "127.0.0.1",
       "--no-browser",
     ],
-    { stdin: "ignore", stdout: "ignore", stderr: "ignore" },
+    { stdin: "ignore", stdout: "ignore", stderr: "ignore", env: environment, extendEnv: false },
     ENGINE_STOP,
   );
 
@@ -321,23 +342,65 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
     ),
   );
 
+  /** Each restart asked for, completed once the engine it stopped is gone. */
+  const restarts = yield* Queue.unbounded<Deferred.Deferred<void>>();
+
+  /** Whatever ends first: `effect`, or a restart asked for, which interrupts it. */
+  const untilRestart = <A, E2>(effect: Effect.Effect<A, E2>) =>
+    Effect.raceFirst(
+      effect.pipe(Effect.map((value) => ({ _tag: "done", value }) as const)),
+      Queue.take(restarts).pipe(Effect.map((asked) => ({ _tag: "restart", asked }) as const)),
+    );
+
+  /** Answers a restart, and every other one asked for meanwhile. */
+  const restarted = Effect.fnUntraced(function* (asked: Deferred.Deferred<void>) {
+    for (const done of [asked, ...(yield* Queue.clear(restarts))]) {
+      yield* Deferred.succeed(done, undefined);
+    }
+  });
+
   const loop = Effect.gen(function* () {
     let failures = 0;
     while (true) {
       const startedAt = yield* Clock.currentTimeMillis;
-      const keepGoing = yield* runOnce;
-      if (!keepGoing) return;
+      // Interrupting the run closes its scope, which stops the engine.
+      const ran = yield* untilRestart(runOnce);
+      if (ran._tag === "done" && !ran.value) return;
       const current = yield* SubscriptionRef.get(state);
       if (current._tag === "ready" || current._tag === "starting") {
         yield* SubscriptionRef.set(state, { _tag: "unavailable", reason: "down" });
       }
+      if (ran._tag === "restart") {
+        failures = 0;
+        yield* restarted(ran.asked);
+        continue;
+      }
       const ranFor = (yield* Clock.currentTimeMillis) - startedAt;
       failures = ranFor >= Duration.toMillis(STABLE_RUN) ? 0 : failures + 1;
-      yield* Effect.sleep(Duration.millis(Math.min(BACKOFF_MAX_MS, 500 * 2 ** failures)));
+      const waited = yield* untilRestart(
+        Effect.sleep(Duration.millis(Math.min(BACKOFF_MAX_MS, 500 * 2 ** failures))),
+      );
+      if (waited._tag === "restart") {
+        failures = 0;
+        yield* restarted(waited.asked);
+      }
     }
   });
 
-  yield* Effect.forkScoped(loop);
+  /** Completed when the loop ends: no restart asked for is answered after that. */
+  const ended = yield* Deferred.make<void>();
+  yield* Effect.forkScoped(loop.pipe(Effect.ensuring(Deferred.succeed(ended, undefined))));
+
+  return {
+    restart: Effect.gen(function* () {
+      const done = yield* Deferred.make<void>();
+      yield* Queue.offer(restarts, done);
+      return yield* Effect.raceFirst(
+        Deferred.await(done).pipe(Effect.as(true)),
+        Deferred.await(ended).pipe(Effect.as(false)),
+      );
+    }),
+  } satisfies Supervision;
 });
 
 /** The state as a stream of changes, starting with the current one. */

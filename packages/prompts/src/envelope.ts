@@ -96,7 +96,20 @@ export type CatchUpItem =
   | {
       readonly type: "profile-changed";
       readonly changes: readonly [ProfileChange, ...Array<ProfileChange>];
-    };
+    }
+  /**
+   * The bot's working session was replaced since its last turn; `digest`
+   * holds the recent conversation for the new one, oldest first.
+   */
+  | { readonly type: "session-rotated"; readonly digest: ReadonlyArray<DigestMessage> };
+
+/** One message of a session digest: who wrote it, its text, and the names of its files. */
+export interface DigestMessage {
+  /** `user` for the operator, `you` for the bot. */
+  readonly from: "user" | "you";
+  readonly text: string;
+  readonly files: ReadonlyArray<string>;
+}
 
 interface WakeBase {
   /** When the wake is dispatched. */
@@ -195,8 +208,6 @@ export type SystemEvent =
       readonly changes: readonly [ProfileChange, ...Array<ProfileChange>];
     }
   | { readonly name: "budget-stopped"; readonly limit: "hops" | "fan-out" }
-  /** `digest` summarizes the recent conversation for the new session. */
-  | { readonly name: "session-rotated"; readonly digest: string }
   | { readonly name: "undelivered" };
 
 export interface SystemWake extends WakeBase {
@@ -232,8 +243,6 @@ const eventLine = (event: SystemEvent): string => {
       return event.limit === "hops"
         ? "A chain of messages between bots reached its limit since your user last spoke, so it stopped."
         : "A message tried to wake more teammates than allowed, so it was not delivered.";
-    case "session-rotated":
-      return "Your working session was replaced. A digest of the recent conversation follows.";
     case "undelivered":
       return "Your last turn for your user ended without delivering an answer.";
   }
@@ -372,6 +381,31 @@ const writeSinceLastTurn = (w: EnvelopeWriter, items: ReadonlyArray<CatchUpItem>
         w.line(PROFILE_CHANGED_LINE);
         writeProfileChanges(w, item.changes);
         break;
+      case "session-rotated":
+        if (item.digest.length === 0) {
+          w.line("Your working session was replaced. No earlier messages are carried over to it.");
+          break;
+        }
+        // One block per message, its author an attribute: no text of one can
+        // pass for another's author.
+        w.line(
+          "Your working session was replaced. The recent conversation follows, oldest first, one block per message.",
+        );
+        for (const message of item.digest) {
+          w.data(
+            [
+              ["source", "digest"],
+              ["from", message.from],
+              // One attribute per file: a name may hold any character, a comma too.
+              ...message.files.map((name, index): readonly [string, string] => [
+                `file-${index + 1}`,
+                name,
+              ]),
+            ],
+            message.text,
+          );
+        }
+        break;
     }
   }
   w.close("since-last-turn");
@@ -501,7 +535,6 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
       const { event } = wake;
       w.line(eventLine(event));
       if (event.name === "profile-changed") writeProfileChanges(w, event.changes);
-      if (event.name === "session-rotated") w.data([["source", "digest"]], event.digest);
       return;
     }
   }

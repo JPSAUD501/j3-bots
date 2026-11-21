@@ -9,6 +9,8 @@ export const HOME_ENTRIES = {
   config: "config.json",
   database: "j3.sqlite",
   engine: "engine",
+  /** One home per Claude Code or Codex instance of the engine, `providers/<provider>`. */
+  providers: "providers",
   /** One workspace per bot, `bots/<bot>`. */
   bots: "bots",
   /** Memory and skills every bot reads. */
@@ -20,6 +22,9 @@ export const HOME_ENTRIES = {
   /** The one place in the home a web client may be put: the server keeps nothing there. */
   web: "web",
 } as const;
+
+/** The engine provider instances that keep a home in `providers`, by J3 Bots provider id. */
+export const PROVIDER_HOMES = ["claude-code", "codex"] as const;
 
 /** What a bot's workspace holds, by name. */
 export const WORKSPACE_ENTRIES = {
@@ -49,6 +54,7 @@ export const SYSTEM_PROMPT_FILE = `${WORKSPACE_ENTRIES.generated}/system.md`;
  * shared/memory/         user.md and log/<yyyy-mm>.md, every bot's to read
  * shared/skills/
  * attachments/           file bytes, by digest
+ * providers/<provider>/  the configuration folder of an engine provider instance
  * web/                   where the operator may put a built web client; public
  * ```
  */
@@ -62,23 +68,34 @@ export const homeLayout = (path: Path.Path, home: string) => {
     sharedMemory,
     sharedSkills,
     attachments: path.join(home, HOME_ENTRIES.attachments),
+    providerHome: (provider: (typeof PROVIDER_HOMES)[number]) =>
+      path.join(home, HOME_ENTRIES.providers, provider),
     /**
      * Every location the server writes, for a home whose bots are `bots`:
      * each entry of the home but `web`, the database's journal beside it, the
-     * shared folders, and each bot's workspace with what the server writes in
+     * shared folders, the provider homes, and each bot's workspace with what the server writes in
      * it: not `skills` and `files`, which are the bot's, links included.
      */
     written: (bots: ReadonlyArray<string>) => {
-      const { config, database, engine, shared, attachments, adminSocket, lock } = HOME_ENTRIES;
+      const { config, database, engine, providers, shared, attachments, adminSocket, lock } =
+        HOME_ENTRIES;
       const { generated, instructions, memory } = WORKSPACE_ENTRIES;
       return [
-        ...[config, engine, HOME_ENTRIES.bots, shared, attachments, adminSocket, lock].map(
-          (entry) => path.join(home, entry),
-        ),
+        ...[
+          config,
+          engine,
+          providers,
+          HOME_ENTRIES.bots,
+          shared,
+          attachments,
+          adminSocket,
+          lock,
+        ].map((entry) => path.join(home, entry)),
         // SQLite keeps its journal beside the database.
         ...["", "-wal", "-shm"].map((suffix) => path.join(home, `${database}${suffix}`)),
         sharedMemory,
         sharedSkills,
+        ...PROVIDER_HOMES.map((provider) => path.join(home, providers, provider)),
         ...bots.flatMap((bot) => [
           workspace(bot),
           ...[generated, instructions, memory].map((entry) => path.join(workspace(bot), entry)),

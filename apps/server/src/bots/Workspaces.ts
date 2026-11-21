@@ -16,6 +16,7 @@ import { EngineState } from "../engine/EngineState.ts";
 import { SYSTEM_PROMPT_FILE, WORKSPACE_ENTRIES } from "../home/entries.ts";
 import { Layout, type PrivateLocationExposed } from "../Layout.ts";
 import { MemoryFiles } from "../memory/MemoryFiles.ts";
+import { UNNAMED_OPERATOR } from "../settings/BasePrompt.ts";
 import { SettingsStore } from "../settings/SettingsStore.ts";
 import { BotStore } from "./BotStore.ts";
 
@@ -24,9 +25,6 @@ export const PINNED_FILE = {
   bot: MemoryPath.make("profile.md"),
   shared: MemoryPath.make("user.md"),
 } as const;
-
-/** What bots call the operator until the operator gives a name. */
-const UNNAMED_OPERATOR = "your user";
 
 const { generated, instructions: AGENTS_FILE, memory: MEMORY, skills, files } = WORKSPACE_ENTRIES;
 /** Folders the server writes in a workspace. */

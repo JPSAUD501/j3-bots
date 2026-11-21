@@ -10,7 +10,7 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import rootPackage from "../../../../package.json" with { type: "json" };
 import { AdminClient } from "../admin/AdminClient.ts";
-import type { AdminStatus } from "../admin/protocol.ts";
+import { type AdminStatus, CONNECT_RESTARTS } from "../admin/protocol.ts";
 import * as ServerConfig from "../config.ts";
 import * as Home from "../home/Home.ts";
 import { socketOwner } from "../service/owner.ts";
@@ -322,7 +322,7 @@ const providerCheck = Effect.fn("doctor.provider")(function* (
       harness.name,
       "warning",
       `Found at ${found.value}, but the server has no ${harness.name} provider set up, so no bot runs on it.`,
-      "This release of the server sets up no provider yet; one that does is needed to run bots.",
+      "Update the server: a release that runs bots sets up a Claude Code and a Codex provider.",
     );
   }
   for (const provider of providers) {
@@ -330,8 +330,8 @@ const providerCheck = Effect.fn("doctor.provider")(function* (
       return check(
         harness.name,
         "problem",
-        `${provider.name} is not signed in.`,
-        `Run \`${provider.status.command}\` as this user, then restart the service.`,
+        `${provider.name} has no way to reach its models yet.`,
+        `Run \`${provider.status.command}\` as this user. ${CONNECT_RESTARTS}`,
       );
     }
   }

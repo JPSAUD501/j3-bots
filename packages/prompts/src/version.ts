@@ -33,6 +33,13 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
       { type: "routine-delivered", routine: "Routine", at, text: "text" },
       { type: "held-message", message },
       { type: "profile-changed", changes: [{ field: "job", value: "text" }] },
+      {
+        type: "session-rotated",
+        digest: [
+          { from: "user", text: "text", files: [] },
+          { from: "you", text: "text", files: ["a.pdf"] },
+        ],
+      },
     ],
     answer: {
       question: "text",
@@ -46,6 +53,7 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
   {
     ...base,
     kind: "user",
+    sinceLastTurn: [{ type: "session-rotated", digest: [] }],
     answer: { question: "text", room: null, response: { type: "dismissed" } },
     messages: [],
   },
@@ -88,7 +96,6 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
   },
   { ...base, kind: "system", event: { name: "budget-stopped", limit: "hops" } },
   { ...base, kind: "system", event: { name: "budget-stopped", limit: "fan-out" } },
-  { ...base, kind: "system", event: { name: "session-rotated", digest: "text" } },
   { ...base, kind: "system", event: { name: "undelivered" } },
 ];
 

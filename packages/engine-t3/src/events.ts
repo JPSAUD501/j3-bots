@@ -204,6 +204,8 @@ export const EndedTurn = Schema.Struct({
   continuation: Schema.NullOr(PendingContinuation),
   /** Every step, in its final state. */
   steps: Schema.Array(WorkStep),
+  /** As on `turn-finished`. */
+  contextRecovered: Schema.Boolean,
 });
 export type EndedTurn = typeof EndedTurn.Type;
 
@@ -283,7 +285,16 @@ export const SessionEvent = Schema.Union([
    * dispatch is the moment that dispatch is delivered: the server admits it
    * here, not when `dispatch` returned.
    */
-  Schema.TaggedStruct("turn-started", { ...at, turnId: TurnId, cause: TurnCause }),
+  Schema.TaggedStruct("turn-started", {
+    ...at,
+    turnId: TurnId,
+    cause: TurnCause,
+    /**
+     * When its provider turn started, as the engine recorded it. `at` is when
+     * the event was sent, which a replay after a reconnect puts later.
+     */
+    startedAt: Schema.DateTimeUtc,
+  }),
   /**
    * The engine queued a start behind another turn: it has the turn, which has
    * not started. Sent once, before the turn's `turn-started` or
@@ -389,6 +400,8 @@ export const SessionEvent = Schema.Union([
   Schema.TaggedStruct("turn-finished", {
     ...at,
     turnId: TurnId,
+    /** When it ended, as the engine recorded it; `at` is when the event was sent. */
+    finishedAt: Schema.DateTimeUtc,
     /**
      * Why the turn started, as `turn-started` says it, and the same when the
      * turn never started: a waiting turn that `stop` cancelled, or one that
@@ -416,6 +429,15 @@ export const SessionEvent = Schema.Union([
      * work is not over: a dispatch it delivered stays open.
      */
     continuation: Schema.NullOr(PendingContinuation),
+    /**
+     * The provider could not resume the session's earlier conversation for
+     * this turn, so the engine ran it in a fresh provider conversation that
+     * starts from the engine's own summary of the old one. The session's
+     * working context is no longer the one J3 Bots built. **Read** at
+     * `db51b67`, `ProviderTurnStartService.ts`: a failed native resume records
+     * a `handoff` item at the run's start before the run's message.
+     */
+    contextRecovered: Schema.Boolean,
   }),
   /**
    * The pending continuation of the ended turn `turnId` will not run: `stop`

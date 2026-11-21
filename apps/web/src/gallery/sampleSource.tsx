@@ -337,6 +337,7 @@ function sampleIntents({ get, update }: Store): ShellIntents {
           pinned: false,
           hidden: false,
           state: { _tag: "idle" },
+          settingsHeld: false,
           createdAt: now(),
         };
         return {

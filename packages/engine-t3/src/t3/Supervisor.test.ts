@@ -15,6 +15,8 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as HttpClient from "effect/http/HttpClient";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as Sink from "effect/Sink";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { makePrivateFiles } from "./PrivateFiles.ts";
 import { type ProcessState, stateChanges, supervise } from "./Supervisor.ts";
@@ -61,6 +63,64 @@ const machine = Layer.mergeAll(
 );
 
 const files = makePrivateFiles(() => Effect.succeed(true));
+
+/**
+ * A machine whose engine, once started, runs until stopped and answers as a
+ * release J3 Bots does not pin.
+ */
+const incompatibleMachine = () => {
+  let started = false;
+  const descriptor = JSON.stringify({
+    environmentId: "environment-other",
+    label: "Other",
+    platform: { os: "linux", arch: "x64" },
+    serverVersion: "0.0.0-other",
+    capabilities: {},
+  });
+  return Layer.mergeAll(
+    Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) =>
+        started
+          ? Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                new Response(descriptor, { headers: { "content-type": "application/json" } }),
+              ),
+            )
+          : Effect.fail(
+              new HttpClientError.HttpClientError({
+                reason: new HttpClientError.TransportError({ request }),
+              }),
+            ),
+      ),
+    ),
+    Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make(() =>
+        Effect.sync(() => {
+          started = true;
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(4242),
+            exitCode: Effect.never,
+            isRunning: Effect.succeed(true),
+            kill: () => Effect.void,
+            stdin: Sink.drain,
+            stdout: Stream.empty,
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+            unref: Effect.succeed(Effect.void),
+          });
+        }),
+      ),
+    ),
+    FileSystem.layerNoop({}),
+    Path.layer,
+    SecureRandom.layerWebCrypto,
+  );
+};
 
 describe("supervise", () => {
   it.effect("stops when its scope closes while a start is under way", () =>
@@ -115,5 +175,28 @@ describe("supervise", () => {
       });
       assert.strictEqual(starts, 0);
     }).pipe(Effect.scoped, Effect.provide(machine)),
+  );
+
+  it.effect("answers a restart at once when the engine it started was incompatible", () =>
+    Effect.gen(function* () {
+      const state = yield* SubscriptionRef.make<ProcessState>({ _tag: "starting" });
+      const supervision = yield* supervise({
+        executable: "/nonexistent/t3",
+        home: "/nonexistent/home",
+        port: 1,
+        state,
+        beforeStart: Effect.void,
+        checkAccess: Effect.succeed("granted"),
+        reissueCredential: Effect.void,
+        files: yield* files,
+      });
+      yield* stateChanges(state).pipe(
+        Stream.filter((current) => current._tag === "incompatible"),
+        Stream.runHead,
+      );
+
+      // Nothing starts the engine again, so nothing would ever answer it.
+      assert.strictEqual(yield* supervision.restart, false);
+    }).pipe(Effect.scoped, Effect.provide(incompatibleMachine())),
   );
 });

@@ -124,6 +124,7 @@ export function EditBotForm({
   const modelMessage =
     problem === "model" || choices.pickUnavailable ? t("editBot.model.unavailable") : null;
   const settingsChange = !sameModel(model, bot.model) || mode !== bot.permissionMode;
+  const providerChange = model.providerId !== bot.model.providerId;
   const canSave = patch._tag === "changes" && !choices.pickUnavailable && !saving && connected;
 
   const unsaved = patch._tag !== "unchanged";
@@ -311,6 +312,7 @@ export function EditBotForm({
         {settingsChange && (
           <p className="text-xs text-muted-foreground">
             {t("editBot.nextTurn", { name: bot.profile.name })}
+            {providerChange && ` ${t("editBot.providerChangeStops", { name: bot.profile.name })}`}
           </p>
         )}
       </div>

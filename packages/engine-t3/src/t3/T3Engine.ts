@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { EngineStatus, ModelChoice, PermissionMode } from "@j3-bots/contracts";
+import { EngineStatus, type ModelChoice, type PermissionMode } from "@j3-bots/contracts";
 import {
   AttachmentCreateUploadUrlInput,
   CommandId,
@@ -17,6 +17,7 @@ import {
   type ChatAttachment,
   type OrchestrationV2Command,
   type OrchestrationV2ThreadStreamItem,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -46,11 +47,14 @@ import {
   Engine,
   type DispatchInput,
   type EngineOptions,
+  type ConnectionOutcome,
+  type ProviderConnection,
   type ProviderInstance,
   type RequestResponse,
   type SecretAnswer,
 } from "../Engine.ts";
 import {
+  BackgroundWorkRunning,
   DispatchRejected,
   EngineIncompatible,
   EngineIndeterminate,
@@ -84,12 +88,27 @@ import {
 import { EngineInstallFailed, ensureInstalled } from "./Install.ts";
 import { commandIdFor, messageIdFor, projectIdFor, threadIdFor } from "./Keys.ts";
 import { isMissingThread } from "./missingThread.ts";
+import { isBackgroundWorkRefusal } from "./backgroundRefusal.ts";
 import { ORCHESTRATION_PROTOCOL, pin } from "./Pin.ts";
 import type { FileChangeItem } from "./approvalDetail.ts";
 import { cursorFor, makeBatches, type BatchPlace } from "./Batches.ts";
 import { makePrivateFiles } from "./PrivateFiles.ts";
-import { instanceIdFor, provision, type InstanceSpec } from "./Provision.ts";
-import { baseUrl, stateChanges, supervise, type ProcessState } from "./Supervisor.ts";
+import { providerStatuses, providersOfEvent } from "./Providers.ts";
+import {
+  activeConnection,
+  instanceIdFor,
+  provision,
+  storeConnection,
+  writeBasePrompt,
+  type InstanceSpec,
+} from "./Provision.ts";
+import {
+  baseUrl,
+  stateChanges,
+  supervise,
+  type ProcessState,
+  type Supervision,
+} from "./Supervisor.ts";
 import { upload } from "./upload.ts";
 import {
   activeTurn,
@@ -115,6 +134,7 @@ import {
   queuedRuns,
   replacement,
   runnableTurns,
+  startedTurn,
   toolsToResolve,
   workInShell,
   type EventBody,
@@ -148,6 +168,18 @@ const SHELL_READ_TIMEOUT = Duration.seconds(3);
 const BATCHES_KEPT = 32;
 /** How long a staged file stays usable: half the engine's 24-hour sweep. */
 const STAGED_LIFETIME = Duration.hours(12);
+/** How long a provider report subscription that ended waits before it opens again. */
+const PROVIDER_RESUBSCRIBE = Duration.seconds(5);
+/**
+ * How long `connectProviders` waits for the engine to be back after its
+ * restart. Most of it is the harnesses' own start-up; one taking longer still
+ * gets the connection when it is up.
+ */
+const CONNECT_RESTART_WAIT = Duration.seconds(60);
+
+/** Statuses that tell a client nothing new: two engine reports that differ only in what J3 Bots does not show. */
+const sameStatus = Schema.toEquivalence(EngineStatus);
+
 /** Retrying a failed install: from a minute, doubling up to half an hour. */
 const INSTALL_RETRY = Schedule.min([
   Schedule.exponential(Duration.minutes(1)),
@@ -285,13 +317,99 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     Effect.provide(SecureRandom.layerWebCrypto),
   );
   const providerIds = new Set(options.providers.map((provider) => provider.id));
-  const provisionEngine = provision({
-    home: options.home,
-    files,
-    instances: options.providers.map(instanceSpecOf),
-    toolBridge: options.toolBridge,
-    systemPromptFile: options.systemPromptFile,
-  }).pipe(Effect.provideService(FileSystem.FileSystem, fs), Effect.provideService(Path.Path, path));
+  const instances = options.providers.map(instanceSpecOf);
+  /** The base prompt as last rendered, which each provisioning writes for Codex. */
+  const basePrompt = yield* Ref.make(
+    Option.getOrElse(yield* Stream.runHead(options.basePrompt), () => ""),
+  );
+  /** One writer of the engine's settings, the connection and the harness homes at a time. */
+  const provisioning = yield* Semaphore.make(1);
+  /** Run before each start of the engine, while it is stopped (`Supervisor.beforeStart`). */
+  const provisionEngine = Effect.gen(function* () {
+    yield* provision({
+      home: options.home,
+      files,
+      instances,
+      toolBridge: options.toolBridge,
+      systemPromptFile: options.systemPromptFile,
+      basePrompt: yield* Ref.get(basePrompt),
+    });
+  }).pipe(
+    provisioning.withPermits(1),
+    Effect.provideService(FileSystem.FileSystem, fs),
+    Effect.provideService(Path.Path, path),
+  );
+
+  // A new base prompt reaches Codex through its instances' configuration,
+  // which Codex reads for each thread it starts or resumes. Only that key is
+  // written.
+  yield* options.basePrompt.pipe(
+    Stream.runForEach((text) =>
+      Effect.gen(function* () {
+        if (text === (yield* Ref.get(basePrompt))) return;
+        yield* Ref.set(basePrompt, text);
+        yield* writeBasePrompt({ files, instances, basePrompt: text }).pipe(
+          provisioning.withPermits(1),
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+          Effect.catch((error) =>
+            Effect.logWarning("The new base prompt was not written for Codex", error),
+          ),
+        );
+      }),
+    ),
+    Effect.forkScoped,
+  );
+
+  const connectedNow = activeConnection(options.home).pipe(
+    Effect.provideService(FileSystem.FileSystem, fs),
+    Effect.provideService(Path.Path, path),
+  );
+
+  /** The supervision loop, once the engine is installed and supervised. */
+  const supervision = yield* Ref.make(Option.none<Supervision>());
+  /**
+   * One connection change at a time, through the restart that applies it, so
+   * an engine that came back answers only for the connection it started with.
+   */
+  const connecting = yield* Semaphore.make(1);
+
+  /**
+   * Stores the connection, then restarts the engine, whose next start
+   * provisions it (`provision`). Answers once the engine is back, or after
+   * `CONNECT_RESTART_WAIT` without it, or at once when nothing will start
+   * the engine again: it then gets the connection whenever it next starts.
+   */
+  const connectProviders = Effect.fn("Engine.connectProviders")(function* (
+    connection: ProviderConnection,
+  ) {
+    const committed = yield* storeConnection({ home: options.home, files, connection }).pipe(
+      provisioning.withPermits(1),
+      Effect.provideService(Path.Path, path),
+      Effect.as(true),
+      Effect.catch((error) =>
+        Effect.logWarning("The provider connection was not stored", error).pipe(Effect.as(false)),
+      ),
+    );
+    if (!committed) {
+      return { _tag: "refused", active: yield* connectedNow } satisfies ConnectionOutcome;
+    }
+    const stored = { _tag: "stored", baseUrl: connection.baseUrl } satisfies ConnectionOutcome;
+    const running = yield* Ref.get(supervision);
+    // Still installing: the engine's first start provisions it.
+    if (Option.isNone(running)) return stored;
+    yield* Effect.logInfo("Restarting the engine for a new provider connection");
+    if (!(yield* running.value.restart)) return stored;
+    const back = yield* stateChanges(state).pipe(
+      Stream.filter((current) => current._tag === "ready"),
+      Stream.runHead,
+      Effect.timeoutOption(CONNECT_RESTART_WAIT),
+      Effect.map(Option.flatten),
+    );
+    return Option.isSome(back)
+      ? ({ _tag: "applied", baseUrl: connection.baseUrl } satisfies ConnectionOutcome)
+      : stored;
+  }, connecting.withPermits(1));
 
   const platformServices = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
@@ -361,7 +479,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
           }),
         ),
       );
-      yield* supervise({
+      const supervised = yield* supervise({
         executable,
         home: options.home,
         port: options.port,
@@ -374,6 +492,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
         reissueCredential: reissue,
         files,
       }).pipe(platformServices);
+      yield* Ref.set(supervision, Option.some(supervised));
     }),
   );
 
@@ -727,28 +846,72 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       Effect.asVoid,
     );
 
+  /**
+   * Sends a change of a session's settings. The engine's refusal to end
+   * background work the change would end is `BackgroundWorkRunning`; any other
+   * refusal is handled as `sendSessionCommand` handles it.
+   */
+  const sendSettingsCommand = (sessionId: SessionId, input: OrchestrationV2Command) =>
+    command(input).pipe(
+      Effect.catchTags({
+        EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
+        OrchestrationV2DispatchCommandError: (error) =>
+          afterSending(projection(sessionId)).pipe(
+            Effect.andThen(
+              isBackgroundWorkRefusal(error)
+                ? Effect.fail(new BackgroundWorkRunning({ sessionId }))
+                : refused(error),
+            ),
+          ),
+      }),
+      Effect.asVoid,
+    );
+
   const configureSession = Effect.fn("Engine.configureSession")(function* (input: {
     readonly sessionId: SessionId;
     readonly model?: ModelChoice;
     readonly permissionMode?: PermissionMode;
   }) {
-    yield* liveProjection(input.sessionId);
+    // Only what differs from what the thread runs is sent: a session opened
+    // again under its key is the one the engine opened first, as it was
+    // opened then, and is set to the caller's settings this way.
+    const mirror = yield* liveProjection(input.sessionId);
+    const thread = mirror.thread;
     const threadId = ThreadId.make(input.sessionId);
-    const selection = input.model === undefined ? undefined : yield* modelSelection(input.model);
+    const wanted = input.model === undefined ? undefined : yield* modelSelection(input.model);
+    const selection =
+      wanted !== undefined &&
+      (thread === undefined ||
+        thread.modelSelection.instanceId !== wanted.instanceId ||
+        thread.modelSelection.model !== wanted.model)
+        ? wanted
+        : undefined;
+    const mode =
+      input.permissionMode !== undefined &&
+      (thread === undefined || thread.runtimeMode !== RUNTIME_MODES[input.permissionMode])
+        ? input.permissionMode
+        : undefined;
+    if (selection === undefined && mode === undefined) return;
+    // A change may replace the provider session, which ends a turn running in
+    // it: none is sent while one runs.
+    const running = startedTurn(mirror);
+    if (Option.isSome(running)) {
+      return yield* new SessionBusy({ sessionId: input.sessionId, turnId: running.value });
+    }
     if (selection !== undefined) {
-      yield* sendSessionCommand(input.sessionId, {
+      yield* sendSettingsCommand(input.sessionId, {
         type: "thread.model-selection.set",
         commandId: commandId("model", `${input.sessionId}:${yield* uniqueKey}`),
         threadId,
         modelSelection: selection,
       });
     }
-    if (input.permissionMode !== undefined) {
-      const send = sendSessionCommand(input.sessionId, {
+    if (mode !== undefined) {
+      const send = sendSettingsCommand(input.sessionId, {
         type: "thread.runtime-mode.set",
         commandId: commandId("mode", `${input.sessionId}:${yield* uniqueKey}`),
         threadId,
-        runtimeMode: RUNTIME_MODES[input.permissionMode],
+        runtimeMode: RUNTIME_MODES[mode],
       });
       yield* selection === undefined ? send : afterSending(send);
     }
@@ -1493,20 +1656,41 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   // ---------------------------------------------------------------------------
   // Status and console
 
-  const providers: EngineStatus["providers"] = options.providers.map((provider) => ({
-    id: provider.id,
-    name: provider.name,
-    harness: provider.harness === "acp-command" ? "other" : provider.harness,
-    status: { _tag: "ready" },
-    models: [],
-    usage: [],
-  }));
+  /** The engine's own report of its provider instances, kept while it is ready. */
+  const reported = yield* SubscriptionRef.make<ReadonlyArray<ServerProvider>>([]);
+  /**
+   * Every report the engine sends, from a subscription opened again a few
+   * seconds after it ends or fails, for as long as the engine is ready.
+   */
+  const reports = Stream.suspend(() =>
+    rpc["subscribeServerConfig"]({ workspaceSnapshotsOnDemand: true }),
+  ).pipe(
+    Stream.map(providersOfEvent),
+    Stream.filter((providers) => providers !== undefined),
+    Stream.catchCause(() => Stream.empty),
+    Stream.repeat(Schedule.spaced(PROVIDER_RESUBSCRIBE)),
+  );
+  yield* stateChanges(state).pipe(
+    // An engine that is not ready reports nothing: a report from before it
+    // left is not kept for when it is back.
+    Stream.switchMap((current) =>
+      current._tag === "ready" ? reports : Stream.succeed<ReadonlyArray<ServerProvider>>([]),
+    ),
+    Stream.runForEach((providers) => SubscriptionRef.set(reported, providers)),
+    Effect.forkScoped,
+  );
 
-  const status = stateChanges(state).pipe(
-    Stream.map((current): EngineStatus => {
+  const status = Stream.zipLatestWith(
+    stateChanges(state),
+    SubscriptionRef.changes(reported),
+    (current, engineProviders): EngineStatus => {
       switch (current._tag) {
         case "ready":
-          return { state: { _tag: "ready" }, pinnedVersion: pin.version, providers };
+          return {
+            state: { _tag: "ready" },
+            pinnedVersion: pin.version,
+            providers: providerStatuses(options.providers, engineProviders),
+          };
         case "starting":
           return { state: { _tag: "starting" }, pinnedVersion: pin.version, providers: [] };
         case "incompatible":
@@ -1522,8 +1706,8 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
             providers: [],
           };
       }
-    }),
-  );
+    },
+  ).pipe(Stream.changesWith(sameStatus));
 
   const consoleLink = Effect.gen(function* () {
     yield* ready;
@@ -1550,6 +1734,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
 
   return Engine.of({
     status,
+    connectProviders,
     consoleLink,
     ensureProject,
     removeProject,

@@ -15,6 +15,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { Workspaces } from "../bots/Workspaces.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
+import { BasePrompt } from "./BasePrompt.ts";
 import { SettingsStore } from "./SettingsStore.ts";
 
 /** The changes `settings.update` may ask for. */
@@ -27,7 +28,8 @@ export interface SettingsChanges {
 
 /**
  * The operator's settings. The operator's name and time zone are part of every
- * bot's instructions, so a change to either rewrites them all.
+ * bot's instructions, so a change to either rewrites them all; the name is also
+ * in the base prompt the engine gives Codex.
  */
 export class SettingsService extends Context.Service<
   SettingsService,
@@ -47,6 +49,7 @@ export const layer = Layer.effect(
     const store = yield* SettingsStore;
     const receipts = yield* CommandReceipts;
     const workspaces = yield* Workspaces;
+    const basePrompt = yield* BasePrompt;
 
     const update = Effect.fn("SettingsService.update")(function* (input: {
       readonly commandId: CommandId;
@@ -77,6 +80,7 @@ export const layer = Layer.effect(
           return next;
         }),
       });
+      if (changes.operatorName !== undefined) yield* basePrompt.refresh;
       if (changes.operatorName !== undefined || changes.timeZone !== undefined) {
         yield* workspaces.renderAll;
       }

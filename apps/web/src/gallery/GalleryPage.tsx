@@ -885,11 +885,6 @@ function Frame({
   );
 }
 
-const signInCommands: Record<string, string> = {
-  "claude-code": "CLAUDE_CONFIG_DIR=~/.j3-bots/providers/claude claude",
-  codex: "CODEX_HOME=~/.j3-bots/providers/codex codex login",
-};
-
 const engines = {
   starting: null,
   down: { ...team.engine, state: { _tag: "unavailable", reason: "down" } },
@@ -900,14 +895,19 @@ const engines = {
     state: { _tag: "unavailable", reason: "credential-refused" },
   },
   incompatible: { ...team.engine, state: { _tag: "incompatible", runningVersion: "0.1.8" } },
-  signIn: {
+  connect: {
     ...team.engine,
     providers: team.engine.providers.map((p) => ({
       ...p,
-      status: {
-        _tag: "sign-in-required",
-        command: signInCommands[p.harness] ?? p.harness,
-      } as const,
+      status: { _tag: "sign-in-required", command: "j3-bots provider connect" } as const,
+    })),
+  },
+  noModels: {
+    ...team.engine,
+    providers: team.engine.providers.map((p, index) => ({
+      ...p,
+      status: index === 0 ? ({ _tag: "ready" } as const) : ({ _tag: "unavailable" } as const),
+      models: [],
     })),
   },
   unusable: {
@@ -959,12 +959,11 @@ function EmptyStatesSection() {
         <Frame label="First run: wrong engine version" width={340} height={360}>
           <FirstRun engine={engines.incompatible} onCreateBot={created} />
         </Frame>
-        <Frame
-          label="First run: sign in to a provider, with the command for each"
-          width={400}
-          height={460}
-        >
-          <FirstRun engine={engines.signIn} onCreateBot={created} />
+        <Frame label="First run: connect the providers, with one command" width={400} height={460}>
+          <FirstRun engine={engines.connect} onCreateBot={created} />
+        </Frame>
+        <Frame label="First run: a provider ready with no model listed" width={400} height={420}>
+          <FirstRun engine={engines.noModels} onCreateBot={created} />
         </Frame>
         <Frame label="First run: one provider limited, one unavailable" width={400} height={420}>
           <FirstRun engine={engines.unusable} onCreateBot={created} />

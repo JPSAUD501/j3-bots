@@ -14,6 +14,7 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -29,6 +30,7 @@ import {
   type SecretAnswer,
 } from "../Engine.ts";
 import {
+  BackgroundWorkRunning,
   DispatchRejected,
   EngineIndeterminate,
   EngineUnavailable,
@@ -76,7 +78,9 @@ import { toolInputDigest } from "../toolCaller.ts";
 // follow-up turn), and one refused because its turn waits or did not complete; Stop
 // acknowledged before it takes effect, which disarms a pending continuation;
 // queue holds reported once per edge, including one the engine puts back on a
-// resume; turns that fail before they start; `j3` tool calls the engine records
+// resume; a settings change refused while a turn runs, and a permission mode
+// refused while background work runs, as on Claude Code; turns that fail
+// before they start; `j3` tool calls the engine records
 // after the bridge sees them; usage-limit continuations; requests that expire
 // with their turn, and whose card can change while they are open; host
 // speech; replies lost after a command was applied; staged files that expire;
@@ -90,6 +94,7 @@ import { toolInputDigest } from "../toolCaller.ts";
 
 /** The engine methods a test can hold in flight with `holdNext`. */
 export type HeldMethod =
+  | "configureSession"
   | "dispatch"
   | "redispatch"
   | "stageAttachment"
@@ -119,6 +124,8 @@ export class TestEngineControl extends Context.Service<
   {
     /** While false, every command fails with `EngineUnavailable` and applies nothing. */
     readonly setReachable: (reachable: boolean) => Effect.Effect<void>;
+    /** The base URL of the provider connection last set; never its key. */
+    readonly providerConnection: Effect.Effect<Option.Option<string>>;
     /**
      * The next command is applied, and then its reply is lost: it fails with
      * `EngineIndeterminate`.
@@ -170,6 +177,23 @@ export class TestEngineControl extends Context.Service<
      * `redispatch` of the key, after a lost reply too.
      */
     readonly rejectNextDispatch: Effect.Effect<void>;
+    /**
+     * The next `count` calls of `openSession` fail with `EngineIndeterminate`,
+     * applying nothing, as when the engine dropped them: a later call under
+     * the same key opens the session.
+     */
+    readonly failNextOpenSessions: (count: number) => Effect.Effect<void>;
+    /**
+     * The next call of `openSession` opens the session and then fails with
+     * `EngineIndeterminate`, as when its reply was lost. A later call under the
+     * same key returns that session as it was opened, as the engine answers a
+     * replayed key.
+     */
+    readonly loseNextOpenSessionReply: Effect.Effect<void>;
+    /** The model a session runs, as it was opened or last configured. */
+    readonly sessionModel: (sessionId: SessionId) => Effect.Effect<ModelChoice>;
+    /** The permission mode a session runs, as it was opened or last configured. */
+    readonly sessionPermissionMode: (sessionId: SessionId) => Effect.Effect<PermissionMode>;
     /**
      * The engine refuses the next `stop` it receives, applying nothing and
      * keeping a rejected receipt, as when a read fails while it plans the
@@ -308,6 +332,19 @@ export class TestEngineControl extends Context.Service<
       readonly sessionId: SessionId;
       readonly turnId: TurnId;
     }) => Effect.Effect<void>;
+    /**
+     * The background work every turn of the session left running ends, and
+     * wakes nothing: a wake it brings is `startEngineTurn`.
+     */
+    readonly endBackgroundWork: (sessionId: SessionId) => Effect.Effect<void>;
+    /**
+     * The provider could not resume the session's conversation, so the engine
+     * runs the turn in a fresh one from its own summary: its end says so.
+     */
+    readonly recoverContext: (input: {
+      readonly sessionId: SessionId;
+      readonly turnId: TurnId;
+    }) => Effect.Effect<void>;
     /** Whether background work some turn of the session started still runs. */
     readonly backgroundWorkRunning: (sessionId: SessionId) => Effect.Effect<boolean>;
     /**
@@ -343,6 +380,12 @@ export class TestEngineControl extends Context.Service<
      * end with `SessionNotFound`, and so does every command for it.
      */
     readonly loseSession: (sessionId: SessionId) => Effect.Effect<void>;
+    /**
+     * The session is archived from the engine's own console: every command
+     * for it is `SessionNotFound`, while its event streams stay open, as the
+     * adapter's do: only its commands check the thread's archive.
+     */
+    readonly archiveSession: (sessionId: SessionId) => Effect.Effect<void>;
     readonly dispatches: (sessionId: SessionId) => Effect.Effect<ReadonlyArray<ReceivedDispatch>>;
     readonly responses: (
       sessionId: SessionId,
@@ -384,6 +427,8 @@ interface TurnRecord {
   }>;
   /** It left background work running, which a Stop ends. */
   background: boolean;
+  /** The engine ran it in a fresh provider conversation, from its summary of the old one. */
+  contextRecovered: boolean;
   ended: {
     readonly outcome: TurnOutcome;
     readonly at: DateTime.Utc;
@@ -453,8 +498,12 @@ const STAGED_USABLE_FOR = Duration.hours(12);
 const make = Effect.gen(function* () {
   const status = yield* SubscriptionRef.make(initialStatus);
   let reachable = true;
+  /** The base URL of the provider connection, once one is set. */
+  let connection = Option.none<string>();
   let loseReply = false;
   let rejectDispatch = false;
+  let failingOpenSessions = 0;
+  let losingOpenSessionReply = false;
   let rejectStop = false;
   const holds = new Map<
     HeldMethod,
@@ -620,6 +669,7 @@ const make = Effect.gen(function* () {
       hostSpeech: [],
       closedRequests: [],
       background: false,
+      contextRecovered: false,
       ended: null,
     };
     session.turns.set(turn.turnId, turn);
@@ -780,10 +830,12 @@ const make = Effect.gen(function* () {
       _tag: "turn-finished",
       ...stamp,
       turnId: turn.turnId,
+      finishedAt: at,
       cause: turn.cause,
       outcome,
       backgroundWork: turn.background,
       continuation,
+      contextRecovered: turn.contextRecovered,
     }));
     for (const settlement of settlements) emit(session, at, settlement);
     if (session.running === turn.turnId) {
@@ -821,6 +873,7 @@ const make = Effect.gen(function* () {
       ...stamp,
       turnId: turn.turnId,
       cause: turn.cause,
+      startedAt: at,
     }));
   };
 
@@ -929,6 +982,7 @@ const make = Effect.gen(function* () {
           backgroundWork: turn.background,
           continuation: turn.ended.continuation,
           steps,
+          contextRecovered: turn.contextRecovered,
         });
         listed.push(turn);
       }
@@ -1032,6 +1086,12 @@ const make = Effect.gen(function* () {
   const engine = Engine.of({
     status: SubscriptionRef.changes(status),
 
+    connectProviders: (input) =>
+      Effect.sync(() => {
+        connection = Option.some(input.baseUrl);
+        return { _tag: "applied", baseUrl: input.baseUrl } as const;
+      }),
+
     consoleLink: command(Effect.succeed("http://127.0.0.1/test-engine")),
 
     ensureProject: ({ workspacePath }) =>
@@ -1061,6 +1121,10 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const previous = yield* priorUse(key, "openSession");
           if (previous?.command === "openSession") return previous.sessionId;
+          if (failingOpenSessions > 0) {
+            failingOpenSessions--;
+            return yield* new EngineIndeterminate();
+          }
           if (![...projects.values()].includes(projectId)) {
             return yield* new ProjectNotFound({ projectId });
           }
@@ -1092,17 +1156,41 @@ const make = Effect.gen(function* () {
             holdStartup: false,
             heldStartup: null,
           });
+          if (losingOpenSessionReply) {
+            losingOpenSessionReply = false;
+            return yield* new EngineIndeterminate();
+          }
           return sessionId;
         }),
       ),
 
     configureSession: ({ sessionId, model, permissionMode }) =>
-      command(
-        Effect.gen(function* () {
-          const session = yield* liveSession(sessionId);
-          if (model !== undefined) session.model = model;
-          if (permissionMode !== undefined) session.permissionMode = permissionMode;
-        }),
+      door(
+        "configureSession",
+        command(
+          Effect.gen(function* () {
+            const session = yield* liveSession(sessionId);
+            const changesMode =
+              permissionMode !== undefined && permissionMode !== session.permissionMode;
+            const changesModel =
+              model !== undefined &&
+              (model.providerId !== session.model.providerId ||
+                model.modelId !== session.model.modelId);
+            if (!changesMode && !changesModel) return;
+            // The adapter's check, before anything is sent.
+            if (session.running !== null) {
+              return yield* new SessionBusy({ sessionId, turnId: session.running });
+            }
+            // As for Claude Code, whose permission mode changes only with a new
+            // provider session, which the engine will not start over
+            // background work.
+            if (changesMode && backgroundRuns(session)) {
+              return yield* new BackgroundWorkRunning({ sessionId });
+            }
+            if (model !== undefined) session.model = model;
+            if (permissionMode !== undefined) session.permissionMode = permissionMode;
+          }),
+        ),
       ),
 
     retireSession: (sessionId) =>
@@ -1376,6 +1464,8 @@ const make = Effect.gen(function* () {
   });
 
   const control = TestEngineControl.of({
+    providerConnection: Effect.sync(() => connection),
+
     setReachable: (value) =>
       Effect.gen(function* () {
         reachable = value;
@@ -1454,6 +1544,31 @@ const make = Effect.gen(function* () {
     rejectNextDispatch: Effect.sync(() => {
       rejectDispatch = true;
     }),
+
+    failNextOpenSessions: (count) =>
+      Effect.sync(() => {
+        failingOpenSessions = count;
+      }),
+
+    loseNextOpenSessionReply: Effect.sync(() => {
+      losingOpenSessionReply = true;
+    }),
+
+    sessionModel: (sessionId) =>
+      Effect.suspend(() => {
+        const session = sessions.get(sessionId);
+        return session === undefined
+          ? misuse(`no session ${sessionId}`)
+          : Effect.succeed(session.model);
+      }),
+
+    sessionPermissionMode: (sessionId) =>
+      Effect.suspend(() => {
+        const session = sessions.get(sessionId);
+        return session === undefined
+          ? misuse(`no session ${sessionId}`)
+          : Effect.succeed(session.permissionMode);
+      }),
 
     rejectNextStop: Effect.sync(() => {
       rejectStop = true;
@@ -1658,6 +1773,19 @@ const make = Effect.gen(function* () {
         turn.background = true;
       }),
 
+    recoverContext: ({ sessionId, turnId }) =>
+      Effect.gen(function* () {
+        const session = yield* existingSession(sessionId);
+        const turn = yield* runningTurn(session, turnId);
+        turn.contextRecovered = true;
+      }),
+
+    endBackgroundWork: (sessionId) =>
+      Effect.gen(function* () {
+        const session = yield* existingSession(sessionId);
+        for (const turn of session.turns.values()) turn.background = false;
+      }),
+
     backgroundWorkRunning: (sessionId) => Effect.map(existingSession(sessionId), backgroundRuns),
 
     finishTurn: ({ sessionId, turnId, outcome, continuation }) =>
@@ -1711,6 +1839,12 @@ const make = Effect.gen(function* () {
         for (const subscriber of session.subscribers.keys()) {
           yield* Queue.fail(subscriber, new SessionNotFound({ sessionId }));
         }
+      }),
+
+    archiveSession: (sessionId) =>
+      Effect.gen(function* () {
+        const session = yield* existingSession(sessionId);
+        retire(session, yield* DateTime.now);
       }),
 
     dispatches: (sessionId) =>

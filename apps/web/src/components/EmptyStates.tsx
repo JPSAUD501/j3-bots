@@ -65,15 +65,20 @@ export function FirstRun({ engine, onCreateBot }: FirstRunProps) {
       </Centered>
     );
   }
-  if (!engine.providers.some((p) => p.status._tag === "ready")) {
-    const signIn = engine.providers.some((p) => p.status._tag === "sign-in-required");
+  if (!engine.providers.some(canRunBots)) {
+    const connect = connectCommand(engine);
     return (
       <Centered>
         <Ensemble />
-        {signIn ? (
-          <Heading title={t("firstRun.signIn.title")} body={t("firstRun.signIn.body")} />
-        ) : (
+        {connect === undefined ? (
           <Heading title={t("firstRun.unavailable.title")} body={t("firstRun.unavailable.body")} />
+        ) : (
+          <>
+            <Heading title={t("firstRun.connect.title")} body={t("firstRun.connect.body")} />
+            <span className="w-full max-w-sm text-start">
+              <CommandLine command={connect} copyLabel={t("firstRun.connect.copy")} />
+            </span>
+          </>
         )}
         <ul className="flex w-full max-w-sm flex-col gap-1.5 text-start text-sm">
           {engine.providers.map((provider) => (
@@ -151,9 +156,27 @@ export function ConversationGone({ onBack }: { onBack: () => void }) {
   );
 }
 
+/** A provider a bot can be created on: ready, with a model to pick. */
+const canRunBots = (provider: ProviderStatus) =>
+  provider.status._tag === "ready" && provider.models.length > 0;
+
+/** The one command that connects every provider that needs it; undefined when none does. */
+const connectCommand = (engine: EngineStatus): string | undefined =>
+  engine.providers.flatMap((p) =>
+    p.status._tag === "sign-in-required" ? [p.status.command] : [],
+  )[0];
+
+/** The command that connects the providers, when one needs it, ready to copy. */
+export function ConnectProviders({ engine }: { engine: EngineStatus }) {
+  const { t } = useI18n();
+  const connect = connectCommand(engine);
+  if (connect === undefined) return null;
+  return <CommandLine command={connect} copyLabel={t("firstRun.connect.copy")} />;
+}
+
 /**
- * One provider: its name, its state in words, and the command that signs it in
- * when it needs one. `stale` mutes a state reported before a disconnection.
+ * One provider: its name, and its state in words. `stale` mutes a state
+ * reported before a disconnection.
  */
 export function ProviderRow({
   provider,
@@ -168,9 +191,11 @@ export function ProviderRow({
   const [label, tone] = ((): readonly [string, string] => {
     switch (status._tag) {
       case "ready":
-        return [t("provider.ready"), "text-success"];
+        return provider.models.length > 0
+          ? [t("provider.ready"), "text-success"]
+          : [t("provider.noModels"), "text-waiting"];
       case "sign-in-required":
-        return [t("provider.signInRequired"), "text-waiting"];
+        return [t("provider.notConnected"), "text-waiting"];
       case "limited":
         return [usageLimitText(status.resetsAt, ctx), "text-blocked"];
       case "unavailable":
@@ -178,17 +203,9 @@ export function ProviderRow({
     }
   })();
   return (
-    <li className="flex flex-col gap-2 rounded-md border border-border px-3 py-2">
-      <span className="flex flex-wrap items-baseline justify-between gap-x-3">
-        <span>{provider.name}</span>
-        <span className={cn("text-xs", stale ? "text-muted-foreground" : tone)}>{label}</span>
-      </span>
-      {status._tag === "sign-in-required" && (
-        <CommandLine
-          command={status.command}
-          copyLabel={t("firstRun.signIn.copy", { name: provider.name })}
-        />
-      )}
+    <li className="flex flex-wrap items-baseline justify-between gap-x-3 rounded-md border border-border px-3 py-2">
+      <span>{provider.name}</span>
+      <span className={cn("text-xs", stale ? "text-muted-foreground" : tone)}>{label}</span>
     </li>
   );
 }
@@ -230,7 +247,7 @@ function CommandLine({ command, copyLabel }: { command: string; copyLabel: strin
         <Button
           variant="ghost-muted"
           size="icon-sm"
-          aria-label={result === "copied" ? t("firstRun.signIn.copied") : copyLabel}
+          aria-label={result === "copied" ? t("firstRun.connect.copied") : copyLabel}
           onClick={copy}
         >
           {result === "copied" ? <CheckIcon /> : <CopyIcon />}
@@ -239,7 +256,7 @@ function CommandLine({ command, copyLabel }: { command: string; copyLabel: strin
       {/* Present, though empty, from the start, so the sentence is announced when it appears. Keyed
           by the press, so pressing again replaces it and it is announced again. */}
       <span role="status" className="text-xs text-muted-foreground not-empty:mt-1">
-        {result === "selected" && <span key={attempt}>{t("firstRun.signIn.selected")}</span>}
+        {result === "selected" && <span key={attempt}>{t("firstRun.connect.selected")}</span>}
       </span>
     </span>
   );

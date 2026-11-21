@@ -46,6 +46,10 @@ A bot's permission mode is the engine's runtime mode for its sessions.
 
 J3 Bots' default for a new bot is **Auto** where the provider supports it and **Supervised** where it does not. Full access is a choice the operator makes per bot, with a plain statement of what it means.
 
+A changed mode is the bot's from the moment it is saved. A session the engine has not been brought to it takes no turn J3 Bots sends until it has been: the server sends no new work into it, applies the change once no turn runs there, retries it while the engine is restarting or unavailable, and only then lets the next turn start ([Server](server.md#sessions), Settings alignment). A turn already running keeps the mode it started with; stopping the bot ends it. On Claude Code, background work still running also holds the change, since applying it would end that work; the bot's conversation says so, the client offers the Stop while it waits, and stopping the bot applies it.
+
+One exception: a turn the engine starts on its own, a usage-limit continuation or a wake from background work that ended, can start between the change and its alignment, and runs with the mode the session still has. The pinned engine offers no way to hold only those starts (**Read** at `db51b67`, `UsageLimitRecoveryWorker.ts`). When lowering a bot's mode must take effect at once, stop the bot after the change.
+
 In every mode, the bot's own `j3` tools run without asking: they only reach J3 Bots, which applies its own rules to each call. The engine's and the harness's other tools keep the mode's rules. The Codex behavior is **Verified** on release `4969`; see [Engine](engine.md#behaviors-j3-bots-designs-around).
 
 J3 Bots adds no sandbox. A bot in full access can read the operator's SSH keys, their other bots' folders, and J3 Bots' own database.
@@ -100,6 +104,9 @@ This is a deployment recommendation, not something J3 Bots enforces. See [open q
 - When a bot needs a credential, it uses the engine's secret request, which shows the operator a masked input and gives the value to the command that needs it without placing it in the model's context.
 - J3 Bots carries the value from the client to the engine and keeps nothing of it: not in the card, the change log, a command receipt or a log line. The card records only that a value was provided. In code the value travels as a redacted type, so printing it shows nothing.
 - Memory files are not a place for secrets. The `remember` tool refuses text that looks like a credential.
+- **The provider connection's key** is typed on the host into `j3-bots provider connect`, without echo, or piped on standard input, never on the command line. The command hands it to the running server over the admin socket, and the server to the engine's secret store, as one file holding the base URL and the key together (mode 0600, inside the private home), so a change cut short never pairs one connection's base URL with another's key. Only before the engine starts is it written out to the harnesses: one secret file per instance for the variable each harness's configuration names next to the base URL; `provider connect` restarts the engine for that ([Engine: reaching the models](engine.md#reaching-the-models)). The server keeps no copy and logs nothing of it. It travels only to the endpoint, so the base URL must be `https`, or `http` to this machine only; the command refuses plain `http` to another host. The engine gives the key to the harness process, in its environment; Claude Code reads it from there through its key helper, `printenv` of that variable. That environment reaches the commands a bot runs in its shell, so a bot can read the key. **Verified** for Codex on release `4969`: the shell snapshot Codex wrote under its home (`providers/codex/shell_snapshots/`, inside the private home) held the key after a bot's turn. **Assumed**: that the live environment of a command a bot runs holds it, under Codex, whose shells start from that snapshot, and under Claude Code, where no run looked. Keeping it out of the bots' shells is an open problem.
+- **The operator's own provider setup stays out.** The harnesses run with homes of their own, and the engine starts with an allowlist of the server's environment (the system's basics, locale, proxy and certificate variables), so a server started from the operator's shell does not hand bots the operator's harness configuration, sign-ins or keys ([Engine: isolation](engine.md#isolation)).
+- **The trust boundary is the operator's user.** A bot's harness runs as the user the server runs as, and the commands it runs inherit the harness environment. So the connection's key, the engine's secret store and every file that user can read, the operator's own sign-ins included, are within reach of a bot that runs a command to look; the allowlist keeps configuration from leaking in by accident, and is not a wall. What is established of the key reaching those commands is in [Secrets](#secrets): Codex's shell snapshot holding it is **Verified**, a command's live environment holding it, under either harness, is **Assumed**.
 
 ## What is logged
 
@@ -109,7 +116,7 @@ This is a deployment recommendation, not something J3 Bots enforces. See [open q
 
 ## Known gaps
 
-- No isolation between bots at the filesystem level.
+- No isolation between bots at the filesystem level, and none between a bot and the operator's user.
 - No protection against a compromised paired device beyond revocation.
 - Push notifications pass through Apple's and Google's services, and through whichever push relay is chosen; previews are opt-in for that reason.
 - The automatic reviewer in Auto mode is the provider's, and its judgment is not J3 Bots' to guarantee.

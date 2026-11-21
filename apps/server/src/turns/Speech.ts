@@ -103,8 +103,8 @@ interface WorkspaceFile {
  * Bot tools). Each request is matched to the engine's record of its call in
  * the session's running admitted turn and pinned to it, in the transaction
  * that publishes what it says, so a request acts once, for the turn and the
- * audience that made it. `message_bot` and `set_routine` come with teammates
- * and routines, in part 2b.
+ * audience that made it. `message_bot` comes with teammates in M3, and
+ * `set_routine` with routines in M2 (`docs/roadmap.md`).
  */
 export const layer = Layer.effect(
   TurnTools,
@@ -160,7 +160,7 @@ export const layer = Layer.effect(
      * bounded number of times.
      */
     const match = Effect.fn("Speech.match")(function* (call: TurnToolCall, caller: BotSession) {
-      const sessionId = SessionRowId.make(caller.id);
+      const sessionId = caller.id;
       const session = yield* engineSessionOf(sessionId).pipe(Effect.orDie);
       if (Option.isNone(session)) return yield* new TurnEnded();
       const digest = yield* toolInputDigest(call.arguments);

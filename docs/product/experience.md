@@ -61,7 +61,7 @@ The operator creates a room, adds two to six bots, and writes.
 - **Name, title, avatar, model, permission mode**: in the bot's details.
 - **Job**: an editable text in the bot's details. Telling the bot "from now on, never do X" updates memory instead; the job stays a short statement of purpose.
 - **Memory**: the operator can read what a bot remembers, correct a line or delete it. They can also just tell the bot to forget something.
-- **Fresh start**: resets the bot's working context. The conversation history, memory, routines and files stay.
+- **Fresh start**: stops any work the bot has running and resets its working context, with nothing of the recent conversation carried over. The conversation history, memory, routines and files stay. Moving a bot to another provider stops its work the same way, and its new working context does carry a digest of the recent conversation.
 - **Delete**: removes the bot, its conversation, memory and routines after an explicit confirmation. Files in its workspace are kept unless the operator chooses otherwise.
 
 ### Knowing what it costs

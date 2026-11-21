@@ -14,6 +14,7 @@ import type * as Option from "effect/Option";
 import type * as Redacted from "effect/Redacted";
 import type * as Stream from "effect/Stream";
 import type {
+  BackgroundWorkRunning,
   DispatchRejected,
   EngineDown,
   EngineIncompatible,
@@ -175,7 +176,9 @@ export type ProviderInstance = {
        * The harness's own configuration folder, owned by J3 Bots, so bots do
        * not inherit the operator's personal setup. The adapter writes the `j3`
        * tool server and J3 Bots' launch settings into it, merging with what the
-       * harness keeps there.
+       * harness keeps there. The harness reaches its models through the
+       * provider connection once one is set (`Engine.connectProviders`), and
+       * otherwise through whatever sign-in this folder holds.
        */
       readonly home: string;
     }
@@ -191,6 +194,29 @@ export type ProviderInstance = {
       readonly args: ReadonlyArray<string>;
     }
 );
+
+/**
+ * How the Claude Code and Codex instances reach their models: an endpoint that
+ * speaks both Anthropic's Messages API and OpenAI's Responses API, such as a
+ * proxy in front of the operator's subscriptions, and the key it takes.
+ */
+export interface ProviderConnection {
+  /** The endpoint's base URL, without `/v1`. */
+  readonly baseUrl: string;
+  readonly key: Redacted.Redacted<string>;
+}
+
+/** What became of the connection `connectProviders` was given. */
+export type ConnectionOutcome =
+  /** Stored, and the engine restarted with it: every harness runs on it from now on. */
+  | { readonly _tag: "applied"; readonly baseUrl: string }
+  /**
+   * Stored, and the engine is not back yet: still installing, or not ready
+   * within the wait. It starts with this connection whenever it starts.
+   */
+  | { readonly _tag: "stored"; readonly baseUrl: string }
+  /** Not stored: the one before it, if any, stays in force. */
+  | { readonly _tag: "refused"; readonly active: string | null };
 
 /**
  * What the adapter's layer is built from: everything the server knows. The
@@ -221,6 +247,13 @@ export interface EngineOptions {
    */
   readonly systemPromptFile: string;
   /**
+   * The base prompt every bot shares, rendered: the current text, then every
+   * change. Codex takes it as its instances' `developer_instructions`, since one
+   * Codex process serves every bot of an instance; Claude Code reads it from
+   * each bot's `systemPromptFile`, which the caller writes.
+   */
+  readonly basePrompt: Stream.Stream<string>;
+  /**
    * The caller's containment check: whether `location`, links resolved, is
    * still private state the adapter may write. The adapter asks it for every
    * folder it writes in, at the moment it writes, and leaves alone one it
@@ -239,7 +272,8 @@ export interface EngineOptions {
  *   and `EngineIncompatible` mean nothing was sent. `EngineIndeterminate` means
  *   a command was sent and no reply settled it: it may have been applied, and
  *   never counts as "not applied". Once a call has sent a command, any later
- *   failure of the call is `EngineIndeterminate`, except `DispatchRejected`.
+ *   failure of the call is `EngineIndeterminate`, except `DispatchRejected`
+ *   and `BackgroundWorkRunning`, which the engine answered.
  * - Methods that take a `key` apply it once, even across engine and server
  *   restarts: calling again with the same key and input applies nothing new.
  *   After `EngineIndeterminate`, that is how the caller learns what happened;
@@ -267,6 +301,18 @@ export class Engine extends Context.Service<
     readonly status: Stream.Stream<EngineStatus>;
 
     /**
+     * Points the Claude Code and Codex instances at `connection`. It is
+     * stored, URL and key in one write, in the engine's secret store and
+     * nowhere else: not in a settings or configuration file, not in a log.
+     * Then the engine is restarted: each harness is configured for it only
+     * while the engine is stopped, and every harness starts again with it.
+     * The restart interrupts every turn and every background task running in
+     * the engine; asking the operator first is the caller's. Setting it again
+     * replaces it. Answers what became of it.
+     */
+    readonly connectProviders: (connection: ProviderConnection) => Effect.Effect<ConnectionOutcome>;
+
+    /**
      * A link that opens the engine's own web interface, signed in, for setting
      * up providers until J3 Bots has its own screen. Short-lived.
      */
@@ -289,7 +335,9 @@ export class Engine extends Context.Service<
 
     /**
      * A new, idle session in the project. `key` is the server's own id for the
-     * session, written before this call, so a retry returns the same session.
+     * session, written before this call, so a retry returns the same session:
+     * with the model and permission mode it was first opened with, which a
+     * retry with other settings does not change. `configureSession` sets them.
      */
     readonly openSession: (input: {
       readonly key: IdempotencyKey;
@@ -299,12 +347,30 @@ export class Engine extends Context.Service<
       readonly permissionMode: PermissionMode;
     }) => Effect.Effect<SessionId, EngineDown | ProjectNotFound | ModelUnavailable>;
 
-    /** Changes the model or permission mode of a session, from its next turn. */
+    /**
+     * Changes the model or permission mode of a session, from its next turn.
+     * Sends only what differs from what the session runs, so it also brings a
+     * session to settings it may already have.
+     *
+     * A change can replace the session's provider session: on Claude Code a
+     * permission mode always does, which ends a turn running there (**Read**
+     * at `db51b67`, `Orchestrator.ts` L4715-4757, `ClaudeAdapterV2.ts` L577).
+     * So it is refused with `SessionBusy`, sending nothing, while the adapter
+     * sees a turn preparing, starting or running in the session; a turn that
+     * only waits in the queue does not count. Like the dispatch's busy check,
+     * a turn the engine starts on its own between the check and the change
+     * is not seen. `BackgroundWorkRunning`: the engine refused a change that
+     * would end the session's background work. A model sent before a refused
+     * permission mode stays applied; calling again sends what still differs.
+     */
     readonly configureSession: (input: {
       readonly sessionId: SessionId;
       readonly model?: ModelChoice;
       readonly permissionMode?: PermissionMode;
-    }) => Effect.Effect<void, EngineDown | SessionNotFound | ModelUnavailable>;
+    }) => Effect.Effect<
+      void,
+      EngineDown | SessionNotFound | ModelUnavailable | SessionBusy | BackgroundWorkRunning
+    >;
 
     /**
      * Takes a replaced session out of use, as a rotation does: stops what runs

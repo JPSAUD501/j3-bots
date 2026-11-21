@@ -431,10 +431,12 @@ describe("backgroundWorkOf", () => {
       {
         _tag: "turn-finished",
         turnId: TurnId.make("run-2"),
+        finishedAt: at,
         cause: { _tag: "background" },
         outcome: { _tag: "completed" },
         backgroundWork: true,
         continuation: null,
+        contextRecovered: false,
       },
     ]);
     keep(5, [replacement(mirror, true, at, new Map()).event]);
@@ -642,4 +644,81 @@ describe("a `j3` call recorded before its arguments", () => {
       ]);
     }),
   );
+});
+
+describe("a turn the engine ran on recovered context", () => {
+  // The engine records a `handoff` item in the run when the provider could not
+  // resume its own conversation (**Read** at `db51b67`,
+  // `ProviderTurnStartService.ts`, "Recovered context").
+  const handoff = item({
+    id: "item-handoff",
+    type: "handoff",
+    status: "completed",
+    contextHandoffId: "handoff-1",
+    fromProviderThreadIds: ["provider-thread-1"],
+    toProviderThreadId: "provider-thread-2",
+    fromProviderInstanceIds: ["codex"],
+    toProviderInstanceId: "codex",
+    strategy: "full_thread_summary",
+  });
+  const recovered = (events: ReturnType<typeof diff>) =>
+    events.flatMap((event) => (event._tag === "turn-finished" ? [event.contextRecovered] : []));
+
+  it("tells so when the turn ends, live and on resume", () => {
+    const mirror = emptyMirror();
+    const { view } = replacement(mirror, false, at);
+    applyEvent(mirror, run("running", 1));
+    applyEvent(mirror, handoff);
+    applyEvent(mirror, run("completed", 1));
+    assert.deepStrictEqual(recovered(diff(mirror, view, at)), [true]);
+
+    const { event: resumed } = replacement(mirror, true, at);
+    assert.isTrue(resumed.endedTurns[0]?.contextRecovered);
+  });
+
+  it("does not for a turn that kept its conversation", () => {
+    const mirror = emptyMirror();
+    const { view } = replacement(mirror, false, at);
+    applyEvent(mirror, run("running", 1));
+    applyEvent(mirror, run("completed", 1));
+    assert.deepStrictEqual(recovered(diff(mirror, view, at)), [false]);
+  });
+});
+
+describe("a turn told after it ran", () => {
+  it("carries the times the engine recorded, not the time it is told", () => {
+    const startedAt = DateTime.makeUnsafe("2026-11-20T09:00:00Z");
+    const finishedAt = DateTime.makeUnsafe("2026-11-20T09:05:00Z");
+    const mirror = emptyMirror();
+    const { view } = replacement(mirror, false, at);
+    // Started and ended while the stream was down: the replay tells both at once, later.
+    applyEvent(
+      mirror,
+      event("run.updated", {
+        id: "run-1",
+        ordinal: 1,
+        userMessageId: "message-1",
+        status: "completed",
+        threadId: "thread-1",
+        providerInstanceId: "codex",
+        modelSelection: { instanceId: "codex", model: "gpt-5" },
+        providerThreadId: null,
+        rootNodeId: null,
+        activeAttemptId: null,
+        requestedAt: startedAt,
+        startedAt,
+        completedAt: finishedAt,
+        checkpointId: null,
+        contextHandoffId: null,
+      }),
+    );
+    const times = diff(mirror, view, at).flatMap((told) =>
+      told._tag === "turn-started"
+        ? [told.startedAt]
+        : told._tag === "turn-finished"
+          ? [told.finishedAt]
+          : [],
+    );
+    assert.deepStrictEqual(times, [startedAt, finishedAt]);
+  });
 });

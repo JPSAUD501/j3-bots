@@ -33,6 +33,7 @@ const bot = (
     pinned: options.pinned ?? false,
     hidden: options.hidden ?? false,
     state: options.state ?? { _tag: "idle" },
+    settingsHeld: false,
     createdAt: DateTime.makeUnsafe(0),
   },
   lastEntry: null,

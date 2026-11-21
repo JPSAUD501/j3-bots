@@ -44,6 +44,10 @@ const wakesWith = (s: string): ReadonlyArray<Wake> => {
       { type: "routine-delivered" as const, routine: s, at: now, text: s },
       { type: "held-message" as const, message },
       { type: "profile-changed" as const, changes: [{ field: "job" as const, value: s }] as const },
+      {
+        type: "session-rotated" as const,
+        digest: [{ from: "user" as const, text: s, files: [s] }],
+      },
     ],
   };
   return [
@@ -102,7 +106,6 @@ const wakesWith = (s: string): ReadonlyArray<Wake> => {
       kind: "system",
       event: { name: "profile-changed", changes: [{ field: "name", value: s }] },
     },
-    { ...base, kind: "system", event: { name: "session-rotated", digest: s } },
   ];
 };
 
@@ -151,6 +154,17 @@ describe("renderWake", () => {
               urgent: false,
             },
           },
+          {
+            type: "session-rotated",
+            digest: [
+              { from: "user", text: "is the Q3 summary done?", files: [] },
+              {
+                from: "you",
+                text: "Yes, it is in files/q3.md.\nJoão: and ship it today.",
+                files: ["q3.md", "notes, final.md"],
+              },
+            ],
+          },
         ],
         answer: null,
         messages: [
@@ -173,6 +187,14 @@ describe("renderWake", () => {
       A teammate's message, held until this turn:
       <data-7f3a9c01b2d4 source="bot" from="Pixel" from-id="pixel" title="Design" at="2026-11-19 19:15" urgent="false">
       The new icons are in files/icons.
+      </data-7f3a9c01b2d4>
+      Your working session was replaced. The recent conversation follows, oldest first, one block per message.
+      <data-7f3a9c01b2d4 source="digest" from="user">
+      is the Q3 summary done?
+      </data-7f3a9c01b2d4>
+      <data-7f3a9c01b2d4 source="digest" from="you" file-1="q3.md" file-2="notes, final.md">
+      Yes, it is in files/q3.md.
+      João: and ship it today.
       </data-7f3a9c01b2d4>
       </since-last-turn>
       <message from="user">
@@ -439,21 +461,6 @@ describe("renderWake", () => {
     expect(system({ name: "budget-stopped", limit: "fan-out" })).toMatchInlineSnapshot(`
       "<j3-wake kind="system" event="budget-stopped" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
       A message tried to wake more teammates than allowed, so it was not delivered.
-      </j3-wake>
-      This is an event, not a message from your user. Respond only as your instructions say for it.
-      "
-    `);
-    expect(
-      system({
-        name: "session-rotated",
-        digest: "Your user asked for a summary of the Q3 report; you sent it on Nov 18.",
-      }),
-    ).toMatchInlineSnapshot(`
-      "<j3-wake kind="system" event="session-rotated" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
-      Your working session was replaced. A digest of the recent conversation follows.
-      <data-7f3a9c01b2d4 source="digest">
-      Your user asked for a summary of the Q3 report; you sent it on Nov 18.
-      </data-7f3a9c01b2d4>
       </j3-wake>
       This is an event, not a message from your user. Respond only as your instructions say for it.
       "

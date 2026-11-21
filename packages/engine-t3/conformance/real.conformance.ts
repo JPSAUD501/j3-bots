@@ -80,6 +80,8 @@ const options = Effect.map(paths, ({ home, agent }): EngineOptions => ({
   // The scripted agent calls no bot tools.
   toolBridge: { command: "true", args: [] },
   systemPromptFile: ".j3/system.md",
+  // Only Codex reads it, and the bench runs no Codex instance.
+  basePrompt: Stream.make(""),
   // The bench's home is a fresh folder of its own, with no web client to publish through.
   isPrivate: () => Effect.succeed(true),
 }));

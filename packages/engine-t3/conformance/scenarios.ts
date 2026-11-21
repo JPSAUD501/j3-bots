@@ -179,6 +179,27 @@ export const scenarios = (it: Methods) => {
     }),
   );
 
+  it.effect("refuses a settings change while a turn runs, and takes it once the turn ended", () =>
+    Effect.gen(function* () {
+      const engine = yield* Engine;
+      const { sessionId, events, key } = yield* session("configure-busy");
+      const running = yield* dispatchTurn({
+        ...(yield* start(key("work"), { _tag: "work" })),
+        sessionId,
+      });
+      yield* events.next("turn-started");
+
+      const change = { sessionId, permissionMode: "auto-accept-edits" } as const;
+      const refused = yield* engine.configureSession(change).pipe(Effect.flip);
+      yield* engine.stop({ key: key("configure-busy-stop"), sessionId });
+      yield* finished(events, running.turnId);
+      // Nothing was sent, so the change is taken once the session is idle.
+      yield* engine.configureSession(change);
+
+      assert.isTrue(refused._tag === "SessionBusy" && refused.turnId === running.turnId);
+    }),
+  );
+
   it.effect("delivers a start as a turn caused by its dispatch, and reports its end", () =>
     Effect.gen(function* () {
       const engine = yield* Engine;

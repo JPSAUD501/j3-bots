@@ -182,6 +182,7 @@ const diagnoseIn = (changes: Partial<World> = {}) =>
               ? Effect.fail(new AdminRequestFailed({ path: "/status", cause: "garbled answer" }))
               : Effect.succeed(world.server),
           startPairing: () => Effect.die("doctor never pairs"),
+          connectProviders: () => Effect.die("doctor never connects providers"),
         }),
       ),
       Layer.succeed(

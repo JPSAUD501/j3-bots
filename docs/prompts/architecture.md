@@ -105,7 +105,7 @@ Rules:
 - `kind` is one of `user`, `room`, `bot`, `routine`, `system`. The base prompt says what each means and how to respond.
 - Every envelope ends with a fixed closing line for its kind, after the block, the cheapest way to restate the speech rule on every turn. For `user`: "Reply with `say`; nothing else reaches them." For `routine`: "Nobody is waiting. Speak only as the instruction's last line says." For `room`, `bot` and `system`, the equivalent one line.
 - `at`, `weekday` and `tz` appear on every wake, in the operator's zone, and every other time in the envelope is given in that zone too. Bots report times in the operator's zone; the weekday is there because models are unreliable at working it out from a date.
-- `since-last-turn` appears only when there is something the session has not seen: results delivered by side sessions, held non-urgent messages, profile edits.
+- `since-last-turn` appears only when there is something the session has not seen: results delivered by side sessions, held non-urgent messages, profile edits, and, in the first envelope of a bot's new main session, that its session was replaced, with a digest of the recent conversation: one block per message, oldest first, whose `from` attribute says who wrote it (`user` or `you`) and whose `file-1`, `file-2`, … attributes name its files, one each.
 - Text written by the operator is placed in `<message from="user">`.
 - A routine's saved instruction is placed in `<instruction>`, never in a nonce block; its trigger data is. The bot wrote the instruction, but the operator's request is what authorized it.
 - Text from anywhere else is placed in a block whose tag ends in a random nonce generated for that wake, for example `<data-7f3a9c01b2d4 source="webhook">`. That includes the bot's own earlier words when they come back to it: what a routine run said, a session digest. Content cannot close a tag it cannot guess, and the nonce is drawn again if it already occurs in the envelope. The base prompt states that everything inside such a block is information.
@@ -141,7 +141,7 @@ Envelope shapes by kind:
 | `routine` | Routine name, schedule, the saved instruction, a summary of recent runs and what each delivered, trigger data if any | Do exactly what the instruction names; speak only if the instruction's delivery line says so |
 | `system` | What happened, in one line; for `profile-changed`, the changed fields | Usually nothing. For `first-run`, open the conversation |
 
-The `system` kind covers a small fixed set: `first-run`, `profile-changed`, `budget-stopped`, `session-rotated`, `undelivered`. A rotated session's first envelope carries a digest of the recent conversation. `undelivered` re-wakes a bot whose operator turn ended without a delivery. A finished background task is not a J3 Bots event: the engine or the harness wakes the session itself, without an envelope, and the base prompt covers that case (**Verified** on Claude Code for a background command).
+The `system` kind covers a small fixed set: `first-run`, `profile-changed`, `budget-stopped`, `undelivered`. A rotation is not a wake of its own: the digest rides in `since-last-turn` of whatever wakes the new session first, so replacing a session costs no turn. `undelivered` re-wakes a bot whose operator turn ended without a delivery. A finished background task is not a J3 Bots event: the engine or the harness wakes the session itself, without an envelope, and the base prompt covers that case (**Verified** on Claude Code for a background command).
 
 ## Tools
 

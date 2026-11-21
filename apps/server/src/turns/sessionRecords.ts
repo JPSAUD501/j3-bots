@@ -16,7 +16,11 @@ import type { Signals } from "./Signals.ts";
 import { stopTargets } from "./stopTargets.ts";
 import type { WorkSteps } from "./WorkSteps.ts";
 
-const LostRow = Schema.Struct({ bot_id: BotId, purpose: Schema.Literals(["main", "side"]) });
+const LostRow = Schema.Struct({
+  bot_id: BotId,
+  purpose: Schema.Literals(["main", "side"]),
+  retired_at: Schema.NullOr(Schema.String),
+});
 
 const OpenTurn = Schema.Struct({
   engine_turn_id: TurnId,
@@ -119,8 +123,13 @@ export const sessionRecords = (
  * work fold end interrupted, and its open requests close. A dispatch not yet
  * answered is the sender's, which settles it in the session's gate: it is due
  * at once, whatever its backoff, and the workers are nudged once the loss
- * commits. A main session's loss shows in the bot's conversation; part 2b
- * gives the bot a new one. Runs in the caller's transaction.
+ * commits. A live main session's loss shows in the bot's conversation, and
+ * the rotator gives the bot a new one; one J3 Bots had retired was replaced
+ * already, so its loss is not told. Runs in the caller's transaction.
+ *
+ * A session J3 Bots retired and the engine then archived (`sessionArchived`)
+ * is settled the same way, untold: the server follows its events no more, so
+ * nothing would ever end what is still open there.
  */
 export const sessionLoss = (
   sql: SqlClient.SqlClient,
@@ -137,10 +146,9 @@ export const sessionLoss = (
     Request: Schema.Struct({ sessionId: Schema.String, at: Schema.String }),
     Result: LostRow,
     execute: ({ sessionId, at }) => sql`
-      UPDATE sessions SET lost_at = ${at}, admitted_turn_id = NULL, admitted_audience = NULL,
-        admitted_room_id = NULL
+      UPDATE sessions SET lost_at = ${at}
       WHERE id = ${sessionId} AND lost_at IS NULL
-      RETURNING bot_id, purpose
+      RETURNING bot_id, purpose, retired_at
     `,
   });
 
@@ -172,12 +180,13 @@ export const sessionLoss = (
     `,
   });
 
-  /** Whether the session was recorded lost by this call. */
-  const sessionLost = Effect.fn("sessionLoss.sessionLost")(function* (sessionId: SessionRowId) {
-    const now = yield* DateTime.now;
+  /** Everything open in a session nothing runs in any more, settled at `now`. */
+  const settleOpen = Effect.fnUntraced(function* (sessionId: SessionRowId, now: DateTime.Utc) {
     const at = timeText(now);
-    const [lost] = yield* markLost({ sessionId, at });
-    if (lost === undefined) return false;
+    yield* sql`
+      UPDATE sessions SET admitted_turn_id = NULL, admitted_audience = NULL, admitted_room_id = NULL
+      WHERE id = ${sessionId}
+    `;
     // Settled as they stand: each round keeps what the engine answered for it,
     // a refusal included.
     yield* sql`
@@ -211,17 +220,41 @@ export const sessionLoss = (
       UPDATE dispatches SET next_attempt_at = NULL
       WHERE session_id = ${sessionId} AND status = 'intended'
     `;
-    if (lost.purpose === "main") {
+    // What waited on the session may settle, its bot may take work
+    // elsewhere, and a main session is replaced.
+    yield* sql.afterCommit(
+      Effect.all(
+        [signals.dispatch.fire, signals.recovery.fire, signals.stops.fire, signals.rotations.fire],
+        { discard: true },
+      ),
+    );
+  });
+
+  /** Whether the session was recorded lost by this call. */
+  const sessionLost = Effect.fn("sessionLoss.sessionLost")(function* (sessionId: SessionRowId) {
+    const now = yield* DateTime.now;
+    const [lost] = yield* markLost({ sessionId, at: timeText(now) });
+    if (lost === undefined) return false;
+    yield* settleOpen(sessionId, now);
+    // A session J3 Bots retired was already replaced: its going is no loss to tell.
+    if (lost.purpose === "main" && lost.retired_at === null) {
       yield* notify(lost.bot_id, conversation, { _tag: "session-lost" }, null);
     }
-    // What waited on the session may settle, and its bot may take work elsewhere.
-    yield* sql.afterCommit(
-      Effect.all([signals.dispatch.fire, signals.recovery.fire, signals.stops.fire], {
-        discard: true,
-      }),
-    );
     return true;
   }, Effect.orDie);
 
-  return { sessionLost };
+  /** Records that the engine archived a session J3 Bots retired, and settles what is open in it. */
+  const sessionArchived = Effect.fn("sessionLoss.sessionArchived")(function* (
+    sessionId: SessionRowId,
+  ) {
+    const now = yield* DateTime.now;
+    const archived = yield* sql`
+      UPDATE sessions SET engine_retired_at = ${timeText(now)}
+      WHERE id = ${sessionId} AND engine_retired_at IS NULL
+      RETURNING id
+    `;
+    if (archived.length > 0) yield* settleOpen(sessionId, now);
+  }, Effect.orDie);
+
+  return { sessionLost, sessionArchived };
 };

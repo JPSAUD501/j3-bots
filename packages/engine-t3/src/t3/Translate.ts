@@ -248,6 +248,12 @@ export const isEnded = (run: Run) => ENDED.has(run.status);
 const hasStarted = (run: Run) =>
   run.startedAt !== null || run.status === "running" || run.status === "waiting";
 
+/** When a run's provider turn started, as the engine recorded it. */
+const startedAtOf = (run: Run) => run.startedAt ?? run.requestedAt;
+
+/** When a run ended, as the engine recorded it. */
+const finishedAtOf = (run: Run) => run.completedAt ?? run.startedAt ?? run.requestedAt;
+
 const turnIdOf = (run: Run) => TurnId.make(run.id);
 
 const runsInOrder = (mirror: Mirror) =>
@@ -398,6 +404,17 @@ const outcomeOf = (mirror: Mirror, run: Run): TurnOutcome => {
 };
 
 const LIVE_ITEM: ReadonlySet<Item["status"]> = new Set(["idle", "pending", "running", "waiting"]);
+
+/**
+ * Whether the engine ran the turn in a fresh provider conversation seeded with
+ * its own summary of the old one: the run carries a `handoff` item. At
+ * `db51b67` the engine records one when the provider fails to resume its
+ * native session (`ProviderTurnStartService.ts`, "Recovered context"), and when
+ * a thread moves to another provider or imports another thread's context
+ * (`Orchestrator.ts`), which J3 Bots never asks for. **Read**.
+ */
+const hasRecoveredContext = (mirror: Mirror, run: Run) =>
+  itemsOf(mirror, run).some((item) => item.type === "handoff");
 
 /**
  * A task the provider reports that holds the agent's completion: the agent
@@ -1455,7 +1472,12 @@ export const diff = (mirror: Mirror, view: View, now: DateTime.Utc): ReadonlyArr
       }
       if (!turn.started && hasStarted(run)) {
         turn.started = true;
-        events.push({ _tag: "turn-started", turnId, cause: causeOf(mirror, run) });
+        events.push({
+          _tag: "turn-started",
+          turnId,
+          cause: causeOf(mirror, run),
+          startedAt: startedAtOf(run),
+        });
       }
       const ended = isEnded(run);
       for (const state of requestsOf(mirror, run)) {
@@ -1535,10 +1557,12 @@ export const diff = (mirror: Mirror, view: View, now: DateTime.Utc): ReadonlyArr
         events.push({
           _tag: "turn-finished",
           turnId,
+          finishedAt: finishedAtOf(run),
           cause: causeOf(mirror, run),
           outcome: outcomeOf(mirror, run),
           backgroundWork: hasBackgroundWork(mirror, run),
           continuation,
+          contextRecovered: hasRecoveredContext(mirror, run),
         });
       }
     }
@@ -1598,7 +1622,7 @@ export const replacement = (
       openTurns.push({
         turnId,
         cause: causeOf(mirror, run),
-        startedAt: hasStarted(run) ? (run.startedAt ?? run.requestedAt) : null,
+        startedAt: hasStarted(run) ? startedAtOf(run) : null,
         steps: stepsOf(mirror, run),
         toolCalls: itemsOf(mirror, run).flatMap((item) => {
           const call = toolCallOf(mirror, item);
@@ -1609,14 +1633,15 @@ export const replacement = (
       endedTurns.push({
         turnId,
         cause: causeOf(mirror, run),
-        startedAt: hasStarted(run) ? (run.startedAt ?? run.requestedAt) : null,
-        finishedAt: run.completedAt ?? run.startedAt ?? run.requestedAt,
+        startedAt: hasStarted(run) ? startedAtOf(run) : null,
+        finishedAt: finishedAtOf(run),
         outcome: outcomeOf(mirror, run),
         // As told at its end: the work may have woken the session and left
         // the roster since. Recomputed only for an end no stream told.
         backgroundWork: toldHandoffs.get(turnId) ?? hasBackgroundWork(mirror, run),
         continuation: continuationOf(mirror, run, now),
         steps: stepsOf(mirror, run),
+        contextRecovered: hasRecoveredContext(mirror, run),
       });
       // A requeued steer shows as its follow-up turn, whose cause is the dispatch.
       for (const steer of steers) {
@@ -1662,6 +1687,16 @@ export const replacement = (
 /** The turn running or waiting in the session, if any: for the best-effort busy check. */
 export const activeTurn = (mirror: Mirror): Option.Option<TurnId> =>
   Option.map(Option.fromNullishOr(runsInOrder(mirror).find((run) => !isEnded(run))), turnIdOf);
+
+/**
+ * The turn the engine is preparing, starting or running in the session, if
+ * any; not one that waits in its queue.
+ */
+export const startedTurn = (mirror: Mirror): Option.Option<TurnId> =>
+  Option.map(
+    Option.fromNullishOr(runsInOrder(mirror).find((run) => ACTIVE_RUN.has(run.status))),
+    turnIdOf,
+  );
 
 /** Runs waiting in the engine's queue, steers kept aside included. */
 export const queuedRuns = (mirror: Mirror) =>

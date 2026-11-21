@@ -31,13 +31,17 @@ import * as Ledger from "./turns/Ledger.ts";
 import * as Observer from "./turns/Observer.ts";
 import * as Pipeline from "./turns/Pipeline.ts";
 import * as Readiness from "./turns/Readiness.ts";
+import * as Rotations from "./turns/Rotations.ts";
+import * as RunningWork from "./turns/RunningWork.ts";
 import * as Sender from "./turns/Sender.ts";
+import * as SendPause from "./turns/SendPause.ts";
 import * as SessionGate from "./turns/SessionGate.ts";
 import * as Signals from "./turns/Signals.ts";
 import * as Speech from "./turns/Speech.ts";
 import * as HeldQueues from "./turns/HeldQueues.ts";
 import * as Stops from "./turns/Stops.ts";
 import * as Turns from "./turns/Turns.ts";
+import * as Usage from "./turns/Usage.ts";
 import * as Wakes from "./turns/Wakes.ts";
 import * as WorkSteps from "./turns/WorkSteps.ts";
 
@@ -49,7 +53,15 @@ import * as WorkSteps from "./turns/WorkSteps.ts";
  */
 export const layer = Layer.mergeAll(BotTools.layer, Turns.layer).pipe(
   Layer.provideMerge(
-    Layer.mergeAll(Bots.layer, Roster.layer, Speech.layer, Pipeline.layer, Cards.layer),
+    Layer.mergeAll(
+      Bots.layer,
+      Roster.layer,
+      Speech.layer,
+      Pipeline.layer,
+      Cards.layer,
+      Rotations.layer,
+      RunningWork.layer,
+    ),
   ),
   Layer.provideMerge(
     Layer.mergeAll(
@@ -86,8 +98,10 @@ export const layer = Layer.mergeAll(BotTools.layer, Turns.layer).pipe(
       EngineState.layer,
       RoomRouting.layer,
       Presence.layer,
+      Usage.layer,
       Signals.layer,
       SessionGate.layer,
+      SendPause.layer,
       Readiness.layer,
       DeviceAuth.layer,
     ),

@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
 import { CommandId, EntryOrder, MemoryPath, type Room } from "@j3-bots/contracts";
+import type { SessionId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -16,6 +18,8 @@ import { Layout } from "../Layout.ts";
 import { Memory } from "../memory/Memory.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import * as TestDomain from "../testing/domain.ts";
+import { mainSessionId, until } from "../testing/turns.ts";
+import { SessionGate } from "../turns/SessionGate.ts";
 import { BotStore } from "./BotStore.ts";
 import { Bots } from "./Bots.ts";
 import { EngineSessions } from "./EngineSessions.ts";
@@ -263,4 +267,60 @@ it.effect("writes the bot's profile and pinned memory into its generated instruc
       "The operator reviews pull requests on Fridays",
     );
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "brings a new session to a permission mode changed while it opened, before it takes work",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const bots = yield* Bots;
+      const store = yield* BotStore;
+      const sql = yield* SqlClient.SqlClient;
+      const recorded = (botId: string) =>
+        sql<{ readonly engine_session_id: SessionId | null }>`
+        SELECT engine_session_id FROM sessions WHERE bot_id = ${botId}
+      `.pipe(Effect.map((rows) => rows[0]?.engine_session_id ?? null));
+      const takesWork = (botId: string) =>
+        sql<{ readonly aligned: number }>`
+        SELECT settings_pending = 0 AS aligned FROM sessions WHERE bot_id = ${botId}
+      `.pipe(Effect.map((rows) => rows[0]?.aligned === 1));
+
+      // The session is aligned once it opened, with the settings the bot had
+      // then; the change is made meanwhile, and waits for that alignment.
+      const first = yield* control.holdNext("configureSession");
+      const creating = yield* Effect.forkChild(createBot("Ana"));
+      yield* first.entered;
+      const [stored] = yield* store.list;
+      if (stored === undefined) return assert.fail("The bot was not stored");
+      const original = stored.bot.permissionMode;
+      const lowered = original === "supervised" ? "auto" : "supervised";
+      const second = yield* control.holdNext("configureSession");
+      const updating = yield* Effect.forkChild(
+        bots.update({
+          commandId: command(),
+          botId: stored.bot.id,
+          changes: { permissionMode: lowered },
+        }),
+      );
+      // The change waits on the session's gate, which the alignment holds:
+      // nothing of it is saved yet.
+      const gate = yield* SessionGate;
+      const rowId = yield* mainSessionId(stored.bot.id);
+      yield* until(gate.users(rowId).pipe(Effect.map((users) => users === 2)));
+      const meanwhile = yield* store.find(stored.bot.id);
+      assert.strictEqual(Option.getOrThrow(meanwhile).bot.permissionMode, original);
+      yield* first.release;
+
+      // Aligned again before it takes work: it takes none meanwhile.
+      yield* second.entered;
+      assert.isFalse(yield* takesWork(stored.bot.id));
+      yield* second.release;
+      yield* Fiber.join(creating);
+      yield* Fiber.join(updating);
+      const sessionId = yield* recorded(stored.bot.id);
+      if (sessionId === null) return assert.fail("The session was not recorded");
+      yield* until(takesWork(stored.bot.id));
+      assert.strictEqual(yield* control.sessionPermissionMode(sessionId), lowered);
+    }).pipe(Effect.provide(TestDomain.layer)),
 );

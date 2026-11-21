@@ -76,6 +76,18 @@ If you did not create a dedicated user, turn lingering on for your own user so t
 sudo loginctl enable-linger "$(id -un)"
 ```
 
+### Connect the providers
+
+Bots run on Claude Code and Codex, each with a home of its own in `~/.j3-bots/providers`, so they use none of your own setup or sign-ins. Give them a way to their models: an endpoint that speaks Anthropic's Messages API and OpenAI's Responses API, such as CLIProxyAPI in front of your subscriptions. With the service running:
+
+```sh
+j3-bots provider connect --base-url http://127.0.0.1:8317
+```
+
+It asks for the endpoint's key without showing it; a script can pipe the key on standard input instead. Run without `--base-url`, it asks for the base URL first. Give the base URL without `/v1`: each harness adds what it needs. It must be `https`, or `http` to this machine, as here, since the key travels with every request. The key goes only into the engine's secret store. Run it again to change the endpoint or the key: the base URL and the key change together. The command restarts the engine so every bot uses the new connection at once, and says when the engine is back. A restart stops the work bots have running, so when any bot has some, it says so and asks before changing anything; `--yes` answers for you, and a script that pipes the key without `--yes` is refused and changes nothing. With no work running it restarts without asking. The providers show as ready a few seconds after the engine is back, once it has checked them: `j3-bots doctor` shows each provider's state, and until one is connected says to run this command. A bot can use the models the engine lists for its provider, so the endpoint has to route those names.
+
+Without such an endpoint, sign each harness in inside its J3 Bots home instead, as this user: `CLAUDE_CONFIG_DIR=~/.j3-bots/providers/claude-code claude auth login` and `CODEX_HOME=~/.j3-bots/providers/codex codex login`. This release has not been tested that way ([open question 2](../open-questions.md)).
+
 ### When `lan` is refused
 
 If the Pi has a public IPv4 address, the default `"host": "lan"` is refused, and `doctor` and `service install` say so, naming the address. Nothing is created then, so create the data directory and the configuration yourself, with `host` set to one private address of the Pi, such as its home network or Tailscale address (`ip -4 addr` lists them):
@@ -178,7 +190,7 @@ systemctl --user stop j3-bots
 systemctl --user start j3-bots
 ```
 
-`umask 077` creates the archive readable by you alone from the start. It holds the bots' files, the device tokens' hashes and `engine/j3/credential.json`, the bearer credential the server signs in to its engine with, which lets whoever has it start agents with full access. Keep it where only you can read it. `engine/j3/runtime` is the downloaded engine, which the server downloads again.
+`umask 077` creates the archive readable by you alone from the start. It holds the bots' files, the device tokens' hashes, the providers' key in `engine/userdata/secrets` and `engine/j3/credential.json`, the bearer credential the server signs in to its engine with, which lets whoever has it start agents with full access. Keep it where only you can read it. `engine/j3/runtime` is the downloaded engine, which the server downloads again.
 
 To restore:
 
@@ -220,6 +232,6 @@ Each line is ✓ (fine), `!` (a warning: the server runs, but something is missi
 
 ## Known limits in this release
 
-- The server sets up no providers yet. `doctor` warns that no Claude Code or Codex provider is set up, and bots cannot run turns until a release that configures them.
-- The engine adapter does not yet read sign-in or usage state from the engine. For a configured provider it reports "ready", and `doctor` repeats what it reports (**Read** in `packages/engine-t3/src/t3/T3Engine.ts`).
+- The engine adapter reads whether each provider can run bots, but not its usage limits yet.
+- Bots choose among the models the engine lists for each provider. An endpoint that names its models otherwise cannot be used for them yet.
 - `j3-bots pair` prints the code and the addresses but no QR code.

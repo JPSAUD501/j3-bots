@@ -11,6 +11,11 @@ export const ADMIN_PATHS = {
   status: "/status",
   /** `POST`, no body. Answers a `PairingGrant`: a fresh code for a new device. */
   pairing: "/pairing",
+  /**
+   * `POST`, a `ProviderConnectionRequest`. Answers a `ProviderConnectionOutcome`
+   * once the engine restarted with the connection, or it could not.
+   */
+  providerConnection: "/provider-connection",
 } as const;
 
 const Port = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 65535 }));
@@ -50,3 +55,81 @@ export const PairingGrant = Schema.Struct({
   expiresAt: Schema.DateTimeUtc,
 });
 export type PairingGrant = typeof PairingGrant.Type;
+
+/**
+ * What `j3-bots provider connect` does beyond storing the connection, as the
+ * command's help and `doctor` both say it.
+ */
+export const CONNECT_RESTARTS =
+  "It restarts the engine so the connection applies at once. A restart stops the work bots have running, so when any has, it asks first; `--yes` answers for you.";
+
+/** Hosts that never leave the machine: plain HTTP to them sends the key nowhere. */
+const isLoopback = (hostname: string) =>
+  hostname === "localhost" || hostname === "[::1]" || /^127\.\d+\.\d+\.\d+$/.test(hostname);
+
+/**
+ * A URL's base form: its origin and its path, as the URL parser writes them
+ * (lower-case host, no default port, dot segments resolved, tabs and line
+ * breaks dropped), with no `/` for an empty path.
+ */
+export const baseUrlForm = (url: URL) => `${url.origin}${url.pathname === "/" ? "" : url.pathname}`;
+
+/**
+ * Why `text` is not an endpoint's base URL as the engine is given it, or
+ * undefined when it is one: `https`, or `http` to a loopback host only, since
+ * the key travels with every request in clear otherwise; no credentials,
+ * query or fragment, not even an empty `?` or `#`, which the parser drops but
+ * a harness would append its path after, since the base URL is kept in plain
+ * text and the key travels on its own; no trailing `/` or `/v1`, which each
+ * harness adds itself; and written in its base form (`baseUrlForm`), so the
+ * text the engine is given is the URL that was checked. A problem never
+ * repeats the text, which may hold a credential.
+ */
+export const providerBaseUrlProblem = (text: string): string | undefined => {
+  if (!URL.canParse(text) || text.length > 1000) return "it is not a URL";
+  const url = new URL(text);
+  if (url.protocol !== "http:" && url.protocol !== "https:")
+    return "it is not an http or https URL";
+  if (url.protocol === "http:" && !isLoopback(url.hostname)) {
+    return "plain http would send the key in clear to another machine; use https, or http only to this machine (localhost, 127.0.0.1 or [::1])";
+  }
+  if (url.username !== "" || url.password !== "") return "it carries a user name or password";
+  if (text.includes("?") || text.includes("#")) return "it has a query or fragment";
+  if (text.endsWith("/") || url.pathname.endsWith("/v1")) return "it ends in / or /v1";
+  if (baseUrlForm(url) !== text) {
+    return "it is not written as scheme://host[:port][/path], in lower case, without a default port or . and .. segments";
+  }
+  return undefined;
+};
+
+export const ProviderConnectionRequest = Schema.Struct({
+  baseUrl: Schema.String.check(
+    Schema.makeFilter((text) => providerBaseUrlProblem(text) === undefined, {
+      expected: "an https base URL, or an http one to this machine",
+    }),
+  ),
+  /** Sent over the private admin socket only, and never logged. */
+  key: Schema.NonEmptyString,
+  /**
+   * Whether the operator agreed that the engine's restart stops the work
+   * bots have running. Without it, the server stores nothing while any runs.
+   */
+  stopWork: Schema.Boolean,
+});
+export type ProviderConnectionRequest = typeof ProviderConnectionRequest.Type;
+
+/** What became of the request (`Engine.connectProviders`). */
+export const ProviderConnectionOutcome = Schema.Union([
+  /** Stored, and the engine restarted with it. */
+  Schema.TaggedStruct("applied", { baseUrl: Schema.String }),
+  /** Stored, and the engine is not back yet: it starts with it. */
+  Schema.TaggedStruct("stored", { baseUrl: Schema.String }),
+  /**
+   * Nothing stored: `bots` bots have work running, which the restart would
+   * stop, and the request did not agree to that.
+   */
+  Schema.TaggedStruct("work-running", { bots: Schema.Int.check(Schema.isGreaterThan(0)) }),
+  /** Not stored: the one before it, if any, stays in force. */
+  Schema.TaggedStruct("refused", { active: Schema.NullOr(Schema.String) }),
+]);
+export type ProviderConnectionOutcome = typeof ProviderConnectionOutcome.Type;

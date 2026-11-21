@@ -52,6 +52,12 @@ export interface ServerConfigShape {
   /** An engine executable to use instead of the pinned one J3 Bots installs. */
   readonly engineBinary: Option.Option<string>;
   /**
+   * The scripted agent's entry point (`packages/engine-t3/scripted-agent/agent.ts`),
+   * offered as one more provider: a development aid that drives a bot with
+   * no model and no allowance.
+   */
+  readonly scriptedAgent: Option.Option<string>;
+  /**
    * The loopback port of the bot tool endpoint, which the `j3` bridge forwards
    * tool calls to. Always bound to loopback, whatever `host` is.
    */
@@ -174,8 +180,9 @@ export const DEFAULTS_TEXT = `${Schema.encodeSync(Schema.fromJsonString(ConfigFi
 /**
  * The variables that override a setting of the file. A service does not
  * inherit them from the shell that installs it: it runs with the file.
- * `J3_ENGINE_BINARY` has no setting in the file; it is for testing an engine
- * build, and a service never uses it.
+ * `J3_ENGINE_BINARY` and `J3_SCRIPTED_AGENT` have no setting in the file;
+ * they are for testing an engine build and for development, and a service
+ * never uses them.
  */
 export const SHELL_OVERRIDES = [
   "J3_HOST",
@@ -186,13 +193,20 @@ export const SHELL_OVERRIDES = [
   "J3_TLS_CERT",
   "J3_TLS_KEY",
   "J3_ENGINE_BINARY",
+  "J3_SCRIPTED_AGENT",
 ] as const;
 
 /** What an operator should know about an override set in their shell, once a service runs. */
-export const overrideNote = (name: (typeof SHELL_OVERRIDES)[number], configFile: string) =>
-  name === "J3_ENGINE_BINARY"
-    ? "J3_ENGINE_BINARY is set in this shell. It is for testing an engine build, and the service never uses it: it runs the pinned engine."
-    : `${name} is set in this shell, but the service does not get it. Put the setting in ${configFile} instead.`;
+export const overrideNote = (name: (typeof SHELL_OVERRIDES)[number], configFile: string) => {
+  switch (name) {
+    case "J3_ENGINE_BINARY":
+      return "J3_ENGINE_BINARY is set in this shell. It is for testing an engine build, and the service never uses it: it runs the pinned engine.";
+    case "J3_SCRIPTED_AGENT":
+      return "J3_SCRIPTED_AGENT is set in this shell. It is for development, and the service never uses it: it offers no scripted agent.";
+    default:
+      return `${name} is set in this shell, but the service does not get it. Put the setting in ${configFile} instead.`;
+  }
+};
 
 /** Each override, decoded as the server decodes it. */
 const OVERRIDES = {
@@ -204,6 +218,7 @@ const OVERRIDES = {
   J3_TLS_CERT: Config.NonEmptyString("J3_TLS_CERT"),
   J3_TLS_KEY: Config.NonEmptyString("J3_TLS_KEY"),
   J3_ENGINE_BINARY: Config.NonEmptyString("J3_ENGINE_BINARY"),
+  J3_SCRIPTED_AGENT: Config.NonEmptyString("J3_SCRIPTED_AGENT"),
 } satisfies Record<(typeof SHELL_OVERRIDES)[number], Config.Config<string | number>>;
 
 /** The overrides set in this process's environment. */
@@ -235,6 +250,7 @@ const environment = Config.all({
   tlsKey: Config.option(OVERRIDES.J3_TLS_KEY),
   enginePort: Config.option(OVERRIDES.J3_ENGINE_PORT),
   engineBinary: Config.option(OVERRIDES.J3_ENGINE_BINARY),
+  scriptedAgent: Config.option(OVERRIDES.J3_SCRIPTED_AGENT),
   toolPort: Config.option(OVERRIDES.J3_TOOL_PORT),
   webClient: Config.option(OVERRIDES.J3_WEB_CLIENT),
 });
@@ -517,6 +533,7 @@ export const load = Effect.gen(function* () {
     tls,
     enginePort: ports.enginePort,
     engineBinary: Option.map(env.engineBinary, (binary) => path.resolve(binary)),
+    scriptedAgent: Option.map(env.scriptedAgent, (agent) => path.resolve(agent)),
     toolPort: ports.toolPort,
     webClient,
     adminSocket,

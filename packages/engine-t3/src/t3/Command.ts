@@ -22,3 +22,51 @@ export const boundedCommand = (
     killSignal: "SIGTERM",
     forceKillAfter: stopWithin,
   });
+
+/**
+ * The variables the engine is started with, from the server's own: what a
+ * process needs to run as the operator's user (the search path, the home and
+ * user, the shell, the locale and time zone, the temporary folder, the user's
+ * runtime folder and session bus), and how it reaches the network (proxies and
+ * extra certificate authorities). Nothing else passes: a variable that
+ * configures T3 Code or a harness (`ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CONFIG_DIR`,
+ * `CODEX_HOME`, `OPENAI_API_KEY`, `T3CODE_HOME`) would give bots the
+ * operator's own credentials, folders or service.
+ */
+const PASSED = new Set([
+  "PATH",
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "LANG",
+  "TZ",
+  "TMPDIR",
+  "XDG_RUNTIME_DIR",
+  "DBUS_SESSION_BUS_ADDRESS",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "no_proxy",
+  "NODE_EXTRA_CA_CERTS",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+]);
+
+const passes = (name: string) => PASSED.has(name) || name.startsWith("LC_");
+
+/**
+ * The environment the engine starts with: the allowed part of the server's.
+ * The engine passes its environment on to every harness it starts, so a bot's
+ * harness is configured only by what J3 Bots provisions.
+ */
+export const engineEnvironment = (
+  parent: Readonly<Record<string, string | undefined>>,
+): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(parent).flatMap(([name, value]) =>
+      value === undefined || !passes(name) ? [] : [[name, value]],
+    ),
+  );

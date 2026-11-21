@@ -30,7 +30,8 @@ const makeTrigger = Effect.gen(function* () {
  * The turn machinery's workers, and what nudges each: the dispatcher (a wake
  * was written, or a session may have become idle), the recovery of
  * dispatches whose answer was lost, the Stop runner, the responder that sends
- * the operator's answers to engine requests, and the resumer of held queues.
+ * the operator's answers to engine requests, the resumer of held queues, and
+ * the rotator of main sessions.
  */
 export class Signals extends Context.Service<
   Signals,
@@ -40,6 +41,7 @@ export class Signals extends Context.Service<
     readonly stops: Trigger;
     readonly responses: Trigger;
     readonly resumes: Trigger;
+    readonly rotations: Trigger;
   }
 >()("@j3-bots/server/turns/Signals") {}
 
@@ -52,6 +54,7 @@ export const layer = Layer.effect(
       stops: yield* makeTrigger,
       responses: yield* makeTrigger,
       resumes: yield* makeTrigger,
+      rotations: yield* makeTrigger,
     });
   }),
 );

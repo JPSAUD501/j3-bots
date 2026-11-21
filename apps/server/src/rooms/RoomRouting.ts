@@ -11,7 +11,7 @@ import * as Layer from "effect/Layer";
  * within the room's hop limit. It writes their `room` wakes in the caller's
  * transaction, the one that writes the message.
  *
- * Room turns are part 2b of the server domain. Until then `layer` wakes
+ * Room turns come with rooms, in M3 (`docs/roadmap.md`). Until then `layer` wakes
  * nobody, and an operator's room message stays `pending`.
  */
 export class RoomRouting extends Context.Service<

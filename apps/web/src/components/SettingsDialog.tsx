@@ -23,7 +23,7 @@ import { editsAfterFailedSave, noEdits, settingsPatch } from "../presentation/se
 import type { ShellData, ShellIntents } from "../shell/data";
 import { cn } from "../lib/cn";
 import { activityTime, clockTime } from "../lib/time";
-import { engineProblem, ProviderRow } from "./EmptyStates";
+import { ConnectProviders, engineProblem, ProviderRow } from "./EmptyStates";
 import { Button } from "./ui/button";
 import { Confirm } from "./ui/confirm";
 
@@ -158,6 +158,7 @@ function EngineSection({ engine, stale }: { engine: EngineStatus | null; stale: 
           ))}
         </ul>
       )}
+      {!stale && <ConnectProviders engine={engine} />}
     </Section>
   );
 }

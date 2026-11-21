@@ -140,11 +140,13 @@ export const layer = Layer.effect(
       // Every session of the bot with work in scope that may be in the engine:
       // a turn running, or a dispatch the engine has or may yet take. A bot
       // Stop reaches every live session too, for background work the server
-      // does not see. A room's Stop reaches no background work its turns
-      // left: room turns, and the Stop of their work, arrive with M3
-      // (`docs/architecture/server.md`, Rooms).
+      // does not see. A session the engine retired has nothing left in it to
+      // stop: its retirement ended what ran there. A room's Stop reaches no
+      // background work its turns left: room turns, and the Stop of their
+      // work, arrive with M3 (`docs/architecture/server.md`, Rooms).
       const sessions = yield* sql<{ readonly id: string }>`
-        SELECT s.id FROM sessions s WHERE s.bot_id = ${botId} AND s.lost_at IS NULL AND (
+        SELECT s.id FROM sessions s
+        WHERE s.bot_id = ${botId} AND s.lost_at IS NULL AND s.engine_retired_at IS NULL AND (
           ${scope._tag === "bot" ? sql`(s.retired_at IS NULL AND s.engine_session_id IS NOT NULL) OR` : sql``}
           EXISTS (
             SELECT 1 FROM turns WHERE session_id = s.id AND finished_at IS NULL AND ${inScope(scope)}
@@ -333,9 +335,12 @@ export const layer = Layer.effect(
       );
     });
 
-    /** A Stop of a session was confirmed: what it held back may go. */
+    /**
+     * A Stop of a session was confirmed: what it held back may go, a rotation
+     * waiting on it included.
+     */
     const settledSession = Effect.all(
-      [signals.dispatch.fire, signals.recovery.fire, signals.resumes.fire],
+      [signals.dispatch.fire, signals.recovery.fire, signals.resumes.fire, signals.rotations.fire],
       { discard: true },
     );
 

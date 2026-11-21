@@ -10,7 +10,7 @@ import {
 import { useState, type Ref } from "react";
 import { useBots, useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
-import { memberList, presenceLine, type StatusLine } from "../presentation/roster";
+import { canStop, memberList, presenceLine, type StatusLine } from "../presentation/roster";
 import { BotAvatar, RoomAvatar } from "./BotAvatar";
 import { toneClass } from "./RosterRow";
 import { Kbd } from "./ui/kbd";
@@ -66,9 +66,7 @@ export function ConversationHeader({
     subject._tag === "bot" && subject.bot.state._tag === "waiting"
       ? subject.bot.state.entryId
       : null;
-  const running =
-    subject._tag === "bot" &&
-    (subject.bot.state._tag === "thinking" || subject.bot.state._tag === "working");
+  const stoppable = subject._tag === "bot" && canStop(subject.bot);
 
   // The announcement is fixed at each change of state; the first state is not announced.
   const state = subject._tag === "bot" ? stateOf(subject.bot) : null;
@@ -156,7 +154,7 @@ export function ConversationHeader({
             <CornerDownRightIcon aria-hidden />
           </Button>
         )}
-        {running && (
+        {stoppable && (
           <Button size="sm" onClick={onStop} aria-keyshortcuts={stopShortcut.aria}>
             <SquareIcon className="size-3 fill-current" aria-hidden />
             {t("conversation.stop")}

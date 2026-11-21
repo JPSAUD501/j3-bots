@@ -247,7 +247,9 @@ export function BotDetails({
 
       <DetailsSection title={t("details.workingContext")}>
         <div className="flex flex-col items-start gap-3">
-          <p className="text-xs text-muted-foreground">{t("details.freshStartHint", { name })}</p>
+          <p className="text-xs text-muted-foreground">
+            {t("details.freshStartHint", { name })} {t("details.freshStartStops", { name })}
+          </p>
           <Button size="sm" onClick={intents.freshStart}>
             {t("details.freshStart")}
           </Button>

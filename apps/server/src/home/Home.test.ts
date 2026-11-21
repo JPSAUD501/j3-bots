@@ -30,6 +30,7 @@ const freshHome = Effect.gen(function* () {
     tls: Option.none(),
     enginePort: 3738,
     engineBinary: Option.none(),
+    scriptedAgent: Option.none(),
     toolPort: 3739,
     webClient: { _tag: "bundled", directory: path.join(home, "web") },
     adminSocket: path.join(home, "admin.sock"),
