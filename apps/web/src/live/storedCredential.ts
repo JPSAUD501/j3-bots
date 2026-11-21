@@ -60,4 +60,5 @@ export const plainCredential = (record: CredentialRecord): CredentialCodec => ({
   open: (stored) =>
     Effect.succeed(Option.map(record.read(stored), (credential) => ({ credential, stale: false }))),
   write: (credential) => Effect.succeed(record.write(credential)),
+  mayReplace: () => true,
 });

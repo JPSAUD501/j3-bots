@@ -12,7 +12,6 @@ import {
   type OpenResult,
   SealRequest,
   type SealResult,
-  UploadStart,
 } from "@j3-bots/desktop-bridge";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -44,7 +43,6 @@ import * as ServerChoice from "./serverChoice.ts";
 import { checkServer } from "./serverCheck.ts";
 import * as Settings from "./settings.ts";
 import { makeTokenSeal } from "./tokenSeal.ts";
-import { refuseUpload, runUpload } from "./upload.ts";
 import { MIN_SIZE, openingBounds } from "./window.ts";
 
 // The desktop app: a window on the web client's own build, served from a
@@ -85,7 +83,6 @@ const encodeNetwork = Schema.encodeSync(NetworkState);
 const decodeConnectRequest = Schema.decodeUnknownOption(ConnectRequest);
 const decodeSealRequest = Schema.decodeUnknownOption(SealRequest);
 const decodeOpenRequest = Schema.decodeUnknownOption(OpenRequest);
-const decodeUploadStart = Schema.decodeUnknownOption(UploadStart);
 
 /** Whether the system has a network, as the page is told. */
 const networkState = () => encodeNetwork({ online: net.isOnline() });
@@ -241,7 +238,9 @@ const program = Effect.gen(function* () {
     request: unknown,
   ): Effect.fn.Return<OpenResult> {
     const decoded = decodeOpenRequest(request);
-    if (!fromApp(event) || Option.isNone(decoded)) return { _tag: "failed" };
+    // Not opened, which is not the same as opened to something not the app's:
+    // only that reads as not paired, and deletes what is kept for the pairing.
+    if (!fromApp(event) || Option.isNone(decoded)) return { _tag: "unavailable" };
     return yield* tokens.open(decoded.value.sealed);
   });
 
@@ -270,13 +269,14 @@ const program = Effect.gen(function* () {
         runPromise(openToken(event, request)),
       );
       ipcMain.handle(IPC_CHANNELS.network, (event) => (fromApp(event) ? networkState() : null));
-      // An upload goes only to the attachments route of the server kept now.
-      ipcMain.on(IPC_CHANNELS.upload, (event, message: unknown) => {
-        const [port] = event.ports;
-        if (port === undefined) return;
-        const start = decodeUploadStart(message);
-        if (!fromApp(event) || Option.isNone(start)) return refuseUpload(port);
-        runUpload(start.value, runSync(settings.get).server, port);
+      // A restart, as once a keyring is unlocked: Chromium keeps the
+      // encryption it set up for the process, so only a new one sees the
+      // unlocked keyring. Quitting closes the window as the operator would,
+      // so its place is saved and IndexedDB is flushed.
+      ipcMain.on(IPC_CHANNELS.relaunch, (event) => {
+        if (!fromApp(event)) return;
+        app.relaunch();
+        app.quit();
       });
     }),
     () =>
@@ -287,7 +287,7 @@ const program = Effect.gen(function* () {
         ipcMain.removeHandler(IPC_CHANNELS.sealToken);
         ipcMain.removeHandler(IPC_CHANNELS.openToken);
         ipcMain.removeHandler(IPC_CHANNELS.network);
-        ipcMain.removeAllListeners(IPC_CHANNELS.upload);
+        ipcMain.removeAllListeners(IPC_CHANNELS.relaunch);
       }),
   );
 

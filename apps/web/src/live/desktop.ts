@@ -4,14 +4,10 @@ import {
   ConnectResult,
   ForgetResult,
   HostedBridge,
-  HostedUpload,
   NetworkState,
   OpenResult,
   SealResult,
   type TokenProtection,
-  UploadOutcome,
-  UploadProgress,
-  type UploadRequest,
 } from "@j3-bots/desktop-bridge";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -20,18 +16,6 @@ import * as Schema from "effect/Schema";
 interface SealedToken {
   readonly sealed: string;
   readonly protection: TokenProtection;
-}
-
-/** The server's answer to an upload, before the page reads it. */
-export type UploadAnswer = Extract<UploadOutcome, { readonly _tag: "answered" }>;
-
-const isAnswer = (outcome: UploadOutcome): outcome is UploadAnswer => outcome._tag === "answered";
-
-/** An upload under way in the desktop app. */
-interface DesktopUpload {
-  /** The server's answer, or `null` when the upload did not reach it or no answer came back. */
-  readonly done: Promise<UploadAnswer | null>;
-  readonly abort: () => void;
 }
 
 /** What the desktop app offers the page it hosts. */
@@ -59,12 +43,8 @@ export interface Desktop {
   readonly online: () => Promise<boolean | null>;
   /** Calls `listener` each time the system wakes from sleep; answers a function that stops it. */
   readonly onResumed: (listener: (online: boolean) => void) => () => void;
-  /** Sends `body` as `request` asks, through the app, calling `onProgress` with the bytes sent so far. */
-  readonly upload: (
-    request: UploadRequest,
-    body: Blob,
-    onProgress: (sent: number) => void,
-  ) => DesktopUpload;
+  /** Restarts the app, which keeps this page's storage. */
+  readonly relaunch: () => void;
 }
 
 const decodeBridge = Schema.decodeUnknownOption(HostedBridge);
@@ -73,9 +53,6 @@ const decodeForget = Schema.decodeUnknownOption(ForgetResult);
 const decodeSeal = Schema.decodeUnknownOption(SealResult);
 const decodeOpen = Schema.decodeUnknownOption(OpenResult);
 const decodeNetwork = Schema.decodeUnknownOption(NetworkState);
-const decodeUpload = Schema.decodeUnknownOption(HostedUpload);
-const decodeProgress = Schema.decodeUnknownOption(UploadProgress);
-const decodeOutcome = Schema.decodeUnknownOption(UploadOutcome);
 const hosted: unknown = Reflect.get(window, BRIDGE_KEY);
 
 /** What `call` answers, decoded; `null` when it throws, rejects or answers something else. */
@@ -116,27 +93,8 @@ export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
         if (typeof stop === "function") stop();
       };
     },
-    upload: (request, body, onProgress) => {
-      const handle = Option.flatMap(
-        Option.liftThrowable(() =>
-          bridge.upload(request, body, (sent: unknown) =>
-            Option.map(decodeProgress(sent), onProgress),
-          ),
-        )(),
-        decodeUpload,
-      );
-      return Option.match(handle, {
-        onNone: () => ({ done: Promise.resolve(null), abort: () => undefined }),
-        onSome: ({ done, abort }) => ({
-          done: done.then(
-            (outcome) => Option.getOrNull(Option.filter(decodeOutcome(outcome), isAnswer)),
-            () => null,
-          ),
-          abort: () => {
-            abort();
-          },
-        }),
-      });
+    relaunch: () => {
+      bridge.relaunch();
     },
   }),
 });

@@ -30,6 +30,11 @@ export interface CredentialCodec {
   >;
   /** What is stored for `credential`. */
   readonly write: (credential: DeviceCredential) => Effect.Effect<string, CredentialStorageError>;
+  /**
+   * Whether `next`, written again for the credential `stored` holds, may take
+   * its place: never when it would keep the credential less protected.
+   */
+  readonly mayReplace: (stored: unknown, next: string) => boolean;
 }
 
 /** The one place the credential is stored. Each call may reject. */
@@ -63,15 +68,20 @@ export const makeCredentialStore = (options: {
       try: () => cell.get(),
       catch: () => new CredentialStorageError({ operation }),
     });
-  /** Stores `credential` again in place of `found`, if `found` is still there. Best effort. */
+  /**
+   * Stores `credential` again in place of `found`, if `found` is still there
+   * and what replaces it is no less protected. Best effort.
+   */
   const restore = (found: unknown, credential: DeviceCredential) =>
     typeof found === "string"
       ? codec.write(credential).pipe(
           Effect.flatMap((next) =>
-            Effect.tryPromise({
-              try: () => cell.swap(found, next),
-              catch: () => new CredentialStorageError({ operation: "save" }),
-            }),
+            codec.mayReplace(found, next)
+              ? Effect.tryPromise({
+                  try: () => cell.swap(found, next),
+                  catch: () => new CredentialStorageError({ operation: "save" }),
+                })
+              : Effect.succeed(false),
           ),
           Effect.flatMap((stored) => (stored ? announce : Effect.void)),
           Effect.ignore,
@@ -81,7 +91,8 @@ export const makeCredentialStore = (options: {
    * Deletes what is stored while it is still `credential`, and says whether
    * it did. A delete is refused when the value changed since it was read;
    * another window sealing the same credential again changes the value, so
-   * the read and the delete are tried again, a few times.
+   * the read and the delete are tried again, a few times, and then it fails:
+   * the credential is still stored.
    */
   const remove = (
     credential: DeviceCredential,
@@ -97,9 +108,12 @@ export const makeCredentialStore = (options: {
                   try: () => cell.swap(found, null),
                   catch: () => new CredentialStorageError({ operation: "clear" }),
                 }).pipe(
-                  Effect.filterOrElse(
-                    (cleared) => cleared || attempts <= 1,
-                    () => remove(credential, attempts - 1),
+                  Effect.flatMap((cleared) =>
+                    cleared
+                      ? Effect.succeed(true)
+                      : attempts <= 1
+                        ? Effect.fail(new CredentialStorageError({ operation: "clear" }))
+                        : remove(credential, attempts - 1),
                   ),
                 )
               : Effect.succeed(false),

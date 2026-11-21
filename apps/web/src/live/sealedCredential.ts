@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { CredentialStorageError } from "@j3-bots/client-runtime";
 import { DeviceId, DeviceToken } from "@j3-bots/contracts";
-import { TokenProtection } from "@j3-bots/desktop-bridge";
+import { type OpenResult, Sealed, TokenProtection } from "@j3-bots/desktop-bridge";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
@@ -26,6 +27,16 @@ const SealedRecord = Schema.fromJsonString(
 const decodeRecord = Schema.decodeUnknownOption(SealedRecord);
 const encodeRecord = Schema.encodeSync(SealedRecord);
 const decodeToken = Schema.decodeUnknownOption(DeviceToken);
+const isSealed = Schema.is(Sealed);
+
+/**
+ * How long the app may take to seal or open the token: long enough for the
+ * system to ask the operator to unlock a keyring and for Chromium to give up
+ * on one that does not answer (its first seal took 24 s with the session's
+ * keyring locked, before it fell back to its built-in key), but a bridge
+ * that never answers must not hold the app's start, nor a save, for ever.
+ */
+export const SEALER_DEADLINE = Duration.seconds(60);
 
 /** The record in `stored`, if the server at `server` issued it. */
 const recordOf = (server: URL, stored: unknown) =>
@@ -38,13 +49,30 @@ export const storedProtection = (server: URL, stored: unknown): Option.Option<To
 /** What the codec needs of the desktop app. */
 export type TokenSealer = Pick<Desktop, "sealToken" | "openToken">;
 
+const NOT_OPENED: OpenResult = { _tag: "unavailable" };
+
+/**
+ * What `sealer` opens `sealed` to. A value that is not a sealed token was
+ * never opened, so it says nothing of whose it is: like no answer, it is
+ * `unavailable`.
+ */
+const openToken = (sealer: TokenSealer, sealed: string): Effect.Effect<OpenResult> =>
+  isSealed(sealed)
+    ? Effect.promise(() => sealer.openToken(sealed)).pipe(
+        Effect.timeoutOption(SEALER_DEADLINE),
+        Effect.map(Option.getOrElse(() => NOT_OPENED)),
+      )
+    : Effect.succeed(NOT_OPENED);
+
 /**
  * Reads and writes the credential of the server at `server` through
  * `sealer`. A record of another server is absent, and so is one whose token
  * decrypts to something the app did not seal: the device reads as not
- * paired, and the operator pairs it again. A token the app cannot open now
- * (a locked keyring, a key the system no longer has) fails to load instead:
- * the pairing, and what is kept for it, stays until it opens.
+ * paired, and the operator pairs it again. A token the app does not open
+ * (a locked keyring, a key the system no longer has, a sealed value that is
+ * not one, no answer by `SEALER_DEADLINE`) fails to load instead: the
+ * pairing, and what is kept for it, stays until it opens. A token sealed
+ * again never replaces one kept encrypted with one kept unencrypted.
  */
 export const sealedCredential = (server: URL, sealer: TokenSealer): CredentialCodec => ({
   pairingOf: (stored) => Option.map(recordOf(server, stored), (record) => record.deviceId),
@@ -52,7 +80,7 @@ export const sealedCredential = (server: URL, sealer: TokenSealer): CredentialCo
     Option.match(recordOf(server, stored), {
       onNone: () => Effect.succeedNone,
       onSome: (record) =>
-        Effect.promise(() => sealer.openToken(record.sealed)).pipe(
+        openToken(sealer, record.sealed).pipe(
           Effect.flatMap((opened) => {
             switch (opened._tag) {
               case "unavailable":
@@ -72,6 +100,8 @@ export const sealedCredential = (server: URL, sealer: TokenSealer): CredentialCo
     }),
   write: (credential) =>
     Effect.promise(() => sealer.sealToken(Redacted.value(credential.token))).pipe(
+      Effect.timeoutOption(SEALER_DEADLINE),
+      Effect.map(Option.getOrNull),
       Effect.flatMap((sealed) =>
         sealed === null
           ? Effect.fail(new CredentialStorageError({ operation: "save" }))
@@ -85,4 +115,7 @@ export const sealedCredential = (server: URL, sealer: TokenSealer): CredentialCo
             ),
       ),
     ),
+  mayReplace: (stored, next) =>
+    !Option.contains(storedProtection(server, stored), "encrypted") ||
+    Option.contains(storedProtection(server, next), "encrypted"),
 });

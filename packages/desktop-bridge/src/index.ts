@@ -8,13 +8,7 @@ import * as Schema from "effect/Schema";
 // decoded on the side that receives it: the main process decodes what a page
 // asks, and the page decodes what the main process answers.
 
-export {
-  BRIDGE_KEY,
-  type DesktopBridge,
-  IPC_CHANNELS,
-  UPLOAD_TAGS,
-  type UploadHandle,
-} from "./channels.ts";
+export { BRIDGE_KEY, type DesktopBridge, IPC_CHANNELS } from "./channels.ts";
 
 /** An `http:` or `https:` origin: scheme, host and port, nothing more. */
 export const ServerOrigin = Schema.String.check(
@@ -89,7 +83,7 @@ export type ForgetResult = typeof ForgetResult.Type;
 const Token = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1024));
 
 /** A sealed token: base64, as the page stores it. */
-const Sealed = Schema.String.check(
+export const Sealed = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(4096),
   Schema.isPattern(/^[A-Za-z0-9+/]+={0,2}$/),
@@ -129,55 +123,11 @@ export type OpenResult = typeof OpenResult.Type;
 export const NetworkState = Schema.Struct({ online: Schema.Boolean });
 export type NetworkState = typeof NetworkState.Type;
 
-/** An upload as the page asks for it: where, and the headers it goes with. */
-export const UploadRequest = Schema.Struct({
-  url: Schema.String.check(Schema.isMaxLength(4096)),
-  headers: Schema.Record(Schema.String, Schema.String),
-});
-export type UploadRequest = typeof UploadRequest.Type;
-
-/** A byte count. */
-const Bytes = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
-
-/** An upload as the preload script posts it to the main process, with its body's size. */
-export const UploadStart = Schema.Struct({ request: UploadRequest, size: Bytes });
-export type UploadStart = typeof UploadStart.Type;
-
-/** What the preload script sends of the body, when the main process pulls it. */
-export const UploadBody = Schema.Union([
-  Schema.TaggedStruct("chunk", { bytes: Schema.Uint8Array }),
-  Schema.TaggedStruct("end", {}),
-]);
-export type UploadBody = typeof UploadBody.Type;
-
-/** How many of the body's bytes have gone, as the page is told. */
-export const UploadProgress = Bytes;
-
-/** How an upload ended: the server's answer, before the page reads it, or `failed`. */
-export const UploadOutcome = Schema.Union([
-  Schema.TaggedStruct("answered", {
-    /** Where the answer came from: the request's address, or where a redirect, not followed, points. */
-    url: Schema.String,
-    status: Schema.Int,
-    body: Schema.String,
-  }),
-  Schema.TaggedStruct("failed", {}),
-]);
-export type UploadOutcome = typeof UploadOutcome.Type;
-
 /** A function, called only to have its answer decoded. */
 const Callable = Schema.declare(
   (input: unknown): input is (...args: ReadonlyArray<unknown>) => unknown =>
     Predicate.isFunction(input),
 );
-
-/** A promise, awaited only to have its value decoded. */
-const Awaitable = Schema.declare(
-  (input: unknown): input is Promise<unknown> => input instanceof Promise,
-);
-
-/** What `upload` answers, as the page decodes it. */
-export const HostedUpload = Schema.Struct({ done: Awaitable, abort: Callable });
 
 /**
  * `window[BRIDGE_KEY]` as the page decodes it: a page in a browser finds
@@ -191,6 +141,6 @@ export const HostedBridge = Schema.Struct({
   openToken: Callable,
   networkStatus: Callable,
   onResumed: Callable,
-  upload: Callable,
+  relaunch: Callable,
 });
 export type HostedBridge = typeof HostedBridge.Type;

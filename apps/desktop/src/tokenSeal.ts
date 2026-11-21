@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { OpenResult, SealResult, TokenProtection } from "@j3-bots/desktop-bridge";
+import type { OpenResult, SealResult } from "@j3-bots/desktop-bridge";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { safeStorage } from "electron";
+import { protectionOf } from "./protection.ts";
 
 /**
  * What is encrypted: the token in a payload of its own, so what decrypts is
@@ -15,19 +16,6 @@ const Payload = Schema.fromJsonString(
 );
 const encodePayload = Schema.encodeSync(Payload);
 const decodePayload = Schema.decodeUnknownOption(Payload);
-
-/**
- * The version Chromium writes before what it sealed on Linux with the key
- * built into it, used where no secret service gives it one. Such a token is
- * only obscured.
- */
-const BUILT_IN_KEY = Buffer.from("v10");
-
-/** How `sealed`, as `safeStorage` just sealed it, is kept. */
-const protectionOf = (sealed: Buffer): TokenProtection =>
-  process.platform === "linux" && sealed.subarray(0, BUILT_IN_KEY.length).equals(BUILT_IN_KEY)
-    ? "unencrypted"
-    : "encrypted";
 
 /** Whether the system's encryption, the one the calls below use, can be used now. */
 const available = () => safeStorage.isAsyncEncryptionAvailable().catch(() => false);
@@ -52,7 +40,7 @@ export const makeTokenSeal = () => {
         (sealed): SealResult => ({
           _tag: "sealed",
           sealed: sealed.toString("base64"),
-          protection: protectionOf(sealed),
+          protection: protectionOf(sealed, process.platform),
         }),
         (): SealResult => ({ _tag: "failed" }),
       );

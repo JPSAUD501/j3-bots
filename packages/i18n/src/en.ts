@@ -481,9 +481,10 @@ export const en = {
     "J3 Bots keeps this device’s sign-in in the browser’s site data, and the browser refused. Allow site data for this page, then try again.",
   "gate.storage.desktopTitle": "This device’s sign-in can’t be read",
   "gate.storage.desktopBody":
-    "The system wouldn’t open the sign-in J3 Bots keeps for {address}. If your keyring is locked, unlock it, then try again. Changing to another server, or this one again, signs this device out here.",
+    "J3 Bots couldn’t read the sign-in it keeps on this device for {address}. If your system’s keychain or keyring is locked, unlock it, then restart J3 Bots. Changing to another server, or to this one again, signs this device out here.",
   "gate.reload": "Reload",
   "gate.retry": "Try again",
+  "gate.restart": "Restart J3 Bots",
 
   "engine.starting.title": "The engine is starting",
   "engine.starting.body": "J3 Bots is starting its engine. This page updates when it’s ready.",

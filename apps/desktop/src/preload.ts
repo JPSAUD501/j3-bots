@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { BRIDGE_KEY, type DesktopBridge, IPC_CHANNELS } from "@j3-bots/desktop-bridge/channels";
 import { contextBridge, ipcRenderer } from "electron";
-import { makeUpload } from "./preloadUpload.ts";
 
 // The page's one way to the main process. It passes values through as they
 // are: the main process decodes what the page asks, and the page decodes what
@@ -22,7 +21,7 @@ const bridge: DesktopBridge = {
       ipcRenderer.removeListener(IPC_CHANNELS.resumed, forward);
     };
   },
-  upload: makeUpload((start, port) => ipcRenderer.postMessage(IPC_CHANNELS.upload, start, [port])),
+  relaunch: () => ipcRenderer.send(IPC_CHANNELS.relaunch),
 };
 
 contextBridge.exposeInMainWorld(BRIDGE_KEY, bridge);

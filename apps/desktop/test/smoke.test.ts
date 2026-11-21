@@ -193,7 +193,7 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
           await page.getByRole("button", { name: "Continue" }).click();
         });
         yield* pair(page);
-        // A message with a file: the file goes through the main process.
+        // A message with a file, uploaded from the page as in a browser.
         yield* onPage(page, async () => {
           await page.getByText(bot.profile.name).first().click({ timeout: STEP });
           await page.locator('input[type="file"]').setInputFiles({

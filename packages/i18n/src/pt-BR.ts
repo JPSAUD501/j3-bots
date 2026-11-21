@@ -488,9 +488,10 @@ const sentences = {
     "O J3 Bots guarda o acesso deste dispositivo nos dados de site do navegador, e o navegador recusou. Permita dados de site para esta página e tente de novo.",
   "gate.storage.desktopTitle": "Não deu para ler o acesso deste dispositivo",
   "gate.storage.desktopBody":
-    "O sistema não abriu o acesso que o J3 Bots guarda para {address}. Se o seu chaveiro estiver bloqueado, desbloqueie-o e tente de novo. Trocar para outro servidor, ou para este de novo, desconecta este dispositivo aqui.",
+    "O J3 Bots não conseguiu ler o acesso que guarda neste dispositivo para {address}. Se o chaveiro do sistema estiver bloqueado, desbloqueie-o e reinicie o J3 Bots. Trocar para outro servidor, ou para este de novo, desconecta este dispositivo aqui.",
   "gate.reload": "Recarregar",
   "gate.retry": "Tentar de novo",
+  "gate.restart": "Reiniciar o J3 Bots",
 
   "engine.starting.title": "O motor está iniciando",
   "engine.starting.body":

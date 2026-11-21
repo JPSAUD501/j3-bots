@@ -29,7 +29,6 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Socket from "effect/socket/Socket";
 import { type CredentialCell, type CredentialCodec, makeCredentialStore } from "./credentialStore";
 import { type Desktop, desktop } from "./desktop";
-import { desktopTransfer } from "./desktopTransfer";
 import * as Idb from "./idb";
 import { sealedCredential, storedProtection } from "./sealedCredential";
 import { credentialRecord, plainCredential } from "./storedCredential";
@@ -302,9 +301,9 @@ const desktopNetwork = (app: Desktop) => {
  * other: clearing the page's storage on a change of server cannot be relied on
  * alone to keep a token from reaching a server that did not issue it. In the
  * desktop app the token is kept only as the app sealed it with the system's
- * key, files go through the main process, and the network status comes from
- * it too; the credential stays in the same database as the drafts and the
- * outbox, so a write's pairing check is still one transaction.
+ * key, and the network status comes from the app; the credential stays in
+ * the same database as the drafts and the outbox, so a write's pairing check
+ * is still one transaction. Files go up with `XMLHttpRequest` there too.
  */
 export const makePlatform = (server: URL): Layer.Layer<Platform> => {
   const codec =
@@ -321,10 +320,7 @@ export const makePlatform = (server: URL): Layer.Layer<Platform> => {
     credentials(codec, cell),
     storage(codec),
     locks,
-    Layer.succeed(
-      FileTransfer,
-      desktop === null ? browserTransfer : desktopTransfer(desktop.upload),
-    ),
+    Layer.succeed(FileTransfer, browserTransfer),
     Layer.succeed(Network, desktop === null ? browserNetwork : desktopNetwork(desktop)),
     FetchHttpClient.layer,
     Socket.layerWebSocketConstructorGlobal,

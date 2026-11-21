@@ -243,19 +243,21 @@ export function Incompatible({ server }: { server?: DesktopServer | undefined })
 
 /**
  * The browser would not let the page keep this device's sign-in. In the
- * desktop app, whose server is `server`, the system would not open it, as
- * while a keyring is locked; if its key is gone for good, changing servers
+ * desktop app, whose server is `server`, the app could not read it, as while
+ * a keyring is locked: the app sees a keyring unlocked since only once it
+ * starts again, so the way on is to `restart` it. If it stays unreadable, changing servers
  * leaves the sign-in behind.
  */
 export function StorageFailed({
   onRetry,
-  server,
+  desktop,
 }: {
   onRetry: () => void;
-  server?: DesktopServer | undefined;
+  desktop?: { readonly server: DesktopServer; readonly restart: () => void } | undefined;
 }) {
   const { t } = useI18n();
-  if (server !== undefined) {
+  if (desktop !== undefined) {
+    const { server, restart } = desktop;
     return (
       <Centered>
         <Heading
@@ -263,8 +265,8 @@ export function StorageFailed({
           body={t("gate.storage.desktopBody", { address: server.address })}
         />
         <div className="flex flex-wrap items-start justify-center gap-2">
-          <Button variant="primary" onClick={onRetry}>
-            {t("gate.retry")}
+          <Button variant="primary" onClick={restart}>
+            {t("gate.restart")}
           </Button>
           <ChangeServer address={server.address} onChange={server.forget} paired />
         </div>

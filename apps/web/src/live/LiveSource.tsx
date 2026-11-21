@@ -221,7 +221,14 @@ function Gate({ children }: { children: ReactNode }) {
     case "storage-failed":
       return (
         <Screen>
-          <StorageFailed onRetry={j3.reconnectNow} server={desktopServer} />
+          <StorageFailed
+            onRetry={j3.reconnectNow}
+            desktop={
+              desktop === null || desktopServer === undefined
+                ? undefined
+                : { server: desktopServer, restart: desktop.relaunch }
+            }
+          />
         </Screen>
       );
     case "offline":

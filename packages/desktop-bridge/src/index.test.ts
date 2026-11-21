@@ -2,14 +2,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
-import {
-  ConnectRequest,
-  ConnectResult,
-  DesktopState,
-  HostedBridge,
-  OpenRequest,
-  UploadBody,
-} from "./index.ts";
+import { ConnectRequest, ConnectResult, DesktopState, HostedBridge, OpenRequest } from "./index.ts";
 
 const decodes = <S extends Schema.Constraint & { readonly DecodingServices: never }>(
   schema: S,
@@ -59,9 +52,6 @@ describe("the desktop bridge", () => {
     assert.isTrue(decodes(OpenRequest, { sealed: "djEwAAAA" }));
     assert.isFalse(decodes(OpenRequest, { sealed: "not base64!" }));
     assert.isFalse(decodes(OpenRequest, { sealed: "" }));
-    assert.isTrue(decodes(UploadBody, { _tag: "chunk", bytes: new Uint8Array(4) }));
-    assert.isFalse(decodes(UploadBody, { _tag: "chunk", bytes: [1, 2, 3] }));
-    assert.isFalse(decodes(UploadBody, { _tag: "chunk", bytes: "AAAA" }));
   });
 
   it("finds the bridge only where the preload script put a whole one", () => {
@@ -73,7 +63,7 @@ describe("the desktop bridge", () => {
       openToken: call,
       networkStatus: call,
       onResumed: call,
-      upload: call,
+      relaunch: call,
     };
     const state = { server: null };
     assert.isTrue(decodes(HostedBridge, { state, ...calls }));

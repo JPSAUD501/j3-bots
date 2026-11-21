@@ -2,6 +2,7 @@
 import {
   Cell,
   ClientStorage,
+  CredentialStorageError,
   CredentialStore,
   createJ3Client,
   type DeviceCredential,
@@ -17,16 +18,20 @@ import {
 import { BotId, DeviceId, DeviceToken, type EntryTarget } from "@j3-bots/contracts";
 import type { OpenResult, TokenProtection } from "@j3-bots/desktop-bridge";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Socket from "effect/socket/Socket";
+import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it } from "vite-plus/test";
 import { type CredentialCell, makeCredentialStore } from "./credentialStore";
-import { sealedCredential, type TokenSealer } from "./sealedCredential";
+import { SEALER_DEADLINE, sealedCredential, type TokenSealer } from "./sealedCredential";
 
 const serverA = new URL("http://192.168.1.20:3737");
 const serverB = new URL("https://bots.example.com");
@@ -94,6 +99,27 @@ const storeFor = (server: URL, sealer: TokenSealer, cell: CredentialCell) =>
     announce: Effect.void,
     changes: Stream.empty,
   });
+
+/** How `effect` ended, once `SEALER_DEADLINE` has passed on a test clock. */
+const pastTheDeadline = <A, E>(effect: Effect.Effect<A, E>) =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const running = yield* Effect.forkChild(Effect.exit(effect));
+      yield* TestClock.adjust(SEALER_DEADLINE);
+      return yield* Fiber.join(running);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+const isStorageError = Schema.is(CredentialStorageError);
+
+const failedWith = (exit: Exit.Exit<unknown, unknown>, operation: string) =>
+  Exit.isFailure(exit) &&
+  exit.cause.reasons.some(
+    (reason) =>
+      reason._tag === "Fail" &&
+      isStorageError(reason.error) &&
+      reason.error.operation === operation,
+  );
 
 /** The device's drafts and unsent messages, in memory, guarded by the pairing `pairing` reads. */
 const memoryStorage = (pairing: () => Option.Option<DeviceId>) => {
@@ -191,6 +217,66 @@ describe("the desktop app's credential", () => {
     expect(await Effect.runPromise(store.load)).toEqual(Option.none());
     await cell.put(JSON.stringify({ deviceId: "device-1", server: serverA.origin }));
     expect(await Effect.runPromise(store.load)).toEqual(Option.none());
+  });
+
+  it("is not cleared quietly while another window keeps sealing it again", async () => {
+    const { system, sealer } = makeSystem();
+    let otherWindow = () => Promise.resolve();
+    const { cell, stored } = memoryCell(() => otherWindow());
+    await Effect.runPromise(storeFor(serverA, sealer, cell).save(first));
+    // Before each delete, another window reads it and seals it again under a newer key.
+    let sealingAgain = false;
+    otherWindow = async () => {
+      if (sealingAgain) return;
+      sealingAgain = true;
+      system.epoch += 1;
+      await Effect.runPromise(storeFor(serverA, sealer, cell).load);
+      sealingAgain = false;
+    };
+    const exit = await Effect.runPromiseExit(storeFor(serverA, sealer, cell).clear(first));
+    expect(failedWith(exit, "clear")).toBe(true);
+    expect(stored()).toBeDefined();
+  });
+
+  it("is not sealed again with less protection than it is kept with", async () => {
+    const { cell, stored } = memoryCell();
+    const { system, sealer } = makeSystem();
+    const store = storeFor(serverA, sealer, cell);
+    await Effect.runPromise(store.save(first));
+    const kept = stored();
+    // The system's key changed, and what it seals now is only obscured.
+    system.epoch += 1;
+    system.protection = "unencrypted";
+    expect(plain(await Effect.runPromise(store.load))).toEqual(plain(Option.some(first)));
+    expect(stored()).toBe(kept);
+  });
+
+  it("fails to load, keeping the pairing, when its sealed token is not one", async () => {
+    const { cell } = memoryCell();
+    const { sealer } = makeSystem();
+    await cell.put(
+      JSON.stringify({
+        deviceId: "device-1",
+        server: serverA.origin,
+        sealed: "not base64!",
+        protection: "encrypted",
+      }),
+    );
+    const exit = await Effect.runPromiseExit(storeFor(serverA, sealer, cell).load);
+    expect(failedWith(exit, "load")).toBe(true);
+  });
+
+  it("fails to load, and to save, when the app never answers", async () => {
+    const { cell } = memoryCell();
+    const { sealer } = makeSystem();
+    await Effect.runPromise(storeFor(serverA, sealer, cell).save(first));
+    const silent: TokenSealer = {
+      sealToken: () => new Promise(() => undefined),
+      openToken: () => new Promise(() => undefined),
+    };
+    const store = storeFor(serverA, silent, cell);
+    expect(failedWith(await pastTheDeadline(store.load), "load")).toBe(true);
+    expect(failedWith(await pastTheDeadline(store.save(second)), "save")).toBe(true);
   });
 
   it("is absent for a server that did not issue it", async () => {
