@@ -320,9 +320,8 @@ function movedTo(taken: string, after: string, text: string, hint: number): numb
 /**
  * The mentions once an edit of a drag `dragged` carried out of this field
  * turned `before` into `after`, with the text dropped, if any, ending at
- * `dropEnd`. A move within the field comes as two edits: the text taken out,
- * then dropped in. Chromium tells each as it is made; WebKit tells both once
- * the whole move is made, so the first already sees the text moved, which
+ * `dropEnd`. A move within the field may come as two edits, the text taken
+ * out and then dropped in, or as one that already sees the text moved, which
  * moves the mentions in it, even when the field reads the same after it, as
  * when "@Ana " is moved past another "@Ana ".
  */
@@ -345,67 +344,81 @@ function followDrag(
   return followDrop(before, after, dropEnd - (after.length - before.length), mentions, dragged);
 }
 
-/** An edit of the field, as its `input` event tells it. */
-export interface FieldEdit {
-  /** The text before the edit: what the composer holds. */
-  readonly before: string;
-  /** The field's text after it. */
-  readonly after: string;
-  /** The event's `inputType`, when it has one. */
-  readonly inputType: string | null;
-  /** The event's `data`: the text typed or pasted, when the browser tells it. */
-  readonly data: string | null;
-  /** The field's selection as the operator last left it, before the edit. */
-  readonly selection: readonly [number, number] | null;
-  /** The field's selection after the edit. */
-  readonly now: readonly [number, number];
-}
+/**
+ * An edit of the composer's field, as any field can tell it, whatever events
+ * its platform tells it with.
+ */
+export type FieldEdit =
+  /** Text written or taken away where the operator left the selection, or an undo. */
+  | {
+      readonly _tag: "change";
+      /** The text before the edit: what the composer holds. */
+      readonly before: string;
+      /** The field's text after it. */
+      readonly after: string;
+      /**
+       * The selection the edit wrote over, as `[start, end)` of `before`: what
+       * the operator left selected, when the edit wrote text there. Null for
+       * an edit that only took text away, or did not write where the operator
+       * left the selection, as an undo.
+       */
+      readonly over: readonly [number, number] | null;
+      /** The text the edit wrote, when the field tells it. */
+      readonly written: string | null;
+      /** The caret after the edit, when the selection is collapsed. */
+      readonly caret: number | null;
+    }
+  /** Text dropped in from outside the field, ending at `end` of `after`. */
+  | {
+      readonly _tag: "drop";
+      readonly before: string;
+      readonly after: string;
+      readonly end: number;
+    }
+  /**
+   * An edit of a move of `dragged` within the field: the text taken out,
+   * dropped back in, or both at once. The text dropped, if any, ends at
+   * `end` of `after`.
+   */
+  | {
+      readonly _tag: "move";
+      readonly before: string;
+      readonly after: string;
+      readonly end: number;
+      readonly dragged: DraggedText;
+    };
 
 /**
- * The mentions that still stand after `edit`. Text dragged within the field
- * moves with the mentions in it (`followDrag`); text dropped from elsewhere
- * moves those after it. Only an edit that inserts text replaces the selection
- * the operator left: one that leaves the text as it was, as text pasted or
- * typed over the same text, still replaced it, so a pick in it is gone,
- * unless its text is not the selection's. Any other edit, an undo among
- * them, is followed as `followEdit` finds it, whatever was selected.
- * A drop leaves the caret, or the text it selects, ending where the text
- * dropped does, which places it. Where a browser leaves it elsewhere, the
- * text before and after that place no longer reads as it did, and
- * `followDrop` falls back to following the one run of text that changed.
+ * The mentions that still stand after `edit`. Text moved within the field
+ * moves the mentions in it (`followDrag`); text dropped from elsewhere moves
+ * those after it. A change that wrote over the selection replaced it, so a
+ * pick in it is gone, also when the text reads the same after it, as for the
+ * same text pasted or typed over it, unless what it wrote is not the
+ * selection's text: then it wrote somewhere else. Any other change, an undo
+ * among them, is followed as `followEdit` finds it. A drop leaves the caret,
+ * or the text it selects, ending where the text dropped does, which places
+ * it. Where a field leaves it elsewhere, the text before and after that place
+ * no longer reads as it did, and `followDrop` falls back to following the one
+ * run of text that changed.
  */
-export function followInput(
+export function followFieldEdit(
   edit: FieldEdit,
   mentions: ReadonlyArray<DraftMention>,
-  dragged: DraggedText | null,
 ): ReadonlyArray<DraftMention> {
-  const { before, after, inputType, data, now } = edit;
-  const [, dropEnd] = now;
-  if (dragged !== null && inputType === "deleteByDrag") {
-    return followDrag(before, after, dropEnd, mentions, dragged);
+  switch (edit._tag) {
+    case "move":
+      return followDrag(edit.before, edit.after, edit.end, mentions, edit.dragged);
+    case "drop": {
+      const { before, after, end } = edit;
+      return followDrop(before, after, end - (after.length - before.length), mentions, null);
+    }
+    case "change": {
+      const { before, after, over, written, caret } = edit;
+      const elsewhere =
+        before === after && over !== null && written !== null && written !== before.slice(...over);
+      return elsewhere ? mentions : followEdit(before, after, { replaced: over, caret }, mentions);
+    }
   }
-  if (dragged !== null && inputType === "insertFromDrop") {
-    // WebKit's second edit of a move it already told: nothing is left to follow.
-    if (after === before) return mentions;
-    return followDrag(before, after, dropEnd, mentions, dragged);
-  }
-  if (inputType === "insertFromDrop") {
-    return followDrop(before, after, dropEnd - (after.length - before.length), mentions, null);
-  }
-  const inserts = inputType?.startsWith("insert") === true;
-  const selection =
-    inserts && edit.selection !== null && edit.selection[0] < edit.selection[1]
-      ? edit.selection
-      : null;
-  if (before === after) {
-    const overSelection =
-      selection !== null && (data === null || data === before.slice(...selection));
-    return overSelection
-      ? followEdit(before, after, { replaced: selection, caret: null }, mentions)
-      : mentions;
-  }
-  const caret = now[0] === now[1] ? now[1] : null;
-  return followEdit(before, after, { replaced: selection, caret }, mentions);
 }
 
 /** The mention being typed: where its `@` is, and what follows it up to the caret. */

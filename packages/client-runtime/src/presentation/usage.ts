@@ -10,7 +10,7 @@ import type {
   UsageTurn,
   UsageWindow,
 } from "@j3-bots/contracts";
-import type * as DateTime from "effect/DateTime";
+import * as DateTime from "effect/DateTime";
 
 /** The turns of one routine, or of every routine deleted since. */
 interface RoutineSpend {
@@ -151,4 +151,33 @@ export function coverage(recent: RecentTurns): Coverage {
         capped: !recent.canLoadMore,
       }
     : { _tag: "period" };
+}
+
+/** Where a limit window stands, as of a moment. */
+export interface WindowState {
+  /** Percent used, rounded down, so a window short of its limit never reads as full. */
+  readonly percent: number;
+  /**
+   * `open`: under its limit. `full`: at it, until it resets. `reset`: its
+   * reset passed, so `percent` is the last figure the engine reported before it.
+   */
+  readonly tone: "open" | "full" | "reset";
+  /** When it resets or reset, when the engine says. */
+  readonly resetsAt: DateTime.Utc | null;
+}
+
+/**
+ * Where `usageWindow` stands at `now`. A window keeps its last figures until
+ * the engine checks again, also past its reset, which then reads as reset
+ * rather than as full.
+ */
+export function windowState(usageWindow: UsageWindow, now: DateTime.Utc): WindowState {
+  const { resetsAt, usedPercent } = usageWindow;
+  const reset =
+    resetsAt !== null && DateTime.toEpochMillis(resetsAt) <= DateTime.toEpochMillis(now);
+  return {
+    percent: Math.floor(usedPercent),
+    tone: reset ? "reset" : usedPercent >= 100 ? "full" : "open",
+    resetsAt,
+  };
 }

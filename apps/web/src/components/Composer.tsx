@@ -28,19 +28,18 @@ import {
 import {
   draggedText,
   EVERYONE,
-  followInput,
   insertMention,
   mentionOptions,
   mentionQuery,
   movedOption,
   type DraggedText,
-  type FieldEdit,
   type Mentionable,
   type MentionOption,
 } from "@j3-bots/client-runtime/presentation";
 import { useI18n } from "../app/context";
 import type { I18n } from "../i18n/i18n";
 import { cn } from "../lib/cn";
+import { type FieldInput, followFieldInput } from "../lib/fieldEdit";
 import { AvatarShape } from "./BotAvatar";
 import { fileSize } from "./FileCard";
 import { Button } from "./ui/button";
@@ -237,7 +236,7 @@ export function Composer({
   const follow = (field: HTMLTextAreaElement, input: Event) => {
     setNotTaken(false);
     const told = input instanceof InputEvent ? input : null;
-    const edit: FieldEdit = {
+    const edit: FieldInput = {
       before: value,
       after: field.value,
       inputType: told?.inputType ?? null,
@@ -245,7 +244,7 @@ export function Composer({
       selection: selection.current,
       now: [field.selectionStart, field.selectionEnd],
     };
-    onValueChange(field.value, followInput(edit, mentions, dragged.current));
+    onValueChange(field.value, followFieldInput(edit, mentions, dragged.current));
     remember(field);
     mention.follow(field);
   };

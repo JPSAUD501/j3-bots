@@ -25,7 +25,12 @@ export const rosterKeyText = (key: RosterItemKey): string =>
 
 const isPinned = (item: RosterItem) => (item._tag === "bot" ? item.bot.pinned : item.room.pinned);
 
-/** Pinned rows first, then rows that need the operator, then the most recently active. */
+/**
+ * Pinned rows first, then rows that need the operator, then the most recently
+ * active. This is the web roster's order, and not yet `rosterRows`': that one
+ * also leaves hidden bots out and breaks a tie by name, where this keeps the
+ * order the rows came in. Issue #54 merges the two into one order.
+ */
 export function orderRoster(items: ReadonlyArray<RosterItem>): RosterItem[] {
   const recency = (item: RosterItem) =>
     item.lastActivityAt === null ? -Infinity : DateTime.toEpochMillis(item.lastActivityAt);
@@ -58,3 +63,13 @@ export function filterRoster(items: ReadonlyArray<RosterItem>, query: string): R
     return names.some((n) => fold(n).includes(q));
   });
 }
+
+/**
+ * A message's text as one line, for a row's preview: code blocks left out
+ * and every run of white space one space.
+ */
+export const firstLine = (text: string): string =>
+  text
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();

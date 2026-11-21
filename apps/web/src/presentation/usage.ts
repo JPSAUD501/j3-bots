@@ -1,21 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { UsageWindow } from "@j3-bots/contracts";
-import * as DateTime from "effect/DateTime";
+import { windowState, type WindowState } from "@j3-bots/client-runtime/presentation";
 import type { I18n, KeyWith } from "../i18n/i18n";
 import { timeInSentence, type TimeContext } from "../lib/time";
 
-/** A limit window in words, as of `ctx.now`. */
-export interface WindowText {
+/** A limit window in words, as of `ctx.now`, with where it stands. */
+export interface WindowText extends Pick<WindowState, "percent" | "tone"> {
   readonly name: string;
   /** How much is used, or that the limit is reached. */
   readonly used: string;
-  /** Percent used, rounded down, so a window short of its limit never reads as full. */
-  readonly percent: number;
-  /**
-   * `open`: under its limit. `full`: at it, until it resets. `reset`: its
-   * reset passed, so `used` is the last figure the engine reported before it.
-   */
-  readonly tone: "open" | "full" | "reset";
   /** When it resets or reset, when the engine says. */
   readonly reset: string | null;
 }
@@ -46,18 +39,13 @@ function windowName(label: string, { t }: I18n): string {
 
 /**
  * One window as the usage view words it. A window at its limit says only that
- * the window is: a model's window blocks that model, not the provider. A
- * window keeps its last figures until the engine checks again, also past its
- * reset, so then it says when it reset and that new figures come with the
- * next check.
+ * the window is: a model's window blocks that model, not the provider. Past
+ * its reset, it says when it reset and that new figures come with the next
+ * check.
  */
 export function windowText(usageWindow: UsageWindow, ctx: TimeContext): WindowText {
   const { t } = ctx.i18n;
-  const percent = Math.floor(usageWindow.usedPercent);
-  const resetsAt = usageWindow.resetsAt;
-  const reset =
-    resetsAt !== null && DateTime.toEpochMillis(resetsAt) <= DateTime.toEpochMillis(ctx.now);
-  const tone = reset ? "reset" : usageWindow.usedPercent >= 100 ? "full" : "open";
+  const { percent, tone, resetsAt } = windowState(usageWindow, ctx.now);
   const formatted = new Intl.NumberFormat(ctx.i18n.locale, { style: "percent" }).format(
     percent / 100,
   );
@@ -69,6 +57,8 @@ export function windowText(usageWindow: UsageWindow, ctx: TimeContext): WindowTe
     reset:
       resetsAt === null
         ? null
-        : t(reset ? "usage.reset" : "usage.resets", { when: timeInSentence(resetsAt, ctx) }),
+        : t(tone === "reset" ? "usage.reset" : "usage.resets", {
+            when: timeInSentence(resetsAt, ctx),
+          }),
   };
 }

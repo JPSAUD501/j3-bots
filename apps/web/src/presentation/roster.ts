@@ -9,7 +9,7 @@ import type {
   RosterItem,
 } from "@j3-bots/contracts";
 import type * as DateTime from "effect/DateTime";
-import { millisBetween, shortDuration } from "@j3-bots/client-runtime/presentation";
+import { firstLine, millisBetween, shortDuration } from "@j3-bots/client-runtime/presentation";
 import { timeInSentence, type TimeContext } from "../lib/time";
 
 export interface PresentationContext extends TimeContext {
@@ -29,12 +29,6 @@ export interface StatusLine {
   readonly text: string;
   readonly tone: LineTone;
 }
-
-const firstLine = (text: string) =>
-  text
-    .replace(/```[\s\S]*?```/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
 
 /**
  * A reached usage limit, with when it resets when that is known: one sentence

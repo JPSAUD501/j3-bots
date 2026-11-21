@@ -11,7 +11,7 @@ import {
 } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { at, bot } from "../../test/fixtures.ts";
-import { coverage, providerUsage } from "./usage.ts";
+import { coverage, providerUsage, windowState } from "./usage.ts";
 
 const claude = ProviderId.make("claude");
 const codex = ProviderId.make("codex");
@@ -131,5 +131,35 @@ describe("coverage", () => {
     });
     // More in the period than one read takes.
     expect(coverage(recent(true, false))).toMatchObject({ _tag: "latest", capped: true });
+  });
+});
+
+describe("windowState", () => {
+  const now = at("2026-11-20T14:00:00Z");
+
+  it("is full at the limit until it resets, and never short of it", () => {
+    const later = at("2026-11-20T18:00:00Z");
+    expect(windowState({ label: "Weekly", usedPercent: 100, resetsAt: later }, now)).toEqual({
+      percent: 100,
+      tone: "full",
+      resetsAt: later,
+    });
+    expect(windowState({ label: "Weekly", usedPercent: 99.6, resetsAt: null }, now)).toEqual({
+      percent: 99,
+      tone: "open",
+      resetsAt: null,
+    });
+  });
+
+  it("past its reset, reads as reset with the last figure, at the limit or not", () => {
+    const earlier = at("2026-11-20T13:00:00Z");
+    expect(windowState({ label: "Weekly", usedPercent: 100, resetsAt: earlier }, now)).toEqual({
+      percent: 100,
+      tone: "reset",
+      resetsAt: earlier,
+    });
+    expect(windowState({ label: "Weekly", usedPercent: 40, resetsAt: now }, now).tone).toBe(
+      "reset",
+    );
   });
 });
