@@ -25,7 +25,8 @@ const LastOutcome = Schema.Struct({ outcome_json: json(TurnOutcome) });
  * reset still ahead. A turn that completed after it shows the limit lifted.
  * A turn ran on its session's provider, which never changes. The query's
  * filter is the one of the `turns_limit_outcomes` index, word for word, so
- * the newest such turns are read in order and the first match ends it.
+ * the newest such turns are read in order and the first match ends it. A
+ * provider with no such turn of its own reads the whole index to learn so.
  */
 export const providerLimit = (sql: SqlClient.SqlClient, engineState: EngineState["Service"]) => {
   const lastOutcome = SqlSchema.findOneOption({

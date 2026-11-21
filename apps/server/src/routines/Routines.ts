@@ -36,6 +36,8 @@ import { transactional } from "../persistence/transaction.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
 import { CERTIFICATE_NAME, Network, reachableHosts } from "../system/Network.ts";
 import { Ledger } from "../turns/Ledger.ts";
+import { DispatchRowId } from "../turns/model.ts";
+import { Signals } from "../turns/Signals.ts";
 import { RoutineRuns } from "./RoutineRuns.ts";
 import { plannedRun } from "./schedule.ts";
 import { Scheduler } from "./Scheduler.ts";
@@ -157,6 +159,7 @@ export const layer = Layer.effect(
     const ids = yield* Ids;
     const random = yield* SecureRandom.SecureRandom;
     const ledger = yield* Ledger;
+    const signals = yield* Signals;
     const routineRuns = yield* RoutineRuns;
     const scheduler = yield* Scheduler;
     const network = yield* Network;
@@ -250,6 +253,21 @@ export const layer = Layer.effect(
       Result: Schema.Struct({ id: Schema.String }),
       execute: (routineId) => sql`
         SELECT id FROM wakes WHERE routine_id = ${routineId} AND status = 'pending'
+      `,
+    });
+
+    /**
+     * The routine's dispatches written and never sent: a provider's usage
+     * limit, or a full budget, may hold one. A send claimed now is not one:
+     * it may already be in the engine.
+     */
+    const unsentDispatches = SqlSchema.findAll({
+      Request: RoutineId,
+      Result: Schema.Struct({ id: DispatchRowId }),
+      execute: (routineId) => sql`
+        SELECT d.id FROM wakes w JOIN dispatches d ON d.id = w.dispatch_id
+        WHERE w.routine_id = ${routineId} AND w.status = 'dispatched'
+          AND d.status = 'intended' AND d.attempts = 0
       `,
     });
 
@@ -439,9 +457,14 @@ export const layer = Layer.effect(
         result: Schema.Void,
         apply: Effect.gen(function* () {
           const routine = yield* find(input.routineId);
-          // A run still waiting for its session has nothing left to run.
+          // A run still waiting for its session, or for its first send, has
+          // nothing left to run. Its side session is retired then.
+          for (const unsent of yield* unsentDispatches(routine.id).pipe(Effect.orDie)) {
+            yield* ledger.release(unsent.id, { _tag: "cancelled" });
+          }
           const waiting = yield* pendingWakes(routine.id).pipe(Effect.orDie);
           yield* ledger.cancelWakes(waiting.map((wake) => wake.id));
+          yield* sql.afterCommit(signals.routines.fire);
           yield* sql`DELETE FROM routines WHERE id = ${routine.id}`.pipe(Effect.orDie);
           yield* announce(routine, "deleted", input.author);
         }),

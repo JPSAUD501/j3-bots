@@ -169,12 +169,15 @@ export class Ledger extends Context.Service<
      * A Stop ended it in the engine before delivery: a cancelled waiting turn
      * (`turnId`), a dropped steer (the turn it was to ride). The bot never
      * read its envelope, so its catch-up notes and held messages go to the
-     * next one. Whether it was still the engine's to drop.
+     * next one. Also a turn the engine ended before it started for another
+     * reason, a provider's failure say, whose `outcome` the dispatch keeps.
+     * Whether it was still the engine's to drop.
      */
     readonly drop: (
       dispatchId: DispatchRowId,
       turnId: TurnId,
       wakes: WakesAfter,
+      outcome: TurnOutcome | null,
     ) => Effect.Effect<boolean>;
     /**
      * The engine certainly applied nothing: it may be sent again as new
@@ -551,10 +554,12 @@ export const layer = Layer.effect(
       dispatchId: DispatchRowId,
       turnId: TurnId,
       wakes: WakesAfter,
+      outcome: TurnOutcome | null,
     ) {
+      const encoded = outcome === null ? null : yield* encodeOutcome(outcome);
       const dropped = yield* sql`
         UPDATE dispatches SET status = 'dropped', engine_turn_id = COALESCE(engine_turn_id, ${turnId}),
-          next_attempt_at = NULL, updated_at = ${yield* now}
+          outcome_json = ${encoded}, next_attempt_at = NULL, updated_at = ${yield* now}
         WHERE id = ${dispatchId} AND status IN ('accepted', 'delivered')
         RETURNING id
       `;

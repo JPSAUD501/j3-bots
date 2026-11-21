@@ -41,8 +41,9 @@ export const RUN_HISTORY = 100;
 /**
  * How many times a run is tried at most. An attempt that fails before the bot
  * says anything (the engine could not open its session or lost it, its turn
- * failed or was interrupted by something other than the operator) is tried
- * again. One whose envelope the engine refused is not: the next would be too.
+ * failed, also before it started, or was interrupted by something other than
+ * the operator) is tried again. One whose envelope the engine refused is not:
+ * the next would be too.
  */
 export const RUN_ATTEMPTS = 3;
 
@@ -70,10 +71,15 @@ const RoutineRow = Schema.Struct({
 
 const RunStatus = RoutineRun.fields.status;
 
-const Ended = Schema.Struct({
+/** What settling a run needs of its row, also when the rest of it cannot be read. */
+const Identified = Schema.Struct({
   id: RoutineRunId,
   routine_id: RoutineId,
   bot_id: BotId,
+});
+
+const Ended = Schema.Struct({
+  ...Identified.fields,
   wake_id: Schema.NullOr(Schema.String),
   attempts: Schema.Int,
   wake_status: Schema.NullOr(WakeStatus),
@@ -97,6 +103,10 @@ type Settlement =
 /** A dispatch the engine may still be working on. */
 const OPEN_DISPATCH: ReadonlyArray<DispatchStatus> = ["intended", "accepted", "delivered"];
 
+/** The engine took the dispatch, and its turn ended before it started. */
+const endedBeforeStart = (run: Ended) =>
+  run.dispatch_status === "dropped" && run.outcome_json !== null;
+
 const settlementOf = (run: Ended): Settlement => {
   // What the bot said reached the operator: the run delivered, whatever came after.
   if (run.spoke) return { _tag: "settled", status: "delivered" };
@@ -107,8 +117,10 @@ const settlementOf = (run: Ended): Settlement => {
       return { _tag: "settled", status: "failed" };
     case "failed":
       // The engine refused its envelope, or the runner found it too long to
-      // send: the next attempt would fare no better.
-      return run.wake_failure === "rejected"
+      // send: the next attempt would fare no better. A turn the engine took
+      // and ended before it started, a provider's passing failure say, keeps
+      // its outcome on the dropped dispatch, and is tried again.
+      return run.wake_failure === "rejected" && !endedBeforeStart(run)
         ? { _tag: "settled", status: "failed" }
         : { _tag: "attempt-failed" };
     case "finished":
@@ -261,9 +273,26 @@ export const layer = Layer.effect(
         )
     `;
 
+    /** Settles the run, which then joins the routine's kept history. */
+    const finish = Effect.fn("RoutineRuns.finish")(function* (
+      run: typeof Identified.Type,
+      status: "delivered" | "silent" | "failed",
+      at: DateTime.Utc,
+    ) {
+      yield* sql`
+        UPDATE routine_runs SET status = ${status}, finished_at = ${timeText(at)}, retry_at = NULL
+        WHERE id = ${run.id} AND status = 'running'
+      `;
+      // The cap on the kept history holds there too.
+      yield* prune(run.routine_id);
+      yield* recordChange(run.bot_id, run.routine_id);
+    });
+
     /**
      * Settles the runs whose wake ended: every routine's, or one routine's. A
-     * row that cannot be read is logged and left running; the others settle.
+     * row that cannot be read whole, its dispatch's outcome written by
+     * another version of the server say, fails its run, which is logged, so
+     * the routine's later runs are not all skipped behind it.
      */
     const settleEnded = Effect.fn("RoutineRuns.settleEnded")(function* (
       routineId: RoutineId | null,
@@ -272,9 +301,15 @@ export const layer = Layer.effect(
       for (const raw of yield* endedRows(routineId)) {
         const decoded = Schema.decodeUnknownOption(Ended)(raw);
         if (Option.isNone(decoded)) {
-          yield* Effect.logError(
-            "A routine run could not be read to settle it; it is left running",
-          );
+          const identified = Schema.decodeUnknownOption(Identified)(raw);
+          if (Option.isNone(identified)) {
+            yield* Effect.logError("A routine run could not be read to settle it");
+            continue;
+          }
+          yield* Effect.logError("A routine run could not be read to settle it; it fails", {
+            runId: identified.value.id,
+          });
+          yield* finish(identified.value, "failed", now);
           continue;
         }
         const run = decoded.value;
@@ -292,14 +327,7 @@ export const layer = Layer.effect(
           }
           settlement = { _tag: "settled", status: "failed" };
         }
-        yield* sql`
-          UPDATE routine_runs SET status = ${settlement.status},
-            finished_at = ${timeText(run.wake_updated_at ?? now)}, retry_at = NULL
-          WHERE id = ${run.id} AND status = 'running'
-        `;
-        // The run just settled joins the routine's kept history: the cap holds there too.
-        yield* prune(run.routine_id);
-        yield* recordChange(run.bot_id, run.routine_id);
+        yield* finish(run, settlement.status, run.wake_updated_at ?? now);
       }
     }, Effect.orDie);
 

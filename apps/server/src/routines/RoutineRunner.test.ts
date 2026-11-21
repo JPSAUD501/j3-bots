@@ -4,6 +4,7 @@ import type { BotId, Routine, RoutineId } from "@j3-bots/contracts";
 import { ENGINE_INPUT_LIMIT, Engine, SessionId, TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -38,6 +39,7 @@ import {
 import { BotTools } from "../tools/BotTools.ts";
 import { MAX_INDETERMINATE_ANSWERS } from "../turns/model.ts";
 import { Pipeline } from "../turns/Pipeline.ts";
+import { SessionGate } from "../turns/SessionGate.ts";
 import { Stops } from "../turns/Stops.ts";
 import { Usage } from "../turns/Usage.ts";
 import { RoutineRunner } from "./RoutineRunner.ts";
@@ -776,5 +778,180 @@ it.effect("ends the background work a failed attempt left once its retry is due"
     assert.strictEqual(yield* timesSent(second.engine_session_id, INSTRUCTION), 1);
     const [run] = yield* history(routine.id);
     assert.deepStrictEqual([run?.status, run?.attempts], ["running", 2]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("tries an attempt again when its turn fails before it starts", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    yield* engineSession(bot.id);
+    const routine = yield* routineOf(bot.id);
+
+    // The attempt's start reaches the engine, whose provider fails it before its turn starts.
+    const sending = yield* control.holdNext("dispatch");
+    yield* (yield* Routines).run({ commandId: command(), routineId: routine.id });
+    yield* sending.entered;
+    const [first] = yield* sideSessions(bot.id);
+    assert.isDefined(first);
+    yield* control.failNextStart({ sessionId: first, failure: "provider-error" });
+    yield* sending.release;
+
+    yield* retryRecorded(routine.id);
+    const [waiting] = yield* history(routine.id);
+    assert.deepStrictEqual([waiting?.status, waiting?.attempts], ["running", 1]);
+
+    yield* TestClock.adjust(retryDelay(1));
+    const side = yield* sideTurn(routine.id, first);
+    yield* control.finishTurn({
+      sessionId: side.engine_session_id,
+      turnId: side.admitted_turn_id,
+      outcome: { _tag: "completed" },
+    });
+    const run = yield* settled(routine);
+    assert.deepStrictEqual([run.status, run.attempts], ["silent", 2]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("starts nothing of a deleted routine whose start was written and not sent", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const sql = yield* SqlClient.SqlClient;
+    yield* concurrentTurns(1);
+    const bot = yield* createBot("Ana");
+    const main = yield* engineSession(bot.id);
+    // The bot's own turn takes the only slot: the routine's session opens and waits.
+    yield* sendToBot(bot.id, "Plan the sprint.");
+    const turn = yield* nextTurn(bot.id);
+    const routine = yield* routineOf(bot.id);
+    yield* (yield* Routines).run({ commandId: command(), routineId: routine.id });
+    yield* until(sideSessions(bot.id).pipe(Effect.map((opened) => opened.length === 1)));
+    const [side] = yield* sideSessions(bot.id);
+    assert.isDefined(side);
+
+    // Its start is written once the slot frees, and waits at its session's gate.
+    const [row] = yield* sql<{ readonly id: string }>`
+      SELECT id FROM sessions WHERE engine_session_id = ${side}
+    `.pipe(Effect.orDie);
+    assert.isDefined(row);
+    const entered = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    yield* (yield* SessionGate)
+      .run(row.id)(
+        Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release))),
+      )
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.await(entered);
+    yield* control.finishTurn({ sessionId: main, turnId: turn, outcome: { _tag: "completed" } });
+    yield* turnEnded(bot.id);
+    const written = sql`
+      SELECT d.status FROM dispatches d WHERE d.session_id = ${row.id}
+    `.pipe(Effect.orDie);
+    const runner = yield* RoutineRunner;
+    yield* until(
+      runner.pass.pipe(
+        Effect.andThen(written),
+        Effect.map((rows) => rows.length > 0),
+      ),
+    );
+
+    yield* (yield* Routines).remove({
+      commandId: command(),
+      routineId: routine.id,
+      author: { _tag: "operator" },
+    });
+    yield* Deferred.succeed(release, undefined);
+
+    yield* until(sidesRetired(bot.id));
+    assert.deepStrictEqual(yield* written, [{ status: "released" }]);
+    assert.strictEqual(yield* timesSent(side, INSTRUCTION), 0);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "never sends a routine's start with the settings it had before a change, once a send is given back",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const sql = yield* SqlClient.SqlClient;
+      const bot = yield* createBot("Ana");
+      yield* engineSession(bot.id);
+      const routine = yield* routineOf(bot.id);
+
+      // The attempt's start is claimed, and on its way when the operator lowers the bot's permissions.
+      const sending = yield* control.holdNext("dispatch");
+      yield* (yield* Routines).run({ commandId: command(), routineId: routine.id });
+      yield* sending.entered;
+      const [first] = yield* sideSessions(bot.id);
+      assert.isDefined(first);
+      assert.notStrictEqual(yield* control.sessionPermissionMode(first), "supervised");
+      yield* (yield* Bots).update({
+        commandId: command(),
+        botId: bot.id,
+        changes: { permissionMode: "supervised" },
+      });
+
+      // The engine is unreachable: the send is given back, never sent.
+      yield* control.setReachable(false);
+      yield* sending.release;
+      yield* until(
+        sql`
+          SELECT 1 FROM dispatches d JOIN sessions s ON s.id = d.session_id
+          WHERE s.engine_session_id = ${first} AND d.attempts = 0
+        `.pipe(
+          Effect.orDie,
+          Effect.map((rows) => rows.length > 0),
+        ),
+      );
+      yield* control.setReachable(true);
+
+      const side = yield* sideTurn(routine.id, first);
+      assert.strictEqual(
+        yield* control.sessionPermissionMode(side.engine_session_id),
+        "supervised",
+      );
+      assert.strictEqual(yield* timesSent(first, INSTRUCTION), 0);
+      yield* control.finishTurn({
+        sessionId: side.engine_session_id,
+        turnId: side.admitted_turn_id,
+        outcome: { _tag: "completed" },
+      });
+      const run = yield* settled(routine);
+      assert.deepStrictEqual([run.status, run.attempts], ["silent", 1]);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("ends the background work a successful run left once the routine runs again", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const sql = yield* SqlClient.SqlClient;
+    const { routine } = yield* ranRoutine;
+    const first = yield* sideTurn(routine.id);
+    yield* control.startBackgroundWork({
+      sessionId: first.engine_session_id,
+      turnId: first.admitted_turn_id,
+    });
+    yield* control.finishTurn({
+      sessionId: first.engine_session_id,
+      turnId: first.admitted_turn_id,
+      outcome: { _tag: "completed" },
+    });
+    assert.strictEqual((yield* settled(routine)).status, "silent");
+    const runner = yield* RoutineRunner;
+    yield* runner.pass;
+    const archived = sql`
+      SELECT 1 FROM sessions
+      WHERE engine_session_id = ${first.engine_session_id} AND engine_retired_at IS NOT NULL
+    `.pipe(
+      Effect.orDie,
+      Effect.map((rows) => rows.length > 0),
+    );
+    // Its work keeps the session while nothing newer needs the routine.
+    assert.isFalse(yield* archived);
+
+    yield* TestClock.adjust("1 second");
+    yield* (yield* Routines).run({ commandId: command(), routineId: routine.id });
+    yield* sideTurn(routine.id, first.engine_session_id);
+    yield* until(runner.pass.pipe(Effect.andThen(archived)));
   }).pipe(Effect.provide(TestDomain.layer)),
 );

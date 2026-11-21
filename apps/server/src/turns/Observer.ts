@@ -681,6 +681,8 @@ export const layer = Layer.effect(
       if (dispatch.status !== "delivered") {
         // It ended without starting: a Stop cancelled it while it waited, or it
         // failed before the provider took it, which the engine refused it with.
+        // The dispatch keeps that outcome: a routine's attempt that failed so
+        // is tried again (`routines/RoutineRuns.ts`).
         yield* ledger.accept(dispatch.id, null);
         const after = yield* stops.wakesAfter(
           dispatch,
@@ -688,7 +690,7 @@ export const layer = Layer.effect(
             ? { _tag: "dropped" }
             : { _tag: "failed", reason: "rejected" },
         );
-        yield* ledger.drop(dispatch.id, end.turnId, after);
+        yield* ledger.drop(dispatch.id, end.turnId, after, end.outcome);
         return;
       }
       if (end.continuation !== null) {
@@ -754,6 +756,7 @@ export const layer = Layer.effect(
         dispatch.value.id,
         turnId,
         yield* stops.wakesAfter(dispatch.value, { _tag: "dropped" }),
+        null,
       );
     });
 

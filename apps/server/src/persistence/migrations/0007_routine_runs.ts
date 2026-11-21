@@ -31,6 +31,14 @@ export default Effect.gen(function* () {
     WHERE side_wake_id IS NOT NULL AND retired_at IS NULL AND lost_at IS NULL
   `;
 
+  // How many times the bot's model or permission mode changed, and, for a
+  // side session, how many times they had when its row was written. A first
+  // send into a side session behind its bot is refused, and the routine
+  // runner replaces the session (`bots/EngineSessions.ts`). Null for a main
+  // session, which is aligned instead (`settings_pending`).
+  yield* sql`ALTER TABLE bots ADD COLUMN settings_revision INTEGER NOT NULL DEFAULT 0`;
+  yield* sql`ALTER TABLE sessions ADD COLUMN settings_revision INTEGER`;
+
   // The position of the conversation entry a catch-up note reports (a
   // routine run's message), so a fresh start leaves out every note from
   // before it, also one an unsent dispatch gives back later

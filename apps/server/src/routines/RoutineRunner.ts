@@ -84,13 +84,14 @@ const SideSession = Schema.Struct({
 
 /**
  * A live side session whose attempt has ended, or that the engine lost, and
- * whether a retry of its attempt is due to start.
+ * whether it is superseded: a retry of its attempt is due to start, or a
+ * newer run of its routine has started.
  */
 const Spent = Schema.Struct({
   id: SessionRowId,
   engine_session_id: Schema.NullOr(SessionId),
   lost: Schema.BooleanFromBit,
-  retry_due: Schema.BooleanFromBit,
+  superseded: Schema.BooleanFromBit,
 });
 type Spent = typeof Spent.Type;
 
@@ -220,7 +221,13 @@ export const layer = Layer.effect(
             SELECT 1 FROM wakes n JOIN routine_runs r ON r.wake_id = n.id
             WHERE n.retry_of = s.side_wake_id AND n.status = 'pending'
               AND r.retry_at IS NOT NULL AND r.retry_at <= ${now}
-          ) AS retry_due
+          )
+          -- A newer run's first wake comes after every wake of the runs
+          -- before it: a run is skipped while the one before is going.
+          OR EXISTS (
+            SELECT 1 FROM wakes n JOIN sessions ns ON ns.side_wake_id = n.id
+            WHERE n.routine_id = w.routine_id AND n.retry_of IS NULL AND n.rowid > w.rowid
+          ) AS superseded
         FROM sessions s
         LEFT JOIN wakes w ON w.id = s.side_wake_id
         WHERE s.purpose = 'side' AND s.retired_at IS NULL
@@ -231,14 +238,16 @@ export const layer = Layer.effect(
     });
 
     /**
-     * Live side sessions opened, or about to open, before a change of their
-     * bot's model or permission mode, with nothing sent there yet
+     * Live side sessions written before a change of their bot's model or
+     * permission mode, with nothing sent there, or a send given back unsent
      * (`EngineSessions.settingsChanged`).
      */
     const staleRows = sql<{ readonly id: string }>`
-      SELECT id FROM sessions
-      WHERE purpose = 'side' AND retired_at IS NULL AND lost_at IS NULL AND settings_pending > 0
-      ORDER BY rowid
+      SELECT s.id FROM sessions s JOIN bots b ON b.id = s.bot_id
+      WHERE s.purpose = 'side' AND s.retired_at IS NULL AND s.lost_at IS NULL
+        AND s.settings_revision < b.settings_revision
+        AND NOT EXISTS (SELECT 1 FROM dispatches d WHERE d.session_id = s.id AND d.attempts > 0)
+      ORDER BY s.rowid
     `.pipe(Effect.orDie);
 
     const earlierRuns = SqlSchema.findAll({
@@ -359,15 +368,17 @@ export const layer = Layer.effect(
             `;
             yield* changes.record({ _tag: "routines", botId: attempt.bot_id }, attempt.routine_id);
           }
-          // Opened with the bot's settings as they stand, it takes no part in
-          // their alignment: nothing of it waits on a change (`settings_pending`).
+          // It takes no part in their alignment (`settings_pending`): it
+          // records the bot's settings revision now, and is replaced once the
+          // bot is past it. Opened later, with settings no older than these.
           const id = SessionRowId.make(yield* ids.make("session"));
           yield* sql`
             INSERT INTO sessions (
-              id, bot_id, purpose, prompt_version, provider_id, settings_pending, created_at,
-              side_wake_id
+              id, bot_id, purpose, prompt_version, provider_id, settings_pending,
+              settings_revision, created_at, side_wake_id
             ) VALUES (
-              ${id}, ${attempt.bot_id}, 'side', ${PROMPT_VERSION}, ${providerId}, 0, ${at},
+              ${id}, ${attempt.bot_id}, 'side', ${PROMPT_VERSION}, ${providerId}, 0,
+              (SELECT settings_revision FROM bots WHERE id = ${attempt.bot_id}), ${at},
               ${attempt.wake_id}
             )
           `;
@@ -402,9 +413,11 @@ export const layer = Layer.effect(
           case "EngineUnavailable":
             return "unavailable";
           case "ModelUnavailable":
-            // The engine does not offer the bot's model: the attempt fails
-            // unsent, and the run tries again after its delay, as for a
-            // failed turn.
+            // The engine does not offer the bot's model: the attempt fails,
+            // and the run tries again after its delay, as for a failed turn.
+            // Its dispatch is certainly never sent, yet fails `unresolved`:
+            // `rejected` would fail the run at once, and a routine's
+            // envelope consumes nothing a failure would have to give back.
             yield* Effect.logWarning("A routine's side session was refused its model", {
               routineId: attempt.routine_id,
             });
@@ -431,9 +444,10 @@ export const layer = Layer.effect(
      * Writes the attempt's dispatch into its side session, in one transaction
      * that finds the wake still waiting and the session still live and opened
      * with its bot's settings as they stand. The dispatcher sends it. One
-     * `failed` already, as for a session the engine refused to open, ends the
-     * attempt unsent, as does an envelope the engine would refuse (`rejected`);
-     * its run settles from the failed wake as for any other.
+     * `failed` already ends the attempt unsent: `unresolved` for a session
+     * the engine refused to open, which the run tries again, and `rejected`
+     * for an envelope the engine would refuse, which fails the run. Its run
+     * settles from the failed wake as for any other.
      */
     const writeDispatch = Effect.fn("RoutineRunner.writeDispatch")(function* (
       attempt: Attempt,
@@ -449,8 +463,10 @@ export const layer = Layer.effect(
         Effect.gen(function* () {
           const still = yield* sql`
             SELECT 1 FROM wakes w JOIN sessions s ON s.side_wake_id = w.id
+            JOIN bots b ON b.id = s.bot_id
             WHERE w.id = ${attempt.wake_id} AND w.status = 'pending' AND s.id = ${sessionId}
-              AND s.retired_at IS NULL AND s.lost_at IS NULL AND s.settings_pending = 0
+              AND s.retired_at IS NULL AND s.lost_at IS NULL
+              AND s.settings_revision = b.settings_revision
           `;
           if (still.length === 0) return;
           const id = DispatchRowId.make(yield* ids.make("dispatch"));
@@ -514,13 +530,13 @@ export const layer = Layer.effect(
     });
 
     /**
-     * A side session opened, or about to open, before its bot's model or
-     * permission mode changed, with nothing sent there: no turn ever starts
-     * there with settings the operator replaced. Its dispatch, if one waits
-     * unsent, is released, so its wake waits again, and it is retired, in
-     * one transaction. The attempt then gets a fresh session, opened with the
+     * A side session written before its bot's model or permission mode
+     * changed, with nothing sent there: no turn ever starts there with
+     * settings the operator replaced. Its dispatch, if one waits unsent, is
+     * released, so its wake waits again, and it is retired, in one
+     * transaction. The attempt then gets a fresh session, opened with the
      * settings as they stand, and is not counted again. Nothing can be sent
-     * there meanwhile: a first send's claim refuses a session marked so.
+     * there meanwhile: a first send's claim refuses a session behind its bot.
      */
     const replaceStale = Effect.fn("RoutineRunner.replaceStale")(function* (sessionId: string) {
       yield* transaction(
@@ -557,11 +573,12 @@ export const layer = Layer.effect(
      * no turn or dispatch the server knows of, no Stop unsettled, checked
      * again in the transaction that retires it, and the engine's own account
      * shows no turn it can still run and no background work. Background work
-     * stops holding it once a retry of its attempt is due: the retry runs
-     * after the failed attempt is out of use, and the archive ends that work,
-     * as a replaced main session's does. A session never opened, or lost, is
-     * retired at once. The rotator then archives the engine thread and stops
-     * following its events, as for a replaced main session
+     * stops holding it once it is superseded: a retry of its attempt is due,
+     * and runs after the failed attempt is out of use, or a newer run of its
+     * routine has started, which has its own session. The archive then ends
+     * that work, as a replaced main session's does. A session never opened,
+     * or lost, is retired at once. The rotator then archives the engine
+     * thread and stops following its events, as for a replaced main session
      * (`turns/Rotations.ts`).
      */
     const retire = Effect.fn("RoutineRunner.retire")(function* (
@@ -607,11 +624,12 @@ export const layer = Layer.effect(
       }
       if (synced.success.runnableTurns.length > 0) return "done";
       // Background work the run left running, a dev server say, keeps its
-      // session until it ends, or until a retry of its failed attempt is due.
+      // session until it ends, or until a retry of its failed attempt is due
+      // or a newer run of its routine has started.
       if (synced.success.backgroundWork === "pending") {
-        if (!session.retry_due) return "done";
+        if (!session.superseded) return "done";
         yield* Effect.logInfo(
-          "A failed routine attempt's background work ends with its session, for the retry",
+          "A routine attempt's background work ends with its session, superseded by a newer attempt",
         );
       }
       yield* record;
