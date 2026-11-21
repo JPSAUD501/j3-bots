@@ -99,7 +99,8 @@ const codeOf = (details: typeof ErrorDetails.Type): MessageError | null => {
  * The message as Expo takes it. A send that may be repeated replaces, rather
  * than adds to, a notification already shown: on Android by its `tag`, on iOS
  * by its `collapseId`. Android's `collapseId` is left out: Google keeps only
- * four of them per device while it is offline, and drops the rest.
+ * four of them per device while it is offline, and drops the rest. On Android
+ * it shows in the channel of its kind, which the app creates.
  */
 const expoMessage = (message: PushMessage) => ({
   to: message.token,
@@ -109,7 +110,9 @@ const expoMessage = (message: PushMessage) => ({
   ttl: TIME_TO_LIVE_SECONDS,
   priority: "high",
   sound: "default",
-  ...(message.platform === "android" ? { tag: message.key } : { collapseId: message.key }),
+  ...(message.platform === "android"
+    ? { tag: message.key, channelId: message.kind }
+    : { collapseId: message.key }),
 });
 
 /**

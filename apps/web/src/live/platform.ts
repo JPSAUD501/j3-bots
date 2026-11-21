@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
+  alwaysForeground,
   Cell,
   ClientStorage,
   CredentialStore,
@@ -322,6 +323,9 @@ export const makePlatform = (server: URL): Layer.Layer<Platform> => {
     locks,
     Layer.succeed(FileTransfer, browserTransfer),
     Layer.succeed(Network, desktop === null ? browserNetwork : desktopNetwork(desktop)),
+    // No push reaches a browser or the desktop app: their socket stays open,
+    // hidden or not, and the server tells them there.
+    alwaysForeground,
     FetchHttpClient.layer,
     Socket.layerWebSocketConstructorGlobal,
     SecureRandom.layerWebCrypto,

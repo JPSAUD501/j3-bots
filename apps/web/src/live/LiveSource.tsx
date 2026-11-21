@@ -320,6 +320,8 @@ function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
         </Screen>
       );
     case "offline":
+    // Never here: a browser stays in the foreground for the runtime.
+    case "background":
     case "connecting":
     case "waiting":
     case "connected":

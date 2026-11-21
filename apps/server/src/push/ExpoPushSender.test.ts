@@ -35,6 +35,7 @@ const Sent = Schema.Struct({
   data: PushData,
   tag: Schema.optional(Schema.String),
   collapseId: Schema.optional(Schema.String),
+  channelId: Schema.optional(Schema.String),
 });
 type Sent = typeof Sent.Type;
 const decodeSends = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Tuple([Sent])));
@@ -249,6 +250,8 @@ it.effect("sends again after a 5xx, then reads the receipt and lets the delivery
     assert.deepStrictEqual(second, first);
     assert.isString(second?.tag);
     assert.isUndefined(second?.collapseId);
+    // In the Android channel the app made for a bot's messages.
+    assert.strictEqual(second?.channelId, "message");
     assert.deepStrictEqual(second?.to, "ExponentPushToken[fixture-Phone]");
     // A tap opens the conversation it is about.
     assert.deepStrictEqual(second?.data.target, { _tag: "conversation", botId: scout.id });

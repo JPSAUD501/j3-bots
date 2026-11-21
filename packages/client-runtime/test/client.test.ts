@@ -1097,6 +1097,24 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
     }).pipe(Effect.provide(client())),
   );
 
+  it.effect("closes its socket in the background and opens another when the app returns", () =>
+    Effect.gen(function* () {
+      const { views } = yield* Fakes;
+      const connection = yield* Connection;
+      const lifecycle = yield* TestPlatform.TestLifecycle;
+      yield* pairAndConnect;
+      // Each socket reports the view as it opens.
+      yield* Queue.take(views);
+
+      yield* lifecycle.set("background");
+      yield* waitFor(connection.state, (state) => state._tag === "background");
+
+      yield* lifecycle.set("foreground");
+      yield* waitFor(connection.state, (state) => state._tag === "connected");
+      yield* Queue.take(views);
+    }).pipe(Effect.provide(client())),
+  );
+
   it.effect("keeps each section's save under way through a disconnection until it is saved", () =>
     Effect.gen(function* () {
       yield* pairAndConnect;

@@ -24,6 +24,8 @@ import {
   FileTransfer,
   LocalStorageError,
   type LocalTable,
+  Lifecycle,
+  type LifecycleState,
   makeInProcessLocks,
   Network,
   type NetworkStatus,
@@ -135,6 +137,27 @@ const network = Layer.effectContext(
     );
   }),
 ).pipe(Layer.provide(Socket.layerWebSocketConstructorGlobal));
+
+/** Test controls over the app's lifecycle: a phone's app goes to the background and back. */
+export class TestLifecycle extends Context.Service<
+  TestLifecycle,
+  { readonly set: (state: LifecycleState) => Effect.Effect<void> }
+>()("@j3-bots/client-runtime/test/platform/TestLifecycle") {}
+
+const lifecycle = Layer.effectContext(
+  Effect.gen(function* () {
+    const state = yield* SubscriptionRef.make<LifecycleState>("foreground");
+    return Context.make(
+      Lifecycle,
+      Lifecycle.of({ state: SubscriptionRef.get(state), changes: SubscriptionRef.changes(state) }),
+    ).pipe(
+      Context.add(
+        TestLifecycle,
+        TestLifecycle.of({ set: (next) => SubscriptionRef.set(state, next) }),
+      ),
+    );
+  }),
+);
 
 /** One window's watch on the device's credential: what it is told when another window changes it. */
 interface CredentialWatcher {
@@ -398,7 +421,7 @@ const REQUEST_TIMEOUT = Duration.seconds(10);
 
 /**
  * A platform for tests: the device's credential in memory, `stored` when given, a network the test turns
- * off and on, Node's own `fetch` and `WebSocket`, and retries in milliseconds.
+ * off and on, an app the test puts in the background and back, Node's own `fetch` and `WebSocket`, and retries in milliseconds.
  * `http` stands between the client and the server, as a reverse proxy would,
  * for every HTTP request and upload.
  */
@@ -419,6 +442,7 @@ export const layer = (
     Layer.succeed(WindowLocks, device.locks),
     transfer.pipe(Layer.provide(http)),
     network,
+    lifecycle,
     http,
     SecureRandom.layerWebCrypto,
     // Short enough that a test sees a sweep, long enough that most deliveries are told.

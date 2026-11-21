@@ -45,6 +45,7 @@ import type {
   ClientStorage,
   CredentialStore,
   FileTransfer,
+  Lifecycle,
   Network,
   ServerAddress,
   WindowLocks,
@@ -70,6 +71,7 @@ export type Platform =
   | ClientStorage
   | FileTransfer
   | Network
+  | Lifecycle
   | WindowLocks
   | HttpClient.HttpClient
   | Socket.WebSocketConstructor

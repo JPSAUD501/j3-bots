@@ -56,6 +56,11 @@ const sentences = {
   "notification.approval": "Precisa da sua aprovação",
   "notification.secret": "Precisa de uma credencial",
   "notification.handoff": "Mandou uma mensagem urgente a um colega",
+  "notification.channel.message": "Mensagens",
+  "notification.channel.question": "Perguntas",
+  "notification.channel.approval": "Aprovações",
+  "notification.channel.secret": "Pedidos de credencial",
+  "notification.channel.handoff": "Mensagens urgentes a colegas",
 
   "time.yesterday": "Ontem",
   "time.yesterdayAt": "Ontem às {time}",

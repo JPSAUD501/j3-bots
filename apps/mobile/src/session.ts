@@ -53,6 +53,11 @@ export interface SessionDevice {
   /** Deletes the files the app opened from its server, which leave the phone with it. */
   readonly forgetFiles: Effect.Effect<void>;
   readonly makePlatform: (origin: URL) => Layer.Layer<Platform>;
+  /**
+   * Ends the phone's pushes for a pairing it left, even one the server still
+   * lists, and clears the notifications that pairing received. Never fails.
+   */
+  readonly endPush: () => Promise<void>;
 }
 
 export interface Session {
@@ -89,16 +94,17 @@ export interface Session {
    * Leaves the server the app runs a client for, so the operator can pair
    * with another: signs this phone out (on the server only if it is
    * connected), which deletes the pairing's drafts, unsent messages and
-   * credential here, and deletes the files opened from it. Resolves `false` when the credential could not be
-   * deleted, and the server is kept.
+   * credential here, deletes the files opened from it, and ends its pushes.
+   * Resolves `false` when the credential could not be deleted, and the
+   * server is kept.
    */
   readonly changeServer: () => Promise<boolean>;
   /**
    * Forgets this phone's sign-in when it cannot be read: deletes the stored
    * credential, with the pairing's drafts, unsent messages and the files
-   * opened from it, and lets go of
-   * any client, so the pairing screen opens. Resolves `false` when the
-   * credential could not be deleted.
+   * opened from it, lets go of any client, so the pairing screen opens, and
+   * ends the pairing's pushes. Resolves `false` when the credential could not
+   * be deleted.
    */
   readonly forget: () => Promise<boolean>;
 }
@@ -134,6 +140,16 @@ export const makeSession = (device: SessionDevice): Session => {
     state.set({ _tag: "none" });
   };
 
+  /**
+   * After the stored pairing was forgotten: none of the files opened from it,
+   * the pairing screen, and none of its pushes.
+   */
+  const left = async () => {
+    await Effect.runPromise(device.forgetFiles);
+    await close();
+    await device.endPush();
+  };
+
   /** Whether `effect` succeeded. */
   const succeeds = <E>(effect: Effect.Effect<void, E>) =>
     Effect.runPromise(Effect.isSuccess(effect));
@@ -157,10 +173,8 @@ export const makeSession = (device: SessionDevice): Session => {
           if (origin !== null) await open(origin);
           // A server the app no longer accepts: its pairing goes before the
           // pairing screen opens, or pairing again would leave it behind.
-          else if (await succeeds(device.forget)) {
-            await Effect.runPromise(device.forgetFiles);
-            await close();
-          } else state.set({ _tag: "unreadable" });
+          else if (await succeeds(device.forget)) await left();
+          else state.set({ _tag: "unreadable" });
         }
       }),
 
@@ -196,6 +210,7 @@ export const makeSession = (device: SessionDevice): Session => {
               await Effect.runPromise(device.forgetFiles);
               await current.client.dispose();
               state.set({ _tag: "none" });
+              await device.endPush();
               return true;
           }
         } finally {
@@ -206,8 +221,7 @@ export const makeSession = (device: SessionDevice): Session => {
     forget: () =>
       serially(async () => {
         if (!(await succeeds(device.forget))) return false;
-        await Effect.runPromise(device.forgetFiles);
-        await close();
+        await left();
         return true;
       }),
   };

@@ -3,6 +3,8 @@ import {
   ClientStorage,
   CredentialStore,
   FileTransfer,
+  Lifecycle,
+  type LifecycleState,
   makeInProcessLocks,
   Network,
   type NetworkStatus,
@@ -23,8 +25,10 @@ import * as ExpoCrypto from "expo-crypto";
 import * as ExpoNetwork from "expo-network";
 import * as SecureStore from "expo-secure-store";
 import * as SQLite from "expo-sqlite";
+import { AppState } from "react-native";
 import { makeSession } from "../session.ts";
 import { forgetOpenedFiles } from "./openFile.ts";
+import { endPush } from "./push.ts";
 import { makeUploader } from "./upload.ts";
 import {
   forgetPairing,
@@ -114,6 +118,31 @@ const network = Layer.succeed(
 );
 
 /**
+ * Only `background` puts the app aside: iOS's `inactive`, while the
+ * notification center or the app switcher covers it, keeps the socket.
+ */
+const lifecycleOf = (status: string | null | undefined): LifecycleState =>
+  status === "background" ? "background" : "foreground";
+
+/** Whether the app is in the foreground, from React Native's `AppState`. */
+const lifecycle = Layer.succeed(
+  Lifecycle,
+  Lifecycle.of({
+    state: Effect.sync(() => lifecycleOf(AppState.currentState)),
+    changes: Stream.callback<LifecycleState>((queue) =>
+      Effect.acquireRelease(
+        Effect.sync(() =>
+          AppState.addEventListener("change", (status) =>
+            Queue.offerUnsafe(queue, lifecycleOf(status)),
+          ),
+        ),
+        (subscription) => Effect.sync(() => subscription.remove()),
+      ),
+    ),
+  }),
+);
+
+/**
  * Expo's `fetch`, which honors `redirect: "error"` on Android and iOS, for
  * every request the client makes: React Native's own `fetch` ignores it and
  * follows every redirect.
@@ -148,6 +177,7 @@ const makePlatform = (origin: URL): Layer.Layer<Platform> =>
     Layer.sync(WindowLocks, makeInProcessLocks),
     transfer,
     network,
+    lifecycle,
     FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, nativeFetch))),
     Socket.layerWebSocketConstructorGlobal,
     secureRandom,
@@ -159,4 +189,5 @@ export const session = makeSession({
   forget: forgetPairing(sqlite, secureCredential),
   forgetFiles: Effect.sync(forgetOpenedFiles),
   makePlatform,
+  endPush,
 });

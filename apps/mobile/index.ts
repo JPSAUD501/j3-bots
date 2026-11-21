@@ -5,6 +5,7 @@ import { registerRootComponent } from "expo";
 import * as SplashScreen from "expo-splash-screen";
 import { App } from "./src/App.tsx";
 import { session } from "./src/platform/platform.ts";
+import { keepPushRegistered, setUpNotifications } from "./src/platform/push.ts";
 import { applyAppearance } from "./src/preferences.ts";
 import { receiveShares } from "./src/share/incoming.ts";
 
@@ -13,6 +14,8 @@ import { receiveShares } from "./src/share/incoming.ts";
 // kept, it hides as the app first renders: nothing to handle.
 SplashScreen.preventAutoHideAsync().catch(() => undefined);
 applyAppearance();
+setUpNotifications();
 void session.start();
+keepPushRegistered(session);
 receiveShares();
 registerRootComponent(App);

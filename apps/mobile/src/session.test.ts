@@ -38,6 +38,7 @@ const sessionOver = (database: SqlDatabase, secure: SecureValue) => {
       opened.forgotten += 1;
     }),
     makePlatform: noClient,
+    endPush: () => Promise.resolve(),
   });
   return { session, opened };
 };

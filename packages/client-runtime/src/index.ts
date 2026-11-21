@@ -46,6 +46,7 @@ export {
 } from "./intents/Actions.ts";
 export { type SignOutResult } from "./intents/SignOut.ts";
 export {
+  alwaysForeground,
   ClientStorage,
   CredentialStorageError,
   CredentialStore,
@@ -54,6 +55,8 @@ export {
   type LocalRecord,
   LocalTable,
   LocalStorageError,
+  Lifecycle,
+  type LifecycleState,
   makeInProcessLocks,
   Network,
   type NetworkStatus,
