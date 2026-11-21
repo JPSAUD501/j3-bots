@@ -21,9 +21,11 @@ import { NOTIFICATION_CLICK } from "./notificationClick.ts";
  * deletes the caches of older builds once it takes over.
  *
  * It also shows the app's notifications, where a page cannot show them itself
- * (Android's browsers), and opens what a click on one asks for: it focuses a
- * window of the app, the focused one first, then a visible one, and tells it
- * which conversation or room to open; with no window, it opens one there.
+ * (Android's browsers), and hands a click on one to a window of the app: it
+ * focuses one, the focused one first, then a visible one, or opens one, and
+ * tells it which conversation or room the notification is about and which
+ * pairing received it. The window opens it only if it still follows that
+ * pairing.
  */
 /**
  * How long a page load waits for the network before the kept page answers: a
@@ -132,26 +134,25 @@ self.addEventListener("fetch", (event) => {
   }
 });
 
-// A notification the app showed carries { target, url }: the conversation or
-// room it is about, and that page's path on this origin.
+// A notification the app showed carries { target, pairing }: the conversation
+// or room it is about, and the pairing that received it. The window decides
+// whether to open it, so a window opened for the click starts at the app's
+// root, not at the target.
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const data = event.notification.data;
-  if (data === null || typeof data !== "object" || typeof data.url !== "string") return;
-  const url = new URL(data.url, self.location.origin);
-  if (url.origin !== self.location.origin) return;
+  if (data === null || typeof data !== "object") return;
+  const click = { type: CONFIG.notificationClick, target: data.target, pairing: data.pairing };
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((windows) => {
       const open =
         windows.find((client) => client.focused) ??
         windows.find((client) => client.visibilityState === "visible") ??
         windows[0];
-      if (open === undefined) return self.clients.openWindow(url.href);
-      return open
-        .focus()
-        .then((focused) =>
-          focused.postMessage({ type: CONFIG.notificationClick, target: data.target }),
-        );
+      if (open === undefined) {
+        return self.clients.openWindow("/").then((opened) => opened?.postMessage(click));
+      }
+      return open.focus().then((focused) => focused.postMessage(click));
     }),
   );
 });

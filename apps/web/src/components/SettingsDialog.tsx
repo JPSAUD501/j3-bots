@@ -338,6 +338,7 @@ const accessLine: Record<Exclude<NotificationAccess, "default">, KeyWith> = {
   granted: "settings.notifications.browser.granted",
   denied: "settings.notifications.browser.denied",
   unsupported: "settings.notifications.browser.unsupported",
+  "home-screen": "settings.notifications.browser.homeScreen",
   insecure: "settings.notifications.browser.insecure",
 };
 

@@ -468,7 +468,7 @@ export const en = {
   "settings.notifications": "Notifications",
   "settings.notifications.enabled": "Notify me",
   "settings.notifications.enabled.hint":
-    "When a bot writes or needs you and no device has that conversation open. Applies to every device.",
+    "When a bot writes or needs you and no device has that conversation in view. Applies to every device.",
   "settings.notifications.previews": "Show what the bot wrote",
   "settings.notifications.previews.hint":
     "Notifications include the first line of the message. Anyone who can see your screen can read it.",
@@ -478,8 +478,10 @@ export const en = {
   "settings.notifications.browser.denied":
     "This browser blocks notifications from J3 Bots. Allow them in its site settings.",
   "settings.notifications.browser.unsupported": "This browser can’t show notifications.",
+  "settings.notifications.browser.homeScreen":
+    "On iPhone and iPad, notifications work once J3 Bots is added to the Home Screen.",
   "settings.notifications.browser.insecure":
-    "Browsers show notifications only over a secure connection. Open J3 Bots over HTTPS to get them here.",
+    "Notifications need HTTPS. Open J3 Bots over HTTPS to get them here.",
   "settings.devices": "Devices",
   "settings.device.current": "This device",
   "settings.device.neverSeen": "Not connected yet",

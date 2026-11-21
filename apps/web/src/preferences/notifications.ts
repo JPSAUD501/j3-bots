@@ -5,13 +5,23 @@ import { useSyncExternalStore } from "react";
  * Whether this browser may show J3 Bots' notifications: the browser's own
  * permission, or why there is none to ask for. Browsers offer notifications
  * only in a secure context (HTTPS, or localhost), so a page served over plain
- * HTTP on the local network gets none.
+ * HTTP on the local network gets none, and some hide the API there. Safari on
+ * iPhone and iPad offers them only to an app added to the Home Screen.
  */
-export type NotificationAccess = "unsupported" | "insecure" | NotificationPermission;
+export type NotificationAccess =
+  | "insecure"
+  | "home-screen"
+  | "unsupported"
+  | NotificationPermission;
 
 const read = (): NotificationAccess => {
-  if (!("Notification" in window)) return "unsupported";
   if (!window.isSecureContext) return "insecure";
+  if (!("Notification" in window)) {
+    // Only Safari on iPhone and iPad has `navigator.standalone`: false in a tab.
+    return "standalone" in navigator && navigator.standalone === false
+      ? "home-screen"
+      : "unsupported";
+  }
   return Notification.permission;
 };
 

@@ -41,7 +41,7 @@ import type {
   RoomId,
   WorkStep,
 } from "@j3-bots/contracts";
-import { useNavigate, useParams, useRouter, useSearch } from "@tanstack/react-router";
+import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import {
   createContext,
   use,
@@ -65,7 +65,7 @@ import { notificationAccess } from "../preferences/notifications";
 import { notificationContent } from "../presentation/notification";
 import type { ConversationView, ShellData, ShellIntents } from "../shell/data";
 import { ShellSourceContext } from "../shell/source";
-import { onServiceWorkerClick, showNotification } from "./notify";
+import { closeNotificationsOutside, onNotificationClick, showNotification } from "./notify";
 import { deliverFile, reserveWindow } from "./openFile";
 import { platform } from "./platform";
 
@@ -131,6 +131,15 @@ function Gate({ children }: { children: ReactNode }) {
   const pairing = useReadable(j3.pairing);
   const [everConnected, setEverConnected] = useState(false);
   if (connection._tag === "connected" && !everConnected) setEverConnected(true);
+  // Once this window knows the pairing it follows, a notification another one
+  // received leaves the screen: signed out or revoked, its words go with it.
+  const pairingKnown = connection._tag !== "starting" && connection._tag !== "storage-failed";
+  useEffect(() => {
+    if (!pairingKnown) return;
+    closeNotificationsOutside(pairing).catch(() => {
+      // The browser would not list them; they close when the operator dismisses them.
+    });
+  }, [pairingKnown, pairing]);
   switch (connection._tag) {
     case "starting":
       return null;
@@ -301,9 +310,9 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
 
   // What the server says no device has in view, shown by the browser once the
   // operator allowed it. A click focuses a window and opens the conversation
-  // or room, whose newest entry is what the notification was about.
+  // or room, whose newest entry is what the notification was about, if the
+  // window still follows the pairing that received it.
   const presentation = usePresentation();
-  const router = useRouter();
   const openTarget = useEffectEvent((opened: EntryTarget) => {
     if (opened._tag === "conversation") {
       void navigate({ to: "/bots/$botId", params: { botId: opened.botId } });
@@ -312,7 +321,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
     }
   });
   const notify = useEffectEvent((notification: Notification) => {
-    if (notificationAccess() !== "granted") return;
+    if (pairing === null || !stillPaired() || notificationAccess() !== "granted") return;
     // Names come from the whole roster, hidden bots included: the shell lists
     // bots for what it draws, below this source.
     const listed = j3.roster.get();
@@ -327,20 +336,24 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
       )[0] ?? null;
     const content = notificationContent(notification, { ...presentation, botName }, roomName);
     if (content === null) return;
-    const { target: about } = notification;
-    const url =
-      about._tag === "conversation"
-        ? router.buildLocation({ to: "/bots/$botId", params: { botId: about.botId } }).href
-        : router.buildLocation({ to: "/rooms/$roomId", params: { roomId: about.roomId } }).href;
-    showNotification({ ...content, tag: notification.entryId, target: about, url }, (opened) =>
-      openTarget(opened),
-    ).catch(() => {
+    showNotification({
+      ...content,
+      tag: notification.entryId,
+      target: notification.target,
+      pairing,
+    }).catch(() => {
       // The browser refused it, as when the permission was withdrawn meanwhile.
       // The entry still shows as unread in the roster.
     });
   });
   useEffect(() => j3.onNotification(notify), [j3]);
-  useEffect(() => onServiceWorkerClick((opened) => openTarget(opened)), []);
+  useEffect(
+    () =>
+      onNotificationClick((click) => {
+        if (click.pairing === pairing && j3.pairing.get() === pairing) openTarget(click.target);
+      }),
+    [j3, pairing],
+  );
 
   // Another tab sent or changed a draft under this one, and this tab shows it
   // as stored. Text of this tab's that the device never kept is offered back

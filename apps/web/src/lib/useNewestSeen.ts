@@ -23,8 +23,9 @@ const covered = (element: Element) => element.closest('[inert], [aria-hidden="tr
 
 /**
  * Calls `onSeen` with the id of the newest entry the operator can see in the
- * timeline `root` scrolls: enough of it on screen, in a shown tab, with no
- * dialog over it.
+ * timeline `root` scrolls: enough of it on screen, in a shown window that has
+ * focus, with no dialog over it. A window in the background reports no view
+ * to the server either, so what arrives there both notifies and stays unread.
  * Entries carry `data-seen-id`, oldest first.
  */
 export function useNewestSeen(root: HTMLElement | null, onSeen: (id: string) => void) {
@@ -34,7 +35,9 @@ export function useNewestSeen(root: HTMLElement | null, onSeen: (id: string) => 
     const halfShown = new Set<Element>();
     const onMiddle = new Set<Element>();
     const check = () => {
-      if (document.visibilityState !== "visible" || covered(root)) return;
+      if (document.visibilityState !== "visible" || !document.hasFocus() || covered(root)) {
+        return;
+      }
       const newest = [...root.querySelectorAll(`[${SEEN_ID}]`)].findLast(
         (entry) => halfShown.has(entry) || onMiddle.has(entry),
       );
@@ -96,7 +99,7 @@ export function useNewestSeen(root: HTMLElement | null, onSeen: (id: string) => 
       observeEntries();
     });
     resizes.observe(root);
-    // Closing a dialog or returning to the tab shows entries without a scroll.
+    // Closing a dialog or returning to the window shows entries without a scroll.
     const covers = new MutationObserver(check);
     covers.observe(document.body, {
       attributes: true,
@@ -104,6 +107,7 @@ export function useNewestSeen(root: HTMLElement | null, onSeen: (id: string) => 
       subtree: true,
     });
     document.addEventListener("visibilitychange", check);
+    window.addEventListener("focus", check);
     return () => {
       half.disconnect();
       middle.disconnect();
@@ -111,6 +115,7 @@ export function useNewestSeen(root: HTMLElement | null, onSeen: (id: string) => 
       arrivals.disconnect();
       covers.disconnect();
       document.removeEventListener("visibilitychange", check);
+      window.removeEventListener("focus", check);
     };
   }, [root]);
 }

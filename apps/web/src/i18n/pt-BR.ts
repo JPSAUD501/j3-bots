@@ -476,7 +476,7 @@ export const ptBR: Catalog = {
   "settings.notifications": "Notificações",
   "settings.notifications.enabled": "Receber notificações",
   "settings.notifications.enabled.hint":
-    "Quando um bot escreve ou precisa de você e nenhum dispositivo está com aquela conversa aberta. Vale para todos os dispositivos.",
+    "Quando um bot escreve ou precisa de você e aquela conversa não está na tela de nenhum dispositivo. Vale para todos os dispositivos.",
   "settings.notifications.previews": "Mostrar o que o bot escreveu",
   "settings.notifications.previews.hint":
     "As notificações trazem a primeira linha da mensagem. Quem vir a sua tela consegue ler.",
@@ -486,8 +486,10 @@ export const ptBR: Catalog = {
   "settings.notifications.browser.denied":
     "Este navegador bloqueia as notificações do J3 Bots. Permita nas configurações do site.",
   "settings.notifications.browser.unsupported": "Este navegador não mostra notificações.",
+  "settings.notifications.browser.homeScreen":
+    "No iPhone e no iPad, as notificações funcionam depois que o J3 Bots é adicionado à Tela de Início.",
   "settings.notifications.browser.insecure":
-    "Os navegadores só mostram notificações numa conexão segura. Abra o J3 Bots por HTTPS para recebê-las aqui.",
+    "As notificações precisam de HTTPS. Abra o J3 Bots por HTTPS para recebê-las aqui.",
   "settings.devices": "Dispositivos",
   "settings.device.current": "Este dispositivo",
   "settings.device.neverSeen": "Ainda não conectou",
