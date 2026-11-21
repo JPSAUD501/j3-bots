@@ -97,6 +97,28 @@ export const recordedLauncher = Effect.fn("install.recordedLauncher")(function* 
 });
 
 /**
+ * Whether a service whose `ExecStart=` is `command` runs the install at
+ * `install`: its executable is the command install.sh recorded there, or its
+ * executable or entry point is in a release in the install's `versions/`.
+ * Anything else, such as a checkout's server, is another J3 Bots.
+ */
+export const startsInstall = Effect.fn("install.startsInstall")(function* (
+  command: ReadonlyArray<string>,
+  install: string,
+) {
+  const path = yield* Path.Path;
+  const recorded = yield* recordedLauncher(install);
+  const launcher = Option.isSome(recorded) ? yield* resolved(recorded.value) : undefined;
+  const versions = yield* resolved(path.join(install, VERSIONS));
+  for (const [index, word] of command.slice(0, 2).entries()) {
+    if (!path.isAbsolute(word)) continue;
+    const real = yield* resolved(word);
+    if ((index === 0 && real === launcher) || real.startsWith(`${versions}/`)) return true;
+  }
+  return false;
+});
+
+/**
  * What install.sh put in `versions/` of the install at `install`: each folder
  * that holds a release (a `release.json`), and each staging folder an
  * interrupted run left. Anything else there is not its own.

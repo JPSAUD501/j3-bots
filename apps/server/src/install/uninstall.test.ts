@@ -38,14 +38,16 @@ interface Machine {
   readonly release?: ReadonlyArray<string>;
   /** Whether install.sh recorded its command in the install folder; it did by default. */
   readonly recorded?: boolean;
-  /** The text of the command the install recorded; install.sh's own by default. */
-  readonly launcher?: (install: string) => string;
+  /** The text of the command the install recorded, install.sh's own by default; none for no command. */
+  readonly launcher?: (install: string) => Option.Option<string>;
   /** Files of the user's, by path under the scratch folder; a path ending in `/` is a folder. */
   readonly userFiles?: ReadonlyArray<string>;
   /** Whether the data directory `data` is a link to the folder `linked-data`. */
   readonly dataIsLink?: boolean;
   /** Whether the service is installed, and the data directory its unit names, under the scratch folder. */
   readonly unitHome: Option.Option<string>;
+  /** What the service's unit starts: this install's release (by default), or a checkout's server. */
+  readonly unitRuns?: "this install" | "a checkout";
   /** `J3_HOME` in this shell, relative to the scratch folder. */
   readonly shellHome?: string;
   /** What answers on the admin socket. */
@@ -74,10 +76,10 @@ const uninstallOn = (machine: Machine, options: { readonly deleteData: boolean }
       recursive: true,
     });
     yield* fs.makeDirectory(at("bin"));
-    yield* fs.writeFileString(
-      launcher,
-      machine.launcher?.(install) ?? ownLauncher(path.join(install, "versions", "0.1.0")),
-    );
+    const launcherText =
+      machine.launcher?.(install) ??
+      Option.some(ownLauncher(path.join(install, "versions", "0.1.0")));
+    if (Option.isSome(launcherText)) yield* fs.writeFileString(launcher, launcherText.value);
     if (machine.recorded ?? true) {
       yield* fs.writeFileString(path.join(install, "launcher"), `${launcher}\n`);
     }
@@ -101,9 +103,14 @@ const uninstallOn = (machine: Machine, options: { readonly deleteData: boolean }
     }
     if (Option.isSome(machine.unitHome)) {
       yield* fs.makeDirectory(path.dirname(unitFile), { recursive: true });
+      // What `service install` writes: the release's Node, or the checkout's, and its entry point.
+      const execStart =
+        (machine.unitRuns ?? "this install") === "this install"
+          ? `${releaseRoot}/node/bin/node ${releaseRoot}/server/bin.mjs serve`
+          : `/usr/bin/node ${at("checkout", "apps", "server", "src", "bin.ts")} serve`;
       yield* fs.writeFileString(
         unitFile,
-        `[Service]\nEnvironment=J3_HOME=${at(machine.unitHome.value)}\n`,
+        `[Service]\nEnvironment=J3_HOME=${at(machine.unitHome.value)}\nExecStart=${execStart}\n`,
       );
     }
 
@@ -257,6 +264,71 @@ it.layer(NodeServices.layer)("uninstall", (it) => {
     }),
   );
 
+  it.effect("keeps the service of another J3 Bots, and the data it runs with", () =>
+    Effect.gen(function* () {
+      const { exit, calls, left } = yield* uninstallOn(
+        { unitHome: Option.some("other-data"), unitRuns: "a checkout" },
+        { deleteData: true },
+      );
+      assert.isTrue(Exit.isSuccess(exit), String(exit));
+      if (Exit.isSuccess(exit)) {
+        assert.isFalse(exit.value.serviceRemoved);
+        assert.deepStrictEqual(exit.value.data, Option.some("deleted"));
+      }
+      assert.deepStrictEqual(calls, []);
+      assert.deepStrictEqual(left, {
+        unit: true,
+        launcher: false,
+        install: false,
+        data: false,
+        otherData: true,
+      });
+    }),
+  );
+
+  it.effect("deletes nothing from a folder no server has used", () =>
+    Effect.gen(function* () {
+      const userFiles = ["plain/shared/", "plain/state/", "plain/config.json", "plain/notes.txt"];
+      const { exit, userFiles: kept } = yield* uninstallOn(
+        { unitHome: Option.none(), shellHome: "plain", userFiles },
+        { deleteData: true },
+      );
+      assert.isTrue(Exit.isSuccess(exit), String(exit));
+      if (Exit.isSuccess(exit)) assert.deepStrictEqual(exit.value.data, Option.some("not-j3"));
+      assert.isTrue(Object.values(kept).every(Boolean), JSON.stringify(kept));
+    }),
+  );
+
+  it.effect("keeps the web client the operator put in the data directory, and the folder", () =>
+    Effect.gen(function* () {
+      const { exit, left, inData } = yield* uninstallOn(
+        { unitHome: Option.none(), userFiles: ["data/web/index.html", "data/shared/memory/"] },
+        { deleteData: true },
+      );
+      assert.isTrue(Exit.isSuccess(exit), String(exit));
+      if (Exit.isSuccess(exit)) assert.deepStrictEqual(exit.value.data, Option.some("web-kept"));
+      assert.isTrue(left.data);
+      assert.deepStrictEqual(inData, ["web"]);
+    }),
+  );
+
+  it.effect("removes the rest when the recorded command is missing", () =>
+    Effect.gen(function* () {
+      const { exit, left } = yield* uninstallOn(
+        { unitHome: Option.none(), launcher: () => Option.none() },
+        { deleteData: false },
+      );
+      assert.isTrue(Exit.isSuccess(exit), String(exit));
+      if (Exit.isSuccess(exit)) {
+        assert.deepStrictEqual(
+          Option.map(exit.value.launcher, ({ state }) => state),
+          Option.some("missing"),
+        );
+      }
+      assert.isFalse(left.install);
+    }),
+  );
+
   it.effect("deletes only J3 Bots' entries from a data directory that holds other files", () =>
     Effect.gen(function* () {
       const { exit, left, userFiles, inData } = yield* uninstallOn(
@@ -313,15 +385,17 @@ it.layer(NodeServices.layer)("uninstall", (it) => {
           unitHome: Option.none(),
           // The user's own wrapper: install.sh's three lines but for the comment.
           launcher: (install) =>
-            `#!/bin/sh\n# My J3 Bots.\nexec '${install}/versions/0.1.0/bin/j3-bots' "$@"\n`,
+            Option.some(
+              `#!/bin/sh\n# My J3 Bots.\nexec '${install}/versions/0.1.0/bin/j3-bots' "$@"\n`,
+            ),
         },
         { deleteData: false },
       );
       assert.isTrue(Exit.isSuccess(exit), String(exit));
       if (Exit.isSuccess(exit)) {
         assert.deepStrictEqual(
-          Option.map(exit.value.launcher, ({ removed }) => removed),
-          Option.some(false),
+          Option.map(exit.value.launcher, ({ state }) => state),
+          Option.some("kept"),
         );
       }
       assert.isTrue(left.launcher);
@@ -335,7 +409,7 @@ it.layer(NodeServices.layer)("uninstall", (it) => {
         { unitHome: Option.some("data"), answering: Option.some(outsider) },
         { deleteData: true },
       );
-      assert.deepInclude(failure(exit), { _tag: "UninstallRefused", reason: "server-outside" });
+      assert.deepInclude(failure(exit), { _tag: "UninstallRefused", reason: "server-running" });
       assert.deepStrictEqual(calls, []);
       assert.deepStrictEqual(left, {
         unit: true,

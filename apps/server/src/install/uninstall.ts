@@ -6,7 +6,7 @@ import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as ServerConfig from "../config.ts";
-import { HOME_ENTRIES } from "../home/entries.ts";
+import { HOME_ENTRIES, homeLayout } from "../home/entries.ts";
 import type { Installation } from "../installation.ts";
 import { socketOwner } from "../service/owner.ts";
 import * as Unit from "../service/unit.ts";
@@ -17,18 +17,19 @@ import {
   isOwnLauncher,
   LAUNCHER_RECORD,
   recordedLauncher,
+  startsInstall,
   VERSIONS,
 } from "./layout.ts";
 
 // `j3-bots uninstall`: undoes `scripts/install.sh`. It stops and removes the
-// service, then removes the j3-bots command and what install.sh put in the
-// install folder, and with `deleteData` J3 Bots' entries in the data
-// directory. It removes nothing it did not write. Refusals come first and
-// change nothing.
+// service when the service runs this install, then removes the j3-bots command
+// and what install.sh put in the install folder, and with `deleteData` what
+// the server wrote in the data directory. It removes nothing it did not write.
+// Refusals come first and change nothing.
 
 /** Why nothing was removed. */
 class UninstallRefused extends Schema.TaggedError<UninstallRefused>()("UninstallRefused", {
-  reason: Schema.Literals(["checkout", "unpacked", "no-systemd", "server-outside"]),
+  reason: Schema.Literals(["checkout", "unpacked", "no-systemd", "server-running"]),
   /** The folder the refusal is about: the release, the data directory. */
   subject: Schema.String,
 }) {
@@ -40,8 +41,8 @@ class UninstallRefused extends Schema.TaggedError<UninstallRefused>()("Uninstall
         return `This release in ${this.subject} was not installed by install.sh, so there is nothing for it to remove. \`j3-bots service uninstall\` removes the service; the release and the data directory are yours to delete.`;
       case "no-systemd":
         return "The service is installed, but there is no systemd user manager to stop it with. Log in to a systemd session as this user (not with sudo), then run this again. Nothing was removed.";
-      case "server-outside":
-        return `A J3 Bots server outside the service is running for ${this.subject}. Stop it, then run this again. Nothing was removed.`;
+      case "server-running":
+        return `A J3 Bots server that this uninstall does not stop is running for ${this.subject}. Stop it, then run this again. Nothing was removed.`;
     }
   }
 }
@@ -50,9 +51,12 @@ class UninstallRefused extends Schema.TaggedError<UninstallRefused>()("Uninstall
 export interface UninstallPlan {
   /** The install folder: what install.sh put in `versions/`, and the record of the command. */
   readonly install: string;
-  /** The service's unit, when it is installed. */
-  readonly unitFile: Option.Option<string>;
-  /** The data directory: the one the service runs with, else this shell's. */
+  /**
+   * The service's unit, when one is installed: `own` when it runs this
+   * install, which removes it; otherwise it runs another J3 Bots, and is kept.
+   */
+  readonly service: Option.Option<{ readonly unitFile: string; readonly own: boolean }>;
+  /** The data directory: the one this install's service runs with, else this shell's. */
   readonly home: string;
 }
 
@@ -71,26 +75,40 @@ export const plan = Effect.fn("install.plan")(function* (installation: Installat
   if (!(yield* fs.exists(unitFile))) {
     return {
       install: install.value,
-      unitFile: Option.none(),
+      service: Option.none(),
+      home: yield* ServerConfig.resolveHome,
+    } satisfies UninstallPlan;
+  }
+  const unit = yield* fs.readFileString(unitFile);
+  if (!(yield* startsInstall(Unit.execStartOf(unit), install.value))) {
+    return {
+      install: install.value,
+      service: Option.some({ unitFile, own: false }),
       home: yield* ServerConfig.resolveHome,
     } satisfies UninstallPlan;
   }
   if (!(yield* systemd.available)) {
     return yield* new UninstallRefused({ reason: "no-systemd", subject: "" });
   }
-  const home = yield* Unit.installedHome(unitFile);
+  const home = Unit.environmentOf(unit).get("J3_HOME");
   return {
     install: install.value,
-    unitFile: Option.some(unitFile),
-    home: Option.isSome(home) ? home.value : yield* ServerConfig.resolveHome,
+    service: Option.some({ unitFile, own: true }),
+    home: home ?? (yield* ServerConfig.resolveHome),
   } satisfies UninstallPlan;
 });
 
 /** What an uninstall removed. */
 interface Uninstalled {
   readonly serviceRemoved: boolean;
-  /** The recorded command, and whether it was removed: one install.sh did not write is kept. */
-  readonly launcher: Option.Option<{ readonly path: string; readonly removed: boolean }>;
+  /**
+   * The recorded command, and what became of it: `removed`; `kept`, as
+   * install.sh did not write it; `missing`, there was none at the path.
+   */
+  readonly launcher: Option.Option<{
+    readonly path: string;
+    readonly state: "removed" | "kept" | "missing";
+  }>;
   /** Whether the install folder is gone: it is kept when it holds something else. */
   readonly installRemoved: boolean;
   /** What became of the data directory, when its deletion was asked for. */
@@ -98,11 +116,13 @@ interface Uninstalled {
 }
 
 /**
- * The data directory after J3 Bots' entries in it were deleted: `deleted`
- * with them; `kept`, holding other files; `link-kept`, a link whose folder
- * had them, both kept; `absent`, there was none.
+ * The data directory after what the server wrote in it was deleted:
+ * `deleted` with it; `web-kept`, holding the operator's web client in `web`;
+ * `kept`, holding other files; `link-kept`, a link whose folder had them,
+ * both kept; `not-j3`, no server ever took it, so nothing in it was deleted;
+ * `absent`, there was none.
  */
-export type DataDeletion = "deleted" | "kept" | "link-kept" | "absent";
+export type DataDeletion = "deleted" | "web-kept" | "kept" | "link-kept" | "not-j3" | "absent";
 
 /** Removes `folder` if it is a folder that holds nothing, and says whether it did. */
 const removeIfEmpty = Effect.fnUntraced(function* (folder: string) {
@@ -114,7 +134,11 @@ const removeIfEmpty = Effect.fnUntraced(function* (folder: string) {
   return true;
 });
 
-/** Deletes J3 Bots' entries in the data directory `home`, and `home` if that empties it. */
+/**
+ * Deletes what the server writes in the data directory `home`, and `home` if
+ * that empties it. Only from a folder a server took: one with its lock or its
+ * database.
+ */
 const deleteOwnData = Effect.fnUntraced(function* (
   home: string,
 ): Effect.fn.Return<DataDeletion, PlatformError.PlatformError, FileSystem.FileSystem | Path.Path> {
@@ -122,12 +146,17 @@ const deleteOwnData = Effect.fnUntraced(function* (
   const path = yield* Path.Path;
   const info = yield* fs.lstat(home).pipe(Effect.option);
   if (Option.isNone(info)) return "absent";
-  for (const entry of Object.values(HOME_ENTRIES)) {
+  const taken =
+    (yield* fs.exists(path.join(home, HOME_ENTRIES.lock))) ||
+    (yield* fs.exists(path.join(home, HOME_ENTRIES.database)));
+  if (!taken) return "not-j3";
+  for (const entry of homeLayout(path, home).written([])) {
     // A link among them goes, not what it points to.
-    yield* fs.remove(path.join(home, entry), { recursive: true, force: true });
+    yield* fs.remove(entry, { recursive: true, force: true });
   }
   if (info.value.type === "SymbolicLink") return "link-kept";
-  return (yield* removeIfEmpty(home)) ? "deleted" : "kept";
+  if (yield* removeIfEmpty(home)) return "deleted";
+  return (yield* fs.exists(path.join(home, HOME_ENTRIES.web))) ? "web-kept" : "kept";
 });
 
 /** Removes what `plan` found, and with `deleteData` J3 Bots' data. */
@@ -139,26 +168,35 @@ export const uninstall = Effect.fn("install.uninstall")(function* (
   const path = yield* Path.Path;
   const systemd = yield* Systemd;
 
+  // The unit to stop and remove: only one that runs this install.
+  const ownUnit = Option.flatMap(found.service, ({ unitFile, own }) =>
+    own ? Option.some(unitFile) : Option.none(),
+  );
+
   if (options.deleteData) {
-    // The service's own server stops with it; another one would keep writing.
+    // This install's service stops with it; any other server would keep writing.
     const { owner } = yield* socketOwner(path.join(found.home, HOME_ENTRIES.adminSocket));
-    if (owner === "other" || owner === "unknown") {
-      return yield* new UninstallRefused({ reason: "server-outside", subject: found.home });
+    if (owner !== "nobody" && !(owner === "service" && Option.isSome(ownUnit))) {
+      return yield* new UninstallRefused({ reason: "server-running", subject: found.home });
     }
   }
 
-  if (Option.isSome(found.unitFile)) {
+  if (Option.isSome(ownUnit)) {
     yield* systemd.disableAndStop(Unit.UNIT_NAME);
-    yield* fs.remove(found.unitFile.value);
+    yield* fs.remove(ownUnit.value);
     yield* systemd.reload;
   }
 
   const recorded = yield* recordedLauncher(found.install);
   let launcher: Uninstalled["launcher"] = Option.none();
   if (Option.isSome(recorded)) {
-    const removed = yield* isOwnLauncher(recorded.value, found.install);
-    if (removed) yield* fs.remove(recorded.value);
-    launcher = Option.some({ path: recorded.value, removed });
+    const state = Option.isNone(yield* fs.lstat(recorded.value).pipe(Effect.option))
+      ? "missing"
+      : (yield* isOwnLauncher(recorded.value, found.install))
+        ? "removed"
+        : "kept";
+    if (state === "removed") yield* fs.remove(recorded.value);
+    launcher = Option.some({ path: recorded.value, state });
   }
 
   for (const version of yield* installedVersions(found.install)) {
@@ -174,7 +212,7 @@ export const uninstall = Effect.fn("install.uninstall")(function* (
     : Option.none<DataDeletion>();
 
   return {
-    serviceRemoved: Option.isSome(found.unitFile),
+    serviceRemoved: Option.isSome(ownUnit),
     launcher,
     installRemoved,
     data,

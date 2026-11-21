@@ -124,8 +124,9 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("install.sh", (it) =
         );
         const site = yield* mirror(files);
         const env = { ...host.env, J3_RELEASE_BASE_URL: site.url };
-        // Data a stranger already has, which only --delete-data deletes.
+        // Data a stranger already has from a server that ran, which only --delete-data deletes.
         yield* fs.makeDirectory(path.join(host.data, "bots"), { recursive: true, mode: 0o700 });
+        yield* fs.writeFileString(path.join(host.data, "j3.sqlite"), "");
 
         // By name, as a pre-release is installed: what a tag's own release notes say to run.
         const installed = yield* runToEnd(

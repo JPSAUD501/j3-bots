@@ -35,6 +35,8 @@
 #
 # `j3-bots uninstall` removes those, and the service, and nothing else.
 set -eu
+# What it makes is its user's alone to change, whatever the shell's umask.
+umask 022
 
 base_url="${J3_RELEASE_BASE_URL:-https://github.com/JPSAUD501/j3-bots/releases}"
 base_url="${base_url%/}"
@@ -170,6 +172,16 @@ installed_version() {
   printf '%s' "$found"
 }
 
+# Refuses the folder $1 when another account could change what is in it, as
+# ssh does for its own files: it must be this user's, and not writable by its
+# group or by others. What is in these folders runs as this user.
+private_folder() {
+  [ -n "$(find -H "$1" -prune -user "$(id -u)")" ] ||
+    fail "$1 belongs to another account, which could change what runs from it. Choose a folder of your own, such as one under $HOME."
+  [ -n "$(find -H "$1" -prune ! -perm -g+w ! -perm -o+w)" ] ||
+    fail "$1 can be written by other accounts (its group or everyone), which could change what runs from it. Make it yours alone with \`chmod go-w $1\`, then run this again."
+}
+
 recorded=
 if [ -f "$record" ]; then recorded="$(cat "$record")"; fi
 if [ -n "$recorded" ] && [ "$recorded" != "$launcher" ] && [ -n "$(installed_version "$recorded")" ]; then
@@ -233,8 +245,17 @@ archive="$stem.tar.gz"
 target="$versions_dir/$version"
 download_url="$base_url/download/v$version"
 
+# Before anything in them is used: a release already there is run as it is.
+# A folder made below is checked once it is made.
+for folder in "$install_dir" "$versions_dir" "$bin_dir"; do
+  if [ -e "$folder" ]; then private_folder "$folder"; fi
+done
+# A release reaches versions/ only by the move below, from a checked download,
+# so anything else there is not this script's, and stays as it is.
 if [ -f "$target/release.json" ] && [ -x "$target/bin/j3-bots" ]; then
   say "J3 Bots $version is already in $target."
+elif [ -e "$target" ] || [ -L "$target" ]; then
+  fail "$target is there, but it is not a J3 Bots release: it has no release.json or no bin/j3-bots. If it is yours, move it away; if it is a damaged J3 Bots release, delete it. Then run this again. Nothing was changed."
 else
   say "Installing J3 Bots $version for linux-$arch."
   fetch "$download_url/SHA256SUMS" "$work/SHA256SUMS" ||
@@ -249,12 +270,13 @@ else
 
   # Unpacked beside the versions, so the move into place is a rename.
   mkdir -p "$versions_dir"
+  private_folder "$install_dir"
+  private_folder "$versions_dir"
   staging="$(mktemp -d "$versions_dir/.staging-XXXXXX")"
   tar -xzf "$work/$archive" -C "$staging" || fail "Could not unpack $archive."
   [ -f "$staging/$stem/release.json" ] || fail "$archive is not a J3 Bots release: it has no $stem/release.json."
   "$staging/$stem/bin/j3-bots" --version > /dev/null ||
     fail "J3 Bots $version does not run on this machine; nothing was installed."
-  rm -rf "$target"
   mv "$staging/$stem" "$target"
   rm -rf "$staging"
   staging=
@@ -263,12 +285,14 @@ fi
 # --- The command -------------------------------------------------------------
 
 mkdir -p "$bin_dir"
+private_folder "$bin_dir"
+# The record first: whenever the command exists, `j3-bots uninstall` finds it.
+printf '%s\n' "$launcher" > "$work/launcher"
+mv -f "$work/launcher" "$record"
 next="$(mktemp "$bin_dir/.j3-bots.XXXXXX")"
 launcher_text "$target" > "$next"
 chmod 755 "$next"
 mv -f "$next" "$launcher"
-printf '%s\n' "$launcher" > "$work/launcher"
-mv -f "$work/launcher" "$record"
 
 # --- Checks and the service --------------------------------------------------
 

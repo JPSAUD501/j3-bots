@@ -29,10 +29,14 @@ const dataLine = (home: string, data: Option.Option<DataDeletion>) => {
   switch (data.value) {
     case "deleted":
       return `Deleted the data directory, ${home}.`;
+    case "web-kept":
+      return `Deleted J3 Bots' data in ${home}. The web client in its web folder is yours, so it is kept, and with it ${home}.`;
     case "kept":
       return `Deleted J3 Bots' data in ${home}. It holds other files, so it is kept.`;
     case "link-kept":
       return `Deleted J3 Bots' data in the folder ${home} links to. The link and that folder are kept.`;
+    case "not-j3":
+      return `${home} is not a J3 Bots data directory: no server has used it. Nothing in it was deleted.`;
     case "absent":
       return `There was no data directory at ${home}.`;
   }
@@ -66,12 +70,19 @@ export const uninstallCommand = Command.make("uninstall", {
       const done = yield* userFacing(uninstall(found, { deleteData }));
       const lines: Array<string> = [];
       if (done.serviceRemoved) lines.push(`Stopped and removed ${Unit.UNIT_NAME}.`);
-      if (Option.isSome(done.launcher)) {
-        const { path, removed } = done.launcher.value;
+      if (Option.isSome(found.service) && !found.service.value.own) {
         lines.push(
-          removed
+          `Kept ${found.service.value.unitFile}: it is the service of another J3 Bots, not of this install.`,
+        );
+      }
+      if (Option.isSome(done.launcher)) {
+        const { path, state } = done.launcher.value;
+        lines.push(
+          state === "removed"
             ? `Removed the j3-bots command, ${path}.`
-            : `Kept ${path}: install.sh did not write it.`,
+            : state === "kept"
+              ? `Kept ${path}: install.sh did not write it.`
+              : `There was no j3-bots command at ${path}.`,
         );
       }
       lines.push(
