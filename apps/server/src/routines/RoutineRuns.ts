@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// @effect-diagnostics nodeBuiltinImport:off -- A comparison whose time does not depend on where two values differ comes only from node:crypto.
+import * as NodeCrypto from "node:crypto";
 import {
   BotId,
   NotFound,
@@ -9,7 +11,6 @@ import {
   RoutineTrigger,
 } from "@j3-bots/contracts";
 import { TurnOutcome } from "@j3-bots/engine-t3";
-import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -17,8 +18,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as Digest from "effect/crypto/Digest";
-import * as Mac from "effect/crypto/Mac";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Ids } from "../Ids.ts";
@@ -61,18 +60,6 @@ export const retryDelay = (n: number): Duration.Duration => Duration.minutes(2 *
  * minute. A caller past it is told when to try again, and nothing is recorded.
  */
 export const WEBHOOK_RUNS_PER_MINUTE = 10;
-
-/**
- * How many webhook calls, across every routine and every caller, may name no
- * webhook (an unknown routine or a wrong secret) within a minute. The one that
- * reaches it closes every webhook for `WEBHOOK_LOCKOUT`, so calls are refused
- * before any routine is looked up. A limit per caller would mean nothing behind
- * a proxy, where every call comes from the proxy.
- */
-export const WEBHOOK_FAILURES_PER_MINUTE = 20;
-
-/** How long every webhook stays closed once `WEBHOOK_FAILURES_PER_MINUTE` is reached. */
-export const WEBHOOK_LOCKOUT = Duration.minutes(1);
 
 const RoutineRow = Schema.Struct({
   id: RoutineId,
@@ -166,8 +153,6 @@ export class WebhookRefused extends Schema.TaggedError<WebhookRefused>()("Webhoo
   reason: Schema.Literals(["unknown", "paused"]),
 }) {}
 
-const encoder = new TextEncoder();
-
 /**
  * A routine's runs (`docs/architecture/server.md`, Routines): each one is
  * recorded with the wake that runs it, in one transaction, so a run exists
@@ -202,14 +187,13 @@ export class RoutineRuns extends Context.Service<
     /**
      * Whether a webhook call names a webhook, checked before anything else of
      * the call is read: `unknown` for a routine that does not exist, has
-     * another trigger or another secret, and `RateLimited` while webhooks are
-     * closed after too many of those (`WEBHOOK_FAILURES_PER_MINUTE`), before
-     * the routine is looked up. `secret` is compared in constant time.
+     * another trigger or another secret. The secrets' digests are compared in
+     * time that does not depend on where they differ.
      */
     readonly admitWebhook: (input: {
       readonly routineId: string;
       readonly secret: string;
-    }) => Effect.Effect<void, WebhookRefused | RateLimited>;
+    }) => Effect.Effect<void, WebhookRefused>;
     /**
      * A call of a routine's webhook, once admitted. The address is checked
      * again, in the transaction that records the run, against a routine
@@ -240,7 +224,6 @@ export const layer = Layer.effect(
     const ids = yield* Ids;
     const wakes = yield* Wakes;
     const changes = yield* ChangeLog;
-    const digest = yield* Digest.Digest;
 
     const routineRow = SqlSchema.findOneOption({
       Request: RoutineId,
@@ -460,16 +443,16 @@ export const layer = Layer.effect(
       );
     });
 
-    /** Whether `presented` is `secret`, in time that does not depend on where they differ. */
-    const sameSecret = Effect.fn("RoutineRuns.sameSecret")(function* (
-      presented: string,
-      secret: string,
-    ) {
-      // Equal-length digests, so not even the length of the secret shows.
-      const a = yield* digest.digest(Digest.sha256, encoder.encode(presented));
-      const b = yield* digest.digest(Digest.sha256, encoder.encode(secret));
-      return Mac.timingSafeEqual(a, b);
-    });
+    /**
+     * Whether `presented` is `secret`. Their digests are compared in time that
+     * does not depend on where they differ, and are of equal length, so not
+     * even the secret's length shows.
+     */
+    const sameSecret = (presented: string, secret: string): boolean => {
+      const digest = (text: string) =>
+        NodeCrypto.createHash("sha256").update(text, "utf8").digest();
+      return NodeCrypto.timingSafeEqual(digest(presented), digest(secret));
+    };
 
     /**
      * The webhook routine `routineId` names, if `secret` is its secret. The
@@ -487,31 +470,17 @@ export const layer = Layer.effect(
         onNone: () => null,
         onSome: (found) => (found.trigger_json._tag === "webhook" ? found.webhook_secret : null),
       });
-      const matches = yield* sameSecret(input.secret, secret ?? "");
+      const matches = sameSecret(input.secret, secret ?? "");
       return secret !== null && matches ? row : Option.none<typeof RoutineRow.Type>();
     });
-
-    // Webhook calls that named no webhook, within the last minute, and until
-    // when every webhook is closed. In memory: a restart forgets both.
-    let failures: ReadonlyArray<number> = [];
-    let closedUntil = 0;
 
     const admitWebhook = Effect.fn("RoutineRuns.admitWebhook")(function* (input: {
       readonly routineId: string;
       readonly secret: string;
     }) {
-      const now = yield* Clock.currentTimeMillis;
-      if (closedUntil > now) {
-        return yield* new RateLimited({ retryAt: DateTime.makeUnsafe(closedUntil) });
+      if (Option.isNone(yield* webhookRoutine(input))) {
+        return yield* new WebhookRefused({ reason: "unknown" });
       }
-      if (Option.isSome(yield* webhookRoutine(input))) return;
-      const window = Duration.toMillis(Duration.minutes(1));
-      failures = [...failures.filter((at) => at > now - window), now];
-      if (failures.length >= WEBHOOK_FAILURES_PER_MINUTE) {
-        failures = [];
-        closedUntil = now + Duration.toMillis(WEBHOOK_LOCKOUT);
-      }
-      return yield* new WebhookRefused({ reason: "unknown" });
     });
 
     const webhook = Effect.fn("RoutineRuns.webhook")(function* (input: {
@@ -563,4 +532,4 @@ export const layer = Layer.effect(
 
     return RoutineRuns.of({ due, runNow, admitWebhook, webhook, settle: settleEnded(null) });
   }),
-).pipe(Layer.provide(Digest.layerWebCrypto));
+);

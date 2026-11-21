@@ -200,12 +200,12 @@ export const layer = Layer.effect(
 
     /**
      * Where another device calls a webhook: the first address `j3-bots pair`
-     * offers, the public origin when one is set, else one for the listener
-     * as bound, read when asked since interfaces come and go. With none, as `pair` says it: over HTTPS, a placeholder for a
-     * name on the certificate; over HTTP on every interface, loopback. The
-     * listener is read, not awaited: a routine is often read in a
-     * transaction, and only clients, which come through the bound listener,
-     * are given one.
+     * offers, the public origin when one is set, else one for the listener as
+     * bound, read when asked since interfaces come and go. With none, as
+     * `pair` says it: over HTTPS, a placeholder for a name on the
+     * certificate; over HTTP on every interface, loopback. The listener is
+     * read, not awaited: a routine is often read in a transaction, and only
+     * clients, which come through the bound listener, are given one.
      */
     const origin = Effect.gen(function* () {
       const polled = yield* Deferred.poll(listener);

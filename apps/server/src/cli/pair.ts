@@ -52,14 +52,15 @@ const encodeLink = Schema.encodeSync(PairingLink);
 
 const addressFlag = Flag.String("address").pipe(
   Flag.withDescription(
-    "The address the QR code carries, for the phone to open J3 Bots at: a bare http or https origin (scheme, host and port, no path), which the phone must reach exactly as given; https only if the server, or a proxy in front of it, serves https there. One of those the command lists, or an https address the server is reached at, such as a domain a proxy serves. The first one listed when left out.",
+    "The address the QR code carries, for the phone to open J3 Bots at: a bare http or https origin (scheme, host and port, no path), which the phone must reach exactly as given; https only if the server, or a proxy in front of it, serves https there. One of those the command lists, or an https address the server is reached at, such as a domain a proxy serves. When left out, the first one listed that another device can open: not localhost or another loopback address.",
   ),
   Flag.optional,
 );
 
 /**
  * The origin the QR code carries: the one the operator chose, which must be a
- * bare origin the server lists or an `https:` one, else the first it lists.
+ * bare origin the server lists or an `https:` one, else the first it lists
+ * that names another device, so not `localhost` or another loopback address.
  * None when there is no such origin, as on a server that listens on loopback
  * only. A choice that does not qualify is refused before a code is made.
  */

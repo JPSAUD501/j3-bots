@@ -20,11 +20,7 @@ import * as Listener from "../listener.ts";
 import * as TestDomain from "../testing/domain.ts";
 import { command, createNewBot } from "../testing/turns.ts";
 import * as WebClient from "../web/WebClient.ts";
-import {
-  WEBHOOK_FAILURES_PER_MINUTE,
-  WEBHOOK_LOCKOUT,
-  WEBHOOK_RUNS_PER_MINUTE,
-} from "./RoutineRuns.ts";
+import { WEBHOOK_RUNS_PER_MINUTE } from "./RoutineRuns.ts";
 import { Routines } from "./Routines.ts";
 import { route, WEBHOOK_BODY_LIMIT } from "./webhook.ts";
 
@@ -304,41 +300,6 @@ it.layer(TestDomain.layer)("a webhook call's address, checked before its body", 
         [named.protocol, named.port, named.pathname],
         ["http:", "3737", `/hooks/${routineId}/${secret}`],
       );
-    }),
-  );
-});
-
-it.layer(TestDomain.layer)("failed webhook calls", (it) => {
-  it.effect("close every webhook for a while once too many name none, whichever way", () =>
-    Effect.gen(function* () {
-      const { routineId, secret } = yield* webhookRoutine;
-      const right = `/hooks/${routineId}/${secret}`;
-      const wrong = `/hooks/${routineId}/${secret.slice(0, -1)}${secret.endsWith("A") ? "B" : "A"}`;
-      const unknown = `/hooks/routine_nothere/${secret}`;
-
-      // Failures older than a minute no longer count.
-      for (let n = 1; n < WEBHOOK_FAILURES_PER_MINUTE; n++) {
-        assert.strictEqual((yield* postCounted(n % 2 === 0 ? wrong : unknown)).status, 404);
-      }
-      yield* TestClock.adjust("61 seconds");
-      assert.strictEqual((yield* postCounted(wrong)).status, 404);
-      assert.strictEqual((yield* postCounted(right)).status, 202);
-
-      for (let n = 1; n < WEBHOOK_FAILURES_PER_MINUTE; n++) {
-        assert.strictEqual((yield* postCounted(n % 2 === 0 ? wrong : unknown)).status, 404);
-      }
-      // That one reaches the limit: from then on every call is refused, the
-      // right one too, alike and unread, until the lockout ends.
-      for (const path of [right, wrong, unknown]) {
-        const refused = yield* postCounted(path);
-        assert.deepStrictEqual(
-          [refused.status, refused.headers["retry-after"], refused.reads],
-          [429, "60", 0],
-          path,
-        );
-      }
-      yield* TestClock.adjust(WEBHOOK_LOCKOUT);
-      assert.strictEqual((yield* postCounted(right)).status, 202);
     }),
   );
 });

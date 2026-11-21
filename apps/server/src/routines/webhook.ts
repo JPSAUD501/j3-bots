@@ -78,10 +78,11 @@ const retryAfter = (limited: RateLimited) =>
 
 /**
  * A refusal answered before the body is read. The connection is closed with
- * it, so Node does not go on to read the rest of the body to keep it open.
+ * it, so Node does not go on to read the rest of the body to keep it open:
+ * what the caller already sent is discarded as it closes.
  */
-const refusedUnread = (status: number, headers: Readonly<Record<string, string>> = {}) =>
-  HttpServerResponse.empty({ status, headers: { ...headers, connection: "close" } });
+const refusedUnread = (status: number) =>
+  HttpServerResponse.empty({ status, headers: { connection: "close" } });
 
 /**
  * A routine's webhook (`docs/architecture/server.md`, Routines): `POST` with
@@ -91,9 +92,8 @@ const refusedUnread = (status: number, headers: Readonly<Record<string, string>>
  * with the earlier run for a repeated `Idempotency-Key`; 404 for an address
  * that names no webhook, a wrong secret included; 409 while the routine is
  * paused; 413 past `WEBHOOK_BODY_LIMIT`; 400 for a body that is not UTF-8 or
- * a key that is blank or too long; 429 with `Retry-After` while webhooks are
- * closed after too many calls that named none, and past the routine's runs
- * per minute.
+ * a key that is blank or too long; 429 with `Retry-After` past the routine's
+ * runs per minute.
  */
 export const route = HttpRouter.add(
   "POST",
@@ -103,11 +103,7 @@ export const route = HttpRouter.add(
     if (Option.isNone(params)) return refusedUnread(404);
     const runs = yield* RoutineRuns;
     const admitted = yield* runs.admitWebhook(params.value).pipe(Effect.result);
-    if (admitted._tag === "Failure") {
-      return admitted.failure._tag === "RateLimited"
-        ? refusedUnread(429, { "retry-after": yield* retryAfter(admitted.failure) })
-        : refusedUnread(404);
-    }
+    if (admitted._tag === "Failure") return refusedUnread(404);
     const request = yield* HttpServerRequest.HttpServerRequest;
     const key = request.headers["idempotency-key"];
     if (key !== undefined && (key.trim() === "" || key.length > REQUEST_KEY_LIMIT)) {
