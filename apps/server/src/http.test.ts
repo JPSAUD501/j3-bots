@@ -2,7 +2,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- A chunked body with no declared length is sent exactly only through node:http.
 import * as NodeHttp from "node:http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import { HTTP_PATHS, PROTOCOL_VERSION, ServerInfo } from "@j3-bots/contracts";
+import { DESKTOP_APP_ORIGINS, HTTP_PATHS, PROTOCOL_VERSION, ServerInfo } from "@j3-bots/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -51,6 +51,24 @@ const post = (path: string, body: string, { chunked = false } = {}) =>
     });
   });
 
+/** Sends a bodiless `method` request to `path` with `headers`, and answers the status and headers. */
+const ask = (method: string, path: string, headers: Record<string, string>) =>
+  Effect.gen(function* () {
+    const { address } = yield* HttpServer.HttpServer;
+    if (!NetAddress.isInetAddress(address)) return yield* Effect.die("not an IP listener");
+    return yield* Effect.callback<{ status: number; headers: NodeHttp.IncomingHttpHeaders }>(
+      (resume) => {
+        NodeHttp.request(
+          { host: "127.0.0.1", port: address.port, path, method, headers },
+          (response) => {
+            response.resume();
+            resume(Effect.succeed({ status: response.statusCode ?? 0, headers: response.headers }));
+          },
+        ).end();
+      },
+    );
+  });
+
 const pairRequest = (name: string) => JSON.stringify({ code: "0000000000", name });
 
 it.layer(
@@ -82,6 +100,37 @@ it.layer(
         yield* post(HTTP_PATHS.pair, pairRequest("Phone"), { chunked: true }),
         400,
       );
+    }),
+  );
+
+  it.effect("lets the desktop app's pages, and no other origin, read its answers", () =>
+    Effect.gen(function* () {
+      for (const origin of Object.values(DESKTOP_APP_ORIGINS)) {
+        // The preflight a bearer request from the app's page needs first.
+        const preflight = yield* ask("OPTIONS", HTTP_PATHS.socketTicket, {
+          origin,
+          "access-control-request-method": "POST",
+          "access-control-request-headers": "authorization,content-type,traceparent,b3",
+        });
+        assert.strictEqual(preflight.headers["access-control-allow-origin"], origin);
+        const allowed = preflight.headers["access-control-allow-headers"]?.split(",") ?? [];
+        for (const header of ["authorization", "content-type", "traceparent", "b3"]) {
+          assert.include(allowed, header);
+        }
+        assert.isUndefined(preflight.headers["access-control-allow-credentials"]);
+        const info = yield* ask("GET", HTTP_PATHS.server, { origin });
+        assert.strictEqual(info.status, 200);
+        assert.strictEqual(info.headers["access-control-allow-origin"], origin);
+      }
+      for (const origin of ["https://example.com", "j3bots://elsewhere", "null"]) {
+        const preflight = yield* ask("OPTIONS", HTTP_PATHS.socketTicket, {
+          origin,
+          "access-control-request-method": "POST",
+        });
+        assert.isUndefined(preflight.headers["access-control-allow-origin"]);
+        const info = yield* ask("GET", HTTP_PATHS.server, { origin });
+        assert.isUndefined(info.headers["access-control-allow-origin"]);
+      }
     }),
   );
 });

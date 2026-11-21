@@ -9,15 +9,17 @@ import { Button } from "./ui/button";
 
 /** A name for this device that the operator recognises in their list: browser and system. */
 export function guessDeviceName(userAgent: string): string {
-  const browser = /Edg\//.test(userAgent)
-    ? "Edge"
-    : /Firefox\//.test(userAgent)
-      ? "Firefox"
-      : /Chrome\//.test(userAgent)
-        ? "Chrome"
-        : /Safari\//.test(userAgent)
-          ? "Safari"
-          : "Browser";
+  const browser = /Electron\//.test(userAgent)
+    ? "Desktop app"
+    : /Edg\//.test(userAgent)
+      ? "Edge"
+      : /Firefox\//.test(userAgent)
+        ? "Firefox"
+        : /Chrome\//.test(userAgent)
+          ? "Chrome"
+          : /Safari\//.test(userAgent)
+            ? "Safari"
+            : "Browser";
   const system = /iPhone/.test(userAgent)
     ? "iPhone"
     : /iPad/.test(userAgent)
@@ -46,13 +48,18 @@ interface PairingProps {
   }) => Promise<PairResult>;
   /** The name the device field starts with. */
   readonly defaultName: string;
+  /**
+   * In the desktop app, the server the operator named, and a way back to the
+   * screen that names it. A browser's server is the page's own, so it has none.
+   */
+  readonly server?: { readonly address: string; readonly onChange: () => void } | undefined;
 }
 
 /**
  * The first screen on a new device: the code from `j3-bots pair` and a name
  * for the device. Once paired, the app opens by itself.
  */
-export function Pairing({ reason, onPair, defaultName }: PairingProps) {
+export function Pairing({ reason, onPair, defaultName, server }: PairingProps) {
   const ctx = usePresentation();
   const { t, parts } = ctx.i18n;
   const codeId = useId();
@@ -167,6 +174,16 @@ export function Pairing({ reason, onPair, defaultName }: PairingProps) {
           <Button onClick={() => window.location.reload()}>{t("gate.reload")}</Button>
         )}
       </form>
+      {server !== undefined && (
+        <p className="flex max-w-xs flex-wrap items-center justify-center gap-x-2 text-xs text-muted-foreground">
+          <span className="font-mono break-all">
+            {t("pairing.server", { address: server.address })}
+          </span>
+          <Button variant="ghost" size="sm" disabled={busy} onClick={server.onChange}>
+            {t("pairing.changeServer")}
+          </Button>
+        </p>
+      )}
     </Centered>
   );
 }

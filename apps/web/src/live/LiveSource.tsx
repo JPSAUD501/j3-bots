@@ -64,6 +64,7 @@ import { MemoryViewer, type MemoryReading } from "../components/MemoryViewer";
 import { NewBotDialog } from "../components/NewBotDialog";
 import { RoomDialog, type RoomSubmission } from "../components/RoomDialog";
 import { guessDeviceName, Incompatible, Pairing, StorageFailed } from "../components/Pairing";
+import { ServerAddress } from "../components/ServerAddress";
 import { type Notice, Toast } from "../components/Toast";
 import { notificationAccess } from "../preferences/notifications";
 import { notificationContent } from "../presentation/notification";
@@ -78,7 +79,8 @@ import {
   showNotification,
 } from "./notify";
 import { deliverFile, reserveWindow } from "./openFile";
-import { platform } from "./platform";
+import { desktop } from "./desktop";
+import { makePlatform } from "./platform";
 
 let started: Promise<J3Client> | null = null;
 
@@ -91,18 +93,38 @@ type RoomFormTarget =
   | { readonly _tag: "create" }
   | { readonly _tag: "edit" | "unarchive"; readonly roomId: RoomId };
 
+/**
+ * The server this page talks to: the one that serves it in a browser, the one
+ * the operator named in the desktop app. `null` in the desktop app until they
+ * have named one.
+ */
+const server = desktop === null ? new URL(window.location.origin) : desktop.server;
+
 /** One client for the page, made on first use. */
-const client = () => (started ??= createJ3Client(platform));
+const client = (origin: URL) => (started ??= createJ3Client(makePlatform(origin)));
 
 /**
- * The shell's source in a build: the client runtime, connected to the server
- * that serves this page. Before the shell, it answers whatever stands between
- * the operator and their bots: pairing, a server of another version, storage
- * the browser refuses.
+ * The shell's source in a build: the client runtime, connected to the server.
+ * Before the shell, it answers whatever stands between the operator and their
+ * bots: naming the server (in the desktop app), pairing, a server of another
+ * version, storage the browser refuses.
  */
 export function LiveSourceProvider({ children }: { children: ReactNode }) {
+  if (server === null) {
+    return (
+      <Screen>
+        <ServerAddress
+          onConnect={(address) => desktop?.connect(address) ?? Promise.resolve(null)}
+        />
+      </Screen>
+    );
+  }
+  return <Connected origin={server}>{children}</Connected>;
+}
+
+function Connected({ origin, children }: { origin: URL; children: ReactNode }) {
   return (
-    <J3ClientProvider client={use(client())}>
+    <J3ClientProvider client={use(client(origin))}>
       <Notices>
         <Gate>{children}</Gate>
       </Notices>
@@ -181,6 +203,11 @@ function Gate({ children }: { children: ReactNode }) {
             reason={connection.reason}
             defaultName={guessDeviceName(navigator.userAgent)}
             onPair={j3.pair}
+            server={
+              desktop === null || server === null
+                ? undefined
+                : { address: server.origin, onChange: desktop.forgetServer }
+            }
           />
         </Screen>
       );

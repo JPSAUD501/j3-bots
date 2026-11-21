@@ -453,6 +453,23 @@ export const ptBR: Catalog = {
   "pairing.storageFailed":
     "Pareado, mas o navegador não guardou o acesso. Permita dados de site para esta página e pareie de novo.",
 
+  "server.title": "Onde o J3 Bots está rodando?",
+  "server.body":
+    "Digite o endereço da máquina que roda o J3 Bots. {command} mostra esse endereço lá.",
+  "server.address": "Endereço do servidor",
+  "server.submit": "Continuar",
+  "server.checking": "Verificando…",
+  "server.invalid":
+    "Isso não é um endereço de servidor. Digite um host e uma porta, como os que {command} mostra.",
+  "server.needsHttps":
+    "HTTP sem criptografia só funciona com um endereço de rede privada, como 192.168.1.20. Use o endereço HTTPS do servidor.",
+  "server.unreachable":
+    "Nada respondeu nesse endereço. Verifique se o J3 Bots está rodando e se este computador alcança a máquina.",
+  "server.notJ3Bots": "Algo respondeu nesse endereço, mas não é o J3 Bots.",
+  "server.failed": "O app não conseguiu verificar esse endereço. Tente de novo.",
+  "pairing.server": "Servidor: {address}",
+  "pairing.changeServer": "Trocar de servidor",
+
   "gate.incompatible.title": "Esta página está desatualizada",
   "gate.incompatible.body":
     "O servidor do J3 Bots foi atualizado e fala uma versão mais nova. Recarregue para pegar a página certa.",

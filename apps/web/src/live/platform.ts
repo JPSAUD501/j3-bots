@@ -284,17 +284,21 @@ const network = Layer.succeed(
 );
 
 /**
- * The browser's platform. The server is the page's own origin: the server
- * serves this app, and the browser sends nothing anywhere else.
+ * The browser's platform, for the server at `server`. In a browser that is the
+ * page's own origin: the server serves this app, and the browser sends nothing
+ * anywhere else. In the desktop app it is the server the operator named, which
+ * answers CORS for the app's pages (decision 0012); the page is a secure
+ * context there, so everything below works as on an HTTPS origin.
  */
-export const platform: Layer.Layer<Platform> = Layer.mergeAll(
-  Layer.succeed(ServerAddress, { origin: new URL(window.location.origin) }),
-  credentials,
-  storage,
-  locks,
-  transfer,
-  network,
-  FetchHttpClient.layer,
-  Socket.layerWebSocketConstructorGlobal,
-  SecureRandom.layerWebCrypto,
-);
+export const makePlatform = (server: URL): Layer.Layer<Platform> =>
+  Layer.mergeAll(
+    Layer.succeed(ServerAddress, { origin: server }),
+    credentials,
+    storage,
+    locks,
+    transfer,
+    network,
+    FetchHttpClient.layer,
+    Socket.layerWebSocketConstructorGlobal,
+    SecureRandom.layerWebCrypto,
+  );

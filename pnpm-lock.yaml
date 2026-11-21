@@ -217,6 +217,37 @@ importers:
         specifier: 1.4.0
         version: 1.4.0(@types/node@24.12.4)(@vitest/ui@5.0.5)(jiti@2.7.0)(yaml@2.9.1)
 
+  apps/desktop:
+    dependencies:
+      '@effect/platform-node':
+        specifier: 4.1.2
+        version: 4.1.2(effect@4.1.3)(redis@6.3.1)
+      '@j3-bots/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@j3-bots/desktop-bridge':
+        specifier: workspace:*
+        version: link:../../packages/desktop-bridge
+      effect:
+        specifier: 4.1.3
+        version: 4.1.3
+    devDependencies:
+      '@effect/vitest':
+        specifier: 4.1.2
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@types/node@24.12.4)(@vitest/ui@5.0.5)(effect@4.1.3)(jiti@2.7.0)(yaml@2.9.1)
+      '@j3-bots/server':
+        specifier: workspace:*
+        version: link:../server
+      electron:
+        specifier: 44.10.1
+        version: 44.10.1
+      playwright-core:
+        specifier: 1.64.1
+        version: 1.64.1
+      vite-plus:
+        specifier: 1.4.0
+        version: 1.4.0(@types/node@24.12.4)(@vitest/ui@5.0.5)(jiti@2.7.0)(yaml@2.9.1)
+
   apps/server:
     dependencies:
       '@effect/platform-node':
@@ -262,6 +293,9 @@ importers:
       '@j3-bots/design-tokens':
         specifier: workspace:*
         version: link:../../packages/design-tokens
+      '@j3-bots/desktop-bridge':
+        specifier: workspace:*
+        version: link:../../packages/desktop-bridge
       '@tanstack/react-router':
         specifier: 1.170.10
         version: 1.170.10(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -342,6 +376,19 @@ importers:
 
   packages/design-tokens:
     devDependencies:
+      vite-plus:
+        specifier: 1.4.0
+        version: 1.4.0(@types/node@24.12.4)(@vitest/ui@5.0.5)(jiti@2.7.0)(yaml@2.9.1)
+
+  packages/desktop-bridge:
+    dependencies:
+      effect:
+        specifier: 4.1.3
+        version: 4.1.3
+    devDependencies:
+      '@effect/vitest':
+        specifier: 4.1.2
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@types/node@24.12.4)(@vitest/ui@5.0.5)(effect@4.1.3)(jiti@2.7.0)(yaml@2.9.1)
       vite-plus:
         specifier: 1.4.0
         version: 1.4.0(@types/node@24.12.4)(@vitest/ui@5.0.5)(jiti@2.7.0)(yaml@2.9.1)
@@ -573,6 +620,14 @@ packages:
     resolution: {integrity: sha512-JJPwAHkJHxvM/woW9mMW/khjasAHcmwWdOMAgMy16rfqsxcVhFDnrRsvN9VI2+kMv8zDCCyBE2q1n5hzZlfE0w==}
     peerDependencies:
       effect: 4.1.3
+
+  '@electron-internal/extract-zip@1.0.8':
+    resolution: {integrity: sha512-8iajeLFbzNwM0m3AsQZSZgYREWglAImyGvvFSWU34FgMW8sHlzdwj9QKvv9dgN7jMP591EFUF/sLOC3Jl9YIjQ==}
+    engines: {node: '>=22.12.0'}
+
+  '@electron/get@5.1.0':
+    resolution: {integrity: sha512-3kSBtG8ObcTVfXanm5vVJ6UnBLEVmVsRk1M+vGqCuMBV+XLCbJYuWQful+yIy0GQDsSlK0kHEriEHn7SPk4EnA==}
+    engines: {node: '>=22.12.0'}
 
   '@emnapi/core@1.11.2':
     resolution: {integrity: sha512-TC8MkTuZUtcTSiFeuC0ksCh9QIJ5+F21MvZ4Wn4ORfYaFJ/0dsiudv5tVkejgwZlwQ39jL9WWDe2lz8x0WglOA==}
@@ -1824,9 +1879,18 @@ packages:
   electron-to-chromium@1.5.491:
     resolution: {integrity: sha512-zMOQrvaTekJMwENqx1Rnyl3qieqGxIui5CRu9g6ktKzQ/T54fq0Qfr3V/SEhGrkStWI3eYMSzMN4rbyFwfQSzA==}
 
+  electron@44.10.1:
+    resolution: {integrity: sha512-CTqxvx02P+xCR/xUxAWBexQEJ42g9Rzy1/0N+ofGAtI/atgSYZKQnTX9/juwzftocWbZtoF2ftEGMGJujJDeBw==}
+    engines: {node: '>= 22.12.0'}
+    hasBin: true
+
   enhanced-resolve@5.27.0:
     resolution: {integrity: sha512-Do6BB2xzlcc/odFg+XEYyneAx4T/WfywO71yw9ePS2tVfRsf7JVR4mUeELadIeHzixkzbG5DpluiEFPi2WGfYQ==}
     engines: {node: '>=10.13.0'}
+
+  env-paths@3.0.0:
+    resolution: {integrity: sha512-dtJUTepzMW3Lm/NPxRf3wP4642UWhjL2sQxc+ym2YMj1m/H2zDNQOlezafzkHwn6sMstjHTwG6iQQsctDW/b1A==}
+    engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
 
   es-module-lexer@2.3.2:
     resolution: {integrity: sha512-poHGpORABojJJucnV9KbOavETW8lBVnphkW77ER5/BQ5Fz7oXSoCNek7IH3vR5nRjdsEz926ibFYX8KtLQmdyw==}
@@ -2149,6 +2213,11 @@ packages:
     resolution: {integrity: sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA==}
     engines: {node: '>=12'}
 
+  playwright-core@1.64.1:
+    resolution: {integrity: sha512-BC4s8y6SEVA6Q1rSxZTto8hI1KUI3xXlHGZgvGqP4IqPdI/a6FX9H29IDNz7vKo9l21b6LfYosScPL6M3xxyDQ==}
+    engines: {node: '>=20'}
+    hasBin: true
+
   pngjs@7.0.0:
     resolution: {integrity: sha512-LKWqWJRhstyYo9pGvgor/ivk2w94eSjE3RGVuzLGlr3NmD8bf7RcYGze1mNdEHRP6TRP6rMuDHk5t44hnTRyow==}
     engines: {node: '>=14.19.0'}
@@ -2165,6 +2234,10 @@ packages:
   pretty-format@27.5.1:
     resolution: {integrity: sha512-Qb1gy5OrP5+zDf2Bvnzdl3jsTf1qXVMazbvCoKhtKqVs4/YK4ozX4gKQJJVyNe+cajNPn0KoC0MC3FUmaHWEmQ==}
     engines: {node: ^10.13.0 || ^12.13.0 || ^14.15.0 || >=15.0.0}
+
+  progress@2.0.3:
+    resolution: {integrity: sha512-7PiHtLll5LdnKIMw100I+8xJXR5gW2QwWYkT6iJva0bXitZKa/XMrSbdmg3r2Xnaidz9Qumd0VPaMrZlF9V9sA==}
+    engines: {node: '>=0.4.0'}
 
   react-dom@19.3.0:
     resolution: {integrity: sha512-JDk8dgif51OjFoDE70+OT9ICyYr+69HlmihNwp1+Nsfbna3t5sIiCa9ZJktDmQ4/1b/rn26hIAR2uYXDMr5r0Q==}
@@ -2199,6 +2272,11 @@ packages:
     resolution: {integrity: sha512-GYrCADwpu6yV5OAvchkQ27Z5wwMxWAEMg5NNWjyHh/5DboFFqbdbvYNIvZouQpxXyeMPoTOh0vdPYKlf0ZswdQ==}
     hasBin: true
 
+  semver@7.8.6:
+    resolution: {integrity: sha512-9lpSSU4Mly3mrtruwLs1eLK6+gzbzqeBFwRNjIjE+9LuDpWdYctrQlQ3ej1Ilgi7gknpsTRnPoLP8DpCHqHIJw==}
+    engines: {node: '>=10'}
+    hasBin: true
+
   seroval-plugins@1.8.0:
     resolution: {integrity: sha512-96vBb12rDvPPwdKUgWw1op3fGq8AVBFOr0IllbnM72yR5J9WWXF18cQ4g1XfDO7HCyh2dt70P3XdtyRayP8FWg==}
     engines: {node: '>=20'}
@@ -2227,6 +2305,10 @@ packages:
   strip-json-comments@5.0.3:
     resolution: {integrity: sha512-1tB5mhVo7U+ETBKNf92xT4hrQa3pm0MZ0PQvuDnWgAAGHDsfp4lPSpiS6psrSiet87wyGPh9ft6wmhOMQ0hDiw==}
     engines: {node: '>=14.16'}
+
+  sumchecker@3.0.1:
+    resolution: {integrity: sha512-MvjXzkz/BOfyVDkG0oFOtBxHX2u3gKbMHIF/dXblZsgD3BWOFLmHovIpZY7BykJdAjcqRCBi1WYBNdEC9yI7vg==}
+    engines: {node: '>= 8.0'}
 
   tailwind-merge@3.6.0:
     resolution: {integrity: sha512-uxL7qAVQriqRQPAyK3pj66VqskWqoZ37PW94jwOTwNfq/z9oyu1V+eqrZqtR2+fCiXdYOZe/Modt8GtvqNzu+w==}
@@ -2271,6 +2353,10 @@ packages:
 
   undici-types@7.16.0:
     resolution: {integrity: sha512-Zz+aZWSj8LE6zoxD+xrjh4VfkIG8Ya6LvYkZqtUQGJPZjYl53ypCaUwWqo7eI0x66KBGeRo+mlBEkMSeSZ38Nw==}
+
+  undici@7.30.2:
+    resolution: {integrity: sha512-mLyPQnHwUxaM/rideoK/+KL8DaAJLRl4aBCfmX444aCSLnIaomqPLtNRe2jdCYcsk5wZzXrDIQC8ZeYNRAYyIA==}
+    engines: {node: '>=20.18.1'}
 
   undici@8.12.4:
     resolution: {integrity: sha512-8Mx+uNKKER2bA4AdtedkqRbwUCIJFr2nJckXRe5yrDqzePqwLP7VNcctN8/XdmDSbF7mS+jJKIszlL+vbam1VA==}
@@ -2659,6 +2745,21 @@ snapshots:
       - utf-8-validate
       - vue-tsc
       - yaml
+
+  '@electron-internal/extract-zip@1.0.8': {}
+
+  '@electron/get@5.1.0':
+    dependencies:
+      debug: 4.4.3
+      env-paths: 3.0.0
+      graceful-fs: 4.2.12
+      progress: 2.0.3
+      semver: 7.8.6
+      sumchecker: 3.0.1
+    optionalDependencies:
+      undici: 7.30.2
+    transitivePeerDependencies:
+      - supports-color
 
   '@emnapi/core@1.11.2':
     dependencies:
@@ -3563,10 +3664,20 @@ snapshots:
 
   electron-to-chromium@1.5.491: {}
 
+  electron@44.10.1:
+    dependencies:
+      '@electron-internal/extract-zip': 1.0.8
+      '@electron/get': 5.1.0
+      '@types/node': 24.12.4
+    transitivePeerDependencies:
+      - supports-color
+
   enhanced-resolve@5.27.0:
     dependencies:
       graceful-fs: 4.2.12
       tapable: 2.3.4
+
+  env-paths@3.0.0: {}
 
   es-module-lexer@2.3.2: {}
 
@@ -3892,6 +4003,8 @@ snapshots:
 
   picomatch@4.0.7: {}
 
+  playwright-core@1.64.1: {}
+
   pngjs@7.0.0: {}
 
   postcss@8.5.33:
@@ -3907,6 +4020,8 @@ snapshots:
       ansi-regex: 5.0.1
       ansi-styles: 5.2.0
       react-is: 17.0.2
+
+  progress@2.0.3: {}
 
   react-dom@19.3.0(react@19.3.0):
     dependencies:
@@ -3938,6 +4053,8 @@ snapshots:
 
   semver@6.3.2: {}
 
+  semver@7.8.6: {}
+
   seroval-plugins@1.8.0(seroval@1.8.2):
     dependencies:
       seroval: 1.8.2
@@ -3957,6 +4074,12 @@ snapshots:
   std-env@4.3.0: {}
 
   strip-json-comments@5.0.3: {}
+
+  sumchecker@3.0.1:
+    dependencies:
+      debug: 4.4.3
+    transitivePeerDependencies:
+      - supports-color
 
   tailwind-merge@3.6.0: {}
 
@@ -3985,6 +4108,9 @@ snapshots:
   unbash@4.0.12: {}
 
   undici-types@7.16.0: {}
+
+  undici@7.30.2:
+    optional: true
 
   undici@8.12.4: {}
 

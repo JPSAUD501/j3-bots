@@ -51,6 +51,18 @@ export const HTTP_PATHS = {
   rpc: "/ws",
 } as const;
 
+/**
+ * The origins the desktop app's pages have: its bundled web client is served
+ * from a custom scheme and calls the server across origins, so the server
+ * answers CORS for these and no others. No web page can send either `Origin`.
+ * The names are development placeholders until the project's name and ids are
+ * settled.
+ */
+export const DESKTOP_APP_ORIGINS = {
+  production: "j3bots://app",
+  development: "j3bots-dev://app",
+} as const;
+
 export const ServerInfo = Schema.Struct({
   protocolVersion: PositiveInt,
   /** The J3 Bots release. */

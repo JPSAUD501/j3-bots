@@ -447,6 +447,22 @@ export const en = {
   "pairing.storageFailed":
     "Paired, but this browser wouldn’t keep the sign-in. Allow site data for this page and pair again.",
 
+  "server.title": "Where does J3 Bots run?",
+  "server.body": "Enter the address of the machine that runs J3 Bots. {command} prints it there.",
+  "server.address": "Server address",
+  "server.submit": "Continue",
+  "server.checking": "Checking…",
+  "server.invalid":
+    "That isn’t a server address. Enter a host and port, such as the one {command} prints.",
+  "server.needsHttps":
+    "Plain HTTP only works with a private network address, such as 192.168.1.20. Use the server’s HTTPS address.",
+  "server.unreachable":
+    "Nothing answered at that address. Check that J3 Bots is running and that this computer can reach it.",
+  "server.notJ3Bots": "Something answered at that address, but it isn’t J3 Bots.",
+  "server.failed": "This app couldn’t check that address. Try again.",
+  "pairing.server": "Server: {address}",
+  "pairing.changeServer": "Change server",
+
   "gate.incompatible.title": "This page is out of date",
   "gate.incompatible.body":
     "The J3 Bots server was updated and speaks a newer version. Reload to get the matching page.",

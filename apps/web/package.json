@@ -17,6 +17,7 @@
     "@j3-bots/client-runtime": "workspace:*",
     "@j3-bots/contracts": "workspace:*",
     "@j3-bots/design-tokens": "workspace:*",
+    "@j3-bots/desktop-bridge": "workspace:*",
     "@tanstack/react-router": "1.170.10",
     "class-variance-authority": "0.7.1",
     "effect": "catalog:",

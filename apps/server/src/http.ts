@@ -3,6 +3,7 @@ import {
   Attachment,
   AttachmentId,
   Conflict,
+  DESKTOP_APP_ORIGINS,
   HTTP_PATHS,
   Invalid,
   MAX_ATTACHMENT_SIZE,
@@ -166,8 +167,23 @@ const download = HttpRouter.add(
   }),
 );
 
+/**
+ * CORS for the desktop app, whose pages call the server from their own origin
+ * (`DESKTOP_APP_ORIGINS`). Every other origin gets no CORS header, so a web
+ * page elsewhere still cannot read an answer. The credential is a bearer
+ * header, never a cookie, so credentialed CORS is never allowed.
+ */
+const desktopCors = HttpRouter.cors({
+  allowedOrigins: Object.values(DESKTOP_APP_ORIGINS),
+  allowedMethods: ["GET", "POST"],
+  // Effect's HTTP client, which clients use, adds the trace context headers.
+  allowedHeaders: ["authorization", "content-type", "traceparent", "b3"],
+  maxAge: 600,
+});
+
 /** The routes outside the RPC socket. */
 export const routes = Layer.mergeAll(
+  desktopCors,
   health,
   serverInfo,
   socketTicket,

@@ -32,11 +32,16 @@ The reference client. It is served by the J3 Bots server itself, so pointing a b
 
 ## Desktop
 
-An Electron shell around the web client.
+An Electron shell around the web client ([decision 0012](../decisions/0012-desktop-reaches-the-server-directly.md)).
 
-- Loads the built web client from a privileged custom scheme, not from a dev server or a `file://` path.
-- Adds what a browser tab cannot do: a global shortcut to open the composer, native notifications with actions, a menu-bar presence that shows which bots need the operator, deep links (`j3bots://bot/<id>`), auto-update.
-- Connects to a J3 Bots server the operator points it at. Bundling a server and an engine inside the desktop app, for people who have no always-on machine, is a later step and not part of the first versions.
+- **Its own build of the web client.** The window loads the built client from a privileged custom scheme, `j3bots://app` (`j3bots-dev://app` in development; both names are placeholders until the app's name and ids are settled), never from a dev server, a `file://` path or the server. The scheme serves only that build's files: a path outside it, or one of the server's routes, is refused, and a route without a file gets `index.html` for the client's own routing. The page is a secure context, so Web Locks, WebCrypto and notifications work as on an HTTPS origin, whatever the server is served over.
+- **A server the operator names.** The first screen asks for the server's address before pairing. The main process checks it (an answer from `/api/server` that decodes as a J3 Bots server) and keeps it in the app's settings. An address without a scheme is HTTP for a loopback or private IP literal or `localhost`, and HTTPS otherwise; plain HTTP to any other host is refused. The pairing screen shows the server, with a way to change it; changing it clears the page's IndexedDB (credential, drafts, unsent messages) and keeps its preferences. Bundling a server and an engine inside the desktop app, for people who have no always-on machine, is a later step.
+- **The server at its own origin.** The page calls the server with `fetch` and `WebSocket` exactly as a browser does, and the server answers CORS for the app's origins. Nothing is proxied through the main process.
+- **A narrow bridge.** The page reaches the main process only through a preload script that exposes three calls (the current server, connect to one, forget it), whose messages both sides decode with the schemas in `packages/desktop-bridge`. The main process acts only on calls from the app's own top frame.
+- **Locked down as T3 Code's shell is** (**Read** at `db51b67`, `apps/desktop/src/window/DesktopWindow.ts`): context isolation, the renderer sandbox, no Node integration, no `<webview>`. The window never navigates away from the app; an `http:`, `https:` or `mailto:` link opens in the system's handler, anything else nowhere. A Content Security Policy allows scripts from the app only (its inline scripts by hash) and connections only to the app and the named server. Only notifications and clipboard writes are granted. One instance runs per profile; a second launch brings the first window forward. The window's size, place and maximized state are kept and restored onto a display that still exists.
+- **Later:** a global shortcut to open the composer, native notifications with actions, a menu-bar presence that shows which bots need the operator, deep links (`j3bots://bot/<id>`), packaging, signing and auto-update.
+
+On Linux, development runs pass `--no-sandbox` when Electron's `chrome-sandbox` helper is not installed setuid root, which a package manager's install does not do; packaged builds install it. This is the process sandbox of the whole browser, not the renderer sandbox above, which stays on.
 
 ## Mobile
 

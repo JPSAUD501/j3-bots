@@ -5,6 +5,7 @@ import "./index.css";
 import { RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { desktop } from "./live/desktop";
 import { listenForNotificationClicks } from "./live/notify";
 import { router } from "./router";
 
@@ -12,8 +13,9 @@ const root = document.getElementById("root");
 if (root === null) throw new Error("index.html has no #root element.");
 
 // Keeps the app shell for offline launch (pwa/serviceWorker.ts). Development
-// has none, and browsers offer none outside a secure context: HTTPS, or localhost.
-if (import.meta.env.PROD && "serviceWorker" in navigator) {
+// has none, browsers offer none outside a secure context (HTTPS, or
+// localhost), and the desktop app ships the shell itself.
+if (import.meta.env.PROD && desktop === null && "serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("/sw.js").catch((error: unknown) => {
       // The app works without it; it only cannot open offline.
