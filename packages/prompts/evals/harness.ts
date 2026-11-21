@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import * as Cron from "effect/Cron";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -23,8 +26,14 @@ import { complete, type FunctionTool, type Message } from "./model.ts";
  * The model gets what a bot's session gives it: the rendered base prompt,
  * profile and pinned memory, one wake envelope, and the `j3` tools as MCP
  * lists them. Two things stand in for the harness: the shipped skills, given
- * as already read (the harness's own listing and reading of them is not what
- * is measured), and `run_command`, a shell whose answers the scenario fixes.
+ * as already read when a run includes them (the harness's own listing and
+ * reading of them is not what is measured), and `run_command`, a shell whose
+ * answers the scenario fixes.
+ *
+ * Every case runs with the skills and without them. Nothing links them into a
+ * harness yet, and a session that never reads one still has to behave, so a
+ * case that fails only without them shows a rule missing from the base prompt,
+ * the tool descriptions or the envelope.
  */
 
 /** A fictional operator and bot. */
@@ -40,10 +49,13 @@ const bot = (model: string): BotInstructionsInput => ({
   pinned: { shared: "- Rui reads messages on his phone; keep them short.", bot: "" },
 });
 
-const systemPrompt = (model: string): string =>
+/** Whether a turn has the shipped skills as already read. */
+export type Skills = "with the skill" | "without the skill";
+
+const systemPrompt = (model: string, skills: Skills): string =>
   [
     renderSystemFile(bot(model)),
-    ...sharedSkills.map(
+    ...(skills === "with the skill" ? sharedSkills : []).map(
       (skill) => `# You read the skill skills/${skill.name}/SKILL.md\n\n${skill.text}`,
     ),
   ].join("\n\n---\n\n");
@@ -123,10 +135,13 @@ class TurnUnfinished extends Schema.TaggedError<TurnUnfinished>()("TurnUnfinishe
 const unfinished = (reason: string, turn: Turn) =>
   new TurnUnfinished({ message: `The turn did not finish: ${reason}.\n${transcript(turn)}` });
 
+/** What `run_command` prints for a command. */
+export type Shell = (command: string) => string;
+
 export interface Scenario {
   readonly wake: Wake;
-  /** What `run_command` prints for a command. */
-  readonly shell: (command: string) => string;
+  /** A fresh shell for each turn, so what one turn writes another never reads. */
+  readonly shell: () => Shell;
 }
 
 /** Model calls in one turn at most; a turn that needs more is a failure in itself. */
@@ -146,8 +161,55 @@ export const commandOf = (call: Call): string | undefined => {
 
 const json = (value: unknown): string => JSON.stringify(value);
 
+/**
+ * When a routine saved now would first run, as the server would answer it:
+ * the schedule's next time after the wake, a one-time run's own time, or none
+ * for a webhook. `undefined` for a schedule that never names a date.
+ */
+const nextRunAt = (
+  routine: ToolInput<"set_routine">,
+  wake: Wake,
+): DateTime.Utc | null | undefined => {
+  const zone = wake.timeZone;
+  if (routine.schedule !== undefined) {
+    const cron = Cron.parse(routine.schedule, zone);
+    if (Result.isFailure(cron)) return undefined;
+    // `next` throws for an expression that names no date that exists (`0 9 31 2 *`).
+    const next = Result.try(() => Cron.next(cron.success, DateTime.toDateUtc(wake.at)));
+    return Result.isSuccess(next) ? DateTime.fromDateUnsafe(next.success) : undefined;
+  }
+  if (routine.at !== undefined) {
+    // A time without an offset is wall-clock time in the operator's zone.
+    return /(?:Z|[+-]\d{2}:\d{2})$/.test(routine.at)
+      ? DateTime.makeUnsafe(routine.at)
+      : DateTime.toUtc(
+          DateTime.makeZonedUnsafe(`${routine.at}Z`, { timeZone: zone, adjustForTimeZone: true }),
+        );
+  }
+  return null;
+};
+
+/** What `set_routine` answers to a call its schema accepted. */
+const savedRoutine = (routine: ToolInput<"set_routine">, wake: Wake): string => {
+  if (routine.action !== "create") return json({ routine: { ...routine, enabled: true } });
+  const next = nextRunAt(routine, wake);
+  if (next === undefined) {
+    return json({ error: "The schedule names no time that exists. Nothing was saved." });
+  }
+  return json({
+    routine: {
+      id: "routine-1",
+      name: routine.name,
+      instruction: routine.instruction,
+      trigger: routine.schedule ?? routine.at ?? "webhook",
+      enabled: true,
+      nextRunAt: next === null ? null : DateTime.formatIso(next),
+    },
+  });
+};
+
 /** What the server would answer, as far as these scenarios need. */
-const answer = (scenario: Scenario, call: Call): string => {
+const answer = (scenario: Scenario, shell: Shell, call: Call): string => {
   switch (call.name) {
     case "say":
       return json({ status: "recorded" });
@@ -158,7 +220,7 @@ const answer = (scenario: Scenario, call: Call): string => {
     case "set_routine":
       return call.routine === undefined
         ? json({ error: "The call was refused as invalid." })
-        : json({ routine: { ...call.routine, id: "routine-1", enabled: true } });
+        : savedRoutine(call.routine, scenario.wake);
     case "recall":
       return json({ facts: [] });
     case "remember":
@@ -170,7 +232,7 @@ const answer = (scenario: Scenario, call: Call): string => {
       const command = commandOf(call);
       return command === undefined
         ? json({ error: "`command` must be a string." })
-        : scenario.shell(command);
+        : shell(command);
     }
     default:
       return json({ error: `${call.name} is not available here.` });
@@ -192,10 +254,11 @@ const toCall = (step: number, name: string, input: unknown): Call => {
  * that chose to say nothing.
  */
 export const runTurn = Effect.fn("evals.runTurn")(
-  function* (model: string, scenario: Scenario) {
+  function* (model: string, skills: Skills, scenario: Scenario) {
     const envelope = yield* renderWake(scenario.wake);
+    const shell = scenario.shell();
     const messages: Array<Message> = [
-      { role: "system", content: systemPrompt(model) },
+      { role: "system", content: systemPrompt(model, skills) },
       { role: "user", content: envelope },
     ];
     const calls: Array<Call> = [];
@@ -226,7 +289,11 @@ export const runTurn = Effect.fn("evals.runTurn")(
           parsed._tag === "Some" ? parsed.value : toolCall.function.arguments,
         );
         calls.push(call);
-        messages.push({ role: "tool", tool_call_id: toolCall.id, content: answer(scenario, call) });
+        messages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: answer(scenario, shell, call),
+        });
       }
       // An `ask` the server would accept ends the turn.
       if (calls.some((call) => call.name === "ask" && decodeAsk(call.input)._tag === "Some"))

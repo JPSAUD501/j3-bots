@@ -6,15 +6,25 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 import { DECODE_OPTIONS, type RoutineRunSummary, tools, type Wake } from "../src/index.ts";
-import { type Call, commandOf, runTurn, type Scenario, transcript } from "./harness.ts";
+import {
+  type Call,
+  commandOf,
+  runTurn,
+  type Scenario,
+  type Shell,
+  type Skills,
+  transcript,
+} from "./harness.ts";
+import { type SimpleCommand, simpleCommands } from "./shell.ts";
 
-// The routine skill's evals: given the base prompt and the skill, a model
-// creates a routine for recurring work, with a valid schedule and an
-// instruction that stands alone; creates none for a one-off request; and in a
-// routine run stays silent when a condition is not met, but speaks when it is,
-// when a reminder is due, and when it could not do the work, unless a recent
-// run already said what blocks it. Each case is one turn per model, scored on
-// its tool calls.
+// The routine skill's evals: given the base prompt, with the skill and without
+// it, a model creates a routine for recurring work, with a valid schedule and
+// an instruction that stands alone; creates none for a one-off request; and in
+// a routine run stays silent when a condition is not met, but speaks when it
+// is, when a reminder is due, and when it could not do the work, unless a
+// recent run already said what blocks it; a run that keeps a state file writes
+// it only after its message. Each case is one turn per model and skill column,
+// scored on its tool calls.
 
 /** The models to evaluate, cheapest adequate first. Override with a comma-separated `J3_EVAL_MODELS`. */
 const MODELS = Effect.runSync(
@@ -119,6 +129,51 @@ const reminderWake: Wake = {
   triggerData: null,
 };
 
+/** The state file a pull-request watch keeps, and what it holds before this run. */
+const STATE_FILE = "files/docs-prs.json";
+const STATE = JSON.stringify({ reported: [118, 121] });
+
+/** An hourly watch for new pull requests that keeps what it reported in a state file, as the skill teaches. */
+const pullRequestWake: Wake = {
+  ...base,
+  at: todayAt(10, 17),
+  kind: "routine",
+  routine: {
+    id: Schema.decodeSync(RoutineId)("routine-3"),
+    name: "New docs pull requests",
+    trigger: { type: "schedule", cron: "17 8-18 * * *" },
+    instruction: `Tell your user about pull requests on the GitHub repository acme/docs that they have not heard about yet. The file ${STATE_FILE} lists, under "reported", the numbers of the open pull requests already reported; read it first. If an open pull request is not in that list, send your user one short message naming each new one by number and title; if there is none, end without saying anything. Do not comment on, review or merge anything. As your last step, after any message, write the numbers of all open pull requests to "reported" in ${STATE_FILE}.`,
+  },
+  recentRuns: [
+    {
+      at: todayAt(9, 17),
+      outcome: {
+        type: "delivered",
+        text: "New on acme/docs: #121 Add French translation of quickstart.",
+      },
+    },
+    { at: todayAt(8, 17), outcome: { type: "silent", note: null } },
+  ],
+  triggerData: null,
+};
+
+const PULL_REQUESTS = [
+  { number: 125, title: "Fix broken anchors in FAQ", author: "lena", age: "about 20 minutes ago" },
+  {
+    number: 124,
+    title: "Document the new search API",
+    author: "omar",
+    age: "about 40 minutes ago",
+  },
+  {
+    number: 121,
+    title: "Add French translation of quickstart",
+    author: "claire",
+    age: "about 1 hour ago",
+  },
+  { number: 118, title: "Update install guide for Node 22", author: "rui", age: "about 1 day ago" },
+] as const;
+
 const PASSING = [
   "STATUS     TITLE                        WORKFLOW    BRANCH  EVENT  ID    ELAPSED  AGE",
   "completed  success  Fix typo in setup guide  Build docs  main    push   1042  3m12s    about 1 hour ago",
@@ -137,20 +192,53 @@ const FAILING = [
   "X guides/pricing.md: link to /plans returns 404",
 ].join("\n");
 
-/** `gh run list` or `gh run view`. */
-const READS_RUNS = /\bgh\s+run\s+(list|view)\b/;
-/** A `gh api` call on acme/docs's workflow runs or jobs. */
-const READS_RUNS_API = /\bgh\s+api\b.*\brepos\/acme\/docs\/actions\/(runs|jobs)\b/;
-const WRITES = /\b(rerun|cancel|delete)\b|(-X|--method)\s*(POST|PUT|PATCH|DELETE)\b/i;
-/** Fields make `gh api` send a POST, unless the method is given as GET. */
-const API_FIELDS = /\s(-f|-F|--field|--raw-field|--input)\b/;
-const API_GET = /(-X|--method)\s*GET\b/i;
+/** The `gh` commands a command runs; `echo 'gh run list'` runs none. */
+const ghCommands = (command: string): ReadonlyArray<SimpleCommand> =>
+  simpleCommands(command).filter((simple) => simple.program === "gh");
 
-/** A read-only look at the build. */
+/** acme/docs as `gh` takes a repository: `acme/docs`, or with its host in front. */
+const DOCS_REPO = /^(?:(?:https:\/\/)?github\.com\/)?acme\/docs$/;
+
+/** Whether a `gh` command names acme/docs with `-R`, `--repo` or `GH_REPO`. */
+const targetsDocs = ({ env, args }: SimpleCommand): boolean =>
+  DOCS_REPO.test(env.get("GH_REPO") ?? "") ||
+  args.some(
+    (arg, index) =>
+      DOCS_REPO.test(arg.replace(/^(-R|--repo=)/, "")) &&
+      (/^(-R|--repo=)./.test(arg) || ["-R", "--repo"].includes(args[index - 1] ?? "")),
+  );
+
+const WRITES = /\b(rerun|cancel|delete|approve)\b/i;
+/** Options that make `gh api` send something other than a GET. */
+const API_BODY = new Set(["-f", "-F", "--field", "--raw-field", "--input"]);
+
+/** A `gh api` read, a GET, of a path `path` matches. */
+const apiRead = ({ args }: SimpleCommand, path: RegExp): boolean => {
+  if (args[0] !== "api" || args.some((arg) => WRITES.test(arg))) return false;
+  const method = args.flatMap((arg, index) =>
+    arg === "-X" || arg === "--method"
+      ? [args[index + 1] ?? ""]
+      : /^(-X|--method=)./.test(arg)
+        ? [arg.replace(/^(-X|--method=)/, "")]
+        : [],
+  );
+  const get =
+    method.length > 0
+      ? method.every((name) => name.toUpperCase() === "GET")
+      : !args.some((arg) => API_BODY.has(arg));
+  return get && args.slice(1).some((arg) => path.test(arg));
+};
+
+/** A read-only look at acme/docs's CI runs: `gh run list`/`view` there, or a `gh api` read of its runs or jobs. */
 const checksBuild = (command: string): boolean =>
-  !WRITES.test(command) &&
-  (READS_RUNS.test(command) ||
-    (READS_RUNS_API.test(command) && (!API_FIELDS.test(command) || API_GET.test(command))));
+  ghCommands(command).some(
+    (gh) =>
+      (gh.args[0] === "run" && ["list", "view"].includes(gh.args[1] ?? "") && targetsDocs(gh)) ||
+      apiRead(gh, /^\/?repos\/acme\/docs\/actions\/(runs|jobs)\b/),
+  );
+
+/** Any `gh` command at all: with an expired sign-in, each one meets the 401. */
+const triesGh = (command: string): boolean => ghCommands(command).length > 0;
 
 const UNAVAILABLE = "sh: this command is not available in this workspace";
 const GH_NOT_FOUND = "gh: Not Found (HTTP 404)";
@@ -159,16 +247,145 @@ const GH_NOT_FOUND = "gh: Not Found (HTTP 404)";
 const buildShell =
   (output: string) =>
   (command: string): string =>
-    checksBuild(command) ? output : /\bgh\b/.test(command) ? GH_NOT_FOUND : UNAVAILABLE;
+    checksBuild(command) ? output : triesGh(command) ? GH_NOT_FOUND : UNAVAILABLE;
 
 /** A shell whose GitHub sign-in has expired. */
 const signedOutShell = (command: string): string =>
-  /\bgh\b/.test(command)
+  triesGh(command)
     ? [
         "HTTP 401: Bad credentials (https://api.github.com/repos/acme/docs/actions/runs)",
         "Try authenticating with:  gh auth login",
       ].join("\n")
     : UNAVAILABLE;
+
+/** Whether a path is the state file, however the command spells its folder. */
+const isStateFile = (path: string): boolean => /(^|\/)files\/docs-prs\.json$/.test(path);
+
+const INTERPRETER = /^(python3?|node|bun|deno)$/;
+
+/** Whether a simple command writes the state file: a redirection, `tee`, a move or copy onto it, an in-place edit, or a script that opens it for writing. */
+const writesState = ({ program, args, writes }: SimpleCommand): boolean => {
+  if (writes.some(isStateFile)) return true;
+  const name = (program ?? "").replace(/^.*\//, "");
+  if (["tee", "sponge"].includes(name)) return args.some(isStateFile);
+  if (["mv", "cp", "install"].includes(name)) return isStateFile(args.at(-1) ?? "");
+  if (["sed", "perl"].includes(name)) {
+    return args.some((arg) => /^-\w*i/.test(arg)) && args.some(isStateFile);
+  }
+  return (
+    INTERPRETER.test(name) &&
+    args.some(
+      (arg) =>
+        arg.includes(STATE_FILE) && /['"]w['"]|write_text|writeFile|\.write\(|dump\(/.test(arg),
+    )
+  );
+};
+
+/** Whether a simple command reads the state file without writing it. */
+const readsState = (simple: SimpleCommand): boolean =>
+  !writesState(simple) &&
+  (simple.args.some(isStateFile) ||
+    simple.reads.some(isStateFile) ||
+    (INTERPRETER.test(simple.program ?? "") &&
+      simple.args.some((arg) => arg.includes(STATE_FILE))));
+
+const writesStateFile = (command: string): boolean => simpleCommands(command).some(writesState);
+const readsStateFile = (command: string): boolean => simpleCommands(command).some(readsState);
+
+/** A read of acme/docs's open pull requests: `gh pr list` there, or a `gh api` read of its pulls. */
+const listsPullRequests = (gh: SimpleCommand): boolean =>
+  (gh.args[0] === "pr" && gh.args[1] === "list" && targetsDocs(gh)) ||
+  apiRead(gh, /^\/?repos\/acme\/docs\/pulls(?:[?#]|$)/);
+
+const listsPullRequestsCommand = (command: string): boolean =>
+  ghCommands(command).some(listsPullRequests);
+
+/** What `gh` answers a pull-request read: a table, or JSON when asked for it. */
+const pullRequestOutput = (gh: SimpleCommand): string => {
+  if (gh.args[0] === "api") {
+    return JSON.stringify(
+      PULL_REQUESTS.map(({ number, title, author }) => ({
+        number,
+        title,
+        state: "open",
+        user: { login: author },
+        html_url: `https://github.com/acme/docs/pull/${number}`,
+      })),
+    );
+  }
+  if (gh.args.some((arg) => arg === "--json" || arg.startsWith("--json="))) {
+    return JSON.stringify(
+      PULL_REQUESTS.map(({ number, title, author }) => ({
+        number,
+        title,
+        author: { login: author },
+        url: `https://github.com/acme/docs/pull/${number}`,
+      })),
+    );
+  }
+  return [
+    "Showing 4 of 4 open pull requests in acme/docs",
+    "",
+    ...PULL_REQUESTS.map(
+      ({ number, title, author, age }) => `#${number}  ${title.padEnd(38)}${author}/branch  ${age}`,
+    ),
+  ].join("\n");
+};
+
+/** What `gh pr view` answers for one of the open pull requests. */
+const pullRequestView = (gh: SimpleCommand): string | undefined => {
+  if (gh.args[0] !== "pr" || gh.args[1] !== "view" || !targetsDocs(gh)) return undefined;
+  const pull = PULL_REQUESTS.find(({ number }) =>
+    gh.args.slice(2).some((arg) => arg.replace(/^#/, "") === String(number)),
+  );
+  return pull === undefined
+    ? undefined
+    : `${pull.title} acme/docs#${pull.number}\nOpen • ${pull.author} wants to merge into main • ${pull.age}`;
+};
+
+/**
+ * What a write of the state file leaves in it: the numbers the command spells
+ * out after "reported", or, when it computes them (with `jq`, say), the open
+ * pull requests, which is what the instruction asks for.
+ */
+const writtenState = (command: string): string => {
+  const listed = /reported\W*:\s*\[([\d,\s]*)\]/.exec(command)?.[1];
+  const numbers =
+    listed === undefined
+      ? PULL_REQUESTS.map(({ number }) => number)
+      : listed
+          .split(",")
+          .map((number) => number.trim())
+          .filter((number) => number !== "")
+          .map(Number);
+  return JSON.stringify({ reported: numbers });
+};
+
+/**
+ * A shell with the pull-request watch's state file and acme/docs's open pull
+ * requests. A write of the file succeeds with no output, and a later read, in
+ * the same command or another, shows what was written; a command it cannot
+ * place answers an error.
+ */
+const pullRequestShell = (): Shell => {
+  let state = STATE;
+  return (command) => {
+    const outputs = simpleCommands(command).map((simple): string | undefined => {
+      if (simple.program === "gh") {
+        if (listsPullRequests(simple)) return pullRequestOutput(simple);
+        return pullRequestView(simple) ?? GH_NOT_FOUND;
+      }
+      if (writesState(simple)) {
+        state = writtenState(command);
+        return "";
+      }
+      if (readsState(simple)) return state;
+      return undefined;
+    });
+    const known = outputs.filter((output) => output !== undefined);
+    return known.length === 0 ? UNAVAILABLE : known.filter((output) => output !== "").join("\n");
+  };
+};
 
 const named = (calls: ReadonlyArray<Call>, name: string) =>
   calls.filter((call) => call.name === name);
@@ -182,11 +399,11 @@ const says = (calls: ReadonlyArray<Call>) =>
     return decoded._tag === "Some" ? [{ call, say: decoded.value }] : [];
   });
 
-/** The index of the first call that looked at the build read-only, or -1. */
-const firstBuildCheck = (calls: ReadonlyArray<Call>): number =>
-  calls.findIndex((call) => {
+/** The first `run_command` call whose command `test` accepts. */
+const firstCommand = (calls: ReadonlyArray<Call>, test: (command: string) => boolean) =>
+  calls.find((call) => {
     const command = commandOf(call);
-    return command !== undefined && checksBuild(command);
+    return command !== undefined && test(command);
   });
 
 /** The routines the turn created and the stub accepted, as the server would save them. */
@@ -207,15 +424,15 @@ const BACK_REFERENCE =
  * "do not send anything".
  */
 const SILENCE =
-  /\b((end|finish|stop)s?( \w+){0,3} (silently|quietly|without|with no)|(stay|remain|keep)s? (quiet|silent)|(say|send|report)s? nothing|(don['’]t|do not|never) (send|say|message|tell|notify|reply|report|speak|call))\b/i;
+  /\b((end|finish|stop)s?( \w+){0,3} (silently|quietly|without|with no)|(stay|remain|keep)s? (quiet|silent)|(say|send|report)s? (nothing|no \w+)|(don['’]t|do not|never) (send|say|message|tell|notify|reply|report|speak|call))\b/i;
 
-/** Words that mark a clause about the healthy case: the build passed, nothing changed, an all-clear. */
+/** Words that mark a clause about the healthy case: the build passed, nothing changed, an all-clear; never "non-success". */
 const HEALTHY =
-  /\b(passing|passes|passed|green|succeed(s|ed)?|success(ful)?|((has|did|is) )?not (fail(ed|ing)?|broken|red)|nothing (is )?(new|wrong)|all[- ]clear|all (is )?(well|good|fine))\b/i;
+  /\b(?<!non-?)(passing|passes|passed|green|succeed(s|ed)?|success(ful)?|((has|did|is) )?not (fail(ed|ing)?|broken|red)|nothing (is )?(new|wrong)|no (new )?(failures?|errors?|problems?)|all[- ]clear|all (is )?(well|good|fine))\b/i;
 const OTHERWISE = /\botherwise\b/i;
 const FAILURE = /\b(fail\w*|broken|red|problem|error|wrong)\b/i;
 /** Words that make a clause conditional. */
-const CONDITIONAL = /\b(if|when|whenever|only|unless)\b/i;
+const CONDITIONAL = /\b(if|when|whenever|only|unless|until)\b/i;
 /** Words that make a clause hold on every run. */
 const EVERY_RUN = /\b(every|each|always|regardless|anyway)\b/i;
 
@@ -226,17 +443,29 @@ const EVERY_RUN = /\b(every|each|always|regardless|anyway)\b/i;
 const CONDITION = /\b(?:if|when|whenever)\b((?:[^,:]|,\s*(?:or|and)\b)*)/i;
 const HEALTHY_ALL = new RegExp(HEALTHY.source, "gi");
 
+/** Words that turn the healthy word after them into its opposite: "anything other than success". */
+const EXCEPT = /\b(other than|anything but|except)\b/i;
+
 /**
  * Whether a clause is about the healthy case. A clause with a condition is
- * judged by that condition alone: it names the healthy case and no failure
- * beside it, so "if it is not failed" is healthy and "if it failed, or is
- * anything other than a success" is not. One without is judged whole, and
- * "otherwise" counts only when the clause does not name a failure.
+ * judged by that condition alone: it is healthy when one of its alternatives
+ * (joined by "or") names the healthy case and no failure, so "if it is not
+ * failed" and "if the build is passing, or its failure was already reported"
+ * are healthy, and "if it failed, or is anything other than a success" is not.
+ * One without is judged whole, and "otherwise" counts only when the clause
+ * does not name a failure.
  */
 const isHealthy = (clause: string): boolean => {
   const condition = CONDITION.exec(clause)?.[1];
   if (condition !== undefined) {
-    return HEALTHY.test(condition) && !FAILURE.test(condition.replace(HEALTHY_ALL, ""));
+    return condition
+      .split(/,?\s*\bor\b/i)
+      .some(
+        (alternative) =>
+          HEALTHY.test(alternative) &&
+          !EXCEPT.test(alternative) &&
+          !FAILURE.test(alternative.replace(HEALTHY_ALL, "")),
+      );
   }
   return HEALTHY.test(clause) || (OTHERWISE.test(clause) && !FAILURE.test(clause));
 };
@@ -246,28 +475,62 @@ const SEND =
   /\b(send|sends|sending|tell|tells|message|messages|messaging|notify|notifies|report|reports|say|says|saying|reply|replies|ping|let \w+ know)\b/gi;
 const NEGATION = /\b(don['’]t|do not|never|no|not|nothing|without)\b/i;
 
+/** Where a phrase ends, whatever follows: a colon, or a turn to another action. */
+const PHRASE_END = /:|\b(?:but|then|instead)\b/gi;
+/** What separates the items of a list: a comma, "and" or "or", or a comma before either. */
+const ITEM_SEPARATOR = /(,\s*(?:(?:and|or)\b)?|\b(?:and|or)\b)/i;
+const wordCount = (text: string): number => text.split(/\s+/).filter((word) => word !== "").length;
+
 /**
- * Whether a clause delivers something that no negation in its own phrase
- * cancels: "send an all-clear" does, "do not send an all-clear" and "say
- * nothing" do not, and in "don't send an alert, but send an all-clear" the
- * second send does.
+ * Whether the send at `index` is an item of a list that a negation earlier in
+ * its phrase covers: "do not send an all-clear, summary, or message", "end
+ * without sending a summary or a message", "do not message or tell anyone".
+ * An item joined by "or" is always covered; one joined by a comma or "and"
+ * only when it is a noun (after an article, or with nothing after it), so in
+ * "do not message Rui, and tell the team" the second send is not.
+ */
+const negatedByList = (phrase: string, after: string): boolean => {
+  const parts = phrase.split(ITEM_SEPARATOR);
+  const current = parts.at(-1) ?? "";
+  const separator = parts.at(-2);
+  if (separator === undefined || !/^\s*(?:a|an|any|the)?\s*$/i.test(current)) return false;
+  const noun = /\b(?:a|an|any|the)\b/i.test(current) || /^\s*(?:$|,|\b(?:and|or)\b)/i.test(after);
+  if (!/\bor\b/i.test(separator) && !noun) return false;
+  // Back through the earlier items, past short ones ("summary"), to the one that holds the verb.
+  for (let index = parts.length - 3; index >= 0; index -= 2) {
+    const item = parts[index] ?? "";
+    if (NEGATION.test(item)) return true;
+    if (wordCount(item) > 3) return false;
+  }
+  return false;
+};
+
+/**
+ * Whether a clause delivers something that no negation cancels: "send an
+ * all-clear" does; "do not send an all-clear", "say nothing" and "do not send
+ * an all-clear, summary, or message" do not; and in "don't send an alert, but
+ * send an all-clear" the second send does. A negation covers its own phrase,
+ * which a comma before a new action ends, and a list that follows it.
  */
 const sendsAnyway = (clause: string): boolean =>
   Array.from(clause.matchAll(SEND)).some((match) => {
-    const phrase =
-      clause
-        .slice(0, match.index)
-        .split(/[,:]|\b(?:but|then|and|instead)\b/i)
-        .at(-1) ?? "";
+    const before = clause.slice(0, match.index);
     const after = clause.slice(match.index + match[0].length);
-    return !NEGATION.test(phrase) && !/^\s+(nothing|no)\b/i.test(after);
+    if (/^\s+(nothing|no)\b/i.test(after)) return false;
+    const phraseStart = Math.max(
+      0,
+      ...Array.from(before.matchAll(PHRASE_END), (end) => end.index + end[0].length),
+    );
+    const phrase = before.slice(phraseStart);
+    const own = phrase.split(ITEM_SEPARATOR).at(-1) ?? "";
+    return !NEGATION.test(own) && !negatedByList(phrase, after);
   });
 
 /**
  * Problems with how an instruction handles the healthy case: it must say to
  * stay silent then, send nothing in a clause about it, and send nothing in a
- * clause that holds on every run with no condition ("on every check send an
- * update").
+ * clause that holds on every run and names neither a condition nor a failure
+ * ("on every check send an update").
  */
 const quietDeliveryProblems = (instruction: string): ReadonlyArray<string> => {
   const clauses = instruction.split(/[.;]/);
@@ -280,7 +543,11 @@ const quietDeliveryProblems = (instruction: string): ReadonlyArray<string> => {
     problems.push("the instruction sends a message when nothing is wrong");
   }
   const unconditional = clauses.filter(
-    (clause) => EVERY_RUN.test(clause) && !CONDITIONAL.test(clause) && sendsAnyway(clause),
+    (clause) =>
+      EVERY_RUN.test(clause) &&
+      !CONDITIONAL.test(clause) &&
+      !FAILURE.test(clause) &&
+      sendsAnyway(clause),
   );
   if (unconditional.length > 0) {
     problems.push(
@@ -300,6 +567,30 @@ const confirmsMorningEight = (text: string): boolean =>
 /** Every weekday, Monday to Friday, not a single day. */
 const confirmsWeekdays = (text: string): boolean =>
   /\b(weekdays?|work ?days?|mon(day)?s?\s*(-|–|—|to|through|thru)\s*fri(day)?s?)\b/i.test(text);
+
+const SUCCESS_WORD = /\b(green|pass(es|ed|ing)?|success(ful|fully)?|succeed(s|ed)?)\b/gi;
+const FAILURE_WORD = /\b(red|fail(s|ed|ing|ures?)?|broken|broke)\b/gi;
+/**
+ * A negation in the few words before a match: "not green", "isn't passing",
+ * "no longer passing", "no failures", "nothing is running or failing".
+ */
+const NEGATED_BEFORE =
+  /(?:\b(?:not|no|never|without|nothing|none|zero|0)|n['’]t)\b(?:\s+[\w'’-]+){0,4}\s*$/i;
+
+/** Whether some match of `words` in `text` stands without a negation in its own clause. */
+const statesUnnegated = (text: string, words: RegExp): boolean =>
+  Array.from(text.matchAll(words)).some((match) => {
+    const clause =
+      text
+        .slice(0, match.index)
+        .split(/[,.;:!?—–()]|\bbut\b/i)
+        .at(-1) ?? "";
+    return !NEGATED_BEFORE.test(clause);
+  });
+
+/** Whether an answer says the build is passing, and nothing in it says it is failing. */
+const saysPassing = (text: string): boolean =>
+  statesUnnegated(text, SUCCESS_WORD) && !statesUnnegated(text, FAILURE_WORD);
 
 interface Case {
   readonly name: string;
@@ -322,23 +613,84 @@ const speaksOnce = (calls: ReadonlyArray<Call>, mentions: RegExp, what: string) 
   ];
 };
 
-/** Problems with a routine run that must look at the build before it speaks. */
-const speaksAfterCheck = (calls: ReadonlyArray<Call>): ReadonlyArray<string> => {
-  const checked = firstBuildCheck(calls);
-  if (checked === -1) return ["never looked at the build"];
-  const first = named(calls, "say")[0];
-  return first !== undefined && calls.indexOf(first) < checked
-    ? ["spoke before looking at the build"]
-    : [];
-};
+/**
+ * Problems with a call that depends on what `source` returned: it must exist,
+ * and come in a later model message, since calls sent together are written
+ * before any of them returns.
+ */
+const after = (
+  source: Call | undefined,
+  dependent: Call | undefined,
+  what: { readonly source: string; readonly dependent: string },
+): ReadonlyArray<string> =>
+  source === undefined
+    ? [`never ${what.source}`]
+    : dependent !== undefined && dependent.step <= source.step
+      ? [`${what.dependent} in the same message as it ${what.source}, or before`]
+      : [];
 
-/** Problems with a routine run that must stay silent. */
-const silentRun = (calls: ReadonlyArray<Call>): ReadonlyArray<string> => [
-  ...(firstBuildCheck(calls) === -1 ? ["never looked at the build"] : []),
-  ...["say", "ask", "message_bot", "set_routine"].flatMap((name) =>
-    named(calls, name).length > 0 ? [`called \`${name}\``] : [],
-  ),
-];
+/** Problems with a routine run that must look at the build, with a command `looks` accepts, before it speaks. */
+const speaksAfterCheck =
+  (looks: (command: string) => boolean) =>
+  (calls: ReadonlyArray<Call>): ReadonlyArray<string> =>
+    after(firstCommand(calls, looks), named(calls, "say")[0], {
+      source: "looked at the build",
+      dependent: "spoke",
+    });
+
+/** Problems with a routine run that must look at the build, with a command `looks` accepts, and stay silent. */
+const silentRun =
+  (looks: (command: string) => boolean) =>
+  (calls: ReadonlyArray<Call>): ReadonlyArray<string> => [
+    ...(firstCommand(calls, looks) === undefined ? ["never looked at the build"] : []),
+    ...["say", "ask", "message_bot", "set_routine"].flatMap((name) =>
+      named(calls, name).length > 0 ? [`called \`${name}\``] : [],
+    ),
+  ];
+
+/** The pull requests the state file does not list yet, as a message would name them. */
+const NEW_PULL_REQUESTS = [/#?\b124\b|search API/i, /#?\b125\b|anchors/i];
+
+/**
+ * Problems with the pull-request watch's run: it reads the state file and the
+ * open pull requests, then, in a later message, reports the two new ones in
+ * exactly one `say`, and writes the state file only after that `say`, in the
+ * same message or a later one.
+ */
+const stateRunProblems = (calls: ReadonlyArray<Call>): ReadonlyArray<string> => {
+  const said = named(calls, "say");
+  const [message] = said;
+  const writes = calls.filter((call) => {
+    const command = commandOf(call);
+    return command !== undefined && writesStateFile(command);
+  });
+  const problems: Array<string> = [
+    ...after(firstCommand(calls, readsStateFile), message, {
+      source: "read the state file",
+      dependent: "spoke",
+    }),
+    ...after(firstCommand(calls, listsPullRequestsCommand), message, {
+      source: "listed the open pull requests",
+      dependent: "spoke",
+    }),
+    ...["ask", "message_bot", "set_routine"].flatMap((name) =>
+      named(calls, name).length > 0 ? [`called \`${name}\``] : [],
+    ),
+  ];
+  if (said.length !== 1 || message === undefined) {
+    return [...problems, `called \`say\` ${said.length} times, not once`];
+  }
+  const text = says(calls).find(({ call }) => call === message)?.say.text ?? "";
+  if (!NEW_PULL_REQUESTS.every((pull) => pull.test(text))) {
+    problems.push("the message does not name both new pull requests, #124 and #125");
+  }
+  const spoken = calls.indexOf(message);
+  if (writes.length === 0) problems.push("never wrote the state file");
+  else if (writes.some((call) => calls.indexOf(call) < spoken)) {
+    problems.push("wrote the state file before its message");
+  }
+  return problems;
+};
 
 const cases: ReadonlyArray<Case> = [
   {
@@ -347,7 +699,7 @@ const cases: ReadonlyArray<Case> = [
       wake: userWake(
         "the docs build broke twice this week and nobody noticed until customers did. from now on can you check it every weekday morning at 8 and only bother me if it's red?",
       ),
-      shell: buildShell(PASSING),
+      shell: () => buildShell(PASSING),
     },
     problems: (calls) => {
       const routines = created(calls);
@@ -359,10 +711,12 @@ const cases: ReadonlyArray<Case> = [
       const problems: Array<string> = [];
       // The turn opens with a `say`, then looks for an existing routine before it creates one.
       if (says(calls)[0]?.call !== calls[0]) problems.push("the first call is not a `say`");
-      const listed = calls.findIndex((candidate) => candidate.name === "list_routines");
-      if (listed === -1 || listed > calls.indexOf(call)) {
-        problems.push("`list_routines` was not called before the routine was created");
-      }
+      problems.push(
+        ...after(named(calls, "list_routines")[0], call, {
+          source: "called `list_routines`",
+          dependent: "created the routine",
+        }),
+      );
       const schedule = routine.schedule ?? "";
       const [minute, hour, day, month, weekday] = schedule.split(/\s+/);
       if (
@@ -407,19 +761,19 @@ const cases: ReadonlyArray<Case> = [
     name: "answers a one-off request in the turn from a check of the build, with no routine",
     scenario: {
       wake: userWake("is the docs build green right now? the release goes out at noon"),
-      shell: buildShell(PASSING),
+      shell: () => buildShell(PASSING),
     },
     problems: (calls) => {
-      const checked = firstBuildCheck(calls);
+      const checked = firstCommand(calls, checksBuild);
       const answer = says(calls).find(
-        ({ call, say }) => say.done === true && calls.indexOf(call) > checked,
+        ({ call, say }) => say.done === true && checked !== undefined && call.step > checked.step,
       );
       return [
         ...(named(calls, "set_routine").length > 0 ? ["called `set_routine`"] : []),
-        ...(checked === -1 ? ["never checked the build"] : []),
+        ...(checked === undefined ? ["never checked the build"] : []),
         ...(answer === undefined
-          ? ["no `say` with `done: true` after the check delivered the answer"]
-          : /\b(green|pass(es|ed|ing)?|success(ful|fully)?|succeeded)\b/i.test(answer.say.text)
+          ? ["no `say` with `done: true` in a message after the check delivered the answer"]
+          : saysPassing(answer.say.text)
             ? []
             : ["the answer does not say the build is passing"]),
       ];
@@ -427,27 +781,27 @@ const cases: ReadonlyArray<Case> = [
   },
   {
     name: "keeps a routine run silent when nothing is worth saying",
-    scenario: { wake: routineWake, shell: buildShell(PASSING) },
-    problems: silentRun,
+    scenario: { wake: routineWake, shell: () => buildShell(PASSING) },
+    problems: silentRun(checksBuild),
   },
   {
     name: "speaks once in a routine run when something is worth saying",
-    scenario: { wake: routineWake, shell: buildShell(FAILING) },
+    scenario: { wake: routineWake, shell: () => buildShell(FAILING) },
     problems: (calls) => [
-      ...speaksAfterCheck(calls),
+      ...speaksAfterCheck(checksBuild)(calls),
       ...speaksOnce(calls, /pricing|link|404/i, "say what failed"),
     ],
   },
   {
     name: "sends a due reminder exactly once",
-    scenario: { wake: reminderWake, shell: () => UNAVAILABLE },
+    scenario: { wake: reminderWake, shell: () => () => UNAVAILABLE },
     problems: (calls) => speaksOnce(calls, /expense/i, "remind about the expense report"),
   },
   {
     name: "says once what blocked a routine run that lost its access",
-    scenario: { wake: routineWake, shell: signedOutShell },
+    scenario: { wake: routineWake, shell: () => signedOutShell },
     problems: (calls) => [
-      ...speaksAfterCheck(calls),
+      ...speaksAfterCheck(triesGh)(calls),
       ...speaksOnce(
         calls,
         /\b(auth\w*|credentials?|token|sign(ed)?[- ]?(in|out)|log(ged)?[- ]?(in|out)|access|401|permission)\b/i,
@@ -457,8 +811,13 @@ const cases: ReadonlyArray<Case> = [
   },
   {
     name: "stays silent when a recent run already said what blocks it",
-    scenario: { wake: blockerReportedWake, shell: signedOutShell },
-    problems: silentRun,
+    scenario: { wake: blockerReportedWake, shell: () => signedOutShell },
+    problems: silentRun(triesGh),
+  },
+  {
+    name: "reports new pull requests once, then records them in its state file",
+    scenario: { wake: pullRequestWake, shell: pullRequestShell },
+    problems: stateRunProblems,
   },
 ];
 
@@ -471,6 +830,15 @@ describe("the quiet-delivery check", () => {
     "If the latest run has been going for more than 30 minutes, message your user. If it passed, say nothing. Keep the message to two short sentences.",
     "Report only if the latest run concluded with failure, or if its conclusion is anything other than success. If the build is green, end without sending anything at all.",
     'If its status is "in_progress" or "queued", or its conclusion is "success", it is not red: end the run without sending anything. If red, send Rui one short message. Otherwise end the run with no message at all.',
+    "If the build failed, tell your user which job failed. If the build passes, do not send an all-clear, summary, or message.",
+    "If it failed, message Rui. If it passed, end without sending a summary or a message.",
+    "If it failed, message Rui. If it passed, do not message or tell anyone.",
+    "Send Rui one short message only when the latest build has failed; otherwise end silently. Report the latest failed run on each weekday check.",
+    "Report to Rui only if the latest build is failing. If it is green or there is no new failure, do not send a message.",
+    "If the latest build is red, send Rui a brief message. If it is successful, pending, or there is no conclusive failure, send no message.",
+    "If there is a problem not yet reported, send Rui one short message. If the build is passing, or the problem's run ID is already reported, end without saying anything at all.",
+    "If the build is red, send your user one short message. Say that this check will report again each weekday until it is fixed. If it is green, end silently.",
+    'If its conclusion is "failure" (or any non-success conclusion such as "cancelled" or "timed_out"), send Rui a short message. If the latest completed run succeeded, send nothing at all.',
   ])("accepts %j", (instruction) => {
     expect(quietDeliveryProblems(instruction)).toEqual([]);
   });
@@ -481,14 +849,151 @@ describe("the quiet-delivery check", () => {
     "If the build is passing, tell your user it is green.",
     "If it passes, say nothing. On every check send an update.",
     "Send your user the build status every morning. If it passed, end silently.",
+    "If it failed, tell Rui. If it is not failed, message your user that it is green.",
+    "If it failed, tell Rui. If it passed, don't message the team, and tell Rui it is green.",
+    "If it failed, tell Rui. If it passed, end silently, send an all-clear.",
+    "If the build is passing, or it failed, send Rui a message. Otherwise end silently.",
   ])("rejects %j", (instruction) => {
     expect(quietDeliveryProblems(instruction)).not.toEqual([]);
   });
 });
 
+describe("the one-off answer's polarity check", () => {
+  it.each([
+    "Yes, it's green: the latest run on main passed about an hour ago.",
+    "Green ✅ no failures on main.",
+    "The docs build is passing, not red, so the release is clear.",
+    "Yes. Both recent runs on main succeeded.",
+    "Yes. The latest run on main passed an hour ago. Nothing is running or failing on main right now.",
+  ])("reads %j as passing", (text) => {
+    expect(saysPassing(text)).toBe(true);
+  });
+
+  it.each([
+    "The build is not green.",
+    "It isn't passing right now.",
+    "No, the latest run on main failed.",
+    "Not yet green; the run failed on link-check.",
+    "The build is no longer passing.",
+    "Green on the last run, but the one before it failed.",
+  ])("does not read %j as passing", (text) => {
+    expect(saysPassing(text)).toBe(false);
+  });
+});
+
+describe("the shell graders", () => {
+  it.each([
+    "gh run list -R acme/docs --branch main -L 5",
+    "gh run list --repo=acme/docs",
+    "GH_REPO=acme/docs gh run view 1043 --log-failed",
+    "cd /tmp && gh run list --repo acme/docs | head -5",
+    "gh api 'repos/acme/docs/actions/runs?branch=main&per_page=1'",
+    "gh api -X GET repos/acme/docs/actions/runs -f branch=main",
+    "gh run list -R github.com/acme/docs 2>&1",
+  ])("counts %j as a look at the build", (command) => {
+    expect(checksBuild(command)).toBe(true);
+  });
+
+  it.each([
+    "echo 'gh run list -R acme/docs'",
+    'echo "x; gh run list -R acme/docs"',
+    "gh run list",
+    "gh run list -R acme/other",
+    "gh run rerun 1043 -R acme/docs",
+    "gh api -X POST repos/acme/docs/actions/runs/1043/rerun",
+    "gh api repos/acme/docs/actions/runs -f status=completed",
+  ])("does not count %j as a look at the build", (command) => {
+    expect(checksBuild(command)).toBe(false);
+  });
+
+  it("counts any `gh` it runs as an attempt, and none it only prints", () => {
+    expect(triesGh("gh auth status")).toBe(true);
+    expect(triesGh("ls && gh run list")).toBe(true);
+    expect(triesGh("echo gh run list")).toBe(false);
+  });
+
+  it.each([
+    `echo '{"reported":[118,121,124,125]}' > ${STATE_FILE}`,
+    `cat > ./${STATE_FILE} <<'EOF'\n{"reported":[118,121,124,125]}\nEOF`,
+    `jq '.reported = [118,121,124,125]' ${STATE_FILE} > /tmp/prs && mv /tmp/prs ${STATE_FILE}`,
+    `printf '%s' '{"reported":[124]}' | tee ${STATE_FILE} >/dev/null`,
+    `python3 -c "import json; json.dump({'reported': [124]}, open('${STATE_FILE}', 'w'))"`,
+  ])("counts %j as a write of the state file", (command) => {
+    expect(writesStateFile(command)).toBe(true);
+  });
+
+  it.each([
+    `cat ${STATE_FILE}`,
+    `jq .reported ${STATE_FILE}`,
+    `cp ${STATE_FILE} /tmp/backup.json`,
+    `echo 'x > ${STATE_FILE}'`,
+    `cat ${STATE_FILE} > /tmp/copy.json`,
+  ])("does not count %j as a write of the state file", (command) => {
+    expect(writesStateFile(command)).toBe(false);
+  });
+});
+
+describe("the state-file run check", () => {
+  const command = (step: number, text: string): Call => ({
+    step,
+    name: "run_command",
+    input: { command: text },
+  });
+  const say = (step: number, text: string): Call => ({
+    step,
+    name: "say",
+    input: { text, done: true },
+  });
+  const look = [command(1, `cat ${STATE_FILE}`), command(1, "gh pr list -R acme/docs")];
+  const report =
+    "New on acme/docs: #124 Document the new search API, #125 Fix broken anchors in FAQ.";
+  const write = (step: number) =>
+    command(step, `echo '{"reported":[118,121,124,125]}' > ${STATE_FILE}`);
+
+  it.each([
+    ["a write in a later message", [...look, say(2, report), write(3)]],
+    ["a write later in the same message", [...look, say(2, report), write(2)]],
+  ])("accepts %s", (_, calls) => {
+    expect(stateRunProblems(calls)).toEqual([]);
+  });
+
+  it.each([
+    ["no write", [...look, say(2, report)]],
+    ["a write earlier in the same message", [...look, write(2), say(2, report)]],
+    ["a write before the message and after it", [...look, write(2), say(3, report), write(4)]],
+    ["a message sent with the reads", [...look, say(1, report), write(2)]],
+    ["two messages", [...look, say(2, report), say(3, report), write(4)]],
+    [
+      "a message missing #125",
+      [...look, say(2, "New: #124 Document the new search API."), write(3)],
+    ],
+    [
+      "no read of the state file",
+      [command(1, "gh pr list -R acme/docs"), say(2, report), write(3)],
+    ],
+  ])("rejects %s", (_, calls) => {
+    expect(stateRunProblems(calls)).not.toEqual([]);
+  });
+});
+
+describe("the pull-request watch's shell", () => {
+  it("shows a write of the state file to every later read in the same turn", () => {
+    const written = JSON.stringify({ reported: [118, 121, 124, 125] });
+    const shell = pullRequestShell();
+    expect(shell(`cat ${STATE_FILE}`)).toBe(STATE);
+    expect(shell(`echo '${written}' > ${STATE_FILE} && cat ${STATE_FILE}`)).toBe(written);
+    expect(shell(`cat ${STATE_FILE}`)).toBe(written);
+    expect(pullRequestShell()(`cat ${STATE_FILE}`)).toBe(STATE);
+  });
+});
+
+const SKILL_COLUMNS: ReadonlyArray<Skills> = ["with the skill", "without the skill"];
+
 describe.each(MODELS)("%s", (model) => {
-  it.concurrent.each(cases)("$name", async ({ scenario, problems }) => {
-    const turn = await Effect.runPromise(runTurn(model, scenario));
-    expect(problems(turn.calls), transcript(turn)).toEqual([]);
+  describe.each(SKILL_COLUMNS)("%s", (skills) => {
+    it.concurrent.each(cases)("$name", async ({ scenario, problems }) => {
+      const turn = await Effect.runPromise(runTurn(model, skills, scenario));
+      expect(problems(turn.calls), transcript(turn)).toEqual([]);
+    });
   });
 });
