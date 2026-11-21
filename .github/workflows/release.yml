@@ -12,7 +12,8 @@ name: Release
 # builds are unsigned. Only the two jobs that run no code from the repository
 # may write: `draft` creates the release and `publish` uploads to it. The jobs
 # that build read, and hand what they built to `publish` as `release-*`
-# artifacts; a job added later hands its files over the same way.
+# artifacts; a job added later hands its files over the same way and is
+# added to `publish`'s `needs`, or its files are left out.
 on:
   push:
     tags: ["v*"]
@@ -40,7 +41,9 @@ jobs:
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
-          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+          number='(0|[1-9][0-9]*)'
+          identifier='(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
+          if ! [[ "$version" =~ ^$number\.$number\.$number(-$identifier(\.$identifier)*)?$ ]]; then
             echo "::error::$GITHUB_REF_NAME is not v followed by a semver version"
             exit 1
           fi
@@ -56,12 +59,18 @@ jobs:
           GH_REPO: ${{ github.repository }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+          wanted=false
+          prerelease=()
+          if [[ "$VERSION" == *-* ]]; then wanted=true; prerelease=(--prerelease); fi
+          # A draft made by hand is used only if it is marked as the tag says.
+          if marked="$(gh release view "$GITHUB_REF_NAME" --json isPrerelease --jq .isPrerelease 2> /dev/null)"; then
+            if [[ "$marked" != "$wanted" ]]; then
+              echo "::error::The release for $GITHUB_REF_NAME exists and is $([[ "$marked" == true ]] || echo "not ")marked as a pre-release, which its version says it $([[ "$wanted" == true ]] && echo "is" || echo "is not")."
+              exit 1
+            fi
             echo "A release for $GITHUB_REF_NAME exists already; the files are uploaded to it only if it is a draft."
             exit 0
           fi
-          prerelease=()
-          if [[ "$VERSION" == *-* ]]; then prerelease=(--prerelease); fi
           gh release create "$GITHUB_REF_NAME" --draft "${prerelease[@]}" --verify-tag \
             --title "J3 Bots $VERSION" \
             --notes "Unsigned builds. macOS and Windows warn before opening an unsigned app. A Mac build and the deb say when a newer version is out; the AppImage and the Windows install update themselves. Linux packages need no signature."

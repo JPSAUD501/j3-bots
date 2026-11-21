@@ -19,9 +19,15 @@ export const runningAppImage: string | null = (() => {
   if (process.platform !== "linux" || appImage === undefined || appDir === undefined) return null;
   if (!NodePath.isAbsolute(appImage) || !NodePath.isAbsolute(appDir)) return null;
   const inside = NodePath.relative(appDir, process.execPath);
-  return inside !== "" && !inside.startsWith("..") && !NodePath.isAbsolute(inside)
-    ? appImage
-    : null;
+  if (inside === "" || inside.startsWith("..") || NodePath.isAbsolute(inside)) return null;
+  // A runtime that mounts the AppImage names the folder `.mount_*`. Any other
+  // folder is one it unpacked, as `--appimage-extract-and-run` does where FUSE
+  // is missing: whatever this process starts from an AppImage, a restart or
+  // an update's first run, must unpack it too, which the variable asks.
+  if (!NodePath.basename(appDir).startsWith(".mount_")) {
+    process.env["APPIMAGE_EXTRACT_AND_RUN"] = "1";
+  }
+  return appImage;
 })();
 
 /**
@@ -49,15 +55,25 @@ const START_ONCE_GONE = [
  * descriptors, so that runtime and its mount never exit (as T3 Code found),
  * and races this one for the profile. A detached Bash, which the AppImage's
  * own launcher needs, closes what it inherited and waits for this process to
- * exit, with `-p` so that no `BASH_ENV` runs first. Anything else is
- * restarted by Electron.
+ * exit, with `-p` so that no `BASH_ENV` runs first. It is given the
+ * arguments this process was, and an AppImage that runs unpacked starts
+ * unpacked again. Anything else is restarted by Electron.
  */
 export const restartApp = (appImage: string | null = runningAppImage): void => {
   if (appImage === null) app.relaunch();
   else {
     NodeChildProcess.spawn(
       "bash",
-      ["-p", "-c", START_ONCE_GONE, "j3-bots-restart", String(process.pid), appImage],
+      [
+        "-p",
+        "-c",
+        START_ONCE_GONE,
+        "j3-bots-restart",
+        String(process.pid),
+        appImage,
+        // The arguments the app was started with, such as `--no-sandbox`.
+        ...process.argv.slice(1),
+      ],
       { detached: true, stdio: "ignore" },
     ).unref();
   }
