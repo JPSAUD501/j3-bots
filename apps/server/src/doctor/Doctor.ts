@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as NetAddress from "effect/net/NetAddress";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import rootPackage from "../../../../package.json" with { type: "json" };
 import { AdminClient } from "../admin/AdminClient.ts";
@@ -13,7 +14,14 @@ import * as ServerConfig from "../config.ts";
 import { findHarness, type Harness, HARNESSES } from "../engine/harnesses.ts";
 import { PROVIDER_HOMES } from "../home/entries.ts";
 import * as Home from "../home/Home.ts";
-import { listSnapshots, takenAt } from "../install/snapshot.ts";
+import {
+  installFolder,
+  launchedRelease,
+  recordedLauncher,
+  startedRelease,
+  startsInstall,
+} from "../install/layout.ts";
+import { listSnapshots, rollbackSnapshot, takenAt } from "../install/snapshot.ts";
 import * as Installation from "../installation.ts";
 import { socketOwner } from "../service/owner.ts";
 import * as Unit from "../service/unit.ts";
@@ -137,21 +145,94 @@ const diskCheck = Effect.fn("doctor.disk")(function* (home: string) {
   return check("Disk space", "ok", `${amount} free where ${home} is.`);
 });
 
-/** The newest snapshot an update took, which `j3-bots update --rollback` puts back. */
-const snapshotCheck = Effect.fn("doctor.snapshot")(function* (home: string) {
-  const newest = (yield* listSnapshots(home))[0];
-  if (newest === undefined) {
+/**
+ * The release the installed service starts, by version, when install.sh
+ * installed it, and the one the j3-bots command runs, if it can tell.
+ */
+const installedReleases = Effect.fn("doctor.installedReleases")(function* (
+  installation: Installation.Installation,
+  unitText: Option.Option<string>,
+) {
+  const path = yield* Path.Path;
+  const install = yield* installFolder(installation);
+  if (Option.isNone(install)) return Option.none();
+  const launcher = yield* recordedLauncher(install.value);
+  const command = Option.isSome(launcher)
+    ? Option.map(yield* launchedRelease(launcher.value), (release) => path.basename(release))
+    : Option.none<string>();
+  const execStart = Option.map(unitText, Unit.execStartOf);
+  const service =
+    Option.isSome(execStart) && (yield* startsInstall(execStart.value, install.value))
+      ? Option.map(yield* startedRelease(execStart.value, install.value), (release) =>
+          path.basename(release),
+        )
+      : Option.none<string>();
+  return Option.some({ service, command });
+});
+
+/**
+ * Whether the j3-bots command runs the release the service runs. An update or
+ * a rollback cut off after the unit was written, and before the command was
+ * pointed, leaves them apart.
+ */
+const commandCheck = (releases: {
+  readonly service: Option.Option<string>;
+  readonly command: Option.Option<string>;
+}) => {
+  if (Option.isNone(releases.service)) return Option.none<Check>();
+  const service = releases.service.value;
+  return Option.some(
+    Option.contains(releases.command, service)
+      ? check("Command", "ok", `j3-bots runs J3 Bots ${service}, as the service does.`)
+      : check(
+          "Command",
+          "warning",
+          Option.match(releases.command, {
+            onSome: (command) =>
+              `The service runs J3 Bots ${service}, but the j3-bots command runs ${command}: an update or a rollback stopped before it pointed the command.`,
+            onNone: () =>
+              `The service runs J3 Bots ${service}, but the j3-bots command is not one install.sh or an update wrote.`,
+          }),
+          `Run \`j3-bots update --version ${service}\`, which points the command at the release the service runs.`,
+        ),
+  );
+};
+
+/**
+ * The snapshot `j3-bots update --rollback` puts back while `running` runs,
+ * and a restore that did not finish, which the data directory holds part of.
+ */
+const snapshotCheck = Effect.fn("doctor.snapshot")(function* (
+  home: string,
+  running: Option.Option<string>,
+) {
+  const snapshots = yield* listSnapshots(home);
+  const unfinished = snapshots.find(({ restoring }) => restoring);
+  if (unfinished !== undefined) {
+    return check(
+      "Snapshot",
+      "problem",
+      `A restore from ${unfinished.folder} did not finish, so the data directory holds part of that snapshot. The service stays disabled until it does.`,
+      "Run `j3-bots update --rollback`, which finishes it.",
+    );
+  }
+  const chosen = Option.isSome(running)
+    ? yield* rollbackSnapshot(home, running.value)
+    : Option.fromNullishOr(snapshots[0]);
+  if (Option.isNone(chosen)) {
     return check(
       "Snapshot",
       "ok",
-      "None yet: `j3-bots update` copies the databases before it changes release.",
+      snapshots.length === 0
+        ? "None yet: `j3-bots update` copies the databases before it changes release."
+        : `None to roll back to: no snapshot was taken by an update to J3 Bots ${Option.getOrElse(running, () => "")}.`,
     );
   }
-  const { from, to } = newest.manifest;
+  const { from, to } = chosen.value.manifest;
   return check(
     "Snapshot",
     "ok",
-    `${newest.folder}, taken at ${takenAt(newest)} by the update from J3 Bots ${from.version} to ${to.version}.`,
+    `${chosen.value.folder}, taken at ${takenAt(chosen.value)} by the update from J3 Bots ${from.version} to ${to.version}: what \`j3-bots update --rollback\` puts back.`,
   );
 });
 
@@ -680,7 +761,15 @@ export const diagnose = Effect.gen(function* () {
   );
   checks.push(yield* homeCheck(config.home));
   checks.push(yield* diskCheck(config.home));
-  checks.push(yield* snapshotCheck(config.home));
+  const releases = yield* installedReleases(installation, unitText);
+  const running = Option.orElse(
+    Option.flatMap(releases, ({ service }) => service),
+    () =>
+      installation.layout._tag === "release"
+        ? Option.some(installation.layout.manifest.version)
+        : Option.none(),
+  );
+  checks.push(yield* snapshotCheck(config.home, running));
 
   // Only a server the report describes lends it live diagnostics.
   const status = live._tag === "described" ? Option.some(live.status) : Option.none();
@@ -715,6 +804,8 @@ export const diagnose = Effect.gen(function* () {
   checks.push(yield* webClientCheck(config, live, installation));
   checks.push(pairingCheck(status, live._tag === "outside"));
   checks.push(...(yield* serviceChecks(unitText)));
+  const command = Option.flatMap(releases, commandCheck);
+  if (Option.isSome(command)) checks.push(command.value);
   if (Option.isSome(shellSettings)) checks.push(shellSettings.value);
   return checks;
 });

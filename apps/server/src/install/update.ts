@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as EngineLive from "@j3-bots/engine-t3/live";
+import * as Console from "effect/Console";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import type * as PlatformError from "effect/PlatformError";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { AdminClient } from "../admin/AdminClient.ts";
@@ -19,9 +22,12 @@ import * as Unit from "../service/unit.ts";
 import { Host } from "../system/Host.ts";
 import { Systemd } from "../system/Systemd.ts";
 import {
+  checkOwnFolder,
   installedVersions,
   installFolder,
+  launchedRelease,
   recordedLauncher,
+  startedRelease,
   startsInstall,
   VERSIONS,
   writeLauncher,
@@ -30,13 +36,15 @@ import { fetchRelease, isRelease, targetVersion } from "./release.ts";
 import {
   listSnapshots,
   pruneSnapshots,
+  restoreBytes,
   restoreSnapshot,
+  rollbackSnapshot,
   type Snapshot,
   type SnapshotRelease,
   snapshotBytes,
   takeSnapshot,
 } from "./snapshot.ts";
-import { type Side, StepFailed, switchOver, type SwitchOutcome } from "./switch.ts";
+import { rollBackOver, type Side, StepFailed, switchOver, type SwitchOutcome } from "./switch.ts";
 
 // `j3-bots update` and `j3-bots update --rollback`, run by the release that is
 // installed, which can always start itself again
@@ -44,6 +52,12 @@ import { type Side, StepFailed, switchOver, type SwitchOutcome } from "./switch.
 // update prepares without changing anything (the release downloaded and
 // checked into `versions/`, its engine fetched), then switches (`switch.ts`),
 // then keeps two of everything: releases, snapshots and engine runtimes.
+//
+// With the service installed, the release that runs is the one its unit
+// starts, not the one the command runs: an update cut off after the new
+// release's `service install` leaves the unit on the new release and the
+// command on the old one, and the next `update` to that release only points
+// the command at it.
 
 /** How long a started release has to answer as itself with its engine ready. Its engine is fetched already. */
 const READY_WITHIN = Duration.minutes(5);
@@ -70,6 +84,7 @@ class UpdateRefused extends Schema.TaggedError<UpdateRefused>()("UpdateRefused",
     "no-snapshot",
     "snapshot-elsewhere",
     "release-gone",
+    "restore-unfinished",
   ]),
   detail: Schema.String,
 }) {
@@ -94,7 +109,9 @@ class UpdateRefused extends Schema.TaggedError<UpdateRefused>()("UpdateRefused",
       case "snapshot-elsewhere":
         return this.detail;
       case "release-gone":
-        return `J3 Bots ${this.detail}, the release the newest snapshot was taken from, is no longer in this install. Install it with install.sh --version ${this.detail} after \`j3-bots uninstall\`, or put the snapshot back by hand.`;
+        return `J3 Bots ${this.detail}, the release the snapshot to roll back to was taken from, is no longer in this install. Install it with install.sh --version ${this.detail} after \`j3-bots uninstall\`, or put the snapshot back by hand.`;
+      case "restore-unfinished":
+        return `A restore from the snapshot in ${this.detail} did not finish, so the data directory holds part of it and the service stays disabled. \`j3-bots update --rollback\` finishes it. Nothing was changed.`;
     }
   }
 }
@@ -104,9 +121,12 @@ interface Installed {
   readonly install: string;
   /** The j3-bots command it recorded. */
   readonly launcher: string;
+  /** The release that runs: the one the unit starts, with the service installed; else the command's. */
   readonly release: Installation.ReleaseManifest;
   /** The folder of the release that runs, in `versions/`. */
   readonly root: string;
+  /** The release folder the command runs, when it is a command install.sh or an update wrote. */
+  readonly command: Option.Option<string>;
   /** The data directory: the service's, else this shell's. */
   readonly home: string;
   /** Whether a systemd unit runs this install. */
@@ -140,11 +160,27 @@ const located = Effect.gen(function* () {
   }
   const environment = own && Option.isSome(unit) ? Unit.environmentOf(unit.value) : new Map();
   const home = environment.get("J3_HOME") ?? (yield* ServerConfig.resolveHome);
+  // The release the unit starts, when it names one that is still a release.
+  const started =
+    own && Option.isSome(unit)
+      ? yield* startedRelease(Unit.execStartOf(unit.value), install.value)
+      : Option.none<string>();
+  const startedManifest = Option.isSome(started)
+    ? Option.map(yield* releaseOf(started.value), (manifest) => ({
+        root: started.value,
+        manifest,
+      }))
+    : Option.none();
+  const running = Option.getOrElse(startedManifest, () => ({
+    root: layout.root,
+    manifest: layout.manifest,
+  }));
   return {
     install: install.value,
     launcher: launcher.value,
-    release: layout.manifest,
-    root: layout.root,
+    release: running.manifest,
+    root: running.root,
+    command: yield* launchedRelease(launcher.value),
     home,
     service: own,
     environment: {
@@ -155,25 +191,62 @@ const located = Effect.gen(function* () {
   } satisfies Installed;
 });
 
-/** Runs the j3-bots of the release at `root` with `args`, its output the operator's: whether it succeeded. */
+/**
+ * Runs the j3-bots of the release at `root` with `args`: whether it
+ * succeeded. Its output is relayed through this process line by line, as it
+ * comes with `relay`, or only when it fails with `on-failure`, so a terminal
+ * that hung up never fails it. It runs in a session of its own, so a hangup
+ * never reaches it either.
+ */
 const runRelease = Effect.fn("update.runRelease")(function* (
   installed: Installed,
   root: string,
   args: ReadonlyArray<string>,
+  output: "relay" | "on-failure",
 ) {
   const path = yield* Path.Path;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const exit = yield* spawner
-    .exitCode(
-      ChildProcess.make(path.join(root, "bin", "j3-bots"), [...args], {
-        env: installed.environment,
-        extendEnv: true,
-        stdin: "ignore",
-        stdout: "inherit",
-        stderr: "inherit",
-      }),
-    )
-    .pipe(Effect.orElseSucceed(() => -1));
+  const kept: Array<readonly [line: string, error: boolean]> = [];
+  const lines = (stream: Stream.Stream<Uint8Array, PlatformError.PlatformError>, error: boolean) =>
+    stream.pipe(
+      Stream.decodeText,
+      Stream.splitLines,
+      Stream.runForEach((line) =>
+        output === "relay"
+          ? error
+            ? Console.error(line)
+            : Console.log(line)
+          : Effect.sync(() => kept.push([line, error])),
+      ),
+    );
+  const exit = yield* Effect.scoped(
+    Effect.gen(function* () {
+      const handle = yield* spawner.spawn(
+        ChildProcess.make(path.join(root, "bin", "j3-bots"), [...args], {
+          env: installed.environment,
+          extendEnv: true,
+          detached: true,
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        }),
+      );
+      const [, , code] = yield* Effect.all(
+        [lines(handle.stdout, false), lines(handle.stderr, true), handle.exitCode],
+        { concurrency: "unbounded" },
+      );
+      return Number(code);
+    }),
+  ).pipe(Effect.orElseSucceed(() => -1));
+  if (exit !== 0) {
+    yield* Effect.forEach(
+      kept,
+      ([line, error]) => (error ? Console.error(line) : Console.log(line)),
+      {
+        discard: true,
+      },
+    );
+  }
   return exit === 0;
 });
 
@@ -260,8 +333,13 @@ const releaseSteps = (
   stop: Effect.gen(function* () {
     yield* (yield* Systemd).stop(Unit.UNIT_NAME);
   }).pipe(Effect.mapError((cause) => new StepFailed({ step: "stop", reason: cause.message }))),
+  disable: Effect.gen(function* () {
+    const systemd = yield* Systemd;
+    yield* systemd.stop(Unit.UNIT_NAME);
+    yield* systemd.disableAndStop(Unit.UNIT_NAME);
+  }).pipe(Effect.mapError((cause) => new StepFailed({ step: "stop", reason: cause.message }))),
   start: (side: Side) =>
-    runRelease(installed, releases[side].root, ["service", "install"]).pipe(
+    runRelease(installed, releases[side].root, ["service", "install"], "on-failure").pipe(
       Effect.flatMap((ok) =>
         ok
           ? Effect.void
@@ -356,6 +434,8 @@ const prune = Effect.fn("update.prune")(function* (
 
 type UpdateResult =
   | { readonly _tag: "current"; readonly version: string }
+  /** The service ran `version` already; the command now runs it too. */
+  | { readonly _tag: "repointed"; readonly version: string }
   | { readonly _tag: "declined" }
   | {
       readonly _tag: "switched";
@@ -367,10 +447,21 @@ type UpdateResult =
       readonly pruning: Option.Option<string>;
     };
 
+/** Fails while a restore from a snapshot has not finished: the home holds part of it. */
+const checkNoUnfinishedRestore = Effect.fn("update.checkNoUnfinishedRestore")(function* (
+  home: string,
+) {
+  const unfinished = (yield* listSnapshots(home)).find(({ restoring }) => restoring);
+  if (unfinished !== undefined) {
+    return yield* new UpdateRefused({ reason: "restore-unfinished", detail: unfinished.folder });
+  }
+});
+
 /**
  * Updates the install to `version`, or the latest stable release. While the
  * service runs bots' work, which stopping it stops, `confirm` is asked first,
- * with how many bots, or none when that cannot be told.
+ * with how many bots, or none when that cannot be told. When the service runs
+ * that release already, the command is only pointed at it.
  */
 export const update = Effect.fn("update.update")(function* <R>(options: {
   readonly version: Option.Option<string>;
@@ -379,9 +470,20 @@ export const update = Effect.fn("update.update")(function* <R>(options: {
 }) {
   const installed = yield* located;
   const path = yield* Path.Path;
+  yield* checkNoUnfinishedRestore(installed.home);
   const from = installed.release;
   const version = yield* targetVersion(options.version);
-  if (version === from.version) return { _tag: "current", version } satisfies UpdateResult;
+  if (version === from.version) {
+    if (Option.exists(installed.command, (release) => path.basename(release) === version)) {
+      return { _tag: "current", version } satisfies UpdateResult;
+    }
+    yield* writeLauncher({
+      install: installed.install,
+      launcher: installed.launcher,
+      release: installed.root,
+    });
+    return { _tag: "repointed", version } satisfies UpdateResult;
+  }
 
   yield* roomFor(
     installed.home,
@@ -400,7 +502,7 @@ export const update = Effect.fn("update.update")(function* <R>(options: {
       ? `J3 Bots ${version} is already in ${fetched.root}.`
       : `J3 Bots ${version} is checked and unpacked in ${fetched.root}.`,
   );
-  if (!(yield* runRelease(installed, fetched.root, ["engine", "fetch"]))) {
+  if (!(yield* runRelease(installed, fetched.root, ["engine", "fetch"], "relay"))) {
     return yield* new UpdateRefused({ reason: "engine-fetch", detail: version });
   }
   const to = Option.getOrUndefined(yield* releaseOf(fetched.root));
@@ -428,15 +530,11 @@ export const update = Effect.fn("update.update")(function* <R>(options: {
       : "Copying the databases…",
   );
   const outcome = yield* switchOver<Snapshot, SwitchServices>({
+    ...steps,
     service: installed.service,
-    stop: steps.stop,
     snapshot: takeSnapshot({ home: installed.home, from: fromRelease, to: toRelease }).pipe(
       Effect.mapError((cause) => new StepFailed({ step: "snapshot", reason: cause.message })),
     ),
-    start: steps.start,
-    ready: steps.ready,
-    restore: steps.restore,
-    pointCommand: steps.pointCommand("new"),
   });
   const pruning =
     outcome._tag === "updated"
@@ -469,53 +567,55 @@ type RollbackResult =
     };
 
 /**
- * Puts back the newest snapshot and starts the release it was taken from,
- * once `confirm` agrees: what the operator asks for with `--rollback`. Only a
- * snapshot taken by the update to the release that runs now.
+ * Puts back `rollbackSnapshot` and starts the release it was taken from, once
+ * `confirm` agrees: what the operator asks for with `--rollback`. Before
+ * anything changes, the install folder, its `versions/` and that release's
+ * folder must be this user's alone to change, as an update checks them, and
+ * there must be room for the copies the restore makes.
  */
 export const rollBack = Effect.fn("update.rollBack")(function* <R>(options: {
   readonly confirm: (snapshot: Snapshot) => Effect.Effect<boolean, never, R>;
 }) {
   const installed = yield* located;
   const path = yield* Path.Path;
-  const newest = (yield* listSnapshots(installed.home))[0];
-  if (newest === undefined) {
-    return yield* new UpdateRefused({ reason: "no-snapshot", detail: installed.home });
-  }
-  const { from, to } = newest.manifest;
-  if (to.version !== installed.release.version) {
+  const chosen = yield* rollbackSnapshot(installed.home, installed.release.version);
+  if (Option.isNone(chosen)) {
+    const newest = (yield* listSnapshots(installed.home))[0];
+    if (newest === undefined) {
+      return yield* new UpdateRefused({ reason: "no-snapshot", detail: installed.home });
+    }
     return yield* new UpdateRefused({
       reason: "snapshot-elsewhere",
-      detail: `The newest snapshot, ${newest.folder}, was taken by the update from J3 Bots ${from.version} to ${to.version}, but ${installed.release.version} is installed, so it is not the data to roll back to. Nothing was changed.`,
+      detail: `No snapshot in ${path.dirname(newest.folder)} was taken by an update to J3 Bots ${installed.release.version}, the release that runs, so none is the data to roll back to. The newest, ${newest.folder}, was taken by the update from ${newest.manifest.from.version} to ${newest.manifest.to.version}. Nothing was changed.`,
     });
   }
-  const oldRoot = path.join(installed.install, VERSIONS, from.version);
+  const snapshot = chosen.value;
+  const { from, to } = snapshot.manifest;
+  const versions = path.join(installed.install, VERSIONS);
+  const oldRoot = path.join(versions, from.version);
   if (!(yield* isRelease(oldRoot))) {
     return yield* new UpdateRefused({ reason: "release-gone", detail: from.version });
   }
+  for (const folder of [installed.install, versions, oldRoot]) yield* checkOwnFolder(folder);
+  yield* roomFor(
+    installed.home,
+    (yield* restoreBytes(snapshot)) + HOME_ROOM,
+    "Putting the snapshot back",
+  );
   yield* checkNoOutsideServer(installed);
-  if (!(yield* options.confirm(newest))) return { _tag: "declined" } satisfies RollbackResult;
+  if (!(yield* options.confirm(snapshot))) return { _tag: "declined" } satisfies RollbackResult;
 
   const steps = releaseSteps(installed, {
     old: { version: from.version, root: oldRoot },
-    new: { version: to.version, root: path.join(installed.install, VERSIONS, to.version) },
+    new: { version: to.version, root: installed.root },
   });
-  const failed = yield* Effect.gen(function* () {
-    if (installed.service) yield* steps.stop;
-    yield* steps.restore(newest);
-    if (installed.service) {
-      yield* steps.start("old");
-      yield* steps.ready("old");
-    }
-    yield* steps.pointCommand("old");
-  }).pipe(
-    Effect.as(Option.none<StepFailed>()),
-    Effect.catch((step) => Effect.succeedSome(step)),
-    Effect.uninterruptible,
+  const failed = yield* rollBackOver<Snapshot, SwitchServices>(
+    { ...steps, service: installed.service },
+    snapshot,
   );
   return {
     _tag: "rolled-back",
-    snapshot: newest,
+    snapshot,
     service: installed.service,
     failed,
   } satisfies RollbackResult;

@@ -33,6 +33,33 @@ const rollbackFlag = Flag.Boolean("rollback").pipe(
 
 const LOG = "Read why with `journalctl --user -u j3-bots -n 100`.";
 
+/**
+ * Runs `effect` with this process kept alive when its terminal hangs up, as
+ * when an SSH connection drops: an update cut off midway leaves the service
+ * stopped or the command on the release before. The releases it runs are in
+ * sessions of their own, which a hangup does not reach, with their output
+ * relayed through this process; output to a terminal that is gone is dropped,
+ * as Node's console drops write errors.
+ */
+const carryingOnAfterHangup = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      const ignore = () => {};
+      process.on("SIGHUP", ignore);
+      return ignore;
+    }),
+    () => effect,
+    (ignore) => Effect.sync(() => process.off("SIGHUP", ignore)),
+  );
+
+/** What a failed restore leaves, when the step that failed was the restore. */
+const unfinishedRestore = (step: StepFailed) =>
+  step.step === "restore"
+    ? [
+        "The service is disabled until the restore finishes: `j3-bots update --rollback` finishes it.",
+      ]
+    : [];
+
 /** Asks `question` on a terminal, or answers no without one. */
 const ask = Effect.fn("update.ask")(function* (question: string) {
   if (!(yield* (yield* Stdio.Stdio).stdinIsTerminal)) return false;
@@ -62,6 +89,10 @@ const runUpdate = Effect.fn("update.run")(function* (version: Option.Option<stri
   switch (result._tag) {
     case "current":
       return yield* Console.log(`J3 Bots ${result.version} is installed already.`);
+    case "repointed":
+      return yield* Console.log(
+        `The service runs J3 Bots ${result.version} already; the j3-bots command now runs it too.`,
+      );
     case "declined":
       return yield* refuse(
         "Bots have work running, which the update would stop, so nothing was changed. Run this again once it is done, or with --yes to stop it.",
@@ -76,11 +107,11 @@ const runUpdate = Effect.fn("update.run")(function* (version: Option.Option<stri
         result.service
           ? `J3 Bots ${to} runs, and its engine is ready. ${from} and the databases as they were are kept: \`j3-bots update --rollback\` puts them back.`
           : `J3 Bots ${to} is installed. ${from} and the databases as they were are kept: \`j3-bots update --rollback\` puts them back. Start the server with \`j3-bots serve\`.`,
-        `Snapshot: ${outcome.snapshot.folder}`,
+        `Snapshot: ${outcome.snapshot.folder}. The two newest snapshots are kept; an older one is removed with what its rollbacks replaced, in its replaced-* folders.`,
       ];
       if (Option.isSome(outcome.command)) {
         lines.push(
-          `${failure(outcome.command.value)} The service runs ${to} all the same; run install.sh --version ${to} to write the command again.`,
+          `${failure(outcome.command.value)} The service runs ${to} all the same; \`j3-bots update --version ${to}\` points the command at it.`,
         );
       }
       if (Option.isSome(result.pruning)) {
@@ -92,11 +123,18 @@ const runUpdate = Effect.fn("update.run")(function* (version: Option.Option<stri
       return yield* refuse(
         [
           `The update to J3 Bots ${to} did not finish: ${failure(outcome.failed)}`,
-          Option.isSome(outcome.restored)
-            ? `J3 Bots ${from} runs again, on the databases as they were before the update. ${result.service ? LOG : ""}`.trim()
-            : result.service
-              ? `J3 Bots ${from} runs again; the databases were not changed.`
-              : `J3 Bots ${from} stays installed; the databases were not changed.`,
+          ...Option.match(outcome.restored, {
+            onSome: (snapshot) => [
+              `J3 Bots ${from} runs again, on the databases as they were before the update.`,
+              `What J3 Bots ${to} recorded while the update waited for it, such as a message sent then, is not in them: it is kept in ${snapshot.folder}, in its replaced-* folder.`,
+              ...(result.service ? [LOG] : []),
+            ],
+            onNone: () => [
+              result.service
+                ? `J3 Bots ${from} runs again; the databases were not changed.`
+                : `J3 Bots ${from} stays installed; the databases were not changed.`,
+            ],
+          }),
         ].join("\n"),
       );
     case "rollback-failed":
@@ -109,6 +147,7 @@ const runUpdate = Effect.fn("update.run")(function* (version: Option.Option<stri
             onSome: (snapshot) =>
               `The databases as they were before the update are in ${snapshot.folder}.`,
           }),
+          ...unfinishedRestore(outcome.rollback),
           LOG,
         ].join("\n"),
       );
@@ -137,6 +176,7 @@ const runRollback = Effect.fn("update.runRollback")(function* (yes: boolean) {
       [
         `The rollback to J3 Bots ${from.version} did not finish: ${failure(result.failed.value)}`,
         `The snapshot is in ${result.snapshot.folder}; what it replaced is beside it, in its replaced-* folder.`,
+        ...unfinishedRestore(result.failed.value),
         LOG,
       ].join("\n"),
     );
@@ -146,7 +186,7 @@ const runRollback = Effect.fn("update.runRollback")(function* (yes: boolean) {
       result.service
         ? `J3 Bots ${from.version} runs again, on the databases as they were at ${takenAt(result.snapshot)}, and its engine is ready.`
         : `J3 Bots ${from.version} is installed again, with the databases as they were at ${takenAt(result.snapshot)}.`,
-      `What the rollback replaced is kept in ${result.snapshot.folder}, in its replaced-* folder.`,
+      `What the rollback replaced is kept in ${result.snapshot.folder}, in its replaced-* folder, until an update removes that snapshot.`,
     ].join("\n"),
   );
 });
@@ -168,6 +208,6 @@ export const updateCommand = Command.make("update", {
         );
       }
       return yield* runRollback(yes);
-    }).pipe(Effect.provide(FetchHttpClient.layer)),
+    }).pipe(carryingOnAfterHangup, Effect.provide(FetchHttpClient.layer)),
   ),
 );

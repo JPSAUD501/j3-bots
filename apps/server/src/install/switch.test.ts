@@ -2,23 +2,26 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { type Side, StepFailed, type SwitchSteps, switchOver } from "./switch.ts";
+import { rollBackOver, type Side, StepFailed, type SwitchSteps, switchOver } from "./switch.ts";
 
 type Step = StepFailed["step"];
 
 /**
- * A host as the switch changes it: the release the unit names, the release
- * that runs, the release the command runs, and the databases. A release that
- * starts migrates them, as a newer one would; a failing start does so too
- * before it fails, the worst case. Each step fails when `failing` names it,
- * or names its nth call as `step@n`.
+ * A host as the switch changes it: the release the unit names, whether the
+ * unit is enabled (a reboot starts it), the release that runs, the release
+ * the command runs, and the databases. A release that starts migrates them,
+ * as a newer one would; a failing start does so too before it fails, the
+ * worst case. A failing restore leaves them half put back. Each step fails
+ * when `failing` names it, or names its nth call as `step@n`. `running` is
+ * the side the rollback starts from: with `"new"`, the update succeeded.
  */
-const hostWith = (failing: ReadonlyArray<string>, service = true) => {
+const hostWith = (failing: ReadonlyArray<string>, service = true, running: Side = "old") => {
   const host = {
-    unit: "old" as Side,
-    running: service ? Option.some<Side>("old") : Option.none<Side>(),
-    command: "old" as Side,
-    data: "as-before" as "as-before" | "migrated",
+    unit: running,
+    enabled: service,
+    running: service ? Option.some<Side>(running) : Option.none<Side>(),
+    command: running,
+    data: (running === "old" ? "as-before" : "migrated") as "as-before" | "migrated" | "half",
     log: [] as Array<Step>,
   };
   const calls = new Map<Step, number>();
@@ -35,8 +38,10 @@ const hostWith = (failing: ReadonlyArray<string>, service = true) => {
     });
   const start = (side: Side) => {
     const step = side === "new" ? "start-new" : "start-old";
-    // `service install` writes the unit and starts the server before it can fail.
+    // `service install` writes the unit, enables it and starts the server before it can fail.
+    assert.notStrictEqual(host.data, "half", "no release starts on a half-restored home");
     host.unit = side;
+    host.enabled = true;
     host.running = Option.some(side);
     if (side === "new") host.data = "migrated";
     return attempt(step, () => {});
@@ -46,6 +51,10 @@ const hostWith = (failing: ReadonlyArray<string>, service = true) => {
     stop: attempt("stop", () => {
       host.running = Option.none();
     }),
+    disable: attempt("stop", () => {
+      host.running = Option.none();
+      host.enabled = false;
+    }),
     snapshot: attempt("snapshot", () => {}).pipe(Effect.as("snapshot" as const)),
     start: (side) => Effect.suspend(() => start(side)),
     ready: (side) =>
@@ -53,13 +62,18 @@ const hostWith = (failing: ReadonlyArray<string>, service = true) => {
         assert.isTrue(Option.contains(host.running, side), `${side} is ready only while it runs`);
       }),
     restore: () =>
-      attempt("restore", () => {
+      Effect.suspend(() => {
         assert.isTrue(Option.isNone(host.running), "the files are put back with no server on them");
-        host.data = "as-before";
+        assert.isFalse(host.enabled, "a reboot during a restore starts nothing");
+        host.data = "half";
+        return attempt("restore", () => {
+          host.data = "as-before";
+        });
       }),
-    pointCommand: attempt("command", () => {
-      host.command = "new";
-    }),
+    pointCommand: (side) =>
+      attempt("command", () => {
+        host.command = side;
+      }),
   };
   return { host, steps };
 };
@@ -67,6 +81,7 @@ const hostWith = (failing: ReadonlyArray<string>, service = true) => {
 /** The old release runs again from the unit and the command, on the databases as they were. */
 const assertBackToOld = (host: ReturnType<typeof hostWith>["host"]) => {
   assert.strictEqual(host.unit, "old");
+  assert.isTrue(host.enabled);
   assert.isTrue(Option.contains(host.running, "old"));
   assert.strictEqual(host.command, "old");
   assert.strictEqual(host.data, "as-before");
@@ -147,6 +162,10 @@ describe("an update's switch", () => {
       assert.isTrue(Option.contains(outcome.snapshot, "snapshot"));
       assert.deepStrictEqual(host.log.slice(-2), ["stop", "restore"]);
       assert.strictEqual(host.command, "old");
+      // Half put back, and nothing starts the service until a restore finishes.
+      assert.strictEqual(host.data, "half");
+      assert.isFalse(host.enabled);
+      assert.isTrue(Option.isNone(host.running));
     }),
   );
 
@@ -191,5 +210,39 @@ describe("an update's switch", () => {
         }),
       );
     }
+  });
+
+  describe("a rollback the operator asks for", () => {
+    it.effect("puts the databases back, then starts the old release and points the command", () =>
+      Effect.gen(function* () {
+        const { host, steps } = hostWith([], true, "new");
+        const failed = yield* rollBackOver(steps, "snapshot");
+        assert.isTrue(Option.isNone(failed));
+        assert.deepStrictEqual(host.log, ["stop", "restore", "start-old", "await-old", "command"]);
+        assertBackToOld(host);
+      }),
+    );
+
+    it.effect("leaves the service disabled and stopped when the restore fails", () =>
+      Effect.gen(function* () {
+        const { host, steps } = hostWith(["restore"], true, "new");
+        const failed = yield* rollBackOver(steps, "snapshot");
+        assert.strictEqual(Option.getOrThrow(failed).step, "restore");
+        assert.deepStrictEqual(host.log, ["stop", "restore"]);
+        assert.isFalse(host.enabled);
+        assert.isTrue(Option.isNone(host.running));
+        assert.strictEqual(host.command, "new");
+      }),
+    );
+
+    it.effect("finishes a restore a cut-off rollback left, when run again", () =>
+      Effect.gen(function* () {
+        const { host, steps } = hostWith(["restore@1"], true, "new");
+        yield* rollBackOver(steps, "snapshot");
+        const failed = yield* rollBackOver(steps, "snapshot");
+        assert.isTrue(Option.isNone(failed));
+        assertBackToOld(host);
+      }),
+    );
   });
 });

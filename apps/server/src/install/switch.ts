@@ -11,10 +11,12 @@ import * as Schema from "effect/Schema";
 //
 // A failure before the new release starts leaves the databases untouched, and
 // starts the old release again. A failure after it started stops it, puts the
-// snapshot back and starts the old release again: the new server never
-// answered as ready, so no turn ran on the new databases. The unit is only
-// ever written by a release's own `service install`, so it names one release
+// snapshot back and starts the old release again. The unit is only ever
+// written by a release's own `service install`, so it names one release
 // whole, and the command is pointed at the new release only once it is ready.
+// Before any restore the service is disabled as well as stopped, and only a
+// release's `service install` enables it again, after the restore ended: a
+// reboot never starts a server on a home that holds part of a snapshot.
 
 /** Which of the two releases a step is about. */
 export type Side = "old" | "new";
@@ -38,8 +40,10 @@ export class StepFailed extends Schema.TaggedError<StepFailed>()("StepFailed", {
 export interface SwitchSteps<Snapshot, R> {
   /** Whether a service runs this install. Without one, nothing is stopped or started. */
   readonly service: boolean;
-  /** Stops the service, and clears its failed state. */
+  /** Stops the service, and clears its failed state. It stays enabled. */
   readonly stop: Effect.Effect<void, StepFailed, R>;
+  /** Stops the service, clears its failed state, and disables it: nothing starts it until a `start`. */
+  readonly disable: Effect.Effect<void, StepFailed, R>;
   /** Copies the databases and settings; a snapshot that fails leaves nothing behind. */
   readonly snapshot: Effect.Effect<Snapshot, StepFailed, R>;
   /** Runs that release's own `service install`, which writes the unit for it and starts it. */
@@ -47,8 +51,8 @@ export interface SwitchSteps<Snapshot, R> {
   /** Waits, bounded, for the service's server to answer as that release, its engine ready. */
   readonly ready: (side: Side) => Effect.Effect<void, StepFailed, R>;
   readonly restore: (snapshot: Snapshot) => Effect.Effect<void, StepFailed, R>;
-  /** Points the j3-bots command at the new release. */
-  readonly pointCommand: Effect.Effect<void, StepFailed, R>;
+  /** Points the j3-bots command at that release. */
+  readonly pointCommand: (side: Side) => Effect.Effect<void, StepFailed, R>;
 }
 
 export type SwitchOutcome<Snapshot> =
@@ -88,7 +92,7 @@ export const switchOver = <Snapshot, R>(
     const back = (failed: StepFailed, snapshot: Option.Option<Snapshot>) =>
       Effect.gen(function* () {
         if (Option.isSome(snapshot)) {
-          if (steps.service) yield* steps.stop;
+          if (steps.service) yield* steps.disable;
           yield* steps.restore(snapshot.value);
         }
         if (steps.service) {
@@ -113,7 +117,7 @@ export const switchOver = <Snapshot, R>(
       const started = yield* Effect.result(Effect.andThen(steps.start("new"), steps.ready("new")));
       if (started._tag === "Failure") return yield* back(started.failure, Option.some(snapshot));
     }
-    const pointed = yield* Effect.result(steps.pointCommand);
+    const pointed = yield* Effect.result(steps.pointCommand("new"));
     if (pointed._tag === "Failure" && !steps.service) {
       // No server ran on the new release: nothing to put back.
       return { _tag: "rolled-back", failed: pointed.failure, restored: Option.none() } as const;
@@ -124,3 +128,27 @@ export const switchOver = <Snapshot, R>(
       command: pointed._tag === "Failure" ? Option.some(pointed.failure) : Option.none(),
     } as const;
   }).pipe(Effect.uninterruptible);
+
+/**
+ * What `j3-bots update --rollback` does once the operator agreed: puts
+ * `snapshot` back and starts the old release, then points the command at it.
+ * Not interruptible. Stops at the first step that fails, which it answers; a
+ * restore that fails leaves the service disabled.
+ */
+export const rollBackOver = <Snapshot, R>(
+  steps: Omit<SwitchSteps<Snapshot, R>, "stop" | "snapshot">,
+  snapshot: Snapshot,
+): Effect.Effect<Option.Option<StepFailed>, never, R> =>
+  Effect.gen(function* () {
+    if (steps.service) yield* steps.disable;
+    yield* steps.restore(snapshot);
+    if (steps.service) {
+      yield* steps.start("old");
+      yield* steps.ready("old");
+    }
+    yield* steps.pointCommand("old");
+  }).pipe(
+    Effect.as(Option.none<StepFailed>()),
+    Effect.catch((failed) => Effect.succeedSome(failed)),
+    Effect.uninterruptible,
+  );

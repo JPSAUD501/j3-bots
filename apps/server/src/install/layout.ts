@@ -92,6 +92,42 @@ export const isOwnLauncher = Effect.fn("install.isOwnLauncher")(function* (
   );
 });
 
+/** The release folder the command at `file` runs, when install.sh or an update wrote it. */
+export const launchedRelease = Effect.fn("install.launchedRelease")(function* (file: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const text = yield* fs.readFileString(file).pipe(Effect.option);
+  return Option.flatMap(text, (launcher) => {
+    const release = LAUNCHED_RELEASE.exec(launcher)?.[1];
+    return release !== undefined && launcher === launcherText(release)
+      ? Option.some(release)
+      : Option.none();
+  });
+});
+
+/**
+ * The release folder in the install's `versions/` that a service whose
+ * `ExecStart=` is `command` runs: the one its Node or its server bundle is
+ * in. `None` when neither is in a release there, as for a unit that starts
+ * the command install.sh recorded.
+ */
+export const startedRelease = Effect.fn("install.startedRelease")(function* (
+  command: ReadonlyArray<string>,
+  install: string,
+) {
+  const path = yield* Path.Path;
+  const versions = yield* resolved(path.join(install, VERSIONS));
+  for (const word of command.slice(0, 2)) {
+    if (!path.isAbsolute(word)) continue;
+    const real = yield* resolved(word);
+    if (!real.startsWith(`${versions}/`)) continue;
+    const version = real.slice(versions.length + 1).split("/")[0];
+    if (version !== undefined && version !== "") {
+      return Option.some(path.join(install, VERSIONS, version));
+    }
+  }
+  return Option.none<string>();
+});
+
 /** The command the install at `install` recorded, if it recorded one. */
 export const recordedLauncher = Effect.fn("install.recordedLauncher")(function* (install: string) {
   const fs = yield* FileSystem.FileSystem;

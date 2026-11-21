@@ -8,7 +8,7 @@ export {
   inspectInstall,
   pruneRuntimes,
 } from "./t3/Install.ts";
-export { recordedMigration, stateFiles } from "./t3/State.ts";
+export { stateFiles } from "./t3/State.ts";
 export { writtenFolders } from "./t3/PrivateFiles.ts";
 export { activeConnection } from "./t3/Provision.ts";
 export { engineEnvironment } from "./t3/Command.ts";

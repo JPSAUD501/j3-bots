@@ -5,8 +5,17 @@ import * as SqliteMigrator from "@effect/sql-sqlite-node/SqliteMigrator";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import { listSnapshots, restoreSnapshot, takeSnapshot } from "./snapshot.ts";
+import * as PlatformError from "effect/PlatformError";
+import * as TestClock from "effect/testing/TestClock";
+import {
+  listSnapshots,
+  pruneSnapshots,
+  restoreSnapshot,
+  rollbackSnapshot,
+  takeSnapshot,
+} from "./snapshot.ts";
 
 /** Every file and folder under `folder`, by path relative to it, with its permission bits. */
 const modesUnder = (folder: string) =>
@@ -19,6 +28,50 @@ const modesUnder = (folder: string) =>
     }
     return modes;
   });
+
+/** Writes `files`, by path relative to `home`, with their text. */
+const writeAll = (home: string, files: Readonly<Record<string, string>>) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    for (const [file, text] of Object.entries(files)) {
+      yield* fs.makeDirectory(path.dirname(path.join(home, file)), { recursive: true });
+      yield* fs.writeFileString(path.join(home, file), text);
+    }
+  });
+
+/** The text of each of `files` in `folder`, or none where it is missing. */
+const readAll = (folder: string, files: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const texts: Record<string, string | null> = {};
+    for (const file of files) {
+      const at = path.join(folder, file);
+      texts[file] = (yield* fs.exists(at)) ? yield* fs.readFileString(at) : null;
+    }
+    return texts;
+  });
+
+/** A file system whose renames onto `failing` fail, as a full or failing disk would. */
+const renamesFailingOnto = (fs: FileSystem.FileSystem, failing: string) =>
+  FileSystem.FileSystem.of({
+    ...fs,
+    rename: (from, to) =>
+      to === failing
+        ? Effect.fail(
+            PlatformError.systemError({
+              _tag: "Unknown",
+              module: "FileSystem",
+              method: "rename",
+              pathOrDescriptor: to,
+              cause: Object.assign(new Error(`EIO: i/o error, rename '${to}'`), { code: "EIO" }),
+            }),
+          )
+        : fs.rename(from, to),
+  });
+
+const FILES = ["config.json", "j3.sqlite", "engine/userdata/settings.json"] as const;
 
 it.layer(NodeServices.layer)("a snapshot", (it) => {
   it.effect("copies the databases and settings privately, and puts them back whole", () =>
@@ -59,8 +112,6 @@ it.layer(NodeServices.layer)("a snapshot", (it) => {
         "engine/userdata/statev2.sqlite",
         "engine/userdata/settings.json",
       ]);
-      assert.strictEqual(taken.manifest.migration, 2);
-      assert.isNull(taken.manifest.engineMigration);
       const modes = yield* modesUnder(taken.folder);
       for (const [entry, mode] of modes) {
         const folder = (yield* fs.stat(path.join(taken.folder, entry))).type === "Directory";
@@ -106,6 +157,121 @@ it.layer(NodeServices.layer)("a snapshot", (it) => {
         yield* fs.readFileString(path.join(aside, "j3.sqlite-wal")),
         "a newer release's log",
       );
+    }),
+  );
+
+  it.effect("that cannot be copied back leaves the home as it was, and unmarked", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      yield* writeAll(home, { "config.json": "before", "j3.sqlite": "before" });
+      const taken = yield* takeSnapshot({
+        home,
+        from: { version: "0.1.0" },
+        to: { version: "0.2.0" },
+      });
+      yield* writeAll(home, { "config.json": "after", "j3.sqlite": "after" });
+      // A file of the snapshot that is gone: copying it back fails.
+      yield* fs.remove(path.join(taken.folder, "j3.sqlite"));
+
+      assert.strictEqual((yield* Effect.exit(restoreSnapshot(home, taken)))._tag, "Failure");
+      assert.deepStrictEqual(yield* readAll(home, ["config.json", "j3.sqlite"]), {
+        "config.json": "after",
+        "j3.sqlite": "after",
+      });
+      assert.deepStrictEqual((yield* fs.readDirectory(home)).sort(), [
+        "backups",
+        "config.json",
+        "j3.sqlite",
+      ]);
+      assert.isFalse((yield* listSnapshots(home))[0]?.restoring);
+    }),
+  );
+
+  it.effect(
+    "cut off once it changed the home is kept marked, and a restore again finishes it",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped();
+        const before = {
+          "config.json": "before",
+          "j3.sqlite": "before",
+          "engine/userdata/settings.json": "before",
+        };
+        yield* writeAll(home, before);
+        const taken = yield* takeSnapshot({
+          home,
+          from: { version: "0.1.0" },
+          to: { version: "0.2.0" },
+        });
+        yield* writeAll(home, {
+          "config.json": "after",
+          "j3.sqlite": "after",
+          "j3.sqlite-wal": "after",
+          "engine/userdata/settings.json": "after",
+        });
+
+        // The live files are moved aside, then putting the database back fails.
+        const cut = yield* Effect.exit(
+          restoreSnapshot(home, taken).pipe(
+            Effect.provideService(
+              FileSystem.FileSystem,
+              renamesFailingOnto(fs, path.join(home, "j3.sqlite")),
+            ),
+          ),
+        );
+        assert.strictEqual(cut._tag, "Failure");
+        const [marked] = yield* listSnapshots(home);
+        assert.isTrue(marked?.restoring);
+        // Pruning keeps it, with what the restore moved aside.
+        assert.deepStrictEqual(yield* pruneSnapshots(home, 0), []);
+        // And it is the one `--rollback` puts back, whatever runs.
+        const chosen = yield* rollbackSnapshot(home, "0.9.0");
+        assert.strictEqual(Option.getOrUndefined(chosen)?.folder, taken.folder);
+
+        yield* restoreSnapshot(home, taken);
+        assert.deepStrictEqual(yield* readAll(home, FILES), before);
+        assert.isFalse(yield* fs.exists(path.join(home, "j3.sqlite-wal")));
+        assert.isFalse((yield* listSnapshots(home))[0]?.restoring);
+        assert.deepStrictEqual(
+          (yield* fs.readDirectory(home, { recursive: true })).filter((entry) =>
+            entry.endsWith(".j3-restoring"),
+          ),
+          [],
+        );
+        // Nothing the home held is lost: what each restore moved out is kept.
+        const replaced = (yield* fs.readDirectory(taken.folder)).filter((entry) =>
+          entry.startsWith("replaced-"),
+        );
+        assert.strictEqual(replaced.length, 2);
+        const kept: Array<string | null> = [];
+        for (const folder of replaced) {
+          const texts = yield* readAll(path.join(taken.folder, folder), [
+            ...FILES,
+            "j3.sqlite-wal",
+          ]);
+          kept.push(...Object.values(texts));
+        }
+        assert.strictEqual(kept.filter((text) => text === "after").length, 4);
+      }),
+  );
+
+  it.effect("for a rollback is the newest taken by an update to the release that runs", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped();
+      yield* writeAll(home, { "config.json": "a" });
+      // A to B succeeded; B to C failed and rolled itself back, so B runs.
+      const toB = yield* takeSnapshot({ home, from: { version: "A" }, to: { version: "B" } });
+      yield* TestClock.adjust("1 second");
+      yield* takeSnapshot({ home, from: { version: "B" }, to: { version: "C" } });
+
+      const chosen = yield* rollbackSnapshot(home, "B");
+      assert.strictEqual(Option.getOrUndefined(chosen)?.folder, toB.folder);
+      assert.isTrue(Option.isNone(yield* rollbackSnapshot(home, "D")));
     }),
   );
 });

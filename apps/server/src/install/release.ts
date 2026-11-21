@@ -157,8 +157,9 @@ export const isRelease = Effect.fn("release.isRelease")(function* (folder: strin
  * `<install>/versions/<version>/`: used as it is when a release is there
  * already, otherwise downloaded with its SHA256SUMS, checked, unpacked into a
  * staging folder in `versions/`, run once, and renamed into place. A folder
- * there that is not a release is refused and kept. The install folder and its
- * `versions/` must be this user's alone to change. Answers the release's
+ * there that is not a release is refused and kept. The install folder, its
+ * `versions/` and a release already there must be this user's alone to
+ * change. Answers the release's
  * folder, and whether it was there already.
  */
 export const fetchRelease = Effect.fn("release.fetchRelease")(function* (options: {
@@ -177,7 +178,10 @@ export const fetchRelease = Effect.fn("release.fetchRelease")(function* (options
   yield* fs.makeDirectory(versions, { recursive: true });
   yield* checkOwnFolder(versions);
   const target = path.join(versions, version);
-  if (yield* isRelease(target)) return { root: target, alreadyThere: true };
+  if (yield* isRelease(target)) {
+    yield* checkOwnFolder(target);
+    return { root: target, alreadyThere: true };
+  }
   if (Option.isSome(yield* fs.lstat(target).pipe(Effect.option))) {
     return yield* failed("occupied", target);
   }

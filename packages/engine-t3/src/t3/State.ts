@@ -1,8 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- The engine's migration head is read from its database read-only, which only node:sqlite opens.
-import * as NodeSqlite from "node:sqlite";
-import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import type * as Path from "effect/Path";
 import { engineFolders } from "./PrivateFiles.ts";
 
@@ -27,28 +23,3 @@ export const stateFiles = (path: Path.Path, home: string): ReadonlyArray<string>
     path.join(userdata, "settings.json"),
   ];
 };
-
-/**
- * The highest migration the engine's database under `home` records, read
- * without writing to it: what an engine that opens it must know at least.
- * None when there is no database, or it cannot be read.
- */
-export const recordedMigration = (path: Path.Path, home: string) =>
-  Effect.sync(() => {
-    const file = path.join(engineFolders(path, home).userdata, DATABASE);
-    try {
-      const database = new NodeSqlite.DatabaseSync(file, { readOnly: true });
-      try {
-        // A database with no migrations table fails here, and records none.
-        const row = database
-          .prepare("SELECT max(migration_id) AS head FROM effect_sql_migrations")
-          .get();
-        const head = row?.["head"];
-        return typeof head === "number" ? Option.some(head) : Option.none<number>();
-      } finally {
-        database.close();
-      }
-    } catch {
-      return Option.none<number>();
-    }
-  });

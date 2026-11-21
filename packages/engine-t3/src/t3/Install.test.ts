@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- The pin holds a SHA-256 of the archive, computed here as the install checks it; a folder swapped for a link mid-download takes node:fs, from inside the response body.
+// @effect-diagnostics nodeBuiltinImport:off -- The pin holds a SHA-256 of the archive, computed here as the install checks it; a folder swapped for a link mid-download takes node:fs, from inside the response body; a real archive to unpack is made with tar.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFs from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -45,11 +47,10 @@ const release = (requests: Array<string>, afterArchive: () => void) =>
     );
   });
 
-/** Where an install keeps its download and unpacks it. */
+/** Where an install keeps the download it resumes. */
 interface Workspace {
   readonly runtime: string;
   readonly partial: string;
-  readonly staging: string;
 }
 
 interface Setup {
@@ -88,7 +89,6 @@ const install = (requests: Array<string>, setup: Setup) =>
     const workspace: Workspace = {
       runtime,
       partial: path.join(runtime, `${pin.version}.partial`),
-      staging: path.join(runtime, `${pin.version}.staging`),
     };
     yield* setup.prepare?.(workspace) ?? Effect.void;
     const files = yield* makePrivateFiles((location) =>
@@ -144,50 +144,31 @@ describe("ensureInstalled", () => {
       const fs = yield* FileSystem.FileSystem;
       const requests: Array<string> = [];
 
-      const { partial, reason } = yield* install(requests, {
+      const { runtime, partial, reason } = yield* install(requests, {
         prepare: ({ partial }) => fs.writeFile(partial, ARCHIVE.slice(0, 10)),
       });
 
       assert.deepStrictEqual(requests, ["bytes=10-"]);
       // The resumed file matched the pinned digest; only unpacking it failed.
       assert.strictEqual(reason, "extract");
+      // Kept where the next install resumes it, and nothing else left.
       assert.deepStrictEqual(yield* fs.readFile(partial), ARCHIVE);
+      assert.deepStrictEqual(yield* fs.readDirectory(runtime), [`${pin.version}.partial`]);
     }).pipe(Effect.scoped, Effect.provide(machine)),
   );
 
   it.effect("refuses an archive the pin has another digest for, and installs nothing", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
       const requests: Array<string> = [];
 
-      const { runtime, partial, staging, reason } = yield* install(requests, {
+      const { runtime, reason } = yield* install(requests, {
         pinned: NodeCrypto.createHash("sha256").update("another build").digest("hex"),
       });
 
       assert.strictEqual(reason, "checksum");
       assert.deepStrictEqual(requests, ["whole"]);
-      assert.isFalse(yield* fs.exists(path.join(runtime, pin.version)));
-      assert.isFalse(yield* fs.exists(partial));
-      assert.isFalse(yield* fs.exists(staging));
-    }).pipe(Effect.scoped, Effect.provide(machine)),
-  );
-
-  it.effect("never unpacks into or clears through a link planted where it unpacks", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const outside = yield* fs.makeTempDirectoryScoped();
-      yield* fs.writeFileString(path.join(outside, "owner-file"), "the owner's file");
-
-      const { staging, reason } = yield* install([], {
-        prepare: ({ staging }) => fs.symlink(outside, staging),
-      });
-
-      // The download matched; only unpacking it failed, in a folder of its own.
-      assert.strictEqual(reason, "extract");
-      assert.deepStrictEqual(yield* fs.readDirectory(outside), ["owner-file"]);
-      assert.strictEqual((yield* fs.lstat(staging)).type, "Directory");
+      assert.deepStrictEqual(yield* fs.readDirectory(runtime), []);
     }).pipe(Effect.scoped, Effect.provide(machine)),
   );
 
@@ -195,12 +176,11 @@ describe("ensureInstalled", () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const installed = ({ runtime, partial, staging }: Workspace) =>
+      const installed = ({ runtime, partial }: Workspace) =>
         Effect.all([
           fs.makeDirectory(path.join(runtime, pin.version)),
           fs.writeFileString(path.join(runtime, pin.version, ".installed"), `${DIGEST}\n`),
           fs.writeFile(partial, ARCHIVE),
-          fs.makeDirectory(path.join(staging, "t3"), { recursive: true }),
         ]);
       const requests: Array<string> = [];
 
@@ -208,7 +188,6 @@ describe("ensureInstalled", () => {
       assert.isUndefined(left.reason);
       assert.deepStrictEqual(requests, []);
       assert.isFalse(yield* fs.exists(left.partial));
-      assert.isFalse(yield* fs.exists(left.staging));
 
       // A leftover that cannot be removed is no reason to stop.
       const outside = yield* fs.makeTempDirectoryScoped();
@@ -247,5 +226,46 @@ describe("ensureInstalled", () => {
         assert.strictEqual(reason, "storage");
         assert.strictEqual(yield* fs.readFileString(ownerFile), "the owner's file");
       }).pipe(Effect.scoped, Effect.provide(machine)),
+  );
+
+  it.effect("installs once when two installs of the pin run at once, and both use it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const runtime = path.join(home, "j3", "runtime");
+      const source = yield* fs.makeTempDirectoryScoped();
+      yield* fs.writeFileString(path.join(source, "t3"), "the engine");
+      const archiveFile = path.join(source, "engine.tar.gz");
+      NodeChildProcess.execFileSync("tar", ["-czf", archiveFile, "-C", source, "t3"]);
+      const archive = yield* fs.readFile(archiveFile);
+
+      // Neither download is answered until both have asked, so they overlap.
+      const bothAsked = yield* Deferred.make<void>();
+      let asked = 0;
+      const releaseServer = HttpClient.make((request) =>
+        Effect.gen(function* () {
+          asked += 1;
+          if (asked === 2) yield* Deferred.succeed(bothAsked, undefined);
+          yield* Deferred.await(bothAsked);
+          return HttpClientResponse.fromWeb(request, new Response(archive, { status: 200 }));
+        }),
+      );
+      const files = yield* makePrivateFiles(() => Effect.succeed(true));
+      const installOnce = ensureInstalled({
+        home,
+        platform: "linux",
+        arch: "x64",
+        sha256: { "linux-x64": NodeCrypto.createHash("sha256").update(archive).digest("hex") },
+        files,
+      }).pipe(Effect.provideService(HttpClient.HttpClient, releaseServer));
+
+      const executables = yield* Effect.all([installOnce, installOnce], { concurrency: 2 });
+
+      const executable = path.join(runtime, pin.version, "t3");
+      assert.deepStrictEqual(executables, [executable, executable]);
+      assert.strictEqual(yield* fs.readFileString(executable), "the engine");
+      assert.deepStrictEqual(yield* fs.readDirectory(runtime), [pin.version]);
+    }).pipe(Effect.scoped, Effect.provide(machine)),
   );
 });
