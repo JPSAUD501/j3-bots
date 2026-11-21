@@ -51,27 +51,20 @@ const setUp = () => {
 };
 
 describe("the desktop app's notifications", () => {
-  it("hands the page what a clicked notification was about and its pairing, once", () => {
+  it("closes a clicked notification and hands the page what it was about and its pairing", () => {
     const { notifications, onScreen, clickOf, opened } = setUp();
     notifications.show(request("entry-1", first, room));
     clickOf(0);
     assert.deepStrictEqual(opened, [{ target: room, pairing: first }]);
     assert.deepStrictEqual(onScreen(), []);
-    clickOf(0);
-    assert.strictEqual(opened.length, 1);
   });
 
-  it("closes what a pairing that ended received, and shows nothing it asks for later", () => {
-    const { notifications, onScreen, clickOf, opened } = setUp();
+  it("closes what a pairing that ended received, and only that", () => {
+    const { notifications, onScreen } = setUp();
     notifications.show(request("entry-1", first));
     notifications.show(request("entry-2", second));
     notifications.closeOf(first);
     assert.deepStrictEqual(onScreen(), ["entry-2 #1"]);
-    notifications.show(request("entry-3", first));
-    assert.deepStrictEqual(onScreen(), ["entry-2 #1"]);
-    // A click the system delivers after its notification was closed opens nothing.
-    clickOf(0);
-    assert.deepStrictEqual(opened, []);
   });
 
   it("keeps one notification per entry, the latest", () => {
@@ -79,8 +72,6 @@ describe("the desktop app's notifications", () => {
     notifications.show(request("entry-1", first, conversation));
     notifications.show(request("entry-1", first, room));
     assert.deepStrictEqual(onScreen(), ["entry-1 #1"]);
-    clickOf(0);
-    assert.deepStrictEqual(opened, []);
     clickOf(1);
     assert.deepStrictEqual(opened, [{ target: room, pairing: first }]);
   });

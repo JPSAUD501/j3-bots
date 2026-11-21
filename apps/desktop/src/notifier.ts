@@ -19,8 +19,9 @@ import {
 import { type Display, makeNotifications } from "./notifications.ts";
 
 // Native notifications: the page decides what to show, as in a browser, and
-// the main process shows it with the system's own notifications, so a click
-// can bring the window forward wherever it is.
+// the main process shows it with the system's own notifications rather than
+// Chromium's web `Notification`, so a click can restore a minimized window
+// and bring it forward wherever it is.
 
 const decodeRequest = Schema.decodeUnknownOption(NotificationRequest);
 const decodeClose = Schema.decodeUnknownOption(CloseNotificationsRequest);
@@ -71,10 +72,11 @@ export const listen = ({ window, fromApp, bringForward, appIcon }: Options) =>
         bringForward();
         window.webContents.send(IPC_CHANNELS.notificationClicked, encodeClick(click));
       });
-      const pageReplaced = (details: { isMainFrame: boolean; isSameDocument: boolean }) => {
-        if (details.isMainFrame && !details.isSameDocument) notifications.closeAll();
-      };
-      window.webContents.on("did-start-navigation", pageReplaced);
+      // Only a page that actually loads in the window's main frame replaces
+      // it: a navigation the window refuses, such as a file dropped outside
+      // the composer, leaves the page and its notifications as they were.
+      const pageReplaced = () => notifications.closeAll();
+      window.webContents.on("did-navigate", pageReplaced);
       app.on("will-quit", notifications.closeAll);
       ipcMain.on(IPC_CHANNELS.notify, (event, request: unknown) => {
         const decoded = decodeRequest(request);
@@ -91,7 +93,7 @@ export const listen = ({ window, fromApp, bringForward, appIcon }: Options) =>
         ipcMain.removeAllListeners(IPC_CHANNELS.notify);
         ipcMain.removeAllListeners(IPC_CHANNELS.closeNotifications);
         app.off("will-quit", notifications.closeAll);
-        if (!window.isDestroyed()) window.webContents.off("did-start-navigation", pageReplaced);
+        if (!window.isDestroyed()) window.webContents.off("did-navigate", pageReplaced);
         notifications.closeAll();
       }),
   ).pipe(Effect.asVoid);

@@ -22,9 +22,9 @@ export type Display = (
 ) => Displayed | null;
 
 export interface Notifications {
-  /** Shows `request`, in place of what was shown for its entry; nothing for a pairing that ended. */
+  /** Shows `request`, in place of what was shown for its entry. */
   readonly show: (request: NotificationRequest) => void;
-  /** Closes what `pairing`, which ended, received, and shows nothing of it again. */
+  /** Closes what `pairing`, which ended, received. The page sends nothing more for it. */
   readonly closeOf: (pairing: DeviceId) => void;
   /** Closes every notification, as the page that showed them goes. */
   readonly closeAll: () => void;
@@ -44,16 +44,13 @@ export const makeNotifications = (
     readonly pairing: DeviceId;
   }
   const shown = new Map<EntryId, Shown>();
-  /** Pairings that ended: a pairing never comes back, so nothing of theirs shows again. */
-  const ended = new Set<DeviceId>();
 
   /** Takes the entry's notification off the screen, if it is still `which`. */
   const remove = (entryId: EntryId, which?: Shown) => {
     const current = shown.get(entryId);
-    if (current === undefined || (which !== undefined && current !== which)) return false;
+    if (current === undefined || (which !== undefined && current !== which)) return;
     shown.delete(entryId);
     current.displayed.close();
-    return true;
   };
   const closeWhere = (closes: (pairing: DeviceId) => boolean) => {
     for (const [entryId, entry] of shown) if (closes(entry.pairing)) remove(entryId);
@@ -61,12 +58,11 @@ export const makeNotifications = (
 
   return {
     show: (request) => {
-      if (ended.has(request.pairing)) return;
       remove(request.entryId);
       let entry: Shown | undefined;
       const displayed = display(request, {
         clicked: () => {
-          if (entry === undefined || !remove(request.entryId, entry)) return;
+          if (entry !== undefined) remove(request.entryId, entry);
           open({ target: request.target, pairing: request.pairing });
         },
         gone: () => {
@@ -79,10 +75,7 @@ export const makeNotifications = (
       entry = { displayed, pairing: request.pairing };
       shown.set(request.entryId, entry);
     },
-    closeOf: (pairing) => {
-      ended.add(pairing);
-      closeWhere((received) => received === pairing);
-    },
+    closeOf: (pairing) => closeWhere((received) => received === pairing),
     closeAll: () => closeWhere(() => true),
   };
 };
