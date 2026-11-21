@@ -6,6 +6,8 @@ packages:
 
 allowBuilds:
   bufferutil: false
+  # Its install script only prints a notice.
+  core-js: false
   esbuild: true
   utf-8-validate: false
 

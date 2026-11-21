@@ -1,0 +1,47 @@
+{
+  "name": "@j3-bots/mobile",
+  "version": "0.0.0",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "main": "index.ts",
+  "scripts": {
+    "dev": "APP_VARIANT=development expo start --dev-client",
+    "android": "APP_VARIANT=development expo prebuild --clean --platform android && APP_VARIANT=development expo run:android",
+    "config": "expo config --type public",
+    "typecheck": "effect-tsgo tsrs --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir src"
+  },
+  "dependencies": {
+    "@formatjs/intl-listformat": "9.1.0",
+    "@formatjs/intl-pluralrules": "7.1.0",
+    "@j3-bots/client-runtime": "workspace:*",
+    "@j3-bots/contracts": "workspace:*",
+    "@j3-bots/design-tokens": "workspace:*",
+    "@j3-bots/i18n": "workspace:*",
+    "@react-navigation/native": "7.5.2",
+    "@react-navigation/native-stack": "7.21.1",
+    "core-js": "3.51.0",
+    "effect": "catalog:",
+    "expo": "58.0.23",
+    "expo-crypto": "58.0.7",
+    "expo-dev-client": "58.0.18",
+    "expo-device": "58.0.5",
+    "expo-localization": "58.0.5",
+    "expo-network": "58.0.4",
+    "expo-secure-store": "58.0.2",
+    "expo-sqlite": "58.0.15",
+    "expo-status-bar": "58.0.5",
+    "expo-system-ui": "58.0.7",
+    "react": "catalog:",
+    "react-native": "0.88.1",
+    "react-native-safe-area-context": "5.11.1",
+    "react-native-screens": "4.30.1",
+    "uniwind": "1.13.2"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/react": "catalog:",
+    "tailwindcss": "4.3.3",
+    "vite-plus": "catalog:"
+  }
+}

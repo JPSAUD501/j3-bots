@@ -1,0 +1,25 @@
+{
+  "cli": {
+    "version": ">= 18.4.0",
+    "appVersionSource": "local"
+  },
+  "build": {
+    "development": {
+      "corepack": true,
+      "env": { "APP_VARIANT": "development" },
+      "developmentClient": true,
+      "distribution": "internal",
+      "android": { "buildType": "apk" }
+    },
+    "preview": {
+      "corepack": true,
+      "env": { "APP_VARIANT": "preview" },
+      "distribution": "internal",
+      "android": { "buildType": "apk" }
+    },
+    "production": {
+      "corepack": true,
+      "env": { "APP_VARIANT": "production" }
+    }
+  }
+}
