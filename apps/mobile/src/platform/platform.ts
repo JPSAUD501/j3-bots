@@ -21,6 +21,7 @@ import * as Stream from "effect/Stream";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Socket from "effect/socket/Socket";
+import { fetch as expoFetch } from "expo/fetch";
 import * as ExpoCrypto from "expo-crypto";
 import * as ExpoNetwork from "expo-network";
 import * as SecureStore from "expo-secure-store";
@@ -61,22 +62,23 @@ const database = (): Promise<SQLite.SQLiteDatabase> => {
 };
 
 /**
- * Transactions on the app's database. `withTransactionAsync` lets any query
- * the app runs meanwhile into the transaction; the storage runs one operation
- * at a time, so only the transaction's own statements run in it.
+ * Transactions on the app's database. Each is exclusive, on a connection of
+ * its own, and only its own statements run in it: a client being replaced can
+ * still write while the new one starts, and neither can run a statement inside
+ * the other's transaction.
  */
 const sqlite: SqlDatabase = {
   transaction: async <A>(work: (sql: SqlTransaction) => Promise<A>): Promise<A> => {
     const db = await database();
-    const sql: SqlTransaction = {
-      all: (text, params = []) => db.getAllAsync<unknown>(text, [...params]),
-      run: async (text, params = []) => {
-        await db.runAsync(text, [...params]);
-      },
-    };
-    // `withTransactionAsync` resolves with nothing: the result comes out through `box`.
+    // `withExclusiveTransactionAsync` resolves with nothing: the result comes out through `box`.
     const box: { done: { readonly value: A } | null } = { done: null };
-    await db.withTransactionAsync(async () => {
+    await db.withExclusiveTransactionAsync(async (txn) => {
+      const sql: SqlTransaction = {
+        all: (text, params = []) => txn.getAllAsync<unknown>(text, [...params]),
+        run: async (text, params = []) => {
+          await txn.runAsync(text, [...params]);
+        },
+      };
       box.done = { value: await work(sql) };
     });
     if (box.done === null) throw new Error("The transaction ended without running.");
@@ -140,6 +142,13 @@ const secureRandom = Layer.succeed(
 );
 
 /**
+ * Expo's `fetch`, which honors `redirect: "error"` on Android and iOS, for
+ * every request the client makes: React Native's own `fetch` ignores it and
+ * follows every redirect.
+ */
+const nativeFetch: typeof globalThis.fetch = (input, init) => expoFetch(input, init);
+
+/**
  * The phone's platform for the server at `origin`. The credential is kept
  * with the origin of the server that issued it, and is absent for any other.
  */
@@ -156,7 +165,7 @@ export const makePlatform = (origin: URL): Layer.Layer<Platform> =>
     Layer.sync(WindowLocks, makeInProcessLocks),
     transfer,
     network,
-    FetchHttpClient.layer,
+    FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, nativeFetch))),
     Socket.layerWebSocketConstructorGlobal,
     secureRandom,
   );

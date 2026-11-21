@@ -193,6 +193,8 @@ export const makeDeviceStorage = Effect.fn("makeDeviceStorage")(function* (
         ),
       ),
     ),
+    // Whether the server refused the credential is kept by the client that
+    // heard it; the app has one window, so no other ever needs to read it.
     clear: Effect.fn("CredentialStore.clear")((credential: DeviceCredential) =>
       serial(
         readStored.pipe(
@@ -212,6 +214,7 @@ export const makeDeviceStorage = Effect.fn("makeDeviceStorage")(function* (
         ),
       ),
     ),
+    refusedPairing: Effect.succeedNone,
     // The app has one window: nothing else changes the credential.
     changes: Stream.never,
   });

@@ -477,7 +477,7 @@ export const en = {
   "server.change.failed": "This app couldn’t forget the server. Try again.",
   "server.change.title": "Change server?",
   "server.change.body":
-    "This app forgets {address} and this device’s sign-in there, with its drafts and unsent messages. The device stays listed on that server until you remove it from another device.",
+    "This app forgets {address} and this device’s sign-in there, with its drafts and unsent messages. The device may still show under Devices on that server, and another device can remove it there.",
   "server.change.cancel": "Keep this server",
   "pairing.server": "Server: {address}",
 

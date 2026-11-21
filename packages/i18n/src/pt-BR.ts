@@ -484,7 +484,7 @@ const sentences = {
   "server.change.failed": "O app não conseguiu esquecer o servidor. Tente de novo.",
   "server.change.title": "Trocar de servidor?",
   "server.change.body":
-    "O app esquece {address} e o acesso deste dispositivo lá, com os rascunhos e as mensagens não enviadas. O dispositivo continua na lista desse servidor até você removê-lo de outro dispositivo.",
+    "O app esquece {address} e o acesso deste dispositivo lá, com os rascunhos e as mensagens não enviadas. O dispositivo pode continuar em Dispositivos nesse servidor, e outro dispositivo pode removê-lo de lá.",
   "server.change.cancel": "Manter este servidor",
   "pairing.server": "Servidor: {address}",
 
