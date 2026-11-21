@@ -10,41 +10,54 @@ import { type Check, check } from "./check.ts";
 // the service at all, whether the account is one a bot should run as, where to
 // get a missing harness, how bots reach a model, and whether the engine can be
 // downloaded. Like every check, they read and change nothing; the one request
-// they make is the `HEAD` that asks GitHub whether the engine's download answers.
+// they make is the `HEAD` that asks GitHub whether the engine's download
+// answers, and only while no server answers on the admin socket.
+
+/** How the engine starts each harness on Linux, and what that needs (docs/architecture/engine.md#isolation). */
+const HARNESS_SCOPES =
+  "On Linux the engine starts each harness with `systemd-run --user --scope`, which needs this manager; whether bots run without it has not been checked.";
 
 /**
- * Whether this user's systemd manager answers. Without it the service cannot
- * be installed, and the engine starts each harness through `systemd-run
- * --user` (docs/architecture/engine.md#isolation).
+ * Whether this user's systemd manager answers, on Linux. Without it the
+ * service cannot be installed, run or managed: a problem with the service
+ * installed, and a warning for `j3-bots serve` in a terminal, which starts
+ * without it.
  */
-export const userManagerCheck = Effect.gen(function* () {
+export const userManagerCheck = Effect.fn("doctor.userManager")(function* (
+  serviceInstalled: boolean,
+) {
   const systemd = yield* Systemd;
   if (yield* systemd.available) {
     return check("User manager", "ok", "This user's systemd manager answers.");
   }
+  const status = serviceInstalled ? "problem" : "warning";
+  const host = yield* Host;
   if (!(yield* systemd.booted)) {
     return check(
       "User manager",
-      "problem",
-      "systemd did not start this machine, as in most containers and on WSL without systemd, so this user has no systemd manager: the service cannot run, and the engine starts each harness through it.",
+      status,
+      `systemd did not start this machine, as in most containers and on WSL without systemd, so this user has no systemd manager, ${serviceInstalled ? "and the installed service cannot run." : `and the service cannot be installed. \`j3-bots serve\` starts without it. ${HARNESS_SCOPES}`}`,
       "On WSL, add `systemd=true` under `[boot]` in /etc/wsl.conf, run `wsl --shutdown` in Windows, and open the distribution again. In a container, run J3 Bots on the host or in a virtual machine instead.",
     );
   }
-  const host = yield* Host;
   return check(
     "User manager",
-    "problem",
-    "systemd runs this machine, but this user's manager does not answer from this shell, as in one opened with `su` or `sudo -u`: the service cannot be installed from here, and the engine starts each harness through that manager.",
+    status,
+    `systemd runs this machine, but this user's manager does not answer from this shell, as in one opened with \`su\` or \`sudo -u\`, ${serviceInstalled ? "so the installed service cannot be checked or managed from here." : `so the service cannot be installed from here. \`j3-bots serve\` starts without it. ${HARNESS_SCOPES}`}`,
     `Log in as ${host.userName} directly, over SSH or on the console. From a \`sudo -iu\` shell, run \`export XDG_RUNTIME_DIR="/run/user/$(id -u)"\`; if it still does not answer, have an administrator run \`sudo loginctl enable-linger ${host.userName}\`, which starts the manager without a login.`,
   );
 });
 
-/** Groups whose members can become root. */
-const ADMIN_GROUPS: ReadonlyArray<string> = ["sudo", "wheel"];
+/**
+ * Groups whose members can become root: through sudo (`sudo`, `wheel`,
+ * `admin`), or by starting a container that mounts the host's root
+ * (`docker`, `lxd`, `incus`).
+ */
+const ADMIN_GROUPS: ReadonlyArray<string> = ["sudo", "wheel", "admin", "docker", "lxd", "incus"];
 
 /** The steps that give J3 Bots an account of its own, as `doctor` and the operator guide give them. */
 const DEDICATED_USER =
-  'Run J3 Bots as a user of its own, with no SSH keys and no sudo: `sudo useradd --create-home --shell /bin/bash j3bots`, then `sudo loginctl enable-linger j3bots`, `sudo -iu j3bots` and `export XDG_RUNTIME_DIR="/run/user/$(id -u)"`. As that user, install J3 Bots and the harnesses, and give them their own sign-ins.';
+  'Run J3 Bots as a user of its own, with no SSH keys and in no group that can become root: `sudo useradd --create-home --shell /bin/bash j3bots`, then `sudo loginctl enable-linger j3bots`, `sudo -iu j3bots` and `export XDG_RUNTIME_DIR="/run/user/$(id -u)"`. As that user, install J3 Bots and the harnesses, and give them their own sign-ins.';
 
 /**
  * Whether the user the server runs as holds what a misled bot could use to
@@ -59,7 +72,7 @@ export const runningUserCheck = Effect.gen(function* () {
     return check(
       "This user",
       "ok",
-      `${host.userName} keeps no SSH private key in ~/.ssh and is not in sudo or wheel.`,
+      `${host.userName} keeps no SSH private key directly in ~/.ssh and is in no group that can become root.`,
     );
   }
   const holds = [
@@ -68,7 +81,11 @@ export const runningUserCheck = Effect.gen(function* () {
       : [
           `keeps ${keys.length === 1 ? "an SSH private key" : "SSH private keys"} (${keys.join(", ")})`,
         ]),
-    ...(admin.length === 0 ? [] : [`is in ${admin.join(" and ")}, so it can become root`]),
+    ...(admin.length === 0
+      ? []
+      : [
+          `is in ${admin.join(" and ")}, ${admin.length === 1 ? "a group that can" : "groups that can"} become root`,
+        ]),
   ];
   return check(
     "This user",
@@ -124,24 +141,31 @@ export const noWayToModels = (harness: Harness, connectCommand: string): Check =
 
 /**
  * The pinned engine is not installed and no server described here runs: the
- * server downloads it on its first start, which needs GitHub to answer.
+ * server downloads it on its first start. With `probe`, when no server answers
+ * at all, whether that download answers; otherwise the report does not ask,
+ * since a server it does not describe holds the home.
  */
-export const engineDownloadCheck = Effect.fn("doctor.engineDownload")(function* (missing: {
-  readonly version: string;
-  readonly source: string;
-}) {
-  const host = yield* Host;
-  if (yield* host.reachable(missing.source)) {
+export const engineDownloadCheck = Effect.fn("doctor.engineDownload")(function* (
+  missing: { readonly version: string; readonly source: string },
+  probe: boolean,
+) {
+  const download = `T3 Code ${missing.version} is not installed yet. The server downloads it from GitHub, about 200 MB, on its first start`;
+  if (!probe) {
     return check(
       "Engine",
-      "ok",
-      `T3 Code ${missing.version} is not installed yet. The server downloads it from GitHub, about 200 MB, on its first start, and the download answers.`,
+      "warning",
+      `${download}.`,
+      "Make sure this machine can reach github.com when the server first starts, or download it now with `j3-bots engine fetch`.",
     );
+  }
+  const host = yield* Host;
+  if (yield* host.reachable(missing.source)) {
+    return check("Engine", "ok", `${download}, and the download answers.`);
   }
   return check(
     "Engine",
     "problem",
     `T3 Code ${missing.version} is not installed yet, and its download on GitHub does not answer from this machine, so the server cannot start the engine.`,
-    `Make sure this machine can reach github.com over HTTPS; \`curl -sSIL ${missing.source}\` shows where it fails. Then run this again.`,
+    `Make sure this machine can reach github.com over HTTPS; \`curl -sSIL ${missing.source}\` shows where it fails. Once it answers, \`j3-bots engine fetch\` downloads it now, or the server does on its first start.`,
   );
 });
