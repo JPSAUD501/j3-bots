@@ -9,10 +9,12 @@ interface NewBotDialogProps {
   readonly onOpenChange: (open: boolean) => void;
   /** Resolves once the bot exists; the dialog then closes and its conversation opens. */
   readonly onCreate: (name: string, primary: boolean) => Promise<void>;
+  /** Whether a name is typed and not created yet. Held by the owner, which keeps such a form open. */
+  readonly onUnsavedChange: (unsaved: boolean) => void;
 }
 
 /** A name, and whether the bot becomes the primary one. The bot asks the rest itself. */
-export function NewBotDialog({ open, onOpenChange, onCreate }: NewBotDialogProps) {
+export function NewBotDialog({ open, onOpenChange, onCreate, onUnsavedChange }: NewBotDialogProps) {
   const { t } = useI18n();
   const titleId = useId();
   return (
@@ -34,6 +36,7 @@ export function NewBotDialog({ open, onOpenChange, onCreate }: NewBotDialogProps
             primaryAtFirst={false}
             onCreate={onCreate}
             onCancel={() => onOpenChange(false)}
+            onUnsavedChange={onUnsavedChange}
           />
         </Dialog.Popup>
       </Dialog.Portal>

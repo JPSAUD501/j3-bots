@@ -5,10 +5,8 @@ import {
   Entry,
   EntryId,
   EntryOrder,
-  type EntryPreview,
   type EntryTarget,
   NotFound,
-  PREVIEW_LENGTH,
   RoomId,
   type Sequence,
 } from "@j3-bots/contracts";
@@ -75,35 +73,6 @@ const toEntry = Effect.fn("Entries.toEntry")(function* (row: typeof EntryRow.Typ
     createdAt: DateTime.formatIso(row.created_at),
   });
 }, Effect.orDie);
-
-/** What the roster shows of an entry: its first line of text, cut short. */
-export const previewOf = (entry: Entry): EntryPreview => {
-  const text = (() => {
-    switch (entry._tag) {
-      case "message":
-      case "handoff":
-        return entry.text;
-      case "question":
-        return entry.questions[0].prompt;
-      case "approval":
-        return entry.action;
-      case "secret-request":
-        return entry.label;
-      case "routine-change":
-        return entry.name;
-      case "work-fold":
-      case "notice":
-        return "";
-    }
-  })();
-  return {
-    entryId: entry.id,
-    kind: entry._tag,
-    author: entry.author,
-    text: text.slice(0, PREVIEW_LENGTH),
-    createdAt: entry.createdAt,
-  };
-};
 
 /** What the roster needs to know about a conversation or room. */
 export interface TargetSummary {

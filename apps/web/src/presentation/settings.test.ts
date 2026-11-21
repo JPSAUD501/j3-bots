@@ -10,7 +10,7 @@ const saved: Settings = {
   operatorName: null,
   timeZone: zone("America/Sao_Paulo"),
   budgets: { hops: 4, fanOut: 2, concurrentTurns: 2 },
-  notifications: { previews: true },
+  notifications: { enabled: true, previews: true },
 };
 
 describe("settingsPatch", () => {

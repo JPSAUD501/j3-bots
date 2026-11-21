@@ -146,8 +146,10 @@ export interface J3Client {
   readonly roster: Readable<Synced<ReadonlyArray<RosterItem>>>;
   readonly engine: Readable<Synced<EngineStatusValue>>;
   readonly settings: Readable<Synced<SettingsValue>>;
-  /** The latest save of the settings, under way or how it ended. */
-  readonly settingsSave: Readable<Settings.SettingsSave>;
+  /** Each section of Settings' latest save, under way or how it ended. */
+  readonly settingsSaves: {
+    readonly [Section in keyof Settings.SettingsSaves]: Readable<Settings.SettingsSaves[Section]>;
+  };
   readonly devices: Readable<Synced<ReadonlyArray<Device>>>;
   /** Actions in flight or just accepted, by `cardAction`, `retryAction` or `stopAction` key. */
   readonly actions: Readable<ReadonlyMap<string, Actions.ActionState>>;
@@ -263,8 +265,10 @@ export interface J3Client {
   readonly stopBot: (botId: BotId) => Promise<Actions.IntentResult>;
 
   readonly updateSettings: (
-    changes: Settings.SettingsChanges,
+    change: Settings.SettingsChange,
   ) => Promise<Actions.IntentResult<SettingsValue>>;
+  /** Reads the settings again, as when Settings opens. */
+  readonly refreshSettings: () => void;
   readonly refreshDevices: () => void;
   /** Waits ten seconds at most; see `Devices.revoke`. */
   readonly revokeDevice: (deviceId: DeviceId) => Promise<Devices.RevokeResult>;
@@ -366,7 +370,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     roster: services.roster.state,
     engine: services.engine.state,
     settings: services.settings.state,
-    settingsSave: services.settings.save,
+    settingsSaves: services.settings.saves,
     devices: services.devices.state,
     actions: services.actions.state,
 
@@ -470,7 +474,8 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     provideSecret: (entryId, answer) => run.promise(conversations.provideSecret(entryId, answer)),
     stopBot: (botId) => run.promise(services.roster.stop(botId)),
 
-    updateSettings: (changes) => run.promise(services.settings.update(changes)),
+    updateSettings: (change) => run.promise(services.settings.update(change)),
+    refreshSettings: () => fire(services.settings.refresh),
     refreshDevices: () => fire(services.devices.refresh),
     revokeDevice: (deviceId) => run.promise(services.devices.revoke(deviceId)),
     startPairing: () =>

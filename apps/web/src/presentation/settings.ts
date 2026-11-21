@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { SettingsChanges } from "@j3-bots/client-runtime";
+import type { ProfileChanges } from "@j3-bots/client-runtime";
 import { Label, type Settings, TimeZone } from "@j3-bots/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -20,7 +20,7 @@ export type SettingsPatch =
   | { readonly _tag: "unchanged" }
   /** An edit the server would refuse, such as a name over the length of a label. */
   | { readonly _tag: "invalid" }
-  | { readonly _tag: "changes"; readonly changes: SettingsChanges };
+  | { readonly _tag: "changes"; readonly changes: ProfileChanges };
 
 /**
  * The fields the operator changed from `settings`, and only those, so a save
@@ -28,7 +28,7 @@ export type SettingsPatch =
  * trimmed, and an empty one clears it.
  */
 export function settingsPatch(settings: Settings, edits: SettingsEdits): SettingsPatch {
-  let changes: SettingsChanges = {};
+  let changes: ProfileChanges = {};
   if (edits.name !== null) {
     const trimmed = edits.name.trim();
     if (trimmed !== (settings.operatorName ?? "")) {
@@ -50,10 +50,7 @@ export function settingsPatch(settings: Settings, edits: SettingsEdits): Setting
  * for takes the value the save sent, so the operator's text is never lost,
  * even in a form opened after the save started.
  */
-export function editsAfterFailedSave(
-  edits: SettingsEdits,
-  changes: SettingsChanges,
-): SettingsEdits {
+export function editsAfterFailedSave(edits: SettingsEdits, changes: ProfileChanges): SettingsEdits {
   return {
     name: edits.name ?? (changes.operatorName === undefined ? null : (changes.operatorName ?? "")),
     zone: edits.zone ?? changes.timeZone ?? null,

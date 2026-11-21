@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { useEffect, useEffectEvent } from "react";
+import { isCovered, watchCovers } from "./covered";
 
 /** The attribute that carries an entry's id in a timeline. */
 const SEEN_ID = "data-seen-id";
@@ -18,13 +19,11 @@ const SEEN_SHARE = 0.5;
 /** The timeline of `height` narrowed to its middle line, in pixels from its measured height. */
 const middleLine = (height: number) => `${-height / 2}px 0px ${-height / 2}px 0px`;
 
-/** A modal dialog hides what it covers from assistive technology; the details pane makes it inert. */
-const covered = (element: Element) => element.closest('[inert], [aria-hidden="true"]') !== null;
-
 /**
  * Calls `onSeen` with the id of the newest entry the operator can see in the
- * timeline `root` scrolls: enough of it on screen, in a shown tab, with no
- * dialog over it.
+ * timeline `root` scrolls: enough of it on screen, in a shown window that has
+ * focus, with no dialog over it. A window in the background reports no view
+ * to the server either, so what arrives there both notifies and stays unread.
  * Entries carry `data-seen-id`, oldest first.
  */
 export function useNewestSeen(root: HTMLElement | null, onSeen: (id: string) => void) {
@@ -34,7 +33,9 @@ export function useNewestSeen(root: HTMLElement | null, onSeen: (id: string) => 
     const halfShown = new Set<Element>();
     const onMiddle = new Set<Element>();
     const check = () => {
-      if (document.visibilityState !== "visible" || covered(root)) return;
+      if (document.visibilityState !== "visible" || !document.hasFocus() || isCovered(root)) {
+        return;
+      }
       const newest = [...root.querySelectorAll(`[${SEEN_ID}]`)].findLast(
         (entry) => halfShown.has(entry) || onMiddle.has(entry),
       );
@@ -96,21 +97,18 @@ export function useNewestSeen(root: HTMLElement | null, onSeen: (id: string) => 
       observeEntries();
     });
     resizes.observe(root);
-    // Closing a dialog or returning to the tab shows entries without a scroll.
-    const covers = new MutationObserver(check);
-    covers.observe(document.body, {
-      attributes: true,
-      attributeFilter: ["inert", "aria-hidden"],
-      subtree: true,
-    });
+    // Closing a dialog or returning to the window shows entries without a scroll.
+    const stopWatchingCovers = watchCovers(check);
     document.addEventListener("visibilitychange", check);
+    window.addEventListener("focus", check);
     return () => {
       half.disconnect();
       middle.disconnect();
       resizes.disconnect();
       arrivals.disconnect();
-      covers.disconnect();
+      stopWatchingCovers();
       document.removeEventListener("visibilitychange", check);
+      window.removeEventListener("focus", check);
     };
   }, [root]);
 }

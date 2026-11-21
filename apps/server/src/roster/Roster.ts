@@ -7,7 +7,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { BotStore } from "../bots/BotStore.ts";
-import { Entries, previewOf } from "../entries/Entries.ts";
+import { Entries } from "../entries/Entries.ts";
+import { previewOf } from "../entries/preview.ts";
 import { ChangeLog, type ChangeScope } from "../persistence/ChangeLog.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 

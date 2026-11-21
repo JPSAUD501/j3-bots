@@ -6,6 +6,7 @@ import Migration0002 from "./migrations/0002_operator_name.ts";
 import Migration0003 from "./migrations/0003_turns.ts";
 import Migration0004 from "./migrations/0004_routines.ts";
 import Migration0005 from "./migrations/0005_sessions.ts";
+import Migration0006 from "./migrations/0006_notifications.ts";
 
 /**
  * Migrations go forward only. Add one by appending an entry with the next id;
@@ -17,6 +18,7 @@ const migrations = SqliteMigrator.fromRecord({
   "3_turns": Migration0003,
   "4_routines": Migration0004,
   "5_sessions": Migration0005,
+  "6_notifications": Migration0006,
 });
 
 /** Applies, in one transaction, every migration the database has not recorded yet. */

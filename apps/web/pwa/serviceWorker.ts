@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { HTTP_PATHS } from "@j3-bots/contracts";
+import { NOTIFICATION_CLICK } from "./notificationClick.ts";
 
 /**
  * The service worker's source, for one build. It exists so the installed app
@@ -18,6 +19,13 @@ import { HTTP_PATHS } from "@j3-bots/contracts";
  *
  * Each build keeps its shell under its own cache name, and a new worker
  * deletes the caches of older builds once it takes over.
+ *
+ * It also shows the app's notifications, where a page cannot show them itself
+ * (Android's browsers), and hands a click on one to a window of the app: it
+ * focuses one, the focused one first, then a visible one, or opens one, and
+ * tells it which conversation or room the notification is about and which
+ * pairing received it. The window opens it only if it still follows that
+ * pairing.
  */
 /**
  * How long a page load waits for the network before the kept page answers: a
@@ -32,6 +40,7 @@ export function serviceWorkerSource(version: string, shell: ReadonlyArray<string
     shell,
     page: "/index.html",
     navigationWait: NAVIGATION_WAIT_MS,
+    notificationClick: NOTIFICATION_CLICK,
     // Every API path sits under /api/, beside the socket and attachments.
     neverCached: ["/api/", HTTP_PATHS.rpc, HTTP_PATHS.attachments],
   };
@@ -123,6 +132,29 @@ self.addEventListener("fetch", (event) => {
         .then((kept) => kept ?? fetch(request)),
     );
   }
+});
+
+// A notification the app showed carries { target, pairing }: the conversation
+// or room it is about, and the pairing that received it. The window decides
+// whether to open it, so a window opened for the click starts at the app's
+// root, not at the target.
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const data = event.notification.data;
+  if (data === null || typeof data !== "object") return;
+  const click = { type: CONFIG.notificationClick, target: data.target, pairing: data.pairing };
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((windows) => {
+      const open =
+        windows.find((client) => client.focused) ??
+        windows.find((client) => client.visibilityState === "visible") ??
+        windows[0];
+      if (open === undefined) {
+        return self.clients.openWindow("/").then((opened) => opened?.postMessage(click));
+      }
+      return open.focus().then((focused) => focused.postMessage(click));
+    }),
+  );
 });
 `;
 }

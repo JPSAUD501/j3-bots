@@ -33,6 +33,7 @@ import {
   rosterKeyText,
 } from "../presentation/roster";
 import type { ShellData, ShellIntents } from "./data";
+import { isCovered, useCovered } from "../lib/covered";
 import { useNewestSeen } from "../lib/useNewestSeen";
 import { useShellLayout } from "./layout";
 import { isEditable, shellShortcuts } from "./shortcuts";
@@ -98,8 +99,39 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
   // included, and the shell's shortcuts wait until it closes.
   const detailsModal = layout === "phone" || layout === "tablet";
   const detailsCover = item !== null && detailsOpen && detailsModal;
-
   const selectionKey = item === null ? null : rosterKeyText(rosterKeyOf(item));
+
+  // The conversation the operator can see: the one shown, with no sheet or
+  // dialog over it, as read tracking also tells. Any other, and what is
+  // covered, notifies when something arrives there.
+  const [conversationRegion, setConversationRegion] = useState<HTMLElement | null>(null);
+  const covered = useCovered(conversationRegion);
+  // What the conversation's header announces, spoken by a region outside the
+  // conversation: a modal hides from assistive technology everything but live
+  // regions and what holds them, so one inside would keep the conversation
+  // uncovered under any dialog. Each announcement belongs to the conversation
+  // that made it and ends when another is chosen, so coming back never speaks
+  // an old one again. A new one replaces the last, so it is spoken even when
+  // the words repeat.
+  const [announcement, setAnnouncement] = useState<{
+    readonly selectionKey: string;
+    readonly id: number;
+    readonly text: string;
+  } | null>(null);
+  if (announcement !== null && announcement.selectionKey !== selectionKey) setAnnouncement(null);
+  const { setShown } = intents;
+  const visibleBot = !covered && item?._tag === "bot" ? item.bot.id : null;
+  const visibleRoom = !covered && item?._tag === "room" ? item.room.id : null;
+  useEffect(() => {
+    setShown(
+      visibleBot !== null
+        ? { _tag: "conversation", botId: visibleBot }
+        : visibleRoom !== null
+          ? { _tag: "room", roomId: visibleRoom }
+          : null,
+    );
+  }, [setShown, visibleBot, visibleRoom]);
+
   // Moving to another conversation with a mouse or keyboard puts the cursor in its
   // composer; opening or closing the details beside the conversation moves focus
   // with them, as the dialog does below `wide`. When the details close because the
@@ -110,18 +142,22 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
   // that row is gone, or a search hides it, the search takes focus, except on a
   // touch screen, where it would raise the keyboard: there the roster does.
   // None of this happens on the first render, so loading a page never scrolls or
-  // steals focus.
+  // steals focus. Nor under a dialog, as the bot editor a notification click
+  // leaves open over the conversation it opens: the dialog keeps focus, and the
+  // keys typed there never reach what lies under it.
   const shown = useRef({ selectionKey, detailsOpen });
   useEffect(() => {
     const before = shown.current;
     shown.current = { selectionKey, detailsOpen };
     const moved = before.selectionKey !== selectionKey;
+    const focus = (element: HTMLElement | null | undefined) => {
+      if (element && !isCovered(element)) element.focus();
+    };
     if (before.detailsOpen !== detailsOpen && (detailsOpen || !moved)) {
       if (detailsModal) return;
-      if (detailsOpen) detailsHeadingRef.current?.focus();
-      else titleRef.current?.focus();
+      focus(detailsOpen ? detailsHeadingRef.current : titleRef.current);
     } else if (moved && selectionKey !== null && !coarsePointer()) {
-      composerRef.current?.focus();
+      focus(composerRef.current);
     } else if (moved && selectionKey === null && before.selectionKey !== null) {
       const roster = rosterRef.current;
       const row = roster?.querySelector<HTMLElement>(
@@ -130,7 +166,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
       const search = coarsePointer()
         ? null
         : roster?.querySelector<HTMLElement>("[data-roster-search]");
-      (row ?? search ?? roster)?.focus();
+      focus(row ?? search ?? roster);
     }
   }, [selectionKey, detailsOpen, detailsModal]);
 
@@ -250,6 +286,13 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
           onGoToWaiting={goToEntry}
           stopShortcut={shortcuts.stop}
           titleRef={titleRef}
+          onAnnounce={(text) =>
+            setAnnouncement((previous) => ({
+              selectionKey: rosterKeyText(key),
+              id: (previous?.id ?? 0) + 1,
+              text,
+            }))
+          }
         />
         {view.phase === "not-found" ? (
           <ConversationGone onBack={() => navigation.select(null)} />
@@ -366,8 +409,12 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
         active={active}
         layout={layout}
         containerRef={containerRef}
+        conversationRef={setConversationRegion}
         onCloseDetails={() => navigation.setDetailsOpen(false)}
       />
+      <span className="sr-only" aria-live="polite">
+        {announcement !== null && <span key={announcement.id}>{announcement.text}</span>}
+      </span>
     </BotsProvider>
   );
 }

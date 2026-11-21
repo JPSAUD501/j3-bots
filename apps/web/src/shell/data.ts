@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { ConversationItem, Draft, SettingsSave } from "@j3-bots/client-runtime";
+import type {
+  ConversationItem,
+  Draft,
+  SettingsChange,
+  SettingsSaves,
+} from "@j3-bots/client-runtime";
 import type {
   BotFile,
   BotId,
@@ -73,8 +78,10 @@ export interface ShellData {
   readonly memory: (botId: BotId) => ReadonlyArray<MemoryFile> | null;
   /** The server's settings; null until they load. */
   readonly settings: Settings | null;
-  /** The latest save of the settings, under way or how it ended. */
-  readonly settingsSave: SettingsSave;
+  /** Each section of Settings' latest save, under way or how it ended. */
+  readonly settingsSaves: SettingsSaves;
+  /** Settings is open. */
+  readonly settingsOpen: boolean;
   /** Every paired device; null until they load. */
   readonly devices: ReadonlyArray<Device> | null;
   /** A connection to the server is open now. Pairing another device needs one. */
@@ -103,6 +110,12 @@ export interface ShellIntents extends TimelineIntents {
   readonly loadOlder: (target: EntryTarget) => void;
   /** The operator has seen the conversation through this entry. */
   readonly markRead: (target: EntryTarget, through: EntryOrder) => void;
+  /**
+   * The conversation or room the shell shows with nothing over it, such as
+   * the details as a sheet or a dialog; null when there is none. Whether the
+   * window itself is in view is the source's to tell.
+   */
+  readonly setShown: (target: EntryTarget | null) => void;
   readonly stopBot: (botId: BotId) => void;
   /** Absent where there is no dictation. */
   readonly dictate?: (target: EntryTarget) => void;
@@ -118,14 +131,17 @@ export interface ShellIntents extends TimelineIntents {
   readonly freshStart: (botId: BotId, name: string) => void;
   readonly deleteBot: (botId: BotId) => void;
 
-  /** Saves the change; `settingsSave` follows it. */
-  readonly updateSettings: (changes: Partial<Pick<Settings, "operatorName" | "timeZone">>) => void;
+  /** Saves the change; the save of its section in `settingsSaves` follows it. */
+  readonly updateSettings: (change: SettingsChange) => void;
+  readonly setSettingsOpen: (open: boolean) => void;
   readonly startPairing: () => Promise<PairingStart>;
   /**
    * Resolves `false` unless the server confirmed it within ten seconds; the
    * list of devices is then read again, and shows whether it was revoked.
    */
   readonly revokeDevice: (deviceId: DeviceId) => Promise<boolean>;
+  /** Reads the settings again, as when Settings opens. */
+  readonly refreshSettings: () => void;
   /** Reads the list of devices again, as when Settings opens. */
   readonly refreshDevices: () => void;
   /**

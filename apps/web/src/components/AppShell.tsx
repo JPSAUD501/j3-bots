@@ -21,6 +21,8 @@ interface AppShellProps {
   /** As measured on `containerRef`; null before the first measure. */
   readonly layout: ShellLayout | null;
   readonly containerRef: Ref<HTMLDivElement>;
+  /** The conversation's region, for what lies over it. */
+  readonly conversationRef: Ref<HTMLElement>;
   readonly onCloseDetails: () => void;
 }
 
@@ -42,6 +44,7 @@ export function AppShell({
   active,
   layout,
   containerRef,
+  conversationRef,
   onCloseDetails,
 }: AppShellProps) {
   // The dialog is drawn inside the shell, so it lies over the shell and not over the page around it.
@@ -59,6 +62,7 @@ export function AppShell({
           {roster}
         </aside>
         <main
+          ref={conversationRef}
           data-active={active === "conversation" ? "" : undefined}
           inert={covered}
           className="hidden min-w-0 flex-1 flex-col pt-(--inset-top) pr-[env(safe-area-inset-right)] data-active:flex @max-tablet:pl-[env(safe-area-inset-left)] @tablet:flex"

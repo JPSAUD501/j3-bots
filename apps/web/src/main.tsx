@@ -5,6 +5,7 @@ import "./index.css";
 import { RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { listenForNotificationClicks } from "./live/notify";
 import { router } from "./router";
 
 const root = document.getElementById("root");
@@ -21,6 +22,10 @@ if (import.meta.env.PROD && "serviceWorker" in navigator) {
     });
   });
 }
+
+// Before the page finishes loading: a window the service worker opened for a
+// notification click is handed the click then.
+listenForNotificationClicks();
 
 // A build replaced while this page was open has deleted the scripts it would load
 // next; loading the page again picks up the new build.

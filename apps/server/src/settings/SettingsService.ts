@@ -4,7 +4,8 @@ import {
   type CommandError,
   type CommandId,
   Invalid,
-  type NotificationSettings,
+  NotificationSettings,
+  type NotificationSettingsChange,
   Settings,
   type TimeZone,
 } from "@j3-bots/contracts";
@@ -13,6 +14,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { Workspaces } from "../bots/Workspaces.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
 import { BasePrompt } from "./BasePrompt.ts";
@@ -23,8 +25,22 @@ export interface SettingsChanges {
   readonly operatorName?: string | null;
   readonly timeZone?: TimeZone;
   readonly budgets?: Budgets;
-  readonly notifications?: NotificationSettings;
+  readonly notifications?: NotificationSettingsChange;
 }
+
+/**
+ * The settings a `settings.update` receipt holds. A receipt written before
+ * notifications could be turned off has no `enabled`: they were on.
+ */
+const SettingsReceipt = Schema.Struct({
+  ...Settings.fields,
+  notifications: Schema.Struct({
+    ...NotificationSettings.fields,
+    enabled: NotificationSettings.fields.enabled.pipe(
+      Schema.withDecodingDefaultKey(Effect.succeed(true)),
+    ),
+  }),
+});
 
 /**
  * The operator's settings. The operator's name and time zone are part of every
@@ -66,7 +82,7 @@ export const layer = Layer.effect(
         commandId: input.commandId,
         method: "settings.update",
         payload: changes,
-        result: Settings,
+        result: SettingsReceipt,
         apply: Effect.gen(function* () {
           const current = yield* store.get;
           const next: Settings = {
@@ -74,7 +90,8 @@ export const layer = Layer.effect(
               changes.operatorName === undefined ? current.operatorName : changes.operatorName,
             timeZone: changes.timeZone ?? current.timeZone,
             budgets: changes.budgets ?? current.budgets,
-            notifications: changes.notifications ?? current.notifications,
+            // Field by field, read in the same transaction as the write.
+            notifications: { ...current.notifications, ...changes.notifications },
           };
           yield* store.save(next, yield* DateTime.now);
           return next;

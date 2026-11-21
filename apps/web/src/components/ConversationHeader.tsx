@@ -7,7 +7,7 @@ import {
   PanelRightIcon,
   SquareIcon,
 } from "lucide-react";
-import { useState, type Ref } from "react";
+import { useEffect, useEffectEvent, useRef, type Ref } from "react";
 import { useBots, useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
 import { canStop, memberList, presenceLine, type StatusLine } from "../presentation/roster";
@@ -29,6 +29,12 @@ interface ConversationHeaderProps {
   readonly onGoToWaiting: (entryId: EntryId) => void;
   readonly stopShortcut: { readonly label: string; readonly aria: string };
   readonly titleRef?: Ref<HTMLButtonElement>;
+  /**
+   * Told the status line at each change of state, for screen readers. The
+   * region that speaks it lies outside the conversation, so a dialog over the
+   * conversation hides all of it from assistive technology (see `isCovered`).
+   */
+  readonly onAnnounce: (text: string) => void;
 }
 
 /** What a bot is doing, as a transition between states: activity text changing within one does not count. */
@@ -40,7 +46,7 @@ const stateOf = (bot: Bot) =>
 /**
  * Who this is, and one line saying what it is doing now. The name opens the
  * details; while the bot waits, the line takes the operator to what it waits
- * on. Changes of state are announced to screen readers, once each.
+ * on. Changes of state are announced through `onAnnounce`, once each.
  *
  * Mount one per conversation, so moving to another conversation announces nothing.
  */
@@ -53,6 +59,7 @@ export function ConversationHeader({
   onGoToWaiting,
   stopShortcut,
   titleRef,
+  onAnnounce,
 }: ConversationHeaderProps) {
   const ctx = usePresentation();
   const { t } = useI18n();
@@ -70,8 +77,14 @@ export function ConversationHeader({
 
   // The announcement is fixed at each change of state; the first state is not announced.
   const state = subject._tag === "bot" ? stateOf(subject.bot) : null;
-  const [announced, setAnnounced] = useState({ state, text: "" });
-  if (announced.state !== state) setAnnounced({ state, text: line?.text ?? "" });
+  const text = line?.text ?? "";
+  const announce = useEffectEvent(() => onAnnounce(text));
+  const announced = useRef(state);
+  useEffect(() => {
+    if (announced.current === state) return;
+    announced.current = state;
+    announce();
+  }, [state]);
 
   return (
     <header className="flex h-14 shrink-0 items-center gap-1 border-b border-border px-2 @tablet:px-3">
@@ -137,9 +150,6 @@ export function ConversationHeader({
             ))}
         </span>
       </div>
-      <span className="sr-only" aria-live="polite">
-        {announced.text}
-      </span>
       <span className="ms-auto flex shrink-0 items-center gap-1">
         {waitingOn !== null && (
           // A finger needs a whole target, apart from the title that opens the details.

@@ -641,6 +641,7 @@ function ComposerSection() {
                 onStop={nothing}
                 onGoToWaiting={nothing}
                 stopShortcut={shortcuts.stop}
+                onAnnounce={nothing}
               />
             </div>
           ))}
