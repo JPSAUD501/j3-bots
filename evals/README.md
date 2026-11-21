@@ -8,26 +8,31 @@ Checks M3's "done when" ([Roadmap](../docs/roadmap.md#m3-more-than-one-bot)): a 
 
 Each run:
 
-1. Starts the server from this checkout in a fresh `J3_HOME` inside a temporary folder, listening on `127.0.0.1` only.
+1. Starts the server from this checkout in a fresh `J3_HOME` inside a temporary folder, listening on `127.0.0.1` only. A server already on the port is never taken for it: only one that started after the spawn counts, and the spawned server exiting first ends the run.
 2. Connects its providers with `j3-bots provider connect`, the key piped on standard input.
 3. Pairs as a device with a code from `j3-bots pair`, and drives the server over the RPC socket as a client does.
-4. Creates three Claude Code bots in `auto` permission mode: Hal, a team lead; Ana, a researcher; Bo, a writer. It waits until their first-run turns are over.
-5. Creates a room of the three, hosted by Hal, with the default hop limit, and posts a task addressed to nobody: turn twelve pieces of fictional beta feedback into `release-notes.md`, with what is new and the three most requested features with their counts, and share the file in the room. The message says who does what: Ana counts, Bo writes, Hal checks. It mentions none of them, so the work reaches Ana and Bo only if the bots hand it on with `mention`.
-6. Waits until nothing has been under way for 30 seconds (no wake waiting or in a turn, no turn running, no background work a turn left), or 20 minutes at most.
-7. Scores the run from the server's database, then stops the server and deletes the run's home.
+4. Creates four Claude Code bots in `auto` permission mode: Hal, a team lead; Ana, a researcher; Bo, a writer; and Cy, a designer, the bystander. It waits until their first-run turns are over.
+5. Creates a room of the four, hosted by Hal, with the default hop limit, and posts a task addressed to nobody: turn twelve pieces of fictional beta feedback into `release-notes.md`, with what is new and the three most requested features with their counts, and share the file in the room.
+6. Waits until nothing has been under way for 30 seconds: no wake waiting or in a turn, no turn running, no background work a turn left.
+7. Scores the run from the server's database and the shared file, then stops the server and deletes the run's home.
+
+The task says who does what: Ana counts, Bo writes, Hal checks. It mentions none of them, so the work reaches Ana and Bo only if the bots hand it on with `mention`. The eval tests that handoff, not whether a host delegates unprompted. The task gives Cy no part, so any room wake of Cy's is a bot woken with nothing to do.
+
+The feedback asks for CSV export four times, dark mode three, recurring transactions two and splitting a purchase once, so "the three most requested" has one right answer.
 
 A run passes when all of these hold:
 
-| Check                                                                                                             | Read from                                                        |
-| ----------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| A bot shared `release-notes.md` in the room                                                                       | the room's bot attachments                                       |
-| At most 6 bot turns for the room                                                                                  | turns whose audience is the room                                 |
-| No turn by a bot that no room wake addressed (as mentioned, or as host of a message to nobody)                    | room turns and room wakes                                        |
-| No `chain-stopped` notice                                                                                         | the room's notices                                               |
-| No `say` in a room turn that no wake addressing its bot began (a turn that continues another counts as that turn) | `say` tool calls, their turns and the dispatches that began them |
-| The room went quiet within the deadline                                                                           | the database, polled                                             |
+| Check                                                                                                                                                                                          | Read from                                                       |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| A bot shared `release-notes.md` in the room                                                                                                                                                    | the room's bot attachments                                      |
+| Its "Most requested next" section puts CSV export, dark mode and recurring transactions each on a line with its count (4, 3 and 2, in digits or words), and does not list splitting a purchase | the last shared `release-notes.md`, downloaded as a client does |
+| Cy has no room wake                                                                                                                                                                            | the room's wakes                                                |
+| At most 6 bot turns for the room                                                                                                                                                               | turns whose audience is the room                                |
+| No `chain-stopped` notice                                                                                                                                                                      | the room's notices                                              |
 
-The report also gives the order of turns and the highest hop count a room wake reached against the room's limit, which is how the default hop limit is checked.
+The handoffs take four turns (Hal, Ana, Bo, Hal). The budget of six leaves Hal one round of sending the file back to Bo for a fix. A teammate woken with nothing to do is what Cy's wakes check; the report also gives the order of turns, where one shows as an extra turn for Ana or Bo. That the server runs one room turn at a time and wakes only the bots a message addresses is checked in CI, not here. The report also gives the highest hop count a room wake reached against the room's limit, which is how the default hop limit is checked.
+
+A run must be over within 30 minutes of its start, boot included. A run that fails before it can be scored reports why and the last 20 lines its server wrote. The server's log never holds the endpoint's key: the server does not log it and drops the engine's output.
 
 ### Running it
 
@@ -45,4 +50,4 @@ J3_EVAL_BASE_URL=http://127.0.0.1:8317 J3_EVAL_API_KEY=… pnpm --filter @j3-bot
 | `J3_EVAL_PORT`     | The server's port; the engine and the bot tools take the next two                                           | 3861                                             |
 | `J3_EVAL_MODEL`    | The Claude Code model id the bots run on                                                                    | the first model the engine lists for Claude Code |
 
-Runs never overlap, and nothing outside the temporary folder is written. The first run downloads the pinned engine; later runs start it from there with `J3_ENGINE_BINARY`. The report is a Markdown table, one row per run.
+Runs never overlap, and nothing outside the temporary folder is written. The first run downloads the engine `engine.json` pins; later runs start it from there with `J3_ENGINE_BINARY`. The report is a Markdown table, one row per run, and the eval exits non-zero when any run fails.

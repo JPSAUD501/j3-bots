@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
-import { BotId, type RoomId } from "@j3-bots/contracts";
+import { AttachmentId, BotId, type RoomId } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -47,71 +47,50 @@ export const busy = (database: string) =>
        AS n`,
   ).pipe(Effect.map((rows) => (rows[0]?.n ?? 0) > 0));
 
-const RoomTurn = Schema.Struct({
-  session_id: Schema.String,
-  engine_turn_id: Schema.String,
-  origin_turn_id: Schema.NullOr(Schema.String),
-  bot_id: BotId,
-});
+const RoomTurn = Schema.Struct({ bot_id: BotId });
 
-const RoomWake = Schema.Struct({
-  bot_id: BotId,
-  hops: Schema.Number,
-  reason: Schema.NullOr(Schema.String),
-  session_id: Schema.NullOr(Schema.String),
-  engine_turn_id: Schema.NullOr(Schema.String),
-});
+const Hops = Schema.Struct({ hops: Schema.Number });
 
-const TurnRef = Schema.Struct({ session_id: Schema.String, engine_turn_id: Schema.String });
-
-const Name = Schema.Struct({ name: Schema.String });
-
-/** A wake that addresses its bot: it was mentioned, or it hosts a message addressed to nobody. */
-const ADDRESSING = new Set(["mentioned", "host"]);
+const SharedFile = Schema.Struct({ id: AttachmentId, name: Schema.String });
 
 export interface Score {
   /** The members who ran a turn for the room, in the order the turns started. */
   readonly sequence: ReadonlyArray<string>;
   readonly botTurns: number;
-  /** Turns by a bot that no room wake ever addressed. */
-  readonly unaddressedTurns: number;
+  /** Room wakes of the member the task gives no part. */
+  readonly bystanderWakes: number;
   readonly chainStopped: number;
-  /** `say` calls in a room turn that no wake addressing its bot began. */
-  readonly offAddressSays: number;
   /** The furthest hop count a room wake reached. */
   readonly maxHops: number;
-  /** The files bots shared in the room. */
-  readonly files: ReadonlyArray<string>;
+  /** The files bots shared in the room, in the order they were shared. */
+  readonly files: ReadonlyArray<typeof SharedFile.Type>;
 }
 
 export const score = Effect.fn("score")(function* (
   database: string,
   roomId: RoomId,
   names: ReadonlyMap<BotId, string>,
+  bystander: BotId,
 ) {
   const turns = yield* query(
     database,
     RoomTurn,
-    `SELECT t.session_id, t.engine_turn_id, t.origin_turn_id, s.bot_id
-       FROM turns t JOIN sessions s ON s.id = t.session_id
+    `SELECT s.bot_id FROM turns t JOIN sessions s ON s.id = t.session_id
        WHERE t.audience_room_id = ? ORDER BY t.started_at, t.rowid`,
     roomId,
   );
-  const wakes = yield* query(
+  const hops = yield* query(
     database,
-    RoomWake,
-    `SELECT w.bot_id, w.hops, json_extract(w.payload_json, '$.reason') AS reason,
-         d.session_id, d.engine_turn_id
-       FROM wakes w LEFT JOIN dispatches d ON d.id = w.dispatch_id
-       WHERE w.audience_room_id = ?`,
+    Hops,
+    `SELECT hops FROM wakes WHERE audience_room_id = ?`,
     roomId,
   );
-  const says = yield* query(
+  const bystanderWakes = yield* query(
     database,
-    TurnRef,
-    `SELECT session_id, engine_turn_id FROM tool_calls
-       WHERE tool = 'say' AND audience_room_id = ?`,
+    Count,
+    `SELECT COUNT(*) AS n FROM wakes WHERE audience_room_id = ? AND bot_id = ?`,
     roomId,
+    bystander,
   );
   const chainStopped = yield* query(
     database,
@@ -123,37 +102,18 @@ export const score = Effect.fn("score")(function* (
   );
   const files = yield* query(
     database,
-    Name,
-    `SELECT a.name FROM attachments a JOIN entries e ON e.id = a.entry_id
+    SharedFile,
+    `SELECT a.id, a.name FROM attachments a JOIN entries e ON e.id = a.entry_id
        WHERE e.room_id = ? AND a.source = 'bot' ORDER BY e.position`,
     roomId,
   );
 
-  const key = (sessionId: string, turnId: string) => `${sessionId}/${turnId}`;
-  const addressing = wakes.filter((wake) => wake.reason !== null && ADDRESSING.has(wake.reason));
-  const addressed = new Set(addressing.map((wake) => wake.bot_id));
-  const turnByKey = new Map(turns.map((turn) => [key(turn.session_id, turn.engine_turn_id), turn]));
-  const begunByAddress = new Set(
-    addressing.flatMap((wake) =>
-      wake.session_id === null || wake.engine_turn_id === null
-        ? []
-        : [key(wake.session_id, wake.engine_turn_id)],
-    ),
-  );
-  // A turn that continues another (background work reporting back) counts as the turn it continues.
-  const begun = (sessionId: string, turnId: string): boolean => {
-    if (begunByAddress.has(key(sessionId, turnId))) return true;
-    const origin = turnByKey.get(key(sessionId, turnId))?.origin_turn_id ?? null;
-    return origin !== null && origin !== turnId && begun(sessionId, origin);
-  };
-
   return {
     sequence: turns.map((turn) => names.get(turn.bot_id) ?? turn.bot_id),
     botTurns: turns.length,
-    unaddressedTurns: turns.filter((turn) => !addressed.has(turn.bot_id)).length,
+    bystanderWakes: bystanderWakes[0]?.n ?? 0,
     chainStopped: chainStopped[0]?.n ?? 0,
-    offAddressSays: says.filter((say) => !begun(say.session_id, say.engine_turn_id)).length,
-    maxHops: Math.max(0, ...wakes.map((wake) => wake.hops)),
-    files: files.map((file) => file.name),
+    maxHops: Math.max(0, ...hops.map((wake) => wake.hops)),
+    files,
   } satisfies Score;
 });

@@ -1,13 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import {
+  type AttachmentId,
+  type DeviceToken,
   HTTP_PATHS,
   J3Rpcs,
   PairingCode,
   PairResult,
   PairRequest,
   type ProviderStatus,
+  ServerInfo,
 } from "@j3-bots/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -28,7 +32,11 @@ import * as RpcSerialization from "effect/rpc/RpcSerialization";
 /** A step of booting or driving the server that did not go as it must. */
 export class EvalFailure extends Schema.TaggedError<EvalFailure>()("EvalFailure", {
   reason: Schema.String,
-}) {}
+}) {
+  override get message(): string {
+    return this.reason;
+  }
+}
 
 /** Where one run's server lives and listens. */
 export interface ServerSpec {
@@ -109,10 +117,6 @@ const cli = Effect.fn("cli")(function* (
   });
   return yield* Effect.scoped(run).pipe(
     Effect.mapError((cause) => new EvalFailure({ reason: `j3-bots ${args[0]}: ${cause.message}` })),
-    Effect.timeoutOrElse({
-      duration: "5 minutes",
-      orElse: () => Effect.fail(new EvalFailure({ reason: `j3-bots ${args[0]} never ended` })),
-    }),
   );
 });
 
@@ -121,6 +125,10 @@ const origin = (spec: ServerSpec) => `http://127.0.0.1:${spec.port}`;
 /**
  * Starts the server for the scope, its output in `log`, and waits until it
  * answers. Closing the scope stops it, and it stops the engine.
+ *
+ * Only a server that started after this one was spawned counts as answering,
+ * and this one exiting first fails the run: a server left on the port from
+ * elsewhere is never taken for it.
  */
 export const startServer = Effect.fn("startServer")(function* (spec: ServerSpec, log: string) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -128,20 +136,35 @@ export const startServer = Effect.fn("startServer")(function* (spec: ServerSpec,
   const http = yield* HttpClient.HttpClient;
   // The server's own budget for a stop is about 17 seconds.
   const command = yield* serverCommand(spec, ["serve"], { forceKillAfter: "30 seconds" });
+  const spawnedAt = yield* DateTime.now;
   const handle = yield* spawner
     .spawn(command)
     .pipe(Effect.mapError((cause) => new EvalFailure({ reason: cause.message })));
   yield* handle.all.pipe(Stream.run(fs.sink(log)), Effect.ignore, Effect.forkScoped);
-  yield* http.get(`${origin(spec)}${HTTP_PATHS.server}`).pipe(
+  const answered = http.get(`${origin(spec)}${HTTP_PATHS.server}`).pipe(
     Effect.filterOrFail((response) => response.status === 200),
+    Effect.flatMap(HttpClientResponse.schemaBodyJson(ServerInfo)),
+    Effect.filterOrFail((info) => DateTime.isGreaterThanOrEqualTo(info.startedAt, spawnedAt)),
     Effect.retry(Schedule.spaced("500 millis")),
-    Effect.timeoutOrElse({
-      duration: "1 minute",
-      orElse: () =>
-        Effect.fail(new EvalFailure({ reason: `The server did not answer; see ${log}` })),
-    }),
   );
+  const exited = handle.exitCode.pipe(
+    Effect.mapError((cause) => new EvalFailure({ reason: cause.message })),
+    Effect.flatMap((code) =>
+      Effect.fail(
+        new EvalFailure({ reason: `The server exited with code ${code} before it answered` }),
+      ),
+    ),
+  );
+  yield* Effect.raceFirst(answered, exited);
 });
+
+/** The last `count` lines the run's server wrote, none if its log cannot be read. */
+export const logTail = (log: string, count: number) =>
+  FileSystem.FileSystem.pipe(
+    Effect.flatMap((fs) => fs.readFileString(log)),
+    Effect.map((text) => text.trimEnd().split("\n").slice(-count)),
+    Effect.orElseSucceed((): ReadonlyArray<string> => []),
+  );
 
 /**
  * Connects the run's providers to the endpoint, as `j3-bots provider connect`
@@ -164,7 +187,7 @@ export const connectProviders = Effect.fn("connectProviders")(function* (
 const PRINTED_CODE = /Pairing code: ([0-9A-Z]{5})-([0-9A-Z]{5})/;
 
 /** Pairs the eval as a device, as a client does with the code `j3-bots pair` prints. */
-const pair = Effect.fn("pair")(function* (spec: ServerSpec) {
+export const pair = Effect.fn("pair")(function* (spec: ServerSpec) {
   const http = yield* HttpClient.HttpClient;
   const { output, exitCode } = yield* cli(spec, ["pair"]);
   const printed = PRINTED_CODE.exec(output);
@@ -181,9 +204,11 @@ const pair = Effect.fn("pair")(function* (spec: ServerSpec) {
   );
 });
 
-/** An RPC client of the run's server, paired as a device, for the scope. */
-export const connectClient = Effect.fn("connectClient")(function* (spec: ServerSpec) {
-  const { token } = yield* pair(spec);
+/** An RPC client of the run's server, as the device `token` was paired, for the scope. */
+export const connectClient = Effect.fn("connectClient")(function* (
+  spec: ServerSpec,
+  token: DeviceToken,
+) {
   const protocol = yield* Layer.build(
     RpcClient.layerProtocolSocket().pipe(
       Layer.provide(
@@ -198,6 +223,24 @@ export const connectClient = Effect.fn("connectClient")(function* (spec: ServerS
 });
 
 export type Client = Effect.Success<ReturnType<typeof connectClient>>;
+
+/** The text of a file in the run's server, fetched as a client fetches an attachment. */
+export const download = Effect.fn("download")(function* (
+  spec: ServerSpec,
+  token: DeviceToken,
+  id: AttachmentId,
+) {
+  const http = yield* HttpClient.HttpClient;
+  const response = yield* http.execute(
+    HttpClientRequest.get(`${origin(spec)}${HTTP_PATHS.attachments}/${id}`).pipe(
+      HttpClientRequest.bearerToken(token),
+    ),
+  );
+  if (response.status !== 200) {
+    return yield* new EvalFailure({ reason: `The server answered ${response.status} for ${id}` });
+  }
+  return yield* response.text;
+});
 
 /** The Claude Code provider, if the engine is ready and reports it ready with models. */
 const readyClaudeCode = (providers: ReadonlyArray<ProviderStatus>) =>
@@ -225,9 +268,4 @@ export const claudeCode = (client: Client) =>
         onSome: Effect.succeed,
       }),
     ),
-    Effect.timeoutOrElse({
-      duration: "3 minutes",
-      orElse: () =>
-        Effect.fail(new EvalFailure({ reason: "Claude Code was not ready within three minutes" })),
-    }),
   );
