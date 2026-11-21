@@ -47,10 +47,12 @@ shared/
   memory/
     user.md          facts about the operator every bot can read
     log/2026-11.md   shared dated history
-  skills/            skills available to every bot
+  skills/            skills available to every bot, the shipped `j3-` ones among them
 providers/
   claude-code/       Claude Code's home for every bot (`CLAUDE_CONFIG_DIR`)
+    skills/          a link to each shared skill, made at every engine start
   codex/             Codex's home for every bot (`CODEX_HOME`)
+    skills/          the same
 ```
 
 Generated files are written by the server from the database and the memory files. A bot never edits them by hand, and the server rewrites them whenever their inputs change.

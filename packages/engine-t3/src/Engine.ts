@@ -254,6 +254,16 @@ export interface EngineOptions {
    */
   readonly basePrompt: Stream.Stream<string>;
   /**
+   * The folder of the skills every bot shares, one folder per skill with a
+   * `SKILL.md`. Each Claude Code and Codex instance lists them as its own
+   * user-level skills: the adapter links each one into the harness home's
+   * skill folder at every start of the engine, so a skill added or removed
+   * here reaches the harnesses at the engine's next start. A skill of the
+   * home's own under the same name wins. A skill whose folder leads out of
+   * private state, by `isPrivate`, is not linked.
+   */
+  readonly sharedSkills: string;
+  /**
    * The caller's containment check: whether `location`, links resolved, is
    * still private state the adapter may write. The adapter asks it for every
    * folder it writes in, at the moment it writes, and leaves alone one it

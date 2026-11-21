@@ -87,6 +87,14 @@ export interface PrivateFiles {
    * itself, never what it leads to; a missing one is fine.
    */
   readonly remove: (location: string) => Effect.Effect<void, StorageError>;
+  /**
+   * Makes a symbolic link at `location` that leads to `target`, a path
+   * relative to `location`'s folder. Both are checked first: the folder that
+   * holds the link, and where `target` really is, links resolved, so a link
+   * the adapter makes never leads out of private state when it is made.
+   * Nothing may be at `location` yet: a link is never made over anything.
+   */
+  readonly link: (location: string, target: string) => Effect.Effect<void, StorageError>;
 }
 
 /** Random bytes in a temporary file's name: never guessed ahead of the write. */
@@ -206,5 +214,13 @@ export const makePrivateFiles = Effect.fnUntraced(function* (
       yield* Stream.runForEach(bytes, (chunk) => Effect.uninterruptible(writeAll(file, fd, chunk)));
     }).pipe(Effect.scoped);
 
-  return { folder, write, writable, writeStream, remove } satisfies PrivateFiles;
+  const link = Effect.fnUntraced(function* (location: string, target: string) {
+    const parent = path.dirname(location);
+    yield* folder(parent);
+    const destination = path.resolve(parent, target);
+    if (!(yield* isPrivate(destination))) return yield* refuse(destination);
+    yield* fs.symlink(target, location);
+  });
+
+  return { folder, write, writable, writeStream, remove, link } satisfies PrivateFiles;
 });

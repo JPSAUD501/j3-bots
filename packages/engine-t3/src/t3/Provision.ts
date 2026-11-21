@@ -8,6 +8,7 @@ import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { engineFolders, type PrivateFiles } from "./PrivateFiles.ts";
+import { linkSharedSkills } from "./SkillLinks.ts";
 import { editToml, type TomlEdit, type TomlTable } from "./toml.ts";
 
 // Everything J3 Bots writes into the engine's data directory and the provider
@@ -59,6 +60,8 @@ export interface ProvisionInput {
   readonly systemPromptFile: string;
   /** The base prompt every bot shares, which Codex takes as `developer_instructions`. */
   readonly basePrompt: string;
+  /** The folder of the skills every bot shares, which each Claude Code and Codex home links. */
+  readonly sharedSkills: string;
 }
 
 /**
@@ -395,9 +398,10 @@ const claudeSettings = (
 
 /**
  * Writes the engine's settings, its secret store and each harness's
- * configuration from the stored connection. Run only while the engine is
- * stopped, before each start (`Supervisor.beforeStart`): the engine reads its
- * settings, and each harness its configuration, when they start, so a
+ * configuration from the stored connection, and links the shared skills into
+ * each Claude Code and Codex home (`linkSharedSkills`). Run only while the
+ * engine is stopped, before each start (`Supervisor.beforeStart`): the engine
+ * reads its settings, and each harness its configuration, when they start, so a
  * connection reaches every harness together with its key, and a provisioning
  * cut short is completed by the next one, which writes everything again.
  *
@@ -455,6 +459,11 @@ export const provision = Effect.fn("engine.provision")(function* (input: Provisi
           },
         });
         yield* writeJson(settingsFile, claudeSettings(settings, connection));
+        yield* linkSharedSkills({
+          files: input.files,
+          home: spec.home,
+          shared: input.sharedSkills,
+        });
         return;
       }
       case "codex": {
@@ -464,6 +473,11 @@ export const provision = Effect.fn("engine.provision")(function* (input: Provisi
         const edited = editToml(text ?? "", codexConfig(input, connection));
         if (edited._tag === "unreadable") return yield* unreadable(configFile)(edited.reason);
         yield* input.files.write(configFile, edited.text);
+        yield* linkSharedSkills({
+          files: input.files,
+          home: spec.home,
+          shared: input.sharedSkills,
+        });
         return;
       }
       case "acp-local":

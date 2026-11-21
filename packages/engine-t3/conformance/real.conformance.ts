@@ -60,11 +60,12 @@ const paths = Effect.gen(function* () {
   return {
     home: path.join(root, "engine"),
     workspace: path.join(root, "workspace"),
+    sharedSkills: path.join(root, "shared-skills"),
     agent: path.join(agent, "scripted-agent", "agent.ts"),
   };
 });
 
-const options = Effect.map(paths, ({ home, agent }): EngineOptions => ({
+const options = Effect.map(paths, ({ home, agent, sharedSkills }): EngineOptions => ({
   home,
   port: PORT,
   binaryOverride: Option.none(),
@@ -83,6 +84,8 @@ const options = Effect.map(paths, ({ home, agent }): EngineOptions => ({
   systemPromptFile: ".j3/system.md",
   // Only Codex reads it, and the bench runs no Codex instance.
   basePrompt: Stream.make(""),
+  // Only Claude Code and Codex list skills, and the bench runs neither.
+  sharedSkills,
   // The bench's home is a fresh folder of its own, with no web client to publish through.
   isPrivate: () => Effect.succeed(true),
 }));

@@ -64,6 +64,7 @@ const setUp = Effect.gen(function* () {
     toolBridge: { command: "/usr/bin/node", args: ["bridge.js"] },
     systemPromptFile: ".j3/system.md",
     basePrompt: 'Say "done" when done.',
+    sharedSkills: path.join(home, "shared-skills"),
   };
   const { userdata, secrets } = engineFolders(path, home);
   const settings = Effect.gen(function* () {
@@ -335,3 +336,21 @@ describe("a Codex instance's config.toml", () => {
     }).pipe(Effect.scoped, Effect.provide(machine)),
   );
 });
+
+it.effect("lets the Claude Code and Codex homes list the shared skills", () =>
+  Effect.gen(function* () {
+    const { fs, path, home, input } = yield* setUp;
+    const text = "---\nname: j3-routines\ndescription: Routines\n---\n";
+    yield* fs.makeDirectory(path.join(input.sharedSkills, "j3-routines"), { recursive: true });
+    yield* fs.writeFileString(path.join(input.sharedSkills, "j3-routines", "SKILL.md"), text);
+
+    yield* provision(input);
+
+    for (const harness of ["claude-code", "codex"]) {
+      assert.strictEqual(
+        yield* fs.readFileString(path.join(home, harness, "skills", "j3-routines", "SKILL.md")),
+        text,
+      );
+    }
+  }).pipe(Effect.scoped, Effect.provide(machine)),
+);

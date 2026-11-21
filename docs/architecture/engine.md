@@ -18,6 +18,7 @@ The engine is a separate T3 Code instance that belongs to J3 Bots. It shares not
 What is still shared with the machine:
 
 - **Provider homes.** By default Claude Code uses `~/.claude` and Codex uses `~/.codex`. J3 Bots gives each engine provider instance its own home directory, `<J3_HOME>/providers/claude-code` and `<J3_HOME>/providers/codex`, so bots do not inherit the operator's coding instructions, hooks, skills, MCP servers or sign-in. See [Reaching the models](#reaching-the-models).
+- **The operator's `~/.agents/skills`, on Codex.** Codex lists the skills in `$HOME/.agents/skills` as user skills, beside those in its `CODEX_HOME`, and the engine passes the server's `HOME` on. So a Codex bot is offered every skill the operator keeps there. **Verified** with Codex 0.170.0, through its app server's `skills/list` and in a real turn on release `4969`. Claude Code with a `CLAUDE_CONFIG_DIR` reads neither `~/.claude/skills` nor `~/.agents/skills` (**Verified**, 2.1.328). Closing this needs a `HOME` of the engine's own, which is not decided yet.
 - **Managed policy.** `/etc/t3code/policy.json` on Linux applies to every T3 Code instance on the machine, including the engine. **Read**.
 
 ## Version pinning
@@ -181,6 +182,13 @@ For Codex:
 
   J3 Bots owns those keys and the two tables, however the file writes them: a table of its own, a dotted key, or a pair inside an inline table such as `mcp_servers = { j3 = {…}, other = {…} }`, which is edited in place with the other pairs kept as written. Each of its tables the file has is replaced where it is, under the comments above it, and one the file lacks goes at the end. Everything else stays. TOML's parser checks the file before the edit and checks after it that nothing J3 Bots does not own reads differently; a file it cannot edit that way is refused with its line, as above.
   - `[mcp_servers.j3]` with `command` and `args`, and `default_tools_approval_mode = "approve"`, the Codex counterpart of `--allowedTools`. The server's name must not contain a dot: T3 Code skips such names when it tags servers with the thread id (**Read**).
+
+For both, the shared skills ([Skills](../prompts/architecture.md#skills)):
+
+- Each harness lists the skills of its home's `skills/` folder, one folder with a `SKILL.md` per skill, following links: Claude Code `$CLAUDE_CONFIG_DIR/skills` and Codex `$CODEX_HOME/skills`. **Verified** with Claude Code 2.1.328 (the `skills` of its `init` message, and the listing in the request it sends) and Codex 0.170.0 (its app server's `skills/list`), each with a fresh home holding linked skill folders: both listed them and both left out a link to a folder that was gone. Each also lists project skills from the thread's folder (`.claude/skills`; `.agents/skills` and `.codex/skills`). On a name both define, Claude Code lists only its home's skill and Codex lists both (**Verified**, same versions). In a real turn on release `4969`, a Claude Code bot (`claude-sonnet-5-5`) and a Codex bot (`gpt-6.2-sol`), asked to list their skills, each named `j3-routines` from the shared skills.
+- At every provisioning, the adapter makes the home's `skills/` a folder of its own and puts in it one link per shared skill, `<name>` leading to `<J3_HOME>/shared/skills/<name>` by a relative path. It first removes the links it made before, recognized by where they lead, so a skill removed from the shared folder loses its link, and a skill added there reaches the harnesses at the engine's next start. A shared skill is a folder whose name does not start with a dot.
+- Nothing else in the home's `skills/` is touched: Codex installs its own skills in `skills/.system`, and a skill of the home's own (one a harness saved there, say) wins over a shared skill of the same name, which is then not linked; that is logged.
+- Each link goes through the containment check: a shared skill whose folder leads out of the home, links resolved, is not linked, and its link from an earlier start is removed. A home whose `skills` is a link or a file is left as it is, with a warning, and gets no links, so the adapter never makes or removes one in a folder outside the home.
 
 ### Reaching the models
 
