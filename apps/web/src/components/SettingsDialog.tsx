@@ -435,7 +435,8 @@ function NotificationsSection({
           />
         </>
       )}
-      <p role="status" className="text-xs text-blocked empty:hidden">
+      {/* Exposed while empty, so a failure that arrives later is announced. */}
+      <p role="status" className="text-xs text-blocked empty:sr-only">
         {failed && t("settings.saveFailed")}
       </p>
       {!connected && <p className="text-xs text-muted-foreground">{t("settings.save.offline")}</p>}
