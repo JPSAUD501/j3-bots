@@ -7,6 +7,7 @@ import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as ServerConfig from "../config.ts";
 import { HOME_ENTRIES, homeLayout } from "../home/entries.ts";
+import { holdLock } from "../home/Home.ts";
 import type { Installation } from "../installation.ts";
 import { socketOwner } from "../service/owner.ts";
 import * as Unit from "../service/unit.ts";
@@ -20,16 +21,18 @@ import {
   startsInstall,
   VERSIONS,
 } from "./layout.ts";
+import { UPDATE_LOCK } from "./snapshot.ts";
 
 // `j3-bots uninstall`: undoes `scripts/install.sh`. It stops and removes the
 // service when the service runs this install, then removes the j3-bots command
 // and what install.sh put in the install folder, and with `deleteData` what
 // the server wrote in the data directory. It removes nothing it did not write.
-// Refusals come first and change nothing.
+// Refusals come first and change nothing. It holds the home's update lock
+// throughout, so it never runs while an update or a rollback does.
 
 /** Why nothing was removed. */
 class UninstallRefused extends Schema.TaggedError<UninstallRefused>()("UninstallRefused", {
-  reason: Schema.Literals(["checkout", "unpacked", "no-systemd", "server-running"]),
+  reason: Schema.Literals(["checkout", "unpacked", "no-systemd", "server-running", "busy"]),
   /** The folder the refusal is about: the release, the data directory. */
   subject: Schema.String,
 }) {
@@ -43,6 +46,8 @@ class UninstallRefused extends Schema.TaggedError<UninstallRefused>()("Uninstall
         return "The service is installed, but there is no systemd user manager to stop it with. Log in to a systemd session as this user (not with sudo), then run this again. Nothing was removed.";
       case "server-running":
         return `A J3 Bots server that this uninstall does not stop is running for ${this.subject}. Stop it, then run this again. Nothing was removed.`;
+      case "busy":
+        return `\`j3-bots update\` or \`j3-bots update --rollback\` is running for ${this.subject}. Wait for it to end, then run this again. Nothing was removed.`;
     }
   }
 }
@@ -134,6 +139,33 @@ const removeIfEmpty = Effect.fnUntraced(function* (folder: string) {
   return true;
 });
 
+/** Whether a server took `home`: it holds the server's lock or its database. */
+const serverTook = Effect.fnUntraced(function* (home: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  return (
+    (yield* fs.exists(path.join(home, HOME_ENTRIES.lock))) ||
+    (yield* fs.exists(path.join(home, HOME_ENTRIES.database)))
+  );
+});
+
+/**
+ * Holds `<home>/backups/update.lock`, the lock an update or a rollback holds
+ * from start to end, for the scope, or fails while one holds it. A home no
+ * server took has nothing for an update to copy, and is left as it is.
+ */
+const holdUpdates = Effect.fnUntraced(function* (home: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  if (!(yield* serverTook(home))) return;
+  const backups = path.join(home, HOME_ENTRIES.backups);
+  yield* fs.makeDirectory(backups, { recursive: true, mode: 0o700 });
+  yield* holdLock(
+    path.join(backups, UPDATE_LOCK),
+    () => new UninstallRefused({ reason: "busy", subject: home }),
+  );
+});
+
 /**
  * Deletes what the server writes in the data directory `home`, and `home` if
  * that empties it. Only from a folder a server took: one with its lock or its
@@ -146,10 +178,7 @@ const deleteOwnData = Effect.fnUntraced(function* (
   const path = yield* Path.Path;
   const info = yield* fs.lstat(home).pipe(Effect.option);
   if (Option.isNone(info)) return "absent";
-  const taken =
-    (yield* fs.exists(path.join(home, HOME_ENTRIES.lock))) ||
-    (yield* fs.exists(path.join(home, HOME_ENTRIES.database)));
-  if (!taken) return "not-j3";
+  if (!(yield* serverTook(home))) return "not-j3";
   for (const entry of homeLayout(path, home).written([])) {
     // A link among them goes, not what it points to.
     yield* fs.remove(entry, { recursive: true, force: true });
@@ -167,6 +196,7 @@ export const uninstall = Effect.fn("install.uninstall")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const systemd = yield* Systemd;
+  yield* holdUpdates(found.home);
 
   // The unit to stop and remove: only one that runs this install.
   const ownUnit = Option.flatMap(found.service, ({ unitFile, own }) =>
@@ -217,4 +247,4 @@ export const uninstall = Effect.fn("install.uninstall")(function* (
     installRemoved,
     data,
   } satisfies Uninstalled;
-});
+}, Effect.scoped);

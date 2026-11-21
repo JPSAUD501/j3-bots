@@ -17,7 +17,7 @@ import release000 from "./samples/status-0.0.0.json" with { type: "json" };
 // Existing unions and literals are closed, because an older reader refuses a
 // value it does not know, so a new value needs a new optional field. The
 // command that waits for an updated server decodes only what it needs from the
-// reply, `version` and `pid`.
+// reply: `version`, `pid` and the tag of the engine's state (`ServerReadiness`).
 
 const SAMPLES = { "0.0.0": release000 };
 

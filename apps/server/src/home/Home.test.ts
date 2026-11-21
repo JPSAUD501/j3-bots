@@ -10,7 +10,14 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import packageJson from "../../package.json" with { type: "json" };
 import { ServerConfig, type ServerConfigShape } from "../config.ts";
+import {
+  markRestoring,
+  restoreSnapshot,
+  takeSnapshot,
+  unmarkRestoring,
+} from "../install/snapshot.ts";
 import * as Home from "./Home.ts";
 
 /** A fresh private home, with the paths the server derives from it. */
@@ -161,5 +168,43 @@ it.layer(NodeServices.layer)("home", (it) => {
       assert.include(failing.message, "EIO: access '/srv/j3'");
       assert.isUndefined(failing.fix);
     }),
+  );
+
+  it.effect(
+    "refuses a home a rollback has not finished, but to the release it ends on once back whole",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const config = yield* freshHome;
+        const reserved = Effect.scoped(reserveIn(config)).pipe(Effect.exit);
+        yield* fs.writeFileString(path.join(config.home, "config.json"), "{}");
+        const toThis = yield* takeSnapshot({
+          home: config.home,
+          from: { version: packageJson.version },
+          to: { version: "99.0.0" },
+        });
+
+        // Marked, nothing copied yet: the home still holds the other release's data.
+        yield* markRestoring(toThis);
+        assert.deepInclude(failure(yield* reserved), {
+          _tag: "RollbackUnfinished",
+          release: packageJson.version,
+        });
+        // Put back whole: the release the rollback ends on may start, to finish it.
+        yield* restoreSnapshot(config.home, toThis);
+        assert.isTrue(Exit.isSuccess(yield* reserved));
+        yield* unmarkRestoring(toThis);
+
+        // A rollback to another release refuses this one, even once back whole.
+        const toAnother = yield* takeSnapshot({
+          home: config.home,
+          from: { version: "0.0.0-another" },
+          to: { version: packageJson.version },
+        });
+        yield* markRestoring(toAnother);
+        yield* restoreSnapshot(config.home, toAnother);
+        assert.deepInclude(failure(yield* reserved), { _tag: "RollbackUnfinished" });
+      }).pipe(Effect.scoped),
   );
 });

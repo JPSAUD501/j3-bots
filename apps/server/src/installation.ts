@@ -31,6 +31,11 @@ export const ReleaseManifest = Schema.Struct({
   platform: Schema.String,
   /** The Node release in `node/`. */
   node: Schema.String,
+  /**
+   * The T3 Code release it is pinned to, which `j3-bots engine fetch`
+   * installs. Absent from releases built before `j3-bots update` existed.
+   */
+  engine: Schema.optionalKey(Schema.String),
 });
 export type ReleaseManifest = typeof ReleaseManifest.Type;
 

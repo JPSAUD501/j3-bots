@@ -29,6 +29,7 @@ import {
   PairingOffer,
   ProviderConnectionOutcome,
   ProviderConnectionRequest,
+  RunningWorkReply,
 } from "./protocol.ts";
 
 // The admin socket: how `j3-bots pair`, `j3-bots doctor` and
@@ -91,6 +92,16 @@ const routes = Layer.mergeAll(
     Effect.gen(function* () {
       yield* (yield* Devices).unlock;
       return yield* offerPairing;
+    }),
+  ),
+  HttpRouter.add(
+    "GET",
+    ADMIN_PATHS.runningWork,
+    Effect.gen(function* () {
+      const working = yield* (yield* RunningWork).bots;
+      return yield* HttpServerResponse.schemaJson(RunningWorkReply)({ bots: working.length }).pipe(
+        Effect.orDie,
+      );
     }),
   ),
   HttpRouter.add(

@@ -120,6 +120,8 @@ const installOn = (machine: Machine) =>
                 : Effect.succeed(machine.before),
           startPairing: () => Effect.die("install never pairs"),
           connectProviders: () => Effect.die("install never connects providers"),
+          readiness: () => Effect.die("install never waits for an update"),
+          runningWork: () => Effect.die("install never asks for running work"),
         }),
       ),
       Layer.succeed(
@@ -143,6 +145,7 @@ const installOn = (machine: Machine) =>
               calls.push(`enable and restart ${unit}`);
             }),
           disableAndStop: () => Effect.die("install never stops the service"),
+          stop: () => Effect.die("install never stops the service"),
         }),
       ),
     );

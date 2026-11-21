@@ -68,6 +68,12 @@ export class Systemd extends Context.Service<
     /** Enables the unit and starts it, or restarts it if it runs. */
     readonly enableAndRestart: (unit: string) => Effect.Effect<void, SystemdFailed>;
     readonly disableAndStop: (unit: string) => Effect.Effect<void, SystemdFailed>;
+    /**
+     * Stops the unit, and returns once it has stopped; it stays enabled. Its
+     * failed state and start limit are cleared, so the next start is not
+     * refused for the restarts before it.
+     */
+    readonly stop: (unit: string) => Effect.Effect<void, SystemdFailed>;
   }
 >()("@j3-bots/server/system/Systemd") {}
 
@@ -161,6 +167,11 @@ export const layer = Layer.effect(
       }),
       disableAndStop: Effect.fn("Systemd.disableAndStop")(function* (unit: string) {
         yield* must(["disable", "--now", unit]);
+      }),
+      stop: Effect.fn("Systemd.stop")(function* (unit: string) {
+        yield* must(["stop", unit]);
+        // A unit that is not failed has nothing to clear, which systemctl may report.
+        yield* systemctl(["reset-failed", unit]);
       }),
     });
   }),

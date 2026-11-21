@@ -3,6 +3,9 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Hex from "effect/encoding/Hex";
 import { type Installation, RELEASE_MANIFEST } from "../installation.ts";
 
 // Where `scripts/install.sh` puts J3 Bots on a host, outside the data
@@ -26,7 +29,11 @@ export const LAUNCHER_RECORD = "launcher";
 /** A folder install.sh unpacks a release into, in `versions/`: `mktemp -d .staging-XXXXXX`. */
 const STAGING = /^\.staging-[A-Za-z0-9]{6}$/;
 
-/** The whole text of the command install.sh writes to run the release at `release`. */
+/**
+ * The whole text of the command install.sh writes to run the release at
+ * `release`, and `j3-bots update` after it: only a command that is exactly
+ * this is the install's.
+ */
 const launcherText = (release: string) =>
   `#!/bin/sh\n# J3 Bots, installed by install.sh. \`j3-bots uninstall\` removes it.\nexec '${release}/bin/j3-bots' "$@"\n`;
 
@@ -85,6 +92,42 @@ export const isOwnLauncher = Effect.fn("install.isOwnLauncher")(function* (
   );
 });
 
+/** The release folder the command at `file` runs, when install.sh or an update wrote it. */
+export const launchedRelease = Effect.fn("install.launchedRelease")(function* (file: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const text = yield* fs.readFileString(file).pipe(Effect.option);
+  return Option.flatMap(text, (launcher) => {
+    const release = LAUNCHED_RELEASE.exec(launcher)?.[1];
+    return release !== undefined && launcher === launcherText(release)
+      ? Option.some(release)
+      : Option.none();
+  });
+});
+
+/**
+ * The release folder in the install's `versions/` that a service whose
+ * `ExecStart=` is `command` runs: the one its Node or its server bundle is
+ * in. `None` when neither is in a release there, as for a unit that starts
+ * the command install.sh recorded.
+ */
+export const startedRelease = Effect.fn("install.startedRelease")(function* (
+  command: ReadonlyArray<string>,
+  install: string,
+) {
+  const path = yield* Path.Path;
+  const versions = yield* resolved(path.join(install, VERSIONS));
+  for (const word of command.slice(0, 2)) {
+    if (!path.isAbsolute(word)) continue;
+    const real = yield* resolved(word);
+    if (!real.startsWith(`${versions}/`)) continue;
+    const version = real.slice(versions.length + 1).split("/")[0];
+    if (version !== undefined && version !== "") {
+      return Option.some(path.join(install, VERSIONS, version));
+    }
+  }
+  return Option.none<string>();
+});
+
 /** The command the install at `install` recorded, if it recorded one. */
 export const recordedLauncher = Effect.fn("install.recordedLauncher")(function* (install: string) {
   const fs = yield* FileSystem.FileSystem;
@@ -140,4 +183,74 @@ export const installedVersions = Effect.fn("install.installedVersions")(function
     }
   }
   return own;
+});
+
+/** A folder of the install that another account could change what runs from. */
+class InstallFolderExposed extends Schema.TaggedError<InstallFolderExposed>()(
+  "InstallFolderExposed",
+  { folder: Schema.String, reason: Schema.Literals(["not-owned", "writable-by-all"]) },
+) {
+  override get message(): string {
+    return this.reason === "not-owned"
+      ? `${this.folder} belongs to another account, which could change what runs from it. Nothing was changed.`
+      : `${this.folder} can be written by every account, which could change what runs from it. Take that away with \`chmod o-w ${this.folder}\`, then run this again. Nothing was changed.`;
+  }
+}
+
+/**
+ * Fails unless `folder` is this user's and not writable by every account, as
+ * install.sh checks the install folder, its `versions/` and the command's
+ * folder: what is in them runs as this user. Its group may write.
+ */
+export const checkOwnFolder = Effect.fn("install.checkOwnFolder")(function* (folder: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const info = yield* fs.stat(folder);
+  const uid = process.getuid?.();
+  if (uid !== undefined && !Option.contains(info.uid, uid)) {
+    return yield* new InstallFolderExposed({ folder, reason: "not-owned" });
+  }
+  if ((info.mode & 0o002) !== 0) {
+    return yield* new InstallFolderExposed({ folder, reason: "writable-by-all" });
+  }
+});
+
+/**
+ * Replaces `file` with `text` and gives it `mode`, whole: written to a new
+ * file of a random name beside it, then renamed over it.
+ */
+const replaceWithMode = Effect.fnUntraced(function* (file: string, text: string, mode: number) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const random = yield* SecureRandom.SecureRandom;
+  const temporary = path.join(
+    path.dirname(file),
+    `.${path.basename(file)}.${Hex.encode(yield* random.randomBytes(6))}`,
+  );
+  yield* fs.writeFileString(temporary, text, { flag: "wx", mode }).pipe(
+    // The mode the file is created with passes through the umask.
+    Effect.andThen(fs.chmod(temporary, mode)),
+    Effect.andThen(fs.rename(temporary, file)),
+    Effect.onError(() => fs.remove(temporary, { force: true }).pipe(Effect.ignore)),
+  );
+}, Effect.provide(SecureRandom.layerWebCrypto));
+
+/**
+ * Points the install's command, `launcher`, at the release in `release`, as
+ * install.sh writes it: the record of where the command is first, so the
+ * command never exists without it, then the command, each replaced whole.
+ */
+export const writeLauncher = Effect.fn("install.writeLauncher")(function* (options: {
+  readonly install: string;
+  readonly launcher: string;
+  readonly release: string;
+}) {
+  const path = yield* Path.Path;
+  yield* checkOwnFolder(options.install);
+  yield* checkOwnFolder(path.dirname(options.launcher));
+  yield* replaceWithMode(
+    path.join(options.install, LAUNCHER_RECORD),
+    `${options.launcher}\n`,
+    0o644,
+  );
+  yield* replaceWithMode(options.launcher, launcherText(options.release), 0o755);
 });

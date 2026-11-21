@@ -50,7 +50,7 @@ curl -fsSL https://github.com/JPSAUD501/j3-bots/releases/download/v0.1.0-rc.1/in
 
 `J3_INSTALL_DIR` and `J3_BIN_DIR` move the first two folders, and `J3_HOME` the data directory. The install folder, its `versions/` and the folder of the command must be yours and not writable by every account: what is in them runs as you, so `install.sh` refuses any other, and says which and why. A folder your own group may write, as `umask 002` makes them, is accepted. It writes its own folders with no write access for group or others, whatever your `umask`.
 
-Run it again with the same version to restore the command, its record and the service. It uses the release already in `versions/<version>/` as it is, so a damaged release there is fixed by `j3-bots uninstall`, then the command above again. It never removes a folder it did not make: a `versions/<version>/` that is not a release, with no `release.json`, is refused and kept. It refuses to install another version over an installed one: to change version, run `j3-bots uninstall` (your data is kept), then the command above again.
+Run it again with the same version to restore the command, its record and the service. It uses the release already in `versions/<version>/` as it is, so a damaged release there is fixed by `j3-bots uninstall`, then the command above again. It never removes a folder it did not make: a `versions/<version>/` that is not a release, with no `release.json`, is refused and kept. It refuses to install another version over an installed one: `j3-bots update` changes version ([Update](#update)).
 
 ### From a checkout
 
@@ -234,6 +234,41 @@ The server writes one JSON object per line. If `journalctl --user` shows nothing
 ## Update
 
 ```sh
+j3-bots update                    # to the latest release
+j3-bots update --version 0.2.0    # to this one, a pre-release included
+```
+
+The installed release runs the update, so it can always start itself again ([decision 0016](../decisions/0016-an-update-keeps-a-snapshot-to-roll-back-to.md)). It changes nothing while it prepares:
+
+- it checks for free space: twice the size of the databases plus 1 GB where the data directory is, and 512 MB where the install is;
+- it downloads the release for this machine and checks it against the release's `SHA256SUMS`, as `install.sh` does, into `~/.local/share/j3-bots/versions/<version>/`, and downloads the engine that release is pinned to beside the running one (`j3-bots engine fetch`);
+- if bots have work running, it asks before stopping it. `--yes` answers for a script; without a terminal to ask on, the update is refused unless it is given.
+
+Then it stops the service, copies the databases and the settings into a snapshot in `~/.j3-bots/backups/`, readable by you alone and flushed to the disk, and starts the new release with its own `service install`. That command gives up after 60 seconds without an answer from the new server. Once it answers, the update waits up to five minutes for its engine to be ready; within that wait the server gives each launch of the engine 90 seconds and launches it again after a failure. Then it points the `j3-bots` command at the new release. It keeps the release before, the two newest snapshots and the engine of each of those two releases, and removes older ones; a snapshot is removed with what its rollbacks replaced, in its `replaced-*` folders.
+
+The update carries on if your terminal hangs up, as when an SSH connection drops: it ignores the hangup, and the releases it runs are out of the terminal's reach. If it is killed anyway, by a power cut or `kill -9`, the service is left on one release whole: `j3-bots doctor` says when the service and the `j3-bots` command run different releases, and `j3-bots update --version <the service's release>` points the command at the one the service runs.
+
+One update or rollback runs at a time: a second one, such as one you start again after a dropped connection, is refused at once and changes nothing, and so is `j3-bots uninstall`. While the databases are copied or put back, no server can start on the data directory, `j3-bots serve` included, and a server you started outside the service makes the update refuse before it stops anything.
+
+If the new release does not start or its engine does not become ready, the update rolls back by itself, as `--rollback` does (below), and says what failed. The new server answered on its own socket while the update waited, so a message sent to it then was accepted, and the databases put back do not have it: what the new release recorded is moved, with its databases, into the snapshot's `replaced-*` folder. `versions/<new version>/`, the engine it fetched and the snapshot stay on disk, and the next update that succeeds removes what is more than two of each.
+
+Keep `~/.j3-bots/backups/` on the same filesystem as the rest of the data directory, not as a link to an external drive: a rollback moves the data directory's files into it, which cannot cross filesystems. An update and `--rollback` refuse before they stop anything when it is elsewhere, and say how to put it back.
+
+A rollback is marked in its snapshot's folder from before it stops anything until the release before runs again. It disables the service, copies every file of the snapshot beside where it goes, then moves the files in the data directory aside and the copies into place, and starts the release before with its own `service install`, which enables the service again. If it is cut off anywhere, by a power cut too, the mark stays: no server starts on the data directory, whoever starts it, but the release before once the snapshot is back whole; `j3-bots update` refuses to run; `j3-bots doctor` gives one fix, `j3-bots update --rollback`; and that finishes it from where it got, using the copies it already made.
+
+To go back after an update that worked:
+
+```sh
+j3-bots update --rollback
+```
+
+It finishes a rollback that was cut off, if there is one, and otherwise takes the newest snapshot taken by an update to the release that runs now, so a later update that failed and rolled itself back does not hide it; `j3-bots doctor` names that snapshot. Before it changes anything it checks that the install folder, its `versions/` and the release it will start are yours and not writable by every account, as `install.sh` does, and that there is room for the copies still to make, plus 1 GB: the snapshot's size, less what a rollback that was cut off copied already. It says when the snapshot was taken and asks first (`--yes` answers for a script). The databases go back to that moment: conversations, rooms, routines, settings, paired devices and the engine's threads since then are lost. Bots' files on disk, their memory included, are not in the snapshot and stay as they are. What the rollback replaced is kept in the snapshot's folder, in `replaced-*/`, until an update removes that snapshot. The rollback starts the release the snapshot was taken from and points the command at it.
+
+A release refuses a database a newer release migrated, and says which migration it does not know, so starting an older release by hand on newer data fails rather than run on it: roll back instead.
+
+From a checkout:
+
+```sh
 cd ~/j3-bots
 git pull
 pnpm install --frozen-lockfile
@@ -242,7 +277,7 @@ systemctl --user restart j3-bots
 j3-bots doctor
 ```
 
-The server migrates its database when it starts. If the new release pins another engine version, the server downloads that version on its first start. The server looks for the web client when it starts: if it was not built then, it is served only after a restart.
+A checkout's server migrates its database when it starts, and keeps no snapshot: back up first ([Back up](#back-up)). If the new code pins another engine version, the server downloads it on its first start. The server looks for the web client when it starts: if it was not built then, it is served only after a restart.
 
 ## Back up
 
@@ -270,7 +305,7 @@ To restore:
 j3-bots uninstall
 ```
 
-This undoes `install.sh`, and removes only what it wrote: it stops the service, disables it and deletes its unit, then deletes the `j3-bots` command, each version `install.sh` unpacked in `~/.local/share/j3-bots/versions/` and the record of the command, and then each of those two folders if that leaves it empty. A command at the recorded path that is not exactly the one `install.sh` writes is kept, and so is anything else you put in those folders. A release you unpacked yourself is not an install: `uninstall` refuses it and removes nothing. The service is this install's only when its unit runs this install: the recorded command, or a release in its `versions/`. A unit that runs another J3 Bots, such as a checkout, is kept, and `uninstall` says so. The data directory stays, and the command names it: the one this install's service ran with, which `service status` also shows, else this shell's. `j3-bots uninstall --delete-data` deletes J3 Bots' data in it too, after asking; `--yes` answers for a script. That is every entry the server writes there ([Server: data](../architecture/server.md#data)), and then the data directory if that leaves it empty. Only a folder a server has used, one with its `server.lock` or `j3.sqlite`, is touched: any other is not a J3 Bots data directory, and nothing in it is deleted. A web client you put in its `web/` is kept, and so is the folder, as is a file of yours in it. When the data directory is a link, the link and the folder it points to are kept. It refuses, and removes nothing, while a server it does not stop runs for that data directory.
+This undoes `install.sh`, and removes only what it wrote: it stops the service, disables it and deletes its unit, then deletes the `j3-bots` command, each version `install.sh` unpacked in `~/.local/share/j3-bots/versions/` and the record of the command, and then each of those two folders if that leaves it empty. A command at the recorded path that is not exactly the one `install.sh` writes is kept, and so is anything else you put in those folders. A release you unpacked yourself is not an install: `uninstall` refuses it and removes nothing. The service is this install's only when its unit runs this install: the recorded command, or a release in its `versions/`. A unit that runs another J3 Bots, such as a checkout, is kept, and `uninstall` says so. The data directory stays, and the command names it: the one this install's service ran with, which `service status` also shows, else this shell's. `j3-bots uninstall --delete-data` deletes J3 Bots' data in it too, after asking; `--yes` answers for a script. That is every entry the server writes there ([Server: data](../architecture/server.md#data)), and then the data directory if that leaves it empty. Only a folder a server has used, one with its `server.lock` or `j3.sqlite`, is touched: any other is not a J3 Bots data directory, and nothing in it is deleted. A web client you put in its `web/` is kept, and so is the folder, as is a file of yours in it. When the data directory is a link, the link and the folder it points to are kept. It refuses, and removes nothing, while a server it does not stop runs for that data directory, or while `j3-bots update` or `j3-bots update --rollback` runs.
 
 From a checkout, `j3-bots service uninstall` stops the service, disables it and deletes its unit, and keeps the data directory; the checkout and the data directory are yours to delete.
 
@@ -286,6 +321,7 @@ Each line is ✓ (fine), `!` (a warning: the server runs, but something is missi
 | Shell settings | With the service installed, a warning for each `J3_*` variable in your shell, which the service does not get, and a problem for one whose value the server would refuse. |
 | Data directory | It is a folder this user owns and can write to, and no group or other user can open it. Otherwise the server does not start, and `doctor` reports the cause, with the fix when it has one, such as the `chmod` or `chown` command. |
 | Disk space | Free space where the data directory is: less than 1 GB is a problem, less than 3 GB a warning. |
+| Snapshot | The snapshot `j3-bots update --rollback` would put back. A rollback that has not finished is a problem, with `j3-bots update --rollback` as its fix; until it does, Server, Service and Command wait for it and give no fix of their own. |
 | Server | Whether a server answers on the admin socket, its version and the address it listens on. Something that is not a socket where the admin socket goes is a problem, since no server can start, with the `mv` command that clears it. |
 | Ports | With the server running, the ports it listens on, and a problem if the engine's port was taken. With no server running, that the server's port, the bot tool port and the engine's port are free on their addresses. |
 | Engine | That the pinned engine has a release for this machine, whether it is installed yet, and, with the server running, the state the server reports for it. While it is not installed and no server answers at all, whether its download on GitHub answers: a problem when it does not, since the server downloads it on its first start. Like the server's download, this check does not go through `HTTPS_PROXY`. |
@@ -294,6 +330,7 @@ Each line is ✓ (fine), `!` (a warning: the server runs, but something is missi
 | Pairing | How many devices are paired. |
 | User manager | On Linux, that this user's systemd manager answers. With the service installed, one that does not is a problem: the service cannot run, or cannot be managed from this shell. Without the service it is a warning: `j3-bots serve` starts without it, but the engine starts each harness with `systemd-run --user --scope`, and whether bots run without the manager has not been checked. `doctor` tells a machine systemd did not start (most containers, WSL without systemd) from a shell that cannot reach the manager (one opened with `su` or `sudo -u`), and gives the fix for each. The service is then not checked. On macOS neither is checked. |
 | Service | That the unit is installed, enabled and running, and has not failed. A unit that is still `activating` is a warning: it is starting or restarting, and the log says which. |
+| Command | For an install made by `install.sh`, that the `j3-bots` command runs the release the service runs. |
 | Start at boot | That lingering is on for this user. |
 | Memory limit | That the kernel lets the service's `MemoryHigh` apply. |
 

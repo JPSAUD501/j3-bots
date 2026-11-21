@@ -22,6 +22,8 @@ export const HOME_ENTRIES = {
   /** What the server keeps for itself outside the database. */
   state: "state",
   attachments: "attachments",
+  /** What `j3-bots update` copied before it changed release, one folder per update. */
+  backups: "backups",
   adminSocket: "admin.sock",
   /** Held by the one server running for the home. */
   lock: "server.lock",
@@ -61,6 +63,7 @@ export const SYSTEM_PROMPT_FILE = `${WORKSPACE_ENTRIES.generated}/system.md`;
  * shared/skills/
  * state/shipped-skills.json  which texts in shared/skills the server installed
  * attachments/           file bytes, by digest
+ * backups/<snapshot>/    the databases and settings an update copied first
  * providers/<provider>/  the configuration folder of an engine provider instance
  * web/                   where the operator may put a built web client; public
  * ```
@@ -95,6 +98,7 @@ export const homeLayout = (path: Path.Path, home: string) => {
         shared,
         state,
         attachments,
+        backups,
         adminSocket,
         lock,
       } = HOME_ENTRIES;
@@ -111,6 +115,7 @@ export const homeLayout = (path: Path.Path, home: string) => {
           shared,
           state,
           attachments,
+          backups,
           adminSocket,
           lock,
         ].map((entry) => path.join(home, entry)),

@@ -21,6 +21,8 @@ export const ADMIN_PATHS = {
    * once the engine restarted with the connection, or it could not.
    */
   providerConnection: "/provider-connection",
+  /** `GET`. Answers `RunningWorkReply`: what `j3-bots update` would stop. */
+  runningWork: "/running-work",
 } as const;
 
 const Port = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 65535 }));
@@ -59,6 +61,25 @@ export const AdminStatus = Schema.Struct({
   publicOrigin: Schema.optionalKey(ServerOrigin),
 });
 export type AdminStatus = typeof AdminStatus.Type;
+
+/**
+ * The part of the status reply `j3-bots update` waits on: a server of the new
+ * release, the service's own process, with its engine ready. It decodes only
+ * these fields, and the engine's state by its tag alone, so it reads the reply
+ * of a release newer than itself, which only adds to it.
+ */
+export const ServerReadiness = Schema.Struct({
+  version: Schema.String,
+  pid: Schema.Int,
+  engine: Schema.Struct({ state: Schema.Struct({ _tag: Schema.String }) }),
+});
+export type ServerReadiness = typeof ServerReadiness.Type;
+
+export const RunningWorkReply = Schema.Struct({
+  /** How many bots have work running in the engine, which a stop of the server stops. */
+  bots: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+export type RunningWorkReply = typeof RunningWorkReply.Type;
 
 export const PairingOffer = Schema.Union([
   Schema.TaggedStruct("granted", { code: PairingCode, expiresAt: Schema.DateTimeUtc }),

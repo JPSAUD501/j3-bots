@@ -236,7 +236,7 @@ if [ -z "$version" ]; then
 fi
 
 if [ -n "$current" ] && [ "$current" != "$version" ]; then
-  fail "J3 Bots $current is installed in $install_dir. This script installs only where none is, or the same version again. To install $version instead, run \`j3-bots uninstall\` (your data is kept), then this again."
+  fail "J3 Bots $current is installed in $install_dir. This script installs only where none is, or the same version again. To move to $version, run \`j3-bots update --version $version\`."
 fi
 
 # --- The release -------------------------------------------------------------

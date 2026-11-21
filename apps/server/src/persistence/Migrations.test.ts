@@ -221,3 +221,32 @@ it.effect("refuses a database that recorded a later migration than one it lacks"
     assert.include(refused.message, "11_fixture");
   }).pipe(Effect.provide(NodeServices.layer)),
 );
+
+it.effect(
+  "refuses a database a newer release migrated, naming the migration it does not know",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const config = TestDatabase.configFor(path, home);
+      const fixture = Effect.void;
+
+      const refused = yield* Effect.gen(function* () {
+        // A newer release, with a migration 13 this one lacks, opened it.
+        yield* SqliteMigrator.run({
+          loader: SqliteMigrator.fromRecord({
+            "11_fixture": fixture,
+            "12_fixture": fixture,
+            "13_newer": fixture,
+          }),
+        });
+        return yield* migrate(
+          SqliteMigrator.fromRecord({ "11_fixture": fixture, "12_fixture": fixture }),
+        ).pipe(Effect.flip);
+      }).pipe(Effect.provide(SqliteClient.layer({ filename: config.databasePath })));
+
+      assert.strictEqual(refused._tag, "MigrationError");
+      assert.include(refused.message, "13_newer");
+    }).pipe(Effect.provide(NodeServices.layer)),
+);

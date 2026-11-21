@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as NetAddress from "effect/net/NetAddress";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import rootPackage from "../../../../package.json" with { type: "json" };
 import { AdminClient } from "../admin/AdminClient.ts";
@@ -13,6 +14,21 @@ import * as ServerConfig from "../config.ts";
 import { findHarness, type Harness, HARNESSES } from "../engine/harnesses.ts";
 import { PROVIDER_HOMES } from "../home/entries.ts";
 import * as Home from "../home/Home.ts";
+import {
+  installFolder,
+  launchedRelease,
+  recordedLauncher,
+  startedRelease,
+  startsInstall,
+} from "../install/layout.ts";
+import {
+  listSnapshots,
+  type RestoreMark,
+  rollbackSnapshot,
+  type Snapshot,
+  takenAt,
+  unfinishedRollback,
+} from "../install/snapshot.ts";
 import * as Installation from "../installation.ts";
 import { socketOwner } from "../service/owner.ts";
 import * as Unit from "../service/unit.ts";
@@ -134,6 +150,105 @@ const diskCheck = Effect.fn("doctor.disk")(function* (home: string) {
     );
   }
   return check("Disk space", "ok", `${amount} free where ${home} is.`);
+});
+
+/**
+ * The release the installed service starts, by version, when install.sh
+ * installed it, and the one the j3-bots command runs, if it can tell.
+ */
+const installedReleases = Effect.fn("doctor.installedReleases")(function* (
+  installation: Installation.Installation,
+  unitText: Option.Option<string>,
+) {
+  const path = yield* Path.Path;
+  const install = yield* installFolder(installation);
+  if (Option.isNone(install)) return Option.none();
+  const launcher = yield* recordedLauncher(install.value);
+  const command = Option.isSome(launcher)
+    ? Option.map(yield* launchedRelease(launcher.value), (release) => path.basename(release))
+    : Option.none<string>();
+  const execStart = Option.map(unitText, Unit.execStartOf);
+  const service =
+    Option.isSome(execStart) && (yield* startsInstall(execStart.value, install.value))
+      ? Option.map(yield* startedRelease(execStart.value, install.value), (release) =>
+          path.basename(release),
+        )
+      : Option.none<string>();
+  return Option.some({ service, command });
+});
+
+/**
+ * Whether the j3-bots command runs the release the service runs. An update or
+ * a rollback cut off after the unit was written, and before the command was
+ * pointed, leaves them apart.
+ */
+const commandCheck = (releases: {
+  readonly service: Option.Option<string>;
+  readonly command: Option.Option<string>;
+}) => {
+  if (Option.isNone(releases.service)) return Option.none<Check>();
+  const service = releases.service.value;
+  return Option.some(
+    Option.contains(releases.command, service)
+      ? check("Command", "ok", `j3-bots runs J3 Bots ${service}, as the service does.`)
+      : check(
+          "Command",
+          "warning",
+          Option.match(releases.command, {
+            onSome: (command) =>
+              `The service runs J3 Bots ${service}, but the j3-bots command runs ${command}: an update or a rollback stopped before it pointed the command.`,
+            onNone: () =>
+              `The service runs J3 Bots ${service}, but the j3-bots command is not one install.sh or an update wrote.`,
+          }),
+          `Run \`j3-bots update --version ${service}\`, which points the command at the release the service runs.`,
+        ),
+  );
+};
+
+/** A rollback that has not finished, with its mark. */
+type Rollback = Option.Option<{ readonly snapshot: Snapshot; readonly mark: RestoreMark }>;
+
+/** What the Server and Service checks say while a rollback has not finished: the Snapshot check says what to do. */
+const deferred = (name: string) =>
+  check(name, "skipped", "Waits for the rollback to finish: see Snapshot.");
+
+/**
+ * The snapshot `j3-bots update --rollback` puts back while `running` runs,
+ * and a rollback that has not finished, which is then the one thing to do.
+ */
+const snapshotCheck = Effect.fn("doctor.snapshot")(function* (
+  home: string,
+  running: Option.Option<string>,
+  rollback: Rollback,
+) {
+  if (Option.isSome(rollback)) {
+    const { snapshot, mark } = rollback.value;
+    return check(
+      "Snapshot",
+      "problem",
+      `A rollback to J3 Bots ${mark.release}, from ${snapshot.folder}, has not finished. Until it does, the service stays disabled and no other release may run on the data directory.`,
+      "Run `j3-bots update --rollback`, which finishes it.",
+    );
+  }
+  const snapshots = yield* listSnapshots(home);
+  const chosen = Option.isSome(running)
+    ? yield* rollbackSnapshot(home, running.value)
+    : Option.fromNullishOr(snapshots[0]);
+  if (Option.isNone(chosen)) {
+    return check(
+      "Snapshot",
+      "ok",
+      snapshots.length === 0
+        ? "None yet: `j3-bots update` copies the databases before it changes release."
+        : `None to roll back to: no snapshot was taken by an update to J3 Bots ${Option.getOrElse(running, () => "")}.`,
+    );
+  }
+  const { from, to } = chosen.value.manifest;
+  return check(
+    "Snapshot",
+    "ok",
+    `${chosen.value.folder}, taken at ${takenAt(chosen.value)} by the update from J3 Bots ${from.version} to ${to.version}: what \`j3-bots update --rollback\` puts back.`,
+  );
 });
 
 /** `http://192.168.1.20:3737`, `https://[fd7a::1]:3737`: where a listener is, for reading. */
@@ -404,7 +519,10 @@ const pairingCheck = (status: Option.Option<AdminStatus>, outside: boolean) => {
       );
 };
 
-const serviceChecks = Effect.fn("doctor.service")(function* (unitText: Option.Option<string>) {
+const serviceChecks = Effect.fn("doctor.service")(function* (
+  unitText: Option.Option<string>,
+  rollback: Rollback,
+) {
   const host = yield* Host;
   if (host.platform !== "linux") {
     return [
@@ -421,7 +539,9 @@ const serviceChecks = Effect.fn("doctor.service")(function* (unitText: Option.Op
     return [manager, check("Service", "skipped", "It needs this user's systemd manager.")];
   }
   const checks: Array<Check> = [manager];
-  if (Option.isNone(unitText)) {
+  if (Option.isSome(rollback)) {
+    checks.push(deferred("Service"));
+  } else if (Option.isNone(unitText)) {
     checks.push(
       check(
         "Service",
@@ -572,7 +692,8 @@ const liveServer = Effect.fn("doctor.liveServer")(function* (
   });
 });
 
-const serverCheck = (live: LiveServer) => {
+const serverCheck = (live: LiveServer, rollback: Rollback) => {
+  if (Option.isSome(rollback)) return deferred("Server");
   switch (live._tag) {
     case "blocked":
       return check("Server", "problem", `${live.summary} The server cannot start.`, live.fix);
@@ -632,6 +753,14 @@ export const diagnose = Effect.gen(function* () {
     yield* ServerConfig.resolveAdminSocket.pipe(Effect.provide(described)),
     Option.isSome(unitText),
   );
+  const releases = yield* installedReleases(installation, unitText);
+  const running = Option.orElse(
+    Option.flatMap(releases, ({ service }) => service),
+    () =>
+      installation.layout._tag === "release"
+        ? Option.some(installation.layout.manifest.version)
+        : Option.none(),
+  );
   const loaded = yield* ServerConfig.load.pipe(Effect.provide(described), Effect.result);
   if (loaded._tag === "Failure") {
     checks.push(
@@ -642,9 +771,12 @@ export const diagnose = Effect.gen(function* () {
         "Fix the setting it names, then run this again.",
       ),
     );
-    checks.push(yield* homeCheck(yield* ServerConfig.resolveHome.pipe(Effect.provide(described))));
-    checks.push(serverCheck(live));
-    checks.push(...(yield* serviceChecks(unitText)));
+    const home = yield* ServerConfig.resolveHome.pipe(Effect.provide(described));
+    const rollback = yield* unfinishedRollback(home);
+    checks.push(yield* homeCheck(home));
+    checks.push(yield* snapshotCheck(home, running, rollback));
+    checks.push(serverCheck(live, rollback));
+    checks.push(...(yield* serviceChecks(unitText, rollback)));
     if (Option.isSome(shellSettings)) checks.push(shellSettings.value);
     return checks;
   }
@@ -661,10 +793,12 @@ export const diagnose = Effect.gen(function* () {
   );
   checks.push(yield* homeCheck(config.home));
   checks.push(yield* diskCheck(config.home));
+  const rollback = yield* unfinishedRollback(config.home);
+  checks.push(yield* snapshotCheck(config.home, running, rollback));
 
   // Only a server the report describes lends it live diagnostics.
   const status = live._tag === "described" ? Option.some(live.status) : Option.none();
-  checks.push(serverCheck(live));
+  checks.push(serverCheck(live, rollback));
   switch (live._tag) {
     case "described":
       checks.push(runningPortsCheck(live.status));
@@ -694,7 +828,11 @@ export const diagnose = Effect.gen(function* () {
   }
   checks.push(yield* webClientCheck(config, live, installation));
   checks.push(pairingCheck(status, live._tag === "outside"));
-  checks.push(...(yield* serviceChecks(unitText)));
+  checks.push(...(yield* serviceChecks(unitText, rollback)));
+  const command = Option.flatMap(releases, commandCheck);
+  if (Option.isSome(command)) {
+    checks.push(Option.isSome(rollback) ? deferred("Command") : command.value);
+  }
   if (Option.isSome(shellSettings)) checks.push(shellSettings.value);
   return checks;
 });

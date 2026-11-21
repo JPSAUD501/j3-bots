@@ -11,6 +11,7 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import { DEFAULTS, load } from "./config.ts";
 import { initialize } from "./home/Home.ts";
+import { markRestoring, takeSnapshot } from "./install/snapshot.ts";
 import { type InterfaceAddress, Network } from "./system/Network.ts";
 import { TEST_TLS } from "./testing/tls.ts";
 
@@ -176,6 +177,23 @@ it.layer(NodeServices.layer)("server configuration", (it) => {
         Effect.ensuring(fs.chmod(locked, 0o700).pipe(Effect.orDie)),
       );
       assert.deepInclude(failure(closed), { _tag: "HomeNotPrivate", reason: "closed-to-owner" });
+
+      // A home a rollback left with its config.json moved aside, the snapshot's not yet in.
+      const halfRestored = yield* freshHome;
+      yield* writeConfigFile(halfRestored, "{}");
+      yield* markRestoring(
+        yield* takeSnapshot({
+          home: halfRestored,
+          from: { version: "0.0.0-before" },
+          to: { version: "0.0.0-after" },
+        }),
+      );
+      yield* fs.remove(path.join(halfRestored, "config.json"));
+      const unfinished = yield* withEnvironment(initialize, { J3_HOME: halfRestored }).pipe(
+        Effect.exit,
+      );
+      assert.deepInclude(failure(unfinished), { _tag: "RollbackUnfinished" });
+      assert.isFalse(yield* fs.exists(path.join(halfRestored, "config.json")));
     }).pipe(Effect.scoped),
   );
 

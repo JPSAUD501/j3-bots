@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- The pin holds a SHA-256 of the archive, computed here as the install checks it; a folder swapped for a link mid-download takes node:fs, from inside the response body.
+// @effect-diagnostics nodeBuiltinImport:off -- The pin holds a SHA-256 of the archive, computed here as the install checks it; a folder swapped for a link mid-download takes node:fs, from inside the response body; a real archive to unpack is made with tar.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFs from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -247,5 +248,45 @@ describe("ensureInstalled", () => {
         assert.strictEqual(reason, "storage");
         assert.strictEqual(yield* fs.readFileString(ownerFile), "the owner's file");
       }).pipe(Effect.scoped, Effect.provide(machine)),
+  );
+
+  it.live("installs once when two installs of the version start at once, and both use it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const source = yield* fs.makeTempDirectoryScoped();
+      yield* fs.writeFileString(path.join(source, "t3"), "the engine");
+      const archiveFile = path.join(source, "engine.tar.gz");
+      NodeChildProcess.execFileSync("tar", ["-czf", archiveFile, "-C", source, "t3"]);
+      const archive = yield* fs.readFile(archiveFile);
+      let downloads = 0;
+      const releaseServer = HttpClient.make((request) =>
+        Effect.sync(() => {
+          downloads += 1;
+          return HttpClientResponse.fromWeb(request, new Response(archive, { status: 200 }));
+        }),
+      );
+      const files = yield* makePrivateFiles(() => Effect.succeed(true));
+      const installOnce = ensureInstalled({
+        home,
+        platform: "linux",
+        arch: "x64",
+        sha256: { "linux-x64": NodeCrypto.createHash("sha256").update(archive).digest("hex") },
+        files,
+      }).pipe(Effect.provideService(HttpClient.HttpClient, releaseServer));
+
+      const executables = yield* Effect.all([installOnce, installOnce], { concurrency: 2 });
+
+      const runtime = path.join(home, "j3", "runtime");
+      const executable = path.join(runtime, pin.version, "t3");
+      assert.deepStrictEqual(executables, [executable, executable]);
+      assert.strictEqual(downloads, 1);
+      assert.strictEqual(yield* fs.readFileString(executable), "the engine");
+      assert.deepStrictEqual((yield* fs.readDirectory(runtime)).sort(), [
+        pin.version,
+        `${pin.version}.lock`,
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(machine)),
   );
 });
