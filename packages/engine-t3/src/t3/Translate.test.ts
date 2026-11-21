@@ -221,7 +221,7 @@ const run = (status: string, ordinal: number, fields: Record<string, unknown> = 
     threadId: "thread-1",
     providerInstanceId: "codex",
     modelSelection: { instanceId: "codex", model: "gpt-5" },
-    providerThreadId: null,
+    providerThreadId: "provider-thread-1",
     rootNodeId: null,
     activeAttemptId: null,
     requestedAt: at,
@@ -284,6 +284,117 @@ const providerThread = (
       updatedAt: at,
       ...fields,
     },
+  });
+/** Every capability of `keys` off. */
+const off = (...keys: ReadonlyArray<string>) => Object.fromEntries(keys.map((key) => [key, false]));
+/** What a provider session says it can do; nothing here reads it. */
+const capabilities = {
+  sessions: off(
+    "supportsMultipleProviderThreadsPerSession",
+    "supportsModelSwitchInSession",
+    "supportsProviderSwitchingViaHandoff",
+    "supportsRuntimeModeSwitchInSession",
+    "pendingRequestsSurviveRestart",
+  ),
+  threads: off(
+    "canCreateEmptyThread",
+    "canReadThreadSnapshot",
+    "canRollbackThread",
+    "canForkThread",
+    "canForkFromTurn",
+    "canForkFromSubagentThread",
+    "exposesNativeThreadId",
+  ),
+  turns: {
+    ...off(
+      "exposesNativeTurnId",
+      "emitsTurnStarted",
+      "emitsTurnCompleted",
+      "supportsInterrupt",
+      "supportsActiveSteering",
+      "supportsSteeringByInterruptRestart",
+      "supportsQueuedMessages",
+    ),
+    terminalStatusQuality: "strong",
+  },
+  streaming: off(
+    "streamsAssistantText",
+    "streamsReasoning",
+    "streamsToolOutput",
+    "streamsPlanText",
+    "emitsMessageCompleted",
+  ),
+  tools: off(
+    "exposesToolItemIds",
+    "emitsToolStarted",
+    "emitsToolCompleted",
+    "emitsToolOutput",
+    "supportsMcpTools",
+    "supportsDynamicToolCallbacks",
+  ),
+  approvals: off(
+    "supportsCommandApproval",
+    "supportsFileReadApproval",
+    "supportsFileChangeApproval",
+    "supportsApplyPatchApproval",
+    "approvalsHaveNativeRequestIds",
+    "approvalCallbacksAreLiveOnly",
+    "approvalsCanOriginateFromSubagents",
+  ),
+  planning: off(
+    "emitsPlanUpdated",
+    "emitsTodoList",
+    "emitsProposedPlan",
+    "supportsStructuredQuestions",
+    "planDeltasHaveItemIds",
+  ),
+  subagents: off(
+    "supportsSubagents",
+    "exposesSubagentThreadIds",
+    "emitsSubagentLifecycle",
+    "canWaitForSubagents",
+    "canCloseSubagents",
+    "canForkSubagentThread",
+  ),
+  context: {
+    ...off(
+      "acceptsSystemContext",
+      "acceptsDeveloperContext",
+      "acceptsSyntheticUserContext",
+      "canGenerateSummaries",
+      "canConsumeHandoffSummaries",
+      "supportsDeltaHandoff",
+      "supportsFullThreadHandoff",
+    ),
+    maxRecommendedHandoffChars: null,
+  },
+  checkpointing: off(
+    "appCanCheckpointFilesystem",
+    "supportsNestedCheckpointScopes",
+    "providerCanRollbackConversation",
+    "providerRollbackReturnsSnapshot",
+    "providerCanReadConversationSnapshot",
+  ),
+  identity: {
+    nativeThreadIds: "none",
+    nativeTurnIds: "none",
+    nativeItemIds: "none",
+    nativeRequestIds: "none",
+  },
+};
+/** A provider session event (`provider-session.attached` or `.updated`) with this status. */
+const providerSession = (type: string, id: string, status: string) =>
+  event(type, {
+    id,
+    driver: "claudeAgent",
+    providerInstanceId: "claude",
+    status,
+    cwd: "/work",
+    model: null,
+    capabilities,
+    createdAt: at,
+    updatedAt: at,
+    lastError: null,
   });
 /** The session's engine thread, as a thread event carries it. */
 const appThread = {
@@ -513,10 +624,13 @@ describe("backgroundWorkOf", () => {
     ]);
   });
 
-  // A fresh-context start reports its new provider thread with no thread
-  // event; the engine's projection makes it the active one unless it only
-  // reserves a seat (**Read** at `db51b67`, `ProjectionStore.ts`, L1142-1150).
-  it("follows the active provider thread as the engine switches it", () => {
+  // The engine's stop fires when its rule counts work, which reads the active
+  // provider thread's tasks, and interrupts the latest run's provider thread
+  // (**Read** at `db51b67`, `Orchestrator.ts`, L14141-14178, L13560-13581). A
+  // fresh-context start reports its new provider thread with no thread event,
+  // and the projection makes any reported one active unless it only reserves
+  // a seat (`ProjectionStore.ts`, L1142-1150).
+  it("counts as stoppable the latest run's provider thread's tasks, when the stop fires", () => {
     const mirror = emptyMirror();
     applyEvent(
       mirror,
@@ -524,7 +638,7 @@ describe("backgroundWorkOf", () => {
     );
     applyEvent(mirror, run("completed", 1));
     applyEvent(mirror, providerThread([]));
-    applyEvent(mirror, run("completed", 2));
+    applyEvent(mirror, run("completed", 2, { providerThreadId: "provider-thread-2" }));
     const fresh = { id: "provider-thread-2", firstRunOrdinal: 2 };
     applyEvent(mirror, providerThread(["task-fresh"], undefined, "run-2", fresh));
     assert.deepStrictEqual(backgroundWorkOf(mirror).pending, pendingIn(["run-2"]));
@@ -540,6 +654,12 @@ describe("backgroundWorkOf", () => {
       }),
     );
     assert.deepStrictEqual(backgroundWorkOf(mirror).pending, pendingIn(["run-2"]));
+
+    // A late report from the old provider thread makes it active: with no task
+    // there and no live item, the engine's rule counts nothing and the stop
+    // does not fire.
+    applyEvent(mirror, providerThread([]));
+    assert.deepStrictEqual(backgroundWorkOf(mirror).pending, pendingIn(["run-2"], false, false));
   });
 
   // A fresh-context start queued behind a turn leaves the old provider session
@@ -553,14 +673,14 @@ describe("backgroundWorkOf", () => {
       mirror,
       event("thread.created", { ...appThread, activeProviderThreadId: "provider-thread-1" }),
     );
-    mirror.providerSessions.set("session-1", "ready");
-    mirror.providerSessions.set("session-2", "ready");
+    applyEvent(mirror, providerSession("provider-session.attached", "session-1", "starting"));
+    applyEvent(mirror, providerSession("provider-session.updated", "session-1", "ready"));
     applyEvent(mirror, run("running", 1));
-    applyEvent(
-      mirror,
-      providerThread(["task-old"], undefined, "run-1", { providerSessionId: "session-1" }),
-    );
+    const old = { providerSessionId: "session-1" };
+    applyEvent(mirror, providerThread(["task-old"], undefined, "run-1", old));
     applyEvent(mirror, run("completed", 1));
+    applyEvent(mirror, providerSession("provider-session.attached", "session-2", "ready"));
+    const onFresh = { providerThreadId: "provider-thread-2" };
     const fresh = { id: "provider-thread-2", providerSessionId: "session-2", firstRunOrdinal: 2 };
     const freshCommand = (status: string) =>
       item({
@@ -570,10 +690,10 @@ describe("backgroundWorkOf", () => {
         input: "npm run dev",
         status,
       });
-    applyEvent(mirror, run("running", 2));
+    applyEvent(mirror, run("running", 2, onFresh));
     applyEvent(mirror, providerThread([], undefined, "run-2", fresh));
     applyEvent(mirror, freshCommand("running"));
-    applyEvent(mirror, run("completed", 2));
+    applyEvent(mirror, run("completed", 2, onFresh));
     // The fresh run left work the stop ends, beside the old session's.
     assert.deepStrictEqual(backgroundWorkOf(mirror).pending, pendingIn(["run-1", "run-2"]));
     assert.isFalse(nothingToStop(mirror, at));
@@ -582,11 +702,39 @@ describe("backgroundWorkOf", () => {
     assert.deepStrictEqual(backgroundWorkOf(mirror).pending, pendingIn(["run-1"], false, false));
     assert.isTrue(nothingToStop(mirror, at));
 
+    // A late report from the old provider thread makes it the active one, so
+    // the stop fires, but it interrupts the latest run's provider thread.
+    applyEvent(mirror, providerThread(["task-old"], undefined, undefined, old));
+    assert.deepStrictEqual(backgroundWorkOf(mirror).pending, pendingIn(["run-1"], false, false));
+    assert.isTrue(nothingToStop(mirror, at));
+
+    // A session the engine judges stopped holds no work.
+    applyEvent(mirror, providerSession("provider-session.updated", "session-1", "stopped"));
+    assert.deepStrictEqual(backgroundWorkOf(mirror).pending, NONE);
+  });
+
+  // The engine binds a session to the thread only when it is attached
+  // (**Read** at `db51b67`, `ProjectionStore.ts`, L2773-2826).
+  it("drops an old provider session's work once it is detached, also after a late update", () => {
+    const mirror = emptyMirror();
+    applyEvent(mirror, event("thread.created", appThread));
+    applyEvent(mirror, providerSession("provider-session.attached", "session-1", "ready"));
+    applyEvent(mirror, run("running", 1));
+    applyEvent(
+      mirror,
+      providerThread(["task-old"], undefined, "run-1", { providerSessionId: "session-1" }),
+    );
+    applyEvent(mirror, run("completed", 1));
+    applyEvent(mirror, run("completed", 2, { providerThreadId: "provider-thread-2" }));
+    assert.deepStrictEqual(backgroundWorkOf(mirror).pending, pendingIn(["run-1"], false, false));
+
     // Archiving detaches the session, which ends its work.
     applyEvent(
       mirror,
       event("provider-session.detached", { providerSessionId: "session-1", detachedAt: at }),
     );
+    assert.deepStrictEqual(backgroundWorkOf(mirror).pending, NONE);
+    applyEvent(mirror, providerSession("provider-session.updated", "session-1", "ready"));
     assert.deepStrictEqual(backgroundWorkOf(mirror).pending, NONE);
   });
 

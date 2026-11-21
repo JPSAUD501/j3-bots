@@ -192,9 +192,10 @@ export const BackgroundWork = Schema.Struct({
   /** Pending work the engine attributes to no turn. */
   unattributed: Schema.Boolean,
   /**
-   * Whether any of it is what the engine's stop interrupts. Work that only a
-   * provider thread from before a fresh-context start reports is not: it ends
-   * on its own, or when the session is retired.
+   * Whether any of it is what the engine's stop interrupts: the latest run's
+   * provider thread's tasks and live items, when the stop fires. Work that
+   * only a provider thread from before a fresh-context start reports is not:
+   * it ends on its own, or when the session is retired.
    */
   stoppable: Schema.Boolean,
 });
