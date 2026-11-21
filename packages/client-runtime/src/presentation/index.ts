@@ -62,6 +62,8 @@ export {
   filterRoster,
   firstLine,
   orderRoster,
+  roomStop,
+  type RoomStop,
   rosterKeyOf,
   rosterKeyText,
 } from "./roster.ts";

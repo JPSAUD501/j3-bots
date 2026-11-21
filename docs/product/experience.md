@@ -49,6 +49,7 @@ The operator creates a room, adds two to six bots, and writes.
 - `@Name` gives a request one owner. `@everyone` asks each member in turn and is meant to be rare.
 - Bots answer each other in the room. The chain stops when a bot has nothing to add, or when the room's budget for consecutive bot turns runs out; then the room waits for the operator.
 - Approvals and questions never appear in a room. They go to the asking bot's own conversation, and the room shows that the bot is waiting.
+- While a member works, the room's header offers Stop. It asks first, saying what ends (what the bots are doing for the room, and the work they left running for it) and what goes on (what they do in their conversations with the operator).
 
 ### One bot hands work to another
 

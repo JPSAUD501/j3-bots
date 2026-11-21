@@ -72,6 +72,8 @@ export interface ShellData {
   readonly draftNotSaved: (target: EntryTarget) => boolean;
   /** Whether the operator's answer to a card is still on its way to the server. */
   readonly submitting: (entryId: EntryId) => boolean;
+  /** Whether the operator's Stop of the room's work is still on its way to the server. */
+  readonly stoppingRoom: (roomId: RoomId) => boolean;
   /** A work fold's steps, or null while they load. */
   readonly workSteps: (entryId: EntryId) => ReadonlyArray<WorkStep> | null;
   /** Null while they load. */
@@ -136,6 +138,8 @@ export interface ShellIntents extends TimelineIntents {
    */
   readonly setShown: (target: EntryTarget | null) => void;
   readonly stopBot: (botId: BotId) => void;
+  /** Stops the work addressed to the room; the shell says so if it did not. */
+  readonly stopRoom: (roomId: RoomId) => void;
   /** Absent where there is no dictation. */
   readonly dictate?: (target: EntryTarget) => void;
   /** Resolves with the new bot's id once the server has created it. */

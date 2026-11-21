@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { type BotId, CommandId, type CommandError, type EntryId } from "@j3-bots/contracts";
+import {
+  type BotId,
+  CommandId,
+  type CommandError,
+  type EntryId,
+  type RoomId,
+} from "@j3-bots/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
@@ -54,6 +60,8 @@ export const cardAction = (entryId: EntryId) => `card:${entryId}`;
 /** Retrying a failed message or a failed turn. */
 export const retryAction = (entryId: EntryId) => `retry:${entryId}`;
 export const stopAction = (botId: BotId) => `stop:${botId}`;
+/** Stopping the work addressed to a room. */
+export const roomStopAction = (roomId: RoomId) => `room-stop:${roomId}`;
 
 interface Running {
   readonly result: Deferred.Deferred<IntentResult>;

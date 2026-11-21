@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Bot, RosterItem, RosterItemKey } from "@j3-bots/contracts";
+import type { Bot, Room, RosterItem, RosterItemKey } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import { needsOperator } from "../stores/Roster.ts";
 
@@ -9,6 +9,34 @@ import { needsOperator } from "../stores/Roster.ts";
  */
 export const canStop = (bot: Bot): boolean =>
   bot.state._tag === "thinking" || bot.state._tag === "working" || bot.settingsHeld;
+
+/**
+ * Whether a room's header offers Stop: `stopping` while the operator's Stop
+ * is on its way to the server.
+ */
+export type RoomStop = "hidden" | "offered" | "stopping";
+
+/**
+ * A client cannot tell whom a bot works for, so an active room offers Stop
+ * while any of its members is thinking or working; the Stop ends only the
+ * room's work, and a member busy elsewhere goes on. Work the room's turns
+ * left running in the background shows in no state a client has, so it alone
+ * offers no Stop. An archived room has nothing to stop: archiving stopped it.
+ * `bots` may hold bots that are not members; only members count.
+ */
+export const roomStop = (room: Room, bots: Iterable<Bot>, stopping: boolean): RoomStop => {
+  if (room.status === "archived") return "hidden";
+  if (stopping) return "stopping";
+  for (const bot of bots) {
+    if (
+      room.members.includes(bot.id) &&
+      (bot.state._tag === "thinking" || bot.state._tag === "working")
+    ) {
+      return "offered";
+    }
+  }
+  return "hidden";
+};
 
 /** Which bot or room a roster item is. */
 export const rosterKeyOf = (item: RosterItem): RosterItemKey =>

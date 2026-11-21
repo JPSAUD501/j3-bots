@@ -70,6 +70,7 @@ const sentences = {
   "conversation.openDetails": "Mostrar detalhes de {name}",
   "conversation.details": "Detalhes",
   "conversation.stop": "Parar",
+  "conversation.stopping": "Parando",
 
   "message.queued": "Na fila",
   "message.cancelled": "Não enviada: você parou o bot antes",
@@ -286,6 +287,12 @@ const sentences = {
     "{name} e tudo o que foi dito nela são excluídos, e isso não pode ser desfeito. Os bots continuam.",
   "room.delete.cancel": "Manter {name}",
   "room.deleteFailed": "{name} não foi excluída. Tente de novo.",
+  "room.stop": "Parar o trabalho",
+  "room.stop.title": "Parar o trabalho em {name}?",
+  "room.stop.body":
+    "Os bots encerram o que estão fazendo para {name}, e o trabalho que deixaram rodando para ela. O que eles fazem nas conversas com você continua.",
+  "room.stop.cancel": "Deixar continuar",
+  "room.stopFailed": "O trabalho em {name} não foi parado. Tente de novo.",
   "room.composerArchived": "{name} está arquivada, então não recebe mensagens.",
 
   "roomForm.newTitle": "Nova sala",

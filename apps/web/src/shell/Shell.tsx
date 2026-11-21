@@ -316,13 +316,16 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
           // One header per conversation: moving to another announces nothing.
           key={rosterKeyText(key)}
           subject={
-            item._tag === "bot" ? { _tag: "bot", bot: item.bot } : { _tag: "room", room: item.room }
+            item._tag === "bot"
+              ? { _tag: "bot", bot: item.bot }
+              : { _tag: "room", room: item.room, stopping: data.stoppingRoom(item.room.id) }
           }
           detailsOpen={detailsOpen}
           onToggleDetails={toggleDetails}
           onBack={() => navigation.select(null)}
           onStop={() => {
             if (item._tag === "bot") intents.stopBot(item.bot.id);
+            else intents.stopRoom(item.room.id);
           }}
           onGoToWaiting={goToEntry}
           stopShortcut={shortcuts.stop}

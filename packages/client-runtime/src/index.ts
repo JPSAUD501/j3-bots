@@ -41,6 +41,7 @@ export {
   type IntentFailure,
   type IntentResult,
   retryAction,
+  roomStopAction,
   stopAction,
 } from "./intents/Actions.ts";
 export { type SignOutResult } from "./intents/SignOut.ts";

@@ -46,6 +46,7 @@ import {
   createJ3Client,
   memorySaveKey,
   retryAction,
+  roomStopAction,
   targetKey,
   type ActionState,
   type BotChanges,
@@ -507,6 +508,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
     draftNotSaved: (asked) => draftsNotSaved.has(targetKey(asked)),
     submitting: (entryId) =>
       submitting(actions.get(cardAction(entryId))) || submitting(actions.get(retryAction(entryId))),
+    stoppingRoom: (roomId) => submitting(actions.get(roomStopAction(roomId))),
     workSteps: (entryId) => steps.get(entryId) ?? null,
     routines: (botId) => (botId === detailsBotId ? loadedList(routines) : null),
     files: (botId) => (botId === detailsBotId ? loadedList(files) : null),
@@ -779,6 +781,20 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
     },
     setShown,
     stopBot: (botId) => void j3.stopBot(botId),
+    stopRoom: (roomId) => {
+      const name = roomOf(roomId)?.name ?? "";
+      void j3.stopRoom(roomId).then((result) => {
+        // An archived room shows so, and its archiving stopped its work.
+        const archived =
+          result._tag === "failed" &&
+          result.failure._tag === "refused" &&
+          result.failure.error._tag === "Conflict" &&
+          result.failure.error.reason === "room-archived";
+        if (result._tag === "failed" && !archived && stillPaired()) {
+          say(t("room.stopFailed", { name }));
+        }
+      });
+    },
     createBot: (name, primary) =>
       j3.createBot({ name, primary }).then((result) => {
         if (result._tag === "failed") throw new Error("The bot was not created");

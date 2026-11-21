@@ -22,7 +22,7 @@ import {
   ProviderId,
   type ProviderStatus,
   type Room,
-  type RoomId,
+  RoomId,
   type RosterItem,
   type RosterItemKey,
   type UsageWindow,
@@ -83,6 +83,14 @@ const team = sampleTeam(SAMPLE_NOW);
 const variants = galleryVariants(SAMPLE_NOW);
 const bots = team.roster.flatMap((item) => (item._tag === "bot" ? [item.bot] : []));
 const nothing = () => {};
+/** A room whose members are all at rest: it offers no Stop. */
+const restingRoom: Room = {
+  ...team.room,
+  id: RoomId.make("weekend-plans"),
+  name: "Weekend plans",
+  members: [team.bots.moss.id, team.bots.pip.id],
+  hostId: team.bots.moss.id,
+};
 const shortcuts = shellShortcuts();
 
 const languageNames: Record<Language, string> = { en: "English", "pt-BR": "Português (Brasil)" };
@@ -792,18 +800,22 @@ function ComposerDemo({
 function ComposerSection() {
   return (
     <Section title="Conversation header and composer">
-      <Labeled label="Headers: a working bot (with Stop), a waiting bot (the line goes to the request), a blocked bot, a room">
+      <Labeled label="Headers: a working bot (with Stop), a waiting bot (the line goes to the request), a blocked bot, a room whose members work (with Stop, which asks first), the same room while its Stop is on its way, a room at rest">
         <div className="flex flex-col gap-2">
-          {[
-            { _tag: "bot", bot: team.bots.scout } as const,
-            { _tag: "bot", bot: team.bots.atlas } as const,
-            { _tag: "bot", bot: team.bots.ledger } as const,
-            { _tag: "room", room: team.room } as const,
-          ].map((subject) => (
-            <div
-              key={subject._tag === "bot" ? subject.bot.id : subject.room.id}
-              className="rounded-md border border-border"
-            >
+          {(
+            [
+              { key: "working", subject: { _tag: "bot", bot: team.bots.scout } },
+              { key: "waiting", subject: { _tag: "bot", bot: team.bots.atlas } },
+              { key: "blocked", subject: { _tag: "bot", bot: team.bots.ledger } },
+              { key: "room", subject: { _tag: "room", room: team.room, stopping: false } },
+              { key: "room-stopping", subject: { _tag: "room", room: team.room, stopping: true } },
+              {
+                key: "room-resting",
+                subject: { _tag: "room", room: restingRoom, stopping: false },
+              },
+            ] as const
+          ).map(({ key, subject }) => (
+            <div key={key} className="rounded-md border border-border">
               <ConversationHeader
                 subject={subject}
                 detailsOpen={false}
