@@ -1,0 +1,17 @@
+J3 Bots: additional permission under section 7 of the GNU Affero General
+Public License, version 3
+
+J3 Bots is licensed under the GNU Affero General Public License, version 3 or
+any later version (LICENSE), with this additional permission:
+
+  As an additional permission under section 7, you are allowed to distribute
+  J3 Bots through an app store, even if that store has restrictive terms and
+  conditions that are incompatible with the AGPL, provided that the source is
+  also available under the AGPL with or without this permission through a
+  channel without those restrictive terms and conditions.
+
+The wording of the permission is taken from the license notice of wger Flutter
+(https://github.com/wger-project/flutter), also licensed under the GNU Affero
+General Public License, version 3 or later, as added in its commit
+c363908099a167666f33e404ebf453a4ae5aa139. Only the program's name was changed:
+"the software" became "J3 Bots".

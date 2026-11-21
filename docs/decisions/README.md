@@ -13,7 +13,7 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0005](0005-j3-bots-owns-wakes.md) | J3 Bots owns scheduling and routing | Accepted |
 | [0006](0006-memory-is-files.md) | Memory is files | Proposed |
 | [0007](0007-client-and-server-stack.md) | Client and server stack | Accepted |
-| [0008](0008-license.md) | License: AGPL-3.0-or-later | Accepted |
+| [0008](0008-license.md) | License: AGPL-3.0-or-later with an app-store permission, contributions signed off | Accepted |
 | [0009](0009-a-wake-is-sent-at-most-once.md) | A wake is sent at most once, and uncertainty fails visibly | Proposed |
 | [0010](0010-workers-reconcile-durable-state.md) | The turn machinery's workers reconcile durable state | Accepted |
 | [0011](0011-a-room-runs-one-turn-at-a-time.md) | A room runs one turn at a time | Accepted |

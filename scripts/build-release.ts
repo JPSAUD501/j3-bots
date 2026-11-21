@@ -16,6 +16,7 @@
 //   web/                  the web client
 //   release.json          what this copy is (apps/server/src/installation.ts)
 //   LICENSE               J3 Bots' license
+//   APP-STORE-PERMISSION  its additional permission for app stores
 //   THIRD_PARTY_NOTICES   the license of everything above that J3 Bots did not write
 //
 // Needs GNU tar and xz, and the network to reach nodejs.org.
@@ -292,7 +293,8 @@ const notices = (
     `J3 Bots ${release.version} for ${release.platform}: third-party notices`,
     "",
     "J3 Bots is licensed under the GNU Affero General Public License, version 3",
-    "or later (LICENSE). This archive also holds the third-party software below,",
+    "or later (LICENSE), with an additional permission for app stores",
+    "(APP-STORE-PERMISSION). This archive also holds the third-party software below,",
     "each under its own license. Each entry names the software, the folder of",
     "this archive it is in, the license it declares, and the license and notice",
     "files it ships, as it ships them.",
@@ -359,7 +361,9 @@ try {
     recursive: true,
     filter: withoutSourceMaps,
   });
-  NodeFS.copyFileSync(NodePath.join(ROOT, "LICENSE"), NodePath.join(stage, "LICENSE"));
+  for (const file of ["LICENSE", "APP-STORE-PERMISSION"]) {
+    NodeFS.copyFileSync(NodePath.join(ROOT, file), NodePath.join(stage, file));
+  }
   NodeFS.writeFileSync(
     NodePath.join(stage, "release.json"),
     `${JSON.stringify({ version, platform, node: node.version }, null, 2)}\n`,

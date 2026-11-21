@@ -31,7 +31,7 @@ import { WorkSteps } from "./WorkSteps.ts";
 
 /**
  * A main session that ran this many turns is replaced. Provisional, until
- * real conversations tune it (`docs/open-questions.md`, 8).
+ * real conversations tune it (`docs/open-questions.md`, 6).
  */
 export const ROTATE_AFTER_RUNS = 200;
 

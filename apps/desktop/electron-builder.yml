@@ -5,8 +5,9 @@
 # unsigned for now, and the macOS and Windows artifacts say so in their names;
 # see docs/operations/releasing.md.
 #
-# Names and ids are development placeholders until open question 6 settles
-# them; `appId` matches `APP_ID` in src/identity.ts.
+# The names are the product's (docs/product/concepts.md, Names). The app id is
+# a development placeholder until the ids of a published build are chosen;
+# `appId` matches `APP_ID` in src/identity.ts.
 
 appId: dev.j3bots.desktop
 productName: J3 Bots

@@ -43,6 +43,7 @@ Decisions marked **Proposed** are recommendations waiting for the project owner'
 ## Engineering
 
 - [Standards](engineering/standards.md): toolchain, code rules, testing policy, pull requests.
+- [Contributing](../CONTRIBUTING.md): building and checking a change, the sign-off every commit carries, and how contributions are licensed.
 
 ## Decisions
 

@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+contact_links:
+  - name: Report a vulnerability
+    url: https://github.com/JPSAUD501/j3-bots/security/advisories/new
+    about: Security problems are reported privately, as SECURITY.md says.

@@ -6,8 +6,8 @@ process.env.EXPO_NO_TYPESCRIPT_SETUP = "1";
 
 /**
  * Each variant installs beside the others, with its own name, link scheme and
- * identifiers. The identifiers are development placeholders, pending the
- * owner's choice of names and ids (open question 6).
+ * identifiers. The identifiers are development placeholders, until the ids of
+ * a published build are chosen.
  */
 const VARIANTS = {
   development: { name: "J3 Bots Dev", scheme: "j3bots-dev", id: "dev.j3bots.mobile.dev" },

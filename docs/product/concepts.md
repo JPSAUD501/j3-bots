@@ -72,3 +72,7 @@ Only a `user` wake carries the operator's instructions. Every other kind is labe
 **Question.** A bot asking the operator to choose. It arrives as a card with options, not as prose.
 
 **Budget.** The limits that keep bots from spending the operator's allowance on each other: how many teammates one bot turn may bring in besides those it answers, or one bot's room message may mention, how many hops a chain of bot-to-bot messages may take, how many turns may run at once.
+
+## Names
+
+The product is called **J3 Bots**. Its command is `j3-bots`, its data directory is `~/.j3-bots`, its environment variables start with `J3_`, the desktop and mobile apps' link scheme is `j3bots://`, and its packages are in the `@j3-bots/*` scope. J3 Bots is not affiliated with T3 Code or its authors: it runs their server as its engine, unmodified.

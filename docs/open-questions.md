@@ -32,36 +32,34 @@ A self-hosted server cannot send to Apple's and Google's push services without c
 
 **Recommended:** Expo's push service, behind an interface any of the others can replace ([decision 0014](decisions/0014-push-goes-through-a-push-sender.md), proposed). The server sends through it today.
 
-## 5. How are contributions licensed, and can the mobile app ship through app stores?
-
-The license is AGPL-3.0-or-later ([decision 0008](decisions/0008-license.md)). Apple's App Store terms have conflicted with GPL-family licenses in the past: the copyright holders can still distribute their own work there, but only if they hold the rights to all of it. That makes the terms for outside contributions (a contributor agreement or a sign-off with an added permission) something to settle before the first outside contribution is merged.
-
-## 6. Is the name free to use?
-
-The product is called J3 Bots. Before going public it needs a check for conflicting marks and for available package, domain and store names. One thing to weigh in that check: the name's shape is close to "T3", the brand of the engine's authors, and J3 Bots must not read as their product.
-
-## 7. How many bots does a host and a subscription sustain?
+## 5. How many bots does a host and a subscription sustain?
 
 On a laptop, a turn under the engine costs about 59,000 input tokens per model call on Claude Code and 15,000 on Codex before J3 Bots adds anything, mostly cache reads while the session is warm; a loaded Claude Code session holds about 230 MB, and the engine about 470 MB ([Engine: footprint](architecture/engine.md#footprint)). Still unknown: the same numbers on the Raspberry Pi the product targets, with J3 Bots' base prompt, pinned memory and tools in place; and how a subscription's allowance counts cached input.
 
 **Matters because** it sets how many bots and routines a host and a subscription can sustain, and therefore the default budgets and the concurrency limit. **Settled by** repeating the measurement on the target host with the first build, and by watching allowance on a subscription account.
 
-## 8. When should a main session rotate, and what does the digest contain?
+## 6. When should a main session rotate, and what does the digest contain?
 
 The server rotates a main session after 200 turns and carries a digest of the last delivered messages, up to 60 of them and 6,000 characters ([Server: sessions](architecture/server.md#sessions)). Both numbers are guesses. Rotation trades continuity for cost: tokens or age may be better triggers than turns, and the digest may need the bot's own summary rather than the raw messages. A fresh start carries no digest, as the client promises: the new session starts from the bot's memory files alone.
 
 **Settled by** real conversations: how a session's cost grows with its turns on each provider, and whether bots pick up well after a rotation.
 
-## 9. How does an operator configure providers without T3 Code's interface?
+## 7. How does an operator configure providers without T3 Code's interface?
 
 Today on the host: `j3-bots provider connect` sets the endpoint and its key, and `j3-bots doctor` shows what the engine reports for each provider. J3 Bots' settings need their own provider screen eventually: whether each provider can run bots, which models each bot may use, and a way to change the connection from a client without the key passing through anything but the server.
 
-## 10. Is non-streamed speech good enough?
+## 8. Is non-streamed speech good enough?
 
 A message sent through `say` arrives whole. The operator sees the avatar working and then a complete message, not text appearing as it is generated. For one or two sentences this is probably right; for long answers it may feel slow.
 
 **Settled by** using M1.
 
-## 11. Which harnesses beyond Claude Code and Codex are worth supporting?
+## 9. Which harnesses beyond Claude Code and Codex are worth supporting?
 
 Agents connected through ACP have no system-prompt field. T3 Code sends each turn to them as its own text followed by the dispatched message, so J3 Bots' base prompt would have to ride in instruction files or in every envelope, which behaves differently after compaction.
+
+## 10. Is the name free to use?
+
+The name is chosen: J3 Bots ([Concepts: Names](product/concepts.md#names)). Whether it is free to use is not checked yet: conflicting trademarks, and the npm scope, GitHub name, domain and app-store names it needs.
+
+**Settled by** those checks, which are the owner's to make.
