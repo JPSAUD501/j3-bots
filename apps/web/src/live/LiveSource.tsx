@@ -37,10 +37,11 @@ import type {
   EntryTarget,
   MemoryPath,
   MemoryScope,
+  Notification,
   RoomId,
   WorkStep,
 } from "@j3-bots/contracts";
-import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
+import { useNavigate, useParams, useRouter, useSearch } from "@tanstack/react-router";
 import {
   createContext,
   use,
@@ -52,7 +53,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { useI18n } from "../app/context";
+import { useI18n, usePresentation } from "../app/context";
 import { ConnectionBanner } from "../components/ConnectionBanner";
 import { memoryLabel } from "../components/DetailsPanel";
 import { EditBotDialog } from "../components/EditBotDialog";
@@ -60,8 +61,11 @@ import { MemoryViewer, type MemoryReading } from "../components/MemoryViewer";
 import { NewBotDialog } from "../components/NewBotDialog";
 import { guessDeviceName, Incompatible, Pairing, StorageFailed } from "../components/Pairing";
 import { type Notice, Toast } from "../components/Toast";
+import { notificationAccess } from "../preferences/notifications";
+import { notificationContent } from "../presentation/notification";
 import type { ConversationView, ShellData, ShellIntents } from "../shell/data";
 import { ShellSourceContext } from "../shell/source";
+import { onServiceWorkerClick, showNotification } from "./notify";
 import { deliverFile, reserveWindow } from "./openFile";
 import { platform } from "./platform";
 
@@ -185,11 +189,18 @@ const submitting = (state: ActionState | undefined) => state?._tag === "submitti
 const loadedList = <A,>(loaded: Loaded<ReadonlyArray<A>> | null): ReadonlyArray<A> | null =>
   loaded === null || loaded._tag === "loading" ? null : loaded._tag === "ready" ? loaded.value : [];
 
-const subscribeVisibility = (listener: () => void) => {
+const subscribeInView = (listener: () => void) => {
   document.addEventListener("visibilitychange", listener);
-  return () => document.removeEventListener("visibilitychange", listener);
+  window.addEventListener("focus", listener);
+  window.addEventListener("blur", listener);
+  return () => {
+    document.removeEventListener("visibilitychange", listener);
+    window.removeEventListener("focus", listener);
+    window.removeEventListener("blur", listener);
+  };
 };
-const isVisible = () => document.visibilityState === "visible";
+/** Whether the operator is looking at this window: it shows, and it has focus. */
+const isInView = () => document.visibilityState === "visible" && document.hasFocus();
 
 /** Reads one open work fold's steps for as long as it stays open. */
 function FoldReader({
@@ -253,7 +264,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   const files = useBotFiles(detailsBotId);
   const memory = useMemory(detailsBotId === null ? null : { _tag: "bot", botId: detailsBotId });
   const routines = useRoutines(detailsBotId);
-  const visible = useSyncExternalStore(subscribeVisibility, isVisible, isVisible);
+  const inView = useSyncExternalStore(subscribeInView, isInView, isInView);
 
   const [openFolds, setOpenFolds] = useState<ReadonlySet<EntryId>>(new Set());
   const [steps, setSteps] = useState<ReadonlyMap<EntryId, ReadonlyArray<WorkStep>>>(new Map());
@@ -281,12 +292,46 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
           loadingOlder: conversation.state.loadingOlder,
         };
 
-  // The server tells the operator's other devices what is on screen here, and
-  // keeps notifications for it quiet. A hidden page shows nothing.
+  // The server keeps notifications quiet for what is on screen here. A window
+  // that is hidden or in the background shows the operator nothing.
   const viewKey = target === null ? null : targetKey(target);
   useEffect(() => {
-    j3.setView(visible ? targetOf(botId, roomId) : null);
-  }, [j3, botId, roomId, visible]);
+    j3.setView(inView ? targetOf(botId, roomId) : null);
+  }, [j3, botId, roomId, inView]);
+
+  // What the server says no device has in view, shown by the browser once the
+  // operator allowed it. A click focuses a window and opens the conversation
+  // or room, whose newest entry is what the notification was about.
+  const presentation = usePresentation();
+  const router = useRouter();
+  const openTarget = useEffectEvent((opened: EntryTarget) => {
+    if (opened._tag === "conversation") {
+      void navigate({ to: "/bots/$botId", params: { botId: opened.botId } });
+    } else {
+      void navigate({ to: "/rooms/$roomId", params: { roomId: opened.roomId } });
+    }
+  });
+  const notify = useEffectEvent((notification: Notification) => {
+    if (notificationAccess() !== "granted") return;
+    const content = notificationContent(notification, presentation, (id) => {
+      const room = roster?.rows.find((row) => row._tag === "room" && row.room.id === id);
+      return room?._tag === "room" ? room.room.name : null;
+    });
+    if (content === null) return;
+    const { target: about } = notification;
+    const url =
+      about._tag === "conversation"
+        ? router.buildLocation({ to: "/bots/$botId", params: { botId: about.botId } }).href
+        : router.buildLocation({ to: "/rooms/$roomId", params: { roomId: about.roomId } }).href;
+    showNotification({ ...content, tag: notification.entryId, target: about, url }, (opened) =>
+      openTarget(opened),
+    ).catch(() => {
+      // The browser refused it, as when the permission was withdrawn meanwhile.
+      // The entry still shows as unread in the roster.
+    });
+  });
+  useEffect(() => j3.onNotification(notify), [j3]);
+  useEffect(() => onServiceWorkerClick((opened) => openTarget(opened)), []);
 
   // Another tab sent or changed a draft under this one, and this tab shows it
   // as stored. Text of this tab's that the device never kept is offered back

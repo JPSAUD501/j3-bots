@@ -25,6 +25,7 @@ import {
   EntryTarget,
   Mentions,
   MessageText,
+  PREVIEW_LENGTH,
   QuestionAnswers,
   WorkStep,
 } from "./entry.ts";
@@ -468,10 +469,32 @@ export const SettingsRpcs = RpcGroup.make(
   }),
 );
 
+/**
+ * The entries a bot adds that notify: what it says to the operator, an urgent
+ * message to a teammate, and the cards that wait on the operator.
+ */
+export const NotificationKind = Schema.Literals([
+  "message",
+  "handoff",
+  "question",
+  "approval",
+  "secret-request",
+]);
+export type NotificationKind = typeof NotificationKind.Type;
+
+/** An entry worth the operator's attention, added where no connected client has it in view. */
 export const Notification = Schema.Struct({
   target: EntryTarget,
   entryId: EntryId,
-  reason: Schema.Literals(["entry", "waiting"]),
+  /** The bot that wrote it. The operator's own entries never notify. */
+  botId: BotId,
+  kind: NotificationKind,
+  /**
+   * The first line of the entry's text, at most `PREVIEW_LENGTH` characters:
+   * the message, the question or the action. Null when the operator does not
+   * allow previews, or when the entry has no text of its own.
+   */
+  preview: Schema.NullOr(Schema.String.check(Schema.isMaxLength(PREVIEW_LENGTH))),
 });
 export type Notification = typeof Notification.Type;
 

@@ -49,6 +49,12 @@ export const en = {
   "summary.routine": "Routine: {name}",
   "summary.routineChanged": "Changed a routine",
 
+  "notification.message": "Sent you a message",
+  "notification.question": "Has a question for you",
+  "notification.approval": "Needs your approval",
+  "notification.secret": "Needs a credential",
+  "notification.handoff": "Sent a teammate an urgent message",
+
   "time.yesterday": "Yesterday",
   "time.yesterdayAt": "Yesterday at {time}",
   "time.tomorrowAt": "Tomorrow at {time}",
@@ -459,6 +465,21 @@ export const en = {
   "settings.saved": "Saved",
   "settings.saveFailed": "Not saved. Try again.",
   "settings.save.offline": "Saving is available once this device is connected to J3 Bots again.",
+  "settings.notifications": "Notifications",
+  "settings.notifications.enabled": "Notify me",
+  "settings.notifications.enabled.hint":
+    "When a bot writes or needs you and no device has that conversation open. Applies to every device.",
+  "settings.notifications.previews": "Show what the bot wrote",
+  "settings.notifications.previews.hint":
+    "Notifications include the first line of the message. Anyone who can see your screen can read it.",
+  "settings.notifications.allow": "Allow notifications in this browser",
+  "settings.notifications.browser.default": "This browser shows none until you allow them.",
+  "settings.notifications.browser.granted": "This browser shows notifications.",
+  "settings.notifications.browser.denied":
+    "This browser blocks notifications from J3 Bots. Allow them in its site settings.",
+  "settings.notifications.browser.unsupported": "This browser can’t show notifications.",
+  "settings.notifications.browser.insecure":
+    "Browsers show notifications only over a secure connection. Open J3 Bots over HTTPS to get them here.",
   "settings.devices": "Devices",
   "settings.device.current": "This device",
   "settings.device.neverSeen": "Not connected yet",

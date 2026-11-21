@@ -87,7 +87,7 @@ export const layer = Layer.mergeAll(BotTools.layer, Turns.layer).pipe(
       BotStore.layer,
     ),
   ),
-  Layer.provideMerge(BotStates.layer),
+  Layer.provideMerge(Layer.mergeAll(BotStates.layer, Presence.layer)),
   Layer.provideMerge(
     Layer.mergeAll(
       Ids.layer,
@@ -97,7 +97,6 @@ export const layer = Layer.mergeAll(BotTools.layer, Turns.layer).pipe(
       SettingsStore.layer,
       EngineState.layer,
       RoomRouting.layer,
-      Presence.layer,
       Usage.layer,
       Signals.layer,
       SessionGate.layer,

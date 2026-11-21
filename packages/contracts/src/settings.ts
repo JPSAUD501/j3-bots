@@ -20,8 +20,15 @@ export const Budgets = Schema.Struct({
 });
 export type Budgets = typeof Budgets.Type;
 
+/** What the operator wants to be told about, and how much a notification may say. */
 export const NotificationSettings = Schema.Struct({
-  /** Whether a push carries the first line of the message, or only the bot's name. */
+  /** Whether the server notifies at all, on any device. */
+  enabled: Schema.Boolean,
+  /**
+   * Whether a notification carries the first line of what the bot wrote, or
+   * only who wrote it. A notification can show where others see it, such as
+   * on a locked screen, so this is off until the operator turns it on.
+   */
   previews: Schema.Boolean,
 });
 export type NotificationSettings = typeof NotificationSettings.Type;

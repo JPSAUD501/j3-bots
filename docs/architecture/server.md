@@ -401,12 +401,18 @@ When a limit stops something, the place where it stopped says so in one quiet li
 
 ## Notifications
 
-The server sends a notification when an entry is added to a conversation or room and no connected client currently has it in view, and when a bot starts waiting on the operator.
+The server sends a notification when a bot adds an entry to a conversation or room and no connected client currently has it in view. A bot that starts waiting on the operator adds a card, so a question, an approval or a credential request notifies the same way.
+
+**What notifies.** A bot's message, its question, approval and credential cards, and a message to a teammate that it marked urgent. Nothing else does: the operator's own entries, a turn's work fold, notices (quiet lines by design; the roster shows a blocked bot), routine changes (the bot's own message about one notifies) and teammate messages that are not urgent. Every notification follows from an entry, so a routine run that ends silently, which adds none, never notifies, and one that speaks notifies like any message.
+
+**What is in view.** Each socket reports what the operator is looking at through it (`client.view`): a conversation or room, or nothing. A client reports a target only while its window shows it, is visible and has focus; otherwise it reports nothing. The server keeps each socket's report in memory, and forgets it with the socket, so a client reports it again on every connection. An entry is in view when any connected socket reports its target.
+
+**Who is told.** Every connected socket, on its `notifications.subscribe` stream, which is live only: a notification sent while a device was disconnected is not replayed, since the roster shows the entry unread when it returns. A notification names the target, the entry, the bot and the kind of entry, and, when the operator allows previews, the entry's first line, at most 200 characters (`PREVIEW_LENGTH`): the message, the question or the action.
+
+**The operator's preferences** are in the settings row (`settings.get`, `settings.update`): whether the server notifies at all (on by default; a browser still shows nothing until the operator lets it) and whether a notification carries a preview (off by default, because a notification can show where others see it, such as on a locked screen). Each notification reads them as it is sent.
 
 - **Web and desktop**: over the open connection, shown by the client.
 - **Mobile**: a push through the platform's service. The payload carries the bot's name and, if the operator allows it, the first line of the message. See [open question 4](../open-questions.md).
-
-Routines that end silently and non-urgent teammate messages never notify.
 
 ## Client API
 

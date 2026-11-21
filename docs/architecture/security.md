@@ -118,5 +118,5 @@ This is a deployment recommendation, not something J3 Bots enforces. See [open q
 
 - No isolation between bots at the filesystem level, and none between a bot and the operator's user.
 - No protection against a compromised paired device beyond revocation.
-- Push notifications pass through Apple's and Google's services, and through whichever push relay is chosen; previews are opt-in for that reason.
+- Push notifications pass through Apple's and Google's services, and through whichever push relay is chosen; previews are opt-in for that reason. A browser notification never leaves the device, but it can show on a screen others see, so the same setting holds for it.
 - The automatic reviewer in Auto mode is the provider's, and its judgment is not J3 Bots' to guarantee.

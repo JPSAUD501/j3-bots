@@ -1,11 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Entry, EntryTarget, Notification } from "@j3-bots/contracts";
+import type {
+  BotId,
+  Entry,
+  EntryTarget,
+  Notification,
+  NotificationKind,
+  NotificationSettings,
+} from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import { previewOf } from "../entries/preview.ts";
+import { SettingsStore } from "../settings/SettingsStore.ts";
 
 /** One connected socket, from its handlers' start to their end. */
 export interface Viewer {
@@ -20,27 +29,55 @@ const sameTarget = (a: EntryTarget, b: EntryTarget): boolean =>
     ? b._tag === "conversation" && a.botId === b.botId
     : b._tag === "room" && a.roomId === b.roomId;
 
-/** Why an entry is worth the operator's attention, if it is. */
-const reasonOf = (entry: Entry): Notification["reason"] | null => {
-  if (entry.author._tag === "operator") return null;
+/**
+ * What kind of notification an entry makes, if any: a bot's message, an
+ * urgent message to a teammate, or a card that waits on the operator. The
+ * operator's own entries, a turn's work, notices (quiet lines by design) and
+ * routine changes (which come with the bot's own words) never notify; nor
+ * does a teammate message that is not urgent.
+ *
+ * Every notification follows from an entry, so a routine run that ends
+ * silently, which adds none, notifies nothing; one that speaks notifies as
+ * any message does.
+ */
+const kindOf = (
+  entry: Entry,
+): { readonly kind: NotificationKind; readonly botId: BotId } | null => {
+  if (entry.author._tag !== "bot") return null;
+  const { botId } = entry.author;
   switch (entry._tag) {
+    case "message":
     case "question":
     case "approval":
     case "secret-request":
-      return "waiting";
-    // A turn's work is shown as it happens, never announced.
+      return { kind: entry._tag, botId };
+    case "handoff":
+      return entry.urgent ? { kind: entry._tag, botId } : null;
     case "work-fold":
+    case "notice":
+    case "routine-change":
       return null;
-    default:
-      return "entry";
   }
 };
 
+/** The entry's first line, when the operator allows previews and it has one. */
+const previewText = (entry: Entry, settings: NotificationSettings): string | null => {
+  if (!settings.previews) return null;
+  const line = (previewOf(entry).text.split("\n")[0] ?? "").trim();
+  return line === "" ? null : line;
+};
+
+interface Socket {
+  target: EntryTarget | null;
+  readonly pubsub: PubSub.PubSub<Notification>;
+}
+
 /**
  * What each connected client has in view, and the notifications that follow
- * from it (`docs/architecture/server.md`, Notifications): an entry the
- * operator did not write, added where no connected client is looking, or a
- * card that waits on them. Kept in memory: a socket's view ends with it.
+ * from it (`docs/architecture/server.md`, Notifications): an entry worth the
+ * operator's attention, added where no connected client has it in view, sent
+ * to every socket while the operator has notifications on. Kept in memory: a
+ * socket's view ends with it.
  */
 export class Presence extends Context.Service<
   Presence,
@@ -52,43 +89,52 @@ export class Presence extends Context.Service<
   }
 >()("@j3-bots/server/presence/Presence") {}
 
-export const layer = Layer.sync(Presence, () => {
-  const sockets = new Map<
-    object,
-    { target: EntryTarget | null; readonly pubsub: PubSub.PubSub<Notification> }
-  >();
+export const layer = Layer.effect(
+  Presence,
+  Effect.gen(function* () {
+    const settings = yield* SettingsStore;
+    const sockets = new Map<object, Socket>();
 
-  const connect = Effect.gen(function* () {
-    const key = {};
-    const pubsub = yield* Effect.acquireRelease(PubSub.unbounded<Notification>(), PubSub.shutdown);
-    const socket: { target: EntryTarget | null; readonly pubsub: PubSub.PubSub<Notification> } = {
-      target: null,
-      pubsub,
-    };
-    sockets.set(key, socket);
-    yield* Effect.addFinalizer(() => Effect.sync(() => sockets.delete(key)));
-    return {
-      view: (target) =>
-        Effect.sync(() => {
-          socket.target = target;
-        }),
-      notifications: Stream.fromPubSub(pubsub),
-    } satisfies Viewer;
-  });
+    const connect = Effect.gen(function* () {
+      const key = {};
+      const pubsub = yield* Effect.acquireRelease(
+        PubSub.unbounded<Notification>(),
+        PubSub.shutdown,
+      );
+      const socket: Socket = { target: null, pubsub };
+      sockets.set(key, socket);
+      yield* Effect.addFinalizer(() => Effect.sync(() => sockets.delete(key)));
+      return {
+        view: (target) =>
+          Effect.sync(() => {
+            socket.target = target;
+          }),
+        notifications: Stream.fromPubSub(pubsub),
+      } satisfies Viewer;
+    });
 
-  const entryAdded = Effect.fn("Presence.entryAdded")(function* (
-    target: EntryTarget,
-    entry: Entry,
-  ) {
-    const reason = reasonOf(entry);
-    if (reason === null) return;
-    const watched = [...sockets.values()].some(
-      (socket) => socket.target !== null && sameTarget(socket.target, target),
-    );
-    if (watched) return;
-    const notification: Notification = { target, entryId: entry.id, reason };
-    for (const socket of sockets.values()) yield* PubSub.publish(socket.pubsub, notification);
-  });
+    const entryAdded = Effect.fn("Presence.entryAdded")(function* (
+      target: EntryTarget,
+      entry: Entry,
+    ) {
+      const made = kindOf(entry);
+      if (made === null || sockets.size === 0) return;
+      const watched = [...sockets.values()].some(
+        (socket) => socket.target !== null && sameTarget(socket.target, target),
+      );
+      if (watched) return;
+      const { notifications } = yield* settings.get;
+      if (!notifications.enabled) return;
+      const notification: Notification = {
+        target,
+        entryId: entry.id,
+        botId: made.botId,
+        kind: made.kind,
+        preview: previewText(entry, notifications),
+      };
+      for (const socket of sockets.values()) yield* PubSub.publish(socket.pubsub, notification);
+    });
 
-  return Presence.of({ connect, entryAdded });
-});
+    return Presence.of({ connect, entryAdded });
+  }),
+);

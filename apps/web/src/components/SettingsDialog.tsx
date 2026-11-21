@@ -12,6 +12,7 @@ import type * as DateTime from "effect/DateTime";
 import { SettingsIcon, XIcon } from "lucide-react";
 import { useId, useState, type ReactNode } from "react";
 import { useI18n, usePresentation } from "../app/context";
+import type { KeyWith } from "../i18n/i18n";
 import {
   setAppearance,
   setLanguage,
@@ -19,6 +20,11 @@ import {
   type Appearance,
   type Language,
 } from "../preferences/preferences";
+import {
+  requestNotificationAccess,
+  useNotificationAccess,
+  type NotificationAccess,
+} from "../preferences/notifications";
 import { editsAfterFailedSave, noEdits, settingsPatch } from "../presentation/settings";
 import type { ShellData, ShellIntents } from "../shell/data";
 import { cn } from "../lib/cn";
@@ -26,6 +32,7 @@ import { activityTime, clockTime } from "../lib/time";
 import { ConnectProviders, engineProblem, ProviderRow } from "./EmptyStates";
 import { Button } from "./ui/button";
 import { Confirm } from "./ui/confirm";
+import { Switch } from "./ui/switch";
 
 type SettingsIntents = Pick<
   ShellIntents,
@@ -83,6 +90,12 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
             <div className="min-h-0 flex-1 overflow-y-auto">
               <EngineSection engine={data.engine} stale={data.engineStale} />
               <YouSection
+                settings={data.settings}
+                save={data.settingsSave}
+                connected={data.connected}
+                onSave={intents.updateSettings}
+              />
+              <NotificationsSection
                 settings={data.settings}
                 save={data.settingsSave}
                 connected={data.connected}
@@ -307,6 +320,125 @@ function YouForm({
         </p>
       )}
     </form>
+  );
+}
+
+/** What this browser can do about notifications, in words. */
+const accessLine: Record<Exclude<NotificationAccess, "default">, KeyWith> = {
+  granted: "settings.notifications.browser.granted",
+  denied: "settings.notifications.browser.denied",
+  unsupported: "settings.notifications.browser.unsupported",
+  insecure: "settings.notifications.browser.insecure",
+};
+
+/**
+ * Whether J3 Bots notifies the operator and how much a notification says,
+ * which hold for every device, and whether this browser may show them. The
+ * browser asks its permission only when the operator presses the button:
+ * never on its own. A switch saves at once; offline, or while a save is under
+ * way, it shows the value it holds and takes no change.
+ */
+function NotificationsSection({
+  settings,
+  save,
+  connected,
+  onSave,
+}: {
+  settings: Settings | null;
+  save: SettingsSave;
+  connected: boolean;
+  onSave: SettingsIntents["updateSettings"];
+}) {
+  const { t } = useI18n();
+  const access = useNotificationAccess();
+  if (settings === null) {
+    return (
+      <Section title={t("settings.notifications")}>
+        <Loading />
+      </Section>
+    );
+  }
+  const saving = save._tag === "saving";
+  const shown = (saving ? save.changes.notifications : undefined) ?? settings.notifications;
+  const failed = save._tag === "failed" && save.changes.notifications !== undefined;
+  const change = (changes: Partial<Settings["notifications"]>) => {
+    if (saving || !connected) return;
+    onSave({ notifications: { ...settings.notifications, ...changes } });
+  };
+  return (
+    <Section title={t("settings.notifications")}>
+      <SwitchRow
+        label={t("settings.notifications.enabled")}
+        hint={t("settings.notifications.enabled.hint")}
+        checked={shown.enabled}
+        readOnly={saving || !connected}
+        onChange={(enabled) => change({ enabled })}
+      />
+      {shown.enabled && (
+        <>
+          {access === "default" ? (
+            <div className="flex flex-col items-start gap-1.5">
+              <p className="text-xs text-muted-foreground">
+                {t("settings.notifications.browser.default")}
+              </p>
+              <Button size="sm" onClick={() => void requestNotificationAccess()}>
+                {t("settings.notifications.allow")}
+              </Button>
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">{t(accessLine[access])}</p>
+          )}
+          <SwitchRow
+            label={t("settings.notifications.previews")}
+            hint={t("settings.notifications.previews.hint")}
+            checked={shown.previews}
+            readOnly={saving || !connected}
+            onChange={(previews) => change({ previews })}
+          />
+        </>
+      )}
+      <p role="status" className="text-xs text-blocked empty:hidden">
+        {failed && !saving && t("settings.saveFailed")}
+      </p>
+      {!connected && <p className="text-xs text-muted-foreground">{t("settings.save.offline")}</p>}
+    </Section>
+  );
+}
+
+/** A setting that is on or off: its name and what it does, beside the switch. */
+function SwitchRow({
+  label,
+  hint,
+  checked,
+  readOnly,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  checked: boolean;
+  readOnly: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  const labelId = useId();
+  const hintId = useId();
+  return (
+    <div className="flex items-start gap-3">
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span id={labelId} className="text-sm">
+          {label}
+        </span>
+        <span id={hintId} className="text-2xs text-muted-foreground">
+          {hint}
+        </span>
+      </span>
+      <Switch
+        checked={checked}
+        readOnly={readOnly}
+        aria-labelledby={labelId}
+        aria-describedby={hintId}
+        onCheckedChange={onChange}
+      />
+    </div>
   );
 }
 

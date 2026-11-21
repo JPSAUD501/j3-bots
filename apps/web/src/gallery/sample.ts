@@ -644,7 +644,7 @@ export function sampleTeam(now: DateTime.Utc) {
     operatorName: "Sam",
     timeZone: TimeZone.make("America/Sao_Paulo"),
     budgets: { hops: 6, fanOut: 3, concurrentTurns: 4 },
-    notifications: { previews: true },
+    notifications: { enabled: true, previews: true },
   };
 
   const devices: ReadonlyArray<Device> = [

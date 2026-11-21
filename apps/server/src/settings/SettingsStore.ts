@@ -15,6 +15,7 @@ const SettingsRow = Schema.Struct({
   hop_limit: PositiveInt,
   fan_out_limit: PositiveInt,
   concurrent_turns: PositiveInt,
+  notifications_enabled: Flag,
   notification_previews: Flag,
 });
 
@@ -36,7 +37,7 @@ export const layer = Layer.effect(
       Result: SettingsRow,
       execute: () => sql`
         SELECT operator_name, time_zone, hop_limit, fan_out_limit, concurrent_turns,
-          notification_previews
+          notifications_enabled, notification_previews
         FROM settings WHERE id = 1
       `,
     });
@@ -51,7 +52,10 @@ export const layer = Layer.effect(
             fanOut: row.fan_out_limit,
             concurrentTurns: row.concurrent_turns,
           },
-          notifications: { previews: row.notification_previews },
+          notifications: {
+            enabled: row.notifications_enabled,
+            previews: row.notification_previews,
+          },
         })),
       ),
       save: Effect.fn("SettingsStore.save")(function* (settings: Settings, at: DateTime.Utc) {
@@ -62,6 +66,7 @@ export const layer = Layer.effect(
             hop_limit = ${settings.budgets.hops},
             fan_out_limit = ${settings.budgets.fanOut},
             concurrent_turns = ${settings.budgets.concurrentTurns},
+            notifications_enabled = ${settings.notifications.enabled ? 1 : 0},
             notification_previews = ${settings.notifications.previews ? 1 : 0},
             updated_at = ${timeText(at)}
           WHERE id = 1

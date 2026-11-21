@@ -119,7 +119,9 @@ export interface ShellIntents extends TimelineIntents {
   readonly deleteBot: (botId: BotId) => void;
 
   /** Saves the change; `settingsSave` follows it. */
-  readonly updateSettings: (changes: Partial<Pick<Settings, "operatorName" | "timeZone">>) => void;
+  readonly updateSettings: (
+    changes: Partial<Pick<Settings, "operatorName" | "timeZone" | "notifications">>,
+  ) => void;
   readonly startPairing: () => Promise<PairingStart>;
   /**
    * Resolves `false` unless the server confirmed it within ten seconds; the

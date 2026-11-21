@@ -10,6 +10,7 @@ J3 Bots has three clients: a web app, a desktop app and a mobile app. All three 
 
 - the connection: pairing, authentication, reconnect with backoff, resuming the subscriptions that resume and re-reading the ones that start with a snapshot;
 - state: the roster, the open conversation, pending cards, routines, engine status;
+- presence: reporting what the operator has in view on every socket, and receiving the server's notifications;
 - commands: sending a message, answering a card, stopping a bot, each with its own idempotency key and optimistic entry;
 - drafts and unsent messages.
 
@@ -27,6 +28,7 @@ The reference client. It is served by the J3 Bots server itself, so pointing a b
 - Component primitives on Base UI, in a local `components/ui` layer whose components own their look: callers pick a variant, they do not restyle.
 - A virtualized conversation list that keeps the scroll position stable while messages stream in.
 - Installable as a PWA, which gives phone users a working client before the native app exists.
+- Browser notifications, through the service worker where one is active and from the page otherwise. The browser's permission is asked for only when the operator presses "Allow notifications in this browser" in Settings, never on load. A click focuses a window of the app, the focused one first, and opens the conversation or room the notification is about; with no window open, the service worker opens one. Every window shows the server's notifications, tagged by entry, so the browser keeps one per entry. Browsers offer notifications only in a secure context, so a page served over plain HTTP on the local network gets none, and Settings says so. Some mobile browsers (Android's) show a notification only through a service worker (**Assumed**: not yet observed on a device).
 
 ## Desktop
 
@@ -84,6 +86,7 @@ A tab only ever shows, keeps or sends the drafts and unsent messages of the pair
 
 - The drafts and the outbox each hold the pairing they follow. It changes only under their own lock, in the same step as they drop everything they held. Every read projects only that pairing's records: another pairing's record reads as no record.
 - Every write is that pairing's, and the storage transaction that writes it also reads the stored credential, and writes nothing unless it is still that pairing's. In a browser the credential and the records are in one IndexedDB database, so the check and the write are one transaction. A platform that keeps the credential in a system keychain must keep a copy of the paired device id beside the records for this check (planned with those clients). A pairing never returns once it ended, so a write refused while the credential is still the tab's pairing was refused for another tab's change, and one refused otherwise means the pairing ended: the tab writes nothing more and follows the next.
+- The same holds for presence: what the operator has in view is reported only on a socket of the pairing it was set under; a socket of another pairing hears that nothing is in view until the window says what it shows. A notification that arrives on a socket of a pairing the window no longer follows is dropped.
 - A message goes only on a socket opened with its own pairing's credential. Any other command belongs to the pairing it started under: a socket of another pairing never runs it, and it fails as not paired.
 - A file transfer carries the token of the pairing it started under, read once, and stops as soon as the tab follows another pairing or none: an upload under way never goes again under the next pairing.
 - The pairing a tab follows changes in the same step as the credential it holds.
@@ -115,5 +118,6 @@ No HTTP request waits forever, since a server or a proxy can take one and never 
 - **One conversation everywhere.** An entry sent or answered on one device appears on the others without a reload.
 - **Cards resolve once.** Answering a question or an approval on any device resolves it on all.
 - **State is the server's.** A client never infers "the bot is working" from its own timers. It shows what the server reports and marks its view as stale when disconnected.
+- **Notifications are the server's call.** A client reports what the operator has in view (a conversation or room in a window that shows and has focus, or nothing) on every socket, and shows each notification the server sends. It never decides by itself what deserves one.
 - **Every action has a name.** A command's label, its shortcut hint, its menu entry and its accessible name describe the same action on the same object.
 - **Languages from the first screen.** Interface text goes through the translation layer from day one, as whole sentences. English is the source language.

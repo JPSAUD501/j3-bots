@@ -47,6 +47,12 @@ export const ptBR: Catalog = {
   "summary.routine": "Rotina: {name}",
   "summary.routineChanged": "Alterou uma rotina",
 
+  "notification.message": "Enviou uma mensagem",
+  "notification.question": "Tem uma pergunta para você",
+  "notification.approval": "Precisa da sua aprovação",
+  "notification.secret": "Precisa de uma credencial",
+  "notification.handoff": "Mandou uma mensagem urgente a um colega",
+
   "time.yesterday": "Ontem",
   "time.yesterdayAt": "Ontem às {time}",
   "time.tomorrowAt": "Amanhã às {time}",
@@ -467,6 +473,21 @@ export const ptBR: Catalog = {
   "settings.saveFailed": "Não foi salvo. Tente de novo.",
   "settings.save.offline":
     "Salvar fica disponível quando este dispositivo voltar a se conectar ao J3 Bots.",
+  "settings.notifications": "Notificações",
+  "settings.notifications.enabled": "Notificar",
+  "settings.notifications.enabled.hint":
+    "Quando um bot escreve ou precisa de você e nenhum dispositivo está com aquela conversa aberta. Vale para todos os dispositivos.",
+  "settings.notifications.previews": "Mostrar o que o bot escreveu",
+  "settings.notifications.previews.hint":
+    "As notificações trazem a primeira linha da mensagem. Quem vir a sua tela consegue ler.",
+  "settings.notifications.allow": "Permitir notificações neste navegador",
+  "settings.notifications.browser.default": "Este navegador não mostra nenhuma até você permitir.",
+  "settings.notifications.browser.granted": "Este navegador mostra notificações.",
+  "settings.notifications.browser.denied":
+    "Este navegador bloqueia as notificações do J3 Bots. Permita nas configurações do site.",
+  "settings.notifications.browser.unsupported": "Este navegador não mostra notificações.",
+  "settings.notifications.browser.insecure":
+    "Os navegadores só mostram notificações numa conexão segura. Abra o J3 Bots por HTTPS para recebê-las aqui.",
   "settings.devices": "Dispositivos",
   "settings.device.current": "Este dispositivo",
   "settings.device.neverSeen": "Ainda não conectou",

@@ -53,6 +53,7 @@ import {
 import { Details, memorySaveKey } from "../src/stores/Details.ts";
 import { Devices } from "../src/stores/Devices.ts";
 import { Drafts } from "../src/stores/Drafts.ts";
+import { Presence } from "../src/stores/Presence.ts";
 import { Roster } from "../src/stores/Roster.ts";
 import { Settings } from "../src/stores/Settings.ts";
 import { SignOut } from "../src/intents/SignOut.ts";
@@ -61,6 +62,12 @@ import * as TestPlatform from "./platform.ts";
 // The real server's routes, socket and part-1 handlers, over the in-memory
 // engine and a temporary database. The RPCs it does not serve yet are answered
 // by the fakes below, which keep the contract: a command id is applied once.
+
+/** A view a socket reported, with the device the socket belongs to. */
+interface ReportedView {
+  readonly device: DeviceId;
+  readonly target: EntryTarget | null;
+}
 
 /** What the fakes record, and a gate that holds them until the test opens it. */
 class Fakes extends Context.Service<
@@ -75,6 +82,8 @@ class Fakes extends Context.Service<
     readonly applied: Map<CommandId, EntryId>;
     /** Texts `message.send` refuses, as the server refuses a message to a bot it no longer has. */
     readonly refusing: Set<string>;
+    /** Every view a socket reported, with the device the socket belongs to. */
+    readonly views: Queue.Queue<ReportedView>;
   }
 >()("@j3-bots/client-runtime/test/client.test/Fakes") {}
 
@@ -87,6 +96,7 @@ const fakes = Layer.effect(
       answers: yield* Queue.unbounded<CommandId>(),
       applied: new Map(),
       refusing: new Set(),
+      views: yield* Queue.unbounded<ReportedView>(),
     });
   }),
 );
@@ -156,7 +166,14 @@ const unserved = Layer.mergeAll(
         });
     }),
   ),
-  J3Rpcs.toLayerHandler("client.view", () => Effect.void),
+  J3Rpcs.toLayerHandler(
+    "client.view",
+    Effect.gen(function* () {
+      const { views } = yield* Fakes;
+      const device = yield* Server.CurrentDevice;
+      return ({ target }) => Queue.offer(views, { device: device.id, target }).pipe(Effect.asVoid);
+    }),
+  ),
   J3Rpcs.toLayerHandler("notifications.subscribe", () => Stream.never),
   J3Rpcs.toLayerHandler("entries.workSteps", () => Stream.die("Not faked")),
   J3Rpcs.toLayerHandler("secret.provide", notFaked),
@@ -3228,7 +3245,9 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
       yield* network.loseReplies(true);
       const saving = yield* Effect.forkChild(
-        settings.update({ notifications: { previews: !before } }),
+        settings.update({
+          notifications: { ...loaded.value.notifications, previews: !before },
+        }),
         { startImmediately: true },
       );
 
@@ -3244,7 +3263,9 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
             }),
           );
         const other = yield* Settings;
-        const back = yield* other.update({ notifications: { previews: before } });
+        const back = yield* other.update({
+          notifications: { ...loaded.value.notifications, previews: before },
+        });
         assert.strictEqual(back._tag, "done");
       }).pipe(Effect.scoped, Effect.provide(client()));
 
@@ -3360,6 +3381,39 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       yield* pairAndConnect;
       assert.strictEqual(details.botSaves.get().size, 0);
       assert.strictEqual(details.memorySaves.get().size, 0);
+    }).pipe(Effect.scoped, Effect.provide(client())),
+  );
+
+  it.effect("reports the view on every socket, and never one set under another pairing", () =>
+    Effect.gen(function* () {
+      const { views } = yield* Fakes;
+      const connection = yield* Connection;
+      const presence = yield* Presence;
+      const network = yield* TestPlatform.TestNetwork;
+      /** The next view a socket of `device` reported. */
+      const nextView = (device: DeviceId) =>
+        Queue.take(views).pipe(
+          Effect.repeat({ until: (view) => view.device === device }),
+          Effect.map((view) => view.target),
+        );
+
+      yield* pairAndConnect;
+      const first = yield* connection.deviceId;
+      const target: EntryTarget = { _tag: "conversation", botId: yield* createBot("Scout") };
+      assert.isNull(yield* nextView(first));
+      yield* presence.setView(target);
+      assert.deepStrictEqual(yield* nextView(first), target);
+      // The server forgets a socket's view with it: the next socket says it again.
+      yield* network.dropSockets;
+      assert.deepStrictEqual(yield* nextView(first), target);
+
+      // Paired anew, the window shows nothing of the pairing that ended until it says so.
+      assert.deepStrictEqual(yield* (yield* SignOut).run, { _tag: "signed-out" });
+      yield* pairAndConnect;
+      const second = yield* connection.deviceId;
+      assert.isNull(yield* nextView(second));
+      yield* presence.setView(target);
+      assert.deepStrictEqual(yield* nextView(second), target);
     }).pipe(Effect.scoped, Effect.provide(client())),
   );
 });

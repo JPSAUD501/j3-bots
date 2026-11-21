@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { HTTP_PATHS } from "@j3-bots/contracts";
+import { NOTIFICATION_CLICK } from "./notificationClick.ts";
 
 /**
  * The service worker's source, for one build. It exists so the installed app
@@ -18,6 +19,11 @@ import { HTTP_PATHS } from "@j3-bots/contracts";
  *
  * Each build keeps its shell under its own cache name, and a new worker
  * deletes the caches of older builds once it takes over.
+ *
+ * It also shows the app's notifications, where a page cannot show them itself
+ * (Android's browsers), and opens what a click on one asks for: it focuses a
+ * window of the app, the focused one first, then a visible one, and tells it
+ * which conversation or room to open; with no window, it opens one there.
  */
 /**
  * How long a page load waits for the network before the kept page answers: a
@@ -32,6 +38,7 @@ export function serviceWorkerSource(version: string, shell: ReadonlyArray<string
     shell,
     page: "/index.html",
     navigationWait: NAVIGATION_WAIT_MS,
+    notificationClick: NOTIFICATION_CLICK,
     // Every API path sits under /api/, beside the socket and attachments.
     neverCached: ["/api/", HTTP_PATHS.rpc, HTTP_PATHS.attachments],
   };
@@ -123,6 +130,30 @@ self.addEventListener("fetch", (event) => {
         .then((kept) => kept ?? fetch(request)),
     );
   }
+});
+
+// A notification the app showed carries { target, url }: the conversation or
+// room it is about, and that page's path on this origin.
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const data = event.notification.data;
+  if (data === null || typeof data !== "object" || typeof data.url !== "string") return;
+  const url = new URL(data.url, self.location.origin);
+  if (url.origin !== self.location.origin) return;
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((windows) => {
+      const open =
+        windows.find((client) => client.focused) ??
+        windows.find((client) => client.visibilityState === "visible") ??
+        windows[0];
+      if (open === undefined) return self.clients.openWindow(url.href);
+      return open
+        .focus()
+        .then((focused) =>
+          focused.postMessage({ type: CONFIG.notificationClick, target: data.target }),
+        );
+    }),
+  );
 });
 `;
 }
