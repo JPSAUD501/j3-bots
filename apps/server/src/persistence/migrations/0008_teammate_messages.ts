@@ -29,4 +29,9 @@ export default Effect.gen(function* () {
   // It covers the turn's work also when no dispatch began the turn, as for a
   // turn the engine started on its own.
   yield* sql`ALTER TABLE turns ADD COLUMN stop_id TEXT REFERENCES stops (id) ON DELETE SET NULL`;
+
+  // A held copy of the operator's Retry of an urgent message, which the
+  // recipient's Stop cancelled: the Retry is the operator's word, so no Stop
+  // of the sender removes it.
+  yield* sql`ALTER TABLE held_messages ADD COLUMN retried INTEGER NOT NULL DEFAULT 0`;
 });

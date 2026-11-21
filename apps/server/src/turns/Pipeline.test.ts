@@ -727,6 +727,26 @@ it.effect("keeps a held teammate message with an envelope whose fate is unknown"
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("shows a held teammate message no envelope can carry as not delivered", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    const sender = yield* holdMessageFor(bot.id, "The launch moved.");
+    // Every writer refuses such a message; the envelope's defence meets one all the same.
+    yield* sql`UPDATE held_messages SET text = ${`The launch moved. ${"a".repeat(130_000)}`}`;
+
+    yield* sendToBot(bot.id, "Any news?");
+    yield* finishRunning(bot.id);
+    assert.strictEqual(yield* timesSent(session, "The launch moved."), 0);
+    assert.deepStrictEqual(yield* handoffStates([sender, bot.id]), [
+      ["not-delivered"],
+      ["not-delivered"],
+    ]);
+    assert.include(yield* noticesOf(bot.id), "too-long");
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("keeps a refused message failed until the operator retries it, then delivers it", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;

@@ -903,13 +903,20 @@ export const layer = Layer.effect(
         `,
       })(botId).pipe(Effect.orDie);
 
+    /**
+     * The bot's held messages in the order they were sent, also a copy of an
+     * urgent one its Stop held later: by when its card was written, then by
+     * the card's place.
+     */
     const heldOf = (botId: BotId) =>
       SqlSchema.findAll({
         Request: Schema.String,
         Result: HeldRow,
         execute: (id) => sql`
-          SELECT id, sender_bot_id, text, created_at FROM held_messages
-          WHERE recipient_bot_id = ${id} AND consumed_dispatch_id IS NULL ORDER BY rowid
+          SELECT m.id, m.sender_bot_id, m.text, m.created_at
+          FROM held_messages m LEFT JOIN entries e ON e.id = m.handoff_entry_id
+          WHERE m.recipient_bot_id = ${id} AND m.consumed_dispatch_id IS NULL
+          ORDER BY m.created_at, e.seq, m.rowid
         `,
       })(botId).pipe(Effect.orDie);
 
@@ -1047,7 +1054,17 @@ export const layer = Layer.effect(
       const notes = dropped.flatMap((row) => (row._tag === "note" ? [row.id] : []));
       const held = dropped.flatMap((row) => (row._tag === "held" ? [row.id] : []));
       if (notes.length > 0) yield* sql`DELETE FROM catch_up_notes WHERE ${sql.in("id", notes)}`;
-      if (held.length > 0) yield* sql`DELETE FROM held_messages WHERE ${sql.in("id", held)}`;
+      if (held.length > 0) {
+        const removed = yield* sql<{ readonly handoff_entry_id: string | null }>`
+          DELETE FROM held_messages WHERE ${sql.in("id", held)} RETURNING handoff_entry_id
+        `;
+        yield* ledger.heldRemoved(
+          removed.flatMap((row) =>
+            row.handoff_entry_id === null ? [] : [EntryId.make(row.handoff_entry_id)],
+          ),
+          "not-delivered",
+        );
+      }
       yield* notify(botId, conversation, { _tag: "too-long" }, null);
     });
 
@@ -1056,13 +1073,17 @@ export const layer = Layer.effect(
      * files in order, its wakes linked, and the notes and held messages the
      * envelope consumed. Nothing changes if the plan no longer holds: its
      * session was retired, lost, became due for a rotation that takes no new
-     * work, or its bot's settings changed since it was chosen (`stale`,
-     * planned again), or its wakes are no longer pending.
+     * work, or its bot's settings changed since it was chosen, or a teammate's
+     * message it waits on turned out read, whose wake is cancelled then
+     * (`stale`, planned again), or its wakes are no longer pending.
      */
     const writeDispatch = Effect.fn("Pipeline.writeDispatch")(function* (plan: Plan) {
       return yield* transaction(
         Effect.gen(function* () {
           if (Option.isNone(yield* plannedSession(plan.sessionId))) return "stale" as const;
+          // A teammate's message the bot read meanwhile goes no more, as a
+          // wake or held; the plan is made again without such a wake.
+          if (yield* ledger.settleRead(plan.botId)) return "stale" as const;
           const still = yield* pendingWakes(plan.wakes.map((wake) => wake.id));
           if (still.length !== plan.wakes.length) return null;
           const fitted = yield* envelopeOf(plan, yield* sinceLastTurn(plan.botId));

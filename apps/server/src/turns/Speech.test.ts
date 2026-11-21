@@ -565,6 +565,14 @@ const handoffStates = (botId: BotId) =>
 const statesBecome = (botId: BotId, states: ReadonlyArray<HandoffState>) =>
   until(handoffStates(botId).pipe(Effect.map((shown) => shown.join() === states.join())));
 
+/** Whether each notice in the bot's conversation offers a Retry, oldest first. */
+const retryOffers = (botId: BotId) =>
+  conversation(botId).pipe(
+    Effect.map((entries) =>
+      entries.flatMap((entry) => (entry._tag === "notice" ? [entry.retryable] : [])),
+    ),
+  );
+
 /** Whether an operator's Retry of a teammate message failed. */
 const retryFailed = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -1077,6 +1085,108 @@ it.effect(
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("sends no Retry that waited while the original landed", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const { bot: ana, session, turnId } = yield* working("Ask Bo for the date.");
+    const bo = yield* createBot("Bo");
+    const boSession = yield* engineSession(bo.id);
+    // Whether the engine took Bo's envelope cannot be learned, and the recovery gives up.
+    const original = yield* control.deferNextDispatch;
+    yield* messageTeammate(session, turnId, { to: bo.id, text: "The date?", urgent: true });
+    yield* flushed(bo.id);
+    yield* recoverTimes(MAX_INDETERMINATE_ANSWERS - 1);
+    yield* statesBecome(bo.id, ["not-delivered"]);
+    const notice = yield* awaitEntry(bo.id, "notice");
+
+    // Ana's running turn takes the only slot, so the operator's Retry waits.
+    yield* concurrentTurns(1);
+    yield* (yield* Pipeline).retryNotice({ commandId: command(), entryId: notice.id });
+    yield* flushed(bo.id);
+    assert.deepStrictEqual(yield* teammateMessagesFor(bo.id), { wakes: 2, held: 0 });
+
+    // The original lands: Bo read it, so the Retry goes no more.
+    yield* original.land;
+    const boTurn = yield* nextTurn(bo.id);
+    assert.deepStrictEqual(yield* teammateMessagesFor(bo.id), { wakes: 1, held: 0 });
+    yield* finished(bo.id, boSession, boTurn);
+    yield* finished(ana.id, session, turnId);
+    yield* flushed(bo.id);
+    assert.strictEqual(yield* timesSent(boSession, "The date?"), 1);
+    assert.deepStrictEqual(yield* handoffStates(bo.id), ["sent"]);
+    assert.deepStrictEqual(yield* handoffStates(ana.id), ["sent"]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("offers no Retry on any notice of a message once its original lands", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const { session, turnId } = yield* working("Ask Bo for the date.");
+    const bo = yield* createBot("Bo");
+    yield* engineSession(bo.id);
+    const original = yield* control.deferNextDispatch;
+    yield* messageTeammate(session, turnId, { to: bo.id, text: "The date?", urgent: true });
+    yield* flushed(bo.id);
+    yield* recoverTimes(MAX_INDETERMINATE_ANSWERS - 1);
+    const first = yield* awaitEntry(bo.id, "notice");
+
+    // The engine refuses the operator's Retry: a second notice offers one more.
+    yield* control.rejectNextDispatch;
+    yield* (yield* Pipeline).retryNotice({ commandId: command(), entryId: first.id });
+    yield* until(retryOffers(bo.id).pipe(Effect.map((offers) => offers.join() === "false,true")));
+
+    // The original lands: Bo read it, and neither notice offers a Retry.
+    yield* original.land;
+    yield* nextTurn(bo.id);
+    yield* statesBecome(bo.id, ["sent"]);
+    assert.deepStrictEqual(yield* retryOffers(bo.id), [false, false]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+/**
+ * Ana's urgent message to Bo was refused, and the operator's Retry of it
+ * waits while Bo works on a message from the operator; Ana's turn that sent
+ * it still runs.
+ */
+const retryWaiting = Effect.gen(function* () {
+  const control = yield* TestEngineControl;
+  const { bot: ana, session, turnId } = yield* working("Ask Bo for the date.");
+  const bo = yield* createBot("Bo");
+  const boSession = yield* engineSession(bo.id);
+  yield* control.rejectNextDispatch;
+  yield* messageTeammate(session, turnId, { to: bo.id, text: "The date?", urgent: true });
+  const notice = yield* awaitEntry(bo.id, "notice");
+  yield* sendToBot(bo.id, "Check the logs.");
+  const boTurn = yield* nextTurn(bo.id);
+  yield* (yield* Pipeline).retryNotice({ commandId: command(), entryId: notice.id });
+  return { ana, bo, boSession, boTurn };
+});
+
+/** The operator stops the bot. */
+const stop = (botId: BotId) =>
+  Effect.gen(function* () {
+    yield* (yield* Stops).stopBot({ commandId: command(), botId });
+  });
+
+for (const order of ["sender first", "recipient first"] as const) {
+  it.effect(`keeps the operator's Retry through Stops of both bots, ${order}`, () =>
+    Effect.gen(function* () {
+      const { ana, bo, boSession, boTurn } = yield* retryWaiting;
+      for (const botId of order === "sender first" ? [ana.id, bo.id] : [bo.id, ana.id]) {
+        yield* stop(botId);
+      }
+      yield* turnEnded(bo.id);
+
+      // Bo's next turn carries it, once.
+      yield* sendToBot(bo.id, "Anything else?");
+      yield* nextTurn(bo.id, boTurn);
+      assert.strictEqual(yield* timesSent(boSession, "The date?"), 1);
+      yield* statesBecome(bo.id, ["sent"]);
+      assert.deepStrictEqual(yield* handoffStates(ana.id), ["sent"]);
+    }).pipe(Effect.provide(TestDomain.layer)),
+  );
+}
+
 /**
  * Ana, in a turn the operator started, sends Bo an urgent and a held
  * message while Bo works on a message from the operator.
@@ -1102,7 +1212,7 @@ it.effect("keeps what teammates sent through a Stop of the recipient, for its ne
     assert.deepStrictEqual(yield* handoffStates(ana.id), ["sent", "sent"]);
     assert.deepStrictEqual(yield* handoffStates(bo.id), ["sent", "sent"]);
 
-    // Bo's next turn carries both, and the one after it neither.
+    // Bo's next turn carries both, in the order Ana sent them, and the one after it neither.
     yield* sendToBot(bo.id, "Anything else?");
     const next = yield* nextTurn(bo.id, boTurn);
     yield* finished(bo.id, boSession, next);
@@ -1111,6 +1221,9 @@ it.effect("keeps what teammates sent through a Stop of the recipient, for its ne
     for (const text of ["Deploy now.", "Staging is down."]) {
       assert.strictEqual(yield* timesSent(boSession, text), 1);
     }
+    const carried = (yield* received(boSession)).find(({ text }) => text.includes("Deploy now."));
+    const envelope = carried?.text ?? "";
+    assert.isAbove(envelope.indexOf("Staging is down."), envelope.indexOf("Deploy now."));
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

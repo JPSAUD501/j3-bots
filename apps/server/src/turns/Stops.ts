@@ -210,7 +210,8 @@ export const layer = Layer.effect(
         // work that had ended was that work's result, and one an earlier
         // Stop covered stays that Stop's. What such a message has not
         // delivered yet is cancelled here, and wherever it would wait again
-        // (`Ledger`); the operator's Retry of one is the operator's word.
+        // (`Ledger`); the operator's Retry of one is the operator's word,
+        // also once the recipient's Stop held it.
         if (sessionIds.length > 0) {
           yield* sql`
             UPDATE turns SET stop_id = ${stopId}
@@ -232,12 +233,15 @@ export const layer = Layer.effect(
           yield* ledger.cancelWakes(unsent.map((wake) => wake.id));
           const held = yield* sql<{ readonly handoff_entry_id: string }>`
             DELETE FROM held_messages
-            WHERE consumed_dispatch_id IS NULL AND handoff_entry_id IN (
+            WHERE consumed_dispatch_id IS NULL AND retried = 0 AND handoff_entry_id IN (
               SELECT received_entry_id FROM handoffs WHERE stop_id = ${stopId}
             )
             RETURNING handoff_entry_id
           `;
-          yield* ledger.heldStopped(held.map((row) => EntryId.make(row.handoff_entry_id)));
+          yield* ledger.heldRemoved(
+            held.map((row) => EntryId.make(row.handoff_entry_id)),
+            "stopped",
+          );
         }
         const fenced = yield* SqlSchema.findAll({
           Request: Schema.Void,
