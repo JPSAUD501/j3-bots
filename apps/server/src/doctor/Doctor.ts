@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { EngineStatus, ProviderStatus } from "@j3-bots/contracts";
 import * as EngineLive from "@j3-bots/engine-t3/live";
-import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import * as NetAddress from "effect/net/NetAddress";
 import * as Option from "effect/Option";
@@ -212,6 +210,8 @@ const UNAVAILABLE_REASONS: Record<
 const engineCheck = Effect.fn("doctor.engine")(function* (
   config: ServerConfig.ServerConfigShape,
   status: Option.Option<AdminStatus>,
+  /** No server answers on the admin socket. */
+  noServer: boolean,
 ) {
   const host = yield* Host;
   const fs = yield* FileSystem.FileSystem;
@@ -240,7 +240,7 @@ const engineCheck = Effect.fn("doctor.engine")(function* (
       );
     }
     if (install._tag === "missing" && Option.isNone(status)) {
-      return yield* engineDownloadCheck(install);
+      return yield* engineDownloadCheck(install, noServer);
     }
   }
   if (Option.isNone(status)) {
@@ -407,15 +407,19 @@ const pairingCheck = (status: Option.Option<AdminStatus>, outside: boolean) => {
       );
 };
 
-/** The installed unit's text, if there is one. */
-const installedUnit = Effect.gen(function* () {
-  const fs = yield* FileSystem.FileSystem;
-  return yield* fs.readFileString(yield* Unit.unitPath).pipe(Effect.option);
-});
-
 const serviceChecks = Effect.fn("doctor.service")(function* (unitText: Option.Option<string>) {
+  const host = yield* Host;
+  if (host.platform !== "linux") {
+    return [
+      check(
+        "Service",
+        "skipped",
+        "The service runs under systemd, on Linux. Here, run `j3-bots serve` yourself.",
+      ),
+    ];
+  }
   const systemd = yield* Systemd;
-  const manager = yield* userManagerCheck;
+  const manager = yield* userManagerCheck(Option.isSome(unitText));
   if (manager.status !== "ok") {
     return [manager, check("Service", "skipped", "It needs this user's systemd manager.")];
   }
@@ -520,24 +524,6 @@ const overridesCheck = Effect.fn("doctor.overrides")(function* (configFile: stri
 });
 
 /**
- * The configuration source the report describes: with the service installed,
- * the service's own (its home and `PATH`, none of this shell's overrides);
- * otherwise this shell's, which `j3-bots serve` would run with.
- */
-const describedConfiguration = Effect.fn("doctor.describedConfiguration")(function* (
-  unitText: Option.Option<string>,
-) {
-  if (Option.isNone(unitText)) return Layer.empty;
-  const environment = Unit.environmentOf(unitText.value);
-  const home = yield* Config.NonEmptyString("HOME");
-  return Unit.asTheService({
-    home,
-    j3Home: environment.get("J3_HOME") ?? (yield* ServerConfig.resolveHome),
-    searchPath: environment.get("PATH") ?? "",
-  });
-});
-
-/**
  * The server answering on the admin socket, as the report may describe it:
  * `described` when it is the one the report is about (the service's own main
  * process, with the service installed; any, without), `outside` when the
@@ -637,8 +623,8 @@ export const diagnose = Effect.gen(function* () {
   const host = yield* Host;
   const checks: Array<Check> = [nodeCheck(host.nodeVersion), yield* runningUserCheck];
 
-  const unitText = yield* installedUnit;
-  const described = yield* describedConfiguration(unitText);
+  const unitText = yield* Unit.installedUnit;
+  const described = yield* Unit.describedConfiguration(unitText);
   const shellSettings = Option.isSome(unitText)
     ? yield* overridesCheck(yield* ServerConfig.resolveConfigFile.pipe(Effect.provide(described)))
     : Option.none<Check>();
@@ -704,7 +690,7 @@ export const diagnose = Effect.gen(function* () {
     case "blocked":
       checks.push(yield* freePortsCheck(config));
   }
-  checks.push(yield* engineCheck(config, status));
+  checks.push(yield* engineCheck(config, status, live._tag === "none"));
   const servicePath = Option.flatMapNullishOr(unitText, (text) =>
     Unit.environmentOf(text).get("PATH"),
   );

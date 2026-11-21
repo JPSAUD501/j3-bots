@@ -14,6 +14,7 @@ import * as Path from "effect/Path";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { type PortState, portStateOf } from "./Ports.ts";
+import { privateKeysIn } from "./sshKeys.ts";
 
 /** The facts about this machine that `j3-bots doctor` and `service` read. */
 export class Host extends Context.Service<
@@ -47,11 +48,16 @@ export class Host extends Context.Service<
       socketPath: string,
     ) => Effect.Effect<Option.Option<boolean>>;
     /**
-     * The files directly in this user's `~/.ssh` that hold a private key,
-     * told by their first line alone; nothing past it is read.
+     * The files directly in this user's `~/.ssh` that hold a private key, by
+     * path (`privateKeysIn`): up to the first 64 bytes of each regular file
+     * are read, and no symbolic link is followed.
      */
     readonly sshPrivateKeys: Effect.Effect<ReadonlyArray<string>>;
-    /** The names of the groups this user is in, as `/etc/group` names them. */
+    /**
+     * The names of the groups this user is in, as `/etc/group` names them: a
+     * group known only to a directory service, such as LDAP through sssd, is
+     * not named.
+     */
     readonly groups: Effect.Effect<ReadonlyArray<string>>;
     /**
      * Whether `url` answers a `HEAD` request with success, following
@@ -91,11 +97,6 @@ const listeningInodes = (table: string, socketPath: string) => {
   }
   return inodes;
 };
-
-/** The first line of a PEM or OpenSSH private key, whatever its algorithm and whether or not encrypted. */
-const PRIVATE_KEY_HEADER = /^-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----/;
-/** Enough of a file to hold the longest such line. */
-const KEY_HEADER_BYTES = 64;
 
 /** Group names by id, from the text of `/etc/group`: `name:password:gid:members`. */
 const groupNames = (table: string) => {
@@ -178,25 +179,7 @@ export const layer = Layer.effect(
         }
         return Option.some(false);
       }),
-      sshPrivateKeys: Effect.gen(function* () {
-        const folder = path.join(user.homedir, ".ssh");
-        const entries = yield* fs.readDirectory(folder).pipe(Effect.orElseSucceed(() => []));
-        const keys: Array<string> = [];
-        for (const entry of entries.toSorted()) {
-          const file = path.join(folder, entry);
-          const info = yield* fs.stat(file).pipe(Effect.option);
-          // Only regular files: opening a pipe or a device could block or have effects.
-          if (Option.isNone(info) || info.value.type !== "File") continue;
-          const head = yield* Effect.scoped(
-            fs.open(file).pipe(Effect.flatMap((handle) => handle.readAlloc(KEY_HEADER_BYTES))),
-          ).pipe(Effect.option);
-          const text = Option.flatten(head).pipe(
-            Option.map((bytes) => new TextDecoder().decode(bytes)),
-          );
-          if (Option.isSome(text) && PRIVATE_KEY_HEADER.test(text.value)) keys.push(file);
-        }
-        return keys;
-      }),
+      sshPrivateKeys: privateKeysIn(path.join(user.homedir, ".ssh")),
       groups: Effect.gen(function* () {
         const table = yield* fs.readFileString("/etc/group").pipe(Effect.orElseSucceed(() => ""));
         const names = groupNames(table);

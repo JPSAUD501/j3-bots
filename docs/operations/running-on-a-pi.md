@@ -14,7 +14,7 @@ No Docker and no root access are involved, except one `sudo loginctl` command so
 
 ## Choose the user it runs as
 
-A bot in full access can do anything its user can do. On a Pi that holds SSH keys to the rest of your network, run J3 Bots as a **dedicated user**: one with no SSH keys, no sudo, its own provider sign-ins and no access to your own home ([Security](../architecture/security.md#running-on-a-machine-that-matters)). `doctor` warns when the user it runs as keeps an SSH private key in `~/.ssh` or is in `sudo` or `wheel`, and gives these steps.
+A bot in full access can do anything its user can do. On a Pi that holds SSH keys to the rest of your network, run J3 Bots as a **dedicated user**: one with no SSH keys, in no group that can become root (such as `sudo` or `docker`), with its own provider sign-ins and no access to your own home ([Security](../architecture/security.md#running-on-a-machine-that-matters)). `doctor` warns when the user it runs as keeps an SSH private key directly in `~/.ssh` or is in such a group, and gives these steps.
 
 ```sh
 sudo useradd --create-home --shell /bin/bash j3bots
@@ -94,7 +94,11 @@ j3-bots provider login claude-code
 j3-bots provider login codex
 ```
 
-Each runs the harness's own sign-in in your terminal, with the harness's home in `~/.j3-bots/providers` as its configuration folder, so the sign-in is stored there and your own `~/.claude` and `~/.codex` stay as they are. While a provider connection is stored, J3 Bots sets the harnesses up to use it, so a sign-in is not expected to be used then; the command says so. Signing in this way has not been tested yet ([open question 2](../open-questions.md#2-does-a-subscription-sign-in-work-inside-a-j3-owned-provider-home)).
+Each runs the harness's own sign-in in your terminal, with the harness's home in the data directory the service uses (`~/.j3-bots/providers` unless you set `J3_HOME`) as its configuration folder, so the sign-in is stored there and your own `~/.claude` and `~/.codex` stay as they are. It prints where. Start the server once first: the command refuses while that data directory does not exist. The sign-in gets the environment the engine gives harnesses, plus your terminal, language and browser variables, so other settings of your shell for the harnesses, such as `ANTHROPIC_*` or `OPENAI_*`, do not apply to it. It refuses when the harness's credential file in that home, or the home itself, is a symbolic link.
+
+Over SSH, sign Codex in with `j3-bots provider login codex --device-auth`. Codex's usual sign-in opens a page in a browser and waits for it to come back to the Pi, which a browser on your laptop cannot do; with `--device-auth` Codex shows a page and a code to enter on any device instead. The flag is Codex's only.
+
+While a provider connection is stored, J3 Bots sets the harnesses up to use it, so a sign-in is not expected to be used then; the command says so. Signing in this way has not been tested yet ([open question 2](../open-questions.md#2-does-a-subscription-sign-in-work-inside-a-j3-owned-provider-home)).
 
 ### When `lan` is refused
 
@@ -240,23 +244,23 @@ Each line is ✓ (fine), `!` (a warning: the server runs, but something is missi
 | Check | What it looks at |
 | --- | --- |
 | Node | The Node running it has the major version J3 Bots is built on. |
-| This user | A warning when the user it runs as keeps an SSH private key directly in `~/.ssh` (a file whose first line is a private key's header; nothing past that line is read) or is in `sudo` or `wheel`, with the steps to a [dedicated user](#choose-the-user-it-runs-as). |
+| This user | A warning when the user it runs as keeps an SSH private key directly in `~/.ssh` (a regular file whose first line is a private key's header; up to the first 64 bytes of each regular file are read, and no symbolic link is followed, `~/.ssh` itself included) or is in a group that can become root (`sudo`, `wheel`, `admin`, `docker`, `lxd` or `incus`, as `/etc/group` names them; a group from LDAP or sssd is not seen), with the steps to a [dedicated user](#choose-the-user-it-runs-as). |
 | Configuration | `config.json` and, while the service is not installed, the `J3_*` variables decode and pass the checks the server makes at start. Some examples: a public address without TLS, two settings on one port, a TLS certificate and key that do not load as a pair, a web client folder that overlaps the data directory, and a data directory inside a Git checkout. With the service installed, every check describes the service: its data directory, its `config.json` and its `PATH`. |
 | Shell settings | With the service installed, a warning for each `J3_*` variable in your shell, which the service does not get, and a problem for one whose value the server would refuse. |
 | Data directory | It is a folder this user owns and can write to, and no group or other user can open it. Otherwise the server does not start, and `doctor` reports the cause, with the fix when it has one, such as the `chmod` or `chown` command. |
 | Disk space | Free space where the data directory is: less than 1 GB is a problem, less than 3 GB a warning. |
 | Server | Whether a server answers on the admin socket, its version and the address it listens on. Something that is not a socket where the admin socket goes is a problem, since no server can start, with the `mv` command that clears it. |
 | Ports | With the server running, the ports it listens on, and a problem if the engine's port was taken. With no server running, that the server's port, the bot tool port and the engine's port are free on their addresses. |
-| Engine | That the pinned engine has a release for this machine, whether it is installed yet, and, with the server running, the state the server reports for it. While it is not installed and no server runs, whether its download on GitHub answers: a problem when it does not, since the server downloads it on its first start. |
+| Engine | That the pinned engine has a release for this machine, whether it is installed yet, and, with the server running, the state the server reports for it. While it is not installed and no server answers at all, whether its download on GitHub answers: a problem when it does not, since the server downloads it on its first start. Like the server's download, this check does not go through `HTTPS_PROXY`. |
 | Claude Code, Codex | That the harness is on the `PATH` the service runs with (your shell's while the service is not installed): when it is only on your shell's, the fix is to install the service again; when it is nowhere, the fix names the page where its maker says how to install it. With the server running, what the engine reports about the server's providers on it; a provider with no way to its models gets both ways: `provider connect` or `provider login`. |
 | Web client | Whether the running server serves the web client, as it reports it. With no server running, whether a client is built where the server would serve it from. |
 | Pairing | How many devices are paired. |
-| User manager | That this user's systemd manager answers. When it does not, the service cannot run, and the engine starts each harness through that manager. `doctor` tells a machine systemd did not start (most containers, WSL without systemd) from a shell that cannot reach the manager (one opened with `su` or `sudo -u`), and gives the fix for each. The service is then not checked. |
+| User manager | On Linux, that this user's systemd manager answers. With the service installed, one that does not is a problem: the service cannot run, or cannot be managed from this shell. Without the service it is a warning: `j3-bots serve` starts without it, but the engine starts each harness with `systemd-run --user --scope`, and whether bots run without the manager has not been checked. `doctor` tells a machine systemd did not start (most containers, WSL without systemd) from a shell that cannot reach the manager (one opened with `su` or `sudo -u`), and gives the fix for each. The service is then not checked. On macOS neither is checked. |
 | Service | That the unit is installed, enabled and running, and has not failed. A unit that is still `activating` is a warning: it is starting or restarting, and the log says which. |
 | Start at boot | That lingering is on for this user. |
 | Memory limit | That the kernel lets the service's `MemoryHigh` apply. |
 
-`doctor` reads; it changes nothing. Its one request to another machine is a `HEAD` request for the engine's download, made only while the engine is not installed and no server runs. It is safe to run while the service runs.
+`doctor` reads; it changes nothing. Its one request to another machine is a `HEAD` request for the engine's download, made only while the engine is not installed and no server answers on the admin socket. It is safe to run while the service runs.
 
 ## Known limits in this release
 

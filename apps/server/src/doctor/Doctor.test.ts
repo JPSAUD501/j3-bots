@@ -540,10 +540,15 @@ it.layer(NodeServices.layer)("doctor", (it) => {
         }),
         pid: 999,
       });
-      const { checks } = yield* diagnoseIn({ server: foreground, ports: () => "in-use" });
+      const { checks, requests } = yield* diagnoseIn({
+        server: foreground,
+        ports: () => "in-use",
+      });
       assertFlagged(named(checks, "Server"), "warning", "outside the service (process 999)");
       assert.strictEqual(named(checks, "Ports").status, "skipped");
       assert.notInclude(named(checks, "Engine").summary, "0.1.9");
+      // Only with no server at all does the report ask GitHub about the download.
+      assert.deepStrictEqual(requests, []);
       assert.strictEqual(named(checks, "Pairing").status, "skipped");
 
       // Without the service, that server is the one the report is about.
@@ -592,7 +597,7 @@ it.layer(NodeServices.layer)("doctor", (it) => {
       const healthy = yield* diagnoseIn();
       assert.strictEqual(named(healthy.checks, "User manager").status, "ok");
 
-      // A shell opened with `su` or `sudo -u` on a systemd machine.
+      // A shell opened with `su` or `sudo -u` on a systemd machine, the service installed.
       const unreachable = yield* diagnoseIn({ systemd: false });
       const fromSu = named(unreachable.checks, "User manager");
       assertFlagged(fromSu, "problem", "does not answer from this shell");
@@ -616,6 +621,19 @@ it.layer(NodeServices.layer)("doctor", (it) => {
         "/etc/wsl.conf",
       );
       assert.strictEqual(named(container.checks, "Service").status, "skipped");
+
+      // Without the service, `j3-bots serve` runs; what the manager is still for is said.
+      const foreground = yield* diagnoseIn({ systemd: false, unitInstalled: false });
+      assertFlagged(
+        named(foreground.checks, "User manager"),
+        "warning",
+        "`j3-bots serve` starts without it. On Linux the engine starts each harness with `systemd-run --user --scope`",
+      );
+
+      // macOS has no systemd: neither is checked there.
+      const mac = yield* diagnoseIn({ systemd: false, booted: false, platform: "darwin" });
+      assert.isUndefined(mac.checks.find((check) => check.name === "User manager"));
+      assert.strictEqual(named(mac.checks, "Service").status, "skipped");
     }),
   );
 
@@ -623,8 +641,16 @@ it.layer(NodeServices.layer)("doctor", (it) => {
     "warns when this user holds SSH keys or can become root, with the steps to a user of its own",
     () =>
       Effect.gen(function* () {
-        const plain = yield* diagnoseIn({ groups: ["pi", "users", "docker"] });
+        const plain = yield* diagnoseIn();
         assert.strictEqual(named(plain.checks, "This user").status, "ok");
+
+        // `docker run -v /:/host` makes root of a member.
+        const docker = yield* diagnoseIn({ groups: ["pi", "users", "docker"] });
+        assertFlagged(
+          named(docker.checks, "This user"),
+          "warning",
+          "is in docker, a group that can become root",
+        );
 
         const keys = yield* diagnoseIn({ sshPrivateKeys: ["/home/pi/.ssh/id_ed25519"] });
         const withKeys = named(keys.checks, "This user");
@@ -638,7 +664,7 @@ it.layer(NodeServices.layer)("doctor", (it) => {
         assertFlagged(
           named(admin.checks, "This user"),
           "warning",
-          "is in sudo, so it can become root",
+          "is in sudo, a group that can become root",
         );
         const both = yield* diagnoseIn({
           sshPrivateKeys: ["/home/pi/.ssh/id_rsa", "/home/pi/.ssh/deploy"],
@@ -647,7 +673,7 @@ it.layer(NodeServices.layer)("doctor", (it) => {
         assertFlagged(
           named(both.checks, "This user"),
           "warning",
-          "keeps SSH private keys (/home/pi/.ssh/id_rsa, /home/pi/.ssh/deploy) and is in wheel",
+          "keeps SSH private keys (/home/pi/.ssh/id_rsa, /home/pi/.ssh/deploy) and is in wheel, a group that can become root",
         );
 
         // Reported even when the configuration is broken.
