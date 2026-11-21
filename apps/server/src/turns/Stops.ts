@@ -205,35 +205,40 @@ export const layer = Layer.effect(
           `;
         }
         // The turns it reaches: their work is covered, also a turn no
-        // dispatch began, which the dispatch mark cannot tell.
+        // dispatch began, which the dispatch mark cannot tell. So is what
+        // those turns sent their teammates, and only that: a message from
+        // work that had ended was that work's result, and one an earlier
+        // Stop covered stays that Stop's. What such a message has not
+        // delivered yet is cancelled here, and wherever it would wait again
+        // (`Ledger`); the operator's Retry of one is the operator's word.
         if (sessionIds.length > 0) {
           yield* sql`
             UPDATE turns SET stop_id = ${stopId}
             WHERE finished_at IS NULL AND ${sql.in("session_id", sessionIds)} AND ${inScope(scope)}
           `;
+          yield* sql`
+            UPDATE handoffs SET stop_id = ${stopId}
+            WHERE stop_id IS NULL AND tool_call_id IN (
+              SELECT c.id FROM tool_calls c JOIN turns t
+                ON t.session_id = c.session_id AND t.engine_turn_id = c.engine_turn_id
+              WHERE t.stop_id = ${stopId}
+            )
+          `;
+          const unsent = yield* sql<{ readonly id: string }>`
+            SELECT w.id FROM wakes w JOIN handoffs h ON h.received_entry_id = w.source_entry_id
+            WHERE w.status = 'pending' AND w.kind = 'bot' AND w.retry_of IS NULL
+              AND h.stop_id = ${stopId}
+          `;
+          yield* ledger.cancelWakes(unsent.map((wake) => wake.id));
+          const held = yield* sql<{ readonly handoff_entry_id: string }>`
+            DELETE FROM held_messages
+            WHERE consumed_dispatch_id IS NULL AND handoff_entry_id IN (
+              SELECT received_entry_id FROM handoffs WHERE stop_id = ${stopId}
+            )
+            RETURNING handoff_entry_id
+          `;
+          yield* ledger.heldStopped(held.map((row) => EntryId.make(row.handoff_entry_id)));
         }
-        // What the bot's work in scope sent its teammates is covered with it:
-        // a message not delivered yet is cancelled below, and wherever it
-        // would wait again (`Ledger`).
-        yield* sql`
-          UPDATE handoffs SET stop_id = ${stopId}
-          WHERE tool_call_id IN (
-            SELECT id FROM tool_calls
-            WHERE session_id IN (SELECT id FROM sessions WHERE bot_id = ${botId})
-              AND ${inScope(scope)}
-          )
-        `;
-        const unsent = yield* sql<{ readonly id: string }>`
-          SELECT w.id FROM wakes w JOIN handoffs h ON h.received_entry_id = w.source_entry_id
-          WHERE w.status = 'pending' AND w.kind = 'bot' AND h.stop_id = ${stopId}
-        `;
-        yield* ledger.cancelWakes(unsent.map((wake) => wake.id));
-        yield* sql`
-          DELETE FROM held_messages
-          WHERE consumed_dispatch_id IS NULL AND handoff_entry_id IN (
-            SELECT received_entry_id FROM handoffs WHERE stop_id = ${stopId}
-          )
-        `;
         const fenced = yield* SqlSchema.findAll({
           Request: Schema.Void,
           Result: Fenced,

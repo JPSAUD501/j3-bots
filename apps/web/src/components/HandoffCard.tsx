@@ -17,15 +17,20 @@ export function HandoffCard({ entry, onOpen }: { entry: HandoffEntry; onOpen: ()
   const { t, parts } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const other = useBot(handoffPeer(entry));
-  const name = (
+  // A deleted teammate has no conversation to go to.
+  const name = other ? (
     <button
       key="name"
       type="button"
       onClick={onOpen}
       className={cn("font-medium underline-offset-2 hover:underline", focusRing)}
     >
-      {other?.profile.name ?? t("bot.unknown")}
+      {other.profile.name}
     </button>
+  ) : (
+    <span key="name" className="font-medium">
+      {t("bot.unknown")}
+    </span>
   );
   return (
     <div className="mt-2 flex w-full max-w-(--layout-compact-card-width) items-start gap-2.5 self-start rounded-md border border-border bg-surface px-3 py-2.5">
@@ -40,8 +45,13 @@ export function HandoffCard({ entry, onOpen }: { entry: HandoffEntry; onOpen: ()
               {t("handoff.urgent")}
             </span>
           )}
-          {entry.failed && (
-            <span className="text-2xs font-medium text-blocked">{t("handoff.failed")}</span>
+          {entry.state === "not-delivered" && (
+            <span className="text-2xs font-medium text-blocked">{t("handoff.notDelivered")}</span>
+          )}
+          {entry.state === "stopped" && (
+            <span className="text-2xs font-medium text-muted-foreground">
+              {t("handoff.stopped")}
+            </span>
           )}
         </div>
         <button

@@ -278,7 +278,7 @@ export function sampleTeam(now: DateTime.Utc) {
       direction: "sent",
       text: "Could you write to the bike shop and ask for a test ride on Saturday morning? Friendly, three lines at most.",
       urgent: false,
-      failed: false,
+      state: "sent",
     },
     message(
       by(ids.scout),

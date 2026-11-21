@@ -169,7 +169,8 @@ export const ptBR: Catalog = {
   "handoff.to": "Para {name}",
   "handoff.from": "De {name}",
   "handoff.urgent": "Urgente",
-  "handoff.failed": "Não entregue",
+  "handoff.notDelivered": "Não entregue",
+  "handoff.stopped": "Interrompida",
 
   "routine.change.created": "Rotina criada",
   "routine.change.updated": "Rotina alterada",

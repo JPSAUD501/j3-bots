@@ -485,7 +485,7 @@ export function galleryVariants(now: DateTime.Utc) {
     name: string,
     from: BotId,
     to: BotId,
-    fields: Pick<HandoffEntry, "direction" | "text" | "urgent" | "failed">,
+    fields: Pick<HandoffEntry, "direction" | "text" | "urgent" | "state">,
   ): HandoffEntry => ({
     _tag: "handoff",
     ...base(name),
@@ -498,25 +498,31 @@ export function galleryVariants(now: DateTime.Utc) {
       direction: "sent",
       text: "Can you shorten the newsletter’s opening to three sentences?",
       urgent: false,
-      failed: false,
+      state: "sent",
     }),
     handoff("handoff-urgent", ids.scout, ids.atlas, {
       direction: "sent",
       text: "The billing API on staging is still read-only ten minutes after the migration. Please look now.",
       urgent: true,
-      failed: false,
+      state: "sent",
     }),
     handoff("handoff-received", ids.wren, ids.scout, {
       direction: "received",
       text: "Which of the three bikes should the test ride be on? The shop has the gravel bike in a medium, the city bike in a large, and the folding one only on Saturday afternoon, so if the ride has to be in the morning the folding one is out.",
       urgent: false,
-      failed: false,
+      state: "sent",
     }),
     handoff("handoff-failed", ids.scout, ids.atlas, {
       direction: "sent",
       text: "Please roll back the staging migration before the demo.",
       urgent: true,
-      failed: true,
+      state: "not-delivered",
+    }),
+    handoff("handoff-stopped", ids.scout, ids.wren, {
+      direction: "sent",
+      text: "Draft the reply to the landlord before tonight.",
+      urgent: false,
+      state: "stopped",
     }),
   ];
 

@@ -4,6 +4,8 @@ import {
   type Entry,
   EntryId,
   type FailureClass,
+  type HandoffEntry,
+  type HandoffState,
   type MessageDelivery,
   type Notice,
   RoomId,
@@ -144,7 +146,11 @@ export class Ledger extends Context.Service<
       dispatchId: DispatchRowId,
       disposition: DispatchDisposition | null,
     ) => Effect.Effect<void>;
-    /** Its turn started (or, for a steer, it was taken): also after it failed, which a late delivery undoes. */
+    /**
+     * Its turn started (or, for a steer, it was taken): also after it failed,
+     * which a late delivery undoes, and after its wakes were cancelled, since
+     * the bot read them all the same.
+     */
     readonly deliver: (dispatchId: DispatchRowId, turnId: TurnId) => Effect.Effect<void>;
     /** Its work is over, with the turn's outcome; its wakes finish. */
     readonly finish: (dispatchId: DispatchRowId, outcome: TurnOutcome) => Effect.Effect<void>;
@@ -213,10 +219,15 @@ export class Ledger extends Context.Service<
     readonly cancelWakes: (wakeIds: ReadonlyArray<string>) => Effect.Effect<void>;
     /**
      * Shows the delivery of each message the wakes came from, as their wakes
-     * now stand: an operator's message, or whether a teammate's urgent one
-     * failed, on both its cards.
+     * now stand: an operator's message, or a teammate's urgent one, on both
+     * its cards.
      */
     readonly refreshMessages: (entryIds: ReadonlyArray<EntryId>) => Effect.Effect<void>;
+    /**
+     * Held teammate messages, by their received cards, that a Stop removed
+     * before the recipient read them: both cards of each show it.
+     */
+    readonly heldStopped: (entryIds: ReadonlyArray<EntryId>) => Effect.Effect<void>;
   }
 >()("@j3-bots/server/turns/Ledger") {}
 
@@ -319,6 +330,24 @@ export const layer = Layer.effect(
         : null;
     }, Effect.orDie);
 
+    /** Both cards of the teammate message whose received card this is show `state`. */
+    const showHandoff = Effect.fn("Ledger.showHandoff")(function* (
+      received: HandoffEntry,
+      state: HandoffState,
+    ) {
+      for (const card of [received, yield* sentCardOf(received.id)]) {
+        if (card !== null && card.state !== state) yield* entries.update({ ...card, state });
+      }
+    });
+
+    /** Where an urgent teammate message stands, from the delivery of its wakes. */
+    const handoffState: { readonly [K in MessageDelivery["_tag"]]: HandoffState } = {
+      pending: "sent",
+      delivered: "sent",
+      failed: "not-delivered",
+      cancelled: "stopped",
+    };
+
     const refreshMessages = Effect.fn("Ledger.refreshMessages")(function* (
       entryIds: ReadonlyArray<EntryId>,
     ) {
@@ -335,9 +364,17 @@ export const layer = Layer.effect(
           continue;
         }
         // A teammate's urgent message: its wakes name the received card.
-        const failed = delivery._tag === "failed";
-        for (const card of [shown, yield* sentCardOf(shown.id)]) {
-          if (card !== null && card.failed !== failed) yield* entries.update({ ...card, failed });
+        yield* showHandoff(shown, handoffState[delivery._tag]);
+      }
+    });
+
+    const heldStopped = Effect.fn("Ledger.heldStopped")(function* (
+      entryIds: ReadonlyArray<EntryId>,
+    ) {
+      for (const entryId of new Set(entryIds)) {
+        const found = yield* entries.find(entryId);
+        if (Option.isSome(found) && found.value.entry._tag === "handoff") {
+          yield* showHandoff(found.value.entry, "stopped");
         }
       }
     });
@@ -434,13 +471,15 @@ export const layer = Layer.effect(
     /**
      * Wakes of the dispatch that a teammate's Stopped work caused are
      * cancelled instead of waiting again or failing: the Stop that covered
-     * the sender's work covers what it sent (`Stops.record`).
+     * the sender's work covers what it sent (`Stops.record`). The operator's
+     * Retry of one is the operator's own word, which no Stop of the sender
+     * cancels.
      */
     const cancelStoppedHandoffs = (dispatchId: DispatchRowId, at: string) =>
       sql`
         UPDATE wakes SET status = 'cancelled', failure_reason = NULL, updated_at = ${at}
         WHERE dispatch_id = ${dispatchId} AND status IN ('dispatched', 'failed')
-          AND source_entry_id IN (
+          AND retry_of IS NULL AND source_entry_id IN (
             SELECT received_entry_id FROM handoffs WHERE stop_id IS NOT NULL
           )
       `;
@@ -528,12 +567,14 @@ export const layer = Layer.effect(
       `;
       yield* sql`UPDATE catch_up_notes SET consumed_dispatch_id = NULL WHERE consumed_dispatch_id = ${dispatchId}`;
       // A message whose sender's work a Stop covered since waits no more.
-      yield* sql`
+      const stopped = yield* sql<{ readonly handoff_entry_id: string }>`
         DELETE FROM held_messages
         WHERE consumed_dispatch_id = ${dispatchId} AND handoff_entry_id IN (
           SELECT received_entry_id FROM handoffs WHERE stop_id IS NOT NULL
         )
+        RETURNING handoff_entry_id
       `;
+      yield* heldStopped(stopped.map((row) => EntryId.make(row.handoff_entry_id)));
       yield* sql`UPDATE held_messages SET consumed_dispatch_id = NULL WHERE consumed_dispatch_id = ${dispatchId}`;
     }, Effect.orDie);
 
@@ -572,10 +613,11 @@ export const layer = Layer.effect(
           next_attempt_at = NULL, updated_at = ${at}
         WHERE id = ${dispatchId} AND status IN ('intended', 'accepted', 'failed')
       `;
-      // A late delivery: the wakes it failed with were delivered after all.
+      // A late delivery: the wakes it failed with, or that were cancelled
+      // while it was undecided, were delivered after all.
       yield* sql`
         UPDATE wakes SET status = 'dispatched', failure_reason = NULL, updated_at = ${at}
-        WHERE dispatch_id = ${dispatchId} AND status = 'failed'
+        WHERE dispatch_id = ${dispatchId} AND status IN ('failed', 'cancelled')
       `;
       yield* refreshNotices(dispatchId);
       yield* refreshMessages(yield* sourcesOf(dispatchId));
@@ -740,6 +782,7 @@ export const layer = Layer.effect(
       undeliveredRetryable,
       cancelWakes,
       refreshMessages,
+      heldStopped,
     });
   }),
 );

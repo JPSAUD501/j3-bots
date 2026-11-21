@@ -784,7 +784,7 @@ export const layer = Layer.effect(
                 direction,
                 text: input.text,
                 urgent: input.urgent,
-                failed: false,
+                state: "sent",
               },
             });
           const sent = yield* card({ _tag: "conversation", botId: found.botId }, "sent");

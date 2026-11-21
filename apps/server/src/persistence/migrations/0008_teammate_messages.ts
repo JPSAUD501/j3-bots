@@ -8,8 +8,8 @@ export default Effect.gen(function* () {
   // One teammate message: the `message_bot` call that sent it, which names
   // the sender's session, turn and audience, and the cards it put in the two
   // conversations. An urgent message's wakes name the received card as their
-  // source; a held message names it as its handoff. `stop_id` is the latest
-  // Stop that covered the sender's work: what the message has not delivered
+  // source; a held message names it as its handoff. `stop_id` is the Stop that
+  // reached the sending turn while it ran: what the message has not delivered
   // yet is cancelled then, and wherever it would wait again. The recipient's
   // id outlives the recipient, as a sender's does.
   yield* sql`

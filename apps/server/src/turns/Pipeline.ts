@@ -563,14 +563,18 @@ export const layer = Layer.effect(
           // A failed wake is retried as such, so its message shows the retry;
           // one a message retry already sent again is not sent a third time.
           // A failed opening, or a teammate's urgent message, is the
-          // operator's to retry too: neither has a message of theirs.
+          // operator's to retry too: neither has a message of theirs. A
+          // teammate's message goes again only while it failed: one a Stop
+          // cancelled stays cancelled. It goes as it was, its kind and hops
+          // kept; the Retry is the operator's, so no Stop of its sender
+          // cancels it (`Stops.record`).
           yield* wakes.record(
             sent
               .filter(
                 (wake) =>
                   (wake.kind === "user" ||
                     wake.payload_json._tag === "first-run" ||
-                    wake.payload_json._tag === "teammate") &&
+                    (wake.payload_json._tag === "teammate" && wake.status === "failed")) &&
                   !retried.has(wake.id),
               )
               .map((wake) => ({

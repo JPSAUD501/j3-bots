@@ -353,6 +353,10 @@ export const NoticeEntry = Schema.TaggedStruct("notice", {
 });
 export type NoticeEntry = typeof NoticeEntry.Type;
 
+/** Where a teammate message stands (`HandoffEntry.state`). */
+export const HandoffState = Schema.Literals(["sent", "not-delivered", "stopped"]);
+export type HandoffState = typeof HandoffState.Type;
+
 /**
  * A bot sent a teammate a message. Both conversations show it: the sender's
  * as `sent`, the recipient's as `received`. Its author is the sender either
@@ -366,12 +370,16 @@ export const HandoffEntry = Schema.TaggedStruct("handoff", {
   text: MessageText,
   urgent: Schema.Boolean,
   /**
-   * An urgent message J3 Bots gave up waking the recipient with. Both cards
-   * show it; the recipient's conversation has a `handoff-failed` notice that
-   * sends it again. It clears once it is sent again, or when the engine turns
-   * out to have taken it after all.
+   * Where the message stands, the same on both cards. `sent`: on its way or
+   * read, which the cards do not tell apart. `not-delivered`: an urgent
+   * message J3 Bots gave up waking the recipient with; the recipient's
+   * conversation has a `handoff-failed` notice that sends it again, and it is
+   * `sent` again once it is, or when the engine turns out to have taken it
+   * after all. `stopped`: an operator's Stop ended it before the recipient
+   * read it, and nothing sends it again; it is `sent` again only when the
+   * engine turns out to have taken it after all.
    */
-  failed: Schema.Boolean,
+  state: HandoffState,
 });
 export type HandoffEntry = typeof HandoffEntry.Type;
 
