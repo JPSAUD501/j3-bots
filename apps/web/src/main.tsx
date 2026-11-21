@@ -7,7 +7,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { desktop } from "./live/desktop";
 import { listenForNotificationClicks } from "./live/notify";
-import { LinkedPairingCode, takePairingCode } from "./live/pairingLink";
+import { LinkedPairingCode, linkedCode, takePairingCode } from "./live/pairingLink";
 import { makeRouter } from "./router";
 
 const root = document.getElementById("root");
@@ -36,12 +36,15 @@ window.addEventListener("vite:preloadError", () => window.location.reload());
 
 // A pairing link's page (`/pair`) leaves the address bar before the router reads
 // it. The desktop app's page is its own, never a link's.
-const linkedCode = desktop === null ? takePairingCode(window.location.href, window.history) : null;
+const linked = linkedCode(
+  desktop === null ? takePairingCode(window.location.href, window.history) : null,
+  window,
+);
 const router = makeRouter();
 
 createRoot(root).render(
   <StrictMode>
-    <LinkedPairingCode value={linkedCode}>
+    <LinkedPairingCode value={linked}>
       <RouterProvider router={router} />
     </LinkedPairingCode>
   </StrictMode>,

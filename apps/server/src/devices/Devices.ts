@@ -23,6 +23,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Digest from "effect/crypto/Digest";
+import * as Mac from "effect/crypto/Mac";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
@@ -40,6 +41,15 @@ const CODE_LIFETIME_MILLIS = 5 * 60_000;
 const FAILURE_WINDOW_MILLIS = 15 * 60_000;
 const FAILURES_BEFORE_LOCKOUT = 5;
 const LOCKOUT_MILLIS = 15 * 60_000;
+
+const encoder = new TextEncoder();
+
+/**
+ * Whether `presented` is `code`, in time that does not depend on where they
+ * differ. Every code has one length, so the length gives nothing away.
+ */
+const sameCode = (code: string, presented: PairingCode) =>
+  Mac.timingSafeEqual(encoder.encode(code), encoder.encode(presented));
 
 const DeviceRow = Schema.Struct({
   id: DeviceId,
@@ -60,11 +70,14 @@ const PairedRow = Schema.Struct({ id: DeviceId, push_registered: Flag });
 /**
  * Paired clients, pairing a new one, and where to push to each. A code is
  * shown on a paired client, works once within five minutes, and is exchanged
- * for a device token, of which only the hash is stored. Failed attempts count
+ * for a device token, of which only the hash is stored. A presented code is
+ * compared with every live code, each in constant time. Failed attempts count
  * across every source: five within fifteen minutes lock pairing for fifteen
- * minutes. Codes and failures live in memory, so a restart of the server
- * forgets both. A push registration is stored, one per device at most, and
- * revoking the device deletes it (`DeviceAuth.revoke`).
+ * minutes, and only the operator on the host lifts the lock sooner (`unlock`,
+ * through the admin socket). Codes, failures and the lock live in memory, so
+ * a restart of the server forgets them. A push registration is stored, one
+ * per device at most, and revoking the device deletes it
+ * (`DeviceAuth.revoke`).
  */
 export class Devices extends Context.Service<
   Devices,
@@ -77,6 +90,10 @@ export class Devices extends Context.Service<
       readonly code: PairingCode;
       readonly name: string;
     }) => Effect.Effect<PairResult, Invalid | RateLimited>;
+    /** Until when pairing is locked after failed attempts, or none while it is open. */
+    readonly lockedUntil: Effect.Effect<Option.Option<DateTime.Utc>>;
+    /** Lifts a lock and forgets the failed attempts counted towards one. */
+    readonly unlock: Effect.Effect<void>;
     /** Devices not revoked, oldest first, marking the one `current` names. */
     readonly list: (current: DeviceId) => Effect.Effect<ReadonlyArray<Device>>;
     /** How many devices are paired and not revoked. */
@@ -152,9 +169,14 @@ export const layer = Layer.effect(
       if (lockedUntil > now) {
         return yield* new RateLimited({ retryAt: DateTime.makeUnsafe(lockedUntil) });
       }
-      const expiresAt = codes.get(input.code);
-      codes.delete(input.code);
-      if (expiresAt === undefined || expiresAt <= now) {
+      // Every live code is compared, so how long a guess takes says nothing of
+      // how near it came to one. A code tried after it expired goes too.
+      let matched: string | undefined;
+      for (const [code, expiresAt] of codes) {
+        if (expiresAt <= now) codes.delete(code);
+        else if (sameCode(code, input.code)) matched = code;
+      }
+      if (matched === undefined) {
         failures = [...failures.filter((at) => at > now - FAILURE_WINDOW_MILLIS), now];
         if (failures.length >= FAILURES_BEFORE_LOCKOUT) {
           failures = [];
@@ -162,6 +184,7 @@ export const layer = Layer.effect(
         }
         return yield* new Invalid({ reason: "pairing-code" });
       }
+      codes.delete(matched);
       const token = DeviceToken.make(Base64Url.encode(yield* random.randomBytes(32)));
       const tokenHash = yield* hashDeviceToken(token).pipe(
         Effect.provideService(Digest.Digest, digest),
@@ -172,6 +195,17 @@ export const layer = Layer.effect(
         VALUES (${deviceId}, ${input.name}, ${tokenHash}, ${timeText(DateTime.makeUnsafe(now))})
       `.pipe(Effect.orDie);
       return { deviceId, token } satisfies PairResult;
+    });
+
+    const lockedUntilNow = Clock.currentTimeMillis.pipe(
+      Effect.map((now) =>
+        lockedUntil > now ? Option.some(DateTime.makeUnsafe(lockedUntil)) : Option.none(),
+      ),
+    );
+
+    const unlock = Effect.sync(() => {
+      failures = [];
+      lockedUntil = 0;
     });
 
     const list = Effect.fn("Devices.list")(function* (current: DeviceId) {
@@ -298,6 +332,8 @@ export const layer = Layer.effect(
     return Devices.of({
       startPairing,
       pair,
+      lockedUntil: lockedUntilNow,
+      unlock,
       list,
       pairedCount,
       paired,
