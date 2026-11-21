@@ -71,7 +71,10 @@ export function deliveryLine(
   return key === null ? null : i18n.t(key);
 }
 
-/** A size in bytes, short and in the operator's language: "1.2 MB". */
+/**
+ * A size in bytes, in the operator's language: "1.2 MB", or "178 bytes" and
+ * "1 byte" in words, since the short unit for a byte is not plural ("178 byte").
+ */
 export function fileSize(bytes: number, locale: string): string {
   const units = ["byte", "kilobyte", "megabyte", "gigabyte"] as const;
   let value = bytes;
@@ -83,7 +86,7 @@ export function fileSize(bytes: number, locale: string): string {
   return new Intl.NumberFormat(locale, {
     style: "unit",
     unit: units[unit],
-    unitDisplay: "short",
+    unitDisplay: unit === 0 ? "long" : "short",
     maximumFractionDigits: unit === 0 ? 0 : 1,
   }).format(value);
 }

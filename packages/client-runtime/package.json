@@ -20,6 +20,10 @@
     "./react": {
       "types": "./src/react/index.ts",
       "import": "./src/react/index.ts"
+    },
+    "./testing": {
+      "types": "./test/fixtures.ts",
+      "import": "./test/fixtures.ts"
     }
   },
   "scripts": {

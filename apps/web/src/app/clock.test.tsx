@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { clockTime } from "@j3-bots/client-runtime/presentation";
 import { createI18n } from "@j3-bots/i18n";
-import { at } from "../test/fixtures";
+import { at } from "@j3-bots/client-runtime/testing";
 import { ClockProvider, OperatorTimeZone, useClock } from "./clock";
 
 const NOON_UTC = at("2026-11-20T12:00:00Z");

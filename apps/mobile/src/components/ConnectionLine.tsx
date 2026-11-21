@@ -3,7 +3,7 @@ import { useConnection, useJ3Client } from "@j3-bots/client-runtime/react";
 import { Text, View } from "react-native";
 import { useI18n } from "../i18n.ts";
 import { ChangeServer } from "../Leave.tsx";
-import { Button } from "../ui.tsx";
+import { Button, Centered, Title } from "../ui.tsx";
 
 /**
  * One line while the server is out of reach; nothing while connected. Once
@@ -42,4 +42,15 @@ export function ConnectionLine(props: { readonly loaded: boolean }) {
     );
   }
   return null;
+}
+
+/** In place of what waits for the roster's first load. */
+export function Connecting() {
+  const { t } = useI18n();
+  return (
+    <Centered>
+      <ConnectionLine loaded={false} />
+      <Title>{t("firstRun.connecting.title")}</Title>
+    </Centered>
+  );
 }

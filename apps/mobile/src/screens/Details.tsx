@@ -7,8 +7,8 @@ import { itemName, useRosterItem } from "./rosterItem.ts";
 
 /** A bot's or room's details, under its name. */
 export function DetailsScreen({ navigation, route }: NativeStackScreenProps<Screens, "details">) {
-  const item = useRosterItem(route.params.item);
-  const name = item === null ? "" : itemName(item);
+  const found = useRosterItem(route.params.item);
+  const name = found._tag === "found" ? itemName(found.item) : "";
   useLayoutEffect(() => {
     navigation.setOptions({ title: name });
   }, [navigation, name]);

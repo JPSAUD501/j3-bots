@@ -313,6 +313,7 @@ function FileChip({
           {name}
         </Text>
         <Text className={`text-2xs ${failed ? "text-blocked" : "text-muted-foreground"}`}>
+          {/* The phone's uploader reports no progress: it refuses redirects instead (`platform/upload.ts`). */}
           {draftFileDetail(file, i18n, { progress: false })}
         </Text>
       </View>

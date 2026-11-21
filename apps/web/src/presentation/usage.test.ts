@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vite-plus/test";
-import { at, context } from "../test/fixtures";
+import { at, context } from "@j3-bots/client-runtime/testing";
 import { windowText } from "./usage";
 
 describe("windowText", () => {

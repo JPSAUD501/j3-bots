@@ -2,7 +2,7 @@
 import { Invalid } from "@j3-bots/contracts";
 import { createI18n } from "@j3-bots/i18n";
 import { describe, expect, it } from "vite-plus/test";
-import { deliveryLine } from "./message.ts";
+import { deliveryLine, fileSize } from "./message.ts";
 
 describe("delivery line", () => {
   const en = createI18n("en");
@@ -39,5 +39,14 @@ describe("delivery line", () => {
 
   it("says nothing once every recipient has the message", () => {
     expect(deliveryLine({ _tag: "delivered" }, settled, en)).toBeNull();
+  });
+});
+
+describe("file size", () => {
+  it("spells bytes out, so their count agrees with them, and abbreviates larger units", () => {
+    expect(fileSize(1, "en")).toBe("1 byte");
+    expect(fileSize(178, "en")).toBe("178 bytes");
+    expect(fileSize(178, "pt-BR")).toBe("178 bytes");
+    expect(fileSize(1_200_000, "en")).toBe("1.2 MB");
   });
 });

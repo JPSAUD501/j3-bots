@@ -108,7 +108,10 @@ function useReadMark(
       const { inView: shown, rows: now, markRead: mark } = latest.current;
       if (!shown) return;
       const { half, covering } = seen;
-      const newest = now.findLast((row) => half.has(row.key) || covering.has(row.key));
+      // A divider or a message still on its way has no order: the newest seen row with one counts.
+      const newest = now.findLast(
+        (row) => (half.has(row.key) || covering.has(row.key)) && orderOf(row) !== null,
+      );
       const order = newest === undefined ? null : orderOf(newest);
       if (order !== null) mark(order);
     };

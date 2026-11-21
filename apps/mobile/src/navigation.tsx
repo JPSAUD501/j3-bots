@@ -6,6 +6,7 @@ import {
   DarkTheme,
   DefaultTheme,
   NavigationContainer,
+  type NavigationRoute,
   type NavigationState,
   type Theme,
   useNavigation,
@@ -39,6 +40,16 @@ export type Screens = {
 };
 
 type Navigation = NativeStackNavigationProp<Screens>;
+
+/**
+ * A route as `reset` takes it back, as it was: which screen and what it
+ * shows. No screen holds a navigator of its own, so there is no state under it.
+ */
+export const asItWas = ({ key, name, params }: NavigationRoute<Screens, keyof Screens>) => ({
+  key,
+  name,
+  params,
+});
 
 const Stack = createNativeStackNavigator<Screens>();
 
