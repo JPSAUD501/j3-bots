@@ -168,10 +168,17 @@ export const layer = Layer.effect(
      * Where another device calls a webhook: the first address `j3-bots pair`
      * offers for the listener as bound, read when asked since interfaces come
      * and go. With none, as `pair` says it: over HTTPS, a placeholder for a
-     * name on the certificate; over HTTP on every interface, loopback.
+     * name on the certificate; over HTTP on every interface, loopback. The
+     * listener is read, not awaited: a routine is often read in a
+     * transaction, and only clients, which come through the bound listener,
+     * are given one.
      */
     const origin = Effect.gen(function* () {
-      const bound = yield* Deferred.await(listener);
+      const polled = yield* Deferred.poll(listener);
+      if (Option.isNone(polled)) {
+        return yield* Effect.die("A webhook's address was asked for before the listener bound");
+      }
+      const bound = yield* polled.value;
       const [host] = yield* reachableHosts(bound).pipe(Effect.provideService(Network, network));
       const shown =
         host !== undefined
@@ -180,6 +187,18 @@ export const layer = Layer.effect(
             ? CERTIFICATE_NAME
             : "127.0.0.1";
       return `${bound.scheme}://${shown}:${bound.port}`;
+    });
+
+    /**
+     * `routine` with its webhook's address on the listener as bound now. A
+     * command's receipt keeps the address given when it ran, whose port the
+     * system may have chosen differently since; the path stays.
+     */
+    const readdressed = Effect.fn("Routines.readdressed")(function* (routine: Routine) {
+      if (routine.webhookUrl === null) return routine;
+      const path = routine.webhookUrl.indexOf(`${WEBHOOK_PATH}/${routine.id}/`);
+      if (path === -1) return yield* Effect.die("A webhook's address holds its path");
+      return { ...routine, webhookUrl: `${yield* origin}${routine.webhookUrl.slice(path)}` };
     });
 
     const SELECT = sql.literal(`
@@ -347,7 +366,7 @@ export const layer = Layer.effect(
           return routine;
         }).pipe(Effect.catchTag(["SqlError", "SchemaError"], Effect.die)),
       });
-    });
+    }, Effect.flatMap(readdressed));
 
     const update = Effect.fn("Routines.update")(function* (input: {
       readonly commandId: CommandId;
@@ -403,7 +422,7 @@ export const layer = Layer.effect(
           return routine;
         }).pipe(Effect.catchTag(["SqlError", "SchemaError"], Effect.die)),
       });
-    });
+    }, Effect.flatMap(readdressed));
 
     const remove = Effect.fn("Routines.remove")(function* (input: {
       readonly commandId: CommandId;

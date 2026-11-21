@@ -9,6 +9,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 import * as Http from "../http.ts";
 import * as Listener from "../listener.ts";
 import * as TestDomain from "../testing/domain.ts";
@@ -172,13 +173,20 @@ it.layer(
   it.effect("limits how many runs a routine's webhook records in a minute", () =>
     Effect.gen(function* () {
       const { routine, url } = yield* webhookRoutine;
-      for (let n = 0; n < WEBHOOK_RUNS_PER_MINUTE; n++) {
+      assert.strictEqual((yield* call(url, "event 0")).status, 202);
+      yield* TestClock.adjust("10 seconds");
+      for (let n = 1; n < WEBHOOK_RUNS_PER_MINUTE; n++) {
         assert.strictEqual((yield* call(url, `event ${n}`)).status, 202);
       }
-      const limited = yield* call(url, "one too many");
+      assert.strictEqual((yield* call(url, "one too many")).status, 429);
+
+      // A run asked for in the app is not limited, and takes the count past
+      // the limit: when the first run leaves the minute, ten remain.
+      yield* (yield* Routines).run({ commandId: command(), routineId: routine.id });
+      const limited = yield* call(url, "still too many");
       assert.strictEqual(limited.status, 429);
-      assert.isAbove(Number(limited.headers["retry-after"]), 0);
-      assert.strictEqual((yield* runsOf(routine.id)).length, WEBHOOK_RUNS_PER_MINUTE);
+      assert.strictEqual(limited.headers["retry-after"], "60");
+      assert.strictEqual((yield* runsOf(routine.id)).length, WEBHOOK_RUNS_PER_MINUTE + 1);
     }),
   );
 
@@ -204,6 +212,8 @@ it.layer(
         `/hooks/${routineId}/${secret}/more`,
         `/HOOKS/${routineId}/${secret}`,
         `/%68ooks/${routineId}/${secret}`,
+        // The router leaves out what follows `;`, where an escape is malformed.
+        `/%68ooks/${routineId}/${secret};%zz`,
         `//hooks/${routineId}/${secret}`,
         `/hooks/${secret}`,
       ]) {

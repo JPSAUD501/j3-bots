@@ -34,12 +34,14 @@ const DueRef = Schema.Struct({
 });
 type DueRef = typeof DueRef.Type;
 
-/** A routine still due, as its run is recorded. */
+/** A routine still due, as its run is recorded, with its trigger as stored. */
 const Due = Schema.Struct({
   id: RoutineId,
   bot_id: BotId,
-  trigger_json: json(RoutineTrigger),
+  trigger_json: Schema.String,
 });
+
+const decodeTrigger = Schema.decodeResult(json(RoutineTrigger));
 
 /**
  * The routine scheduler (`docs/architecture/server.md`, Routines), a worker
@@ -113,6 +115,15 @@ export const layer = Layer.effect(
       `,
     });
 
+    /** Sets when the routine runs next; with no next run, it is paused. */
+    const moveOn = (routineId: RoutineId, after: DateTime.Utc | null, now: DateTime.Utc) => sql`
+      UPDATE routines SET
+        next_run_at = ${after === null ? null : timeText(after)},
+        enabled = ${after === null ? 0 : 1},
+        updated_at = ${timeText(now)}
+      WHERE id = ${routineId}
+    `;
+
     /**
      * Records the run of one routine that came due and moves it on, in one
      * transaction, if it is still due. The routine is read again there, so a
@@ -126,7 +137,19 @@ export const layer = Layer.effect(
           const row = yield* stillDue({ id: ref.id, now: timeText(now) });
           if (Option.isNone(row)) return;
           const routine = row.value;
-          const next = nextRun(routine.trigger_json, now);
+          const trigger = decodeTrigger(routine.trigger_json);
+          if (Result.isFailure(trigger)) {
+            // A trigger this server cannot read would fail the same way every
+            // time: the routine runs nothing and is paused, for the operator.
+            yield* Effect.logWarning("A routine's trigger cannot be read; it is paused", {
+              routineId: routine.id,
+              reason: trigger.failure.message,
+            });
+            yield* moveOn(routine.id, null, now);
+            yield* changes.record({ _tag: "routines", botId: routine.bot_id }, routine.id);
+            return;
+          }
+          const next = nextRun(trigger.success, now);
           if (Result.isFailure(next)) {
             // Saved schedules have a next run; one that no longer has (a zone
             // the runtime no longer knows) runs this once and is paused, for
@@ -138,13 +161,7 @@ export const layer = Layer.effect(
           }
           const after = Result.isSuccess(next) ? Option.getOrNull(next.success) : null;
           // A routine with no run left (a one-time trigger, an unreadable schedule) is paused.
-          yield* sql`
-            UPDATE routines SET
-              next_run_at = ${after === null ? null : timeText(after)},
-              enabled = ${after === null ? 0 : 1},
-              updated_at = ${timeText(now)}
-            WHERE id = ${routine.id}
-          `;
+          yield* moveOn(routine.id, after, now);
           yield* runs.due({ id: routine.id, botId: routine.bot_id });
         }),
       ).pipe(Effect.orDie);

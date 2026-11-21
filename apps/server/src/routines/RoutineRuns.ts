@@ -327,10 +327,12 @@ export const layer = Layer.effect(
             routineId: routine.id,
             since: timeText(windowStart),
           }).pipe(Effect.orDie);
-          const oldest = recent[0];
-          if (recent.length >= WEBHOOK_RUNS_PER_MINUTE && oldest !== undefined) {
+          // `routine.run` can take the count past the limit, so a call is
+          // taken again once the tenth newest run, not the oldest, leaves the window.
+          const tenthNewest = recent[recent.length - WEBHOOK_RUNS_PER_MINUTE];
+          if (tenthNewest !== undefined) {
             return yield* new RateLimited({
-              retryAt: DateTime.addDuration(oldest.started_at, Duration.minutes(1)),
+              retryAt: DateTime.addDuration(tenthNewest.started_at, Duration.minutes(1)),
             });
           }
           return yield* begin(

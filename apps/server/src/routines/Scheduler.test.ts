@@ -185,8 +185,11 @@ it.effect("tells clients of the later try when a routine's run cannot be recorde
       timeZone: "UTC",
     });
     const sql = yield* SqlClient.SqlClient;
-    // A trigger the scheduler cannot read: recording the run fails.
-    yield* sql`UPDATE routines SET trigger_json = '{"_tag":"unknown"}' WHERE id = ${routine.id}`;
+    // A database that refuses the run: recording it fails.
+    yield* sql`
+      CREATE TRIGGER refuse_runs BEFORE INSERT ON routine_runs
+      BEGIN SELECT RAISE(ABORT, 'refused'); END
+    `;
     const changes = yield* ChangeLog;
     const before = yield* changes.watermark;
 
@@ -203,6 +206,37 @@ it.effect("tells clients of the later try when a routine's run cannot be recorde
       readonly next_run_at: string;
     }>`SELECT next_run_at FROM routines WHERE id = ${routine.id}`;
     assert.strictEqual(row?.next_run_at, timeText(at("1970-01-01T00:10:30.000Z")));
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("pauses a routine whose trigger cannot be read, and tells clients", () =>
+  Effect.gen(function* () {
+    const bot = yield* createBot("Ana");
+    const routine = yield* createRoutine(bot.id, {
+      _tag: "schedule",
+      cron: "10 * * * *",
+      timeZone: "UTC",
+    });
+    const sql = yield* SqlClient.SqlClient;
+    // A trigger this server cannot read, as one written by another version.
+    yield* sql`UPDATE routines SET trigger_json = '{"_tag":"unknown"}' WHERE id = ${routine.id}`;
+    const changes = yield* ChangeLog;
+    const before = yield* changes.watermark;
+
+    yield* setTime("1970-01-01T00:10:00.000Z");
+    yield* pass;
+
+    const resume = yield* changes.since({ _tag: "routines", botId: bot.id }, before);
+    assert.deepStrictEqual(
+      resume._tag === "changes" ? resume.changes.map((change) => change.entityId) : resume._tag,
+      [routine.id],
+    );
+    const [row] = yield* sql<{
+      readonly enabled: number;
+      readonly next_run_at: string | null;
+    }>`SELECT enabled, next_run_at FROM routines WHERE id = ${routine.id}`;
+    assert.deepStrictEqual([row?.enabled, row?.next_run_at], [0, null]);
+    assert.deepStrictEqual(yield* wakesOf(routine.id), []);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

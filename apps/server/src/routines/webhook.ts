@@ -17,26 +17,35 @@ import { RoutineRuns } from "./RoutineRuns.ts";
 export const WEBHOOK_PATH = "/hooks";
 
 /**
+ * `path` with each run of percent-escapes decoded on its own, so a malformed
+ * escape elsewhere in the path, such as in a `;` parameter the router leaves
+ * out, changes nothing before it. Of a run that is not UTF-8, the escapes of
+ * ASCII characters are still decoded.
+ */
+const decodeEscapes = (path: string): string =>
+  path.replace(/(?:%[0-9a-f]{2})+/gi, (run) =>
+    Result.getOrElse(
+      Result.try(() => decodeURIComponent(run)),
+      () => run.replace(/%[0-7][0-9a-f]/gi, decodeURIComponent),
+    ),
+  );
+
+/**
  * What the request log shows of a path that may hold a webhook's secret, or
  * `None` for one that holds none. Under `WEBHOOK_PATH` everything after it is
  * left out: the routine's id and the secret, but also a secret in any other
  * place, such as the `/hooks/<secret>` addresses given before the routine's
  * id was part of them. Every path the router could take for a webhook's is
  * covered, whatever it answers: one written with percent-escapes, doubled
- * slashes or other letter case too.
+ * slashes or other letter case too. Only the prefix decides, so whatever
+ * follows it, however malformed, never lets a path through unredacted.
  */
 export const redactPath = (path: string): Option.Option<string> => {
   const prefix = `${WEBHOOK_PATH}/`;
-  const decoded = Result.getOrElse(
-    Result.try(() => decodeURIComponent(path)),
-    () => path,
-  );
-  const under = [path, decoded].some((candidate) =>
-    candidate
-      .replace(/\/{2,}/g, "/")
-      .toLowerCase()
-      .startsWith(prefix),
-  );
+  const under = decodeEscapes(path)
+    .replace(/\/{2,}/g, "/")
+    .toLowerCase()
+    .startsWith(prefix);
   return under ? Option.some(`${prefix}…`) : Option.none();
 };
 
