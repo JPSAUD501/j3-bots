@@ -104,6 +104,9 @@ const installOn = (machine: Machine) =>
             Effect.succeed(port === 0 ? (machine.address ?? { _tag: "free" }) : { _tag: "in-use" }),
           findExecutable: () => Effect.succeedNone,
           holdsSocket: () => Effect.succeed(machine.holder),
+          sshPrivateKeys: Effect.succeed([]),
+          groups: Effect.succeed([]),
+          reachable: () => Effect.die("install asks nothing of the network"),
         }),
       ),
       Layer.succeed(
@@ -123,6 +126,7 @@ const installOn = (machine: Machine) =>
         Systemd,
         Systemd.of({
           available: Effect.succeed(true),
+          booted: Effect.succeed(true),
           linger: Effect.succeed("yes"),
           unitState: () =>
             Effect.succeed({

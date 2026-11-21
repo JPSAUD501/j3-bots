@@ -86,8 +86,8 @@ const INSTALLED_MARKER = ".installed";
  */
 export type EngineInstall =
   | { readonly _tag: "installed"; readonly version: string; readonly executable: string }
-  /** The server downloads it on its first start. */
-  | { readonly _tag: "missing"; readonly version: string }
+  /** The server downloads it, from `source`, on its first start. */
+  | { readonly _tag: "missing"; readonly version: string; readonly source: string }
   /** No release of the pinned version runs on this platform. */
   | { readonly _tag: "unsupported-platform"; readonly version: string };
 
@@ -109,9 +109,14 @@ export const inspectInstall = Effect.fn("engine.inspectInstall")(function* (inpu
       executable: path.join(target, "t3"),
     } satisfies EngineInstall;
   }
-  return Option.isSome(pinnedArchive(pin.sha256, input.platform, input.arch))
-    ? ({ _tag: "missing", version: pin.version } satisfies EngineInstall)
-    : ({ _tag: "unsupported-platform", version: pin.version } satisfies EngineInstall);
+  return Option.match(pinnedArchive(pin.sha256, input.platform, input.arch), {
+    onNone: (): EngineInstall => ({ _tag: "unsupported-platform", version: pin.version }),
+    onSome: (archive): EngineInstall => ({
+      _tag: "missing",
+      version: pin.version,
+      source: releaseUrl(archive.name),
+    }),
+  });
 });
 
 /**

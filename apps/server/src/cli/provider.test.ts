@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
 import { providerBaseUrlProblem } from "../admin/protocol.ts";
-import { normalizeBaseUrl } from "./provider.ts";
+import { normalizeBaseUrl, signInCommand } from "./provider.ts";
 
 it("takes the endpoint's root from what the operator typed, and refuses what is no base URL", () => {
   assert.deepStrictEqual(normalizeBaseUrl(" http://127.0.0.1:8317/v1/ "), {
@@ -57,4 +57,52 @@ it("refuses plain http to another machine, which would send the key in clear", (
     assert.strictEqual(normalized._tag, "problem", remote);
     if (normalized._tag === "problem") assert.include(normalized.problem, "https");
   }
+});
+
+it("runs each harness's own sign-in in J3 Bots' home for it, with only the variables a sign-in needs", () => {
+  // The operator's shell points the harnesses at their own folders and endpoints.
+  const kept = {
+    PATH: "/usr/local/bin:/usr/bin",
+    HOME: "/home/ada",
+    LANG: "pt_BR.UTF-8",
+    HTTPS_PROXY: "http://proxy.example:3128",
+    TERM: "xterm-256color",
+    BROWSER: "firefox",
+  };
+  const shell = {
+    ...kept,
+    CLAUDE_CONFIG_DIR: "/home/ada/.claude-work",
+    CODEX_HOME: "/home/ada/.codex-work",
+    ANTHROPIC_BASE_URL: "https://elsewhere.example",
+    OPENAI_API_KEY: "not-for-bots",
+  };
+  assert.deepStrictEqual(
+    signInCommand(
+      "claude-code",
+      "/usr/local/bin/claude",
+      "/home/ada/.j3-bots/providers/claude-code",
+      shell,
+      false,
+    ),
+    {
+      command: "/usr/local/bin/claude",
+      args: ["auth", "login"],
+      env: { ...kept, CLAUDE_CONFIG_DIR: "/home/ada/.j3-bots/providers/claude-code" },
+    },
+  );
+  // Codex's code sign-in, for a machine reached over SSH.
+  assert.deepStrictEqual(
+    signInCommand(
+      "codex",
+      "/usr/local/bin/codex",
+      "/home/ada/.j3-bots/providers/codex",
+      shell,
+      true,
+    ),
+    {
+      command: "/usr/local/bin/codex",
+      args: ["login", "--device-auth"],
+      env: { ...kept, CODEX_HOME: "/home/ada/.j3-bots/providers/codex" },
+    },
+  );
 });

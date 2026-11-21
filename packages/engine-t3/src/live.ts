@@ -8,3 +8,5 @@ export {
   inspectInstall,
 } from "./t3/Install.ts";
 export { writtenFolders } from "./t3/PrivateFiles.ts";
+export { activeConnection } from "./t3/Provision.ts";
+export { engineEnvironment } from "./t3/Command.ts";

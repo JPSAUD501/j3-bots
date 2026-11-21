@@ -69,11 +69,11 @@ The first deployment of J3 Bots is on a host that has SSH access to the rest of 
 
 Recommended for any such host, and set out step by step in [Running on a Raspberry Pi](../operations/running-on-a-pi.md#choose-the-user-it-runs-as):
 
-- Run J3 Bots and its engine as a **dedicated system user** that has no SSH keys, no sudo, and no read access to the operator's home directory.
+- Run J3 Bots and its engine as a **dedicated system user** that has no SSH keys, is in no group that can become root, and has no read access to the operator's home directory.
 - Give that user its own provider sign-ins.
 - If a bot needs access to something outside its workspace, grant that one thing.
 
-This is a deployment recommendation, not something J3 Bots enforces. See [open question 3](../open-questions.md).
+This is a deployment recommendation, not something J3 Bots enforces. `j3-bots doctor` warns when the user it runs as keeps an SSH private key directly in `~/.ssh`, or is in a group that can become root, and gives the steps to a dedicated user. A key is a regular file whose first line is a private key's header; up to the first 64 bytes of each regular file are read, and no symbolic link is followed, so neither a linked file in `~/.ssh` nor a `~/.ssh` that is itself a link is looked into. The groups are `sudo`, `wheel` and `admin`, which reach root through sudo, and `docker`, `lxd` and `incus`, whose members can start a container that mounts the host's root (`docker run -v /:/host`). They are read from `/etc/group` only, so a group from a directory service, such as LDAP through sssd, is not seen. It does not look for keys elsewhere, nor at other ways the user can reach other machines, such as an SSH agent or stored cloud credentials. See [open question 3](../open-questions.md).
 
 ## The engine's credentials
 
