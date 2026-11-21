@@ -26,7 +26,7 @@ export class AdminRequestFailed extends Schema.TaggedError<AdminRequestFailed>()
   { path: Schema.String, cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return `The running server did not answer ${this.path} as expected. Check its log with \`journalctl --user -u j3-bots\`.`;
+    return `The running server did not answer ${this.path} as expected. If \`j3-bots\` was just updated, restart the service with \`systemctl --user restart j3-bots\`; otherwise check its log with \`journalctl --user -u j3-bots\`.`;
   }
 }
 

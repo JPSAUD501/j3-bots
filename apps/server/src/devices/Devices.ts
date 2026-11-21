@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// @effect-diagnostics nodeBuiltinImport:off -- pairing codes are compared with node:crypto's native constant-time comparison; Effect's is a JavaScript loop the runtime makes no timing promise for.
+import * as NodeCrypto from "node:crypto";
 import {
   type CommandId,
   type Conflict,
@@ -23,7 +25,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Digest from "effect/crypto/Digest";
-import * as Mac from "effect/crypto/Mac";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
@@ -49,7 +50,7 @@ const encoder = new TextEncoder();
  * differ. Every code has one length, so the length gives nothing away.
  */
 const sameCode = (code: string, presented: PairingCode) =>
-  Mac.timingSafeEqual(encoder.encode(code), encoder.encode(presented));
+  NodeCrypto.timingSafeEqual(encoder.encode(code), encoder.encode(presented));
 
 const DeviceRow = Schema.Struct({
   id: DeviceId,

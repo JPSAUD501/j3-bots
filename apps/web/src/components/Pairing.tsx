@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import * as DateTime from "effect/DateTime";
-import { useEffect, useId, useRef, useState, type ReactElement } from "react";
+import { useId, useRef, useState, type ReactElement } from "react";
 import type { PairingFailure, PairResult, UnpairedReason } from "@j3-bots/client-runtime";
 import type { PairingCode } from "@j3-bots/contracts";
 import { clockTime } from "@j3-bots/client-runtime/presentation";
@@ -93,16 +92,9 @@ export function Pairing({
   >({ _tag: "editing" });
   // Pairing and changing server never run together: one would undo the other.
   const [changingServer, setChangingServer] = useState(false);
-  const lockedUntil =
-    state._tag === "failed" && state.reason._tag === "rate-limited" ? state.reason.retryAt : null;
-  // Pairing opens again by itself once the lockout ends.
-  useEffect(() => {
-    if (lockedUntil === null) return;
-    const wait = DateTime.toEpochMillis(lockedUntil) - Date.now();
-    const timer = window.setTimeout(() => setState({ _tag: "editing" }), Math.max(0, wait));
-    return () => window.clearTimeout(timer);
-  }, [lockedUntil]);
-  const busy = state._tag === "pairing" || lockedUntil !== null || changingServer;
+  // A lockout only shows its time: the server enforces it, and the operator
+  // can lift it on the host before then, so Pair stays available.
+  const busy = state._tag === "pairing" || changingServer;
   const ready = code.trim() !== "" && name.trim() !== "" && !busy;
   const error = state._tag === "failed" ? failureText(state.reason) : null;
 
