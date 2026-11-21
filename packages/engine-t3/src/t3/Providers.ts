@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { ModelId, type ProviderStatus } from "@j3-bots/contracts";
 import type { ServerConfigStreamEvent, ServerProvider } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type { ProviderInstance } from "../Engine.ts";
@@ -84,6 +85,24 @@ const statusOf = (
     : { _tag: "ready" };
 };
 
+/**
+ * The usage windows the engine reports for an instance, in its order (by
+ * kind, then id), with their labels as it words them: percent used, 0 to 100,
+ * and the reset when it gives one (**Read** at `db51b67`,
+ * `ServerProviderUsageLimits` in `providerUsageLimits.ts`). The windows it
+ * kept after a failed check count; an instance it reads no usage for, as one
+ * reached through a provider connection, has none (**Verified** on release
+ * `4969`). A label longer than J3 Bots holds is cut, as a model's name is; a
+ * reset that is not a valid instant is reported unknown.
+ */
+const usageOf = (engine: ServerProvider | undefined): ProviderStatus["usage"] =>
+  (engine?.usageLimits?.windows ?? []).map((window) => ({
+    label: window.label.slice(0, 200),
+    usedPercent: window.usedPercent,
+    resetsAt:
+      window.resetsAt === undefined ? null : Option.getOrNull(DateTime.make(window.resetsAt)),
+  }));
+
 /** Each of J3 Bots' providers as the engine reports its instance, in the order J3 Bots lists them. */
 export const providerStatuses = (
   providers: ReadonlyArray<ProviderInstance>,
@@ -99,6 +118,6 @@ export const providerStatuses = (
       harness: provider.harness === "acp-command" ? "other" : provider.harness,
       status: statusOf(provider, reported),
       models: modelsOf(reported),
-      usage: [],
+      usage: usageOf(reported),
     };
   });

@@ -2,6 +2,7 @@
 import { ModelId, ProviderId } from "@j3-bots/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import { ServerProvider } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import type { ProviderInstance } from "../Engine.ts";
 import { CONNECT_COMMAND, providerStatuses } from "./Providers.ts";
@@ -74,5 +75,68 @@ describe("providerStatuses", () => {
     ]) {
       assert.deepStrictEqual(statusOf(claude, fields)?.status, { _tag: "unavailable" });
     }
+  });
+
+  it("reports the usage windows the engine reports, as percent used with their resets", () => {
+    // As Claude Code's probe reports a subscription (**Read** at `db51b67`,
+    // `claudeUsageResponseToLimits`): a five-hour and a weekly window, and a
+    // weekly one for a single model with no reset given.
+    const status = statusOf(claude, {
+      usageLimits: {
+        checkedAt: "2026-11-20T12:00:00Z",
+        windows: [
+          {
+            id: "five_hour",
+            kind: "session",
+            label: "Session",
+            usedPercent: 38,
+            resetsAt: "2026-11-20T14:20:00.000Z",
+            windowDurationMins: 300,
+          },
+          {
+            id: "seven_day",
+            kind: "weekly",
+            label: "Weekly",
+            usedPercent: 71.5,
+            resetsAt: "2026-11-24T09:00:00.000Z",
+            windowDurationMins: 10080,
+          },
+          {
+            id: "seven_day_fable",
+            kind: "weekly",
+            label: "Weekly · Fable",
+            usedPercent: 100,
+            windowDurationMins: 10080,
+          },
+        ],
+      },
+    });
+    assert.deepStrictEqual(status?.usage, [
+      {
+        label: "Session",
+        usedPercent: 38,
+        resetsAt: DateTime.makeUnsafe("2026-11-20T14:20:00.000Z"),
+      },
+      {
+        label: "Weekly",
+        usedPercent: 71.5,
+        resetsAt: DateTime.makeUnsafe("2026-11-24T09:00:00.000Z"),
+      },
+      { label: "Weekly · Fable", usedPercent: 100, resetsAt: null },
+    ]);
+  });
+
+  it("keeps the windows the engine kept after a failed check", () => {
+    // The engine merges a turn's rate-limit updates into limits whose last
+    // probe failed, and keeps them marked unavailable (**Read** at `db51b67`,
+    // `applyUsageLimitsUpdate`).
+    const status = statusOf(claude, {
+      usageLimits: {
+        checkedAt: "2026-11-20T12:00:00Z",
+        windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent: 12 }],
+        unavailable: { reason: "probeFailed" },
+      },
+    });
+    assert.deepStrictEqual(status?.usage, [{ label: "Session", usedPercent: 12, resetsAt: null }]);
   });
 });
