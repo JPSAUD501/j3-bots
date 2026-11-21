@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { AttachmentId, type BotId } from "@j3-bots/contracts";
+import { AttachmentId, type BotId, ProviderId, RoomId } from "@j3-bots/contracts";
 import {
   type DispatchAttachment,
   type DispatchDisposition,
@@ -21,6 +21,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Attachments } from "../attachments/Attachments.ts";
+import { EngineState } from "../engine/EngineState.ts";
 import { Entries } from "../entries/Entries.ts";
 import { Layout } from "../Layout.ts";
 import { Time, timeText } from "../persistence/columns.ts";
@@ -30,7 +31,7 @@ import { admission } from "./admission.ts";
 import { type DispatchRow, keyOf, Ledger } from "./Ledger.ts";
 import {
   busyBackoff,
-  type DispatchRowId,
+  DispatchRowId,
   MAX_INDETERMINATE_ANSWERS,
   MAX_STAGING_FAILURES,
   RECOVERY_WINDOW,
@@ -39,11 +40,13 @@ import {
 } from "./model.ts";
 import { inboxPath } from "./inbox.ts";
 import { Observer } from "./Observer.ts";
+import { automatedSql, providerLimit } from "./providerLimit.ts";
 import { DEFECT_RETRY } from "./reconciler.ts";
 import { SendPause } from "./SendPause.ts";
 import { SessionGate } from "./SessionGate.ts";
 import { sessionLoss } from "./sessionRecords.ts";
 import { Signals } from "./Signals.ts";
+import { roomLiveSql } from "./roomLive.ts";
 import { stopTargets } from "./stopTargets.ts";
 import { WorkSteps } from "./WorkSteps.ts";
 
@@ -94,7 +97,12 @@ type Staging =
   /** The engine cannot take commands: nothing was staged, and nothing counts. */
   | { readonly _tag: "unavailable" }
   /** It failed, and may not next time. */
-  | { readonly _tag: "failed" };
+  | { readonly _tag: "failed" }
+  /**
+   * The dispatch is no longer to be sent as it was read: it was settled
+   * meanwhile, or its room start's bot left the room. Nothing more was copied.
+   */
+  | { readonly _tag: "withdrawn" };
 
 /**
  * Sends one dispatch to the engine, through its session's gate
@@ -154,6 +162,7 @@ export const layer = Layer.effect(
     const path = yield* Path.Path;
     const targets = stopTargets(sql);
     const { admitsStart } = admission(sql, yield* SettingsStore);
+    const limitOf = providerLimit(sql, yield* EngineState);
     const { sessionLost } = sessionLoss(sql, yield* Entries, ledger, yield* WorkSteps, signals);
 
     const files = SqlSchema.findAll({
@@ -376,11 +385,38 @@ export const layer = Layer.effect(
     });
 
     /**
+     * Whether a dispatch never sent is still to be sent as it was read: still
+     * undecided and unsent, and, for a room start, its bot still a member of
+     * the room, as the claim requires.
+     */
+    const stillUnsent = SqlSchema.findOne({
+      Request: DispatchRowId,
+      Result: Schema.Struct({ due: Schema.BooleanFromBit }),
+      execute: (id) => sql`
+        SELECT EXISTS (
+          SELECT 1 FROM dispatches sw_dispatch
+          WHERE sw_dispatch.id = ${id} AND sw_dispatch.status = 'intended'
+            AND sw_dispatch.attempts = 0
+            AND (
+              sw_dispatch.delivery <> 'start' OR sw_dispatch.audience_room_id IS NULL
+              OR EXISTS (
+                SELECT 1 FROM room_members sw_member
+                WHERE sw_member.room_id = sw_dispatch.audience_room_id
+                  AND sw_member.bot_id = sw_dispatch.bot_id
+              )
+            )
+        ) AS due
+      `,
+    });
+
+    /**
      * Each file staged and still usable, staging again those whose staged copy
      * expired. Before the first send, each is copied into the bot's workspace
-     * where its envelope names it. A resend carries the same envelope, which
-     * the engine applies at most once, so it copies nothing: what the bot made
-     * of its inbox since is its own.
+     * where its envelope names it, once the durable row shows the dispatch is
+     * still to be sent: a member that left the room while an earlier file
+     * staged, or a dispatch settled meanwhile, is given nothing more. A resend
+     * carries the same envelope, which the engine applies at most once, so it
+     * copies nothing: what the bot made of its inbox since is its own.
      */
     const stage = Effect.fn("Sender.stage")(function* (row: DispatchRow) {
       const now = yield* DateTime.now;
@@ -391,6 +427,8 @@ export const layer = Layer.effect(
         if (Option.isNone(stored)) return { _tag: "failed" } satisfies Staging;
         const { attachment } = stored.value;
         if (row.attempts === 0) {
+          const still = yield* stillUnsent(row.id).pipe(Effect.orDie);
+          if (!still.due) return { _tag: "withdrawn" } satisfies Staging;
           const copied = yield* copyToWorkspace(row.bot_id, attachment, stored.value.path).pipe(
             Effect.as(true),
             Effect.catch((error) =>
@@ -458,12 +496,83 @@ export const layer = Layer.effect(
       }) satisfies DispatchInput;
 
     /**
+     * Whether a room start's bot is still a member, and whether anything else
+     * of the room is live.
+     */
+    const roomStart = SqlSchema.findOne({
+      Request: Schema.Struct({ dispatchId: DispatchRowId, roomId: RoomId }),
+      Result: Schema.Struct({ member: Schema.BooleanFromBit, live: Schema.BooleanFromBit }),
+      execute: ({ dispatchId, roomId }) => sql`
+        SELECT
+          EXISTS (
+            SELECT 1 FROM room_members rs_member JOIN dispatches rs_dispatch
+              ON rs_dispatch.bot_id = rs_member.bot_id
+            WHERE rs_member.room_id = ${roomId} AND rs_dispatch.id = ${dispatchId}
+          ) AS member,
+          ${roomLiveSql(sql, sql`${roomId}`, sql`${dispatchId}`)} AS live
+      `,
+    });
+
+    /**
+     * Whether the dispatch is automated work its provider's usage limit holds
+     * now (`automatedSql`), and whether it goes into its bot's main session.
+     */
+    const automatedStart = SqlSchema.findOne({
+      Request: DispatchRowId,
+      Result: Schema.Struct({
+        automated: Schema.BooleanFromBit,
+        provider_id: ProviderId,
+        main: Schema.BooleanFromBit,
+      }),
+      execute: (id) => sql`
+        SELECT ${automatedSql(sql, sql.literal("ls_dispatch.id"))} AS automated,
+          ls_session.provider_id, ls_session.purpose = 'main' AS main
+        FROM dispatches ls_dispatch
+        JOIN sessions ls_session ON ls_session.id = ls_dispatch.session_id
+        WHERE ls_dispatch.id = ${id}
+      `,
+    });
+
+    /**
+     * What becomes of a first start that cannot be sent now, because no turn
+     * slot is free for its session or because it is automated work its
+     * provider's usage limit holds: it is sent (`send`), stays unsent for the
+     * dispatcher's next pass (`wait`), or is released (`release`). A room
+     * start is released either way: unsent, it would hold the room for
+     * nothing. So is one in the bot's main session the limit holds: unsent,
+     * it would keep the session busy, and the operator's word, which the
+     * limit never holds, would wait behind it until the reset. Its wakes
+     * wait as pending wakes, which the planner holds until then. A routine's
+     * start, in a side session, holds nothing else, and waits.
+     */
+    const startHold = Effect.fn("Sender.startHold")(function* (row: DispatchRow) {
+      if (!(yield* admitsStart(row.session_id))) {
+        return row.audience_room_id === null ? ("wait" as const) : ("release" as const);
+      }
+      const start = yield* automatedStart(row.id).pipe(Effect.orDie);
+      if (!start.automated || Option.isNone(yield* limitOf(start.provider_id))) {
+        return "send" as const;
+      }
+      return start.main ? ("release" as const) : ("wait" as const);
+    });
+
+    /**
      * The send's claim: the attempt is counted only if the dispatch is still
      * what was read, and still this send's to make. A recovery owns every key
      * already sent, fenced or not; a first send needs an unfenced dispatch in
      * a live session no Stop holds, and a first start a turn slot, by the
      * budget as it stands now: it may have changed while the files staged.
-     * One the budget refuses stays unsent, for the dispatcher's next pass.
+     * A first start of automated work its provider's usage limit holds now,
+     * which may have been reached while the files staged, is held too. A held
+     * start stays unsent, for the dispatcher's next pass, or is released
+     * (`startHold`): a room start's wakes are planned again in the room's
+     * order, and those of a main session's start the limit holds wait for the
+     * reset without holding back the operator's word.
+     * A first room start needs its bot still a member and nothing else of the
+     * room live (`roomLiveSql`), as planning did: another member's turn the
+     * engine resumed after a usage limit's reset may have started since. One
+     * that finds otherwise is released: its wakes are planned again with the
+     * room as it is then, or cancelled for a bot that left it.
      * A first steer needs the turn it was planned for to be still the
      * admitted one: if that turn ended while the files staged, the engine
      * would start a turn with it, outside the budget, so it is released and
@@ -489,7 +598,16 @@ export const layer = Layer.effect(
             return released;
           }
           if (row.attempts === 0 && row.delivery === "start") {
-            if (!(yield* admitsStart(row.session_id))) return "refused" as const;
+            const hold = yield* startHold(row);
+            if (hold === "release") return yield* releaseFirst;
+            if (hold === "wait") return "refused" as const;
+            if (row.audience_room_id !== null) {
+              const room = yield* roomStart({
+                dispatchId: row.id,
+                roomId: row.audience_room_id,
+              }).pipe(Effect.orDie);
+              if (!room.member || room.live) return yield* releaseFirst;
+            }
           }
           if (row.attempts === 0 && row.delivery === "steer") {
             const session = yield* sessionState(row.session_id).pipe(Effect.orDie);
@@ -632,9 +750,24 @@ export const layer = Layer.effect(
         return "settled" as const;
       }
 
+      // A room start that cannot be sent when it is due, for want of a turn
+      // slot or held by a usage limit, holds the room for nothing, and a main
+      // session's start the limit holds keeps the operator's word waiting:
+      // it is released before anything is staged (`startHold`), so the
+      // room's order is read again and the operator's word may go first. Its
+      // wakes wait, as pending wakes, for what held it.
+      if (firstSend && row.delivery === "start" && (yield* startHold(row)) === "release") {
+        yield* releaseUnsent(row.id);
+        return "settled" as const;
+      }
+
       const staging = yield* stage(row);
       if (staging._tag === "unavailable") return "engine-unavailable" as const;
       if (staging._tag === "failed") return yield* stagingFailed(row.id);
+      if (staging._tag === "withdrawn") {
+        yield* releaseUnsent(row.id);
+        return "settled" as const;
+      }
       const input = inputOf(row, sessionId, staging.files);
 
       const claimed = yield* claim(row);

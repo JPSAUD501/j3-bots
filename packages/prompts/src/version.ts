@@ -69,11 +69,25 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
       hostName: "Bot",
     },
     reason: "host",
+    omitted: 1,
     entries: [
       { author: "user", at, text: "text", mentions: "everyone", attachments: [] },
       { author: teammate, at, text: "text", mentions: ["Bot"] },
     ],
   },
+  ...(["mentioned", "everyone"] as const).map((reason): Wake => ({
+    ...base,
+    kind: "room",
+    room: {
+      id: Schema.decodeSync(RoomId)("room"),
+      name: "Room",
+      members: [teammate],
+      hostName: "Bot",
+    },
+    reason,
+    omitted: 0,
+    entries: [{ author: teammate, at, text: "text", mentions: [] }],
+  })),
   { ...base, kind: "bot", messages: [message] },
   {
     ...base,

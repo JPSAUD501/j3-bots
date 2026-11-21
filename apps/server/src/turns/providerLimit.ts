@@ -7,8 +7,10 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
+import type * as Statement from "effect/sql/Statement";
 import type { EngineState } from "../engine/EngineState.ts";
 import { json } from "../persistence/columns.ts";
+import { PRIORITY } from "./model.ts";
 
 /** A provider at its usage limit, until its reset when that is known. */
 interface ProviderLimit {
@@ -60,3 +62,22 @@ export const providerLimit = (sql: SqlClient.SqlClient, engineState: EngineState
       : Option.none();
   });
 };
+
+/**
+ * Whether a dispatch is automated work, which a usage limit holds until the
+ * reset: it carries no word of the operator's, which would be its head wake
+ * and is never held, and no bot's opening, which waits for its provider by a
+ * rule of its own. The planner holds a wake by the same rule, and a start's
+ * claim checks it again. `dispatchId` is often a caller's column, so the table
+ * here has an alias no caller uses.
+ */
+export const automatedSql = (sql: SqlClient.SqlClient, dispatchId: Statement.Fragment) => sql`(
+  NOT EXISTS (
+    SELECT 1 FROM wakes au_wake
+    WHERE au_wake.dispatch_id = ${dispatchId}
+      AND (
+        au_wake.priority = ${PRIORITY.user}
+        OR json_extract(au_wake.payload_json, '$._tag') = 'first-run'
+      )
+  )
+)`;

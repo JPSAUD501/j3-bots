@@ -69,6 +69,7 @@ export const layer = Layer.mergeAll(BotTools.layer, Turns.layer).pipe(
     Layer.mergeAll(
       Memory.layer,
       Rooms.layer,
+      RoomRouting.layer,
       EngineSessions.layer,
       SettingsService.layer,
       Routines.layer,
@@ -98,7 +99,6 @@ export const layer = Layer.mergeAll(BotTools.layer, Turns.layer).pipe(
       CommandReceipts.layer,
       SettingsStore.layer,
       EngineState.layer,
-      RoomRouting.layer,
       Usage.layer,
       Signals.layer,
       SessionGate.layer,

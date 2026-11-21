@@ -160,11 +160,20 @@ export interface RoomWake extends WakeBase {
   /**
    * Why this bot is the one woken: it was mentioned, the operator addressed
    * everyone, or the operator addressed nobody and this bot hosts the room.
+   * It chooses the envelope's closing line.
    */
-  readonly reason: "mentioned" | "everyone" | "host";
+  readonly reason: RoomReason;
+  /**
+   * How many entries this bot has not seen are older than those shown: the
+   * envelope carries the newest that fit.
+   */
+  readonly omitted: number;
   /** The entries this bot has not seen, oldest first. */
   readonly entries: readonly [RoomEntry, ...Array<RoomEntry>];
 }
+
+/** Why a bot is woken for a room. */
+export type RoomReason = "mentioned" | "everyone" | "host";
 
 export interface BotWake extends WakeBase {
   readonly kind: "bot";
@@ -217,18 +226,33 @@ export interface SystemWake extends WakeBase {
 export type Wake = UserWake | RoomWake | BotWake | RoutineWake | SystemWake;
 
 /**
- * The line every envelope ends with, restating the speech rule for its kind.
- * Exported so the versioning hash and the docs can name them.
+ * The line every envelope ends with, restating the speech rule for its kind;
+ * a room's depends on why the bot was woken ({@link ROOM_CLOSING_LINES}).
  */
-export const CLOSING_LINES: { readonly [K in WakeKind]: string } = {
+export const CLOSING_LINES: { readonly [K in Exclude<WakeKind, "room">]: string } = {
   user: "Reply with `say`; nothing else reaches them. Your last call is a `say` with the result and `done: true`, or an `ask`.",
-  room: "In this room, `say` reaches everyone. Speak if you were addressed or have something new; otherwise end your turn without a word.",
   bot: "`say` reaches your user, not the sender. Answer the sender with `message_bot`, and only if you were asked something or have a result.",
   routine:
     "Nobody is waiting, so send no progress message. Only `say` reaches your user, never reply text: a message is one `say` with `done: true`, sent once, after the work; once it returns, never alongside it, the only calls left are the state-file update the instruction names, or one `pause` the instruction asks for, of this routine by the id above with no lookup, and no second `say`. A one-time routine is paused for you, so never pause it yourself. If the instruction asks you to pause after a message that a run in `recent-runs` already sent, pause once now with no `say`. Follow the instruction's delivery line: a reminder or a report asked for every time is sent when due; when a report's condition is not met, end with no `say` at all, not even to say all is well. If you could not do the work (access refused, a source gone): when a run in `recent-runs` already said what blocks it, end with no `say`; when none did, tell your user in one `say` of one sentence, whatever the delivery line says.",
   system:
     "This is an event, not a message from your user. Respond only as your instructions say for it.",
 };
+
+/**
+ * A room envelope's closing line, by why the bot was woken: the host's role
+ * when nobody was addressed, and how far a mentioned or polled member goes.
+ */
+export const ROOM_CLOSING_LINES: { readonly [R in RoomReason]: string } = {
+  host: "In this room, `say` reaches everyone. You host it and nobody was addressed: answer, or hand the work to one member with `mention`.",
+  mentioned:
+    "In this room, `say` reaches everyone. You were addressed: answer, and `mention` a member only if they must act next.",
+  everyone:
+    "In this room, `say` reaches everyone. Everyone was addressed, one at a time: add only what the replies before yours do not say, or end your turn without a word.",
+};
+
+/** The line an envelope ends with. */
+const closingLine = (wake: Wake): string =>
+  wake.kind === "room" ? ROOM_CLOSING_LINES[wake.reason] : CLOSING_LINES[wake.kind];
 
 const PROFILE_CHANGED_LINE = "Your profile was changed. The new values:";
 
@@ -460,6 +484,11 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
         ]);
       }
       w.close("room");
+      if (wake.omitted > 0) {
+        w.line(
+          `${wake.omitted} earlier ${wake.omitted === 1 ? "entry" : "entries"} you have not seen ${wake.omitted === 1 ? "is" : "are"} left out; what woke you and the newest follow.`,
+        );
+      }
       for (const entry of wake.entries) {
         const to = mentionsOf(entry.mentions);
         if (entry.author === "user") {
@@ -553,7 +582,7 @@ const write = (
   writeSinceLastTurn(w, wake.sinceLastTurn);
   writeBody(w, wake);
   w.close("j3-wake");
-  w.line(CLOSING_LINES[wake.kind]);
+  w.line(closingLine(wake));
   // Each data block names the nonce twice, in its opening and its closing tag.
   return { text: `${w.lines.join("\n")}\n`, nonceUses: w.dataBlocks * 2 };
 };

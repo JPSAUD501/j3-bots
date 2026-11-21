@@ -5,9 +5,16 @@ import {
   Conflict,
   type EntryTarget,
   MAX_ATTACHMENT_SIZE,
+  type MessageEntry,
   RoomId,
 } from "@j3-bots/contracts";
-import { SessionId, TurnId, toolInputDigest, ToolInputDigest } from "@j3-bots/engine-t3";
+import {
+  attachmentLimitViolation,
+  SessionId,
+  TurnId,
+  toolInputDigest,
+  ToolInputDigest,
+} from "@j3-bots/engine-t3";
 import type { ToolInput } from "@j3-bots/prompts";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -26,6 +33,7 @@ import { Ids } from "../Ids.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { json, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
+import { type LiveRoom, liveRoom } from "../rooms/liveRoom.ts";
 import { RoomRouting } from "../rooms/RoomRouting.ts";
 import { SettingsStore } from "../settings/SettingsStore.ts";
 import {
@@ -171,6 +179,7 @@ export const layer = Layer.effect(
     const { notify } = notices(sql, entries);
     const readWorkspaceFile = yield* workspaceReader;
     const targetOf = liveTarget(sql);
+    const roomOf = liveRoom(sql);
     const spoken = routineSpeech(sql, ids, yield* ChangeLog);
     const setRoutine = yield* routineTool;
 
@@ -491,6 +500,52 @@ export const layer = Layer.effect(
         Effect.map((rows) => rows.length > 0),
       );
 
+    /** Whether a `say` of the pinned turn already found its mentions past the room's hop limit. */
+    const roomChainStopped = (found: Pin) =>
+      sql`
+        SELECT 1 FROM tool_calls
+        WHERE session_id = ${found.sessionId} AND engine_turn_id = ${found.turnId}
+          AND tool = 'say' AND json_extract(result_json, '$.stopped') = 'hops'
+      `.pipe(
+        Effect.orDie,
+        Effect.map((rows) => rows.length > 0),
+      );
+
+    /**
+     * The members a room `say` mentions, each once, checked against the room
+     * and the fan-out limit in the caller's transaction. A refusal sends
+     * nothing.
+     */
+    const mentionedIn = Effect.fn("Speech.mentionedIn")(function* (
+      found: Pin,
+      room: LiveRoom,
+      given: ReadonlyArray<string>,
+    ) {
+      const refuse = (reason: string) => new TurnToolRefused({ reason });
+      const mention: Array<BotId> = [];
+      for (const id of given) {
+        const botId = Option.getOrNull(Schema.decodeOption(BotId)(id));
+        if (botId === found.botId) {
+          return yield* refuse(
+            "Nothing was sent: that id in `mention` is your own. Mention only the members who must act next.",
+          );
+        }
+        if (botId === null || !room.members.includes(botId)) {
+          return yield* refuse(
+            `Nothing was sent: ${id} is not a member of this room. The room's members and their ids are in the wake; mention only them.`,
+          );
+        }
+        if (!mention.includes(botId)) mention.push(botId);
+      }
+      const { budgets } = yield* settings.get;
+      if (mention.length > budgets.fanOut) {
+        return yield* refuse(
+          `Nothing was sent: one message may mention at most ${budgets.fanOut} ${budgets.fanOut === 1 ? "member" : "members"}. Mention only who must act next, or tell your user who else should.`,
+        );
+      }
+      return mention;
+    });
+
     /** Where the pinned turn's speech goes, unless its room was archived. */
     const requireTarget = Effect.fn("Speech.requireTarget")(function* (
       botId: BotId,
@@ -509,9 +564,10 @@ export const layer = Layer.effect(
      * is not a regular file, empty files and files above
      * `MAX_ATTACHMENT_SIZE`, of which no more than that is read, are refused
      * (`readWorkspaceFile`), and so are files together above
-     * `MAX_SAY_ATTACHMENTS_SIZE`, of which no more than that is read, and a
-     * name the store would not take. Every file is checked before any is
-     * stored.
+     * `MAX_SAY_ATTACHMENTS_SIZE`, of which no more than that is read, a
+     * name the store would not take, and files the engine would refuse in
+     * one message (`attachmentLimitViolation`), such as an image above its
+     * inline limit. Every file is checked before any is stored.
      */
     const workspaceFiles = Effect.fn("Speech.workspaceFiles")(function* (
       botId: BotId,
@@ -566,12 +622,69 @@ export const layer = Layer.effect(
             files.push(file);
         }
       }
+      // Every `say` is held to the engine's rule for one message's files,
+      // wherever it speaks, as the operator's own files are: a room
+      // message's go in the envelope of each member it wakes, where the
+      // engine would refuse what it refuses here.
+      const violation = attachmentLimitViolation(
+        files.map((file) => ({ mediaType: file.mediaType, size: file.bytes.length })),
+      );
+      if (violation !== undefined) {
+        return yield* refuse(
+          violation._tag === "image-too-large"
+            ? `${paths[violation.index] ?? "An image"} cannot be attached: an image the model sees (GIF, JPEG, PNG or WebP) may be at most ${violation.limit / 1024 / 1024} MiB. Attach a smaller copy.`
+            : "These files cannot be attached together. Attach fewer, and send the rest in another message.",
+        );
+      }
       return files;
+    });
+
+    /**
+     * Wakes the members a room `say` mentioned, unless the operator stopped
+     * the work that spoke. Past the room's hop limit nobody is woken, and the
+     * room shows one `chain-stopped` notice for the turn, however often it
+     * tries; nobody is woken to hear of it either.
+     */
+    const routeMentions = Effect.fn("Speech.routeMentions")(function* (
+      found: Pin,
+      room: LiveRoom,
+      message: MessageEntry,
+      mention: ReadonlyArray<BotId>,
+    ) {
+      if (mention.length === 0) return null;
+      const work = yield* workStopped(found);
+      if (work.stopped) return null;
+      const routed = yield* routing.botMessage({
+        room,
+        botId: found.botId,
+        message,
+        mention,
+        hops: hopsOf(yield* carriedBy(found)),
+        seq: work.seq,
+      });
+      if (routed._tag === "hop-limit" && !(yield* roomChainStopped(found))) {
+        yield* notify(
+          found.botId,
+          { _tag: "room", roomId: room.id },
+          { _tag: "chain-stopped", limit: "hops" },
+          null,
+        );
+      }
+      return routed;
     });
 
     const say = Effect.fn("Speech.say")(function* (found: Pin, input: ToolInput<"say">) {
       // `to: "dm"` speaks to the operator in private, also from a room turn.
       const audience = input.to === "dm" ? conversation : found.audience;
+      const given = input.mention ?? [];
+      if (given.length > 0 && audience._tag !== "room") {
+        return yield* new TurnToolRefused({
+          reason:
+            input.to === "dm"
+              ? 'Nothing was sent: `mention` goes with a message to the room, not with `to: "dm"`.'
+              : "Nothing was sent: `mention` works only in a room turn, and this turn speaks to your user.",
+        });
+      }
       const read = yield* workspaceFiles(found.botId, input.attachments ?? []);
       // The file lock, then the transaction: the order every writer of the
       // attachment store takes them in. Admission and publication stay one
@@ -583,6 +696,8 @@ export const layer = Layer.effect(
         )(
           Effect.gen(function* () {
             const target = yield* requireTarget(found.botId, audience);
+            const room = target._tag === "room" ? yield* roomOf(target.roomId) : Option.none();
+            const mention = Option.isSome(room) ? yield* mentionedIn(found, room.value, given) : [];
             const files: Array<Attachment> = [];
             for (const file of read) {
               files.push(
@@ -600,7 +715,7 @@ export const layer = Layer.effect(
                 author: { _tag: "bot", botId: found.botId },
                 text: input.text,
                 attachments: files,
-                mentions: { _tag: "bots", ids: [] },
+                mentions: { _tag: "bots", ids: mention },
                 delivery: { _tag: "delivered" },
                 commandId: null,
               },
@@ -620,17 +735,20 @@ export const layer = Layer.effect(
               entryId: entry.id,
               text: input.text,
             });
-            if (target._tag === "room" && entry._tag === "message") {
-              yield* routing.botMessage({
-                roomId: target.roomId,
-                botId: found.botId,
-                message: entry,
-                hops: hopsOf(yield* carriedBy(found)),
-              });
-            }
+            const routed =
+              Option.isSome(room) && entry._tag === "message"
+                ? yield* routeMentions(found, room.value, entry, mention)
+                : null;
             if (input.done === true) {
               for (const { id } of yield* deliveredBy(found))
                 yield* ledger.closeDelivery(id, "done");
+            }
+            if (routed?._tag === "hop-limit") {
+              return {
+                status: "recorded",
+                stopped: "hops",
+                note: `Your message is in the room, but nobody was woken: this chain of turns between bots reached your user's limit of ${routed.limit} since they last spoke. Do not mention anyone again for it. If your user is waiting on it, say so in the room.`,
+              } satisfies Schema.Json;
             }
             return { status: "recorded" } satisfies Schema.Json;
           }),

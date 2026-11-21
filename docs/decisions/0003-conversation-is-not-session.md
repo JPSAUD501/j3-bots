@@ -1,6 +1,6 @@
 # 0003: Conversations belong to J3 Bots, sessions to the engine
 
-**Status:** Proposed
+**Status:** Accepted
 
 ## Context
 
@@ -22,6 +22,7 @@ J3 Bots stores conversations and rooms itself, as its own data. An engine thread
 - J3 Bots needs a store, a history API and search of its own.
 - What a bot says has to be captured explicitly, which leads to [0004](0004-speech-is-a-tool.md).
 - The main session does not see what side sessions did, so J3 Bots adds a catch-up note to the next wake.
+- A room is J3 Bots data too. Its turns run in each member's main session, with the room as the turn's audience, and what a member has seen of the room is derived from J3 Bots' own dispatches, so a replaced session costs a member nothing it has not been shown.
 - A rotated session loses detail the digest does not carry. Memory is what a bot is expected to rely on across rotations, which is the right dependency.
 
 ## Rejected

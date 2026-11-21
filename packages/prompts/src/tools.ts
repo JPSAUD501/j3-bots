@@ -85,6 +85,12 @@ const SayInput = toolInput({
       "Only during a room turn: send privately to your user instead of to the room.",
     ),
   ),
+  mention: Schema.optionalKey(
+    described(
+      Schema.Array(Id).check(Schema.isMaxLength(6)),
+      "Only with a message to the room: the bot ids of the members who must act next, each woken in turn. Leave it out when nobody needs to act.",
+    ),
+  ),
   done: Schema.optionalKey(
     described(
       Schema.Boolean,
@@ -272,6 +278,7 @@ export const tools = {
     [
       "Send a message to your user. This is the only way they hear you: reply text outside this tool reaches nobody.",
       'During a room turn it goes to the room; `to: "dm"` sends it to your user privately instead.',
+      "In a room, the members you list in `mention` are woken to answer; nobody else is. Mention a member only to hand them work they must do next, usually one: your user limits how many one message may mention, and how long a chain of turns between bots may run since they last spoke. Mentioning nobody lets the room settle.",
       "Attach files you produced, rather than linking workspace paths they cannot open.",
       "Set `done: true` on the message that delivers the result and make it your last call, after every other call has returned; in a routine run, only the state-file update its instruction names (a record of what the message reported is written only then), or a `pause` of that routine the instruction asks for, may follow it, never a second `say`. Then end your turn.",
       "Returns once the message is recorded.",

@@ -1,7 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Attachment, QuestionEntry, RoomId } from "@j3-bots/contracts";
+import {
+  type Attachment,
+  BotId,
+  MAX_ID_LENGTH,
+  MAX_LABEL_LENGTH,
+  MAX_ROOM_MEMBERS,
+  PROFILE_LIMITS,
+  type QuestionEntry,
+  type RoomId,
+} from "@j3-bots/contracts";
 import { ENGINE_INPUT_LIMIT, engineInputLength } from "@j3-bots/engine-t3";
-import type { AskAnswer, OperatorMessage, Wake } from "@j3-bots/prompts";
+import type { AskAnswer, OperatorMessage, RoomWake, TeammateRef, Wake } from "@j3-bots/prompts";
 import { renderWakeForSize } from "@j3-bots/prompts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -15,8 +24,9 @@ import { inboxPath } from "./inbox.ts";
  * `card.answer`) leaves under the engine's input limit when it checks that
  * text alone: what can render longer when the wake is dispatched later. The
  * wake's zone (an IANA name, at most about 30 characters), its weekday, the
- * message's time, which gains its date once the day has changed, and a
- * room's name take well under this.
+ * message's time, which gains its date once the day has changed, take well
+ * under this. What a room may change meanwhile (its name, members and host,
+ * and their names) is checked at its widest instead (`widestRoomHeader`).
  */
 const DISPATCH_VARIANCE = 1_000;
 
@@ -31,6 +41,39 @@ export const fitsEngine = (wake: Wake, reserve = 0): boolean =>
  * cannot send.
  */
 export const fitsAlone = (wake: Wake): boolean => fitsEngine(wake, DISPATCH_VARIANCE);
+
+/**
+ * Text of `length` characters that renders longest in an envelope: each
+ * character is one the envelope escapes, into its longest entity.
+ */
+const widest = (length: number): string => '"'.repeat(length);
+
+/** A room's name at its widest: a room can be renamed after text for it was accepted. */
+export const WIDEST_ROOM_NAME = widest(MAX_LABEL_LENGTH);
+
+/** A teammate as an envelope names it at its widest: a bot can be renamed meanwhile. */
+export const widestTeammate = (id: BotId): TeammateRef => ({
+  id,
+  name: widest(PROFILE_LIMITS.name),
+  title: widest(PROFILE_LIMITS.title),
+});
+
+/**
+ * The room as an envelope names it at its widest: its name, as many members
+ * as a room can have, and every name and id as long as they can be. A wake
+ * for the room may be dispatched after the room was renamed, given members or
+ * a new host, or its members renamed, so a writer of operator text into a
+ * room's wake checks its size with this rather than the room as it is now.
+ */
+export const widestRoomHeader = (roomId: RoomId): RoomWake["room"] => {
+  const member = widestTeammate(BotId.make(widest(MAX_ID_LENGTH)));
+  return {
+    id: roomId,
+    name: WIDEST_ROOM_NAME,
+    members: Array.from({ length: MAX_ROOM_MEMBERS }, () => member),
+    hostName: member.name,
+  };
+};
 
 /** The operator's zone, in which an envelope gives every time. */
 export const operatorZone = (settings: SettingsStore["Service"]) =>

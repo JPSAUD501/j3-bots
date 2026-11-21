@@ -86,7 +86,11 @@ export const AudienceColumn = Schema.Literals(["conversation", "room"]);
 export const WakeKind = Schema.Literals(["user", "room", "bot", "routine", "system"]);
 export type WakeKind = typeof WakeKind.Type;
 
-/** Lower is first: the operator, then rooms, teammates, J3 Bots itself and routines. */
+/**
+ * Lower is first: the operator, then rooms, teammates, J3 Bots itself and
+ * routines. The operator's own room message is a `room` wake that goes at
+ * `user` priority (`priorityOf`).
+ */
 export const PRIORITY: { readonly [K in WakeKind]: number } = {
   user: 0,
   room: 1,
@@ -96,9 +100,22 @@ export const PRIORITY: { readonly [K in WakeKind]: number } = {
 };
 
 /**
- * What a wake carries, read when its envelope is rendered. Room wakes add
- * their own variant with room routing.
+ * A wake's priority: its kind's, except that a room wake the operator caused
+ * goes first like any of the operator's, and may steer a running turn of the
+ * same room (`docs/architecture/server.md`, The server holds waiting wakes).
  */
+export const priorityOf = (kind: WakeKind, byOperator: boolean): number =>
+  kind === "room" && byOperator ? PRIORITY.user : PRIORITY[kind];
+
+/**
+ * Why a bot is woken for a room (`docs/architecture/server.md`, Rooms): a
+ * message mentioned it, the operator addressed everyone, or the operator
+ * addressed nobody and it hosts the room.
+ */
+export const RoomReason = Schema.Literals(["mentioned", "everyone", "host"]);
+export type RoomReason = typeof RoomReason.Type;
+
+/** What a wake carries, read when its envelope is rendered. */
 export const WakePayload = Schema.Union([
   /** An operator message, read from its entry. */
   Schema.TaggedStruct("message", { entryId: EntryId }),
@@ -112,6 +129,11 @@ export const WakePayload = Schema.Union([
   Schema.TaggedStruct("routine", { routineId: RoutineId, runId: RoutineRunId }),
   /** A teammate's urgent message, read from the handoff card it put in this bot's conversation. */
   Schema.TaggedStruct("teammate", { entryId: EntryId }),
+  /**
+   * A room message that addresses this bot; the envelope carries every entry
+   * of the room the bot has not seen, this one among them.
+   */
+  Schema.TaggedStruct("room", { entryId: EntryId, reason: RoomReason }),
 ]);
 export type WakePayload = typeof WakePayload.Type;
 

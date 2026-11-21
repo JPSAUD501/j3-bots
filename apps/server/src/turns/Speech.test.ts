@@ -5,11 +5,14 @@ import {
   type HandoffState,
   MAX_ATTACHMENT_NAME_LENGTH,
   MAX_ATTACHMENT_SIZE,
+  MAX_INLINE_IMAGE_SIZE,
 } from "@j3-bots/contracts";
 import type { SessionId, TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import { NO_TURN_REFUSAL } from "@j3-bots/prompts";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -38,6 +41,7 @@ import {
   messageTeammate,
   nextTurn,
   noticesOf,
+  providerIs,
   received,
   recoverTimes,
   roomOf,
@@ -531,6 +535,20 @@ it.effect("refuses a say whose files together pass the limit", () =>
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("refuses a say with an image larger than the engine takes inline", () =>
+  Effect.gen(function* () {
+    // Within one upload's limit, past what the model is given as an image.
+    const { bot, reply } = yield* sayWithFiles([
+      { name: "chart.png", bytes: new Uint8Array(MAX_INLINE_IMAGE_SIZE + 1).fill(1) },
+    ]);
+
+    assert.include(reply._tag === "refused" ? reply.message : "", "files/chart.png");
+    assert.include(reply._tag === "refused" ? reply.message : "", "at most 10 MiB");
+    assert.deepStrictEqual(yield* botSaid(bot.id), []);
+    assert.deepStrictEqual(yield* storedBlobs, []);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 /** The teammate messages the bot's conversation shows, oldest first. */
 const handoffs = (botId: BotId) =>
   conversation(botId).pipe(
@@ -653,6 +671,54 @@ it.effect("wakes a teammate once with an urgent message, shown in both conversat
     assert.deepStrictEqual(yield* handoffs(bo.id), ["received: When is the launch?"]);
     assert.deepStrictEqual(yield* teammateMessagesFor(bo.id), { wakes: 1, held: 0 });
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "dispatches the operator's message to a bot whose teammate's start a usage limit holds, and the handoff after the reset",
+  () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const { providerId } = TestDomain.DEFAULT_MODEL;
+      const ana = yield* createBot("Ana");
+      const bo = yield* createBot("Bo");
+      const boSession = yield* engineSession(bo.id);
+
+      // Ana's urgent handoff to Bo is written, and its send waits; the
+      // provider reaches its usage limit before it goes.
+      const gate = yield* holdGate(bo.id);
+      yield* wokenBy(ana.id, bo.id, "Roll back the release.", true);
+      yield* until(
+        sql<{ readonly n: number }>`
+          SELECT COUNT(*) AS n FROM dispatches WHERE bot_id = ${bo.id}
+        `.pipe(
+          Effect.orDie,
+          Effect.map(([row]) => (row?.n ?? 0) > 0),
+        ),
+      );
+      yield* providerIs(providerId, {
+        _tag: "limited",
+        resetsAt: DateTime.addDuration(yield* DateTime.now, Duration.hours(5)),
+      });
+      const message = yield* sendToBot(bo.id, "Is the release out?");
+      yield* gate.release;
+      yield* flushed(bo.id);
+
+      const sent = yield* received(boSession);
+      assert.deepStrictEqual(
+        sent.map(({ text }) => [
+          text.includes("Is the release out?"),
+          text.includes("Roll back the release."),
+        ]),
+        [[true, false]],
+      );
+      const turnId = yield* nextTurn(bo.id);
+      yield* deliveryIs(message, "delivered");
+
+      yield* providerIs(providerId, { _tag: "ready" });
+      yield* finished(bo.id, boSession, turnId);
+      yield* nextTurn(bo.id, turnId);
+      assert.include((yield* received(boSession)).at(-1)?.text ?? "", "Roll back the release.");
+    }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect("refuses a message to itself, to an unknown id and to a deleted teammate", () =>

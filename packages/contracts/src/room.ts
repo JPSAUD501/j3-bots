@@ -2,8 +2,14 @@
 import * as Schema from "effect/Schema";
 import { BotId, Label, PositiveInt, RoomId } from "./base.ts";
 
+/** The most bots a room has. */
+export const MAX_ROOM_MEMBERS = 6;
+
 /** Two to six bots. Order matters: `@everyone` wakes members in this order. */
-export const RoomMembers = Schema.Array(BotId).check(Schema.isMinLength(2), Schema.isMaxLength(6));
+export const RoomMembers = Schema.Array(BotId).check(
+  Schema.isMinLength(2),
+  Schema.isMaxLength(MAX_ROOM_MEMBERS),
+);
 
 export const RoomName = Label;
 
@@ -35,7 +41,7 @@ export const Room = Schema.Union([
   Schema.Struct({
     ...roomFields,
     status: Schema.Literal("archived"),
-    members: Schema.Array(BotId).check(Schema.isMaxLength(6)),
+    members: Schema.Array(BotId).check(Schema.isMaxLength(MAX_ROOM_MEMBERS)),
     hostId: Schema.NullOr(BotId),
     archivedAt: Schema.DateTimeUtc,
   }),

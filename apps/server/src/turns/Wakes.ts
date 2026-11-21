@@ -12,7 +12,7 @@ import {
   type Audience,
   audienceColumns,
   type DispatchSeq,
-  PRIORITY,
+  priorityOf,
   type WakeKind,
   WakePayload,
 } from "./model.ts";
@@ -109,7 +109,8 @@ export const layer = Layer.effect(
             id, bot_id, kind, priority, audience, audience_room_id, routine_id, hops,
             payload_json, status, source_entry_id, retry_of, created_at, updated_at
           ) VALUES (
-            ${id}, ${wake.botId}, ${wake.kind}, ${PRIORITY[wake.kind]}, ${audience}, ${roomId},
+            ${id}, ${wake.botId}, ${wake.kind},
+            ${priorityOf(wake.kind, wake.cause._tag === "operator")}, ${audience}, ${roomId},
             ${wake.payload._tag === "routine" ? wake.payload.routineId : null}, ${wake.hops},
             ${yield* encodePayload(wake.payload)}, 'pending', ${wake.sourceEntryId},
             ${wake.retryOf}, ${at}, ${at}

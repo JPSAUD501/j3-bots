@@ -31,6 +31,7 @@ import {
   DispatchRowId,
   DispatchSeq,
   DispatchStatus,
+  PRIORITY,
   SessionRowId,
   WakeFailure,
   WakeKind,
@@ -75,6 +76,7 @@ export const WakeRow = Schema.Struct({
   id: Schema.String,
   bot_id: BotId,
   kind: WakeKind,
+  priority: Schema.Int,
   audience: AudienceColumn,
   audience_room_id: Schema.NullOr(RoomId),
   hops: Schema.Int,
@@ -86,8 +88,8 @@ export const WakeRow = Schema.Struct({
 export type WakeRow = typeof WakeRow.Type;
 
 export const WAKE_COLUMNS = `
-  id, bot_id, kind, audience, audience_room_id, hops, payload_json, status, source_entry_id,
-  created_at
+  id, bot_id, kind, priority, audience, audience_room_id, hops, payload_json, status,
+  source_entry_id, created_at
 `;
 
 /** What becomes of the wakes of a dispatch that ends undelivered. */
@@ -302,7 +304,10 @@ export class Ledger extends Context.Service<
      * sender's card, or `unconfirmed` while a dispatch that carried it may
      * still have reached the bot with nothing to tell: sent with no answer,
      * taken by the engine with no turn seen, or given up on by its recovery.
-     * The bot's own card goes with its conversation.
+     * The bot's own card goes with its conversation. The operator's room
+     * messages to it show their delivery to the other members alone, or,
+     * when it was their only recipient and never received one, `cancelled`:
+     * it never will, and the operator can write again.
      */
     readonly recipientRemoved: (botId: BotId) => Effect.Effect<void>;
   }
@@ -345,15 +350,17 @@ export const layer = Layer.effect(
     }, Effect.orDie);
 
     const DeliveryRow = Schema.Struct({
+      bot_id: BotId,
       status: WakeStatus,
       failure_reason: Schema.NullOr(WakeFailure),
       dispatch_status: Schema.NullOr(DispatchStatus),
+      recipient_left: Schema.BooleanFromBit,
     });
     const deliveryRows = SqlSchema.findAll({
       Request: EntryId,
       Result: DeliveryRow,
       execute: (entryId) => sql`
-        SELECT w.status, w.failure_reason, d.status AS dispatch_status
+        SELECT w.bot_id, w.status, w.failure_reason, d.status AS dispatch_status, w.recipient_left
         FROM wakes w LEFT JOIN dispatches d ON d.id = w.dispatch_id
         WHERE w.source_entry_id = ${entryId}
           AND NOT EXISTS (SELECT 1 FROM wakes r WHERE r.retry_of = w.id)
@@ -389,6 +396,13 @@ export const layer = Layer.effect(
       if (delivered + cancelled === rows.length) return { _tag: "cancelled" };
       return { _tag: "pending" };
     };
+
+    /**
+     * The rows of recipients an operator's message still counts: one that
+     * left the room before its wake ran counts no more, as a deleted one.
+     */
+    const counted = (rows: ReadonlyArray<typeof DeliveryRow.Type>) =>
+      rows.filter((row) => !row.recipient_left);
 
     const sentCardRow = SqlSchema.findOneOption({
       Request: EntryId,
@@ -494,8 +508,14 @@ export const layer = Layer.effect(
           if (state !== null) yield* showHandoff(shown, state);
           continue;
         }
-        if (shown._tag !== "message") continue;
-        const delivery = deliveryOf(yield* deliveryRows(entryId).pipe(Effect.orDie));
+        // A bot's room message wakes the members it mentions, but it was
+        // delivered when it was said: only the operator's waits on its wakes.
+        if (shown._tag !== "message" || shown.author._tag !== "operator") continue;
+        // It shows the delivery of the recipients it still counts, and
+        // `cancelled` when every one left the room before receiving it.
+        const rows = yield* deliveryRows(entryId).pipe(Effect.orDie);
+        const delivery: MessageDelivery | undefined =
+          deliveryOf(counted(rows)) ?? (rows.length > 0 ? { _tag: "cancelled" } : undefined);
         if (delivery !== undefined && !sameDelivery(delivery, shown.delivery)) {
           yield* entries.update({ ...shown, delivery });
         }
@@ -766,6 +786,36 @@ export const layer = Layer.effect(
           if (unread) yield* holdUnread(sql`w.dispatch_id = ${dispatchId}`);
           break;
         case "failed": {
+          // A member a bot's room message woke has no message of the
+          // operator's to show the failure on, and a room offers no retry:
+          // the room shows, once, that the member's turn did not run. One
+          // that failed before, when the engine took it late, showed it then.
+          // When the dispatch carries the operator's room message too, that
+          // message shows the failure, with its Retry, and the room nothing.
+          const [roomWake] = yield* SqlSchema.findAll({
+            Request: DispatchRowId,
+            Result: FailedWake,
+            execute: (id) => sql`
+              SELECT id, bot_id, audience, audience_room_id, payload_json, source_entry_id
+              FROM wakes
+              WHERE dispatch_id = ${id} AND status = 'dispatched' AND kind = 'room'
+                AND priority <> ${PRIORITY.user}
+                AND NOT EXISTS (
+                  SELECT 1 FROM wakes fo_wake
+                  WHERE fo_wake.dispatch_id = ${id} AND fo_wake.kind = 'room'
+                    AND fo_wake.priority = ${PRIORITY.user}
+                )
+              ORDER BY rowid LIMIT 1
+            `,
+          })(dispatchId);
+          if (roomWake !== undefined) {
+            yield* notify(
+              roomWake.bot_id,
+              audienceOf(roomWake),
+              { _tag: "turn-failed", failure: unshownFailure[after.reason] },
+              null,
+            );
+          }
           // Wakes the dispatch failed with before, when the engine took it
           // late, fail again with this reason.
           const all = yield* failedWakes({ dispatchId, reason: after.reason, at });
@@ -854,6 +904,29 @@ export const layer = Layer.effect(
             state: row.undecided ? "unconfirmed" : "not-delivered",
           });
         }
+      }
+      // Its wakes go with it, so what the operator's room messages show
+      // is read now from the other members' wakes, as it will be from then on.
+      const messages = yield* SqlSchema.findAll({
+        Request: Schema.Void,
+        Result: Schema.Struct({ id: EntryId }),
+        execute: () => sql`
+          SELECT DISTINCT rr_entry.id FROM wakes rr_wake
+          JOIN entries rr_entry ON rr_entry.id = rr_wake.source_entry_id
+          WHERE rr_wake.bot_id = ${botId} AND rr_entry.room_id IS NOT NULL
+            AND rr_entry.kind = 'message' AND rr_entry.author_kind = 'operator'
+        `,
+      })(undefined);
+      for (const { id } of messages) {
+        const found = yield* entries.find(id);
+        if (Option.isNone(found) || found.value.entry._tag !== "message") continue;
+        const shown = found.value.entry;
+        const rows = yield* deliveryRows(id);
+        const own = deliveryOf(rows.filter((row) => row.bot_id === botId));
+        const delivery: MessageDelivery =
+          deliveryOf(counted(rows.filter((row) => row.bot_id !== botId))) ??
+          (own?._tag === "delivered" ? own : { _tag: "cancelled" });
+        if (!sameDelivery(delivery, shown.delivery)) yield* entries.update({ ...shown, delivery });
       }
     }, Effect.orDie);
 

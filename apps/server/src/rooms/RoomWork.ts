@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { RoomId } from "@j3-bots/contracts";
+import type { BotId, RoomId } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 
@@ -13,5 +13,17 @@ import type * as Effect from "effect/Effect";
  */
 export class RoomWork extends Context.Service<
   RoomWork,
-  { readonly end: (roomId: RoomId) => Effect.Effect<void> }
+  {
+    readonly end: (roomId: RoomId) => Effect.Effect<void>;
+    /**
+     * The bots left the room: their wakes still held for it are cancelled,
+     * and their room dispatches never sent released with their wakes
+     * cancelled, in the caller's transaction, so none of them reads what is
+     * said there after it left. The operator's messages they never received
+     * count them no more, as for a deleted bot: no wake of theirs for the room
+     * that did not finish, failed ones included. When anything was cancelled
+     * or released, the dispatcher is nudged once the transaction commits.
+     */
+    readonly leave: (roomId: RoomId, botIds: ReadonlyArray<BotId>) => Effect.Effect<void>;
+  }
 >()("@j3-bots/server/rooms/RoomWork") {}
