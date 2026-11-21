@@ -72,6 +72,18 @@ const RunRow = Schema.Struct({
 const decodeRoutine = Schema.decodeUnknownEffect(Routine);
 const encodeTrigger = Schema.encodeEffect(json(RoutineTrigger));
 
+/** Whether two triggers are the same: the same schedule, time or webhook. */
+const sameTrigger = (a: RoutineTrigger, b: RoutineTrigger): boolean => {
+  switch (a._tag) {
+    case "schedule":
+      return b._tag === "schedule" && a.cron === b.cron && a.timeZone === b.timeZone;
+    case "once":
+      return b._tag === "once" && DateTime.Equivalence(a.at, b.at);
+    case "webhook":
+      return b._tag === "webhook";
+  }
+};
+
 export type RoutineFrame =
   | {
       readonly _tag: "snapshot";
@@ -422,23 +434,26 @@ export const layer = Layer.effect(
           const [row] = yield* routineRows({ botId: null, ids: [input.routineId] });
           if (row === undefined) return yield* new NotFound({ resource: "routine" });
           const before = yield* toRoutine(row);
+          // A change that sends the saved trigger again, as a form sending the
+          // whole draft does, gives no new one.
+          const retriggered =
+            change.trigger !== undefined && !sameTrigger(change.trigger, before.trigger);
           const trigger = change.trigger ?? before.trigger;
           const now = yield* DateTime.now;
-          // A one-time trigger whose time has passed paused its routine by
-          // running: a new trigger starts it again, unless the change says.
-          const finished =
+          // A one-time routine whose time has passed, whether it ran or was
+          // paused before its time, starts again when given a new trigger,
+          // unless the same change pauses it.
+          const passed =
             before.trigger._tag === "once" && !DateTime.isGreaterThan(before.trigger.at, now);
-          const enabled =
-            change.enabled ?? (before.enabled || (finished && change.trigger !== undefined));
+          const enabled = change.enabled ?? (before.enabled || (passed && retriggered));
           // A new trigger is checked also on a paused routine, so a resume
           // never meets one that could not have been saved.
-          const planned =
-            change.trigger === undefined ? Option.none() : yield* plannedRun(trigger, now);
-          // The next run moves only with the trigger or the switch: an edit of
-          // the name or the instruction leaves a run that is due to happen.
+          const planned = retriggered ? yield* plannedRun(trigger, now) : Option.none();
+          // The next run moves only with a new trigger or the switch: an edit
+          // of the name or the instruction leaves a run that is due to happen.
           const next = !enabled
             ? Option.none()
-            : change.trigger !== undefined
+            : retriggered
               ? planned
               : enabled !== before.enabled
                 ? yield* plannedRun(trigger, now)

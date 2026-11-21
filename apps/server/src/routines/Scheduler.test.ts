@@ -307,6 +307,31 @@ it.effect(
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("renames a one-time routine that ran through a change that sends its saved trigger", () =>
+  Effect.gen(function* () {
+    const bot = yield* createBot("Ana");
+    const routines = yield* Routines;
+    const reminder = yield* createRoutine(bot.id, {
+      _tag: "once",
+      at: at("1970-01-01T00:10:00.000Z"),
+    });
+    yield* setTime("1970-01-01T00:10:05.000Z");
+    yield* pass;
+
+    // A form sends the whole draft: the trigger it sends is the saved one.
+    const renamed = yield* routines.update({
+      commandId: command(),
+      routineId: reminder.id,
+      changes: { name: "Dentist", trigger: reminder.trigger },
+      author: operator,
+    });
+    assert.deepStrictEqual(
+      [renamed.name, renamed.enabled, renamed.nextRunAt],
+      ["Dentist", false, null],
+    );
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("refuses a trigger that could never run, also on a paused routine", () =>
   Effect.gen(function* () {
     const bot = yield* createBot("Ana");

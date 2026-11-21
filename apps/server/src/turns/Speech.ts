@@ -199,7 +199,8 @@ export const layer = Layer.effect(
      * Brings the session's events up to the request, then looks for its call;
      * the engine records a call apart from the request, so it looks again a
      * bounded number of times. A forward of the same request that committed
-     * meanwhile claimed the call: its stored result is the answer.
+     * meanwhile claimed the call: its stored result is the answer, also when
+     * the engine no longer has the session.
      */
     const match = Effect.fn("Speech.match")(function* (
       call: TurnToolCall,
@@ -211,16 +212,26 @@ export const layer = Layer.effect(
       const digest = yield* toolInputDigest(call.arguments);
       const started = yield* DateTime.now;
       for (let attempt = 0; attempt <= MATCH_RETRIES; attempt++) {
-        yield* observer.synchronize(sessionId, session.value.engine_session_id).pipe(
-          Effect.catchTags({
-            SessionNotFound: () => new TurnEnded(),
-            // Nothing is pinned: the bridge forwards the request again.
-            NotObserved: () => new TurnToolRetry(),
-            EngineUnavailable: () => new TurnToolRetry(),
-            EngineIndeterminate: () => new TurnToolRetry(),
-            EngineIncompatible: () => new TurnToolRetry(),
-          }),
-        );
+        const vanished = yield* observer
+          .synchronize(sessionId, session.value.engine_session_id)
+          .pipe(
+            Effect.as(false),
+            Effect.catchTags({
+              // Archived or removed: what a forward of this request committed
+              // before that is still its answer.
+              SessionNotFound: () => Effect.succeed(true),
+              // Nothing is pinned: the bridge forwards the request again.
+              NotObserved: () => new TurnToolRetry(),
+              EngineUnavailable: () => new TurnToolRetry(),
+              EngineIndeterminate: () => new TurnToolRetry(),
+              EngineIncompatible: () => new TurnToolRetry(),
+            }),
+          );
+        if (vanished) {
+          const stored = yield* storedResult(keyOf(call)).pipe(Effect.orDie);
+          if (Option.isSome(stored)) return { _tag: "stored", result: stored.value.result_json };
+          return yield* new TurnEnded();
+        }
         const found = yield* candidate({ sessionId, tool: call.tool, digest }).pipe(Effect.orDie);
         if (Option.isSome(found)) {
           return {

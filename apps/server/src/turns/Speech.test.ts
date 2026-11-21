@@ -171,6 +171,41 @@ it.effect("answers a forward that overlapped the one that committed with its sto
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("answers an overlapping forward with its stored result after the session vanished", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const tools = yield* BotTools;
+    const { bot, session, turnId } = yield* working("Write the summary.");
+    const args = { text: "The summary is in files/summary.md." };
+    yield* control.toolCall({
+      sessionId: session,
+      turnId,
+      tool: "say",
+      input: args,
+      recorded: "now",
+    });
+    const forward = tools.call({
+      requestId: "call-1",
+      sessionId: session,
+      tool: "say",
+      arguments: args,
+    });
+
+    // The retry waits for the session's events while the first forward
+    // commits, and the session is archived before it hears back.
+    const held = yield* control.holdNext("synchronize");
+    const retry = yield* Effect.forkChild(forward);
+    yield* held.entered;
+    const first = yield* forward;
+    yield* control.archiveSession(session);
+    yield* held.release;
+
+    assert.deepStrictEqual(first, { _tag: "result", value: { status: "recorded" } });
+    assert.deepStrictEqual(yield* Fiber.join(retry), first);
+    assert.deepStrictEqual(yield* botSaid(bot.id), ["The summary is in files/summary.md."]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("gives a request id another session used none of that session's result", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;

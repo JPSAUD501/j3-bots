@@ -103,20 +103,61 @@ it.effect(
         entry._tag === "routine-change" ? [[entry.author, entry.change]] : [],
       );
       assert.deepStrictEqual(changes, [[{ _tag: "bot", botId: bot.id }, "created"]]);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
 
-      // A new schedule is saved in the operator's zone too.
-      const updated = yield* setRoutine(
+it.effect("reads a new schedule in the operator's zone as set now, and keeps a saved one's", () =>
+  Effect.gen(function* () {
+    const { session, turnId } = yield* working;
+    const created = savedBy(
+      yield* setRoutine(
         session,
         turnId,
-        { action: "update", id: created.id, schedule: "30 8 * * 1-5" },
+        {
+          action: "create",
+          name: "Standup",
+          instruction: "Remind my user of the standup.",
+          schedule: "30 8 * * 1-5",
+        },
+        "call-1",
+      ),
+    );
+    assert.deepStrictEqual(created.trigger, {
+      _tag: "schedule",
+      cron: "30 8 * * 1-5",
+      timeZone: "Asia/Tokyo",
+    });
+    yield* (yield* SettingsService).update({
+      commandId: command(),
+      changes: { timeZone: TimeZone.make("Europe/Lisbon") },
+    });
+
+    // A change with no new trigger keeps the zone the schedule was saved in.
+    const renamed = savedBy(
+      yield* setRoutine(
+        session,
+        turnId,
+        { action: "update", id: created.id, name: "Daily standup" },
         "call-2",
-      );
-      assert.deepStrictEqual(savedBy(updated).trigger, {
-        _tag: "schedule",
-        cron: "30 8 * * 1-5",
-        timeZone: "Asia/Tokyo",
-      });
-    }).pipe(Effect.provide(TestDomain.layer)),
+      ),
+    );
+    assert.deepStrictEqual(renamed.trigger, created.trigger);
+
+    // A new schedule is read in the zone the operator keeps now.
+    const moved = savedBy(
+      yield* setRoutine(
+        session,
+        turnId,
+        { action: "update", id: created.id, schedule: "0 9 * * 1-5" },
+        "call-3",
+      ),
+    );
+    assert.deepStrictEqual(moved.trigger, {
+      _tag: "schedule",
+      cron: "0 9 * * 1-5",
+      timeZone: "Europe/Lisbon",
+    });
+  }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect("refuses a routine of another bot, and changes nothing", () =>

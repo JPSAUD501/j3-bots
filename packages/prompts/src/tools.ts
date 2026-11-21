@@ -188,7 +188,10 @@ const SetRoutineFields = toolInput({
     described(Cron, "Five-field cron, in your user's time zone: 3 8 * * 1-5."),
   ),
   at: Schema.optionalKey(
-    described(LocalTime, "One run at this local time in your user's zone: 2026-11-21T09:00."),
+    described(
+      LocalTime,
+      "One run at this time: local time in your user's zone (2026-11-21T09:00), or with Z or an explicit offset (2026-11-21T09:00-03:00).",
+    ),
   ),
   webhook: Schema.optionalKey(
     described(Schema.Literal(true), "Run whenever the routine's address receives a request."),

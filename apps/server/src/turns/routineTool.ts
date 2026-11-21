@@ -63,7 +63,7 @@ const notYours = (id: string | undefined) =>
  * once its job is done.
  *
  * The result is the routine as saved, its webhook's address included: that
- * address is a credential, and the tool result is the only place it goes.
+ * address is a credential, which the server adds to no entry, notice or log.
  */
 export const routineTool = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -103,20 +103,32 @@ export const routineTool = Effect.gen(function* () {
     );
   });
 
+  /**
+   * The operator's zone, which a schedule and a time without an offset are
+   * read in. One the server does not know refuses every such call: only the
+   * operator can choose another, so the bot is told to ask them.
+   */
+  const operatorZone = Effect.fn("RoutineTool.operatorZone")(function* () {
+    const { timeZone } = yield* settings.get;
+    const zone = DateTime.zoneMakeNamed(timeZone);
+    if (Option.isNone(zone)) {
+      return yield* refuse(
+        `Your user's time zone, ${timeZone}, is not one the server knows, so no schedule or time can be set until they choose another in their settings. Tell them so in your reply.`,
+      );
+    }
+    return { name: timeZone, zone: zone.value };
+  });
+
   /** The trigger the call gives, with its times in the operator's zone. */
   const triggerOf = Effect.fn("RoutineTool.triggerOf")(function* (input: SetRoutineInput) {
     if (input.webhook === true) return { _tag: "webhook" } satisfies RoutineTrigger;
     if (input.schedule !== undefined) {
-      const { timeZone } = yield* settings.get;
-      return { _tag: "schedule", cron: input.schedule, timeZone } satisfies RoutineTrigger;
+      const { name } = yield* operatorZone();
+      return { _tag: "schedule", cron: input.schedule, timeZone: name } satisfies RoutineTrigger;
     }
     if (input.at === undefined) return undefined;
-    const { timeZone } = yield* settings.get;
-    const zone = DateTime.zoneMakeNamed(timeZone);
-    if (Option.isNone(zone)) {
-      return yield* refuse(`Your user's time zone, ${timeZone}, is not one the server knows.`);
-    }
-    const instant = localInstant(input.at, zone.value);
+    const { zone } = yield* operatorZone();
+    const instant = localInstant(input.at, zone);
     if (Option.isNone(instant)) {
       return yield* refuse(`${input.at} is not a date and time that exists.`);
     }
