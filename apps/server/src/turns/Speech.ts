@@ -622,10 +622,10 @@ export const layer = Layer.effect(
             files.push(file);
         }
       }
-      // A room message's files go in the envelope of each member it wakes:
-      // what the engine would refuse there is refused here, as the
-      // operator's own files are, and a `say` is held to one rule wherever
-      // it speaks.
+      // Every `say` is held to the engine's rule for one message's files,
+      // wherever it speaks, as the operator's own files are: a room
+      // message's go in the envelope of each member it wakes, where the
+      // engine would refuse what it refuses here.
       const violation = attachmentLimitViolation(
         files.map((file) => ({ mediaType: file.mediaType, size: file.bytes.length })),
       );

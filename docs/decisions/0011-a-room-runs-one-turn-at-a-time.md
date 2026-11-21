@@ -12,8 +12,8 @@ The server already decides which wakes may go into which session from durable ro
 
 At most one turn of a room runs at a time, across all its members.
 
-- A room wake may start a turn only when no turn with the room as its audience runs and no dispatch of the room is `intended`, `accepted`, or `delivered` with no continuation pending. Nothing records that a room is busy: the dispatcher derives it from those rows, and the transaction that writes the dispatch reads it again, with the room still active and the bot still a member.
-- The room's pending wakes go one at a time, by priority and then in the order they were written, whichever member each wakes. The operator's room message has the operator's priority, so it goes before the bots' handoffs.
+- A room wake may start a turn only when no turn with the room as its audience runs and no dispatch of the room is `intended`, `accepted`, or `delivered` with no continuation pending. Nothing records that a room is busy: the dispatcher derives it from those rows, and the transaction that writes the dispatch reads it again, with the room still active and the bot still a member. The transaction that claims a room start's first send reads the same rule once more, without the start itself, since a turn the engine resumed after a usage limit's reset may have started since; a start that finds the room live, or its bot no longer a member, is released unsent and planned again.
+- The room's pending wakes go one at a time, by priority and then in the order they were written, whichever member each wakes. The operator's room message has the operator's priority, so it goes before the bots' handoffs. While the next wake's member cannot get a turn slot, the operator's room wake to a member whose session can start a turn now (it holds a slot already, as with a pending continuation) goes first instead; whenever the next member can start, the order stands.
 - The operator's room message may steer the running turn of its member for the same room, as their private message steers a turn in their conversation. That is the same turn, not a second one.
 - A member's waiting wakes for one room share one envelope; wakes for two rooms never do.
 
@@ -21,7 +21,8 @@ At most one turn of a room runs at a time, across all its members.
 
 - `@everyone` and a chain of handoffs read as a conversation: each member's envelope carries the replies before it, and a reply never crosses another.
 - A room is as slow as its members in turn, and its next wake is the head of its line: while that member is busy elsewhere, every other member's wake for the room waits behind it, even a free member's. The member's other wakes go on as usual.
-- A turn waiting for a usage limit's reset does not hold the room: other members take their turns meanwhile, so the engine can resume it beside another member's room turn.
+- A turn waiting for a usage limit's reset does not hold the room: other members take their turns meanwhile. Once the engine resumes it, its turn holds the room again, and a start written before that is not sent beside it. A start already sent when the engine resumes it still runs beside it: the engine resumes a continuation on its own.
+- A member whose continuation holds the only free turn slot would hold the room's next wake for its whole wait, and with it the operator's word to that member, which would drop the continuation. That is why the operator's wake to such a member may go first: it takes no slot the next member could have.
 - A dispatch whose recovery gave up (`unresolved`) does not hold the room either, and the engine can still apply its key: its turn would then run beside the turn that started in the meantime. Holding the room for as long as the key could land would hold it for up to a day with no way to release it.
 - A busy room holds no slot of the concurrency budget: its next wake is simply not planned yet, so other bots' work goes on.
 - A crash can never leave a room marked busy, since there is no mark. The cost is a short read of a room's dispatches and turns when its wakes are planned, kept small by partial indexes.

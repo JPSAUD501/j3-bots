@@ -354,12 +354,13 @@ export const layer = Layer.effect(
       status: WakeStatus,
       failure_reason: Schema.NullOr(WakeFailure),
       dispatch_status: Schema.NullOr(DispatchStatus),
+      recipient_left: Schema.BooleanFromBit,
     });
     const deliveryRows = SqlSchema.findAll({
       Request: EntryId,
       Result: DeliveryRow,
       execute: (entryId) => sql`
-        SELECT w.bot_id, w.status, w.failure_reason, d.status AS dispatch_status
+        SELECT w.bot_id, w.status, w.failure_reason, d.status AS dispatch_status, w.recipient_left
         FROM wakes w LEFT JOIN dispatches d ON d.id = w.dispatch_id
         WHERE w.source_entry_id = ${entryId}
           AND NOT EXISTS (SELECT 1 FROM wakes r WHERE r.retry_of = w.id)
@@ -395,6 +396,13 @@ export const layer = Layer.effect(
       if (delivered + cancelled === rows.length) return { _tag: "cancelled" };
       return { _tag: "pending" };
     };
+
+    /**
+     * The rows of recipients an operator's message still counts: one that
+     * left the room before its wake ran counts no more, as a deleted one.
+     */
+    const counted = (rows: ReadonlyArray<typeof DeliveryRow.Type>) =>
+      rows.filter((row) => !row.recipient_left);
 
     const sentCardRow = SqlSchema.findOneOption({
       Request: EntryId,
@@ -503,7 +511,11 @@ export const layer = Layer.effect(
         // A bot's room message wakes the members it mentions, but it was
         // delivered when it was said: only the operator's waits on its wakes.
         if (shown._tag !== "message" || shown.author._tag !== "operator") continue;
-        const delivery = deliveryOf(yield* deliveryRows(entryId).pipe(Effect.orDie));
+        // It shows the delivery of the recipients it still counts, and
+        // `cancelled` when every one left the room before receiving it.
+        const rows = yield* deliveryRows(entryId).pipe(Effect.orDie);
+        const delivery: MessageDelivery | undefined =
+          deliveryOf(counted(rows)) ?? (rows.length > 0 ? { _tag: "cancelled" } : undefined);
         if (delivery !== undefined && !sameDelivery(delivery, shown.delivery)) {
           yield* entries.update({ ...shown, delivery });
         }
@@ -778,6 +790,8 @@ export const layer = Layer.effect(
           // operator's to show the failure on, and a room offers no retry:
           // the room shows, once, that the member's turn did not run. One
           // that failed before, when the engine took it late, showed it then.
+          // When the dispatch carries the operator's room message too, that
+          // message shows the failure, with its Retry, and the room nothing.
           const [roomWake] = yield* SqlSchema.findAll({
             Request: DispatchRowId,
             Result: FailedWake,
@@ -786,6 +800,11 @@ export const layer = Layer.effect(
               FROM wakes
               WHERE dispatch_id = ${id} AND status = 'dispatched' AND kind = 'room'
                 AND priority <> ${PRIORITY.user}
+                AND NOT EXISTS (
+                  SELECT 1 FROM wakes fo_wake
+                  WHERE fo_wake.dispatch_id = ${id} AND fo_wake.kind = 'room'
+                    AND fo_wake.priority = ${PRIORITY.user}
+                )
               ORDER BY rowid LIMIT 1
             `,
           })(dispatchId);
@@ -905,7 +924,7 @@ export const layer = Layer.effect(
         const rows = yield* deliveryRows(id);
         const own = deliveryOf(rows.filter((row) => row.bot_id === botId));
         const delivery: MessageDelivery =
-          deliveryOf(rows.filter((row) => row.bot_id !== botId)) ??
+          deliveryOf(counted(rows.filter((row) => row.bot_id !== botId))) ??
           (own?._tag === "delivered" ? own : { _tag: "cancelled" });
         if (!sameDelivery(delivery, shown.delivery)) yield* entries.update({ ...shown, delivery });
       }

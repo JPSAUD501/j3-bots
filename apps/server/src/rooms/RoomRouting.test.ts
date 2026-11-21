@@ -5,6 +5,7 @@ import {
   type BotId,
   type Entry,
   EntryOrder,
+  MAX_MESSAGE_LENGTH,
   type Mentions,
   type Notice,
   type RoomId,
@@ -14,7 +15,9 @@ import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import { Bots } from "../bots/Bots.ts";
 import { Entries } from "../entries/Entries.ts";
@@ -23,6 +26,7 @@ import {
   admittedTurn,
   chainLimits,
   command,
+  concurrentTurns,
   conversation,
   createBot,
   deliveryIs,
@@ -30,6 +34,7 @@ import {
   flushed,
   holdGate,
   nextTurn,
+  providerIs,
   received,
   recoverTimes,
   sendToBot,
@@ -814,5 +819,302 @@ it.effect(
       const second = yield* lastEnvelope(hal);
       assert.include(second, "Anyone?");
       assert.include(second, 'reason="host"');
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+/** The room's dispatches for the bot, oldest first: their status. */
+const roomDispatchStatuses = (botId: BotId, roomId: RoomId) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql<{ readonly status: string }>`
+      SELECT status FROM dispatches WHERE bot_id = ${botId} AND audience_room_id = ${roomId}
+      ORDER BY seq
+    `.pipe(Effect.orDie);
+    return rows.map((row) => row.status);
+  });
+
+/** The member's room turn fails at the usage limit, with a continuation pending for hours. */
+const limitedAt = (one: Member, turnId: TurnId, members: ReadonlyArray<Member>) =>
+  Effect.gen(function* () {
+    const at = DateTime.addDuration(yield* DateTime.now, Duration.hours(5));
+    yield* (yield* TestEngineControl).finishTurn({
+      sessionId: one.session,
+      turnId,
+      outcome: { _tag: "failed", failure: "usage-limit", retryAt: at },
+      continuation: { resumesAt: at },
+    });
+    yield* turnEnded(one.bot.id);
+    yield* settle(members);
+  });
+
+it.effect(
+  "lets the operator's word to a member that holds a turn slot go first while the room's next member cannot get one",
+  () =>
+    Effect.gen(function* () {
+      const [hal, bo, ana] = [yield* member("Hal"), yield* member("Bo"), yield* member("Ana")];
+      const members = [hal, bo, ana];
+      const room = yield* roomWith(hal, [bo, ana]);
+      yield* operatorWrites(room.id, members, "Ana, translate the docs.", to(ana));
+      const limited = yield* nextTurn(ana.bot.id);
+      yield* limitedAt(ana, limited, members);
+      // Ana's pending continuation holds the one slot there is.
+      yield* concurrentTurns(1);
+
+      yield* operatorWrites(room.id, members, "Status, everyone?", { _tag: "everyone" });
+      const anaTurn = yield* nextTurn(ana.bot.id, limited);
+      assert.deepStrictEqual(yield* running(members), ["Ana"]);
+      assert.include(yield* lastEnvelope(ana), "Status, everyone?");
+      yield* finish(ana, anaTurn, members);
+
+      // The slot is free: the rest go in member order.
+      const halTurn = yield* nextTurn(hal.bot.id);
+      assert.deepStrictEqual(yield* running(members), ["Hal"]);
+      yield* finish(hal, halTurn, members);
+      yield* nextTurn(bo.bot.id);
+      assert.deepStrictEqual(yield* running(members), ["Bo"]);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "holds a room start written before another member's continuation resumed until that turn ends",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const sql = yield* SqlClient.SqlClient;
+      const [hal, ana, bo] = [yield* member("Hal"), yield* member("Ana"), yield* member("Bo")];
+      const members = [hal, ana, bo];
+      const room = yield* roomWith(hal, [ana, bo]);
+      yield* operatorWrites(room.id, members, "Ana, translate the docs.", to(ana));
+      const limited = yield* nextTurn(ana.bot.id);
+      yield* limitedAt(ana, limited, members);
+
+      // Bo's start is written while Ana's turn waits for the reset, and
+      // waits at Bo's gate while the engine resumes Ana's turn.
+      const gate = yield* holdGate(bo.bot.id);
+      yield* (yield* Pipeline).sendMessage({
+        commandId: command(),
+        target: { _tag: "room", roomId: room.id },
+        text: "Bo, check the links.",
+        attachments: [],
+        mentions: to(bo),
+      });
+      yield* until(Effect.map(roomDispatchStatuses(bo.bot.id, room.id), (all) => all.length > 0));
+      const resumed = yield* control.resumeContinuation({
+        sessionId: ana.session,
+        turnId: limited,
+      });
+      yield* nextTurn(ana.bot.id, limited);
+      yield* gate.release;
+      yield* settle(members);
+      assert.deepStrictEqual(yield* received(bo.session), []);
+      assert.deepStrictEqual(yield* running(members), ["Ana"]);
+
+      // Bo goes once Ana's turn ended, seeing what it said.
+      yield* say(ana, resumed, { text: "The docs are translated." });
+      yield* finish(ana, resumed, members);
+      yield* nextTurn(bo.bot.id);
+      assert.include(yield* lastEnvelope(bo), "The docs are translated.");
+      const [sent] = yield* sql<{ readonly n: number }>`
+        SELECT COUNT(*) AS n FROM dispatches WHERE bot_id = ${bo.bot.id} AND attempts > 0
+          AND audience_room_id = ${room.id}
+      `.pipe(Effect.orDie);
+      assert.strictEqual(sent?.n, 1);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("sends no room dispatch written for a member that left before it was sent", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const [hal, ana, bo, cy] = [
+      yield* member("Hal"),
+      yield* member("Ana"),
+      yield* member("Bo"),
+      yield* member("Cy"),
+    ];
+    const members = [hal, ana, bo, cy];
+    const room = yield* roomWith(hal, [ana, bo, cy]);
+    const writeTo = (one: Member, text: string) =>
+      Effect.gen(function* () {
+        const gate = yield* holdGate(one.bot.id);
+        const entryId = yield* (yield* Pipeline).sendMessage({
+          commandId: command(),
+          target: { _tag: "room", roomId: room.id },
+          text,
+          attachments: [],
+          mentions: to(one),
+        });
+        yield* until(
+          Effect.map(roomDispatchStatuses(one.bot.id, room.id), (all) => all.length > 0),
+        );
+        return { entryId, gate };
+      });
+
+    // Ana is removed from the room while her dispatch waits at her gate.
+    const forAna = yield* writeTo(ana, "Ana, the budget is secret.");
+    yield* (yield* Rooms).update({
+      commandId: command(),
+      roomId: room.id,
+      changes: { members: [hal.bot.id, bo.bot.id, cy.bot.id] },
+    });
+    assert.deepStrictEqual(yield* roomDispatchStatuses(ana.bot.id, room.id), ["released"]);
+    yield* forAna.gate.release;
+    yield* settle(members);
+    assert.deepStrictEqual(yield* received(ana.session), []);
+    assert.deepStrictEqual(yield* roomWakeStatuses(ana.bot.id, room.id), ["cancelled"]);
+    yield* deliveryIs(forAna.entryId, "cancelled");
+
+    // Bo's membership ends behind the dispatch's back: its send refuses it.
+    const forBo = yield* writeTo(bo, "Bo, the venue is booked.");
+    yield* sql`
+      DELETE FROM room_members WHERE room_id = ${room.id} AND bot_id = ${bo.bot.id}
+    `.pipe(Effect.orDie);
+    yield* forBo.gate.release;
+    yield* settle(members);
+    assert.deepStrictEqual(yield* received(bo.session), []);
+    assert.deepStrictEqual(yield* roomWakeStatuses(bo.bot.id, room.id), ["cancelled"]);
+
+    // Nothing of theirs holds the room.
+    yield* operatorWrites(room.id, members, "Hal, wrap up.", to(hal));
+    yield* nextTurn(hal.bot.id);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("holds a bot's room mention while the provider is at its usage limit", () =>
+  Effect.gen(function* () {
+    const { providerId } = TestDomain.DEFAULT_MODEL;
+    const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
+    const members = [hal, ana];
+    const room = yield* roomWith(hal, [ana]);
+    yield* operatorWrites(room.id, members, "Plan the launch.", nobody);
+    const halTurn = yield* nextTurn(hal.bot.id);
+    yield* say(hal, halTurn, { text: "Ana, find the numbers.", mention: [ana.bot.id] });
+    yield* providerIs(providerId, {
+      _tag: "limited",
+      resetsAt: DateTime.addDuration(yield* DateTime.now, Duration.hours(5)),
+    });
+    yield* finish(hal, halTurn, members);
+    assert.deepStrictEqual(yield* received(ana.session), []);
+    assert.deepStrictEqual(yield* roomWakeStatuses(ana.bot.id, room.id), ["pending"]);
+
+    yield* providerIs(providerId, { _tag: "ready" });
+    yield* settle(members);
+    yield* nextTurn(ana.bot.id);
+    assert.include(yield* lastEnvelope(ana), "Ana, find the numbers.");
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+/** What `sendMessage` answered, in a transaction rolled back so the probe writes nothing. */
+class Probe extends Schema.TaggedError<Probe>()("Probe", { accepted: Schema.Boolean }) {}
+
+/** Text as long as allowed, of the character an envelope escapes into its longest entity. */
+const widestText = (length: number) => '"'.repeat(length);
+
+it.effect(
+  "dispatches a room message accepted at the engine's limit after the room was renamed and given members",
+  () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const pipeline = yield* Pipeline;
+      const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
+      const room = yield* roomWith(hal, [ana]);
+      yield* operatorWrites(room.id, [hal, ana], "Plan the launch.", nobody);
+      const halTurn = yield* nextTurn(hal.bot.id);
+
+      // Text that reads as envelope tags renders longer than it is written,
+      // so a message well under the length limit can reach the engine's.
+      const textOf = (units: number) => "<j3 ".repeat(units);
+      const accepts = (units: number) =>
+        sql
+          .withTransaction(
+            Effect.gen(function* () {
+              const sent = yield* Effect.exit(
+                pipeline.sendMessage({
+                  commandId: command(),
+                  target: { _tag: "room", roomId: room.id },
+                  text: textOf(units),
+                  attachments: [],
+                  mentions: to(ana),
+                }),
+              );
+              return yield* new Probe({ accepted: Exit.isSuccess(sent) });
+            }),
+          )
+          .pipe(
+            Effect.catchTag("Probe", (probe) => Effect.succeed(probe.accepted)),
+            Effect.orDie,
+          );
+      let [low, high] = [1, MAX_MESSAGE_LENGTH / 4];
+      assert.isTrue(yield* accepts(low));
+      assert.isFalse(yield* accepts(high));
+      while (high - low > 1) {
+        const middle = Math.floor((low + high) / 2);
+        if (yield* accepts(middle)) low = middle;
+        else high = middle;
+      }
+      const atBound = yield* pipeline.sendMessage({
+        commandId: command(),
+        target: { _tag: "room", roomId: room.id },
+        text: textOf(low),
+        attachments: [],
+        mentions: to(ana),
+      });
+
+      // Before Ana's wake goes, the room gets its longest name and as many
+      // members as it can have, with names as long as they can be.
+      const joined: Array<Member> = [];
+      for (let index = 0; index < 4; index++) joined.push(yield* member(widestText(40)));
+      const members = [hal, ana, ...joined];
+      yield* (yield* Rooms).update({
+        commandId: command(),
+        roomId: room.id,
+        changes: { name: widestText(200), members: members.map((one) => one.bot.id) },
+      });
+      yield* finish(hal, halTurn, members);
+
+      yield* nextTurn(ana.bot.id);
+      assert.include(yield* lastEnvelope(ana), "j3 ");
+      yield* deliveryIs(atBound, "delivered");
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "shows the operator's room message delivered to the members it reached when another left before receiving it",
+  () =>
+    Effect.gen(function* () {
+      const [hal, ana, bo] = [yield* member("Hal"), yield* member("Ana"), yield* member("Bo")];
+      const members = [hal, ana, bo];
+      const room = yield* roomWith(hal, [ana, bo]);
+      yield* operatorWrites(room.id, members, "Plan the offsite.", nobody);
+      const halTurn = yield* nextTurn(hal.bot.id);
+      const both = yield* operatorWrites(room.id, members, "Ana and Bo, pick a date.", to(ana, bo));
+      yield* (yield* Rooms).update({
+        commandId: command(),
+        roomId: room.id,
+        changes: { members: [hal.bot.id, bo.bot.id] },
+      });
+      yield* deliveryIs(both, "pending");
+      yield* finish(hal, halTurn, members);
+      yield* nextTurn(bo.bot.id);
+      yield* deliveryIs(both, "delivered");
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "leaves the room without a failure notice when the operator's message shows the member's failed dispatch",
+  () =>
+    Effect.gen(function* () {
+      const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
+      const members = [hal, ana];
+      const room = yield* roomWith(hal, [ana]);
+      yield* operatorWrites(room.id, members, "Plan the launch.", nobody);
+      const halTurn = yield* nextTurn(hal.bot.id);
+      yield* say(hal, halTurn, { text: "Ana, find the numbers.", mention: [ana.bot.id] });
+      // Ana's wakes, Hal's mention and the operator's word, go together.
+      const asked = yield* operatorWrites(room.id, members, "Ana, use last year's too.", to(ana));
+      yield* (yield* TestEngineControl).rejectNextDispatch;
+      yield* finish(hal, halTurn, members);
+
+      yield* deliveryIs(asked, "failed");
+      assert.deepStrictEqual(yield* noticesIn(room.id), []);
     }).pipe(Effect.provide(TestDomain.layer)),
 );

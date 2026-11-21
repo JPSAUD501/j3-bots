@@ -642,6 +642,7 @@ export const roomWorkLayer = Layer.effect(
     const stops = yield* Stops;
     const entries = yield* Entries;
     const ledger = yield* Ledger;
+    const signals = yield* Signals;
 
     const end = Effect.fn("RoomWork.end")(function* (roomId: RoomId) {
       // Each bot that had work addressed to the room: its room Stop selects
@@ -687,6 +688,30 @@ export const roomWorkLayer = Layer.effect(
       botIds: ReadonlyArray<BotId>,
     ) {
       if (botIds.length === 0) return;
+      // Its room dispatches never sent go back with their wakes cancelled:
+      // the engine has none of them, and a send would show the bot the room
+      // it left.
+      const unsent = yield* SqlSchema.findAll({
+        Request: Schema.Void,
+        Result: Schema.Struct({ id: DispatchRowId }),
+        execute: () => sql`
+          SELECT id FROM dispatches
+          WHERE status = 'intended' AND attempts = 0 AND audience_room_id = ${roomId}
+            AND ${sql.in("bot_id", botIds)}
+        `,
+      })(undefined);
+      // The operator's messages they never received count them no more,
+      // marked before the wakes are cancelled, which shows those messages.
+      const unsentIds = unsent.map((row) => row.id);
+      const inUnsent = unsentIds.length > 0 ? sql.in("dispatch_id", unsentIds) : sql`0`;
+      yield* sql`
+        UPDATE wakes SET recipient_left = 1
+        WHERE audience_room_id = ${roomId} AND ${sql.in("bot_id", botIds)}
+          AND (status = 'pending' OR (status = 'dispatched' AND ${inUnsent}))
+      `;
+      for (const id of unsentIds) yield* ledger.release(id, { _tag: "cancelled" });
+      // The room is free for its next member's wake.
+      if (unsentIds.length > 0) yield* sql.afterCommit(signals.dispatch.fire);
       const pending = yield* sql<{ readonly id: string }>`
         SELECT id FROM wakes
         WHERE status = 'pending' AND audience = 'room' AND audience_room_id = ${roomId}

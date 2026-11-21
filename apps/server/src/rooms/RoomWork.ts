@@ -17,8 +17,10 @@ export class RoomWork extends Context.Service<
     readonly end: (roomId: RoomId) => Effect.Effect<void>;
     /**
      * The bots left the room: their wakes still held for it are cancelled,
-     * in the caller's transaction, so none of them reads what is said there
-     * after it left.
+     * and their room dispatches never sent released with their wakes
+     * cancelled, in the caller's transaction, so none of them reads what is
+     * said there after it left. The operator's messages they never received
+     * count them no more, as for a deleted bot.
      */
     readonly leave: (roomId: RoomId, botIds: ReadonlyArray<BotId>) => Effect.Effect<void>;
   }

@@ -27,6 +27,14 @@ export default Effect.gen(function* () {
     WHERE room_through IS NOT NULL
   `;
 
+  // A room wake its bot never ran because it left the room first: the
+  // operator's message no longer counts that recipient, as for a deleted bot,
+  // and shows the other recipients' delivery.
+  yield* sql`
+    ALTER TABLE wakes ADD COLUMN recipient_left INTEGER NOT NULL DEFAULT 0
+      CHECK (recipient_left IN (0, 1))
+  `;
+
   // A room runs one turn at a time: planning asks whether any dispatch or
   // turn of the room is live.
   yield* sql`

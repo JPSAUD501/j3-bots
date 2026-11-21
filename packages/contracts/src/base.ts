@@ -4,10 +4,19 @@ import * as Schema from "effect/Schema";
 export const NonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 export const PositiveInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
 
-/** Text a person reads: a name, a label, a line of status. */
-export const Label = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200));
+/** The longest `Label`. */
+export const MAX_LABEL_LENGTH = 200;
 
-const id = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(128));
+/** Text a person reads: a name, a label, a line of status. */
+export const Label = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(MAX_LABEL_LENGTH),
+);
+
+/** The longest id of any kind. */
+export const MAX_ID_LENGTH = 128;
+
+const id = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(MAX_ID_LENGTH));
 
 export const BotId = id.pipe(Schema.brand("BotId"));
 export type BotId = typeof BotId.Type;

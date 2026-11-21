@@ -30,12 +30,11 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
 import { Entries } from "../entries/Entries.ts";
-import { Rooms } from "../rooms/Rooms.ts";
 import { SettingsStore } from "../settings/SettingsStore.ts";
 import { json, Time, timeText } from "../persistence/columns.ts";
 import { Ids } from "../Ids.ts";
 import { transactional } from "../persistence/transaction.ts";
-import { askAnswer, fitsAlone, operatorZone, roomName } from "./envelopes.ts";
+import { askAnswer, fitsAlone, operatorZone, WIDEST_ROOM_NAME } from "./envelopes.ts";
 import { keyedLock } from "./keyedLock.ts";
 import { Ledger } from "./Ledger.ts";
 import {
@@ -189,7 +188,6 @@ export const layer = Layer.effect(
     const signals = yield* Signals;
     const wakes = yield* Wakes;
     const readiness = yield* Readiness;
-    const rooms = yield* Rooms;
     const settings = yield* SettingsStore;
     const transaction = transactional(sql);
     const { sessionLost } = sessionLoss(sql, entries, yield* Ledger, yield* WorkSteps, signals);
@@ -246,7 +244,8 @@ export const layer = Layer.effect(
           card,
           status,
           values: row.value.option_values_json,
-          room: yield* roomName(rooms, row.value.audience_room_id),
+          // At its widest: the room may be renamed before the answer is dispatched.
+          room: row.value.audience_room_id === null ? null : WIDEST_ROOM_NAME,
         }),
         messages: [],
       };

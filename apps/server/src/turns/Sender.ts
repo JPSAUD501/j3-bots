@@ -44,6 +44,7 @@ import { SendPause } from "./SendPause.ts";
 import { SessionGate } from "./SessionGate.ts";
 import { sessionLoss } from "./sessionRecords.ts";
 import { Signals } from "./Signals.ts";
+import { roomLiveSql } from "./roomLive.ts";
 import { stopTargets } from "./stopTargets.ts";
 import { WorkSteps } from "./WorkSteps.ts";
 
@@ -458,12 +459,35 @@ export const layer = Layer.effect(
       }) satisfies DispatchInput;
 
     /**
+     * Whether a room start's bot is still a member, and whether anything else
+     * of the room is live.
+     */
+    const roomStart = SqlSchema.findOne({
+      Request: Schema.Struct({ dispatchId: Schema.String, roomId: Schema.String }),
+      Result: Schema.Struct({ member: Schema.BooleanFromBit, live: Schema.BooleanFromBit }),
+      execute: ({ dispatchId, roomId }) => sql`
+        SELECT
+          EXISTS (
+            SELECT 1 FROM room_members rs_member JOIN dispatches rs_dispatch
+              ON rs_dispatch.bot_id = rs_member.bot_id
+            WHERE rs_member.room_id = ${roomId} AND rs_dispatch.id = ${dispatchId}
+          ) AS member,
+          ${roomLiveSql(sql, sql`${roomId}`, sql`${dispatchId}`)} AS live
+      `,
+    });
+
+    /**
      * The send's claim: the attempt is counted only if the dispatch is still
      * what was read, and still this send's to make. A recovery owns every key
      * already sent, fenced or not; a first send needs an unfenced dispatch in
      * a live session no Stop holds, and a first start a turn slot, by the
      * budget as it stands now: it may have changed while the files staged.
      * One the budget refuses stays unsent, for the dispatcher's next pass.
+     * A first room start needs its bot still a member and nothing else of the
+     * room live (`roomLiveSql`), as planning did: another member's turn the
+     * engine resumed after a usage limit's reset may have started since. One
+     * that finds otherwise is released: its wakes are planned again with the
+     * room as it is then, or cancelled for a bot that left it.
      * A first steer needs the turn it was planned for to be still the
      * admitted one: if that turn ended while the files staged, the engine
      * would start a turn with it, outside the budget, so it is released and
@@ -490,6 +514,13 @@ export const layer = Layer.effect(
           }
           if (row.attempts === 0 && row.delivery === "start") {
             if (!(yield* admitsStart(row.session_id))) return "refused" as const;
+            if (row.audience_room_id !== null) {
+              const room = yield* roomStart({
+                dispatchId: row.id,
+                roomId: row.audience_room_id,
+              }).pipe(Effect.orDie);
+              if (!room.member || room.live) return yield* releaseFirst;
+            }
           }
           if (row.attempts === 0 && row.delivery === "steer") {
             const session = yield* sessionState(row.session_id).pipe(Effect.orDie);

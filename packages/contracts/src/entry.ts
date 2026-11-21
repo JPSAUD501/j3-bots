@@ -64,8 +64,11 @@ const entry = {
  * - `pending`: recorded, and not every recipient has received it yet (one is
  *   busy, or the message waits on a budget).
  * - `delivered`: it reached every recipient.
- * - `cancelled`: the operator stopped or deleted a recipient before it
- *   received the message, so it never will.
+ * - `cancelled`: the operator stopped a recipient before it received the
+ *   message, so it never will. A recipient the operator deleted, or removed
+ *   from the room, before it received the message no longer counts: the
+ *   message shows the other recipients' delivery, and `cancelled` only when
+ *   it had no other.
  * - `failed`: J3 Bots gave up delivering it to a recipient, and will not try
  *   again on its own; `message.retry` sends it again. `rejected`: the engine
  *   refused it. `unresolved`: whether the engine took it could not be
