@@ -11,6 +11,7 @@ export const ptBR: Catalog = {
   "roster.new": "Novo bot ou sala",
   "roster.newBot": "Novo bot",
   "roster.newRoom": "Nova sala",
+  "roster.newRoom.needsBots": "Uma sala precisa de dois bots. Crie outro bot antes.",
   "roster.empty": "Nenhum bot ainda.",
   "roster.noMatch": "Nada corresponde a “{query}”.",
   "roster.noMessages": "Nenhuma mensagem ainda",
@@ -76,6 +77,8 @@ export const ptBR: Catalog = {
   "message.failed.unresolved": "Pode ter sido entregue. Enviar de novo pode repetir o trabalho.",
   "message.failed.stopped": "Não entregue: o trabalho foi interrompido",
   "message.retry": "Enviar de novo",
+  "message.retry.host": "Enviar ao anfitrião ({name})",
+  "message.retry.to": "Enviar para {names}",
 
   "file.open": "Abrir {name}",
   "file.kindAndSize": "{kind} · {size}",
@@ -266,6 +269,65 @@ export const ptBR: Catalog = {
   "room.hopLimit.other":
     "Os bots podem responder uns aos outros {count} vezes seguidas antes de a sala esperar por você.",
 
+  "room.edit": "Editar {name}",
+  "room.archivedLine": "Arquivada. O que foi dito fica, e ela não recebe mensagens.",
+  "room.noMembers": "Não sobrou nenhum bot nesta sala.",
+  "room.archive": "Arquivar {name}",
+  "room.archive.hint":
+    "Arquivar interrompe o que os bots estão fazendo aqui. O que foi dito fica, e você pode desarquivar depois.",
+  "room.unarchive": "Desarquivar {name}",
+  "room.archiveFailed": "{name} não foi arquivada. Tente de novo.",
+  "room.unarchiveFailed": "{name} não foi desarquivada. Tente de novo.",
+  "room.unarchiveNeedsMembers":
+    "{name} não foi desarquivada: antes ela precisa de dois a seis bots e um anfitrião. Desarquive-a de novo para escolhê-los.",
+  "room.delete": "Excluir {name}",
+  "room.delete.title": "Excluir {name}?",
+  "room.delete.body":
+    "{name} e tudo o que foi dito nela são excluídos, e isso não pode ser desfeito. Os bots continuam.",
+  "room.delete.cancel": "Manter {name}",
+  "room.deleteFailed": "{name} não foi excluída. Tente de novo.",
+  "room.composerArchived": "{name} está arquivada, então não recebe mensagens.",
+
+  "roomForm.newTitle": "Nova sala",
+  "roomForm.editTitle": "Editar {name}",
+  "roomForm.unarchiveTitle": "Desarquivar {name}",
+  "roomForm.unarchiveBody":
+    "{name} precisa de dois a seis bots e de um anfitrião para voltar a receber mensagens.",
+  "roomForm.close": "Fechar",
+  "roomForm.name": "Nome",
+  "roomForm.name.required": "Dê um nome à sala.",
+  "roomForm.members": "Bots",
+  "roomForm.members.hint": "Escolha de dois a seis.",
+  "roomForm.members.invalid": "Escolha de dois a seis bots.",
+  "roomForm.host": "Anfitrião",
+  "roomForm.host.hint": "Responde o que você escreve sem mencionar ninguém.",
+  "roomForm.host.pick": "Escolha um anfitrião",
+  "roomForm.host.required": "Escolha o bot que é o anfitrião da sala.",
+  "roomForm.hopLimit": "Respostas seguidas entre bots",
+  "roomForm.hopLimit.hint":
+    "Quantas vezes os bots podem responder uns aos outros antes de a sala esperar por você.",
+  "roomForm.hopLimit.default": "Deixe vazio para usar o padrão, {count}.",
+  "roomForm.hopLimit.invalid": "Use um número inteiro a partir de 1.",
+  "roomForm.cancel": "Cancelar",
+  "roomForm.create": "Criar sala",
+  "roomForm.creating": "Criando…",
+  "roomForm.save": "Salvar alterações",
+  "roomForm.unarchive": "Desarquivar sala",
+  "roomForm.saving": "Salvando…",
+  "roomForm.createFailed": "A sala não foi criada. Tente de novo.",
+  "roomForm.failed": "Suas alterações não foram salvas. Tente de novo.",
+  "roomForm.membersRefused":
+    "Uma sala precisa de dois a seis bots, com o anfitrião entre eles. Talvez um deles tenha sido excluído nesse meio-tempo.",
+  "roomForm.dropped.one": "{names} foi excluído e saiu da seleção.",
+  "roomForm.dropped.other": "{names} foram excluídos e saíram da seleção.",
+  "roomForm.archived": "{name} foi arquivada nesse meio-tempo, então nada foi salvo.",
+  "roomForm.gone": "{name} foi excluída, então nada pode ser salvo.",
+  "roomForm.failedClosed": "As alterações em {name} não foram salvas.",
+  "roomForm.createFailedClosed": "A sala {name} não foi criada.",
+
+  "mention.label": "Mencionar um bot",
+  "mention.everyone": "Cada membro, um de cada vez",
+
   "settings.title": "Configurações",
   "settings.appearance": "Aparência",
   "settings.language": "Idioma",
@@ -309,6 +371,8 @@ export const ptBR: Catalog = {
   "empty.quiet.body": "Nenhuma mensagem ainda. Diga a {name} do que você precisa.",
 
   "message.sending": "Enviando…",
+  "message.notSent.left.one": "Não enviada: {names} não está mais nesta sala",
+  "message.notSent.left.other": "Não enviada: {names} não estão mais nesta sala",
   "message.notSent.refused": "Não enviada: o servidor recusou",
   "message.notSent.tooLong":
     "Não enviada: longa demais para o motor deste bot receber numa mensagem só",
@@ -352,6 +416,9 @@ export const ptBR: Catalog = {
   "composer.dismiss": "Dispensar",
   "composer.unread": "Não foi possível carregar seu rascunho.",
   "composer.unread.retry": "Tentar de novo",
+  "composer.to.host": "Para o anfitrião (agora {name})",
+  "composer.to": "Para {names}",
+  "composer.to.everyone": "Para todos",
   "composer.notSaved": "Ainda não salvo",
   "composer.waitToAttach": "Espere um instante e adicione os arquivos de novo.",
 

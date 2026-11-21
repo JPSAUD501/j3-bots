@@ -19,7 +19,7 @@ import {
   WebhookIcon,
   XIcon,
 } from "lucide-react";
-import type { ReactElement, ReactNode, Ref } from "react";
+import { useState, type ReactElement, type ReactNode, type Ref } from "react";
 import { useBots, useI18n, usePresentation } from "../app/context";
 import type { KeyWith } from "../i18n/i18n";
 import { cn } from "../lib/cn";
@@ -423,50 +423,132 @@ function MemoryList({
   );
 }
 
-/** A room's details: who is in it, who hosts, and how long bots may talk among themselves. */
+export interface RoomDetailsIntents {
+  readonly editRoom: () => void;
+  /** Resolves once the server answered, whatever it said. */
+  readonly archiveRoom: () => Promise<void>;
+  /** Asks for members and a host first when the room lacks them. Resolves like `archiveRoom`. */
+  readonly unarchiveRoom: () => Promise<void>;
+  readonly deleteRoom: () => void;
+}
+
+/**
+ * A room's details: who is in it, who hosts, how long bots may talk among
+ * themselves, and what the operator does to the room itself.
+ */
 export function RoomDetails({
   room,
+  intents,
   onClose,
   headingRef,
   headingId,
 }: {
   room: Room;
+  intents: RoomDetailsIntents;
   onClose: () => void;
   headingRef?: Ref<HTMLHeadingElement>;
   headingId?: string;
 }) {
   const { t, plural } = useI18n();
   const bots = useBots();
+  const { name } = room;
+  const archived = room.status === "archived";
   return (
-    <PanelFrame title={room.name} onClose={onClose} headingRef={headingRef} headingId={headingId}>
+    <PanelFrame title={name} onClose={onClose} headingRef={headingRef} headingId={headingId}>
+      {archived ? (
+        <section className="border-b border-border px-4 py-4">
+          <p className="text-sm text-muted-foreground">{t("room.archivedLine")}</p>
+        </section>
+      ) : (
+        <section className="border-b border-border px-4 py-4">
+          <Button size="sm" onClick={intents.editRoom}>
+            {t("room.edit", { name })}
+          </Button>
+        </section>
+      )}
       <DetailsSection title={t("room.membersTitle")}>
-        <ul className="flex flex-col gap-2">
-          {room.members.map((id) => {
-            const bot = bots.get(id);
-            if (!bot) return null;
-            return (
-              <li
-                key={id}
-                className="flex items-center gap-2.5 [--avatar-cutout:var(--background)]"
-              >
-                <BotAvatar avatar={bot.profile.avatar} state={bot.state} size={24} />
-                <span className="text-sm">{bot.profile.name}</span>
-                {bot.profile.title !== "" && (
-                  <span className="text-xs text-muted-foreground">{bot.profile.title}</span>
-                )}
-                {id === room.hostId && (
-                  <span className="ms-auto rounded-sm bg-muted px-1.5 py-0.5 text-2xs text-muted-foreground">
-                    {t("room.host")}
-                  </span>
-                )}
-              </li>
-            );
-          })}
-        </ul>
+        {room.members.length === 0 ? (
+          <p className="text-xs text-muted-foreground">{t("room.noMembers")}</p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {room.members.map((id) => {
+              const bot = bots.get(id);
+              if (!bot) return null;
+              return (
+                <li
+                  key={id}
+                  className="flex items-center gap-2.5 [--avatar-cutout:var(--background)]"
+                >
+                  <BotAvatar avatar={bot.profile.avatar} state={bot.state} size={24} />
+                  <span className="text-sm">{bot.profile.name}</span>
+                  {bot.profile.title !== "" && (
+                    <span className="text-xs text-muted-foreground">{bot.profile.title}</span>
+                  )}
+                  {id === room.hostId && (
+                    <span className="ms-auto rounded-sm bg-muted px-1.5 py-0.5 text-2xs text-muted-foreground">
+                      {t("room.host")}
+                    </span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </DetailsSection>
       <DetailsSection title={t("room.budget")}>
         <p className="text-sm">{plural("room.hopLimit", room.hopLimit)}</p>
       </DetailsSection>
+      <section className="border-b border-border px-4 py-4">
+        {archived ? (
+          <PendingButton onPress={intents.unarchiveRoom}>
+            {t("room.unarchive", { name })}
+          </PendingButton>
+        ) : (
+          <div className="flex flex-col items-start gap-3">
+            <p className="text-xs text-muted-foreground">{t("room.archive.hint")}</p>
+            <PendingButton onPress={intents.archiveRoom}>
+              {t("room.archive", { name })}
+            </PendingButton>
+          </div>
+        )}
+      </section>
+      {/* Last and on its own, so the one action that cannot be undone is never next to another. */}
+      <section className="px-4 py-4">
+        <Confirm
+          trigger={<Button size="sm" variant="destructive-outline" />}
+          title={t("room.delete.title", { name })}
+          body={t("room.delete.body", { name })}
+          cancel={t("room.delete.cancel", { name })}
+          confirm={t("room.delete", { name })}
+          onConfirm={intents.deleteRoom}
+        >
+          {t("room.delete", { name })}
+        </Confirm>
+      </section>
     </PanelFrame>
+  );
+}
+
+/** A button that takes no second press until what it started has an answer. */
+function PendingButton({
+  onPress,
+  children,
+}: {
+  onPress: () => Promise<void>;
+  children: ReactNode;
+}) {
+  const [pending, setPending] = useState(false);
+  return (
+    <Button
+      size="sm"
+      aria-disabled={pending}
+      onClick={() => {
+        if (pending) return;
+        setPending(true);
+        void onPress().finally(() => setPending(false));
+      }}
+    >
+      {children}
+    </Button>
   );
 }

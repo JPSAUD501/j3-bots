@@ -36,10 +36,23 @@ export function MenuPopup({
   );
 }
 
-export function MenuItem({ onClick, children }: { onClick: () => void; children: ReactNode }) {
+/** A menu row. `hint`, when given, says more on a quieter second line. */
+export function MenuItem({
+  onClick,
+  children,
+  hint,
+}: {
+  onClick: () => void;
+  children: ReactNode;
+  hint?: ReactNode;
+}) {
   return (
-    <MenuPrimitive.Item onClick={onClick} className={item}>
+    <MenuPrimitive.Item
+      onClick={onClick}
+      className={cn(item, hint !== undefined && "h-auto flex-col items-start gap-0 py-1.5")}
+    >
       {children}
+      {hint !== undefined && <span className="max-w-56 text-xs text-muted-foreground">{hint}</span>}
     </MenuPrimitive.Item>
   );
 }

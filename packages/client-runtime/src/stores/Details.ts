@@ -12,6 +12,8 @@ import type {
   PermissionMode,
   Profile,
   ProfileChanges,
+  Room,
+  RoomId,
   Routine,
   RoutineId,
 } from "@j3-bots/contracts";
@@ -52,6 +54,28 @@ export interface BotChanges {
   readonly permissionMode?: PermissionMode;
 }
 
+/** What creating a room takes. A hop limit left out takes the server's default. */
+export interface RoomDraft {
+  readonly name: string;
+  /** Two to six bots, in the order `@everyone` asks them. */
+  readonly members: ReadonlyArray<BotId>;
+  /** One of the members. */
+  readonly hostId: BotId;
+  readonly hopLimit?: number;
+}
+
+/**
+ * What `updateRoom` changes. Fields left out keep their value. An archived
+ * room takes only `archived: false`, which may come with members and a host.
+ */
+export interface RoomChanges {
+  readonly name?: string;
+  readonly members?: ReadonlyArray<BotId>;
+  readonly hostId?: BotId;
+  readonly hopLimit?: number;
+  readonly archived?: boolean;
+}
+
 /** What `writeMemory` writes: the file's new text, over the revision the operator read. */
 export interface MemoryEdit {
   readonly text: string;
@@ -84,7 +108,8 @@ export const freshStartAction = (botId: BotId) => `fresh-start:${botId}`;
 /**
  * A bot as its details show it, and what the operator does to a bot itself:
  * its files, its memory and its routines, live while they are open; creating
- * it, starting it fresh, deleting it.
+ * it, starting it fresh, deleting it. And what the operator does to a room:
+ * creating, changing, archiving and deleting it. The roster shows the result.
  */
 export class Details extends Context.Service<
   Details,
@@ -141,6 +166,13 @@ export class Details extends Context.Service<
     readonly dismissBotSave: (botId: BotId) => void;
     readonly freshStart: (botId: BotId) => Effect.Effect<IntentResult>;
     readonly deleteBot: (botId: BotId, deleteFiles: boolean) => Effect.Effect<IntentResult>;
+    readonly createRoom: (draft: RoomDraft) => Effect.Effect<IntentResult<Room>>;
+    readonly updateRoom: (
+      roomId: RoomId,
+      changes: RoomChanges,
+    ) => Effect.Effect<IntentResult<Room>>;
+    /** Deletes the room and everything said in it. Its bots stay. */
+    readonly deleteRoom: (roomId: RoomId) => Effect.Effect<IntentResult>;
   }
 >()("@j3-bots/client-runtime/stores/Details") {}
 
@@ -342,6 +374,30 @@ export const layer = Layer.effect(
         .pipe(Effect.exit, Effect.map(intentResult));
     });
 
+    const createRoom = Effect.fn("Details.createRoom")(function* (draft: RoomDraft) {
+      const commandId = yield* actions.commandId;
+      return yield* connection
+        .call((client) => client["room.create"]({ commandId, ...draft }))
+        .pipe(Effect.exit, Effect.map(intentResult));
+    });
+
+    const updateRoom = Effect.fn("Details.updateRoom")(function* (
+      roomId: RoomId,
+      changes: RoomChanges,
+    ) {
+      const commandId = yield* actions.commandId;
+      return yield* connection
+        .call((client) => client["room.update"]({ commandId, roomId, ...changes }))
+        .pipe(Effect.exit, Effect.map(intentResult));
+    });
+
+    const deleteRoom = Effect.fn("Details.deleteRoom")(function* (roomId: RoomId) {
+      const commandId = yield* actions.commandId;
+      return yield* connection
+        .call((client) => client["room.delete"]({ commandId, roomId }))
+        .pipe(Effect.exit, Effect.map(intentResult));
+    });
+
     return Details.of({
       files: files.acquire,
       memory: memory.acquire,
@@ -358,6 +414,9 @@ export const layer = Layer.effect(
       dismissBotSave: (botId) => dismissFailed(botSaves, botId),
       freshStart,
       deleteBot,
+      createRoom,
+      updateRoom,
+      deleteRoom,
     });
   }),
 );

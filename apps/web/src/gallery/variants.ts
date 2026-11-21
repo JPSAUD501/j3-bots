@@ -79,6 +79,7 @@ export function galleryVariants(now: DateTime.Utc) {
     text,
     attachments: [],
     mentions: null,
+    labels: [],
     createdAt: ago(1),
     status,
   });

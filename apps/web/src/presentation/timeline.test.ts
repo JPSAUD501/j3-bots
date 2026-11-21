@@ -61,6 +61,7 @@ describe("buildTimeline", () => {
       text: "hello",
       attachments: [],
       mentions: null,
+      labels: [],
       createdAt: at("2026-11-20T10:01:00Z"),
       status: { _tag: "sending" },
     };

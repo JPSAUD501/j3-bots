@@ -6,6 +6,7 @@
  */
 import {
   type DraftFile,
+  type DraftMention,
   type PairingFailure,
   type RecentTurns,
   type RecentTurnsState,
@@ -13,6 +14,7 @@ import {
 } from "@j3-bots/client-runtime";
 import {
   AttachmentId,
+  type BotId,
   Conflict,
   type EngineStatus,
   Invalid,
@@ -21,6 +23,7 @@ import {
   ModelId,
   ProviderId,
   type ProviderStatus,
+  type Room,
   type RosterItem,
   type RosterItemKey,
   type UsageWindow,
@@ -29,10 +32,10 @@ import { avatarShapeNames, botColors, colors, radii, typeScale } from "@j3-bots/
 import * as DateTime from "effect/DateTime";
 import { useId, useState, type ReactNode } from "react";
 import { ClockProvider, OperatorTimeZone } from "../app/clock";
-import { BotsProvider, I18nProvider } from "../app/context";
+import { BotsProvider, I18nProvider, useI18n } from "../app/context";
 import { ApprovalCard } from "../components/ApprovalCard";
 import { BotAvatar, RoomAvatar } from "../components/BotAvatar";
-import { Composer } from "../components/Composer";
+import { Composer, type MentionCandidate, MentionList } from "../components/Composer";
 import { ConversationHeader } from "../components/ConversationHeader";
 import { BotDetails, RoomDetails } from "../components/DetailsPanel";
 import { ConnectionBanner } from "../components/ConnectionBanner";
@@ -44,6 +47,7 @@ import { MessageBubble } from "../components/MessageBubble";
 import { NoticeLine } from "../components/NoticeLine";
 import { Incompatible, Pairing, StorageFailed } from "../components/Pairing";
 import { QuestionCard } from "../components/QuestionCard";
+import { RoomForm, type RoomFormProps } from "../components/RoomDialog";
 import { RosterRow } from "../components/RosterRow";
 import { RoutineChangeCard } from "../components/RoutineChangeCard";
 import { SecretRequestCard } from "../components/SecretRequestCard";
@@ -52,6 +56,7 @@ import { UsageSection } from "../components/UsageSection";
 import { WorkFold } from "../components/WorkFold";
 import { locales, type Locale } from "../i18n/i18n";
 import { cn } from "../lib/cn";
+import { addressed, addresseeOf, addresseeLine, mentionOptions } from "../presentation/mentions";
 import { Shell } from "../shell/Shell";
 import { shellShortcuts } from "../shell/shortcuts";
 import { SAMPLE_NOW, ids, sampleTeam } from "./sample";
@@ -112,6 +117,7 @@ export default function GalleryPage() {
                 <ComposerSection />
                 <DetailsSection />
                 <EditingSection />
+                <RoomsSection />
                 <UsageGallerySection />
                 <EmptyStatesSection />
                 <ConnectionSection />
@@ -340,6 +346,7 @@ const notSubmitting = () => false;
 
 function BubblesSection() {
   const { bubbles } = variants;
+  const { t } = useI18n();
   return (
     <Section title="Bubbles">
       <Labeled label="Single bubbles, with no tightened corner: the operator, queued, cancelled, refused, perhaps delivered, being sent again, on its way from this device, not sent from it, answered with no record on this device, a bot with code, a bot with files">
@@ -394,6 +401,16 @@ function BubblesSection() {
             onRetry={nothing}
             onDiscard={nothing}
           />
+          {/* In a room, refused because the member it mentions left: Send again sends it to the host. */}
+          <MessageBubble
+            message={bubbles.notSent}
+            position="single"
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+            onDiscard={nothing}
+            leftRoom={["Wren"]}
+            retryLabel={t("message.retry.host", { name: "Scout" })}
+          />
           <MessageBubble
             message={bubbles.unrecorded}
             position="single"
@@ -418,7 +435,7 @@ function BubblesSection() {
         <div className="max-w-(--layout-text-column)">
           <Timeline
             entries={team.entries[`bot:${ids.scout}`] ?? []}
-            inRoom={false}
+            room={null}
             workSteps={workSteps}
             submitting={notSubmitting}
             intents={timelineIntents}
@@ -429,7 +446,7 @@ function BubblesSection() {
         <div className="max-w-(--layout-text-column)">
           <Timeline
             entries={team.entries[`room:${ids.newsletter}`] ?? []}
-            inRoom
+            room={team.room}
             workSteps={workSteps}
             submitting={notSubmitting}
             intents={timelineIntents}
@@ -588,6 +605,7 @@ function ComposerDemo({
   sending = false,
   notSaved = false,
   replaced: initialReplaced = null,
+  mentionable,
 }: {
   initial: string;
   recipient: string;
@@ -597,9 +615,29 @@ function ComposerDemo({
   notSaved?: boolean;
   /** Text another tab replaced, on offer. */
   replaced?: string | null;
+  /** In a room, its members and its host. */
+  mentionable?: { readonly members: ReadonlyArray<MentionCandidate>; readonly hostId: BotId };
 }) {
+  const i18n = useI18n();
   const draftKey = useId();
   const [value, setValue] = useState(initial);
+  const [mentions, setMentions] = useState<ReadonlyArray<DraftMention>>([]);
+  const addressee =
+    mentionable === undefined
+      ? null
+      : addresseeLine(
+          addresseeOf(
+            addressed(
+              value,
+              mentions,
+              mentionable.members.map((member) => member.id),
+            )?.mentions ?? null,
+            mentionable.hostId,
+            (botId) => mentionable.members.find((member) => member.id === botId)?.name,
+            i18n,
+          ),
+          i18n,
+        );
   const [files, setFiles] = useState(initialFiles);
   const [replaced, setReplaced] = useState(initialReplaced);
   return (
@@ -607,14 +645,23 @@ function ComposerDemo({
       draftKey={draftKey}
       recipient={recipient}
       value={value}
-      onValueChange={setValue}
+      mentions={mentions}
+      onValueChange={(text, picked) => {
+        setValue(text);
+        setMentions(picked);
+      }}
       files={files}
       sending={sending}
       notSaved={notSaved}
       onAttachFiles={nothing}
       onDetachFile={(key) => setFiles((current) => current.filter((file) => file.key !== key))}
-      onSend={() => setValue("")}
+      onSend={() => {
+        setValue("");
+        setMentions([]);
+      }}
       onDictate={nothing}
+      {...(mentionable === undefined ? {} : { mentionable: mentionable.members })}
+      {...(addressee === null ? {} : { addressee })}
       {...(replaced === null
         ? {}
         : {
@@ -622,6 +669,7 @@ function ComposerDemo({
               revision: 1,
               onRestore: () => {
                 setValue(replaced);
+                setMentions([]);
                 setReplaced(null);
               },
               onDismiss: () => setReplaced(null),
@@ -705,6 +753,26 @@ const detailsIntents = {
   deleteBot: nothing,
 };
 
+const roomIntents = {
+  editRoom: nothing,
+  archiveRoom: () => Promise.resolve(),
+  unarchiveRoom: () => Promise.resolve(),
+  deleteRoom: nothing,
+};
+
+/** The sample room after deleting bots left it with one: archived, with no host. */
+const archivedRoom: Room = {
+  id: team.room.id,
+  name: team.room.name,
+  hopLimit: team.room.hopLimit,
+  pinned: false,
+  createdAt: team.room.createdAt,
+  status: "archived",
+  members: [team.bots.scout.id],
+  hostId: null,
+  archivedAt: SAMPLE_NOW,
+};
+
 function Pane({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-[40rem] w-(--layout-details-width) max-w-full flex-col overflow-hidden rounded-md border border-border">
@@ -741,7 +809,10 @@ function DetailsSection() {
           />
         </Pane>
         <Pane>
-          <RoomDetails room={team.room} onClose={nothing} />
+          <RoomDetails room={team.room} intents={roomIntents} onClose={nothing} />
+        </Pane>
+        <Pane>
+          <RoomDetails room={archivedRoom} intents={roomIntents} onClose={nothing} />
         </Pane>
       </div>
     </Section>
@@ -872,6 +943,125 @@ function EditingSection() {
           }}
         />
       </div>
+    </Section>
+  );
+}
+
+/** The room form as the dialog holds it, in a frame the size of a sheet. */
+function RoomFormVariant({
+  label,
+  ...props
+}: { label: string } & Partial<Omit<RoomFormProps, "titleId">>) {
+  const titleId = useId();
+  return (
+    <Frame label={label} width={400} height={720}>
+      <div className="h-full bg-background">
+        <RoomForm
+          mode={{ _tag: "create" }}
+          bots={bots}
+          defaultHopLimit={team.settings.budgets.hops}
+          connected
+          onSubmit={() => new Promise(() => {})}
+          onClose={nothing}
+          titleId={titleId}
+          {...props}
+        />
+      </div>
+    </Frame>
+  );
+}
+
+const roomMembers: ReadonlyArray<MentionCandidate> = team.room.members.flatMap((id) => {
+  const bot = bots.find((candidate) => candidate.id === id);
+  return bot ? [{ id, name: bot.profile.name, avatar: bot.profile.avatar }] : [];
+});
+
+/** The mention list as it opens above the composer, for `query` typed after `@`. */
+function MentionVariant({
+  label,
+  query,
+  active,
+}: {
+  label: string;
+  query: string;
+  active: number;
+}) {
+  const listId = useId();
+  return (
+    <Labeled label={label}>
+      <div className="relative h-56 max-w-72">
+        <MentionList
+          id={listId}
+          options={mentionOptions(query, roomMembers)}
+          members={roomMembers}
+          active={active}
+          optionId={(index) => `${listId}-${index}`}
+          onPick={nothing}
+        />
+      </div>
+    </Labeled>
+  );
+}
+
+function RoomsSection() {
+  const { scout, wren, juniper } = team.bots;
+  return (
+    <Section title="Rooms: the room form and mentions">
+      <div className="flex flex-wrap gap-4">
+        <RoomFormVariant label="New room: empty; pick bots and the host follows them, then Create to see what is missing" />
+        <RoomFormVariant
+          label="New room: the server refused the bots, one of them deleted meanwhile"
+          initial={{
+            name: "Launch week",
+            members: [scout.id, wren.id],
+            hostPick: null,
+            hopLimit: "",
+          }}
+          initialFailure={{ _tag: "refused", error: new Invalid({ reason: "room-members" }) }}
+        />
+        <RoomFormVariant
+          label="Edit: as saved"
+          mode={{ _tag: "edit", room: team.room, gone: false }}
+        />
+        <RoomFormVariant
+          label="Edit: the room was archived meanwhile, offline"
+          mode={{ _tag: "edit", room: team.room, gone: false }}
+          connected={false}
+          initial={{
+            name: team.room.name,
+            members: [juniper.id, scout.id],
+            hostPick: juniper.id,
+            hopLimit: "2",
+          }}
+          initialFailure={{ _tag: "refused", error: new Conflict({ reason: "room-archived" }) }}
+        />
+        <RoomFormVariant
+          label="Unarchive: a room left with one bot"
+          mode={{ _tag: "unarchive", room: archivedRoom, gone: false }}
+        />
+        <RoomFormVariant
+          label="Edit: the room was deleted while the form was open; it stays open and saves nothing"
+          mode={{ _tag: "edit", room: team.room, gone: true }}
+        />
+      </div>
+      <div className="flex flex-wrap gap-6">
+        <MentionVariant
+          label="Mentions: after @, every member and @everyone, the second one active"
+          query=""
+          active={1}
+        />
+        <MentionVariant label="Mentions: after @w, the members it matches" query="w" active={0} />
+        <MentionVariant label="Mentions: after @ev, only everyone" query="ev" active={0} />
+      </div>
+      <Labeled label="Composer in a room: type @ to open the list; arrows, Enter, Tab and Escape work, and so does a tap. Only a pick mentions; the line under it says who the message wakes">
+        <div className="max-w-(--layout-text-column) pt-60">
+          <ComposerDemo
+            initial=""
+            recipient={team.room.name}
+            mentionable={{ members: roomMembers, hostId: team.room.hostId }}
+          />
+        </div>
+      </Labeled>
     </Section>
   );
 }

@@ -69,6 +69,7 @@ export {
   type ConversationItem,
   Conversations,
   type ConversationState,
+  type MentionLabel,
   messageStatus,
   type MessageStatus,
   type OutgoingMessage,
@@ -81,14 +82,18 @@ export {
   freshStartAction,
   type MemoryEdit,
   memorySaveKey,
+  type RoomChanges,
+  type RoomDraft,
   type Save,
   type SaveResult,
 } from "./stores/Details.ts";
 export { Devices, type RevokeResult } from "./stores/Devices.ts";
 export {
+  type Addressing,
   type Draft,
   type DraftChangedElsewhere,
   type DraftFile,
+  DraftMention,
   type DraftSendResult,
 } from "./stores/Drafts.ts";
 export { EngineStatus } from "./stores/EngineStatus.ts";
