@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import { type BotId, CommandId, type DeviceId, type Language, PushToken } from "@j3-bots/contracts";
+import {
+  type BotId,
+  CommandId,
+  type DeviceId,
+  type Language,
+  PushData,
+  PushToken,
+} from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -20,12 +27,12 @@ import * as ExpoPushSender from "./ExpoPushSender.ts";
 import { PushReceiptId, PushSender } from "./PushSender.ts";
 import { PushWorker, RECEIPT_DELAY, sendBackoff } from "./PushWorker.ts";
 
-/** A message as it reached Expo. */
+/** A message as it reached Expo, its data as the app decodes it. */
 const Sent = Schema.Struct({
   to: Schema.String,
   title: Schema.String,
   body: Schema.String,
-  data: Schema.Struct({ deviceId: Schema.String, entryId: Schema.String }),
+  data: PushData,
   tag: Schema.optional(Schema.String),
   collapseId: Schema.optional(Schema.String),
 });
@@ -243,6 +250,8 @@ it.effect("sends again after a 5xx, then reads the receipt and lets the delivery
     assert.isString(second?.tag);
     assert.isUndefined(second?.collapseId);
     assert.deepStrictEqual(second?.to, "ExponentPushToken[fixture-Phone]");
+    // A tap opens the conversation it is about.
+    assert.deepStrictEqual(second?.data.target, { _tag: "conversation", botId: scout.id });
 
     yield* TestClock.adjust(RECEIPT_DELAY);
     yield* deliverPending;

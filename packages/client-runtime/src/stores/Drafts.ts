@@ -147,6 +147,14 @@ const localFileOf = (file: DraftFile): LocalFile =>
       }
     : file;
 
+/**
+ * The files `draft` holds toward its message, uploaded or uploading: those a
+ * file added to it is admitted against (`admitFiles`). A failed file holds
+ * no place.
+ */
+export const heldFiles = (draft: Draft | undefined): ReadonlyArray<LocalFile> =>
+  (draft?.files ?? []).filter((file) => file._tag !== "failed").map(localFileOf);
+
 const isEmpty = (draft: Draft) => draft.text === "" && draft.files.length === 0;
 
 /** What the device keeps of a draft: its text, its mentions and the files already on the server. */
@@ -790,9 +798,7 @@ export const layer = Layer.effect(
     ) {
       const key = targetKey(target);
       if (state.get().get(key)?.sending === true || closed()) return;
-      const held = (state.get().get(key)?.files ?? [])
-        .filter((file) => file._tag !== "failed")
-        .map(localFileOf);
+      const held = heldFiles(state.get().get(key));
       const picked = added.map((file) => ({
         local: {
           name: file.name,

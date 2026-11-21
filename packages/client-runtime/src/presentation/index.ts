@@ -38,6 +38,12 @@ export {
   movedOption,
 } from "./mentions.ts";
 export { type Inline, parseMessageText } from "./messageText.ts";
+export {
+  notificationOpening,
+  type NotificationOpening,
+  type OpenedNotification,
+  pushOpening,
+} from "./notificationOpening.ts";
 export { assembleAnswers, type QuestionDraft } from "./question.ts";
 export {
   blankRoomForm,
@@ -69,6 +75,7 @@ export {
   rosterKeyText,
 } from "./roster.ts";
 export { shownSaveProblem } from "./saves.ts";
+export { type Shared, sharedDraft, type SharedDraft, type SharedFile } from "./share.ts";
 export { minuteText, readCron, timeOfDayText, weekdayList, zoneName } from "./schedule.ts";
 export { editsAfterFailedSave, noEdits, type SettingsEdits, settingsPatch } from "./settings.ts";
 export {
