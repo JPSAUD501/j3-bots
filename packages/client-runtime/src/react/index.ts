@@ -20,12 +20,14 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import type { ConversationHandle, J3Client, WorkStepsHandle } from "../client.ts";
+import type { ConversationHandle, J3Client, UsageHandle, WorkStepsHandle } from "../client.ts";
 import { type ActionState, cardAction } from "../intents/Actions.ts";
 import type { Readable } from "../Store.ts";
 import { type ConversationState, targetKey } from "../stores/Conversations.ts";
 import type { Draft } from "../stores/Drafts.ts";
 import type { Loaded } from "../stores/reads.ts";
+import type { Synced } from "../stores/synced.ts";
+import type { RecentTurns } from "../stores/Usage.ts";
 import { rosterRows } from "../stores/Roster.ts";
 import type { WorkStepsState } from "../stores/WorkSteps.ts";
 
@@ -170,4 +172,17 @@ export const useWorkSteps = (foldId: EntryId): WorkStepsState | null => {
     client.openWorkSteps(id),
   );
   return useHeldState(handle);
+};
+
+/**
+ * The turns bots spent recently while `held`, read again each time it
+ * becomes true; `null` for the first render or while not held.
+ */
+export const useRecentTurns = (
+  held: boolean,
+): { readonly state: Synced<RecentTurns> | null; readonly loadMore: () => void } => {
+  const handle: UsageHandle | null = useHeld(held ? "usage" : null, same, (client) =>
+    client.openUsage(),
+  );
+  return { state: useHeldState(handle), loadMore: handle?.loadMore ?? (() => {}) };
 };

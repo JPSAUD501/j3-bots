@@ -3,6 +3,7 @@
  * A sample team for development and the gallery: every bot state, every kind of
  * entry, typed from the contracts. Development only; builds do not include it.
  */
+import type { RecentTurns } from "@j3-bots/client-runtime";
 import {
   AttachmentId,
   BotId,
@@ -30,6 +31,8 @@ import {
   type RosterItem,
   type Routine,
   type Settings,
+  type UsageRoutine,
+  type UsageTurn,
   type WorkStep,
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
@@ -76,7 +79,10 @@ export function sampleTeam(now: DateTime.Utc) {
           { id: ModelId.make("claude-opus-5-5"), name: "Claude Opus 5.5" },
           { id: ModelId.make("claude-sonnet-5-5"), name: "Claude Sonnet 5.5" },
         ],
-        usage: [{ label: "5 hours", usedPercent: 38, resetsAt: ahead(140) }],
+        usage: [
+          { label: "5 hours", usedPercent: 38, resetsAt: ahead(140) },
+          { label: "Weekly", usedPercent: 81, resetsAt: ahead(3 * 24 * 60 + 200) },
+        ],
       },
       {
         id: codex,
@@ -641,6 +647,55 @@ export function sampleTeam(now: DateTime.Utc) {
     ]),
   );
 
+  // The day's turns, newest first: Scout's research and its routine, Atlas's
+  // webhook runs, one run of a routine deleted since, and Juniper on Codex
+  // before it was signed out.
+  const priceWatch: UsageRoutine = {
+    _tag: "routine",
+    id: RoutineId.make("price-drop-watch"),
+    name: "Price drop watch",
+  };
+  const migrations: UsageRoutine = {
+    _tag: "routine",
+    id: RoutineId.make("migration-finished"),
+    name: "Migration finished",
+  };
+  const spent = (
+    minutesAgo: number,
+    botId: BotId,
+    routine: UsageRoutine | null = null,
+    providerId = claude,
+  ): UsageTurn => ({
+    botId,
+    routine,
+    providerId,
+    startedAt: ago(minutesAgo),
+    finishedAt: minutesAgo < 4 ? null : ago(minutesAgo - 2),
+  });
+  const recentTurns: RecentTurns = {
+    turns: [
+      spent(3, ids.scout),
+      spent(12, ids.scout),
+      spent(28, ids.atlas),
+      spent(41, ids.scout),
+      spent(66, ids.ledger),
+      spent(95, ids.scout),
+      spent(180, ids.atlas, migrations),
+      spent(240, ids.atlas, migrations),
+      spent(353, ids.scout, priceWatch),
+      spent(410, ids.scout),
+      spent(530, ids.atlas, { _tag: "deleted" }),
+      spent(610, ids.juniper, null, codex),
+      spent(640, ids.juniper, null, codex),
+      spent(720, ids.atlas, migrations),
+      spent(1_300, ids.scout, priceWatch),
+    ],
+    since: ago(24 * 60),
+    hasMore: false,
+    canLoadMore: false,
+    loadingMore: false,
+  };
+
   const settings: Settings = {
     operatorName: "Sam",
     timeZone: TimeZone.make("America/Sao_Paulo"),
@@ -678,6 +733,7 @@ export function sampleTeam(now: DateTime.Utc) {
     memory,
     settings,
     devices,
+    recentTurns,
   };
 }
 

@@ -18,11 +18,13 @@ import {
   Invalid,
   NotFound,
   ProviderId,
+  type UsageTurn,
 } from "@j3-bots/contracts";
 import * as Server from "@j3-bots/server/testing";
 import { assert, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -56,6 +58,7 @@ import { Drafts } from "../src/stores/Drafts.ts";
 import { Presence } from "../src/stores/Presence.ts";
 import { Roster } from "../src/stores/Roster.ts";
 import { Settings } from "../src/stores/Settings.ts";
+import { USAGE_PAGE, Usage } from "../src/stores/Usage.ts";
 import { SignOut } from "../src/intents/SignOut.ts";
 import * as TestPlatform from "./platform.ts";
 
@@ -84,6 +87,8 @@ class Fakes extends Context.Service<
     readonly refusing: Set<string>;
     /** Every view a socket reported, with the device the socket belongs to. */
     readonly views: Queue.Queue<ReportedView>;
+    /** The turns `usage.turns` answers from, newest first. */
+    readonly turns: Array<UsageTurn>;
   }
 >()("@j3-bots/client-runtime/test/client.test/Fakes") {}
 
@@ -97,6 +102,7 @@ const fakes = Layer.effect(
       applied: new Map(),
       refusing: new Set(),
       views: yield* Queue.unbounded<ReportedView>(),
+      turns: [],
     });
   }),
 );
@@ -181,7 +187,17 @@ const unserved = Layer.mergeAll(
   J3Rpcs.toLayerHandler("message.retry", notFaked),
   J3Rpcs.toLayerHandler("bot.stop", notFaked),
   J3Rpcs.toLayerHandler("bot.freshStart", notFaked),
-  J3Rpcs.toLayerHandler("usage.turns", notFaked),
+  J3Rpcs.toLayerHandler(
+    "usage.turns",
+    Effect.gen(function* () {
+      const { turns } = yield* Fakes;
+      return ({ since, limit }) =>
+        Effect.sync(() => {
+          const after = turns.filter((turn) => DateTime.isGreaterThan(turn.startedAt, since));
+          return { turns: after.slice(0, limit), hasMore: after.length > limit };
+        });
+    }),
+  ),
 ).pipe(Layer.provide(fakes));
 
 const server = Server.layer(unserved).pipe(Layer.provideMerge(fakes));
@@ -493,6 +509,52 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         devices._tag === "ready" ? devices.value.find((device) => device.current) : null;
       assert.strictEqual(current?.name, "Test client");
     }).pipe(Effect.provide(client())),
+  );
+
+  it.effect(
+    "reads the day's turns while held, a page more on demand, up to what one read takes",
+    () =>
+      Effect.gen(function* () {
+        yield* pairAndConnect;
+        const botId = yield* createBot("Ana");
+        const now = yield* DateTime.now;
+        const turnAt = (minutesAgo: number): UsageTurn => {
+          const startedAt = DateTime.subtract(now, { minutes: minutesAgo });
+          return {
+            botId,
+            routine: null,
+            providerId: ProviderId.make("claude"),
+            startedAt,
+            finishedAt: startedAt,
+          };
+        };
+        // More than one read takes within the day, and one turn from the day before.
+        const { turns } = yield* Fakes;
+        turns.push(
+          ...Array.from({ length: 1_100 }, (_, index) => turnAt(index + 1)),
+          turnAt(25 * 60),
+        );
+
+        const view = yield* (yield* Usage).open;
+        const first = yield* waitFor(view.state, (state) => state._tag === "ready");
+        assert.deepStrictEqual(
+          first._tag === "ready" && [first.value.turns.length, first.value.canLoadMore],
+          [USAGE_PAGE, true],
+        );
+        let read = view.state.get();
+        while (read._tag === "ready" && read.value.canLoadMore) {
+          yield* view.loadMore;
+          read = view.state.get();
+        }
+        assert.deepStrictEqual(
+          read._tag === "ready" && [
+            read.value.turns.length,
+            read.value.hasMore,
+            read.value.loadingMore,
+          ],
+          [1_000, true, false],
+        );
+      }).pipe(Effect.scoped, Effect.provide(client())),
   );
 
   it.effect("asks to pair again when the ticket route refuses the saved credential", () =>

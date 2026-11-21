@@ -59,6 +59,7 @@ import type { Loaded } from "./stores/reads.ts";
 import * as Roster from "./stores/Roster.ts";
 import * as Settings from "./stores/Settings.ts";
 import type { Synced } from "./stores/synced.ts";
+import * as Usage from "./stores/Usage.ts";
 import * as WorkSteps from "./stores/WorkSteps.ts";
 
 /** What a platform provides to run the client. See `ports.ts`. */
@@ -85,6 +86,7 @@ export const layer = SignOut.layer.pipe(
       Details.layer,
       WorkSteps.layer,
       Presence.layer,
+      Usage.layer,
     ),
   ),
   Layer.provideMerge(Conversations.layer),
@@ -105,6 +107,13 @@ export interface ConversationHandle {
 
 export interface WorkStepsHandle {
   readonly state: Readable<WorkSteps.WorkStepsState>;
+  readonly release: () => void;
+}
+
+export interface UsageHandle {
+  readonly state: Readable<Synced<Usage.RecentTurns>>;
+  /** Reads more of the period's turns; see `Usage.RecentTurnsView`. */
+  readonly loadMore: () => void;
   readonly release: () => void;
 }
 
@@ -151,6 +160,8 @@ export interface J3Client {
     readonly [Section in keyof Settings.SettingsSaves]: Readable<Settings.SettingsSaves[Section]>;
   };
   readonly devices: Readable<Synced<ReadonlyArray<Device>>>;
+  /** The turns bots spent recently, read while held, for the usage view. */
+  readonly openUsage: () => UsageHandle;
   /** Actions in flight or just accepted, by `cardAction`, `retryAction` or `stopAction` key. */
   readonly actions: Readable<ReadonlyMap<string, Actions.ActionState>>;
 
@@ -318,6 +329,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
         conversations: yield* Conversations.Conversations,
         workSteps: yield* WorkSteps.WorkSteps,
         presence: yield* Presence.Presence,
+        usage: yield* Usage.Usage,
         drafts: yield* Drafts.Drafts,
         files: yield* Files.Files,
         details: yield* Details.Details,
@@ -372,6 +384,10 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     settings: services.settings.state,
     settingsSaves: services.settings.saves,
     devices: services.devices.state,
+    openUsage: () => {
+      const { value, release } = hold(services.usage.open);
+      return { state: value.state, loadMore: () => fire(value.loadMore), release };
+    },
     actions: services.actions.state,
 
     openConversation: (target) => {

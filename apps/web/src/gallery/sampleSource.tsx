@@ -410,6 +410,7 @@ function sampleIntents({ get, update }: Store): ShellIntents {
     freshStart: nothing,
     refreshSettings: nothing,
     refreshDevices: nothing,
+    loadMoreTurns: nothing,
     signOut: () => Promise.resolve(true),
   };
 }
@@ -440,6 +441,7 @@ function toData(state: State): ShellData {
     settingsSaves: state.settingsSaves,
     settingsOpen: state.settingsOpen,
     devices: state.devices,
+    recentTurns: state.recentTurns,
     connected: true,
   };
 }

@@ -62,6 +62,10 @@ export const ptBR: Catalog = {
   "time.inSentence.tomorrow": "amanhã às {time}",
   "time.inSentence.day": "{day} às {time}",
   "time.inSentence.date": "em {date}",
+  "time.since.today": "desde as {time}",
+  "time.since.yesterday": "desde ontem às {time}",
+  "time.since.day": "desde {day} às {time}",
+  "time.since.date": "desde {date}",
 
   "conversation.back": "Voltar para os bots",
   "conversation.openDetails": "Mostrar detalhes de {name}",
@@ -465,6 +469,25 @@ export const ptBR: Catalog = {
   "settings.engine.ready": "Rodando, versão {version}",
   "settings.engine.lastKnown":
     "Último estado conhecido. Este dispositivo não está conectado ao J3 Bots agora.",
+  "settings.usage": "Uso",
+  "usage.intro.one":
+    "Os limites como cada provedor os informa, e os turnos que os bots usaram na última hora.",
+  "usage.intro.other":
+    "Os limites como cada provedor os informa, e os turnos que os bots usaram nas últimas {count} horas.",
+  "usage.introSince":
+    "Os limites como cada provedor os informa, e os turnos que os bots usaram {since}.",
+  "usage.noProviders": "Nenhum provedor pode rodar bots ainda.",
+  "usage.noWindows": "Nenhum limite de uso informado.",
+  "usage.used": "{percent} usado",
+  "usage.full": "Limite atingido",
+  "usage.resets": "Renova {when}",
+  "usage.noTurns": "Nenhum bot o usou nesse período.",
+  "usage.turns.one": "{count} turno",
+  "usage.turns.other": "{count} turnos",
+  "usage.deletedBot": "Um bot excluído",
+  "usage.deletedRoutines": "Rotinas excluídas",
+  "usage.loadMore": "Carregar turnos anteriores",
+  "usage.loadingMore": "Carregando…",
   "settings.you": "Você",
   "settings.name": "Como os bots chamam você",
   "settings.name.placeholder": "Seu nome",

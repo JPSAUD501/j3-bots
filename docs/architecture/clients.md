@@ -9,7 +9,7 @@ J3 Bots has three clients: a web app, a desktop app and a mobile app. All three 
 **`packages/client-runtime`** holds everything a client does that is not drawing:
 
 - the connection: pairing, authentication, reconnect with backoff, resuming the subscriptions that resume and re-reading the ones that start with a snapshot;
-- state: the roster, the open conversation, pending cards, routines, engine status;
+- state: the roster, the open conversation, pending cards, routines, engine status, and the turns bots spent recently, for the usage view: the contract does not push those, so they are read when the view opens and on every reconnect while it stays open;
 - presence: reporting what the operator has in view on every socket, and receiving the server's notifications;
 - commands: sending a message, answering a card, stopping a bot, each with its own idempotency key and optimistic entry;
 - drafts and unsent messages.

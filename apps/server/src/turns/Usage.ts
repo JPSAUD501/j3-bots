@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BotId, ProviderId, RoutineId, type UsageTurn } from "@j3-bots/contracts";
+import { BotId, Label, ProviderId, RoutineId, type UsageTurn } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -11,7 +11,9 @@ import { Time, timeText } from "../persistence/columns.ts";
 
 const TurnRow = Schema.Struct({
   bot_id: BotId,
+  purpose: Schema.Literals(["main", "side"]),
   routine_id: Schema.NullOr(RoutineId),
+  routine_name: Schema.NullOr(Label),
   provider_id: ProviderId,
   started_at: Time,
   finished_at: Schema.NullOr(Time),
@@ -21,7 +23,9 @@ const TurnRow = Schema.Struct({
  * What bots spent: every turn the engine ran for them, in any of their
  * sessions, with the provider it ran on. A session never changes provider,
  * so a turn's provider is its session's. A turn in a side session is a
- * routine run's, and names its routine.
+ * routine run's, and names its routine. Deleting a routine unlinks its wakes
+ * (`wakes.routine_id` is set null) but keeps its side sessions, so such a turn
+ * is still told apart from the bot's own, as a deleted routine's.
  */
 export class Usage extends Context.Service<
   Usage,
@@ -34,6 +38,13 @@ export class Usage extends Context.Service<
   }
 >()("@j3-bots/server/turns/Usage") {}
 
+const routineOf = (row: typeof TurnRow.Type): UsageTurn["routine"] => {
+  if (row.purpose === "main") return null;
+  return row.routine_id === null || row.routine_name === null
+    ? { _tag: "deleted" }
+    : { _tag: "routine", id: row.routine_id, name: row.routine_name };
+};
+
 export const layer = Layer.effect(
   Usage,
   Effect.gen(function* () {
@@ -42,9 +53,11 @@ export const layer = Layer.effect(
       Request: Schema.Struct({ since: Schema.String, limit: Schema.Number }),
       Result: TurnRow,
       execute: ({ since, limit }) => sql`
-        SELECT s.bot_id, w.routine_id, s.provider_id, t.started_at, t.finished_at
+        SELECT s.bot_id, s.purpose, r.id AS routine_id, r.name AS routine_name, s.provider_id,
+          t.started_at, t.finished_at
         FROM turns t JOIN sessions s ON s.id = t.session_id
         LEFT JOIN wakes w ON w.id = s.side_wake_id
+        LEFT JOIN routines r ON r.id = w.routine_id
         WHERE t.started_at > ${since}
         ORDER BY t.started_at DESC, t.rowid DESC
         LIMIT ${limit}
@@ -60,7 +73,7 @@ export const layer = Layer.effect(
       return {
         turns: rows.slice(0, input.limit).map((row): UsageTurn => ({
           botId: row.bot_id,
-          routineId: row.routine_id,
+          routine: routineOf(row),
           providerId: row.provider_id,
           startedAt: row.started_at,
           finishedAt: row.finished_at,

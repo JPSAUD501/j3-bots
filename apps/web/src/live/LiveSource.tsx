@@ -24,6 +24,7 @@ import {
   useJ3Client,
   useMemory,
   useReadable,
+  useRecentTurns,
   useRoutines,
   useSettings,
   useWorkSteps,
@@ -306,6 +307,8 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Without a roster, Settings has no button and closes without saying so.
   if (settingsOpen && (roster === null || roster.length === 0)) setSettingsOpen(false);
+  // Read each time Settings opens, and on every socket while it stays open.
+  const recentTurns = useRecentTurns(settingsOpen);
   // What the shell shows with nothing over it.
   const [shown, setShown] = useState<EntryTarget | null>(null);
   const botSaves = useReadable(j3.botSaves);
@@ -433,6 +436,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
     settingsSaves: { profile: profileSave, notifications: notificationsSave },
     settingsOpen,
     devices: devices._tag === "ready" ? devices.value : null,
+    recentTurns: recentTurns.state?._tag === "ready" ? recentTurns.state.value : null,
     connected: connection._tag === "connected",
   };
 
@@ -636,6 +640,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
     revokeDevice: (deviceId) => j3.revokeDevice(deviceId).then((result) => result._tag === "done"),
     refreshSettings: j3.refreshSettings,
     refreshDevices: j3.refreshDevices,
+    loadMoreTurns: recentTurns.loadMore,
     signOut: () =>
       j3.signOut().then((result) => {
         // Another tab paired this browser again meanwhile: it stays signed in

@@ -8,6 +8,7 @@ export {
   type LoadedHandle,
   type PairResult,
   type Platform,
+  type UsageHandle,
   type WorkStepsHandle,
 } from "./client.ts";
 export {
@@ -102,4 +103,10 @@ export {
   type SettingsSaves,
 } from "./stores/Settings.ts";
 export type { Synced } from "./stores/synced.ts";
+export {
+  type RecentTurns,
+  type RecentTurnsView,
+  Usage,
+  USAGE_PERIOD,
+} from "./stores/Usage.ts";
 export { WorkSteps, type WorkStepsState } from "./stores/WorkSteps.ts";

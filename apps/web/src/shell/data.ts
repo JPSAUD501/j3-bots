@@ -2,6 +2,7 @@
 import type {
   ConversationItem,
   Draft,
+  RecentTurns,
   SettingsChange,
   SettingsSaves,
 } from "@j3-bots/client-runtime";
@@ -84,6 +85,8 @@ export interface ShellData {
   readonly settingsOpen: boolean;
   /** Every paired device; null until they load. */
   readonly devices: ReadonlyArray<Device> | null;
+  /** The turns bots spent recently, read while Settings is open; null while they load. */
+  readonly recentTurns: RecentTurns | null;
   /** A connection to the server is open now. Pairing another device needs one. */
   readonly connected: boolean;
 }
@@ -144,6 +147,8 @@ export interface ShellIntents extends TimelineIntents {
   readonly refreshSettings: () => void;
   /** Reads the list of devices again, as when Settings opens. */
   readonly refreshDevices: () => void;
+  /** Reads more of the recent turns, when `recentTurns` can take more. */
+  readonly loadMoreTurns: () => void;
   /**
    * Ends this device's access and deletes what it keeps here; the app then
    * returns to pairing. Resolves `false` when the credential could not be

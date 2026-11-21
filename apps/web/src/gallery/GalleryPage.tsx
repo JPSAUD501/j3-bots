@@ -39,6 +39,7 @@ import { RosterRow } from "../components/RosterRow";
 import { RoutineChangeCard } from "../components/RoutineChangeCard";
 import { SecretRequestCard } from "../components/SecretRequestCard";
 import { Timeline, type TimelineIntents } from "../components/Timeline";
+import { UsageSection } from "../components/UsageSection";
 import { WorkFold } from "../components/WorkFold";
 import { locales, type Locale } from "../i18n/i18n";
 import { cn } from "../lib/cn";
@@ -101,6 +102,7 @@ export default function GalleryPage() {
               <ComposerSection />
               <DetailsSection />
               <EditingSection />
+              <UsageGallerySection />
               <EmptyStatesSection />
               <ConnectionSection />
               <ShellSection />
@@ -927,6 +929,93 @@ const engines = {
 } as const;
 
 const created = () => Promise.resolve();
+
+const usageEngines = {
+  /** Claude Code at its 5-hour limit; Codex signed in again, reporting no limit. */
+  atLimit: {
+    ...team.engine,
+    providers: team.engine.providers.map((p, index) =>
+      index === 0
+        ? {
+            ...p,
+            status: { _tag: "limited", resetsAt: p.usage[0]?.resetsAt ?? null } as const,
+            usage: p.usage.map((w, i) => (i === 0 ? { ...w, usedPercent: 100 } : w)),
+          }
+        : { ...p, status: { _tag: "ready" } as const },
+    ),
+  },
+} as const;
+
+/** The day's first turns read, with more of them on the server. */
+const firstPage = {
+  ...team.recentTurns,
+  turns: team.recentTurns.turns.slice(0, 9),
+  hasMore: true,
+  canLoadMore: true,
+};
+
+function UsageGallerySection() {
+  return (
+    <Section title="Usage">
+      <div className="flex flex-wrap gap-4">
+        <Frame label="Limits and the day's turns, by provider and bot" width={420} height={640}>
+          <UsageSection
+            engine={team.engine}
+            stale={false}
+            recent={team.recentTurns}
+            roster={team.roster}
+            onLoadMore={nothing}
+          />
+        </Frame>
+        <Frame label="More turns than one read: counted since the oldest" width={420} height={520}>
+          <UsageSection
+            engine={team.engine}
+            stale={false}
+            recent={firstPage}
+            roster={team.roster}
+            onLoadMore={nothing}
+          />
+        </Frame>
+        <Frame label="Loading earlier turns" width={420} height={520}>
+          <UsageSection
+            engine={team.engine}
+            stale={false}
+            recent={{ ...firstPage, loadingMore: true }}
+            roster={team.roster}
+            onLoadMore={nothing}
+          />
+        </Frame>
+        <Frame label="A provider at its limit; another reports none" width={420} height={640}>
+          <UsageSection
+            engine={usageEngines.atLimit}
+            stale={false}
+            recent={team.recentTurns}
+            roster={team.roster}
+            onLoadMore={nothing}
+          />
+        </Frame>
+        <Frame label="Turns loading; limits last known while offline" width={420} height={320}>
+          <UsageSection
+            engine={team.engine}
+            stale
+            recent={null}
+            roster={team.roster}
+            onLoadMore={nothing}
+          />
+        </Frame>
+        <Frame label="No provider can run bots yet" width={420} height={200}>
+          <UsageSection
+            engine={engines.connect}
+            stale={false}
+            recent={{ ...team.recentTurns, turns: [] }}
+            roster={team.roster}
+            onLoadMore={nothing}
+          />
+        </Frame>
+      </div>
+    </Section>
+  );
+}
 
 /** A bot just created: its first turn has started and nothing is in its conversation yet. */
 const speakingFirst = {

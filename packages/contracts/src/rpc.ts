@@ -17,7 +17,7 @@ import {
 } from "./base.ts";
 import { Avatar, Bot, ModelChoice, PermissionMode, Profile } from "./bot.ts";
 import { Device, PairingCode } from "./device.ts";
-import { EngineStatus, UsageTurn } from "./engineStatus.ts";
+import { EngineStatus, MAX_USAGE_TURNS, UsageTurn } from "./engineStatus.ts";
 import {
   ApprovalDecision,
   Entry,
@@ -447,7 +447,7 @@ export const EngineRpcs = RpcGroup.make(
   Rpc.make("usage.turns", {
     payload: {
       since: Schema.DateTimeUtc,
-      limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1_000 })),
+      limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: MAX_USAGE_TURNS })),
     },
     success: Schema.Struct({ turns: Schema.Array(UsageTurn), hasMore: Schema.Boolean }),
   }),

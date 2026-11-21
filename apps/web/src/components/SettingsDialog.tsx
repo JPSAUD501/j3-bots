@@ -11,7 +11,7 @@ import {
 } from "@j3-bots/contracts";
 import type * as DateTime from "effect/DateTime";
 import { SettingsIcon, XIcon } from "lucide-react";
-import { useId, useState, type ReactNode } from "react";
+import { useId, useState } from "react";
 import { useI18n, usePresentation } from "../app/context";
 import type { KeyWith } from "../i18n/i18n";
 import {
@@ -36,6 +36,8 @@ import type { ShellData, ShellIntents } from "../shell/data";
 import { cn } from "../lib/cn";
 import { activityTime, clockTime } from "../lib/time";
 import { ConnectProviders, engineProblem, ProviderRow } from "./EmptyStates";
+import { Loading, Section } from "./SettingsSection";
+import { UsageSection } from "./UsageSection";
 import { Button } from "./ui/button";
 import { Confirm } from "./ui/confirm";
 import { Switch } from "./ui/switch";
@@ -48,6 +50,7 @@ type SettingsIntents = Pick<
   | "revokeDevice"
   | "refreshSettings"
   | "refreshDevices"
+  | "loadMoreTurns"
   | "signOut"
 >;
 
@@ -61,6 +64,8 @@ interface SettingsButtonProps {
     | "settingsOpen"
     | "devices"
     | "connected"
+    | "roster"
+    | "recentTurns"
   >;
   readonly intents: SettingsIntents;
 }
@@ -138,6 +143,13 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
             </header>
             <div className="min-h-0 flex-1 overflow-y-auto">
               <EngineSection engine={data.engine} stale={data.engineStale} />
+              <UsageSection
+                engine={data.engine}
+                stale={data.engineStale}
+                recent={data.recentTurns}
+                roster={data.roster}
+                onLoadMore={intents.loadMoreTurns}
+              />
               <YouSection
                 settings={data.settings}
                 save={data.settingsSaves.profile}
@@ -165,20 +177,6 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
       </Dialog.Root>
     </div>
   );
-}
-
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="flex flex-col gap-3 border-b border-border px-4 py-4 last:border-b-0">
-      <h3 className="text-xs font-medium text-muted-foreground">{title}</h3>
-      {children}
-    </section>
-  );
-}
-
-function Loading() {
-  const { t } = useI18n();
-  return <p className="text-xs text-muted-foreground">{t("details.loading")}</p>;
 }
 
 const fieldClass =
