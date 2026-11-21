@@ -196,6 +196,17 @@ describe("roomChanges", () => {
     });
   });
 
+  it("sends the host it shows once the bot the operator picked leaves", () => {
+    const opened = roomFormOf({ ...room, members: [hal, ana, scout], hostId: hal });
+    // The operator picks Ana, then takes her out: the form shows the primary bot.
+    const values = withMember({ ...opened, hostPick: ana }, ana, false);
+    expect(hostOf(values, hosted(scout))).toBe(scout);
+    expect(roomChanges(opened, values, hosted(scout))).toEqual({
+      _tag: "ready",
+      value: { members: [hal, scout], hostId: scout },
+    });
+  });
+
   it("gives a host picked and then deleted back to the server's", () => {
     const opened = roomFormOf({ ...room, members: [hal, ana, bo], hostId: hal });
     const values = { ...opened, hostPick: bo };

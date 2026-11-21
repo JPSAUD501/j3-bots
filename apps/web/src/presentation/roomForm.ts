@@ -249,17 +249,19 @@ function sameField(
 }
 
 /**
- * Whether `values` give the room another host than `from`: one the operator
- * picked, or, when `from`'s host is not among the members, the one the form
- * shows instead. A host the form falls back to while `from`'s stays a member
- * is not a change, so it never overrides a host set elsewhere.
+ * Whether `values` give the room another host than `from`: the operator
+ * touched the host pick, or `from`'s host is not among the members, so Save
+ * sends the host the form shows. A host the form falls back to while the
+ * pick is untouched and `from`'s host stays a member is not a change, so it
+ * never overrides a host set elsewhere.
  */
 function hostChanged(from: RoomFormValues, values: RoomFormValues, context: RoomFormContext) {
   const host = hostOf(values, context);
   const fromHost = hostOf(from, context);
   if (host === fromHost) return false;
-  const picked = values.hostPick === host;
-  return picked || fromHost === null || !values.members.includes(fromHost);
+  return (
+    values.hostPick !== from.hostPick || fromHost === null || !values.members.includes(fromHost)
+  );
 }
 
 /** The fields where `values` say something else than `from`, as the server reads them. */
