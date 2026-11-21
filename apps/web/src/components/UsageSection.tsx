@@ -5,7 +5,13 @@ import * as Duration from "effect/Duration";
 import { useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
 import { timeInSentence } from "../lib/time";
-import { coverage, providerUsage, type BotSpend, type ProviderUsage } from "../presentation/usage";
+import {
+  coverage,
+  providerUsage,
+  windowText,
+  type BotSpend,
+  type ProviderUsage,
+} from "../presentation/usage";
 import { AvatarShape } from "./BotAvatar";
 import { Loading, Section } from "./SettingsSection";
 import { Button } from "./ui/button";
@@ -60,21 +66,31 @@ export function UsageSection({
   );
   const read: RecentTurnsRead | null = recent.read._tag === "ready" ? recent.read : null;
   const providers = providerUsage(engine.providers, read?.value.turns ?? [], bots);
+  // Through a provider connection no provider reports limits: one quiet line
+  // above the blocks says so, not one per provider, and the blocks hold only
+  // the turns.
+  const anyWindows = providers.some((provider) => provider.windows.length > 0);
   return (
     <Section title={t("settings.usage")}>
       {providers.length === 0 ? (
         <p className="text-sm text-muted-foreground">{t("usage.noProviders")}</p>
       ) : (
-        <ul className="flex flex-col gap-2">
-          {providers.map((provider) => (
-            <ProviderCard
-              key={provider.id}
-              provider={provider}
-              windowsStale={engineStale}
-              turns={read === null ? (recent.failed ? "failed" : "loading") : read}
-            />
-          ))}
-        </ul>
+        <>
+          {!anyWindows && (
+            <p className="text-xs text-muted-foreground">{t("usage.noWindowsAtAll")}</p>
+          )}
+          <ul className="flex flex-col gap-2">
+            {providers.map((provider) => (
+              <ProviderCard
+                key={provider.id}
+                provider={provider}
+                anyWindows={anyWindows}
+                windowsStale={engineStale}
+                turns={read === null ? (recent.failed ? "failed" : "loading") : read}
+              />
+            ))}
+          </ul>
+        </>
       )}
       <TurnsFooter recent={recent} read={read} onLoadMore={onLoadMore} onRetry={onRetry} />
     </Section>
@@ -140,10 +156,13 @@ function TurnsFooter({
 
 function ProviderCard({
   provider,
+  anyWindows,
   windowsStale,
   turns,
 }: {
   provider: ProviderUsage;
+  /** Whether any provider reports limits; when none does, the section says so once. */
+  anyWindows: boolean;
   windowsStale: boolean;
   turns: RecentTurnsRead | "loading" | "failed";
 }) {
@@ -152,18 +171,18 @@ function ProviderCard({
   return (
     <li className="flex flex-col gap-3 rounded-md border border-border px-3 py-2.5">
       <h4 className="text-sm">{provider.name}</h4>
-      {provider.windows.length === 0 ? (
-        <p className="text-xs text-muted-foreground">{t("usage.noWindows")}</p>
-      ) : (
+      {provider.windows.length > 0 ? (
         <ul className="flex flex-col gap-2.5">
-          {provider.windows.map((usageWindow) => (
-            <WindowMeter key={usageWindow.label} usageWindow={usageWindow} stale={windowsStale} />
+          {provider.windows.map(({ key, usageWindow }) => (
+            <WindowMeter key={key} usageWindow={usageWindow} stale={windowsStale} />
           ))}
         </ul>
+      ) : (
+        anyWindows && <p className="text-xs text-muted-foreground">{t("usage.noWindows")}</p>
       )}
       {/* After a failed first read the footer says so once, for every provider. */}
       {turns !== "failed" && (
-        <div className="border-t border-border pt-2.5">
+        <div className={cn(anyWindows && "border-t border-border pt-2.5")}>
           {turns === "loading" ? (
             <Loading />
           ) : provider.bots.length === 0 ? (
@@ -184,36 +203,30 @@ function ProviderCard({
 /**
  * One limit window: how much of it is used, as a bar and in words, and when
  * it resets, when the provider says. The words carry it; the bar repeats them.
+ * Past its reset, or offline, it is greyed: the figures are the last known.
  */
 function WindowMeter({ usageWindow, stale }: { usageWindow: UsageWindow; stale: boolean }) {
-  const ctx = usePresentation();
-  const { t } = ctx.i18n;
-  const full = usageWindow.usedPercent >= 100;
-  // Rounded down, so a window short of its limit never reads as full.
-  const used = Math.floor(usageWindow.usedPercent);
-  const percent = new Intl.NumberFormat(ctx.i18n.locale, { style: "percent" }).format(used / 100);
+  const text = windowText(usageWindow, usePresentation());
+  const muted = stale || text.tone === "reset";
+  const full = !muted && text.tone === "full";
   return (
     <li className="flex flex-col gap-1">
       <span className="flex flex-wrap items-baseline justify-between gap-x-3 text-xs">
-        <span>{usageWindow.label}</span>
-        <span className={stale ? "text-muted-foreground" : full ? "text-blocked" : undefined}>
-          {full ? t("usage.full") : t("usage.used", { percent })}
+        <span className="min-w-0 wrap-break-word">{text.name}</span>
+        <span className={muted ? "text-muted-foreground" : full ? "text-blocked" : undefined}>
+          {text.used}
         </span>
       </span>
       <span aria-hidden className="h-1.5 overflow-hidden rounded-pill bg-muted">
         <span
           className={cn(
             "block h-full rounded-pill",
-            stale ? "bg-muted-foreground" : full ? "bg-blocked" : "bg-foreground",
+            muted ? "bg-muted-foreground" : full ? "bg-blocked" : "bg-foreground",
           )}
-          style={{ width: `${used}%` }}
+          style={{ width: `${text.percent}%` }}
         />
       </span>
-      {usageWindow.resetsAt !== null && (
-        <span className="text-2xs text-muted-foreground">
-          {t("usage.resets", { when: timeInSentence(usageWindow.resetsAt, ctx) })}
-        </span>
-      )}
+      {text.reset !== null && <span className="text-2xs text-muted-foreground">{text.reset}</span>}
     </li>
   );
 }

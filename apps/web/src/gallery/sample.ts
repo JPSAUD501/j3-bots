@@ -79,9 +79,15 @@ export function sampleTeam(now: DateTime.Utc) {
           { id: ModelId.make("claude-opus-5-5"), name: "Claude Opus 5.5" },
           { id: ModelId.make("claude-sonnet-5-5"), name: "Claude Sonnet 5.5" },
         ],
+        // As the engine labels Claude Code's windows: "Session" is its five-hour one.
         usage: [
-          { label: "5 hours", usedPercent: 38, resetsAt: ahead(140) },
+          { label: "Session", usedPercent: 38, resetsAt: ahead(140) },
           { label: "Weekly", usedPercent: 81, resetsAt: ahead(3 * 24 * 60 + 200) },
+          {
+            label: "Weekly · Claude Opus 5.5",
+            usedPercent: 64,
+            resetsAt: ahead(3 * 24 * 60 + 200),
+          },
         ],
       },
       {

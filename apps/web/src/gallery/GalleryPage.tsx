@@ -20,8 +20,10 @@ import {
   MemoryRevision,
   ModelId,
   ProviderId,
+  type ProviderStatus,
   type RosterItem,
   type RosterItemKey,
+  type UsageWindow,
 } from "@j3-bots/contracts";
 import { avatarShapeNames, botColors, colors, radii, typeScale } from "@j3-bots/design-tokens";
 import * as DateTime from "effect/DateTime";
@@ -939,21 +941,47 @@ const engines = {
 
 const created = () => Promise.resolve();
 
+/** The sample engine with Codex signed in again and Claude Code's windows changed by `windows`. */
+const usageEngine = (
+  windows: (usage: ReadonlyArray<UsageWindow>) => ReadonlyArray<UsageWindow>,
+  claudeStatus: ProviderStatus["status"] = { _tag: "ready" },
+): EngineStatus => ({
+  ...team.engine,
+  providers: team.engine.providers.map((p, index) =>
+    index === 0
+      ? { ...p, status: claudeStatus, usage: windows(p.usage) }
+      : { ...p, status: { _tag: "ready" } },
+  ),
+});
+
+/** Claude Code's window at `index` at its limit. */
+const atLimit = (index: number) => (usage: ReadonlyArray<UsageWindow>) =>
+  usage.map((w, i) => (i === index ? { ...w, usedPercent: 100 } : w));
+
 const usageEngines = {
-  /** Claude Code at its 5-hour limit; Codex signed in again, reporting no limit. */
-  atLimit: {
-    ...team.engine,
-    providers: team.engine.providers.map((p, index) =>
-      index === 0
-        ? {
-            ...p,
-            status: { _tag: "limited", resetsAt: p.usage[0]?.resetsAt ?? null } as const,
-            usage: p.usage.map((w, i) => (i === 0 ? { ...w, usedPercent: 100 } : w)),
-          }
-        : { ...p, status: { _tag: "ready" } as const },
+  /** Claude Code at its five-hour limit; Codex reporting no limit. */
+  atLimit: usageEngine(atLimit(0), {
+    _tag: "limited",
+    resetsAt: team.engine.providers[0]?.usage[0]?.resetsAt ?? null,
+  }),
+  /** One model's weekly window at its limit: the provider still runs its other models. */
+  modelAtLimit: usageEngine(atLimit(2)),
+  /** The five-hour window full when last checked, its reset since passed. */
+  resetPassed: usageEngine((usage) =>
+    usage.map((w, i) =>
+      i === 0
+        ? { ...w, usedPercent: 100, resetsAt: DateTime.subtract(SAMPLE_NOW, { minutes: 3 }) }
+        : w,
     ),
+  ),
+  /** Through a provider connection: no provider reports a window. */
+  noWindows: usageEngine(() => []),
+  /** Every provider signed out, reporting no window. */
+  signedOut: {
+    ...engines.connect,
+    providers: engines.connect.providers.map((p) => ({ ...p, usage: [] })),
   },
-} as const;
+};
 
 /** The day's turns, read and current. */
 const turnsRead = (
@@ -1036,6 +1064,19 @@ function UsageGallerySection() {
         <Frame label="A provider at its limit; another reports none" width={420} height={640}>
           {usage(usageEngines.atLimit, turnsRead(team.recentTurns))}
         </Frame>
+        <Frame label="One model at its weekly limit" width={420} height={640}>
+          {usage(usageEngines.modelAtLimit, turnsRead(team.recentTurns))}
+        </Frame>
+        <Frame label="A reset passed since the last check" width={420} height={640}>
+          {usage(usageEngines.resetPassed, turnsRead(team.recentTurns))}
+        </Frame>
+        <Frame
+          label="No provider reports limits, as through a provider connection"
+          width={420}
+          height={520}
+        >
+          {usage(usageEngines.noWindows, turnsRead(team.recentTurns))}
+        </Frame>
         <Frame label="Offline: limits and turns last known" width={420} height={640}>
           {usage(team.engine, turnsRead(team.recentTurns, { stale: true }), { engineStale: true })}
         </Frame>
@@ -1055,7 +1096,7 @@ function UsageGallerySection() {
           {usage(engines.down, turnsRead(team.recentTurns))}
         </Frame>
         <Frame label="No provider can run bots yet" width={420} height={200}>
-          {usage(engines.connect, turnsRead({ ...team.recentTurns, turns: [] }))}
+          {usage(usageEngines.signedOut, turnsRead({ ...team.recentTurns, turns: [] }))}
         </Frame>
       </div>
     </Section>

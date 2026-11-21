@@ -10,7 +10,8 @@ import type {
   UsageTurn,
   UsageWindow,
 } from "@j3-bots/contracts";
-import type * as DateTime from "effect/DateTime";
+import * as DateTime from "effect/DateTime";
+import { timeInSentence, type TimeContext } from "../lib/time";
 
 /** The turns of one routine, or of every routine deleted since. */
 interface RoutineSpend {
@@ -27,11 +28,18 @@ export interface BotSpend {
   readonly routines: ReadonlyArray<RoutineSpend>;
 }
 
+/** A limit window and a key for it. */
+interface KeyedWindow {
+  readonly key: string;
+  readonly usageWindow: UsageWindow;
+}
+
 /** A provider in the usage view: its limit windows and who spent its turns. */
 export interface ProviderUsage {
   readonly id: ProviderId;
   readonly name: string;
-  readonly windows: ReadonlyArray<UsageWindow>;
+  /** In the engine's order. */
+  readonly windows: ReadonlyArray<KeyedWindow>;
   /** Most turns first; a tie goes to the bot whose turn is the more recent. */
   readonly bots: ReadonlyArray<BotSpend>;
 }
@@ -74,6 +82,19 @@ function botSpends(
 }
 
 /**
+ * Each window keyed by its label and how many windows before it share that
+ * label: the engine's labels need not be unique.
+ */
+function keyedWindows(windows: ReadonlyArray<UsageWindow>): ReadonlyArray<KeyedWindow> {
+  const seen = new Map<string, number>();
+  return windows.map((usageWindow) => {
+    const before = seen.get(usageWindow.label) ?? 0;
+    seen.set(usageWindow.label, before + 1);
+    return { key: `${before}:${usageWindow.label}`, usageWindow };
+  });
+}
+
+/**
  * The providers the usage view lists, in the engine's order: each that can
  * run bots, reports a limit window or spent some of `turns`. A provider the
  * engine no longer lists but that spent turns comes last, named by its id.
@@ -92,7 +113,7 @@ export function providerUsage(
       {
         id: provider.id,
         name: provider.name,
-        windows: provider.usage,
+        windows: keyedWindows(provider.usage),
         bots: botSpends(spent, bots),
       },
     ];
@@ -131,4 +152,51 @@ export function coverage(recent: RecentTurns): Coverage {
         capped: !recent.canLoadMore,
       }
     : { _tag: "period" };
+}
+
+/** A limit window in words, as of `ctx.now`. */
+export interface WindowText {
+  readonly name: string;
+  /** How much is used, or that the limit is reached. */
+  readonly used: string;
+  /** Percent used, rounded down, so a window short of its limit never reads as full. */
+  readonly percent: number;
+  /**
+   * `open`: under its limit. `full`: at it, until it resets. `reset`: its
+   * reset passed, so `used` is the last figure the engine reported before it.
+   */
+  readonly tone: "open" | "full" | "reset";
+  /** When it resets or reset, when the engine says. */
+  readonly reset: string | null;
+}
+
+/**
+ * One window as the usage view words it. The engine calls its five-hour
+ * window "Session", which is not a J3 Bots session, so that one reads as the
+ * five-hour window; every other label is the engine's own, such as "Weekly"
+ * or "Weekly · Claude Opus 5.5". A window at its limit says only that the
+ * window is: a model's window blocks that model, not the provider. A window
+ * keeps its last figures until the engine checks again, also past its reset,
+ * so then it says when it reset and that new figures come with the next check.
+ */
+export function windowText(usageWindow: UsageWindow, ctx: TimeContext): WindowText {
+  const { t } = ctx.i18n;
+  const percent = Math.floor(usageWindow.usedPercent);
+  const resetsAt = usageWindow.resetsAt;
+  const reset =
+    resetsAt !== null && DateTime.toEpochMillis(resetsAt) <= DateTime.toEpochMillis(ctx.now);
+  const tone = reset ? "reset" : usageWindow.usedPercent >= 100 ? "full" : "open";
+  const formatted = new Intl.NumberFormat(ctx.i18n.locale, { style: "percent" }).format(
+    percent / 100,
+  );
+  return {
+    name: usageWindow.label === "Session" ? t("usage.fiveHours") : usageWindow.label,
+    used: tone === "full" ? t("usage.full") : t("usage.used", { percent: formatted }),
+    percent,
+    tone,
+    reset:
+      resetsAt === null
+        ? null
+        : t(reset ? "usage.reset" : "usage.resets", { when: timeInSentence(resetsAt, ctx) }),
+  };
 }
