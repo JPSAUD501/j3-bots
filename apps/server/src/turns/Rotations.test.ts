@@ -18,6 +18,7 @@ import * as TestDomain from "../testing/domain.ts";
 import {
   command,
   createBot,
+  createNewBot,
   deliveryIs,
   engineSession,
   failedAs,
@@ -92,16 +93,21 @@ const reachRunLimit = (sessionId: SessionRowId) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const at = DateTime.formatIso(yield* DateTime.now);
-    for (let n = 0; n < ROTATE_AFTER_RUNS; n++) {
-      yield* sql`
-        INSERT INTO turns (
-          session_id, engine_turn_id, audience, started_at, last_activity_at, finished_at,
-          outcome_json
-        ) VALUES (
-          ${sessionId}, ${`old-${n}`}, 'conversation', ${at}, ${at}, ${at}, '{"_tag":"completed"}'
-        )
-      `;
-    }
+    // One transaction: a commit per row would take seconds.
+    yield* sql.withTransaction(
+      Effect.forEach(
+        Array.from({ length: ROTATE_AFTER_RUNS }, (_, n) => n),
+        (n) => sql`
+          INSERT INTO turns (
+            session_id, engine_turn_id, audience, started_at, last_activity_at, finished_at,
+            outcome_json
+          ) VALUES (
+            ${sessionId}, ${`old-${n}`}, 'conversation', ${at}, ${at}, ${at}, '{"_tag":"completed"}'
+          )
+        `,
+        { discard: true },
+      ),
+    );
   });
 
 /**
@@ -667,7 +673,7 @@ it.effect("never opens a session on the provider its bot moved away from", () =>
     // The bot's first session is written on its provider and cannot be
     // opened yet; the bot then moves to another provider.
     yield* control.failNextOpenSessions(2);
-    const bot = yield* createBot("Ana");
+    const bot = yield* createNewBot("Ana");
     yield* (yield* Rotations).rotateDue;
     yield* (yield* Bots).update({
       commandId: command(),
@@ -868,11 +874,13 @@ it.effect("reports each turn with its bot and provider, newest first", () =>
   Effect.gen(function* () {
     const ana = yield* createBot("Ana");
     const anaSession = yield* engineSession(ana.id);
+    // Bia's first turn runs before the period, on the provider it then leaves.
+    const bia = yield* createBot("Bia");
+    const biaFirst = yield* engineSession(bia.id);
+    yield* TestClock.adjust("1 second");
     const since = yield* DateTime.now;
     yield* TestClock.adjust("1 second");
     yield* exchange(ana.id, anaSession, "First.", "One.");
-    const bia = yield* createBot("Bia");
-    const biaFirst = yield* engineSession(bia.id);
     yield* (yield* Bots).update({
       commandId: command(),
       botId: bia.id,

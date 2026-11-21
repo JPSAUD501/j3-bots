@@ -31,6 +31,8 @@ import { Rooms } from "../rooms/Rooms.ts";
 import { rotationRequests } from "../turns/rotationRequests.ts";
 import { Signals } from "../turns/Signals.ts";
 import { Stops } from "../turns/Stops.ts";
+import { conversation } from "../turns/model.ts";
+import { Wakes } from "../turns/Wakes.ts";
 import { freeAvatar } from "./avatars.ts";
 import { type BotChanges, BotStore } from "./BotStore.ts";
 import { EngineSessions } from "./EngineSessions.ts";
@@ -54,6 +56,10 @@ export interface BotDraft {
 export class Bots extends Context.Service<
   Bots,
   {
+    /**
+     * Saves the bot with a `first-run` system wake, so its first turn opens
+     * its conversation, then opens its main session if the engine can.
+     */
     readonly create: (input: {
       readonly commandId: CommandId;
       readonly draft: BotDraft;
@@ -112,6 +118,7 @@ export const layer = Layer.effect(
     const ids = yield* Ids;
     const signals = yield* Signals;
     const stops = yield* Stops;
+    const wakes = yield* Wakes;
     const { requestBotRotation, providerRestored, forgetConversation } = rotationRequests(
       sql,
       signals,
@@ -198,6 +205,20 @@ export const layer = Layer.effect(
             workspacePath: layout.workspace(id),
             at,
           });
+          // The bot opens its conversation: its first turn is this wake's,
+          // written once, with the bot, and dispatched like any other.
+          yield* wakes.record([
+            {
+              botId: id,
+              kind: "system",
+              audience: conversation,
+              payload: { _tag: "first-run" },
+              sourceEntryId: null,
+              hops: 0,
+              retryOf: null,
+              cause: { _tag: "operator" },
+            },
+          ]);
           yield* changes.touch({ _tag: "bot", botId: id });
           return (yield* require(id).pipe(Effect.orDie)).bot;
         }),

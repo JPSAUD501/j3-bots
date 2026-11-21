@@ -40,11 +40,31 @@ let commands = 0;
 /** A fresh operator command id. */
 export const command = () => CommandId.make(`command-${++commands}`);
 
-export const createBot = (name: string) =>
+/** A bot just created: its `first-run` wake is pending, its first turn not begun. */
+export const createNewBot = (name: string) =>
   Effect.gen(function* () {
     const bots = yield* Bots;
     yield* TestClock.adjust("1 second");
     return yield* bots.create({ commandId: command(), draft: { name, job: "" } });
+  });
+
+/**
+ * A bot past its first turn, the one its `first-run` wake starts, which ends
+ * without a word: what most tests begin with, an empty conversation and an
+ * idle session.
+ */
+export const createBot = (name: string) =>
+  Effect.gen(function* () {
+    const bot = yield* createNewBot(name);
+    const session = yield* engineSession(bot.id);
+    const turnId = yield* nextTurn(bot.id);
+    yield* (yield* TestEngineControl).finishTurn({
+      sessionId: session,
+      turnId,
+      outcome: { _tag: "completed" },
+    });
+    yield* turnEnded(bot.id);
+    return bot;
   });
 
 /** How long `eventually` waits for a change before it reads again anyway, in real time. */
@@ -250,6 +270,16 @@ export const awaitEntry = <T extends Entry["_tag"]>(botId: BotId, tag: T) =>
       ),
     ),
   );
+
+/**
+ * What the engine applied to the session, oldest first, leaving out the
+ * dispatch of the bot's `first-run` wake: the work a test gave it.
+ */
+export const received = (sessionId: SessionId) =>
+  Effect.gen(function* () {
+    const all = yield* (yield* TestEngineControl).dispatches(sessionId);
+    return all.filter((dispatch) => !dispatch.text.includes('event="first-run"'));
+  });
 
 /** How many dispatches the engine applied to the session carried `text`. */
 export const timesSent = (sessionId: SessionId, text: string) =>

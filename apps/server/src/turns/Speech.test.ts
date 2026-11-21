@@ -23,6 +23,7 @@ import {
   engineSession,
   flushed,
   nextTurn,
+  received,
   roomOf,
   sendInRoom,
   sendToBot,
@@ -102,7 +103,7 @@ it.effect(
       yield* turnEnded(bot.id);
       yield* flushed(bot.id);
       // It delivered: no follow-up asks the bot to say something.
-      assert.strictEqual((yield* control.dispatches(session)).length, 1);
+      assert.strictEqual((yield* received(session)).length, 1);
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
@@ -198,7 +199,7 @@ it.effect("closes delivery with an ask card, whose answer wakes the bot", () =>
     yield* turnEnded(bot.id);
     yield* flushed(bot.id);
     // The card delivered the turn: the bot waits on it, with no follow-up.
-    assert.strictEqual((yield* control.dispatches(session)).length, 1);
+    assert.strictEqual((yield* received(session)).length, 1);
     assert.deepStrictEqual(yield* states.of(bot.id), { _tag: "waiting", entryId: card.id });
 
     const question = card.questions[0].id;

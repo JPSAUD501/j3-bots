@@ -106,6 +106,8 @@ export const WakePayload = Schema.Union([
   Schema.TaggedStruct("answer", { cardId: EntryId }),
   /** The `user` dispatch this one follows up, whose turn delivered nothing. */
   Schema.TaggedStruct("undelivered", { dispatchId: DispatchRowId }),
+  /** The bot was just created: its first turn opens its conversation. */
+  Schema.TaggedStruct("first-run", {}),
   /** A run of a routine; for a webhook, the run holds the request's body. */
   Schema.TaggedStruct("routine", { routineId: RoutineId, runId: RoutineRunId }),
 ]);

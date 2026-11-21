@@ -20,6 +20,7 @@ import type {
   AskAnswer,
   CatchUpItem,
   OperatorMessage,
+  SystemEvent,
   TeammateMessage,
   Wake,
 } from "@j3-bots/prompts";
@@ -66,6 +67,7 @@ import {
   sameAudience,
   SessionRowId,
   TurnsInvariant,
+  type WakePayload,
 } from "./model.ts";
 import { Sender, type SendOwner, type SendResult } from "./Sender.ts";
 import { notices } from "./notices.ts";
@@ -156,6 +158,22 @@ const userWake = (
   if (answer !== null) return { ...wake, answer, messages } satisfies Wake;
   if (first === undefined) return null;
   return { ...wake, answer: null, messages: [first, ...rest] } satisfies Wake;
+};
+
+/** The event a system wake reports; any other payload on one is a bug. */
+const systemEventOf = (payload: WakePayload): Effect.Effect<SystemEvent> => {
+  switch (payload._tag) {
+    case "first-run":
+      return Effect.succeed({ name: "first-run" });
+    case "undelivered":
+      return Effect.succeed({ name: "undelivered" });
+    case "message":
+    case "answer":
+    case "routine":
+      return Effect.die(
+        new TurnsInvariant({ invariant: `A system wake carries no ${payload._tag} payload` }),
+      );
+  }
 };
 
 /** A catch-up note as an envelope shows it. */
@@ -304,6 +322,17 @@ export const layer = Layer.effect(
       return files;
     });
 
+    /** The bot's `first-run` wake, while it still waits to open the conversation. */
+    const pendingOpening = (botId: BotId) =>
+      sql<{ readonly id: string }>`
+        SELECT id FROM wakes
+        WHERE bot_id = ${botId} AND status = 'pending'
+          AND json_extract(payload_json, '$._tag') = 'first-run'
+      `.pipe(
+        Effect.orDie,
+        Effect.map((rows) => rows.map((row) => row.id)),
+      );
+
     const sendMessage = Effect.fn("Pipeline.sendMessage")(function* (input: {
       readonly commandId: CommandId;
       readonly target: EntryTarget;
@@ -375,6 +404,8 @@ export const layer = Layer.effect(
                 cause: { _tag: "operator" },
               },
             ]);
+            // The operator spoke first: there is no conversation left to open.
+            yield* ledger.cancelWakes(yield* pendingOpening(input.target.botId));
           } else if (room !== undefined) {
             yield* routing.operatorMessage({ room, message: entry });
           }
@@ -847,25 +878,25 @@ export const layer = Layer.effect(
           new TurnsInvariant({ invariant: `No envelope for ${head.kind} wakes yet` }),
         );
       }
-      const system = (since: ReadonlyArray<CatchUpItem>): Wake => ({
+      const system = (event: SystemEvent, since: ReadonlyArray<CatchUpItem>): Wake => ({
         ...base,
         sinceLastTurn: since,
         kind: "system",
-        event: { name: "undelivered" },
+        event,
       });
       // The smallest envelope there is: one that cannot carry the item alone never will.
       const carried: Array<Unseen> = [];
       const dropped: Array<Unseen["source"]> = [];
       for (const one of unseen) {
-        if (one.item === null || fitsEngine(system([one.item]))) carried.push(one);
-        else dropped.push(one.source);
+        if (one.item === null || fitsEngine(system({ name: "first-run" }, [one.item]))) {
+          carried.push(one);
+        } else dropped.push(one.source);
       }
+      const event = head.kind === "system" ? yield* systemEventOf(head.payload_json) : null;
       const parts = head.kind === "user" ? yield* Effect.forEach(plan.wakes, partOf) : [];
       const render = (wakes: number, seen: number): Wake | null => {
         const since = carried.slice(0, seen).flatMap(({ item }) => (item === null ? [] : [item]));
-        return head.kind === "system"
-          ? system(since)
-          : userWake(base, since, parts.slice(0, wakes));
+        return event !== null ? system(event, since) : userWake(base, since, parts.slice(0, wakes));
       };
       // Nothing left to render takes no room.
       const fits = (wake: Wake | null) => wake === null || fitsEngine(wake);

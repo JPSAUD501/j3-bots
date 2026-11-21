@@ -26,6 +26,7 @@ import {
   flushed,
   gateSettled,
   nextTurn,
+  received,
   noticesOf,
   recoverTimes,
   roomOf,
@@ -593,7 +594,7 @@ it.effect("starts no turn of its own for work a Stop covered that ended before t
     );
     yield* flushed(bot.id);
 
-    assert.strictEqual((yield* control.dispatches(session)).length, 1);
+    assert.strictEqual((yield* received(session)).length, 1);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
@@ -613,7 +614,8 @@ it.effect(
       yield* nextTurn(bot.id);
       yield* gateSettled(bot.id);
       const [queued] = yield* sql<{ readonly status: string; readonly disposition: string | null }>`
-      SELECT status, disposition FROM dispatches WHERE bot_id = ${bot.id}
+      SELECT status, disposition FROM dispatches
+      WHERE id = (SELECT dispatch_id FROM wakes WHERE source_entry_id = ${message})
     `;
       assert.deepStrictEqual(queued, { status: "accepted", disposition: "queued" });
 
