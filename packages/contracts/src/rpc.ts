@@ -16,7 +16,7 @@ import {
   Sequence,
 } from "./base.ts";
 import { Avatar, Bot, ModelChoice, PermissionMode, Profile } from "./bot.ts";
-import { Device, PairingCode } from "./device.ts";
+import { Device, PairingCode, PushRegistration } from "./device.ts";
 import { EngineStatus, MAX_USAGE_TURNS, UsageTurn } from "./engineStatus.ts";
 import {
   ApprovalDecision,
@@ -517,11 +517,30 @@ export const ClientRpcs = RpcGroup.make(
   Rpc.make("pairing.start", {
     success: Schema.Struct({ code: PairingCode, expiresAt: Schema.DateTimeUtc }),
   }),
-  /** Closes that device's sockets at once and refuses its token from now on. */
+  /**
+   * Closes that device's sockets at once, refuses its token from now on and
+   * deletes its push registration.
+   */
   Rpc.make("device.revoke", {
     payload: { ...command, deviceId: DeviceId },
     error: NotFound,
   }),
+  /**
+   * Registers this socket's device for push notifications, replacing what it
+   * registered before, and takes the token from any other device that
+   * registered it. While the device has no socket open, the server pushes to
+   * it what it would otherwise tell it. `NotFound("device")` when the device
+   * was revoked.
+   */
+  Rpc.make("push.register", {
+    payload: { ...command, ...PushRegistration.fields },
+    error: CommandError,
+  }),
+  /**
+   * Ends this socket's device's push registration, if it has one.
+   * `NotFound("device")` when the device was revoked.
+   */
+  Rpc.make("push.unregister", { payload: command, error: CommandError }),
 );
 
 /** Every RPC a paired client can make, on the socket at `HTTP_PATHS.rpc`. */

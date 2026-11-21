@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { LANGUAGES } from "@j3-bots/contracts";
 import { en } from "./en";
 import { ptBR } from "./pt-BR";
 
@@ -11,7 +12,8 @@ import { ptBR } from "./pt-BR";
  * locale's plural rules.
  */
 
-export const locales = ["en", "pt-BR"] as const;
+/** The server writes a push in the same languages (`LANGUAGES`), so the list is one. */
+export const locales = LANGUAGES;
 export type Locale = (typeof locales)[number];
 
 type Source = typeof en;

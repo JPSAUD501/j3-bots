@@ -545,6 +545,7 @@ function DevicesSection({
                         : t("settings.device.lastSeen", {
                             when: activityTime(device.lastSeenAt, ctx),
                           })}
+                    {device.pushRegistered && ` · ${t("settings.device.pushOn")}`}
                   </span>
                   <span role="alert" className="text-2xs text-blocked empty:hidden">
                     {state === "failed" &&

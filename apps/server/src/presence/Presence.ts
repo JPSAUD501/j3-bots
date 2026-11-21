@@ -83,7 +83,7 @@ export interface Recipients {
   readonly notification: Notification;
   /** Devices with a socket open, told on each of their sockets now. */
   readonly live: ReadonlyArray<DeviceId>;
-  /** Devices with no socket open: the ones a push would reach. */
+  /** Devices with no socket open that registered for push: the ones a push reaches. */
   readonly push: ReadonlyArray<DeviceId>;
 }
 
@@ -92,8 +92,8 @@ export interface Recipients {
  * from it (`docs/architecture/server.md`, Notifications): an entry worth the
  * operator's attention, added where no connected client has it in view, while
  * the operator has notifications on, is told to every socket of a device that
- * has one open; a device with none is left to a push. Kept in memory: a
- * socket's view ends with it.
+ * has one open; a device with none is left to a push if it registered for
+ * one. Kept in memory: a socket's view ends with it.
  */
 export class Presence extends Context.Service<
   Presence,
@@ -180,7 +180,7 @@ export const layer = Layer.effect(
       // From here on, one synchronous step over the sockets as they are now:
       // what is in view and who has a socket open are read together. A
       // revoked device's socket, until it closes, counts for neither.
-      if (paired.some((deviceId) => inView(deviceId, target))) return null;
+      if (paired.some(({ id }) => inView(id, target))) return null;
       return {
         notification: {
           target,
@@ -189,8 +189,10 @@ export const layer = Layer.effect(
           kind: made.kind,
           preview: previewText(entry, notifications),
         },
-        live: paired.filter((deviceId) => sockets.has(deviceId)),
-        push: paired.filter((deviceId) => !sockets.has(deviceId)),
+        live: paired.filter(({ id }) => sockets.has(id)).map(({ id }) => id),
+        push: paired
+          .filter(({ id, pushRegistered }) => pushRegistered && !sockets.has(id))
+          .map(({ id }) => id),
       } satisfies Recipients;
     });
 

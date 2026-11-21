@@ -717,6 +717,7 @@ export function sampleTeam(now: DateTime.Utc) {
       pairedAt: ago(60 * 24 * 30),
       lastSeenAt: now,
       current: true,
+      pushRegistered: false,
     },
     {
       id: DeviceId.make("phone"),
@@ -724,6 +725,7 @@ export function sampleTeam(now: DateTime.Utc) {
       pairedAt: ago(60 * 24 * 12),
       lastSeenAt: ago(95),
       current: false,
+      pushRegistered: true,
     },
   ];
 

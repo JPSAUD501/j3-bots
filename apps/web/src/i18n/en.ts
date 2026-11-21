@@ -616,6 +616,7 @@ export const en = {
   "settings.device.current": "This device",
   "settings.device.neverSeen": "Not connected yet",
   "settings.device.lastSeen": "Last seen {when}",
+  "settings.device.pushOn": "Push notifications on",
   "settings.device.revoke": "Sign out",
   "settings.device.revoke.title": "Sign out {name}?",
   "settings.device.revoke.body": "{name} loses access at once. Pairing it again takes a new code.",

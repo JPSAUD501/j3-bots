@@ -31,8 +31,8 @@ it.effect("upgrades a database the last release wrote, keeping its rows and thei
     const config = TestDatabase.configFor(path, home);
 
     // What the last release wrote: a bot with its session, a message in its
-    // conversation and the file the message carries, and the receipt of the
-    // command that created the bot.
+    // conversation and the file the message carries, the receipt of the
+    // command that created the bot, and a paired device.
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* sql`PRAGMA foreign_keys = ON`;
@@ -84,6 +84,10 @@ it.effect("upgrades a database the last release wrote, keeping its rows and thei
         INSERT INTO command_receipts (command_id, method, payload_hash, result_json, created_at)
         VALUES ('command-1', 'bot.create', 'hash', ${created}, ${now})
       `;
+      yield* sql`
+        INSERT INTO devices (id, name, token_hash, paired_at)
+        VALUES ('device-1', 'Phone', 'fixture-token-hash', ${now})
+      `;
     }).pipe(Effect.provide(SqliteClient.layer({ filename: config.databasePath })));
 
     // This release opens it.
@@ -104,6 +108,15 @@ it.effect("upgrades a database the last release wrote, keeping its rows and thei
       `;
       const bot = yield* Schema.decodeUnknownEffect(json(Bot))(receipt?.result_json);
       assert.isFalse(bot.settingsHeld);
+      // A paired device stays signed in.
+      const devices = yield* sql<{
+        readonly id: string;
+        readonly token_hash: string;
+        readonly revoked_at: string | null;
+      }>`SELECT id, token_hash, revoked_at FROM devices`;
+      assert.deepStrictEqual(devices, [
+        { id: "device-1", token_hash: "fixture-token-hash", revoked_at: null },
+      ]);
       const [foreignKeys] = yield* sql<{ readonly foreign_keys: number }>`PRAGMA foreign_keys`;
       assert.strictEqual(foreignKeys?.foreign_keys, 1);
       assert.deepStrictEqual(yield* sql`PRAGMA foreign_key_check`, []);
