@@ -17,7 +17,6 @@ import type {
   MemoryScope,
   Mentions,
   Notification,
-  PairingCode,
   Room,
   RoomId,
   RosterItem,
@@ -25,7 +24,6 @@ import type {
   RoutineId,
   Settings as SettingsValue,
 } from "@j3-bots/contracts";
-import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -309,9 +307,7 @@ export interface J3Client {
   readonly refreshDevices: () => void;
   /** Waits ten seconds at most; see `Devices.revoke`. */
   readonly revokeDevice: (deviceId: DeviceId) => Promise<Devices.RevokeResult>;
-  readonly startPairing: () => Promise<
-    Actions.IntentResult<{ readonly code: PairingCode; readonly expiresAt: DateTime.Utc }>
-  >;
+  readonly startPairing: () => Promise<Actions.IntentResult<Devices.PairingOffer>>;
 
   readonly setView: (target: EntryTarget | null) => void;
   /** Calls `listener` for each notification. Returns the function that stops it. */

@@ -12,6 +12,7 @@ import {
   ModelId,
   PairingCode,
   ProviderId,
+  ServerOrigin,
   type Bot,
   type BotState,
   type Entry,
@@ -424,6 +425,10 @@ function sampleIntents({ get, update }: Store): ShellIntents {
         _tag: "started",
         code: PairingCode.make("7KQ2M9XH4D"),
         expiresAt: DateTime.makeUnsafe(Date.now() + 5 * 60_000),
+        origins: [
+          ServerOrigin.make("http://192.0.2.10:3737"),
+          ServerOrigin.make("http://100.64.0.7:3737"),
+        ],
       }),
     revokeDevice: (deviceId) => {
       update((s) => ({ ...s, devices: s.devices.filter((device) => device.id !== deviceId) }));

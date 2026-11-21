@@ -85,6 +85,7 @@ import {
 import { loadRasterizer, notificationIcon, systemTheme } from "./notificationIcon";
 import { deliverFile, reserveWindow } from "./openFile";
 import { desktop } from "./desktop";
+import { LinkedPairingCode, linkedCodeAfter } from "./pairingLink";
 import { makePlatform, signInUnencrypted } from "./platform";
 
 let started: Promise<J3Client> | null = null;
@@ -137,7 +138,7 @@ function Connected({ origin, children }: { origin: URL; children: ReactNode }) {
   return (
     <J3ClientProvider client={use(client(origin))}>
       <Notices>
-        <Gate>{children}</Gate>
+        <Gate origin={origin}>{children}</Gate>
       </Notices>
     </J3ClientProvider>
   );
@@ -179,10 +180,13 @@ function Screen({ children }: { children: ReactNode }) {
   );
 }
 
-function Gate({ children }: { children: ReactNode }) {
+function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
   const j3 = useJ3Client();
   const connection = useConnection();
   const pairing = useReadable(j3.pairing);
+  const [linkedCode, setLinkedCode] = useState(use(LinkedPairingCode));
+  const keptCode = linkedCodeAfter(linkedCode, connection);
+  if (keptCode !== linkedCode) setLinkedCode(keptCode);
   const [everConnected, setEverConnected] = useState(false);
   if (connection._tag === "connected" && !everConnected) setEverConnected(true);
   // A pairing this window followed ends, signed out or revoked, here or in
@@ -213,6 +217,8 @@ function Gate({ children }: { children: ReactNode }) {
           <Pairing
             reason={connection.reason}
             defaultName={guessDeviceName(navigator.userAgent)}
+            initialCode={linkedCode}
+            address={origin.origin}
             onPair={j3.pair}
             server={desktopServer}
             restart={desktop?.relaunch}
@@ -824,9 +830,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
       j3
         .startPairing()
         .then((result) =>
-          result._tag === "done"
-            ? { _tag: "started", code: result.value.code, expiresAt: result.value.expiresAt }
-            : { _tag: "failed" },
+          result._tag === "done" ? { _tag: "started", ...result.value } : { _tag: "failed" },
         ),
     revokeDevice: (deviceId) => j3.revokeDevice(deviceId).then((result) => result._tag === "done"),
     refreshSettings: j3.refreshSettings,

@@ -2,9 +2,13 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Interface addresses, IP parsing and the accepted socket's address come only from node:os and node:net.
 import * as NodeNet from "node:net";
 import * as NodeOs from "node:os";
+import { ServerOrigin } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import * as NetAddress from "effect/net/NetAddress";
 
 /** One IPv4 address of this machine. `internal` is loopback. */
 export interface InterfaceAddress {
@@ -89,7 +93,7 @@ const VIRTUAL_INTERFACE = /^(docker|veth|br-|virbr|cni|flannel|cali|podman)/;
  * interface (`0.0.0.0`), the private addresses of this machine's real
  * interfaces. Empty when there is none.
  */
-export const reachableHosts = Effect.fn("Network.reachableHosts")(function* (listener: {
+const reachableHosts = Effect.fn("Network.reachableHosts")(function* (listener: {
   readonly scheme: "http" | "https";
   readonly address: string;
   readonly names: ReadonlyArray<string>;
@@ -105,6 +109,28 @@ export const reachableHosts = Effect.fn("Network.reachableHosts")(function* (lis
         isPrivateAddress(entry.address),
     )
     .map((entry) => entry.address);
+});
+
+const decodeOrigin = Schema.decodeUnknownOption(ServerOrigin);
+
+/**
+ * The origins another device reaches a listener at, best first: one for each
+ * of its `reachableHosts`, at the port it bound, as a browser writes it (no
+ * default port). Empty when there is none.
+ */
+export const reachableOrigins = Effect.fn("Network.reachableOrigins")(function* (listener: {
+  readonly scheme: "http" | "https";
+  readonly address: string;
+  readonly port: number;
+  readonly names: ReadonlyArray<string>;
+}) {
+  const hosts = yield* reachableHosts(listener);
+  return hosts.flatMap((host) => {
+    const url = URL.parse(
+      `${listener.scheme}://${NetAddress.formatUrlHostString(host)}:${listener.port}`,
+    );
+    return url === null ? [] : Option.toArray(decodeOrigin(url.origin));
+  });
 });
 
 /**

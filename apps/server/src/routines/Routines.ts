@@ -24,7 +24,6 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as SecureRandom from "effect/crypto/SecureRandom";
-import * as NetAddress from "effect/net/NetAddress";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Entries } from "../entries/Entries.ts";
@@ -34,7 +33,7 @@ import { ChangeLog, scopeKey } from "../persistence/ChangeLog.ts";
 import { Flag, json, Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
-import { CERTIFICATE_NAME, Network, reachableHosts } from "../system/Network.ts";
+import { CERTIFICATE_NAME, Network, reachableOrigins } from "../system/Network.ts";
 import { Ledger } from "../turns/Ledger.ts";
 import { DispatchRowId } from "../turns/model.ts";
 import { Signals } from "../turns/Signals.ts";
@@ -212,13 +211,11 @@ export const layer = Layer.effect(
         return yield* Effect.die("A webhook's address was asked for before the listener bound");
       }
       const bound = yield* polled.value;
-      const [host] = yield* reachableHosts(bound).pipe(Effect.provideService(Network, network));
-      const shown =
-        host !== undefined
-          ? NetAddress.formatUrlHostString(host)
-          : bound.scheme === "https"
-            ? CERTIFICATE_NAME
-            : "127.0.0.1";
+      const [reached] = yield* reachableOrigins(bound).pipe(
+        Effect.provideService(Network, network),
+      );
+      if (reached !== undefined) return reached;
+      const shown = bound.scheme === "https" ? CERTIFICATE_NAME : "127.0.0.1";
       return `${bound.scheme}://${shown}:${bound.port}`;
     });
 

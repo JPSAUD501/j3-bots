@@ -148,11 +148,15 @@ The server listens at:
   http://192.168.1.40:3737
   http://100.101.102.103:3737
 On the new device, open J3 Bots at one of these addresses and enter the code.
+
+Scan this with a phone's camera to open J3 Bots at http://192.168.1.40:3737 with the code filled in.
+For another address, run `j3-bots pair --address <address>`.
+(a QR code, drawn in the terminal)
 ```
 
 `pair` asks the running server for the code over its admin socket, `~/.j3-bots/admin.sock`. Only this user can connect to that socket, so the command works only on the Pi, as the user that runs the service. The addresses come from the server too: the port and scheme it listens on and, with `lan`, the Pi's private addresses, leaving out container and virtual-network interfaces such as `docker0`.
 
-On the new device, open one of those addresses in a browser: the server serves the web client there, which asks for the code. A code typed in lower case, or with spaces or dashes, works too. `j3-bots doctor` says whether the server serves the web client.
+On the new device, open one of those addresses in a browser: the server serves the web client there, which asks for the code. On a phone, scan the QR code with the camera instead: it opens the address it carries, at `/pair`, in the browser with the code filled in, and you check the server it names and press Pair. The QR code carries the first address listed, and the addresses are listed in the order the Pi lists its network interfaces, so which network comes first depends on the Pi, not on a rule. For a phone that reaches the Pi on another of them, such as over Tailscale, name that address: `j3-bots pair --address http://100.101.102.103:3737`. `--address` takes a bare address (scheme, host and port, no path) that the phone reaches exactly as written: one of the listed addresses, or an `https` address the Pi is reached at, such as a domain a proxy serves; `https` only where the server or its proxy serves HTTPS. Any other value is refused before a code is made. The QR code is printed last, under the lines that say where it goes; the terminal must be large enough for those lines, the QR code and the prompt after it. When it is not, or when the output goes to a file or a pipe, `pair` prints the link as text instead and says how large the terminal must be. A device already paired shows the same in Settings → Devices, where you can pick another address for the QR code. A code typed in lower case, or with spaces or dashes, works too. `j3-bots doctor` says whether the server serves the web client.
 
 A browser treats a plain-HTTP address other than `localhost` as insecure, and on such an address it does not install J3 Bots as an app (a PWA). To install it on a phone, serve HTTPS: put a certificate and key in `tls` (paths relative to the data directory work), or serve it through a platform that holds the certificate ([Serve it through a container](#serve-it-through-a-container)). With Tailscale, `tailscale cert <machine>.<tailnet>.ts.net` issues one for the Pi's tailnet name. Over HTTPS, `pair` prints the names on the certificate, such as `https://<machine>.<tailnet>.ts.net:3737`, and no bare addresses, which the browser would not accept. A wildcard name names no one host, so it is not printed; for a certificate with only wildcards, open a name it covers.
 
@@ -164,9 +168,9 @@ Some platforms publish only containers, behind a proxy of their own that holds t
 2. On the platform, create a Docker Compose app from this repository, with `deploy/container-proxy/compose.yaml`, on the machine that runs J3 Bots. Give its `proxy` service your domain on port 8080, such as `https://bots.example.com:8080`. If the server listens on a port other than 3737, set `J3_PORT` to it.
 3. Deploy. The container counts as healthy while the server answers, so the platform routes to it only then.
 
-On a new device, open your domain and pair as usual. `j3-bots pair` prints the server's own addresses, not the domain.
+On a new device, open your domain and pair as usual. `j3-bots pair` prints the server's own addresses, not the domain; for a QR code to the domain, run `j3-bots pair --address https://bots.example.com:8080`. Devices, opened at the domain, puts the domain in its QR code.
 
-The server authenticates every request itself, with the device's token, and sets no cookies, so the proxy needs no settings for cookies, origins or WebSockets. A proxy that asks for a sign-in first, such as a single sign-on gate, works in front of it too. The web client sends credentials when it asks for its manifest, so the browser still offers to install it.
+The server authenticates every request itself, with the device's token, and sets no cookies, so the proxy needs no settings for cookies, origins or WebSockets. A proxy that asks for a sign-in first, such as a single sign-on gate, works in front of it too. The web client sends credentials when it asks for its manifest, so the browser still offers to install it. Behind such a gate, sign in on the phone before you scan a QR code, or pair by typing the code instead: a phone that is not signed in yet is sent to the identity provider's page, and the browser carries the link's fragment, which is the pairing code, along with that redirect to the provider's address (**Verified** in Chromium with a cross-origin redirect).
 
 Bots run with full access to the user that runs J3 Bots. On an address the internet can reach, anyone can open the pairing page. A pairing code is made only on this machine and works once, for five minutes, but a sign-in gate in front adds a second lock that does not depend on this release's code. Use one if your platform has it.
 
@@ -249,4 +253,3 @@ Each line is ✓ (fine), `!` (a warning: the server runs, but something is missi
 
 - With Claude Code and Codex reaching their models through a CLIProxyAPI endpoint (the provider connection), the engine reads no usage limits for them, so the server reports none. That is the setup tested so far.
 - Bots choose among the models the engine lists for each provider. An endpoint that names its models otherwise cannot be used for them yet.
-- `j3-bots pair` prints the code and the addresses but no QR code.

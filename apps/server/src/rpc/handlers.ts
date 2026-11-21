@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { type AttachmentId, type BotId, J3Rpcs, NotFound, USAGE_PERIOD } from "@j3-bots/contracts";
 import { Engine } from "@j3-bots/engine-t3";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { Attachments } from "../attachments/Attachments.ts";
@@ -9,12 +10,14 @@ import { BotStore } from "../bots/BotStore.ts";
 import { Bots } from "../bots/Bots.ts";
 import { Devices } from "../devices/Devices.ts";
 import { Entries } from "../entries/Entries.ts";
+import { Listener } from "../listener.ts";
 import { Memory } from "../memory/Memory.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import { Routines } from "../routines/Routines.ts";
 import { Roster } from "../roster/Roster.ts";
 import { SettingsService } from "../settings/SettingsService.ts";
 import { Presence } from "../presence/Presence.ts";
+import { Network, reachableOrigins } from "../system/Network.ts";
 import { Cards } from "../turns/Cards.ts";
 import { Pipeline } from "../turns/Pipeline.ts";
 import { Stops } from "../turns/Stops.ts";
@@ -48,6 +51,21 @@ export const handlers = ServedRpcs.toLayer(
     const workSteps = yield* WorkSteps;
     const usage = yield* Usage;
     const viewer = yield* (yield* Presence).connect(device.id);
+    const listener = yield* Listener;
+    const network = yield* Network;
+
+    /**
+     * A code, and the origins `j3-bots pair` lists, read when asked since
+     * interfaces come and go. A client reached the server through the
+     * listener, so it has bound.
+     */
+    const startPairing = Effect.gen(function* () {
+      const grant = yield* devices.startPairing;
+      const origins = yield* reachableOrigins(yield* Deferred.await(listener)).pipe(
+        Effect.provideService(Network, network),
+      );
+      return { ...grant, origins };
+    });
 
     const botFiles = Effect.fn("rpc.botFiles")(function* (input: {
       readonly botId: BotId;
@@ -102,7 +120,7 @@ export const handlers = ServedRpcs.toLayer(
       "client.view": ({ target }) => viewer.view(target),
       "notifications.subscribe": () => viewer.notifications,
       "devices.list": () => devices.list(device.id),
-      "pairing.start": () => devices.startPairing,
+      "pairing.start": () => startPairing,
       // Revoking is idempotent by nature: a retry revokes nothing more.
       "device.revoke": ({ deviceId }) => auth.revoke(deviceId),
       // Always this socket's own device: a device registers only itself.

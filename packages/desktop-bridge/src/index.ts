@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { ServerOrigin } from "@j3-bots/contracts";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
@@ -9,20 +10,8 @@ import * as Schema from "effect/Schema";
 // asks, and the page decodes what the main process answers.
 
 export { BRIDGE_KEY, type DesktopBridge, IPC_CHANNELS } from "./channels.ts";
-
-/** An `http:` or `https:` origin: scheme, host and port, nothing more. */
-export const ServerOrigin = Schema.String.check(
-  Schema.makeFilter((text: string) => {
-    const url = URL.parse(text);
-    return (
-      (url !== null &&
-        (url.protocol === "http:" || url.protocol === "https:") &&
-        url.origin === text) ||
-      "an http: or https: origin"
-    );
-  }),
-).pipe(Schema.brand("ServerOrigin"));
-export type ServerOrigin = typeof ServerOrigin.Type;
+// The server, as the desktop app keeps it: the origin the contract defines.
+export { ServerOrigin } from "@j3-bots/contracts";
 
 /**
  * How a sealed device token is kept on disk: `encrypted` with a key the

@@ -26,10 +26,12 @@
     "@j3-bots/engine-t3": "workspace:*",
     "@j3-bots/i18n": "workspace:*",
     "@j3-bots/prompts": "workspace:*",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "lean-qr": "2.7.4"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "jsqr": "1.4.0",
     "vite-plus": "catalog:"
   }
 }

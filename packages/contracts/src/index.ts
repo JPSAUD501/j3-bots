@@ -7,6 +7,7 @@ export * from "./engineStatus.ts";
 export * from "./entry.ts";
 export * from "./errors.ts";
 export * from "./http.ts";
+export * from "./link.ts";
 export * from "./memory.ts";
 export * from "./room.ts";
 export * from "./routine.ts";

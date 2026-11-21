@@ -4,7 +4,7 @@ import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import { guardConnections, isPrivateAddress, Network, reachableHosts } from "./Network.ts";
+import { guardConnections, isPrivateAddress, Network, reachableOrigins } from "./Network.ts";
 
 /**
  * What a client that sends a request to a guarded server reads back, and
@@ -59,15 +59,23 @@ it.effect(
   "offers the private addresses of real interfaces for every interface, and names over HTTPS",
   () =>
     Effect.gen(function* () {
-      const lan = { scheme: "http", address: "0.0.0.0", names: [] } as const;
-      assert.deepStrictEqual(yield* reachableHosts(lan), ["192.168.0.20", "10.0.0.7"]);
-      assert.deepStrictEqual(yield* reachableHosts({ ...lan, address: "192.168.0.20" }), [
-        "192.168.0.20",
+      const lan = { scheme: "http", address: "0.0.0.0", port: 3737, names: [] } as const;
+      assert.deepStrictEqual(yield* reachableOrigins(lan), [
+        "http://192.168.0.20:3737",
+        "http://10.0.0.7:3737",
       ]);
-      assert.deepStrictEqual(
-        yield* reachableHosts({ scheme: "https", address: "0.0.0.0", names: ["j3.example.com"] }),
-        ["j3.example.com"],
-      );
+      assert.deepStrictEqual(yield* reachableOrigins({ ...lan, address: "192.168.0.20" }), [
+        "http://192.168.0.20:3737",
+      ]);
+      const https = { scheme: "https", address: "0.0.0.0", names: ["j3.example.com"] } as const;
+      assert.deepStrictEqual(yield* reachableOrigins({ ...https, port: 8443 }), [
+        "https://j3.example.com:8443",
+      ]);
+      // As a browser writes it, so a link carries the origin a page there has.
+      assert.deepStrictEqual(yield* reachableOrigins({ ...https, port: 443 }), [
+        "https://j3.example.com",
+      ]);
+      assert.deepStrictEqual(yield* reachableOrigins({ ...https, port: 443, names: [] }), []);
     }).pipe(
       Effect.provideService(
         Network,
