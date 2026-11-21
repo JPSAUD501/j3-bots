@@ -245,11 +245,12 @@ export class Connection extends Context.Service<
     /** Skips the wait before the next attempt, and leaves `incompatible` and `storage-failed`. */
     readonly reconnectNow: Effect.Effect<void>;
     /**
-     * Whether the server itself refused `pairing`'s credential to this window:
-     * its own word that the pairing ended. A credential another window
-     * deleted, or one this window let go of, says nothing of the server.
+     * Whether the server said that `pairing` ended: it refused that pairing's
+     * credential to this window, or to another window, which deleted the
+     * credential and left the refusal in its place. A credential another
+     * window deleted without one was only signed out here.
      */
-    readonly refusedByServer: (pairing: DeviceId) => boolean;
+    readonly endedOnServer: (pairing: DeviceId) => Effect.Effect<boolean>;
     /**
      * Runs `use` on the open socket, waiting for one if there is none. If the
      * socket drops before `use` finishes, runs it again on the next socket, so
@@ -340,11 +341,16 @@ export const layer = Layer.effect(
       a.deviceId === b.deviceId && Redacted.value(a.token) === Redacted.value(b.token);
 
     /**
-     * Deletes `ended` from storage and follows what is left: nothing, or a
-     * pairing another window made after this one last read the credential.
+     * Deletes `ended` from storage, with the server's refusal when it is why,
+     * and follows what is left: nothing, or a pairing another window made
+     * after this one last read the credential.
      */
-    const end = (ended: DeviceCredential, reason: Exclude<UnpairedReason, "new">) =>
-      store.clear(ended).pipe(
+    const end = (
+      ended: DeviceCredential,
+      reason: Exclude<UnpairedReason, "new">,
+      refusedByServer: boolean,
+    ) =>
+      store.clear(ended, refusedByServer).pipe(
         Effect.flatMap((left) => {
           const newer = Option.filter(left, (found) => !sameCredential(found, ended));
           return follow(() =>
@@ -511,7 +517,7 @@ export const layer = Layer.effect(
             // The server refused this credential. The refusal may come late,
             // after another window paired anew: that pairing stays.
             refused.add(current.credential.deviceId);
-            yield* end(current.credential, "signed-out").pipe(
+            yield* end(current.credential, "signed-out", true).pipe(
               Effect.catchTag("CredentialStorageError", (error) =>
                 Effect.logWarning("The revoked credential stays in storage", error).pipe(
                   Effect.andThen(follow(() => ({ _tag: "none", reason: "signed-out" }))),
@@ -594,7 +600,7 @@ export const layer = Layer.effect(
         // here, or the credential that ended may still be there.
         const stored = yield* store.load;
         if (Option.isSome(stored) && stored.value.deviceId === pairing) {
-          return yield* end(stored.value, reason);
+          return yield* end(stored.value, reason, false);
         }
         return yield* follow(() =>
           Option.match(stored, {
@@ -605,7 +611,7 @@ export const layer = Layer.effect(
       }
       // This window already follows a pairing made since: it stays.
       if (current.credential.deviceId !== pairing) return "paired-anew";
-      return yield* end(current.credential, reason);
+      return yield* end(current.credential, reason, false);
     });
 
     const awaitSession = (after: number) =>
@@ -709,7 +715,19 @@ export const layer = Layer.effect(
           ),
         ),
       ),
-      refusedByServer: (held) => refused.has(held),
+      endedOnServer: Effect.fn("Connection.endedOnServer")((held: DeviceId) =>
+        refused.has(held)
+          ? Effect.succeed(true)
+          : store.refusedPairing.pipe(
+              Effect.map((found) => Option.contains(found, held)),
+              Effect.catchTag("CredentialStorageError", (error) =>
+                Effect.logWarning(
+                  "Whether the server refused the device could not be read",
+                  error,
+                ).pipe(Effect.as(false)),
+              ),
+            ),
+      ),
       reconnectNow: Queue.offer(wakes, void 0).pipe(Effect.asVoid),
       call,
       eachSession,

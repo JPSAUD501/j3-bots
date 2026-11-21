@@ -56,10 +56,22 @@ export class CredentialStore extends Context.Service<
      * Deletes `credential`, unless storage holds another one: a pairing
      * another window made since. The comparison and the deletion are one
      * transaction. Succeeds with the credential storage holds afterwards.
+     *
+     * Given `refusedByServer`, the server refused the credential, and the
+     * same transaction leaves that word in its place, so a window that finds
+     * the credential gone can tell that the pairing ended on the server and
+     * not only here: `refusedPairing` reads it.
      */
     readonly clear: (
       credential: DeviceCredential,
+      refusedByServer: boolean,
     ) => Effect.Effect<Option.Option<DeviceCredential>, CredentialStorageError>;
+    /**
+     * The pairing whose credential was deleted because the server refused
+     * it, read afresh, until a credential is saved again. A pairing the
+     * server ended never returns, so what it says stays true.
+     */
+    readonly refusedPairing: Effect.Effect<Option.Option<DeviceId>, CredentialStorageError>;
     /**
      * Emits each time another window of this client saved or cleared the
      * credential, so this one loads it again: a browser's other tabs of the

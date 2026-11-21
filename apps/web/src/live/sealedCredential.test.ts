@@ -56,9 +56,9 @@ const memoryCell = () => {
       value = next;
       return Promise.resolve();
     },
-    remove: (expected) => {
+    replace: (expected, next) => {
       if (value !== expected) return Promise.resolve(false);
-      value = undefined;
+      value = next ?? undefined;
       return Promise.resolve(true);
     },
   };
@@ -256,8 +256,10 @@ describe("the desktop app's credential", () => {
     const store = storeFor(serverA, makeSystem().sealer, cell);
     await Effect.runPromise(store.save(first));
     // Another window paired the device again since this one read `second`.
-    expect(plain(await Effect.runPromise(store.clear(second)))).toEqual(plain(Option.some(first)));
-    expect(await Effect.runPromise(store.clear(first))).toEqual(Option.none());
+    expect(plain(await Effect.runPromise(store.clear(second, false)))).toEqual(
+      plain(Option.some(first)),
+    );
+    expect(await Effect.runPromise(store.clear(first, false))).toEqual(Option.none());
     expect(await Effect.runPromise(store.load)).toEqual(Option.none());
   });
 
@@ -266,10 +268,25 @@ describe("the desktop app's credential", () => {
     const { system, sealer } = makeSystem();
     await Effect.runPromise(storeFor(serverA, sealer, cell).save(first));
     system.locked = true;
-    expect(await Effect.runPromise(storeFor(serverA, sealer, cell).clear(first))).toEqual(
+    expect(await Effect.runPromise(storeFor(serverA, sealer, cell).clear(first, false))).toEqual(
       Option.none(),
     );
     expect(stored()).toBeUndefined();
+  });
+
+  it("leaves the server's refusal in its place, until the device is paired again", async () => {
+    const { cell, stored } = memoryCell();
+    const { sealer } = makeSystem();
+    const store = storeFor(serverA, sealer, cell);
+    await Effect.runPromise(store.save(first));
+    expect(await Effect.runPromise(store.clear(first, true))).toEqual(Option.none());
+    expect(await Effect.runPromise(store.refusedPairing)).toEqual(Option.some(first.deviceId));
+    // No write guarded by the pairing that ended takes it for a credential.
+    expect(sealedCredential(serverA, sealer).pairingOf(stored())).toEqual(Option.none());
+
+    await Effect.runPromise(store.save(second));
+    expect(await Effect.runPromise(store.refusedPairing)).toEqual(Option.none());
+    expect(plain(await Effect.runPromise(store.load))).toEqual(plain(Option.some(second)));
   });
 
   it("reads as not paired when its token is not one the app sealed", async () => {

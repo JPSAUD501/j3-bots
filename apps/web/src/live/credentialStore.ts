@@ -4,9 +4,10 @@ import {
   CredentialStore,
   type DeviceCredential,
 } from "@j3-bots/client-runtime";
-import type { DeviceId } from "@j3-bots/contracts";
+import { DeviceId } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import type * as Stream from "effect/Stream";
 
 /** The device credential as one stored value, and back: a browser's plain record, the desktop app's sealed one. */
@@ -31,9 +32,21 @@ export interface CredentialCodec {
 export interface CredentialCell {
   readonly get: () => Promise<unknown>;
   readonly put: (value: string) => Promise<void>;
-  /** Deletes what is stored in one transaction, only if it is still `expected`. */
-  readonly remove: (expected: string) => Promise<boolean>;
+  /**
+   * Replaces what is stored with `next`, or deletes it when `next` is null,
+   * in one transaction, only if it is still `expected`.
+   */
+  readonly replace: (expected: string, next: string | null) => Promise<boolean>;
 }
+
+/**
+ * What the cell holds in place of a credential the server refused: the
+ * pairing that ended, nothing secret. No codec reads it as a credential, so
+ * every window, and a tab still running an older build, finds none.
+ */
+const Refused = Schema.fromJsonString(Schema.Struct({ refused: DeviceId }));
+const decodeRefused = Schema.decodeUnknownOption(Refused);
+const encodeRefused = Schema.encodeSync(Refused);
 
 /**
  * The `CredentialStore` over `cell`, reading and writing through `codec`.
@@ -90,19 +103,28 @@ export const makeCredentialStore = (options: {
     // Deletes only a value of `credential`'s pairing: if another window
     // stored a pairing since, it stays. A pairing is told by its device id,
     // read in the clear, so signing out needs nothing opened.
-    clear: Effect.fn("CredentialStore.clear")((credential: DeviceCredential) =>
-      stored("clear").pipe(
-        Effect.flatMap((found) =>
-          typeof found === "string" && Option.contains(codec.pairingOf(found), credential.deviceId)
-            ? Effect.tryPromise({
-                try: () => cell.remove(found),
-                catch: () => new CredentialStorageError({ operation: "clear" }),
-              })
-            : Effect.succeed(false),
+    clear: Effect.fn("CredentialStore.clear")(
+      (credential: DeviceCredential, refusedByServer: boolean) =>
+        stored("clear").pipe(
+          Effect.flatMap((found) =>
+            typeof found === "string" &&
+            Option.contains(codec.pairingOf(found), credential.deviceId)
+              ? Effect.tryPromise({
+                  try: () =>
+                    cell.replace(
+                      found,
+                      refusedByServer ? encodeRefused({ refused: credential.deviceId }) : null,
+                    ),
+                  catch: () => new CredentialStorageError({ operation: "clear" }),
+                })
+              : Effect.succeed(false),
+          ),
+          Effect.tap((cleared) => (cleared ? announce : Effect.void)),
+          Effect.andThen(load),
         ),
-        Effect.tap((cleared) => (cleared ? announce : Effect.void)),
-        Effect.andThen(load),
-      ),
+    ),
+    refusedPairing: stored("load").pipe(
+      Effect.map((found) => Option.map(decodeRefused(found), ({ refused }) => refused)),
     ),
     changes: options.changes,
   });
