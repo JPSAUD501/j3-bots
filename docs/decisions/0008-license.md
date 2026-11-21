@@ -4,13 +4,13 @@
 
 ## Decision
 
-J3 Bots is licensed under the GNU Affero General Public License, version 3 or later (AGPL-3.0-or-later), with one additional permission under the license's section 7: it may be distributed through an app store whose terms conflict with the AGPL, as long as the same source is also available under the AGPL through a channel without those terms ([LICENSE-APP-STORE](../../LICENSE-APP-STORE)). The license covers the code and the prompt texts, which are part of the product.
+J3 Bots is licensed under the GNU Affero General Public License, version 3 or later (AGPL-3.0-or-later), with one additional permission under the license's section 7: it may be distributed through an app store whose terms conflict with the AGPL, as long as the same source is also available under the AGPL through a channel without those terms ([APP-STORE-PERMISSION](../../APP-STORE-PERMISSION)). The license covers the code and the prompt texts, which are part of the product.
 
-**Contributions come in under the same terms.** Every commit is signed off under the [Developer Certificate of Origin](https://developercertificate.org/), and with the sign-off its author licenses the commit under AGPL-3.0-or-later with the app-store permission ([CONTRIBUTING.md](../../CONTRIBUTING.md#sign-off)). There is no contributor agreement. CI refuses a pull request with a commit its author did not sign off. A contribution made with an AI tool follows the same rules, and the person who submits it signs off.
+**Contributions come in under the same terms.** A contribution is submitted to a project whose terms are `LICENSE` with the app-store permission, and [CONTRIBUTING.md](../../CONTRIBUTING.md#how-contributions-are-licensed) states that it comes in under them. Every commit is signed off under the [Developer Certificate of Origin](https://developercertificate.org/), which certifies that its author has the right to submit it ([CONTRIBUTING.md](../../CONTRIBUTING.md#sign-off)). There is no contributor agreement. CI refuses a pull request with a commit its author did not sign off. A contribution made with an AI tool follows the same rules, and the person who submits it signs off.
 
 **The permission is not new legal text.** Its wording is taken from wger Flutter, an app under AGPL-3.0-or-later that ships through the App Store, with only the program's name changed. The file names the source.
 
-**A distribution carries its notices.** A release archive carries `LICENSE`, `LICENSE-APP-STORE` and `THIRD_PARTY_NOTICES`, the license of everything in it that J3 Bots did not write, made from what its bundles hold ([decision 0015](0015-a-release-is-a-self-contained-archive.md)). Any other build that is given to people, such as a desktop or mobile package, carries the same before it is published.
+**A distribution carries its notices.** A release archive carries `LICENSE`, `APP-STORE-PERMISSION` and `THIRD_PARTY_NOTICES`, the license of everything in it that J3 Bots did not write, made from what its bundles hold ([decision 0015](0015-a-release-is-a-self-contained-archive.md)). Any other build that is given to people, such as a desktop or mobile package, carries the same before it is published.
 
 ## Why
 

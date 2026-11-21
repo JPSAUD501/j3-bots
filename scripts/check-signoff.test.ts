@@ -70,6 +70,7 @@ describe("check-signoff.sh", () => {
     const result = repo.check(base, head);
 
     expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("checked 2 commits");
     expect(result.status).toBe(0);
   });
 

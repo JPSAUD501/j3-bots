@@ -29,6 +29,6 @@ J3 Bots does not run models itself. It drives an unmodified [T3 Code](https://gi
 
 ## License
 
-J3 Bots is free software under the [GNU Affero General Public License, version 3 or later](LICENSE), with an [additional permission](LICENSE-APP-STORE) for distribution through app stores. The reasoning is in [decision 0008](docs/decisions/0008-license.md). To contribute, see [CONTRIBUTING.md](CONTRIBUTING.md).
+J3 Bots is free software under the [GNU Affero General Public License, version 3 or later](LICENSE), with an [additional permission](APP-STORE-PERMISSION) for distribution through app stores. The reasoning is in [decision 0008](docs/decisions/0008-license.md). To contribute, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 T3 Code is MIT licensed and is not affiliated with this project.

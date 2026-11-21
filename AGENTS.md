@@ -33,6 +33,7 @@ These are settled before the first line is written. Details are in [docs/enginee
 - Clients talk only to the J3 Bots server, through `packages/contracts`.
 - Test behavior that can break. No tests for what types already guarantee, and no tests that assert something removed stays removed.
 - Fix the cause. No workarounds that leave the underlying problem in place.
+- Sign off every commit (`git commit -s`). See [CONTRIBUTING.md](CONTRIBUTING.md#sign-off).
 
 ## Intellectual property boundaries
 

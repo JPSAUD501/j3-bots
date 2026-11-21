@@ -21,8 +21,10 @@ for ref in "$1" "$2"; do
 done
 
 commits=$(git rev-list --no-merges "$1..$2")
+checked=0
 unsigned=0
 for commit in $commits; do
+  checked=$((checked + 1))
   author=$(git show -s --format=%ae "$commit")
   if ! git show -s --format='%(trailers:key=Signed-off-by,valueonly)' "$commit" |
     grep -qiF "<$author>"; then
@@ -33,5 +35,6 @@ done
 
 if [[ $unsigned -ne 0 ]]; then
   echo "Sign every commit off with \`git commit -s\`. To sign off commits already made, run \`git rebase --signoff\` onto the branch the pull request targets, then push with --force-with-lease (CONTRIBUTING.md)." >&2
+  exit 1
 fi
-exit "$unsigned"
+echo "Every commit is signed off by its author: checked $checked commits."

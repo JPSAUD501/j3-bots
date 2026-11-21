@@ -22,7 +22,7 @@ j3-bots-<version>-<platform>/
   web/                  the web client
   release.json          version, platform and Node release: marks the layout
   LICENSE
-  LICENSE-APP-STORE
+  APP-STORE-PERMISSION
   THIRD_PARTY_NOTICES
 ```
 

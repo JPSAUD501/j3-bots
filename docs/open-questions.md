@@ -57,3 +57,9 @@ A message sent through `say` arrives whole. The operator sees the avatar working
 ## 9. Which harnesses beyond Claude Code and Codex are worth supporting?
 
 Agents connected through ACP have no system-prompt field. T3 Code sends each turn to them as its own text followed by the dispatched message, so J3 Bots' base prompt would have to ride in instruction files or in every envelope, which behaves differently after compaction.
+
+## 10. Is the name free to use?
+
+The name is chosen: J3 Bots ([Concepts: Names](product/concepts.md#names)). Whether it is free to use is not checked yet: conflicting trademarks, and the npm scope, GitHub name, domain and app-store names it needs.
+
+**Settled by** those checks, which are the owner's to make.

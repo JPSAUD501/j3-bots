@@ -23,7 +23,5 @@ Every commit is signed off (`git commit -s`): see CONTRIBUTING.md.
 - [ ] Web
 - [ ] Desktop
 - [ ] Mobile
-- [ ] Server, and the `j3-bots` command
 - [ ] Both themes
 - [ ] The reverse action: what can be turned on can be turned off
-- [ ] Docs say what the code now does

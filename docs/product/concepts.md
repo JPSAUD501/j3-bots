@@ -75,4 +75,4 @@ Only a `user` wake carries the operator's instructions. Every other kind is labe
 
 ## Names
 
-The product is called **J3 Bots**. Its command is `j3-bots`, its data directory is `~/.j3-bots`, its environment variables start with `J3_`, its desktop app's URL scheme is `j3bots://`, and its packages are in the `@j3-bots/*` scope. J3 Bots is not affiliated with T3 Code or its authors: it runs their server as its engine, unmodified.
+The product is called **J3 Bots**. Its command is `j3-bots`, its data directory is `~/.j3-bots`, its environment variables start with `J3_`, the desktop and mobile apps' link scheme is `j3bots://`, and its packages are in the `@j3-bots/*` scope. J3 Bots is not affiliated with T3 Code or its authors: it runs their server as its engine, unmodified.
