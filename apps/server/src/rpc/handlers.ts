@@ -47,7 +47,7 @@ export const handlers = ServedRpcs.toLayer(
     const stops = yield* Stops;
     const workSteps = yield* WorkSteps;
     const usage = yield* Usage;
-    const viewer = yield* (yield* Presence).connect;
+    const viewer = yield* (yield* Presence).connect(device.id);
 
     const botFiles = Effect.fn("rpc.botFiles")(function* (input: {
       readonly botId: BotId;
