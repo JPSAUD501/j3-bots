@@ -36,6 +36,7 @@ import type * as HttpClient from "effect/http/HttpClient";
 import type { RpcClientError } from "effect/rpc/RpcClientError";
 import type * as Socket from "effect/socket/Socket";
 import * as Connection from "./connection/Connection.ts";
+import { refuseRedirects } from "./connection/http.ts";
 import * as Files from "./files/Files.ts";
 import type { MessageProblem } from "./files/limits.ts";
 import * as Actions from "./intents/Actions.ts";
@@ -93,6 +94,7 @@ export const layer = SignOut.layer.pipe(
   Layer.provideMerge(Files.layer),
   Layer.provideMerge(Actions.layer),
   Layer.provideMerge(Connection.layer),
+  Layer.provide(refuseRedirects),
 );
 
 export interface ConversationHandle {

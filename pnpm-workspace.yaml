@@ -10,6 +10,8 @@ allowBuilds:
   bufferutil: false
   # Squirrel.Windows, which electron-builder carries; the app builds an NSIS installer instead.
   electron-winstaller: false
+  # Its install script only prints a notice.
+  core-js: false
   esbuild: true
   utf-8-validate: false
 

@@ -1,0 +1,24 @@
+{
+  "extends": ["expo/tsconfig.base.json", "../../tsconfig.base.json"],
+  "compilerOptions": {
+    "module": "Preserve",
+    "moduleResolution": "Bundler",
+    "customConditions": ["react-native"],
+    "jsx": "react-jsx",
+    "lib": ["ESNext", "esnext.disposable", "DOM"],
+    "types": ["node"],
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        // Severities deep-merge with tsconfig.effect.json. React Native has no
+        // Effect platform layer: the app uses its clock, timers and fetch directly.
+        "diagnosticSeverity": {
+          "globalDate": "off",
+          "globalTimers": "off",
+          "globalFetch": "off"
+        }
+      }
+    ]
+  },
+  "include": ["index.ts", "app.config.ts", "src"]
+}

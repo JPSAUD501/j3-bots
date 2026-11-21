@@ -63,6 +63,7 @@ export {
   type UploadResponse,
   WindowLocks,
 } from "./ports.ts";
+export { parseServerAddress, type ServerAddressProblem } from "./serverAddress.ts";
 export { Cell, type Readable, waitFor } from "./Store.ts";
 export {
   type CardAnswer,

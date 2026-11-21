@@ -12,8 +12,10 @@ import {
 } from "@j3-bots/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -37,6 +39,27 @@ export const within =
   <E2>(duration: Duration.Duration, onTimeout: () => E2) =>
   <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | E2, R> =>
     effect.pipe(Effect.timeoutOrElse({ duration, orElse: () => Effect.fail(onTimeout()) }));
+
+/**
+ * The platform's HTTP client with redirects refused: an answer that redirects
+ * fails the request, and nothing is sent where it points. The server never
+ * redirects its own routes, so a redirect comes from something in between,
+ * and following it would send the request again, with its pairing code or
+ * device token, to another address, plain HTTP included. Every request of the
+ * runtime's HTTP client goes through it (uploads go through `FileTransfer`).
+ * It asks `fetch` for `redirect: "error"`, so the platform's `fetch` must
+ * honor that; React Native's own does not.
+ */
+export const refuseRedirects = Layer.effect(
+  HttpClient.HttpClient,
+  Effect.gen(function* () {
+    const client = yield* HttpClient.HttpClient;
+    return HttpClient.transformResponse(
+      client,
+      Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
+    );
+  }),
+);
 
 /** The slowest link a file transfer is waited for: 32 KiB a second, a poor mobile link. */
 const SLOW_LINK_BYTES_PER_SECOND = 32 * 1024;

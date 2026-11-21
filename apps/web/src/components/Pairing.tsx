@@ -114,7 +114,7 @@ export function Pairing({
         // The desktop app carries its page: reloading it changes nothing.
         return server === undefined
           ? t("pairing.incompatible")
-          : t("gate.incompatible.desktopBody", { address: server.address });
+          : t("gate.incompatible.appBody", { address: server.address });
       case "storage-failed":
         // The code is spent and the device listed by now: in the desktop
         // app, only a new process sees a keyring unlocked since it started.
@@ -256,8 +256,8 @@ export function Incompatible({
     return (
       <Centered>
         <Heading
-          title={t("gate.incompatible.desktopTitle")}
-          body={t("gate.incompatible.desktopBody", { address: server.address })}
+          title={t("gate.incompatible.appTitle")}
+          body={t("gate.incompatible.appBody", { address: server.address })}
         />
         <div className="flex flex-wrap items-start justify-center gap-2">
           <Button variant="primary" onClick={() => window.location.reload()}>
