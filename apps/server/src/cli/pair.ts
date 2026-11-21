@@ -26,15 +26,15 @@ const NOT_RUNNING =
   "The server is not running, and pairing codes live in the running server. Start it with `systemctl --user start j3-bots` (or `j3-bots serve`), then run `j3-bots pair` again.";
 
 /**
- * Where a new device reaches the running server, as it listens, and what to
- * do there. Over HTTPS a browser accepts only a name on the certificate, so
- * no bare address is offered; plain HTTP is offered on the private addresses
- * it serves.
+ * Where a new device reaches the running server, and what to do there: its
+ * public origin first, when one is set, then where it listens. Over HTTPS a
+ * browser accepts only a name on the certificate, so no bare address is
+ * offered; plain HTTP is offered on the private addresses it serves.
  */
 const whereToOpen = (listener: ListenerStatus, origins: ReadonlyArray<ServerOrigin>) => {
   if (origins.length > 0) {
     return [
-      "The server listens at:",
+      "The server is reached at:",
       ...origins.map((origin) => `  ${origin}`),
       "On the new device, open J3 Bots at one of these addresses and enter the code.",
     ];
@@ -136,7 +136,10 @@ export const pairCommand = Command.make("pair", { address: addressFlag }).pipe(
       const status = yield* userFacing(admin.status(socket));
       if (Option.isNone(status)) return yield* refuse(NOT_RUNNING);
       const { listener } = status.value;
-      const origins = yield* reachableOrigins(listener);
+      const origins = yield* reachableOrigins(
+        listener,
+        Option.fromUndefinedOr(status.value.publicOrigin),
+      );
       const carried = yield* carriedOrigin(origins, address);
       const grant = yield* userFacing(admin.startPairing(socket));
       if (Option.isNone(grant)) return yield* refuse(NOT_RUNNING);

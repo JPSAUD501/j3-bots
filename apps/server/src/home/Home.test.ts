@@ -34,6 +34,7 @@ const freshHome = Effect.gen(function* () {
     toolPort: 3739,
     webClient: { _tag: "bundled", directory: path.join(home, "web") },
     adminSocket: path.join(home, "admin.sock"),
+    publicOrigin: Option.none(),
   };
   return config;
 });
