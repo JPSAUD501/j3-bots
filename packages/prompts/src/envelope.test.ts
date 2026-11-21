@@ -389,7 +389,7 @@ describe("renderWake", () => {
       {"action":"completed","conclusion":"failure"}
       </data-7f3a9c01b2d4>
       </j3-wake>
-      Nobody is waiting. Call \`say\` only if the instruction's last line asks for a message about what you found; otherwise end with no \`say\` at all, not even to say all is well.
+      Nobody is waiting. Follow the instruction's delivery line: a reminder or a report asked for every time is sent when due; when a report's condition is not met, end with no \`say\` at all, not even to say all is well. If you could not do the work, say in one sentence what blocked it, unless a recent run already did.
       "
     `);
     expect(
@@ -414,7 +414,7 @@ describe("renderWake", () => {
       </recent-runs>
       </routine>
       </j3-wake>
-      Nobody is waiting. Call \`say\` only if the instruction's last line asks for a message about what you found; otherwise end with no \`say\` at all, not even to say all is well.
+      Nobody is waiting. Follow the instruction's delivery line: a reminder or a report asked for every time is sent when due; when a report's condition is not met, end with no \`say\` at all, not even to say all is well. If you could not do the work, say in one sentence what blocked it, unless a recent run already did.
       "
     `);
   });

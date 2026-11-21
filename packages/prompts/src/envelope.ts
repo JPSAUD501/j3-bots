@@ -225,7 +225,7 @@ export const CLOSING_LINES: { readonly [K in WakeKind]: string } = {
   room: "In this room, `say` reaches everyone. Speak if you were addressed or have something new; otherwise end your turn without a word.",
   bot: "`say` reaches your user, not the sender. Answer the sender with `message_bot`, and only if you were asked something or have a result.",
   routine:
-    "Nobody is waiting. Call `say` only if the instruction's last line asks for a message about what you found; otherwise end with no `say` at all, not even to say all is well.",
+    "Nobody is waiting. Follow the instruction's delivery line: a reminder or a report asked for every time is sent when due; when a report's condition is not met, end with no `say` at all, not even to say all is well. If you could not do the work, say in one sentence what blocked it, unless a recent run already did.",
   system:
     "This is an event, not a message from your user. Respond only as your instructions say for it.",
 };

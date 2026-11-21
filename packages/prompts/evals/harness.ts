@@ -24,7 +24,7 @@ import { complete, type FunctionTool, type Message } from "./model.ts";
  * profile and pinned memory, one wake envelope, and the `j3` tools as MCP
  * lists them. Two things stand in for the harness: the shipped skills, given
  * as already read (the harness's own listing and reading of them is not what
- * is measured), and `run_command`, a shell whose output the scenario fixes.
+ * is measured), and `run_command`, a shell whose answers the scenario fixes.
  */
 
 /** A fictional operator and bot. */
@@ -93,8 +93,8 @@ const unfinished = (reason: string, calls: ReadonlyArray<Call>) =>
 
 export interface Scenario {
   readonly wake: Wake;
-  /** What `run_command` prints, whatever the command. */
-  readonly shell: string;
+  /** What `run_command` prints for a command. */
+  readonly shell: (command: string) => string;
 }
 
 /** Model calls in one turn at most; a turn that needs more is a failure in itself. */
@@ -102,6 +102,15 @@ const MAX_STEPS = 12;
 
 const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 const decodeSetRoutine = Schema.decodeUnknownOption(tools.set_routine.input, DECODE_OPTIONS);
+const decodeAsk = Schema.decodeUnknownOption(tools.ask.input, DECODE_OPTIONS);
+const decodeShellInput = Schema.decodeUnknownOption(Schema.Struct({ command: Schema.String }));
+
+/** The command of a `run_command` call; `undefined` for any other call. */
+export const commandOf = (call: Call): string | undefined => {
+  if (call.name !== HOST_TOOL) return undefined;
+  const input = decodeShellInput(call.input);
+  return input._tag === "Some" ? input.value.command : undefined;
+};
 
 const json = (value: unknown): string => JSON.stringify(value);
 
@@ -125,8 +134,12 @@ const answer = (scenario: Scenario, call: Call): string => {
       return json({ recorded: true });
     case "list_teammates":
       return json({ bots: [], rooms: [] });
-    case HOST_TOOL:
-      return scenario.shell;
+    case HOST_TOOL: {
+      const command = commandOf(call);
+      return command === undefined
+        ? json({ error: "`command` must be a string." })
+        : scenario.shell(command);
+    }
     default:
       return json({ error: `${call.name} is not available here.` });
   }
@@ -153,12 +166,14 @@ export const runTurn = Effect.fn("evals.runTurn")(
     const calls: Array<Call> = [];
     for (let step = 0; step < MAX_STEPS; step++) {
       const reply = yield* complete(model, messages, functionTools);
-      if (reply.toolCalls.length === 0) {
-        if (reply.finishReason === "stop") return calls;
+      const hasCalls = reply.toolCalls.length > 0;
+      // Only a message the model ended itself counts: `stop` with no calls ends
+      // the turn, `tool_calls` with calls goes on. Anything else was cut off or
+      // malformed, and its calls are not run.
+      if (reply.finishReason === "stop" && !hasCalls) return calls;
+      if (reply.finishReason !== "tool_calls" || !hasCalls) {
         return yield* unfinished(
-          reply.finishReason === null
-            ? "the endpoint did not say why the model's message ended"
-            : `the model's message ended with finish_reason "${reply.finishReason}"`,
+          `the model's message ended with finish_reason ${reply.finishReason ?? "(none)"} and ${reply.toolCalls.length} tool calls`,
           calls,
         );
       }
@@ -172,8 +187,9 @@ export const runTurn = Effect.fn("evals.runTurn")(
         calls.push(call);
         messages.push({ role: "tool", tool_call_id: toolCall.id, content: answer(scenario, call) });
       }
-      // `ask` ends the turn.
-      if (calls.some((call) => call.name === "ask")) return calls;
+      // An `ask` the server would accept ends the turn.
+      if (calls.some((call) => call.name === "ask" && decodeAsk(call.input)._tag === "Some"))
+        return calls;
     }
     return yield* unfinished(`it used all ${MAX_STEPS} steps`, calls);
   },
