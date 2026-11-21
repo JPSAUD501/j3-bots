@@ -7,11 +7,14 @@ import {
   type EntryId,
   EntryOrder,
   type MessageDelivery,
+  type ModelChoice,
   type Notice,
   PositiveInt,
+  type ProviderId,
+  type ProviderStatus,
   type QuestionEntry,
 } from "@j3-bots/contracts";
-import { SessionId, TurnId } from "@j3-bots/engine-t3";
+import { type IdempotencyKey, SessionId, TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -24,6 +27,7 @@ import * as SqlSchema from "effect/sql/SqlSchema";
 import * as TestClock from "effect/testing/TestClock";
 import { Attachments } from "../attachments/Attachments.ts";
 import { Bots } from "../bots/Bots.ts";
+import { EngineState } from "../engine/EngineState.ts";
 import { Entries } from "../entries/Entries.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { Rooms } from "../rooms/Rooms.ts";
@@ -35,16 +39,68 @@ import { Observer } from "../turns/Observer.ts";
 import { Pipeline } from "../turns/Pipeline.ts";
 import { SessionGate } from "../turns/SessionGate.ts";
 import { Wakes } from "../turns/Wakes.ts";
+import { TestProviders } from "./domain.ts";
 
 let commands = 0;
 /** A fresh operator command id. */
 export const command = () => CommandId.make(`command-${++commands}`);
 
-export const createBot = (name: string) =>
+/**
+ * A bot just created, on `model` or the default one: its `first-run` wake is
+ * pending, its first turn not begun.
+ */
+export const createNewBot = (name: string, model?: ModelChoice) =>
   Effect.gen(function* () {
     const bots = yield* Bots;
     yield* TestClock.adjust("1 second");
-    return yield* bots.create({ commandId: command(), draft: { name, job: "" } });
+    return yield* bots.create({
+      commandId: command(),
+      draft: model === undefined ? { name, job: "" } : { name, job: "", model },
+    });
+  });
+
+/** The engine reports the provider in `status` from now on, and the server has taken it in. */
+export const providerIs = (providerId: ProviderId, status: ProviderStatus["status"]) =>
+  Effect.gen(function* () {
+    yield* (yield* TestProviders).setStatus(providerId, status);
+    const engineState = yield* EngineState;
+    yield* until(
+      engineState.current.pipe(
+        Effect.map((now) =>
+          now.providers.some(
+            (provider) => provider.id === providerId && provider.status._tag === status._tag,
+          ),
+        ),
+      ),
+    );
+  });
+
+/** The opening dispatch of each bot `createBot` made, which `received` leaves out. */
+const openings = new Set<IdempotencyKey>();
+
+/**
+ * A bot past its first turn, the one its `first-run` wake starts, which ends
+ * without a word: what most tests begin with, an empty conversation and an
+ * idle session.
+ */
+export const createBot = (name: string) =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createNewBot(name);
+    const session = yield* engineSession(bot.id);
+    const turnId = yield* nextTurn(bot.id);
+    const [opening, ...more] = yield* control.dispatches(session);
+    if (opening === undefined || more.length > 0) {
+      return yield* Effect.die(new Error("A new bot's session got something besides its opening"));
+    }
+    openings.add(opening.key);
+    yield* control.finishTurn({
+      sessionId: session,
+      turnId,
+      outcome: { _tag: "completed" },
+    });
+    yield* turnEnded(bot.id);
+    return bot;
   });
 
 /** How long `eventually` waits for a change before it reads again anyway, in real time. */
@@ -250,6 +306,17 @@ export const awaitEntry = <T extends Entry["_tag"]>(botId: BotId, tag: T) =>
       ),
     ),
   );
+
+/**
+ * What the engine applied to the session, oldest first, leaving out the
+ * opening `createBot` ran: the work a test gave it. Any other opening, such as
+ * a second hello, shows.
+ */
+export const received = (sessionId: SessionId) =>
+  Effect.gen(function* () {
+    const all = yield* (yield* TestEngineControl).dispatches(sessionId);
+    return all.filter((dispatch) => !openings.has(dispatch.key));
+  });
 
 /** How many dispatches the engine applied to the session carried `text`. */
 export const timesSent = (sessionId: SessionId, text: string) =>

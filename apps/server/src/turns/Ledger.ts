@@ -19,7 +19,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Entries } from "../entries/Entries.ts";
 import { json, Time, timeText } from "../persistence/columns.ts";
-import { notices } from "./notices.ts";
+import { notices, operatorWroteSql } from "./notices.ts";
 import { fromBeforeFreshStartSql } from "./rotationRequests.ts";
 import {
   AudienceColumn,
@@ -94,10 +94,11 @@ export type WakesAfter =
   | { readonly _tag: "failed"; readonly reason: WakeFailure };
 
 /**
- * How an answer's notice names why it did not reach the bot: a key never
- * resolved is the engine's to blame, and a room's Stop is the operator's.
+ * How the notice of an answer or an opening names why it did not reach the
+ * bot: a key never resolved is the engine's to blame, and a room's Stop is
+ * the operator's.
  */
-const answerFailure: Record<WakeFailure, FailureClass> = {
+const unshownFailure: Record<WakeFailure, FailureClass> = {
   rejected: "unknown",
   unresolved: "engine-unavailable",
   stopped: "stopped",
@@ -201,10 +202,11 @@ export class Ledger extends Context.Service<
      */
     readonly abandon: (dispatchId: DispatchRowId, wakes: WakesAfter) => Effect.Effect<boolean>;
     /**
-     * Whether a notice that the dispatch was not delivered may send its answer
-     * again: the engine has not got the dispatch and never delivered it (it
-     * failed, or the engine dropped it before its turn started), and its
-     * answer failed and was not sent again yet.
+     * Whether a notice that the dispatch was not delivered may send its answer,
+     * or the bot's opening, again: the engine has not got the dispatch and
+     * never delivered it (it failed, or the engine dropped it before its turn
+     * started), and that wake failed and was not sent again yet. An opening
+     * is not sent again once the operator has written.
      */
     readonly undeliveredRetryable: (dispatchId: DispatchRowId) => Effect.Effect<boolean>;
     /** Pending wakes stop waiting: a Stop or an archival ended what they asked for. */
@@ -317,7 +319,13 @@ export const layer = Layer.effect(
           AND EXISTS (
             SELECT 1 FROM wakes w
             WHERE w.dispatch_id = d.id AND w.status = 'failed'
-              AND json_extract(w.payload_json, '$._tag') = 'answer'
+              AND (
+                json_extract(w.payload_json, '$._tag') = 'answer'
+                OR (
+                  json_extract(w.payload_json, '$._tag') = 'first-run'
+                  AND NOT ${operatorWroteSql(sql, sql.literal("w.bot_id"))}
+                )
+              )
               AND NOT EXISTS (SELECT 1 FROM wakes r WHERE r.retry_of = w.id)
           )
       `;
@@ -394,15 +402,18 @@ export const layer = Layer.effect(
           // Wakes the dispatch failed with before, when the engine took it
           // late, fail again with this reason.
           const failed = yield* failedWakes({ dispatchId, reason: after.reason, at });
-          // An answer has no message of its own to show its failure on: a
-          // retryable notice does, where the answer was for. One that failed
-          // before keeps the notice it has, which now shows this failure.
-          const answer = failed.find((wake) => wake.payload_json._tag === "answer");
-          if (answer !== undefined) {
-            const notice: Notice = { _tag: "turn-failed", failure: answerFailure[after.reason] };
+          // An answer, or a new bot's opening, has no message of its own to
+          // show its failure on: a retryable notice does, where it was for.
+          // One that failed before keeps the notice it has, which now shows
+          // this failure.
+          const unshown = failed.find(
+            (wake) => wake.payload_json._tag === "answer" || wake.payload_json._tag === "first-run",
+          );
+          if (unshown !== undefined) {
+            const notice: Notice = { _tag: "turn-failed", failure: unshownFailure[after.reason] };
             const shown = yield* undeliveredNotices(dispatchId);
             if (shown.length === 0) {
-              yield* notify(answer.bot_id, audienceOf(answer), notice, {
+              yield* notify(unshown.bot_id, audienceOf(unshown), notice, {
                 dispatchId,
                 reason: "undelivered",
               });

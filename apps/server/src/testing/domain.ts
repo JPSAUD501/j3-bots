@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { EngineStatus } from "@j3-bots/contracts";
+import type { EngineStatus, ProviderStatus } from "@j3-bots/contracts";
 import { ModelId, ProviderId } from "@j3-bots/contracts";
 import { Engine } from "@j3-bots/engine-t3";
 import * as TestEngine from "@j3-bots/engine-t3/testing";
+import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import type { ListenerStatus } from "../admin/protocol.ts";
 import * as Domain from "../domain.ts";
 import * as Listener from "../listener.ts";
@@ -15,7 +17,10 @@ import * as SettingsStore from "../settings/SettingsStore.ts";
 import * as TestDatabase from "./database.ts";
 
 /** The model a bot gets by default: the first the test engine offers. */
-const MODEL = { providerId: ProviderId.make("claude"), modelId: ModelId.make("opus") };
+export const DEFAULT_MODEL = {
+  providerId: ProviderId.make("claude"),
+  modelId: ModelId.make("opus"),
+};
 
 /** A model of a second provider, which a bot can move to. */
 export const OTHER_PROVIDER_MODEL = {
@@ -25,11 +30,11 @@ export const OTHER_PROVIDER_MODEL = {
 
 const providers: EngineStatus["providers"] = [
   {
-    id: MODEL.providerId,
+    id: DEFAULT_MODEL.providerId,
     name: "Claude",
     harness: "claude-code",
     status: { _tag: "ready" },
-    models: [{ id: MODEL.modelId, name: "Claude Opus" }],
+    models: [{ id: DEFAULT_MODEL.modelId, name: "Claude Opus" }],
     usage: [],
   },
   {
@@ -42,21 +47,51 @@ const providers: EngineStatus["providers"] = [
   },
 ];
 
+/** The providers the test engine reports, whose state a test can change. */
+export class TestProviders extends Context.Service<
+  TestProviders,
+  {
+    readonly current: Stream.Stream<EngineStatus["providers"]>;
+    /** The engine reports the provider in this state from now on. */
+    readonly setStatus: (
+      providerId: ProviderId,
+      status: ProviderStatus["status"],
+    ) => Effect.Effect<void>;
+  }
+>()("@j3-bots/server/testing/domain/TestProviders") {}
+
+const testProviders = Layer.effect(
+  TestProviders,
+  Effect.gen(function* () {
+    const ref = yield* SubscriptionRef.make(providers);
+    return TestProviders.of({
+      current: SubscriptionRef.changes(ref),
+      setStatus: (providerId, status) =>
+        SubscriptionRef.update(ref, (all) =>
+          all.map((provider) => (provider.id === providerId ? { ...provider, status } : provider)),
+        ),
+    });
+  }),
+);
+
 /**
- * The in-memory engine, offering a ready Claude Code and a ready Codex
- * provider. The test engine reports no providers of its own, and a bot needs a
- * model to exist.
+ * The in-memory engine, offering a Claude Code and a Codex provider, both
+ * ready until a test says otherwise. The test engine reports no providers of
+ * its own, and a bot needs a model to exist.
  */
 const engine = Layer.effect(
   Engine,
   Effect.gen(function* () {
     const inner = yield* Engine;
+    const reported = yield* TestProviders;
     return Engine.of({
       ...inner,
-      status: inner.status.pipe(Stream.map((status) => ({ ...status, providers }))),
+      status: inner.status.pipe(
+        Stream.zipLatestWith(reported.current, (status, now) => ({ ...status, providers: now })),
+      ),
     });
   }),
-).pipe(Layer.provideMerge(TestEngine.layer));
+).pipe(Layer.provideMerge(Layer.merge(TestEngine.layer, testProviders)));
 
 /** The database, the home and the engine. */
 const stores = Layer.mergeAll(

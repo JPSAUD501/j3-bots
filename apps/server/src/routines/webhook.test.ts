@@ -13,7 +13,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Http from "../http.ts";
 import * as Listener from "../listener.ts";
 import * as TestDomain from "../testing/domain.ts";
-import { command, createBot } from "../testing/turns.ts";
+import { command, createNewBot } from "../testing/turns.ts";
 import * as WebClient from "../web/WebClient.ts";
 import { WEBHOOK_RUNS_PER_MINUTE } from "./RoutineRuns.ts";
 import { Routines } from "./Routines.ts";
@@ -21,10 +21,14 @@ import { WEBHOOK_BODY_LIMIT } from "./webhook.ts";
 
 const Answer = Schema.Struct({ run: Schema.String, status: Schema.String });
 
-/** A routine of a new bot. */
+/**
+ * A routine of a new bot. What a webhook records needs no turn of the bot's,
+ * so its opening waits: the routine turns earlier tests left running may hold
+ * every slot.
+ */
 const routineWith = (trigger: RoutineTrigger) =>
   Effect.gen(function* () {
-    const bot = yield* createBot("Ana");
+    const bot = yield* createNewBot("Ana");
     return yield* (yield* Routines).create({
       commandId: command(),
       botId: bot.id,

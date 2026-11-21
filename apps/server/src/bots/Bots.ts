@@ -31,6 +31,8 @@ import { Rooms } from "../rooms/Rooms.ts";
 import { rotationRequests } from "../turns/rotationRequests.ts";
 import { Signals } from "../turns/Signals.ts";
 import { Stops } from "../turns/Stops.ts";
+import { conversation } from "../turns/model.ts";
+import { Wakes } from "../turns/Wakes.ts";
 import { freeAvatar } from "./avatars.ts";
 import { type BotChanges, BotStore } from "./BotStore.ts";
 import { EngineSessions } from "./EngineSessions.ts";
@@ -54,6 +56,10 @@ export interface BotDraft {
 export class Bots extends Context.Service<
   Bots,
   {
+    /**
+     * Saves the bot with a `first-run` system wake, so its first turn opens
+     * its conversation, then opens its main session if the engine can.
+     */
     readonly create: (input: {
       readonly commandId: CommandId;
       readonly draft: BotDraft;
@@ -112,6 +118,7 @@ export const layer = Layer.effect(
     const ids = yield* Ids;
     const signals = yield* Signals;
     const stops = yield* Stops;
+    const wakes = yield* Wakes;
     const { requestBotRotation, providerRestored, forgetConversation } = rotationRequests(
       sql,
       signals,
@@ -198,6 +205,23 @@ export const layer = Layer.effect(
             workspacePath: layout.workspace(id),
             at,
           });
+          // The bot opens its conversation: its first turn is this wake's,
+          // written once, with the bot, and dispatched like any other. Its
+          // cause is the operator's, as the creation is, also when the primary
+          // bot's `create_bot` carried their word: it follows from no
+          // dispatch's work, so no Stop of earlier work can drop it unwritten.
+          yield* wakes.record([
+            {
+              botId: id,
+              kind: "system",
+              audience: conversation,
+              payload: { _tag: "first-run" },
+              sourceEntryId: null,
+              hops: 0,
+              retryOf: null,
+              cause: { _tag: "operator" },
+            },
+          ]);
           yield* changes.touch({ _tag: "bot", botId: id });
           return (yield* require(id).pipe(Effect.orDie)).bot;
         }),
@@ -230,12 +254,13 @@ export const layer = Layer.effect(
             // Compared with the provider the bot's live main session runs on, in
             // this transaction: an earlier change may not have reached it yet.
             // Moving to another provider is the operator's own action, so it
-            // stops the work in progress before the session is replaced. Moving
-            // back before that keeps the session.
+            // stops the work in progress before the session is replaced, but
+            // leaves a hello the bot has not sent yet to run on the new one.
+            // Moving back before that keeps the session.
             if (change.model !== undefined) {
               const live = yield* liveMainProvider(input.botId);
               if (Option.isSome(live) && live.value !== change.model.providerId) {
-                yield* stops.record(input.botId, { _tag: "bot" });
+                yield* stops.record(input.botId, { _tag: "bot" }, { keepOpening: true });
                 yield* requestBotRotation(input.botId, "provider-changed");
               } else if (Option.isSome(live)) {
                 yield* providerRestored(input.botId);

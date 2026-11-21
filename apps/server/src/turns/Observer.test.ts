@@ -28,6 +28,7 @@ import {
   gateSettled,
   mainSessionId,
   nextTurn,
+  received,
   noticesOf,
   sendToBot,
   timesSent,
@@ -51,8 +52,8 @@ const steering = Effect.gen(function* () {
   const turnId = yield* nextTurn(bot.id);
   const steer = yield* sendToBot(bot.id, "Also check the tests.");
   yield* flushed(bot.id);
-  const received = yield* control.dispatches(session);
-  assert.deepStrictEqual(received[1]?.delivery, { _tag: "steer", turnId });
+  const sent = yield* received(session);
+  assert.deepStrictEqual(sent[1]?.delivery, { _tag: "steer", turnId });
   return { control, bot, session, turnId, steer };
 });
 
@@ -207,10 +208,10 @@ it.effect("wakes the bot no more when its turn handed off to background work", (
     yield* flushed(bot.id);
 
     const closed = yield* sql<{ readonly closed_by: string | null }>`
-      SELECT closed_by FROM dispatches
+      SELECT closed_by FROM dispatches WHERE engine_turn_id = ${watching}
     `;
     assert.deepStrictEqual(closed, [{ closed_by: "handoff" }]);
-    assert.strictEqual((yield* control.dispatches(session)).length, 1);
+    assert.strictEqual((yield* received(session)).length, 1);
     assert.notInclude(yield* noticesOf(bot.id), "undelivered");
   }).pipe(Effect.provide(TestDomain.layer)),
 );
