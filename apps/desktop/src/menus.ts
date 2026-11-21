@@ -15,6 +15,7 @@ import { createI18n, type I18n, resolveLocale } from "@j3-bots/i18n";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import {
   app,
   type BrowserWindow,
@@ -103,6 +104,8 @@ export const serve = Effect.fn("desktop.menus")(function* ({
   const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
   const saved = (yield* settings.get).shortcut;
   const wayland = onWayland();
+  // One change of shortcut at a time, so two cannot both register and leave one untracked.
+  const changing = yield* Semaphore.make(1);
 
   yield* Effect.acquireRelease(
     Effect.sync(() => {
@@ -157,10 +160,11 @@ export const serve = Effect.fn("desktop.menus")(function* ({
             id: "show",
             label: t("desktop.menu.show"),
             accelerator: shortcut.accelerator,
-            // The system holds it as the global shortcut once it took it, or
-            // its desktop decides; where it refused it, the menu holds it for
-            // as long as the window is in front.
-            registerAccelerator: shortcut.state === "taken" || shortcut.state === "unavailable",
+            // The system holds it as the global shortcut once it took it.
+            // Anywhere else the menu holds it too, for as long as the window
+            // is in front: where it was refused, and on Wayland, where the
+            // desktop may refuse it without telling the app.
+            registerAccelerator: shortcut.state !== "registered",
             click: show,
           },
           { type: "separator" },
@@ -308,37 +312,42 @@ export const serve = Effect.fn("desktop.menus")(function* ({
         trayMenu();
       });
       ipcMain.handle(IPC_CHANNELS.shortcut, (event) => (fromApp(event) ? shortcut : null));
-      ipcMain.handle(
-        IPC_CHANNELS.setShortcut,
-        async (event, request: unknown): Promise<ShortcutChange | null> => {
-          const decoded = decodeShortcut(request);
-          if (!fromApp(event) || Option.isNone(decoded)) return null;
-          const { accelerator } = decoded.value;
+      const change = (accelerator: Accelerator): Effect.Effect<ShortcutChange> =>
+        Effect.gen(function* () {
           const before = shortcut;
-          if (accelerator === before.accelerator) return { outcome: "changed", status: before };
+          const held = before.state === "registered" || before.state === "requested";
+          // One that was refused is tried again when chosen again.
+          if (held && accelerator === before.accelerator) {
+            return { outcome: "changed", status: before };
+          }
           // The new one is held before the old one goes, so a refusal keeps the old one working.
           if (!register(accelerator)) return { outcome: "taken", status: before };
-          const kept = await runPromise(
-            settings
-              .update((current) => ({
-                ...current,
-                shortcut: accelerator === DEFAULT_SHORTCUT ? null : accelerator,
-              }))
-              .pipe(
-                Effect.as(true),
-                Effect.catch((error) =>
-                  Effect.logWarning("Saving the shortcut failed", error).pipe(Effect.as(false)),
-                ),
+          const kept = yield* settings
+            .update((current) => ({
+              ...current,
+              shortcut: accelerator === DEFAULT_SHORTCUT ? null : accelerator,
+            }))
+            .pipe(
+              Effect.as(true),
+              Effect.catch((error) =>
+                Effect.logWarning("Saving the shortcut failed", error).pipe(Effect.as(false)),
               ),
-          );
+            );
           if (!kept) {
             globalShortcut.unregister(accelerator);
             return { outcome: "not-saved", status: before };
           }
-          globalShortcut.unregister(before.accelerator);
+          if (before.accelerator !== accelerator) globalShortcut.unregister(before.accelerator);
           shortcut = statusOf(accelerator, true);
           applicationMenu();
           return { outcome: "changed", status: shortcut };
+        });
+      ipcMain.handle(
+        IPC_CHANNELS.setShortcut,
+        (event, request: unknown): Promise<ShortcutChange | null> => {
+          const decoded = decodeShortcut(request);
+          if (!fromApp(event) || Option.isNone(decoded)) return Promise.resolve(null);
+          return runPromise(changing.withPermits(1)(change(decoded.value.accelerator)));
         },
       );
       return { icon, pageReplaced, themeChanged };

@@ -705,7 +705,7 @@ const sentences = {
   "settings.shortcut.unavailable":
     "Este desktop não deixa apps usarem um atalho fora da própria janela, então {shortcut} só funciona com o J3 Bots em primeiro plano.",
   "settings.shortcut.requested":
-    "No Wayland, é o seu desktop que decide se o J3 Bots pode usar {shortcut}, e ele não avisa o J3 Bots. O GNOME pergunta na primeira vez. Se pressionar o atalho não fizer nada, o seu desktop não permitiu.",
+    "No Wayland, é o seu desktop que decide se o J3 Bots pode usar {shortcut}, e ele pode recusar sem avisar o J3 Bots. Se pressionar o atalho fora do J3 Bots não fizer nada, o seu desktop não permitiu; ele continua funcionando com o J3 Bots em primeiro plano.",
   "desktop.menu.app": "J3 Bots",
   "desktop.menu.show": "Mostrar o J3 Bots",
   "desktop.menu.hide": "Ocultar o J3 Bots",
@@ -723,7 +723,7 @@ const sentences = {
   "desktop.menu.composer": "Pôr o cursor na caixa de mensagem",
   "desktop.menu.next": "Próximo bot ou sala",
   "desktop.menu.previous": "Bot ou sala anterior",
-  "desktop.menu.stop": "Parar o bot",
+  "desktop.menu.stop": "Parar",
   "desktop.menu.closeDetails": "Fechar detalhes",
   "desktop.menu.view": "Exibir",
   "desktop.menu.reload": "Recarregar",

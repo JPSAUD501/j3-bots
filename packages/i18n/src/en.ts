@@ -691,7 +691,7 @@ export const en = {
   "settings.shortcut.unavailable":
     "This desktop doesn’t let apps use a shortcut outside their own window, so {shortcut} works only while J3 Bots is in front.",
   "settings.shortcut.requested":
-    "On Wayland your desktop decides whether J3 Bots may use {shortcut}, and doesn’t tell J3 Bots. GNOME asks the first time. If pressing it does nothing, your desktop didn’t allow it.",
+    "On Wayland your desktop decides whether J3 Bots may use {shortcut}, and may refuse it without telling J3 Bots. If pressing it does nothing outside J3 Bots, your desktop didn’t allow it; it still works while J3 Bots is in front.",
   "desktop.menu.app": "J3 Bots",
   "desktop.menu.show": "Show J3 Bots",
   "desktop.menu.hide": "Hide J3 Bots",
@@ -709,7 +709,7 @@ export const en = {
   "desktop.menu.composer": "Put the cursor in the message box",
   "desktop.menu.next": "Next bot or room",
   "desktop.menu.previous": "Previous bot or room",
-  "desktop.menu.stop": "Stop the bot",
+  "desktop.menu.stop": "Stop",
   "desktop.menu.closeDetails": "Close details",
   "desktop.menu.view": "View",
   "desktop.menu.reload": "Reload",
