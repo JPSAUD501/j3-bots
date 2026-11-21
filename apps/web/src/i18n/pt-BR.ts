@@ -474,7 +474,7 @@ export const ptBR: Catalog = {
   "settings.save.offline":
     "Salvar fica disponível quando este dispositivo voltar a se conectar ao J3 Bots.",
   "settings.notifications": "Notificações",
-  "settings.notifications.enabled": "Notificar",
+  "settings.notifications.enabled": "Receber notificações",
   "settings.notifications.enabled.hint":
     "Quando um bot escreve ou precisa de você e nenhum dispositivo está com aquela conversa aberta. Vale para todos os dispositivos.",
   "settings.notifications.previews": "Mostrar o que o bot escreveu",
