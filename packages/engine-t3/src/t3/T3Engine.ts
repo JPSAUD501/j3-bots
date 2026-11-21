@@ -88,6 +88,7 @@ import {
 import { EngineInstallFailed, ensureInstalled } from "./Install.ts";
 import { commandIdFor, messageIdFor, projectIdFor, threadIdFor } from "./Keys.ts";
 import { isMissingThread } from "./missingThread.ts";
+import { isBackgroundWorkRefusal } from "./backgroundRefusal.ts";
 import { ORCHESTRATION_PROTOCOL, pin } from "./Pin.ts";
 import type { FileChangeItem } from "./approvalDetail.ts";
 import { cursorFor, makeBatches, type BatchPlace } from "./Batches.ts";
@@ -221,15 +222,6 @@ const REJECTIONS: ReadonlySet<string> = new Set([
  * **Read** at `db51b67`, `ThreadMessageIntake.dispatchCommand`.
  */
 const CLAIM_ERROR = "AttachmentClaimError";
-/**
- * The text of the engine's refusal to change a session's model or permission
- * mode while the provider session the change replaces runs background work.
- * The reply carries it as its message, since no class name tells this refusal
- * from others. **Read** at `db51b67`: `Orchestrator.ts` L4744-4757 and
- * `ClaudeAdapterV2.ts` L831 word it, `ws.ts` (`userFacingDispatchErrorMessage`)
- * makes it the reply's message.
- */
-const BACKGROUND_REFUSAL = "still running background agents or commands";
 /**
  * A reply's cause keeps the engine error's class name and message, and nothing
  * else of it (**Read** at `db51b67`: `ws.ts`, the cause is a `Schema.Defect`).
@@ -866,7 +858,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
         OrchestrationV2DispatchCommandError: (error) =>
           afterSending(projection(sessionId)).pipe(
             Effect.andThen(
-              error.message.includes(BACKGROUND_REFUSAL)
+              isBackgroundWorkRefusal(error)
                 ? Effect.fail(new BackgroundWorkRunning({ sessionId }))
                 : refused(error),
             ),
