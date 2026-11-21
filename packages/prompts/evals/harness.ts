@@ -73,23 +73,55 @@ const functionTools: ReadonlyArray<FunctionTool> = [
 
 /** A tool the model called, with its arguments as it sent them. */
 export interface Call {
+  /** The model message it came in, counted from 1: calls with the same step were sent together. */
+  readonly step: number;
   readonly name: string;
   readonly input: unknown;
   /** For a `set_routine` call the schema accepted, its arguments as decoded: what the server would save. */
   readonly routine?: ToolInput<"set_routine">;
 }
 
-/** The calls of a turn, one line each, for a failure's report. */
-export const transcript = (calls: ReadonlyArray<Call>): string =>
-  calls.map((call) => `${call.name} ${JSON.stringify(call.input)}`).join("\n");
+/** Reply text the model wrote beside or instead of its calls. It reaches nobody. */
+interface ReplyText {
+  readonly step: number;
+  readonly text: string;
+}
+
+/** One turn: the tools the model called, in order, and the reply text it wrote. */
+export interface Turn {
+  readonly calls: ReadonlyArray<Call>;
+  readonly text: ReadonlyArray<ReplyText>;
+}
+
+/**
+ * A turn as one line per call or reply text, each with its step, for a
+ * failure's report: it tells a call repeated in one message from one sent
+ * again after the first returned, and shows what a turn that ended without
+ * `say` wrote instead.
+ */
+export const transcript = ({ calls, text }: Turn): string =>
+  [
+    ...text.map((reply) => ({
+      step: reply.step,
+      line: `(reply text) ${JSON.stringify(reply.text)}`,
+    })),
+    ...calls.map((call) => ({
+      step: call.step,
+      line: `${call.name} ${JSON.stringify(call.input)}`,
+    })),
+  ]
+    // A stable sort: within a message, its text comes before its calls, as the model wrote them.
+    .toSorted((a, b) => a.step - b.step)
+    .map(({ step, line }) => `#${step} ${line}`)
+    .join("\n");
 
 /** A turn that did not end on its own: the model was cut off, or ran out of steps. */
 class TurnUnfinished extends Schema.TaggedError<TurnUnfinished>()("TurnUnfinished", {
   message: Schema.String,
 }) {}
 
-const unfinished = (reason: string, calls: ReadonlyArray<Call>) =>
-  new TurnUnfinished({ message: `The turn did not finish: ${reason}.\n${transcript(calls)}` });
+const unfinished = (reason: string, turn: Turn) =>
+  new TurnUnfinished({ message: `The turn did not finish: ${reason}.\n${transcript(turn)}` });
 
 export interface Scenario {
   readonly wake: Wake;
@@ -118,7 +150,7 @@ const json = (value: unknown): string => JSON.stringify(value);
 const answer = (scenario: Scenario, call: Call): string => {
   switch (call.name) {
     case "say":
-      return json({ recorded: true });
+      return json({ status: "recorded" });
     case "ask":
       return json({ asked: true });
     case "list_routines":
@@ -145,16 +177,19 @@ const answer = (scenario: Scenario, call: Call): string => {
   }
 };
 
-const toCall = (name: string, input: unknown): Call => {
-  if (name !== "set_routine") return { name, input };
+const toCall = (step: number, name: string, input: unknown): Call => {
+  if (name !== "set_routine") return { step, name, input };
   const decoded = decodeSetRoutine(input);
-  return decoded._tag === "Some" ? { name, input, routine: decoded.value } : { name, input };
+  return decoded._tag === "Some"
+    ? { step, name, input, routine: decoded.value }
+    : { step, name, input };
 };
 
 /**
  * Runs one turn of `model` on `scenario` and returns every tool call it made,
- * in order. Fails with {@link TurnUnfinished} when the turn did not end on its
- * own, so a cut-off turn never passes for one that chose to say nothing.
+ * in order, with the reply text it wrote. Fails with {@link TurnUnfinished}
+ * when the turn did not end on its own, so a cut-off turn never passes for one
+ * that chose to say nothing.
  */
 export const runTurn = Effect.fn("evals.runTurn")(
   function* (model: string, scenario: Scenario) {
@@ -164,23 +199,29 @@ export const runTurn = Effect.fn("evals.runTurn")(
       { role: "user", content: envelope },
     ];
     const calls: Array<Call> = [];
-    for (let step = 0; step < MAX_STEPS; step++) {
+    const text: Array<ReplyText> = [];
+    const turn: Turn = { calls, text };
+    for (let step = 1; step <= MAX_STEPS; step++) {
       const reply = yield* complete(model, messages, functionTools);
+      if (reply.content !== null && reply.content.trim() !== "") {
+        text.push({ step, text: reply.content });
+      }
       const hasCalls = reply.toolCalls.length > 0;
       // Only a message the model ended itself counts: `stop` with no calls ends
       // the turn, `tool_calls` with calls goes on. Anything else was cut off or
       // malformed, and its calls are not run.
-      if (reply.finishReason === "stop" && !hasCalls) return calls;
+      if (reply.finishReason === "stop" && !hasCalls) return turn;
       if (reply.finishReason !== "tool_calls" || !hasCalls) {
         return yield* unfinished(
           `the model's message ended with finish_reason ${reply.finishReason ?? "(none)"} and ${reply.toolCalls.length} tool calls`,
-          calls,
+          turn,
         );
       }
       messages.push({ role: "assistant", content: reply.content, tool_calls: reply.toolCalls });
       for (const toolCall of reply.toolCalls) {
         const parsed = decodeJson(toolCall.function.arguments);
         const call = toCall(
+          step,
           toolCall.function.name,
           parsed._tag === "Some" ? parsed.value : toolCall.function.arguments,
         );
@@ -189,9 +230,9 @@ export const runTurn = Effect.fn("evals.runTurn")(
       }
       // An `ask` the server would accept ends the turn.
       if (calls.some((call) => call.name === "ask" && decodeAsk(call.input)._tag === "Some"))
-        return calls;
+        return turn;
     }
-    return yield* unfinished(`it used all ${MAX_STEPS} steps`, calls);
+    return yield* unfinished(`it used all ${MAX_STEPS} steps`, turn);
   },
   Effect.provide(Layer.mergeAll(FetchHttpClient.layer, SecureRandom.layerWebCrypto)),
 );

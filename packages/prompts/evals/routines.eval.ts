@@ -24,8 +24,26 @@ const MODELS = Effect.runSync(
   .map((model) => model.trim())
   .filter((model) => model !== "");
 
-const at = DateTime.makeUnsafe("2026-11-20T09:41:00Z");
 const timeZone = DateTime.zoneMakeNamedUnsafe("Europe/Lisbon");
+
+/**
+ * Today at `hour:minute` in the operator's zone. The fixtures take their date
+ * from the real current date, as the server takes a wake's time from its
+ * clock, so no date in a wake disagrees with one the model was given
+ * elsewhere and invites a correction.
+ */
+const todayAt = (hour: number, minute: number): DateTime.Utc =>
+  DateTime.toUtc(
+    DateTime.setParts(DateTime.makeZonedUnsafe(DateTime.nowUnsafe(), { timeZone }), {
+      hour,
+      minute,
+      second: 0,
+      millisecond: 0,
+    }),
+  );
+
+/** When the operator writes. */
+const at = todayAt(9, 41);
 const base = { at, timeZone, sinceLastTurn: [] } as const;
 
 const userWake = (text: string): Wake => ({
@@ -39,7 +57,10 @@ const userWake = (text: string): Wake => ({
 const DOCS_CHECK =
   "Check the latest CI run on the `main` branch of the GitHub repository acme/docs. Report it if the run failed or has been running for more than 30 minutes; a passing run is not news. When it failed, name the failing job and the first error line. Do not re-run jobs or push anything. If there is a problem, send your user one short message saying what is wrong; if the build is passing, end without saying anything.";
 
-const daysAgo = (days: number) => DateTime.subtract(at, { days });
+/** When a routine run starts: the time its daily schedule names. */
+const runAt = todayAt(8, 7);
+
+const daysAgo = (days: number) => DateTime.subtract(runAt, { days });
 
 const quietRuns: ReadonlyArray<RoutineRunSummary> = [1, 2, 3].map((days): RoutineRunSummary => ({
   at: daysAgo(days),
@@ -48,11 +69,13 @@ const quietRuns: ReadonlyArray<RoutineRunSummary> = [1, 2, 3].map((days): Routin
 
 const routineWake: Wake = {
   ...base,
+  at: runAt,
   kind: "routine",
   routine: {
     id: Schema.decodeSync(RoutineId)("routine-1"),
     name: "Docs build watch",
-    trigger: { type: "schedule", cron: "0 8 * * 1-5" },
+    // Daily, so the run is due whatever weekday the evals run on.
+    trigger: { type: "schedule", cron: "7 8 * * *" },
     instruction: DOCS_CHECK,
   },
   recentRuns: quietRuns,
@@ -74,16 +97,23 @@ const blockerReportedWake: Wake = {
   ],
 };
 
+/** A date as the operator reads it, such as "Friday, 20 November 2026", or a part of it. */
+const local = (when: DateTime.Utc, parts: Intl.DateTimeFormatOptions): string =>
+  new Intl.DateTimeFormat("en-GB", { timeZone: DateTime.zoneToString(timeZone), ...parts }).format(
+    DateTime.toDateUtc(when),
+  );
+
 /** A one-time reminder, as the skill would save "remind me at 9 to submit my expenses". */
+const reminderAt = todayAt(9, 0);
 const reminderWake: Wake = {
   ...base,
+  at: reminderAt,
   kind: "routine",
   routine: {
     id: Schema.decodeSync(RoutineId)("routine-2"),
     name: "Expense report reminder",
     trigger: { type: "once" },
-    instruction:
-      "Remind your user to submit their November expense report in the Acme expenses portal; it is due on Friday 20 November 2026 at 18:00. Send them one short message saying so.",
+    instruction: `Remind your user to submit their ${local(reminderAt, { month: "long" })} expense report in the Acme expenses portal; it is due on ${local(reminderAt, { weekday: "long", day: "numeric", month: "long", year: "numeric" })} at 18:00. Send them one short message saying so.`,
   },
   recentRuns: [],
   triggerData: null,
@@ -458,7 +488,7 @@ describe("the quiet-delivery check", () => {
 
 describe.each(MODELS)("%s", (model) => {
   it.concurrent.each(cases)("$name", async ({ scenario, problems }) => {
-    const calls = await Effect.runPromise(runTurn(model, scenario));
-    expect(problems(calls), transcript(calls)).toEqual([]);
+    const turn = await Effect.runPromise(runTurn(model, scenario));
+    expect(problems(turn.calls), transcript(turn)).toEqual([]);
   });
 });

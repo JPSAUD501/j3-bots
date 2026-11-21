@@ -50,7 +50,7 @@ Fill a gap with a sensible default and state it in your confirmation ("every wee
 
 **`at`: once,** at a local time in your user's zone, such as `2026-11-21T09:00`. It must lie ahead, and the routine pauses itself after it runs. "Remind me tomorrow at nine" is an `at`, not a schedule.
 
-**`webhook`: when another system calls in.** Use it when the sender can reach this server's address; a hosted service usually cannot reach a server on a home network. In your confirmation, tell your user the routine is waiting for its first delivery. Confirm that a delivery arrived from the sender's own delivery result (a repository webhook lists its recent deliveries and their responses), not from a run in `list_routines` alone: your user's **Run now** records a run too. Use a schedule instead only when the sender cannot reach this server and checking on a schedule does the job.
+**`webhook`: when another system calls in.** Use it when the sender can reach this server's address; a hosted service usually cannot reach a server on a home network. In your confirmation, tell your user the routine is waiting for its first delivery. Confirm that a delivery arrived from the sender's own delivery result (a repository webhook lists its recent deliveries and their responses), not from a run in `list_routines` alone: a run started on demand is recorded too. Use a schedule instead only when the sender cannot reach this server and checking on a schedule does the job.
 
 The saved routine carries its address, and the address is a credential: anyone who has it can start the routine. It goes to exactly one place:
 
@@ -69,7 +69,7 @@ The run will know only what the instruction says, plus your memory and files. Wr
 4. **What the run may and may not do.** A run follows your instructions, so the rules about sends and destructive steps hold there too.
 5. **The delivery line,** last: what to send your user, and when (see the next section).
 
-**Make every step safe to run twice.** A run that fails partway is retried from the start in a fresh session, which does not know what the failed attempt already did, and cannot tell that it is a retry at all. For each send, publish, purchase or other change the instruction asks for, say how the run makes repeating it harmless:
+**Make every step safe to run twice.** A run that fails before it has said anything is tried again from the start, up to three attempts in all, each in a fresh session that does not know what the failed attempt already did and cannot tell that it is a retry at all. For each send, publish, purchase or other change the instruction asks for, say how the run makes repeating it harmless:
 
 - an idempotency key the destination honors, unique to this occurrence and the same on every attempt of it: the id of the event that triggered the run, or the date of the scheduled occurrence. Never the routine's id alone, which would suppress every later occurrence, and never something that changes between attempts, such as the current time;
 - or a look at the destination for that exact action first (the message in the sent folder, an open issue with that title).
@@ -93,9 +93,9 @@ The delivery line decides whether a run speaks. Write it explicitly, because the
 - **Conditional reports** (watching, checks, "tell me if"): speak only when the condition holds. When it does not, the run ends without calling `say` at all: no "all clear", no summary of what it checked. This is the usual case, and a silent run is a successful run.
 - **Digests:** speak only when there is something to list, unless your user asked for one every time. Say which you chose in your confirmation.
 
-Whatever the delivery line says, a run that could not do its work (access lost, a source gone) tells your user in one sentence what blocked it; otherwise lost access would look like a quiet week. When one of the recent runs already said so, the run ends silently. A wake lists only the five newest settled runs, so a blocker that lasts is restated about once every six runs, which is fine.
+Whatever the delivery line says, a run that could not do its work (access lost, a source gone) tells your user in one sentence what blocked it; otherwise lost access would look like a quiet week. When one of the recent runs already said so, the run ends silently. A wake lists at most the five newest settled runs, so a blocker that lasts is restated about once every six runs, which is fine.
 
-When a run speaks, it sends one short message, phrased the way you would mention something you took care of, not as an alert. A run cannot use `ask`: a question goes inside its message, and the answer arrives in your main conversation.
+When a run speaks, it sends one short message after the work, phrased the way you would mention something you took care of, not as an alert. It never opens with a progress note: nobody is waiting, and a run that has said anything counts as delivered and is not retried if it then fails. A run cannot use `ask`: a question goes inside its message, and the answer arrives in your main conversation.
 
 ## What needs your user's approval
 
@@ -123,9 +123,9 @@ A routine your user asked for needs nothing further, as long as its instruction 
 
 After the routine has run once, `list_routines` shows its last run:
 
-- `delivered`: it spoke. Check that the message was what your user wanted.
+- `delivered`: it said something, even if it failed afterwards. Check that the message was what your user wanted.
 - `silent`: it stayed quiet. Right when nothing was new; if something should have been reported, tighten the threshold or the delivery line.
-- `failed`: it could not finish, even after retries, or someone stopped it. `list_routines` does not say why, so do the instruction's first read-only step yourself to find what breaks, fix the instruction or the access, and tell your user if they need to act.
+- `failed`: every attempt failed before it said anything, or a stop or a deletion ended it. `list_routines` does not say why, so do the instruction's first read-only step yourself to find what breaks, fix the instruction or the access, and tell your user if they need to act.
 - `skipped`: it came due while the previous run was still going. Make the schedule less frequent or the work shorter.
 - `running`: due and not settled yet: waiting to start, in progress, or waiting to retry.
 
