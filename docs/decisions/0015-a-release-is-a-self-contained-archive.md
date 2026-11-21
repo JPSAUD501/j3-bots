@@ -4,7 +4,7 @@
 
 ## Context
 
-Until now J3 Bots ran only from a checkout: `git clone`, `pnpm install`, `pnpm build`, then the server bundle in `apps/server/dist/bin.mjs` on the host's own Node ([Running on a Raspberry Pi](../operations/running-on-a-pi.md#install)). That needs Git, pnpm and the right Node release on every host, and a host's Node can change under the service.
+Until now J3 Bots ran only from a checkout: `git clone`, `pnpm install`, `pnpm build`, then the server bundle in `apps/server/dist/bin.mjs` on the host's own Node ([Installing J3 Bots: from a checkout](../operations/install.md#from-a-checkout)). That needs Git, pnpm and the right Node release on every host, and a host's Node can change under the service.
 
 The server is already close to runnable on its own. Its production build bundles every dependency into two entry points, `bin.mjs` (the CLI and the server) and `bridge.mjs` (the `j3` MCP bridge each harness starts), with the prompt files copied beside them; SQLite is Node's own; and the bridge and the scripted agent are started with `process.execPath`, the Node that runs the server. What it lacked was a Node that does not depend on the host, a place for the web client that is not the checkout's `apps/web/dist`, and the license notices of what it bundles, which a redistribution must carry.
 

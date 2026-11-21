@@ -37,7 +37,9 @@ Decisions marked **Proposed** are recommendations waiting for the project owner'
 
 ## Operations
 
-- [Running on a Raspberry Pi](operations/running-on-a-pi.md): install, pairing, updates, logs and backups for the server as a user service.
+- [Installing J3 Bots](operations/install.md): the one-command install, supported systems, what `doctor` says, providers, pairing, Raspberry Pi notes.
+- [Operating J3 Bots](operations/operating.md): configuration, the service, logs, updates, back up and restore, removal.
+- [Reaching J3 Bots from elsewhere](operations/exposing.md): HTTPS, Tailscale, a domain through a proxy, `publicOrigin`, webhooks, a sign-in gate.
 - [Releasing](operations/releasing.md): cutting a release of the desktop app and the server, what the release workflow may do, signing, and trying an update or an install locally.
 
 ## Engineering

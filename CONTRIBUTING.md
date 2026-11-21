@@ -19,7 +19,7 @@ pnpm knip        # unused files, dependencies and exports
 
 These are the checks CI runs on every pull request. CI also builds the release archive for x64 and arm64 and runs it, runs the desktop app's smoke test, and checks that every commit is signed off ([below](#sign-off)).
 
-To run J3 Bots from a checkout, see [Running on a Raspberry Pi](docs/operations/running-on-a-pi.md).
+To run J3 Bots from a checkout, see [Installing J3 Bots: from a checkout](docs/operations/install.md#from-a-checkout).
 
 ## What a change has to meet
 
