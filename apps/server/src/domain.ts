@@ -16,6 +16,8 @@ import * as Memory from "./memory/Memory.ts";
 import * as MemoryFiles from "./memory/MemoryFiles.ts";
 import * as ChangeLog from "./persistence/ChangeLog.ts";
 import * as Presence from "./presence/Presence.ts";
+import * as PushDeliveries from "./push/PushDeliveries.ts";
+import * as PushWorker from "./push/PushWorker.ts";
 import * as RoomRouting from "./rooms/RoomRouting.ts";
 import * as Rooms from "./rooms/Rooms.ts";
 import * as Roster from "./roster/Roster.ts";
@@ -48,11 +50,12 @@ import * as WorkSteps from "./turns/WorkSteps.ts";
 
 /**
  * Every service of the server's domain, over a migrated database, the server's
- * configuration, the filesystem and an `Engine`. Which engine is the caller's:
- * the real one in `server.ts`, the in-memory one in tests. Building it starts
- * the turn machinery, which runs for as long as the layer's scope.
+ * configuration, the filesystem, an `Engine` and a `PushSender`. Which engine
+ * and which sender are the caller's: the real ones in `server.ts`, in-memory
+ * ones in tests. Building it starts the turn machinery and the push worker,
+ * which run for as long as the layer's scope.
  */
-export const layer = Layer.mergeAll(BotTools.layer, Turns.layer).pipe(
+export const layer = Layer.mergeAll(BotTools.layer, Turns.layer, PushWorker.layer).pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       Bots.layer,
@@ -84,7 +87,7 @@ export const layer = Layer.mergeAll(BotTools.layer, Turns.layer).pipe(
   Layer.provideMerge(
     Layer.mergeAll(MemoryFiles.layer, Entries.layer, Attachments.layer, BotStore.layer),
   ),
-  Layer.provideMerge(Layer.mergeAll(BotStates.layer, Presence.layer)),
+  Layer.provideMerge(Layer.mergeAll(BotStates.layer, Presence.layer, PushDeliveries.layer)),
   Layer.provideMerge(Devices.layer),
   Layer.provideMerge(
     Layer.mergeAll(

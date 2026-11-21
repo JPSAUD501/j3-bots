@@ -24,6 +24,7 @@ import { ChangeLog, type ChangeScope, scopeKey } from "../persistence/ChangeLog.
 import { Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { Presence } from "../presence/Presence.ts";
+import { PushDeliveries } from "../push/PushDeliveries.ts";
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
@@ -105,7 +106,8 @@ const scopeOf = (
  * Entries of conversations and rooms. An entry is appended with the next place
  * in its target and keeps it: it can change (a card is answered), never move or
  * disappear on its own. Every write records a change in the same transaction,
- * which is what subscriptions follow.
+ * which is what subscriptions follow, and an append writes the pushes its
+ * notification makes.
  */
 export class Entries extends Context.Service<
   Entries,
@@ -153,6 +155,7 @@ export const layer = Layer.effect(
     const sql = yield* SqlClient.SqlClient;
     const changes = yield* ChangeLog;
     const presence = yield* Presence;
+    const pushes = yield* PushDeliveries;
     const ids = yield* Ids;
     const transaction = transactional(sql);
 
@@ -246,7 +249,13 @@ export const layer = Layer.effect(
           )
         `;
         yield* changes.record(scopeOf(input.target), id);
-        yield* sql.afterCommit(presence.entryAdded(input.target, entry));
+        // Who hears of it is settled with the entry: a push is written with
+        // it, and the devices with a socket open are told once it commits.
+        const told = yield* presence.recipients(input.target, entry);
+        if (told !== null) {
+          yield* pushes.record(told);
+          yield* sql.afterCommit(presence.tell(told));
+        }
         return entry;
       },
       transaction,

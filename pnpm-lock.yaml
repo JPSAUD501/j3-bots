@@ -262,6 +262,9 @@ importers:
       '@j3-bots/engine-t3':
         specifier: workspace:*
         version: link:../../packages/engine-t3
+      '@j3-bots/i18n':
+        specifier: workspace:*
+        version: link:../../packages/i18n
       '@j3-bots/prompts':
         specifier: workspace:*
         version: link:../../packages/prompts

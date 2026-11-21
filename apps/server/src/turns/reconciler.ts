@@ -44,7 +44,7 @@ export const passOutcome = () => {
     until: (at: DateTime.Utc | null) => {
       if (at !== null && (next === null || DateTime.isLessThan(at, next))) next = at;
     },
-    done: (): Pass => ({ _tag: "done", deferred, next }),
+    done: (): Extract<Pass, { readonly _tag: "done" }> => ({ _tag: "done", deferred, next }),
   };
 };
 
@@ -54,8 +54,38 @@ export const passOutcome = () => {
  * plan the same work side by side and a pass that returns has seen every send
  * that the one before it started.
  */
-export const onePassAtATime = (pass: Effect.Effect<Pass>): Effect.Effect<Effect.Effect<Pass>> =>
+export const onePassAtATime = <P extends Pass>(
+  pass: Effect.Effect<P>,
+): Effect.Effect<Effect.Effect<P>> =>
   Effect.map(Semaphore.make(1), (permit) => permit.withPermits(1)(pass));
+
+/** Waits after a pass that ran to its end, as long as what it found asks. */
+const waitAfter = (
+  result: Extract<Pass, { readonly _tag: "done" }>,
+  signal: Trigger,
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const due =
+      result.next === null
+        ? null
+        : DateTime.isGreaterThan(result.next, now)
+          ? DateTime.distance(now, result.next)
+          : // Due already and not done by this pass: left for a later one.
+            RETRY_TICK;
+    const base = result.deferred ? RETRY_TICK : HEARTBEAT;
+    const wait = due === null ? base : Duration.min(base, due);
+    yield* signal.next.pipe(Effect.timeoutOption(wait));
+  });
+
+/** Runs a pass, logging a failure, which yields `null`. */
+const supervisedPass = <P extends Pass>(name: string, pass: Effect.Effect<P>) =>
+  pass.pipe(
+    Effect.catchCauseIf(
+      (cause) => !Cause.hasInterruptsOnly(cause),
+      (cause) => Effect.as(Effect.logError(`${name} failed; it runs again later`, cause), null),
+    ),
+  );
 
 /**
  * A worker that reconciles durable state (`docs/architecture/server.md`, The
@@ -75,24 +105,23 @@ export const reconcile = (input: {
 }): Effect.Effect<never> =>
   Effect.gen(function* () {
     yield* input.readiness.released;
-    const result = yield* input.pass.pipe(
-      Effect.catchCauseIf(
-        (cause) => !Cause.hasInterruptsOnly(cause),
-        (cause) =>
-          Effect.as(Effect.logError(`${input.name} failed; it runs again later`, cause), null),
-      ),
-    );
+    const result = yield* supervisedPass(input.name, input.pass);
     if (result === null) return yield* Effect.sleep(DEFECT_RETRY);
     if (result._tag === "unavailable") return yield* input.readiness.changeOrRetry;
-    const now = yield* DateTime.now;
-    const due =
-      result.next === null
-        ? null
-        : DateTime.isGreaterThan(result.next, now)
-          ? DateTime.distance(now, result.next)
-          : // Due already and not done by this pass: left for a later one.
-            RETRY_TICK;
-    const base = result.deferred ? RETRY_TICK : HEARTBEAT;
-    const wait = due === null ? base : Duration.min(base, due);
-    yield* input.signal.next.pipe(Effect.timeoutOption(wait));
+    yield* waitAfter(result, input.signal);
+  }).pipe(Effect.forever, Effect.withSpan(input.name));
+
+/**
+ * A reconciler whose work never goes to the engine, such as push delivery:
+ * it runs whether or not the engine is ready.
+ */
+export const reconcileWithoutEngine = (input: {
+  readonly name: string;
+  readonly pass: Effect.Effect<Extract<Pass, { readonly _tag: "done" }>>;
+  readonly signal: Trigger;
+}): Effect.Effect<never> =>
+  Effect.gen(function* () {
+    const result = yield* supervisedPass(input.name, input.pass);
+    if (result === null) return yield* Effect.sleep(DEFECT_RETRY);
+    yield* waitAfter(result, input.signal);
   }).pipe(Effect.forever, Effect.withSpan(input.name));

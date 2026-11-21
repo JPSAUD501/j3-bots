@@ -24,6 +24,7 @@
     "@effect/sql-sqlite-node": "catalog:",
     "@j3-bots/contracts": "workspace:*",
     "@j3-bots/engine-t3": "workspace:*",
+    "@j3-bots/i18n": "workspace:*",
     "@j3-bots/prompts": "workspace:*",
     "effect": "catalog:"
   },
