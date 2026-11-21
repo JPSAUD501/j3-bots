@@ -107,7 +107,7 @@ describe("the app's storage", () => {
         assert.isTrue(yield* storage.commit(write("during"), [], first.deviceId));
         assert.isFalse(yield* storage.commit(write("other"), [], deviceId("device-2")));
 
-        assert.isTrue(Option.isNone(yield* credentials.clear(first)));
+        assert.isTrue(Option.isNone(yield* credentials.clear(first, false)));
         assert.isFalse(yield* storage.commit(write("after"), [], first.deviceId));
         assert.deepStrictEqual([...(yield* storage.readAll("drafts")).keys()], ["during"]);
       }),
@@ -146,7 +146,7 @@ describe("the app's storage", () => {
       yield* credentials.save(first);
       yield* credentials.save(second);
 
-      const left = yield* credentials.clear(first);
+      const left = yield* credentials.clear(first, false);
       assert.strictEqual(Option.getOrNull(left)?.deviceId, second.deviceId);
       const write = [{ table: "drafts" as const, key: "k", value: "text" }];
       assert.isTrue(yield* storage.commit(write, [], second.deviceId));

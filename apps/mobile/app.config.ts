@@ -49,13 +49,23 @@ export default ({ config }: ConfigContext): ExpoConfig => {
           "J3 Bots connects to the J3 Bots server on your own network.",
       },
     },
-    android: { package: variant.id },
+    android: {
+      package: variant.id,
+      // Added by dependencies, used by nothing the app does.
+      blockedPermissions: [
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.VIBRATE",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+      ],
+    },
     // No over-the-air updates: a build runs the JavaScript it was built with.
     updates: { enabled: false },
     plugins: [
       // Its defaults keep the credential out of Android's backups: a restored
-      // backup could not decrypt it.
-      "expo-secure-store",
+      // backup could not decrypt it. The credential is read without Face ID,
+      // so the app asks for no permission to use it.
+      ["expo-secure-store", { faceIDPermission: false }],
       "./plugins/cleartextToPrivateHosts.js",
     ],
   };

@@ -5,6 +5,7 @@ import type { RosterItem } from "@j3-bots/contracts";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { FlatList, Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { ChangeServer } from "../ChangeServer.tsx";
 import { useI18n } from "../i18n.ts";
 import type { Screens } from "../navigation.tsx";
 import { Body, Button, Centered, Title } from "../ui.tsx";
@@ -23,11 +24,15 @@ function ConnectionLine(props: { readonly loaded: boolean }) {
       <Text className="px-4 py-2 text-sm text-muted-foreground">{t("connection.offline")}</Text>
     );
   }
+  // A server whose address changed is never reached again: it can be left here.
   if (connection._tag === "waiting") {
     return (
-      <View className="flex-row items-center justify-between gap-2 px-4 py-1">
-        <Text className="flex-1 text-sm text-muted-foreground">{t("connection.unreachable")}</Text>
-        <Button label={t("connection.retryNow")} onPress={client.reconnectNow} />
+      <View className="gap-1 px-4 py-1">
+        <Text className="text-sm text-muted-foreground">{t("connection.unreachable")}</Text>
+        <View className="flex-row flex-wrap items-start gap-2">
+          <Button label={t("connection.retryNow")} onPress={client.reconnectNow} />
+          <ChangeServer />
+        </View>
       </View>
     );
   }
