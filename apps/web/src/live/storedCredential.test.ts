@@ -36,6 +36,12 @@ describe("credentialRecord", () => {
     expect(Option.isSome(credentialRecord(new URL(page), page).read(legacy))).toBe(true);
   });
 
+  it("writes a browser's record as older builds of the page write it", () => {
+    const page = "https://bots.example.com";
+    const stored = credentialRecord(new URL(page), page).write(credential);
+    expect(JSON.parse(stored)).toEqual({ deviceId: "device-1", token: "t".repeat(32) });
+  });
+
   it("does not read a record without a server in the desktop app", () => {
     const legacy = JSON.stringify({ deviceId: "device-1", token: "t".repeat(32) });
     expect(credentialRecord(serverA, DESKTOP_PAGE).read(legacy)).toEqual(Option.none());

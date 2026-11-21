@@ -79,6 +79,10 @@ const fromApp = (event: IpcMainEvent | IpcMainInvokeEvent) =>
   event.senderFrame === event.sender.mainFrame &&
   isAppUrl(event.senderFrame.url, APP_ORIGIN);
 
+/** Whether a failed load was cut short by another navigation. */
+const isAborted = (error: unknown): boolean =>
+  error instanceof Error && Reflect.get(error, "code") === "ERR_ABORTED";
+
 /** The page that sent `event`, as the server choice acts on it. */
 const pageOf = (event: IpcMainInvokeEvent): ServerChoice.Page => ({
   // The credential, drafts and unsent messages, all in IndexedDB. Preferences
@@ -87,8 +91,23 @@ const pageOf = (event: IpcMainInvokeEvent): ServerChoice.Page => ({
     try: () => event.sender.session.clearStorageData({ storages: ["indexdb"] }),
     catch: (cause) => new ServerChoice.StorageNotCleared({ cause }),
   }),
-  // A load the page cuts short by navigating first leaves it where it went.
-  openHome: Effect.sync(() => void event.sender.loadURL(`${APP_ORIGIN}/`).catch(() => undefined)),
+  // Not awaited: the page that asked is the one going away. A load the page
+  // cuts short by navigating first (`ERR_ABORTED`) leaves it where it went;
+  // any other failure is logged.
+  openHome: Effect.forkDetach(
+    Effect.promise(() =>
+      event.sender.loadURL(`${APP_ORIGIN}/`).then(
+        () => null,
+        (error: unknown) => ({ error }),
+      ),
+    ).pipe(
+      Effect.flatMap((notLoaded) =>
+        notLoaded === null || isAborted(notLoaded.error)
+          ? Effect.void
+          : Effect.logError("Opening the app's first page failed", notLoaded.error),
+      ),
+    ),
+  ).pipe(Effect.asVoid),
 });
 
 /**

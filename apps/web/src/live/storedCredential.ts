@@ -12,8 +12,10 @@ import * as Schema from "effect/Schema";
  * API does not exist, and a script running on this origin could use such a
  * key as freely as read the token.
  *
- * A record written before the server was kept has none: it was written by a
- * browser, whose server is the page's own origin.
+ * A record with none is the server's at the page's own origin: a browser
+ * writes it that way, as it always has, so a tab still running an older
+ * build reads and clears it exactly as it wrote it. The desktop app's page
+ * is never its server, so its records always name one.
  */
 const StoredCredential = Schema.fromJsonString(
   Schema.Struct({
@@ -46,6 +48,6 @@ export const credentialRecord = (server: URL, pageOrigin: string): CredentialRec
     encode({
       deviceId: credential.deviceId,
       token: Redacted.value(credential.token),
-      server: server.origin,
+      ...(server.origin === pageOrigin ? {} : { server: server.origin }),
     }),
 });

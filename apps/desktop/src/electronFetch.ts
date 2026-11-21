@@ -27,10 +27,12 @@ export const electronFetch: typeof globalThis.fetch = (input, init) =>
       credentials: "omit",
     });
     let settled = false;
-    /** Settles with `outcome` and lets go of the request, unless already settled. */
+    const onAbort = () => fail(signal?.reason);
+    /** Settles with `outcome` and lets go of the request and the signal, unless already settled. */
     const settle = (outcome: Result.Result<Response, unknown>) => {
       if (settled) return;
       settled = true;
+      signal?.removeEventListener("abort", onAbort);
       request.abort();
       Result.match(outcome, { onSuccess: resolve, onFailure: reject });
     };
@@ -40,7 +42,7 @@ export const electronFetch: typeof globalThis.fetch = (input, init) =>
     } catch (cause) {
       return fail(cause);
     }
-    signal?.addEventListener("abort", () => fail(signal.reason), { once: true });
+    signal?.addEventListener("abort", onAbort, { once: true });
     request.on("redirect", (status) => {
       if (mode === "manual") settle(responseOf(status, null));
     });
