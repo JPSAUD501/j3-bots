@@ -217,11 +217,17 @@ export const layer = Layer.effect(
           }
         }
       }
-      const pending = yield* sql<{ readonly id: string }>`
-        SELECT id FROM wakes WHERE bot_id = ${botId} AND status = 'pending' AND ${inScope(scope)}
+      const pending = yield* sql<{ readonly id: string; readonly kind: string }>`
+        SELECT id, kind FROM wakes
+        WHERE bot_id = ${botId} AND status = 'pending' AND ${inScope(scope)}
       `;
       yield* ledger.cancelWakes(pending.map((wake) => wake.id));
       yield* sql.afterCommit(signals.stops.fire);
+      // A routine run whose attempt waited is settled now, and its side
+      // session retired.
+      if (pending.some((wake) => wake.kind === "routine")) {
+        yield* sql.afterCommit(signals.routines.fire);
+      }
     }, Effect.orDie);
 
     const stopBot = Effect.fn("Stops.stopBot")(function* (input: {

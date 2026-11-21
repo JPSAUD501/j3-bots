@@ -20,9 +20,10 @@ const LastOutcome = Schema.Struct({ outcome_json: json(TurnOutcome) });
 /**
  * Whether a provider is at its usage limit, which holds automated wakes until
  * its reset. The engine's status may say so; otherwise the turns the server
- * saw end on that provider do: the newest one that either completed or failed
- * at the usage limit, when it failed with a reset still ahead. A turn that
- * completed after it shows the limit lifted.
+ * saw end on that provider, in any session of any bot, do: the newest one
+ * that either completed or failed at the usage limit, when it failed with a
+ * reset still ahead. A turn that completed after it shows the limit lifted.
+ * A turn ran on its session's provider, which never changes.
  */
 export const providerLimit = (sql: SqlClient.SqlClient, engineState: EngineState["Service"]) => {
   const lastOutcome = SqlSchema.findOneOption({
@@ -31,8 +32,7 @@ export const providerLimit = (sql: SqlClient.SqlClient, engineState: EngineState
     execute: (providerId) => sql`
       SELECT t.outcome_json FROM turns t
       JOIN sessions s ON s.id = t.session_id
-      JOIN bots b ON b.id = s.bot_id
-      WHERE b.provider_id = ${providerId} AND t.finished_at IS NOT NULL
+      WHERE s.provider_id = ${providerId} AND t.finished_at IS NOT NULL
         AND (json_extract(t.outcome_json, '$._tag') = 'completed'
           OR json_extract(t.outcome_json, '$.failure') = 'usage-limit')
       ORDER BY t.finished_at DESC

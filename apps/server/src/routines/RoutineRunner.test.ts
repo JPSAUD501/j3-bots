@@ -36,6 +36,7 @@ import { BotTools } from "../tools/BotTools.ts";
 import { MAX_INDETERMINATE_ANSWERS } from "../turns/model.ts";
 import { Pipeline } from "../turns/Pipeline.ts";
 import { Stops } from "../turns/Stops.ts";
+import { Usage } from "../turns/Usage.ts";
 import { RoutineRunner } from "./RoutineRunner.ts";
 import { RoutineRuns, RUN_ATTEMPTS, retryDelay } from "./RoutineRuns.ts";
 import { Routines } from "./Routines.ts";
@@ -109,13 +110,19 @@ const sideTurn = (routineId: RoutineId, previous: SessionId | null = null) =>
     );
   });
 
-/** Whether the server recorded every side session of the bot retired. */
+/**
+ * Whether every side session of the bot is out of use: retired, and archived
+ * in the engine unless the engine never had it or lost it.
+ */
 const sidesRetired = (botId: BotId) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const [row] = yield* sql<{ readonly n: number }>`
       SELECT COUNT(*) AS n FROM sessions
-      WHERE bot_id = ${botId} AND purpose = 'side' AND retired_at IS NULL
+      WHERE bot_id = ${botId} AND purpose = 'side' AND (
+        retired_at IS NULL
+        OR (engine_session_id IS NOT NULL AND lost_at IS NULL AND engine_retired_at IS NULL)
+      )
     `.pipe(Effect.orDie);
     return (row?.n ?? 0) === 0;
   });
@@ -441,7 +448,7 @@ it.effect("deletes a bot after one of its routines ran", () =>
 );
 
 it.effect(
-  "records a side session retired that the engine archived without the server knowing",
+  "retires a side session the engine archived on its own, and tells the conversation nothing",
   () =>
     Effect.gen(function* () {
       const control = yield* TestEngineControl;
@@ -459,17 +466,12 @@ it.effect(
       });
       yield* settled(routine);
 
-      // The engine archived it, and the server never learned: its answer was lost.
+      // Archived from the engine's console: the server never asked for it.
       yield* (yield* Engine).retireSession(side.engine_session_id);
       yield* (yield* RoutineRunner).pass;
 
       yield* until(sidesRetired(bot.id));
-      const sql = yield* SqlClient.SqlClient;
-      const lost = yield* sql`
-      SELECT 1 FROM sessions WHERE engine_session_id = ${side.engine_session_id}
-        AND lost_at IS NOT NULL
-    `.pipe(Effect.orDie);
-      assert.strictEqual(lost.length, 0);
+      assert.deepStrictEqual(yield* noticesOf(bot.id), []);
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
@@ -572,4 +574,51 @@ it.effect("holds a run while its provider is at its usage limit, until the reset
     yield* TestClock.adjust(Duration.hours(1));
     yield* sideTurn(routine.id);
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "stops a run in progress when its bot moves to another provider, and runs the next one there",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const sql = yield* SqlClient.SqlClient;
+      const { bot, routine } = yield* ranRoutine;
+      const first = yield* sideTurn(routine.id);
+
+      yield* (yield* Bots).update({
+        commandId: command(),
+        botId: bot.id,
+        changes: { model: TestDomain.OTHER_PROVIDER_MODEL },
+      });
+      const stopped = yield* settled(routine);
+      assert.strictEqual(stopped.status, "failed");
+      assert.strictEqual(stopped.attempts, 1);
+      yield* until(sidesRetired(bot.id));
+
+      // Later, so the runs and their turns order newest first.
+      yield* TestClock.adjust("1 second");
+      yield* (yield* Routines).run({ commandId: command(), routineId: routine.id });
+      const next = yield* sideTurn(routine.id, first.engine_session_id);
+      const [row] = yield* sql<{ readonly provider_id: string }>`
+        SELECT provider_id FROM sessions WHERE engine_session_id = ${next.engine_session_id}
+      `.pipe(Effect.orDie);
+      assert.strictEqual(row?.provider_id, TestDomain.OTHER_PROVIDER_MODEL.providerId);
+      yield* control.finishTurn({
+        sessionId: next.engine_session_id,
+        turnId: next.admitted_turn_id,
+        outcome: { _tag: "completed" },
+      });
+      assert.strictEqual((yield* settled(routine)).status, "silent");
+
+      // Both runs' turns count in the bot's usage, each naming the routine.
+      const { turns } = yield* (yield* Usage).turns({
+        since: DateTime.makeUnsafe(0),
+        limit: 100,
+      });
+      const runs = turns.filter((turn) => turn.routineId === routine.id);
+      assert.deepStrictEqual(
+        runs.map((turn) => turn.providerId),
+        [TestDomain.OTHER_PROVIDER_MODEL.providerId, "claude"],
+      );
+    }).pipe(Effect.provide(TestDomain.layer)),
 );

@@ -3,6 +3,7 @@ import {
   BotId,
   EntryId,
   Label,
+  ProviderId,
   RoutineId,
   RoutineInstruction,
   RoutineRunId,
@@ -47,10 +48,11 @@ import {
   passOutcome,
   reconcile,
 } from "../turns/reconciler.ts";
-import { SessionGate } from "../turns/SessionGate.ts";
 import { providerLimit } from "../turns/providerLimit.ts";
+import { sessionLoss } from "../turns/sessionRecords.ts";
 import { isIdle, sessionWork } from "../turns/sessionWork.ts";
 import { Signals } from "../turns/Signals.ts";
+import { WorkSteps } from "../turns/WorkSteps.ts";
 import { RoutineRuns } from "./RoutineRuns.ts";
 
 /** How many of a routine's earlier runs its envelope describes, newest first. */
@@ -76,6 +78,7 @@ type Attempt = typeof Attempt.Type;
 const SideSession = Schema.Struct({
   id: SessionRowId,
   engine_session_id: Schema.NullOr(SessionId),
+  provider_id: ProviderId,
 });
 
 /** A live side session whose attempt has ended, or that the engine lost. */
@@ -158,7 +161,6 @@ export const layer = Layer.effect(
     const runs = yield* RoutineRuns;
     const signals = yield* Signals;
     const readiness = yield* Readiness;
-    const gate = yield* SessionGate;
     const settings = yield* SettingsStore;
     const random = yield* SecureRandom.SecureRandom;
     const changes = yield* ChangeLog;
@@ -166,6 +168,7 @@ export const layer = Layer.effect(
     const limitOf = providerLimit(sql, engineState);
     const workOf = sessionWork(sql);
     const zoneOf = operatorZone(settings);
+    const { sessionLost } = sessionLoss(sql, entries, ledger, yield* WorkSteps, signals);
 
     const attemptRows = sql`
       SELECT w.id AS wake_id, w.bot_id, r.id AS run_id, r.retry_at, r.trigger_data,
@@ -181,7 +184,7 @@ export const layer = Layer.effect(
       Request: Schema.String,
       Result: SideSession,
       execute: (wakeId) => sql`
-        SELECT id, engine_session_id FROM sessions
+        SELECT id, engine_session_id, provider_id FROM sessions
         WHERE side_wake_id = ${wakeId} AND retired_at IS NULL AND lost_at IS NULL
       `,
     });
@@ -189,12 +192,14 @@ export const layer = Layer.effect(
     /**
      * Whether the attempt this wake retries still has a side session in use,
      * where it may yet run: a send of it whose answer was lost may land
-     * there, or work it left may still go on.
+     * there, or work it left may still go on. A retired one is in use until
+     * the engine archived it, which nudges the runner.
      */
     const retriedStillLive = (wakeId: string) =>
       sql`
         SELECT 1 FROM wakes w JOIN sessions s ON s.side_wake_id = w.retry_of
-        WHERE w.id = ${wakeId} AND s.retired_at IS NULL AND s.lost_at IS NULL
+        WHERE w.id = ${wakeId} AND s.lost_at IS NULL AND s.engine_retired_at IS NULL
+          AND (s.retired_at IS NULL OR s.engine_session_id IS NOT NULL)
       `.pipe(
         Effect.orDie,
         Effect.map((rows) => rows.length > 0),
@@ -300,14 +305,24 @@ export const layer = Layer.effect(
 
     /**
      * The attempt's side session, written now if it has none, while its wake
-     * still waits. The first one written for the wake starts the attempt,
-     * which the run counts.
+     * still waits, on the provider the bot's settings choose, read in the same
+     * transaction. The first one written for the wake starts the attempt,
+     * which the run counts. One not opened yet whose bot moved to another
+     * provider never opens: it is retired, and a fresh one replaces it.
      */
     const sideSession = Effect.fn("RoutineRunner.sideSession")(function* (attempt: Attempt) {
       return yield* transaction(
         Effect.gen(function* () {
+          const found = yield* bots.find(attempt.bot_id);
+          if (Option.isNone(found)) return Option.none();
+          const providerId = found.value.bot.model.providerId;
+          const at = timeText(yield* DateTime.now);
           const existing = yield* sideSessionOf(attempt.wake_id);
-          if (Option.isSome(existing)) return existing;
+          if (Option.isSome(existing)) {
+            const { id, engine_session_id, provider_id } = existing.value;
+            if (engine_session_id !== null || provider_id === providerId) return existing;
+            yield* sql`UPDATE sessions SET retired_at = ${at} WHERE id = ${id}`;
+          }
           const pending = yield* sql`
             SELECT 1 FROM wakes WHERE id = ${attempt.wake_id} AND status = 'pending'
           `;
@@ -321,15 +336,19 @@ export const layer = Layer.effect(
             `;
             yield* changes.record({ _tag: "routines", botId: attempt.bot_id }, attempt.routine_id);
           }
+          // Opened with the bot's settings as they stand, it takes no part in
+          // their alignment: nothing of it waits on a change (`settings_pending`).
           const id = SessionRowId.make(yield* ids.make("session"));
           yield* sql`
-            INSERT INTO sessions (id, bot_id, purpose, prompt_version, created_at, side_wake_id)
-            VALUES (
-              ${id}, ${attempt.bot_id}, 'side', ${PROMPT_VERSION}, ${timeText(yield* DateTime.now)},
+            INSERT INTO sessions (
+              id, bot_id, purpose, prompt_version, provider_id, settings_pending, created_at,
+              side_wake_id
+            ) VALUES (
+              ${id}, ${attempt.bot_id}, 'side', ${PROMPT_VERSION}, ${providerId}, 0, ${at},
               ${attempt.wake_id}
             )
           `;
-          return Option.some({ id, engine_session_id: null });
+          return Option.some({ id, engine_session_id: null, provider_id: providerId });
         }),
       ).pipe(Effect.orDie);
     });
@@ -349,8 +368,9 @@ export const layer = Layer.effect(
 
     /**
      * Opens the side session in the engine, in the bot's project, with the
-     * bot's model and permission mode. The row's id is the request's key, so
-     * a retried opening returns the same engine session.
+     * bot's model and permission mode, on the provider its row names. The
+     * row's id is the request's key, so a retried opening returns the same
+     * engine session, with the settings of its first attempt.
      */
     const openInEngine = Effect.fn("RoutineRunner.openInEngine")(function* (
       attempt: Attempt,
@@ -452,7 +472,7 @@ export const layer = Layer.effect(
       const found = yield* bots.find(attempt.bot_id);
       if (Option.isNone(found)) return "done";
       // The attempt it retries may still be running: one attempt at a time.
-      // Its session's retirement nudges the runner.
+      // Its session's archive in the engine nudges the runner.
       if (yield* retriedStillLive(attempt.wake_id)) return "done";
       // A provider at its usage limit holds automated wakes until its reset.
       const limit = yield* limitOf(found.value.bot.model.providerId);
@@ -461,7 +481,12 @@ export const layer = Layer.effect(
       if (Option.isNone(session)) return "done";
       const { id } = session.value;
       if (session.value.engine_session_id === null) {
-        const opened = yield* openInEngine(attempt, found.value, id);
+        // Read again: a session opens only on the provider its row names. A
+        // bot moved since is given a fresh one on the next pass.
+        const current = yield* bots.find(attempt.bot_id);
+        if (Option.isNone(current)) return "done";
+        if (current.value.bot.model.providerId !== session.value.provider_id) return "deferred";
+        const opened = yield* openInEngine(attempt, current.value, id);
         if (opened !== "done") return opened;
       }
       // Nothing is planned, and no slot taken, before the session's events are known.
@@ -474,37 +499,49 @@ export const layer = Layer.effect(
     });
 
     /**
-     * Takes a spent side session out of use, once nothing of it can still run:
-     * no turn or dispatch the server knows of, no Stop unsettled, and the
-     * engine's own account shows no turn it can still run and no background
-     * work. A session never opened, or lost, is only recorded retired.
+     * Records a spent side session retired, once nothing of it can still run:
+     * no turn or dispatch the server knows of, no Stop unsettled, checked
+     * again in the transaction that retires it, and the engine's own account
+     * shows no turn it can still run and no background work. A session never
+     * opened, or lost, is retired at once. The rotator then archives the
+     * engine thread and stops following its events, as for a replaced main
+     * session (`turns/Rotations.ts`).
      */
     const retire = Effect.fn("RoutineRunner.retire")(function* (
       session: Spent,
     ): Effect.fn.Return<Step> {
+      const quiet = Effect.map(
+        workOf(session.id),
+        (work) => isIdle(work) && work.continuations === 0 && !work.stopUnsettled,
+      );
       const record = transaction(
-        sql`
-          UPDATE sessions SET retired_at = ${timeText(yield* DateTime.now)}
-          WHERE id = ${session.id} AND retired_at IS NULL
-        `,
+        Effect.gen(function* () {
+          if (!session.lost && session.engine_session_id !== null && !(yield* quiet)) return;
+          yield* sql`
+            UPDATE sessions SET retired_at = ${timeText(yield* DateTime.now)}
+            WHERE id = ${session.id} AND retired_at IS NULL
+          `;
+          yield* sql.afterCommit(signals.rotations.fire);
+        }),
       ).pipe(Effect.orDie);
       if (session.lost || session.engine_session_id === null) {
         yield* record;
         return "done";
       }
-      const engineSessionId = session.engine_session_id;
       // Still at work: the turn's end, or the Stop's confirmation, nudges the runner.
-      const work = yield* workOf(session.id);
-      if (!isIdle(work) || work.continuations > 0 || work.stopUnsettled) return "done";
-      const synced = yield* observer.synchronize(session.id, engineSessionId).pipe(Effect.result);
+      if (!(yield* quiet)) return "done";
+      const synced = yield* observer
+        .synchronize(session.id, session.engine_session_id)
+        .pipe(Effect.result);
       if (synced._tag === "Failure") {
         switch (synced.failure._tag) {
           case "EngineUnavailable":
             return "unavailable";
           case "SessionNotFound":
-            // Already retired in the engine: an archive whose answer was lost,
-            // or that the server stopped before recording.
-            yield* record;
+            // The engine has no such session, archived from its console say:
+            // recorded lost, which nudges the runner to retire it. Its event
+            // stream may still be open, and nothing else closes it.
+            yield* transaction(sessionLost(session.id));
             yield* observer.close(session.id);
             return "done";
           default:
@@ -516,22 +553,8 @@ export const layer = Layer.effect(
       if (synced.success.backgroundWork === "pending" || synced.success.runnableTurns.length > 0) {
         return "done";
       }
-      return yield* gate.run(session.id)(
-        Effect.gen(function* (): Effect.fn.Return<Step> {
-          // Read again in the gate: nothing may have been sent meanwhile.
-          const now = yield* workOf(session.id);
-          if (!isIdle(now) || now.continuations > 0 || now.stopUnsettled) {
-            return "deferred";
-          }
-          const retired = yield* engine.retireSession(engineSessionId).pipe(Effect.result);
-          if (retired._tag === "Failure") {
-            return retired.failure._tag === "EngineUnavailable" ? "unavailable" : "deferred";
-          }
-          yield* record;
-          yield* observer.close(session.id);
-          return "done";
-        }),
-      );
+      yield* record;
+      return "done";
     });
 
     /** What the pass makes of one item's step; whether the engine is down. */
