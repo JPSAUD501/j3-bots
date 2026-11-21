@@ -247,6 +247,6 @@ Each line is ✓ (fine), `!` (a warning: the server runs, but something is missi
 
 ## Known limits in this release
 
-- Through a provider connection the engine reads no usage limits, so the usage view shows no limit windows for Claude Code or Codex.
+- With Claude Code and Codex reaching their models through a CLIProxyAPI endpoint (the provider connection), the engine reads no usage limits for them, so the server reports none. That is the setup tested so far.
 - Bots choose among the models the engine lists for each provider. An endpoint that names its models otherwise cannot be used for them yet.
 - `j3-bots pair` prints the code and the addresses but no QR code.
