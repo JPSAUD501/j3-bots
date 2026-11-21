@@ -42,13 +42,20 @@ export interface PushMessage {
 }
 
 /**
- * The service could not be reached, or asked to come back later, for this
- * message or for every one: the same send may work later. `reason` is one the
- * sender chose, never text the service sent.
+ * The service could not be reached, did not answer in time, or asked to come
+ * back later: no message would pass now, this one included, though the same
+ * send may later. `reason` is one the sender chose, never text the service
+ * sent.
  */
 export class PushUnavailable extends Schema.TaggedError<PushUnavailable>()("PushUnavailable", {
   reason: Schema.String,
 }) {}
+
+/**
+ * The service refused this message because too many went to its device just
+ * now: the same send may pass later, and messages to other devices pass now.
+ */
+export class PushThrottled extends Schema.TaggedError<PushThrottled>()("PushThrottled", {}) {}
 
 /** The token no longer reaches the app: the device must register again. */
 export class PushUnregistered extends Schema.TaggedError<PushUnregistered>()(
@@ -92,7 +99,10 @@ export class PushSender extends Context.Service<
      */
     readonly send: (
       message: PushMessage,
-    ) => Effect.Effect<PushReceiptId | null, PushUnavailable | PushUnregistered | PushRejected>;
+    ) => Effect.Effect<
+      PushReceiptId | null,
+      PushUnavailable | PushThrottled | PushUnregistered | PushRejected
+    >;
     /**
      * What became of messages the service took. A receipt the service has no
      * answer for yet, or that could not be asked for now, is left out: the

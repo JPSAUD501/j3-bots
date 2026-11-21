@@ -51,27 +51,35 @@ const DEFECT_DELAY = Duration.seconds(30);
  */
 const BATCH = 50;
 
-/** A delivery due now, with what sending it needs. */
+/** A pending delivery due now, with what sending it needs. */
 const Due = Schema.Struct({
   id: PushDeliveryId,
   entry_id: EntryId,
   device_id: DeviceId,
-  status: Schema.Literals(["pending", "accepted"]),
-  title: Schema.NullOr(Schema.String),
-  body: Schema.NullOr(Schema.String),
-  plain_body: Schema.NullOr(Schema.String),
+  title: Schema.String,
+  body: Schema.String,
+  plain_body: Schema.String,
   attempts: Schema.Int,
-  token: Schema.NullOr(PushToken),
-  sent_at: Schema.NullOr(Schema.String),
-  receipt_id: Schema.NullOr(PushReceiptId),
+  generation: Schema.NullOr(Schema.String),
   conversation_bot_id: Schema.NullOr(BotId),
   room_id: Schema.NullOr(RoomId),
   provider: Schema.NullOr(PushProvider),
-  registered_token: Schema.NullOr(PushToken),
+  token: Schema.NullOr(PushToken),
   platform: Schema.NullOr(PushPlatform),
+  registered_generation: Schema.NullOr(Schema.String),
 });
 type Due = typeof Due.Type;
 const decodeDue = Schema.decodeUnknownEffect(Due);
+
+/** A delivery the service took whose receipt is due now. */
+const Taken = Schema.Struct({
+  id: PushDeliveryId,
+  device_id: DeviceId,
+  generation: Schema.String,
+  receipt_id: PushReceiptId,
+});
+type Taken = typeof Taken.Type;
+const decodeTaken = Schema.decodeUnknownEffect(Taken);
 
 /** A delivery past its deadline. */
 const Expired = Schema.Struct({
@@ -79,32 +87,28 @@ const Expired = Schema.Struct({
   device_id: DeviceId,
   status: Schema.Literals(["pending", "accepted"]),
   attempts: Schema.Int,
-  token: Schema.NullOr(PushToken),
-  sent_at: Schema.NullOr(Schema.String),
+  generation: Schema.NullOr(Schema.String),
 });
 const decodeExpired = Schema.decodeUnknownEffect(Expired);
 
 /**
- * One send as it was begun: to which device and token, and when. What its
- * answer says about the device holds only for the registration it went to,
- * so a registration made since is left alone.
+ * One send as it was begun: to which device, and which of its registrations.
+ * What its answer says about the device holds only for that registration, so
+ * one made since, even in the same millisecond, is left alone.
  */
 interface Attempt {
   readonly deviceId: DeviceId;
-  readonly token: PushToken;
-  /** `sent_at`, as stored. */
-  readonly sentAt: string;
+  readonly generation: string;
 }
 
 /** The last send begun for a delivery, if one was. */
 const lastAttempt = (delivery: {
   readonly device_id: DeviceId;
-  readonly token: PushToken | null;
-  readonly sent_at: string | null;
+  readonly generation: string | null;
 }): Attempt | null =>
-  delivery.token === null || delivery.sent_at === null
+  delivery.generation === null
     ? null
-    : { deviceId: delivery.device_id, token: delivery.token, sentAt: delivery.sent_at };
+    : { deviceId: delivery.device_id, generation: delivery.generation };
 
 /** A row's id, to name it in the logs even when the rest of it cannot be read. */
 const rowId = (row: Readonly<Record<string, unknown>>): string =>
@@ -115,18 +119,25 @@ const rowId = (row: Readonly<Record<string, unknown>>): string =>
  * Notifications): a reconciler (decision 0010) whose every deadline is a
  * column, so a restart resumes where the last process stopped.
  *
- * A send is recorded as begun, with the time the next one may begin, before
- * it is made, and only while its deadline has not passed and the device is
- * still registered with the token it goes to. So a crash between a send and
- * its record leaves the delivery due again at that time, never at once and
- * never past its bounds: it is sent again with the same key, its id, which the
- * push service uses to replace a notification still shown with the second
- * (`ExpoPushSender`). Each send follows the operator's settings as they are
- * then: none while notifications are off, and no preview while previews are.
- * A delivery ends when the service took it and later reported it handed on,
- * or when it cannot be: the device is no longer registered, the service
- * refused it, its sends ran out, or its deadline passed. Each end deletes it;
- * a device the service no longer reaches loses its registration.
+ * A send is claimed before it is made: recorded as begun, with the time the
+ * next one may begin, only while its deadline has not passed and the device's
+ * registration is the one the pass read. The claim reads the operator's
+ * settings in its own transaction and words the send by them: none while
+ * notifications are off, and no preview while previews are. Once the claim
+ * commits, the send is under way. So a crash between a send and its record
+ * leaves the delivery due again at that time, never at once and never past its
+ * bounds: it is sent again with the same key, its id, which the push service
+ * uses to replace a notification still shown with the second
+ * (`ExpoPushSender`). A delivery ends when the service took it and later
+ * reported it handed on, or when it cannot be: the device is no longer
+ * registered, the service refused it, its sends ran out, or its deadline
+ * passed. Each end deletes it; a device the service no longer reaches loses
+ * its registration.
+ *
+ * Receipts are read before any send, so a service that does not answer sends
+ * holds back no receipt; and the first send it does not answer ends the
+ * pass's sends: the others wait as long as that one does, their attempts
+ * unspent.
  */
 export class PushWorker extends Context.Service<
   PushWorker,
@@ -154,21 +165,19 @@ export const layer = Layer.effect(
         ? Effect.void
         : sql`
             UPDATE push_registrations SET failures = failures + 1
-            WHERE device_id = ${attempt.deviceId} AND token = ${attempt.token}
-              AND updated_at <= ${attempt.sentAt}
+            WHERE device_id = ${attempt.deviceId} AND generation = ${attempt.generation}
           `.pipe(Effect.asVoid, Effect.orDie);
 
     /**
-     * The service no longer reaches the app at the token `attempt` went to:
-     * the device's registration ends, unless it registered again since.
+     * The service no longer reaches the app at the registration `attempt`
+     * went to: that registration ends, unless the device registered again since.
      */
     const unregistered = (id: PushDeliveryId, attempt: Attempt) =>
       transaction(
         Effect.gen(function* () {
           const ended = yield* sql`
             DELETE FROM push_registrations
-            WHERE device_id = ${attempt.deviceId} AND token = ${attempt.token}
-              AND updated_at <= ${attempt.sentAt}
+            WHERE device_id = ${attempt.deviceId} AND generation = ${attempt.generation}
             RETURNING device_id
           `;
           yield* settle(id);
@@ -207,8 +216,7 @@ export const layer = Layer.effect(
       const delivery = yield* decodeExpired(row).pipe(Effect.orDie);
       // Only sends that failed count: a receipt never read says nothing
       // either way, and a delivery never sent failed no send.
-      const attempt =
-        delivery.status === "pending" && delivery.attempts > 0 ? lastAttempt(delivery) : null;
+      const attempt = delivery.status === "pending" ? lastAttempt(delivery) : null;
       yield* transaction(Effect.andThen(failed(attempt), settle(delivery.id)));
       yield* Effect.logWarning(
         delivery.status === "pending"
@@ -231,7 +239,7 @@ export const layer = Layer.effect(
      */
     const expire = Effect.fn("PushWorker.expire")(function* () {
       const rows = yield* sql`
-        SELECT id, device_id, status, attempts, token, sent_at FROM push_deliveries
+        SELECT id, device_id, status, attempts, generation FROM push_deliveries
         WHERE deadline_at <= ${timeText(yield* DateTime.now)}
       `.pipe(Effect.orDie);
       for (const row of rows) {
@@ -249,34 +257,67 @@ export const layer = Layer.effect(
       }
     });
 
-    /** One pending delivery: begun on the record, sent, and what came of it recorded. */
+    /**
+     * Claims the next send of `delivery` to the registration `generation`,
+     * and words it by the settings as the claim leaves them, read in its
+     * transaction: a change to them commits before the claim, and is followed,
+     * or after it, once the send is under way. `null` when nothing is to be
+     * sent: the delivery changed since the pass read it, or notifications are
+     * off, which ends it without a failed send.
+     */
+    const claim = (delivery: Due, generation: string) =>
+      transaction(
+        Effect.gen(function* () {
+          const now = yield* DateTime.now;
+          const count = delivery.attempts + 1;
+          const begun = yield* sql`
+            UPDATE push_deliveries
+            SET attempts = ${count}, generation = ${generation},
+              due_at = ${timeText(DateTime.addDuration(now, sendBackoff(count)))}
+            WHERE id = ${delivery.id} AND status = 'pending' AND attempts = ${delivery.attempts}
+              AND deadline_at > ${timeText(now)}
+              AND EXISTS (
+                SELECT 1 FROM push_registrations r
+                WHERE r.device_id = ${delivery.device_id} AND r.generation = ${generation}
+              )
+            RETURNING id
+          `.pipe(Effect.orDie);
+          if (begun.length === 0) return null;
+          const { notifications } = yield* settings.get;
+          if (!notifications.enabled) {
+            yield* settle(delivery.id);
+            return null;
+          }
+          return {
+            count,
+            // Never a preview the operator turned off since it was written.
+            body: notifications.previews ? delivery.body : delivery.plain_body,
+          };
+        }),
+      );
+
+    /**
+     * One pending delivery: claimed, sent, and what came of it recorded.
+     * Returns when the service may next be tried if it did not answer, or
+     * `null`.
+     */
     const sendOne = Effect.fn("PushWorker.sendOne")(function* (delivery: Due) {
       const {
         provider,
-        registered_token: token,
+        token,
         platform,
-        title,
-        body,
-        plain_body: plainBody,
+        registered_generation: generation,
         conversation_bot_id: botId,
         room_id: roomId,
       } = delivery;
-      if (provider === null || token === null || platform === null) {
+      if (provider === null || token === null || platform === null || generation === null) {
         // Unregistered or revoked since it was written: nothing to send to.
-        return yield* settle(delivery.id);
+        yield* settle(delivery.id);
+        return null;
       }
-      const { notifications } = yield* settings.get;
-      // Turned off since it was written: it is not sent, and no send failed.
-      if (!notifications.enabled) return yield* settle(delivery.id);
       if (delivery.attempts >= MAX_ATTEMPTS) {
-        return yield* gaveUp(
-          delivery.id,
-          lastAttempt(delivery),
-          `no send succeeded in ${MAX_ATTEMPTS}`,
-        );
-      }
-      if (title === null || body === null || plainBody === null) {
-        return yield* Effect.die("A pending push has its words");
+        yield* gaveUp(delivery.id, lastAttempt(delivery), `no send succeeded in ${MAX_ATTEMPTS}`);
+        return null;
       }
       const target: EntryTarget | null =
         botId !== null
@@ -285,39 +326,25 @@ export const layer = Layer.effect(
             ? { _tag: "room", roomId }
             : null;
       if (target === null) return yield* Effect.die("An entry has a target");
-      const now = yield* DateTime.now;
-      const attempt: Attempt = { deviceId: delivery.device_id, token, sentAt: timeText(now) };
-      const count = delivery.attempts + 1;
-      // Begun only within its deadline and while the device is still
-      // registered with this token: a revocation or a new token since the
-      // pass read it leaves it to the next pass.
-      const begun = yield* sql`
-        UPDATE push_deliveries
-        SET attempts = ${count}, token = ${token}, sent_at = ${attempt.sentAt},
-          due_at = ${timeText(DateTime.addDuration(now, sendBackoff(count)))}
-        WHERE id = ${delivery.id} AND status = 'pending' AND attempts = ${delivery.attempts}
-          AND deadline_at > ${attempt.sentAt}
-          AND EXISTS (
-            SELECT 1 FROM push_registrations r
-            WHERE r.device_id = ${delivery.device_id} AND r.token = ${token}
-          )
-        RETURNING id
-      `.pipe(Effect.orDie);
-      if (begun.length === 0) return;
+      const claimed = yield* claim(delivery, generation);
+      if (claimed === null) return null;
+      const attempt: Attempt = { deviceId: delivery.device_id, generation };
       const sent = yield* sender
         .send({
           key: delivery.id,
           provider,
           token,
           platform,
-          title,
-          // Never a preview the operator turned off since it was written.
-          body: notifications.previews ? body : plainBody,
+          title: delivery.title,
+          body: claimed.body,
           data: { deviceId: delivery.device_id, target, entryId: delivery.entry_id },
         })
         .pipe(Effect.result);
       if (sent._tag === "Success") {
-        if (sent.success === null) return yield* settle(delivery.id);
+        if (sent.success === null) {
+          yield* settle(delivery.id);
+          return null;
+        }
         // Taken: its words are no longer needed, its receipt is.
         const accepted = yield* DateTime.now;
         yield* sql`
@@ -328,37 +355,49 @@ export const layer = Layer.effect(
             deadline_at = ${timeText(DateTime.addDuration(accepted, RECEIPT_WINDOW))}
           WHERE id = ${delivery.id}
         `.pipe(Effect.orDie);
-        return;
+        return null;
       }
       const error = sent.failure;
       switch (error._tag) {
         case "PushUnregistered":
-          return yield* unregistered(delivery.id, attempt);
+          yield* unregistered(delivery.id, attempt);
+          return null;
         case "PushRejected":
-          return yield* gaveUp(delivery.id, attempt, error.reason);
-        case "PushUnavailable":
+          yield* gaveUp(delivery.id, attempt, error.reason);
+          return null;
+        case "PushThrottled":
           // Due again when the next send may begin, as recorded before this one.
-          return yield* Effect.logInfo("A push could not be sent; it is tried again").pipe(
-            Effect.annotateLogs({ deliveryId: delivery.id, attempt: count, reason: error.reason }),
+          yield* Effect.logInfo("A push could not be sent; it is tried again").pipe(
+            Effect.annotateLogs({
+              deliveryId: delivery.id,
+              attempt: claimed.count,
+              reason: "MessageRateExceeded",
+            }),
           );
+          return null;
+        case "PushUnavailable":
+          yield* Effect.logInfo("The push service did not take a push; sends wait").pipe(
+            Effect.annotateLogs({
+              deliveryId: delivery.id,
+              attempt: claimed.count,
+              reason: error.reason,
+            }),
+          );
+          return DateTime.addDuration(yield* DateTime.now, sendBackoff(claimed.count));
       }
     });
 
     /** What the service later said about deliveries it took. */
     const readReceipts = Effect.fn("PushWorker.readReceipts")(function* (
-      accepted: ReadonlyArray<Due>,
+      taken: ReadonlyArray<Taken>,
     ) {
-      const asked = accepted.flatMap((delivery) => {
-        const attempt = lastAttempt(delivery);
-        return delivery.receipt_id === null || attempt === null
-          ? []
-          : [{ id: delivery.id, receipt: delivery.receipt_id, attempt }];
-      });
-      if (asked.length === 0) return;
-      const answers = yield* sender.receipts(asked.map(({ receipt }) => receipt));
+      if (taken.length === 0) return;
+      const answers = yield* sender.receipts(taken.map((delivery) => delivery.receipt_id));
       const again = DateTime.addDuration(yield* DateTime.now, RECEIPT_RETRY);
-      for (const { id, receipt, attempt } of asked) {
-        const answer = answers.get(receipt);
+      for (const delivery of taken) {
+        const { id } = delivery;
+        const attempt: Attempt = { deviceId: delivery.device_id, generation: delivery.generation };
+        const answer = answers.get(delivery.receipt_id);
         if (answer === undefined) {
           yield* later(id, again);
           continue;
@@ -413,48 +452,84 @@ export const layer = Layer.effect(
         ),
       );
 
+    /** The receipts due now. Whether there may be more than one pass reads. */
+    const followReceipts = Effect.fn("PushWorker.followReceipts")(function* () {
+      const rows = yield* sql`
+        SELECT id, device_id, generation, receipt_id FROM push_deliveries
+        WHERE status = 'accepted' AND due_at <= ${timeText(yield* DateTime.now)}
+        ORDER BY due_at, id
+        LIMIT ${BATCH}
+      `.pipe(Effect.orDie);
+      // Decoded one by one, so a row that cannot be read waits alone.
+      const taken: Array<Taken> = [];
+      for (const row of rows) {
+        yield* supervised(
+          rowId(row),
+          Effect.map(decodeTaken(row).pipe(Effect.orDie), (delivery) => {
+            taken.push(delivery);
+          }),
+        );
+      }
+      // A defect reading receipts holds those receipts back, not the pass.
+      yield* readReceipts(taken).pipe(
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.gen(function* () {
+              yield* Effect.logError("Push receipts could not be handled").pipe(
+                Effect.annotateLogs({ failure: failureTag(cause) }),
+              );
+              const at = DateTime.addDuration(yield* DateTime.now, DEFECT_DELAY);
+              for (const delivery of taken) yield* later(delivery.id, at);
+            }),
+        ),
+      );
+      return rows.length === BATCH;
+    });
+
+    /**
+     * The sends due now, until the service does not answer one: those left
+     * wait as long as that one, without a send begun. Whether there may be
+     * more than one pass reads.
+     */
+    const sendDue = Effect.fn("PushWorker.sendDue")(function* () {
+      const rows = yield* sql`
+        SELECT d.id, d.entry_id, d.device_id, d.title, d.body, d.plain_body, d.attempts,
+          d.generation, e.conversation_bot_id, e.room_id, r.provider, r.token, r.platform,
+          r.generation AS registered_generation
+        FROM push_deliveries d
+        JOIN entries e ON e.id = d.entry_id
+        LEFT JOIN push_registrations r ON r.device_id = d.device_id
+        WHERE d.status = 'pending' AND d.due_at <= ${timeText(yield* DateTime.now)}
+        ORDER BY d.due_at, d.id
+        LIMIT ${BATCH}
+      `.pipe(Effect.orDie);
+      const service: { unavailableUntil: DateTime.Utc | null } = { unavailableUntil: null };
+      for (const row of rows) {
+        if (service.unavailableUntil !== null) break;
+        // Decoded one by one, so a row that cannot be read waits alone.
+        yield* supervised(
+          rowId(row),
+          Effect.gen(function* () {
+            service.unavailableUntil = yield* sendOne(yield* decodeDue(row).pipe(Effect.orDie));
+          }),
+        );
+      }
+      const until = service.unavailableUntil;
+      if (until === null) return rows.length === BATCH;
+      yield* sql`
+        UPDATE push_deliveries SET due_at = ${timeText(until)}
+        WHERE status = 'pending' AND due_at < ${timeText(until)}
+      `.pipe(Effect.orDie);
+      return false;
+    });
+
     const pass = yield* onePassAtATime(
       Effect.gen(function* () {
         const outcome = passOutcome();
         yield* expire();
-        // Decoded one by one, so a row that cannot be read waits alone.
-        const rows = yield* sql`
-          SELECT d.id, d.entry_id, d.device_id, d.status, d.title, d.body, d.plain_body,
-            d.attempts, d.token, d.sent_at, d.receipt_id, e.conversation_bot_id, e.room_id,
-            r.provider, r.token AS registered_token, r.platform
-          FROM push_deliveries d
-          JOIN entries e ON e.id = d.entry_id
-          LEFT JOIN push_registrations r ON r.device_id = d.device_id
-          WHERE d.due_at <= ${timeText(yield* DateTime.now)}
-          ORDER BY d.due_at, d.id
-          LIMIT ${BATCH}
-        `.pipe(Effect.orDie);
-        if (rows.length === BATCH) outcome.defer();
-        const receipts: Array<Due> = [];
-        for (const row of rows) {
-          yield* supervised(
-            rowId(row),
-            Effect.gen(function* () {
-              const delivery = yield* decodeDue(row).pipe(Effect.orDie);
-              if (delivery.status === "accepted") receipts.push(delivery);
-              else yield* sendOne(delivery);
-            }),
-          );
-        }
-        // A defect reading receipts holds those receipts back, not the pass.
-        yield* readReceipts(receipts).pipe(
-          Effect.catchCauseIf(
-            (cause) => !Cause.hasInterruptsOnly(cause),
-            (cause) =>
-              Effect.gen(function* () {
-                yield* Effect.logError("Push receipts could not be handled").pipe(
-                  Effect.annotateLogs({ failure: failureTag(cause) }),
-                );
-                const at = DateTime.addDuration(yield* DateTime.now, DEFECT_DELAY);
-                for (const delivery of receipts) yield* later(delivery.id, at);
-              }),
-          ),
-        );
+        if (yield* followReceipts()) outcome.defer();
+        if (yield* sendDue()) outcome.defer();
         const [next] = yield* SqlSchema.findAll({
           Request: Schema.Void,
           Result: Schema.Struct({ due: Schema.NullOr(Time), deadline: Schema.NullOr(Time) }),

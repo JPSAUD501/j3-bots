@@ -12,6 +12,7 @@ import {
   PushReceiptId,
   PushRejected,
   PushSender,
+  PushThrottled,
   PushUnavailable,
   PushUnregistered,
 } from "./PushSender.ts";
@@ -185,7 +186,7 @@ export const layer = Layer.effect(
           return yield* new PushUnregistered();
         case "MessageRateExceeded":
           // Too many to this device just now: the same send may pass later.
-          return yield* new PushUnavailable({ reason: code });
+          return yield* new PushThrottled();
         default:
           return yield* new PushRejected({ reason: code ?? UNDOCUMENTED });
       }

@@ -248,19 +248,27 @@ export const layer = Layer.effect(
           result: Schema.Void,
           apply: Effect.gen(function* () {
             const at = timeText(yield* DateTime.now);
+            // A new generation, even for the same token: an answer to a send
+            // made before this registration says nothing about it.
+            const generation = yield* ids.make("registration");
             yield* sql`
               DELETE FROM push_registrations
               WHERE provider = ${provider} AND token = ${token} AND device_id <> ${input.deviceId}
             `.pipe(Effect.orDie);
             yield* sql`
-              INSERT INTO push_registrations (device_id, provider, token, platform, language, updated_at)
-              VALUES (${input.deviceId}, ${provider}, ${token}, ${platform}, ${language}, ${at})
+              INSERT INTO push_registrations (
+                device_id, provider, token, platform, language, updated_at, generation
+              ) VALUES (
+                ${input.deviceId}, ${provider}, ${token}, ${platform}, ${language}, ${at},
+                ${generation}
+              )
               ON CONFLICT (device_id) DO UPDATE SET
                 provider = excluded.provider,
                 token = excluded.token,
                 platform = excluded.platform,
                 language = excluded.language,
                 updated_at = excluded.updated_at,
+                generation = excluded.generation,
                 failures = 0
             `.pipe(Effect.orDie);
           }),

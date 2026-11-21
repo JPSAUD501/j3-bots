@@ -6,6 +6,13 @@ import * as SqlClient from "effect/sql/SqlClient";
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
+  // Each registration of a device, a first one or one made again, gets a
+  // generation of its own: what a send's answer says about the device holds
+  // only for the generation the send went to. A registration written before
+  // generations existed gets one here.
+  yield* sql`ALTER TABLE push_registrations ADD COLUMN generation TEXT NOT NULL DEFAULT ''`;
+  yield* sql`UPDATE push_registrations SET generation = lower(hex(randomblob(16)))`;
+
   // One notification to push to one device, written with the entry it is
   // about. `pending` waits to be sent, with its words as they were rendered
   // then: `body` as the previews setting allowed, `plain_body` the fixed
@@ -15,7 +22,7 @@ export default Effect.gen(function* () {
   // deleted once it settles. `due_at` is when the worker next acts on it: its
   // next send, or the next look at its receipt. `deadline_at` ends the stage it
   // is in. `attempts` counts the sends begun, each recorded before it is made;
-  // `token` is the one the last send went to, and `sent_at` when it began.
+  // `generation` is that of the registration the last one went to.
   yield* sql`
     CREATE TABLE push_deliveries (
       id TEXT PRIMARY KEY,
@@ -26,8 +33,7 @@ export default Effect.gen(function* () {
       body TEXT,
       plain_body TEXT,
       attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
-      token TEXT,
-      sent_at TEXT,
+      generation TEXT,
       receipt_id TEXT,
       due_at TEXT NOT NULL,
       deadline_at TEXT NOT NULL,
@@ -36,8 +42,8 @@ export default Effect.gen(function* () {
       CHECK (
         (status = 'pending') = (title IS NOT NULL AND body IS NOT NULL AND plain_body IS NOT NULL)
       ),
-      CHECK ((status = 'accepted') = (receipt_id IS NOT NULL AND token IS NOT NULL)),
-      CHECK ((token IS NULL) = (sent_at IS NULL))
+      CHECK ((status = 'accepted') = (receipt_id IS NOT NULL AND generation IS NOT NULL)),
+      CHECK ((generation IS NULL) = (attempts = 0))
     )
   `;
   yield* sql`CREATE INDEX push_deliveries_due ON push_deliveries (due_at)`;

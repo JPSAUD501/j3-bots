@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as SqliteMigrator from "@effect/sql-sqlite-node/SqliteMigrator";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import * as Migrator from "effect/sql/Migrator";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlSchema from "effect/sql/SqlSchema";
 import Migration0001 from "./migrations/0001_initial.ts";
 import Migration0002 from "./migrations/0002_operator_name.ts";
 import Migration0003 from "./migrations/0003_turns.ts";
@@ -31,9 +35,38 @@ const migrations = SqliteMigrator.fromRecord({
   "12_push_deliveries": Migration0012,
 });
 
-/** Applies, in one transaction, every migration the database has not recorded yet. */
-export const runMigrations = Effect.fn("runMigrations")(function* () {
-  const applied = yield* SqliteMigrator.run({ loader: migrations });
+const Recorded = Schema.Struct({ migration_id: Schema.Int });
+
+/**
+ * Applies, in one transaction, every migration of `loader` the database has
+ * not recorded yet. The migrator applies only those numbered past the last
+ * one recorded, so a database that recorded one numbered later than a
+ * migration it lacks is refused: that migration would never be applied.
+ */
+export const migrate = Effect.fn("migrate")(function* (loader: Migrator.Loader) {
+  const sql = yield* SqlClient.SqlClient;
+  const [table] = yield* sql`
+    SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'
+  `;
+  if (table !== undefined) {
+    const recorded = yield* SqlSchema.findAll({
+      Request: Schema.Void,
+      Result: Recorded,
+      execute: () => sql`SELECT migration_id FROM effect_sql_migrations`,
+    })(undefined).pipe(Effect.orDie);
+    const ids = new Set(recorded.map(({ migration_id }) => migration_id));
+    const latest = Math.max(0, ...ids);
+    const skipped = (yield* loader).filter(([id]) => id < latest && !ids.has(id));
+    if (skipped.length > 0) {
+      return yield* new Migrator.MigrationError({
+        kind: "BadState",
+        message: `The database recorded migration ${latest} but not ${skipped
+          .map(([id, name]) => `${id}_${name}`)
+          .join(", ")}, which would never be applied`,
+      });
+    }
+  }
+  const applied = yield* SqliteMigrator.run({ loader });
   if (applied.length > 0) {
     yield* Effect.logInfo("Applied database migrations").pipe(
       Effect.annotateLogs({ migrations: applied.map(([id, name]) => `${id}_${name}`) }),
@@ -41,3 +74,6 @@ export const runMigrations = Effect.fn("runMigrations")(function* () {
   }
   return applied;
 });
+
+/** Applies every migration of this server the database has not recorded yet. */
+export const runMigrations = () => migrate(migrations);

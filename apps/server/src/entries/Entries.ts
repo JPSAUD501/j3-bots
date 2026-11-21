@@ -10,6 +10,7 @@ import {
   RoomId,
   type Sequence,
 } from "@j3-bots/contracts";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -24,6 +25,7 @@ import { ChangeLog, type ChangeScope, scopeKey } from "../persistence/ChangeLog.
 import { Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { Presence } from "../presence/Presence.ts";
+import { failureTag } from "../push/failureTag.ts";
 import { PushDeliveries } from "../push/PushDeliveries.ts";
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
@@ -215,6 +217,29 @@ export const layer = Layer.effect(
       );
     }, Effect.orDie);
 
+    /**
+     * Who hears of an entry is settled with it: a push is written with it,
+     * and the devices with a socket open are told once it commits. Never at
+     * the entry's cost: a failure to work out who hears of it is logged and
+     * nobody is told; a failure to write its pushes is logged and they are
+     * rolled back, while the devices with a socket open are still told.
+     */
+    const notify = (target: EntryTarget, entry: Entry) =>
+      Effect.gen(function* () {
+        const told = yield* presence.recipients(target, entry);
+        if (told === null) return;
+        yield* sql.afterCommit(presence.tell(told));
+        yield* transaction(pushes.record(told));
+      }).pipe(
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.logError("The notification of an entry could not be handled").pipe(
+              Effect.annotateLogs({ entryId: entry.id, failure: failureTag(cause) }),
+            ),
+        ),
+      );
+
     const append = Effect.fn("Entries.append")(
       function* (input: {
         readonly target: EntryTarget;
@@ -249,13 +274,7 @@ export const layer = Layer.effect(
           )
         `;
         yield* changes.record(scopeOf(input.target), id);
-        // Who hears of it is settled with the entry: a push is written with
-        // it, and the devices with a socket open are told once it commits.
-        const told = yield* presence.recipients(input.target, entry);
-        if (told !== null) {
-          yield* pushes.record(told);
-          yield* sql.afterCommit(presence.tell(told));
-        }
+        yield* notify(input.target, entry);
         return entry;
       },
       transaction,

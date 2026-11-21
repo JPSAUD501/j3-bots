@@ -8,26 +8,29 @@ import {
   PushReceiptId,
   type PushRejected,
   PushSender,
+  type PushThrottled,
   type PushUnavailable,
   type PushUnregistered,
 } from "../push/PushSender.ts";
 
+/** How the service fails one send, without taking the message. */
+type TestPushFailure = PushUnavailable | PushThrottled | PushUnregistered | PushRejected;
+
 /**
  * How the service answers one send: it takes the message, it takes it and the
- * answer never comes (the server stops waiting only when it stops), it takes
- * it once `before` ran (for what happens while a send is on its way), or it
- * fails as given, without taking it.
+ * answer never comes (the server stops waiting only when it stops), it
+ * answers as `answer` says once `before` ran (for what happens while a send is
+ * on its way), or it fails as given.
  */
 export type TestPushAnswer =
   | "take"
   | "take-and-hang"
   | {
-      readonly _tag: "take-after";
+      readonly _tag: "after";
       readonly before: (message: PushMessage) => Effect.Effect<void>;
+      readonly answer: "take" | TestPushFailure;
     }
-  | PushUnavailable
-  | PushUnregistered
-  | PushRejected;
+  | TestPushFailure;
 
 /**
  * An in-memory push service, which outlives a server restart. It reports
@@ -51,12 +54,13 @@ export const layer = Layer.effectContext(
     const send = (message: PushMessage) =>
       Effect.gen(function* () {
         sends.push(message);
-        const answer = answers.shift() ?? "take";
+        let answer = answers.shift() ?? "take";
         if (answer === "take-and-hang") return yield* Effect.never;
-        if (typeof answer !== "string") {
-          if (answer._tag !== "take-after") return yield* answer;
+        if (answer !== "take" && answer._tag === "after") {
           yield* answer.before(message);
+          answer = answer.answer;
         }
+        if (answer !== "take") return yield* answer;
         return PushReceiptId.make(`receipt-${sends.length}`);
       });
 
