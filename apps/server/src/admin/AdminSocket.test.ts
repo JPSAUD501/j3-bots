@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { assert, it } from "@effect/vitest";
+import { PairingCode } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -17,6 +18,7 @@ import * as TestDomain from "../testing/domain.ts";
 import * as WebClient from "../web/WebClient.ts";
 import * as AdminClient from "./AdminClient.ts";
 import * as AdminSocket from "./AdminSocket.ts";
+import type { PairingOffer } from "./protocol.ts";
 
 /**
  * The admin socket of a server holding the test home, with the server's web
@@ -24,13 +26,25 @@ import * as AdminSocket from "./AdminSocket.ts";
  */
 const adminServer = AdminSocket.layer.pipe(Layer.provide(Home.layer));
 
+/** The code an offer grants; anything else fails the test. */
+const granted = <E, R>(
+  offer: Effect.Effect<Option.Option<PairingOffer>, E, R>,
+): Effect.Effect<Extract<PairingOffer, { readonly _tag: "granted" }>, E, R> =>
+  offer.pipe(
+    Effect.flatMap((answer) =>
+      Option.isSome(answer) && answer.value._tag === "granted"
+        ? Effect.succeed(answer.value)
+        : Effect.die(`expected a code, got ${JSON.stringify(answer)}`),
+    ),
+  );
+
 it.layer(AdminClient.layer.pipe(Layer.provideMerge(TestDomain.layer)))("admin socket", (it) => {
   it.effect("pairs a first device through the running server, and only then", () =>
     Effect.gen(function* () {
       const { adminSocket, home } = yield* ServerConfig;
       const admin = yield* AdminClient.AdminClient;
       const devices = yield* Devices;
-      assert.isTrue(Option.isNone(yield* admin.startPairing(adminSocket)));
+      assert.isTrue(Option.isNone(yield* admin.startPairing(adminSocket, { unlock: false })));
 
       yield* Effect.gen(function* () {
         const before = yield* admin.status(adminSocket);
@@ -42,10 +56,8 @@ it.layer(AdminClient.layer.pipe(Layer.provideMerge(TestDomain.layer)))("admin so
           names: [],
         });
 
-        const grant = yield* admin.startPairing(adminSocket);
-        assert.isTrue(Option.isSome(grant));
-        if (Option.isNone(grant)) return;
-        yield* devices.pair({ code: grant.value.code, name: "Phone" });
+        const grant = yield* granted(admin.startPairing(adminSocket, { unlock: false }));
+        yield* devices.pair({ code: grant.code, name: "Phone" });
 
         const after = yield* admin.status(adminSocket);
         assert.strictEqual(Option.getOrUndefined(after)?.pairedDevices, 1);
@@ -61,6 +73,30 @@ it.layer(AdminClient.layer.pipe(Layer.provideMerge(TestDomain.layer)))("admin so
 
       // Closing removed the socket: the server is gone, not unreachable.
       assert.isTrue(Option.isNone(yield* admin.status(adminSocket)));
+    }),
+  );
+
+  it.effect("lifts a lock on pairing from the host, and pairs at once", () =>
+    Effect.gen(function* () {
+      const { adminSocket } = yield* ServerConfig;
+      const admin = yield* AdminClient.AdminClient;
+      const devices = yield* Devices;
+      yield* Effect.gen(function* () {
+        for (let attempt = 0; attempt < 5; attempt++) {
+          yield* devices
+            .pair({ code: PairingCode.make("0000000000"), name: "Guess" })
+            .pipe(Effect.ignore);
+        }
+        const locked = yield* admin.startPairing(adminSocket, { unlock: false });
+        assert.strictEqual(Option.getOrUndefined(locked)?._tag, "locked");
+
+        const grant = yield* granted(admin.startPairing(adminSocket, { unlock: true }));
+        const paired = yield* devices.pair({ code: grant.code, name: "Phone" }).pipe(Effect.exit);
+        assert.isTrue(Exit.isSuccess(paired));
+      }).pipe(
+        Effect.provide(adminServer.pipe(Layer.provide(WebClient.statusLayer))),
+        Effect.scoped,
+      );
     }),
   );
 

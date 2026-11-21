@@ -16,7 +16,6 @@ export {
   Connection,
   type ConnectionState,
   type J3RpcClient,
-  normalizePairingCode,
   NotPaired,
   PairingFailed,
   type PairingFailure,

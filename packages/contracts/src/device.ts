@@ -58,7 +58,8 @@ export type PushRegistration = typeof PushRegistration.Type;
 
 /**
  * Crockford base32 without the ambiguous letters, in upper case. Clients
- * upper-case what the operator types and drop spaces and dashes before sending.
+ * upper-case what the operator types and drop spaces and dashes before sending
+ * (`normalizePairingCode`).
  */
 const PAIRING_ALPHABET = "0-9A-HJKMNP-TV-Z";
 /** Ten characters: 50 bits, against an attacker who gets a handful of tries. */
@@ -73,6 +74,12 @@ export const PairingCode = Schema.String.check(
   Schema.isPattern(new RegExp(`^[${PAIRING_ALPHABET}]{${PAIRING_CODE_LENGTH}}$`)),
 ).pipe(Schema.brand("PairingCode"));
 export type PairingCode = typeof PairingCode.Type;
+
+/**
+ * A code as typed or carried in a link, in `PairingCode`'s form if it is one:
+ * upper case, without the spaces and dashes people put between groups.
+ */
+export const normalizePairingCode = (input: string) => input.replace(/[\s-]/g, "").toUpperCase();
 
 /** Grants everything the operator can do. The server stores only its hash. */
 export const DeviceToken = Schema.String.check(

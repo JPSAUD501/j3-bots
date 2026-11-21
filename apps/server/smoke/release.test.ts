@@ -183,8 +183,9 @@ it.layer(services, { excludeTestServices: true })("release archive", (it) => {
 
         // A device pairs, as from a browser, and opens the client socket.
         const grant = yield* admin
-          .startPairing(socket)
+          .startPairing(socket, { unlock: false })
           .pipe(Effect.flatMap((found) => Effect.fromOption(found)));
+        if (grant._tag !== "granted") return yield* Effect.die("pairing is locked on a new server");
         const paired = yield* HttpClientRequest.post(`${origin}${HTTP_PATHS.pair}`).pipe(
           HttpClientRequest.schemaBodyJson(PairRequest)({
             code: grant.code,

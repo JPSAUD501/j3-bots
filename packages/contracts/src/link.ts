@@ -2,7 +2,7 @@
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SchemaGetter from "effect/SchemaGetter";
-import { PairingCode } from "./device.ts";
+import { normalizePairingCode, PairingCode } from "./device.ts";
 
 /**
  * `text` as a URL, or none when it is not one. Built on `new URL`: `URL.parse`
@@ -28,15 +28,27 @@ export type ServerOrigin = typeof ServerOrigin.Type;
 const decodeOrigin = Schema.decodeUnknownOption(ServerOrigin);
 
 /**
+ * `http://` or `https://`, an authority with no user name, path, query or
+ * fragment in it, not even an empty one, and at most a final `/`: checked as
+ * typed, since parsing resolves `/x/..` and drops an empty `@` before the URL
+ * is read back.
+ */
+const BARE_ORIGIN_TEXT = /^https?:\/\/[^\s/\\?#@%]+\/?$/i;
+
+/**
  * An address typed as a bare http or https origin, as the origin, or none. A
  * trailing `/` is the only path it may have, and it has no query, fragment or
- * user name, not even an empty one: a URL writes back exactly as its origin
- * and `/` only then. Letter case and a default port are a browser's to write.
+ * user name, not even an empty one. Letter case and a default port are a
+ * browser's to write.
  */
-export const bareServerOrigin = (text: string): Option.Option<ServerOrigin> =>
-  Option.flatMap(parseUrl(text.trim()), (url) =>
-    url.href === `${url.origin}/` ? decodeOrigin(url.origin) : Option.none(),
-  );
+export const bareServerOrigin = (text: string): Option.Option<ServerOrigin> => {
+  const typed = text.trim();
+  return BARE_ORIGIN_TEXT.test(typed)
+    ? Option.flatMap(parseUrl(typed), (url) =>
+        url.href === `${url.origin}/` ? decodeOrigin(url.origin) : Option.none(),
+      )
+    : Option.none();
+};
 
 /** What a pairing link carries: where the server is, and the code to pair with there. */
 export const PairingLinkTarget = Schema.Struct({ server: ServerOrigin, code: PairingCode });
@@ -48,7 +60,8 @@ export const PAIRING_PATH = "/pair";
 /**
  * `<origin>/pair#<code>` exactly: the origin as a browser writes it, the path
  * `/pair`, no query or user name, and a fragment that is the code alone.
- * Whether the code has a code's form is the target's to check.
+ * Whether the code has a code's form, once normalized as a typed one is, is
+ * the target's to check.
  */
 const isPairingLinkText = (text: string) =>
   Option.exists(
@@ -64,14 +77,16 @@ const isPairingLinkText = (text: string) =>
  * path is the link's own so that opening one always loads the page, even in
  * a tab already showing the app, where a new fragment alone would not. The
  * fragment never reaches the server, so the code stays out of its logs and of
- * `Referer`. A link only fills in the pairing screen: a client never pairs
+ * `Referer`. Its code is read as a typed one is (`normalizePairingCode`), in
+ * either case and with dashes between groups, and written in `PairingCode`'s
+ * own form. A link only fills in the pairing screen: a client never pairs
  * from one by itself. The code still works once and expires as any code does.
  */
 export const PairingLink = Schema.String.check(Schema.makeFilter(isPairingLinkText)).pipe(
   Schema.decodeTo(PairingLinkTarget, {
     decode: SchemaGetter.transform((text: string) => {
       const url = new URL(text);
-      return { server: url.origin, code: url.hash.slice(1) };
+      return { server: url.origin, code: normalizePairingCode(url.hash.slice(1)) };
     }),
     encode: SchemaGetter.transform(
       ({ server, code }: { readonly server: string; readonly code: string }) =>

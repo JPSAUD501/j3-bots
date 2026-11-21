@@ -62,6 +62,37 @@ it.effect("locks pairing for fifteen minutes after five failures in fifteen minu
   }).pipe(Effect.provide(devices)),
 );
 
+it.effect("refuses even the right code while locked, until the operator unlocks it", () =>
+  Effect.gen(function* () {
+    const service = yield* Devices.Devices;
+    const pair = (code: PairingCode) => service.pair({ code, name: "Phone" }).pipe(Effect.exit);
+    for (let attempt = 0; attempt < 5; attempt++) yield* pair(WRONG);
+    const { code } = yield* service.startPairing;
+    assert.deepStrictEqual(failure(yield* pair(code)), Option.some("RateLimited"));
+    assert.isTrue(Option.isSome(yield* service.lockedUntil));
+
+    yield* service.unlock;
+    assert.isTrue(Option.isNone(yield* service.lockedUntil));
+    // The refused attempt did not spend the code.
+    assert.isTrue(Exit.isSuccess(yield* pair(code)));
+  }).pipe(Effect.provide(devices)),
+);
+
+it.effect("forgets the failures counted towards a lock when it unlocks", () =>
+  Effect.gen(function* () {
+    const service = yield* Devices.Devices;
+    const pair = (code: PairingCode) => service.pair({ code, name: "Phone" }).pipe(Effect.exit);
+    for (let attempt = 0; attempt < 4; attempt++) yield* pair(WRONG);
+    yield* service.unlock;
+
+    // Four more failures within the window would have locked it without the unlock.
+    for (let attempt = 0; attempt < 4; attempt++) {
+      assert.deepStrictEqual(failure(yield* pair(WRONG)), Option.some("Invalid"));
+    }
+    assert.isTrue(Option.isNone(yield* service.lockedUntil));
+  }).pipe(Effect.provide(devices)),
+);
+
 it.effect("accepts a code once and not after five minutes", () =>
   Effect.gen(function* () {
     const service = yield* Devices.Devices;

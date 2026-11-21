@@ -4,6 +4,7 @@ import {
   type DeviceToken,
   J3Rpcs,
   Label,
+  normalizePairingCode,
   PairingCode,
   PROTOCOL_VERSION,
   type PairRequest,
@@ -157,9 +158,6 @@ export const backoffDelay = (
   );
   return Duration.millis(base / 2 + (random * base) / 2);
 };
-
-/** Upper case, without the spaces and dashes people type between groups. */
-export const normalizePairingCode = (input: string) => input.replace(/[\s-]/g, "").toUpperCase();
 
 /** One open socket. `generation` grows with every socket, so a retry can wait for a newer one. */
 interface Session {

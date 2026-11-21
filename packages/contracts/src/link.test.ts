@@ -64,14 +64,22 @@ describe("a pairing link", () => {
       `#${code}&extra=1`,
       `#${code}#more`,
       "#7KQ2M9XH4",
-      "#7kq2m9xh4d",
-      "#7KQ2M-9XH4D",
       "#7KQ2M9XH4I",
       "#7KQ2M%399XH4D",
     ]) {
       assert.isTrue(refused(`${base}${fragment}`), fragment);
     }
     assert.isTrue(refused(`${base}?code=${code}`));
+  });
+
+  it("reads its code as a typed one is read, in either case and with dashes", () => {
+    const server = "http://192.0.2.10:3737";
+    for (const fragment of ["7kq2m9xh4d", "7KQ2M-9XH4D", "7kq2m-9xh4d"]) {
+      assert.deepStrictEqual(Schema.decodeSync(PairingLink)(`${server}/pair#${fragment}`), {
+        server,
+        code,
+      });
+    }
   });
 });
 
@@ -110,6 +118,8 @@ describe("an address typed as a server's origin", () => {
   it("refuses a path, query, fragment, user name or another scheme", () => {
     for (const typed of [
       "http://192.0.2.10:3737/pair",
+      "https://j3.example.test/setup/..",
+      "http://192.0.2.10:3737/.",
       "http://192.0.2.10:3737//",
       "http://192.0.2.10:3737/?",
       "http://192.0.2.10:3737/?x=1",
@@ -117,6 +127,8 @@ describe("an address typed as a server's origin", () => {
       `http://192.0.2.10:3737/#${code}`,
       "https://operator@j3.example.test",
       "https://operator:secret@j3.example.test",
+      "https://@j3.example.test",
+      "https://:@j3.example.test",
       "blob:https://j3.example.test/1b4e28ba-2fa1-11d2-883f-0016d3cca427",
       "ws://192.0.2.10:3737",
       "ftp://192.0.2.10",

@@ -57,6 +57,17 @@ const addressFlag = Flag.String("address").pipe(
   Flag.optional,
 );
 
+const unlockFlag = Flag.Boolean("unlock").pipe(
+  Flag.withDefault(false),
+  Flag.withDescription(
+    "Lift the lock on pairing that repeated wrong codes set, before the code is made. Only the server's user on this machine can.",
+  ),
+);
+
+/** The lock's end, as the host's clock reads it. */
+const lockedText = (until: DateTime.Utc) =>
+  `Pairing is locked until ${DateTime.formatLocal(until, { hour: "2-digit", minute: "2-digit" })}, after repeated wrong codes, so no code was made. Run \`j3-bots pair --unlock\` to lift the lock and get a code now.`;
+
 /**
  * The origin the QR code carries: the one the operator chose, which must be a
  * bare origin the server lists or an `https:` one, else the first it lists.
@@ -125,11 +136,14 @@ const scanToPair = Effect.fn("pair.scanToPair")(function* (
 /** `ABCDE-FGHJK`: two halves, easier to read out and type. */
 const formatCode = (code: string) => `${code.slice(0, 5)}-${code.slice(5)}`;
 
-export const pairCommand = Command.make("pair", { address: addressFlag }).pipe(
+export const pairCommand = Command.make("pair", {
+  address: addressFlag,
+  unlock: unlockFlag,
+}).pipe(
   Command.withDescription(
-    "Print a one-time code that pairs a new device with the running server, and a QR code that opens J3 Bots on a phone with the code filled in. The code works once, within five minutes.",
+    "Print a one-time code that pairs a new device with the running server, and a QR code that opens J3 Bots on a phone with the code filled in. The code works once, within five minutes. While pairing is locked after repeated wrong codes, it says until when; `--unlock` lifts the lock.",
   ),
-  Command.withHandler(({ address }) =>
+  Command.withHandler(({ address, unlock }) =>
     Effect.gen(function* () {
       const socket = yield* userFacing(ServerConfig.resolveAdminSocket);
       const admin = yield* AdminClient;
@@ -138,20 +152,23 @@ export const pairCommand = Command.make("pair", { address: addressFlag }).pipe(
       const { listener } = status.value;
       const origins = yield* reachableOrigins(listener);
       const carried = yield* carriedOrigin(origins, address);
-      const grant = yield* userFacing(admin.startPairing(socket));
-      if (Option.isNone(grant)) return yield* refuse(NOT_RUNNING);
+      const offer = yield* userFacing(admin.startPairing(socket, { unlock }));
+      if (Option.isNone(offer)) return yield* refuse(NOT_RUNNING);
+      if (offer.value._tag === "locked") return yield* refuse(lockedText(offer.value.until));
+      const grant = offer.value;
       const now = yield* DateTime.now;
       const minutes = Math.max(
         1,
-        Math.round(Duration.toMinutes(DateTime.distance(now, grant.value.expiresAt))),
+        Math.round(Duration.toMinutes(DateTime.distance(now, grant.expiresAt))),
       );
       yield* Console.log(
         [
-          `Pairing code: ${formatCode(grant.value.code)}`,
+          ...(unlock ? ["Pairing is open.", ""] : []),
+          `Pairing code: ${formatCode(grant.code)}`,
           "",
           `It works once, for the next ${minutes} minute${minutes === 1 ? "" : "s"}.`,
           ...whereToOpen(listener, origins),
-          ...(Option.isSome(carried) ? yield* scanToPair(carried.value, grant.value.code) : []),
+          ...(Option.isSome(carried) ? yield* scanToPair(carried.value, grant.code) : []),
         ].join("\n"),
       );
     }),

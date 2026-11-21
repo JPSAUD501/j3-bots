@@ -8,6 +8,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServer from "effect/http/HttpServer";
@@ -25,7 +26,7 @@ import { WebClientStatus } from "../web/WebClient.ts";
 import {
   ADMIN_PATHS,
   AdminStatus,
-  PairingGrant,
+  PairingOffer,
   ProviderConnectionOutcome,
   ProviderConnectionRequest,
 } from "./protocol.ts";
@@ -36,6 +37,19 @@ import {
 // Nothing on the network reaches it. The server binds it only while it holds
 // the home (`home/Home.ts`), which also removed any socket a stopped server
 // left there.
+
+/**
+ * A code for a new device, or while pairing is locked, until when. The answer
+ * is never logged: the request log records the method, path and status only.
+ */
+const offerPairing = Effect.gen(function* () {
+  const devices = yield* Devices;
+  const locked = yield* devices.lockedUntil;
+  const offer: PairingOffer = Option.isSome(locked)
+    ? { _tag: "locked", until: locked.value }
+    : { _tag: "granted", ...(yield* devices.startPairing) };
+  return yield* HttpServerResponse.schemaJson(PairingOffer)(offer).pipe(Effect.orDie);
+});
 
 const routes = Layer.mergeAll(
   Layer.unwrap(
@@ -66,13 +80,13 @@ const routes = Layer.mergeAll(
       );
     }),
   ),
+  HttpRouter.add("POST", ADMIN_PATHS.pairing, offerPairing),
   HttpRouter.add(
     "POST",
-    ADMIN_PATHS.pairing,
+    ADMIN_PATHS.unlockPairing,
     Effect.gen(function* () {
-      const devices = yield* Devices;
-      const grant = yield* devices.startPairing;
-      return yield* HttpServerResponse.schemaJson(PairingGrant)(grant).pipe(Effect.orDie);
+      yield* (yield* Devices).unlock;
+      return yield* offerPairing;
     }),
   ),
   HttpRouter.add(
