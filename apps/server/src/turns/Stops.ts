@@ -375,7 +375,8 @@ export const layer = Layer.effect(
      * engine sends after the end of the turn it steered: taken, dropped, or
      * requeued as a follow-up turn. A room's Stop sends no round then, since
      * the engine's stop would end that work too. Except a dispatch whose turn
-     * the events have not shown start, while that turn cannot start: the
+     * the engine did not answer as started and the events have not shown
+     * start, while that turn cannot start: the
      * room's own turn runs ahead of it, or the engine holds the queue, as it
      * does with a steer requeued behind a turn that failed. The room's Stop
      * then cancels it with the room's work. The turn's end, and the
@@ -404,6 +405,10 @@ export const layer = Layer.effect(
           )
           AND NOT (
             oa_dispatch.engine_turn_id IS NOT NULL
+            AND NOT (
+              oa_dispatch.disposition IS 'started'
+              AND oa_dispatch.engine_turn_id = oa_dispatch.disposition_turn_id
+            )
             AND NOT EXISTS (
               SELECT 1 FROM turns oa_seen
               WHERE oa_seen.session_id = ${sessionId}
