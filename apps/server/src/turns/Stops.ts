@@ -419,7 +419,9 @@ export const layer = Layer.effect(
               _tag: "synchronized",
               // An acknowledged round proves no interrupt: the engine's state
               // after it is what counts, also for work its interrupt missed.
-              engineShows: backgroundWork === "pending" || runnableTurns.length > 0,
+              // Work the engine's stop does not reach is not waited on: no
+              // round would end it.
+              engineShows: backgroundWork.stoppable || runnableTurns.length > 0,
             }) as const,
         ),
         Effect.catchTags({

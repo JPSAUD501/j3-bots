@@ -9,7 +9,7 @@ import {
   RoutineRunId,
   RoutineTrigger,
 } from "@j3-bots/contracts";
-import { Engine, IdempotencyKey, SessionId } from "@j3-bots/engine-t3";
+import { Engine, IdempotencyKey, isBackgroundWorkPending, SessionId } from "@j3-bots/engine-t3";
 import {
   PROMPT_VERSION,
   renderWake,
@@ -626,7 +626,7 @@ export const layer = Layer.effect(
       // Background work the run left running, a dev server say, keeps its
       // session until it ends, or until a retry of its failed attempt is due
       // or a newer run of its routine has started.
-      if (synced.success.backgroundWork === "pending") {
+      if (isBackgroundWorkPending(synced.success.backgroundWork)) {
         if (!session.superseded) return "done";
         yield* Effect.logInfo(
           "A routine attempt's background work ends with its session, superseded by a newer attempt",

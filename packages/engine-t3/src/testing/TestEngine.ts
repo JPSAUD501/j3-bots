@@ -334,11 +334,14 @@ export class TestEngineControl extends Context.Service<
      * The turn leaves background work running when it ends, which wakes the
      * session when it ends, as a delegated task or a command whose completion
      * wakes it: its turn reports it as `backgroundWork`. The wake it brings is
-     * `startEngineTurn`.
+     * `startEngineTurn`. With `stoppable: false` the engine's stop does not
+     * reach it, as an old provider session's work after another client started
+     * a fresh context: it ends by itself or when the session is retired.
      */
     readonly startBackgroundWork: (input: {
       readonly sessionId: SessionId;
       readonly turnId: TurnId;
+      readonly stoppable?: boolean;
     }) => Effect.Effect<void>;
     /**
      * The background work every turn of the session left running ends, and
@@ -378,9 +381,14 @@ export class TestEngineControl extends Context.Service<
     }) => Effect.Effect<void>;
     /**
      * Background work the bot started wakes the session. The turn starts at
-     * once, or after the running one.
+     * once, or after the running one. `origin` is the turn the engine names
+     * as the one whose work woke it, as for its own delegated tasks; a
+     * harness's wake names none.
      */
-    readonly startEngineTurn: (sessionId: SessionId) => Effect.Effect<TurnId>;
+    readonly startEngineTurn: (
+      sessionId: SessionId,
+      origin?: TurnId | null,
+    ) => Effect.Effect<TurnId>;
     /** Forgets the session's event history, so a resume from any cursor gets a `replaced`. */
     readonly pruneHistory: (sessionId: SessionId) => Effect.Effect<void>;
     /**
@@ -435,6 +443,8 @@ interface TurnRecord {
   }>;
   /** It left background work running, which a Stop ends. */
   background: boolean;
+  /** It left background work running that a Stop does not reach; retiring the session ends it. */
+  unstoppable: boolean;
   /** The engine ran it in a fresh provider conversation, from its summary of the old one. */
   contextRecovered: boolean;
   ended: {
@@ -678,6 +688,7 @@ const make = Effect.gen(function* () {
       hostSpeech: [],
       closedRequests: [],
       background: false,
+      unstoppable: false,
       contextRecovered: false,
       ended: null,
     };
@@ -685,9 +696,11 @@ const make = Effect.gen(function* () {
     return turn;
   };
 
-  /** Whether background work some turn of the session left still runs: what the engine's stop counts. */
-  const backgroundRuns = (session: SessionRecord) =>
-    [...session.turns.values()].some((turn) => turn.background);
+  /** Whether the turn left background work that still runs, whether or not a Stop reaches it. */
+  const leftWork = (turn: TurnRecord) => turn.background || turn.unstoppable;
+
+  /** Whether background work some turn of the session left still runs. */
+  const backgroundRuns = (session: SessionRecord) => [...session.turns.values()].some(leftWork);
 
   const closeRequest = (
     session: SessionRecord,
@@ -842,7 +855,7 @@ const make = Effect.gen(function* () {
       finishedAt: at,
       cause: turn.cause,
       outcome,
-      backgroundWork: turn.background,
+      backgroundWork: leftWork(turn),
       continuation,
       contextRecovered: turn.contextRecovered,
     }));
@@ -905,7 +918,7 @@ const make = Effect.gen(function* () {
   ): DispatchDisposition => {
     if (session.raceNextStart) {
       session.raceNextStart = false;
-      addTurn(session, { _tag: "background" }, at);
+      addTurn(session, { _tag: "background", origin: null }, at);
     }
     const turn = addTurn(session, { _tag: "dispatch", key }, at);
     return session.waiting.includes(turn.turnId)
@@ -952,6 +965,7 @@ const make = Effect.gen(function* () {
 
   const retire = (session: SessionRecord, at: DateTime.Utc) => {
     stopSession(session, at, [...session.waiting]);
+    for (const turn of session.turns.values()) turn.unstoppable = false;
     session.retired = true;
   };
 
@@ -988,7 +1002,7 @@ const make = Effect.gen(function* () {
           startedAt: turn.startedAt,
           finishedAt: turn.ended.at,
           outcome: turn.ended.outcome,
-          backgroundWork: turn.background,
+          backgroundWork: leftWork(turn),
           continuation: turn.ended.continuation,
           steps,
           contextRecovered: turn.contextRecovered,
@@ -1321,7 +1335,7 @@ const make = Effect.gen(function* () {
               turnDuringStop = null;
               const at = yield* DateTime.now;
               stopSession(session, at, [...session.waiting]);
-              const turn = addTurn(session, { _tag: "background" }, at);
+              const turn = addTurn(session, { _tag: "background", origin: null }, at);
               yield* Deferred.succeed(during.started, turn.turnId);
               return yield* Deferred.await(during.reply);
             }
@@ -1448,8 +1462,13 @@ const make = Effect.gen(function* () {
             // Every event is handed to the streams as it happens, so each stream
             // is already caught up: the marker follows what it was last given.
             // The TestEngine knows every tool's persistence: its work is never in doubt.
-            const backgroundWork: BackgroundWork =
-              session.running === null && backgroundRuns(session) ? "pending" : "none";
+            const left =
+              session.running === null ? [...session.turns.values()].filter(leftWork) : [];
+            const backgroundWork: BackgroundWork = {
+              turns: left.map((turn) => turn.turnId),
+              unattributed: false,
+              stoppable: left.some((turn) => turn.background),
+            };
             // The running turn, also one whose provider turn has not started, and those waiting.
             const runnableTurns =
               session.running === null
@@ -1793,11 +1812,12 @@ const make = Effect.gen(function* () {
         return speech.speechId;
       }),
 
-    startBackgroundWork: ({ sessionId, turnId }) =>
+    startBackgroundWork: ({ sessionId, turnId, stoppable = true }) =>
       Effect.gen(function* () {
         const session = yield* existingSession(sessionId);
         const turn = yield* runningTurn(session, turnId);
-        turn.background = true;
+        if (stoppable) turn.background = true;
+        else turn.unstoppable = true;
       }),
 
     recoverContext: ({ sessionId, turnId }) =>
@@ -1810,7 +1830,10 @@ const make = Effect.gen(function* () {
     endBackgroundWork: (sessionId) =>
       Effect.gen(function* () {
         const session = yield* existingSession(sessionId);
-        for (const turn of session.turns.values()) turn.background = false;
+        for (const turn of session.turns.values()) {
+          turn.background = false;
+          turn.unstoppable = false;
+        }
       }),
 
     backgroundWorkRunning: (sessionId) => Effect.map(existingSession(sessionId), backgroundRuns),
@@ -1846,10 +1869,10 @@ const make = Effect.gen(function* () {
         dropContinuation(session, turn, yield* DateTime.now);
       }),
 
-    startEngineTurn: (sessionId) =>
+    startEngineTurn: (sessionId, origin = null) =>
       Effect.gen(function* () {
         const session = yield* existingSession(sessionId);
-        return addTurn(session, { _tag: "background" }, yield* DateTime.now).turnId;
+        return addTurn(session, { _tag: "background", origin }, yield* DateTime.now).turnId;
       }),
 
     pruneHistory: (sessionId) =>

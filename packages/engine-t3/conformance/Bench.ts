@@ -22,7 +22,12 @@ export type Act =
   /** Speaks to the user through the engine's own tool, then ends the turn. */
   | { readonly _tag: "speak"; readonly text: string }
   /** Asks the operator for a secret, then ends the turn. */
-  | { readonly _tag: "secret" };
+  | { readonly _tag: "secret" }
+  /**
+   * Hands a short task to a delegated agent of the engine's own, then ends
+   * the turn. The task's completion wakes the session with a new turn.
+   */
+  | { readonly _tag: "delegate" };
 
 export class Bench extends Context.Service<
   Bench,

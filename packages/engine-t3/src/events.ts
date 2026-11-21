@@ -40,10 +40,22 @@ export const TurnCause = Schema.Union([
   Schema.TaggedStruct("continuation", { turnId: TurnId }),
   /**
    * The engine or the harness woke the session itself: background work the bot
-   * started (a delegated task, a background command) finished or reported. Such
-   * a turn answers no dispatch.
+   * started (a delegated task, a background command) finished or reported, or
+   * another client of the engine started it. Such a turn answers no dispatch.
+   *
+   * `origin` is the turn whose work woke the session, when the engine names
+   * it, which at `db51b67` it does only for the engine's own delegated tasks:
+   * their completion's message carries the run that delegated them
+   * (`delegatedCompletion.parentRunId`). A harness's wake (a background
+   * command, a monitor, a subagent) carries no run id: its notice says what
+   * kind of work reported and, for a single native subagent, may name the
+   * child thread it ran in (`childThreadId`), never the run that started it.
+   * Its turn has `null`, as does a turn another client started. **Read** at
+   * `db51b67`: `ProviderContinuationService.ts` L177-192 and L247-264,
+   * `ProviderContinuationRequests.ts` L15-35, `notification.ts` L136-170.
+   * The origin is the same in each of the turn's events, also after a steer.
    */
-  Schema.TaggedStruct("background", {}),
+  Schema.TaggedStruct("background", { origin: Schema.NullOr(TurnId) }),
 ]);
 export type TurnCause = typeof TurnCause.Type;
 
@@ -163,13 +175,35 @@ export const PendingContinuation = Schema.Struct({ resumesAt: Schema.DateTimeUtc
 export type PendingContinuation = typeof PendingContinuation.Type;
 
 /**
- * A session's background work as the engine's stop counts it, with no turn
- * running. `pending`: work the engine counts as pending, or may: work the
- * adapter could not judge, which counts as pending until it can. `none`:
- * nothing.
+ * A session's background work, with no turn running, by the turn that started
+ * it: what the engine's stop counts, and what a provider session the engine
+ * keeps from before a fresh-context start still reports, which the engine's
+ * stop does not reach. Work the adapter could not judge counts as pending
+ * until it can.
  */
-export const BackgroundWork = Schema.Literals(["pending", "none"]);
+export const BackgroundWork = Schema.Struct({
+  /**
+   * The turns whose work is pending, in the order they ran: the run the
+   * engine attributes each task or item to, the one that was executing when
+   * the work first appeared (**Read** at `db51b67`, `ProjectionStore.ts`,
+   * `attributePendingBackgroundTasks`, L936-954; a turn item's own `runId`).
+   */
+  turns: Schema.Array(TurnId),
+  /** Pending work the engine attributes to no turn. */
+  unattributed: Schema.Boolean,
+  /**
+   * Whether any of it is what the engine's stop interrupts: the latest run's
+   * provider thread's tasks and live items, when the stop fires. Work that
+   * only a provider thread from before a fresh-context start reports is not:
+   * it ends on its own, or when the session is retired.
+   */
+  stoppable: Schema.Boolean,
+});
 export type BackgroundWork = typeof BackgroundWork.Type;
+
+/** Whether the session has any background work pending, whether or not a stop reaches it. */
+export const isBackgroundWorkPending = (work: BackgroundWork) =>
+  work.turns.length > 0 || work.unattributed;
 
 /** A turn that has not ended. */
 export const OpenTurn = Schema.Struct({
@@ -414,7 +448,8 @@ export const SessionEvent = Schema.Union([
     outcome: TurnOutcome,
     /**
      * The turn handed off to background work it started, which is still
-     * running and wakes the session when it ends, with a `background` turn: a
+     * running and wakes the session when it ends, with a `background` turn
+     * (whose `origin` names this turn only when the engine says so): a
      * delegated task, a command whose completion wakes the session, or a task
      * the provider reports that holds the agent's completion by the engine's
      * rule (one the agent marked awaited, a subagent, a background task). A

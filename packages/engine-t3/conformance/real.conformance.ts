@@ -18,8 +18,8 @@ import * as Stream from "effect/Stream";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { Engine, type EngineOptions } from "../src/Engine.ts";
-import type { SessionEvent } from "../src/events.ts";
-import { IdempotencyKey, type TurnId } from "../src/ids.ts";
+import { isBackgroundWorkPending, type SessionEvent } from "../src/events.ts";
+import { IdempotencyKey, SyncToken, type TurnId } from "../src/ids.ts";
 import { makeEngineRpc } from "../src/t3/Connection.ts";
 import { ensureCredential } from "../src/t3/Credential.ts";
 import { ensureInstalled } from "../src/t3/Install.ts";
@@ -46,6 +46,7 @@ const directive = (act: Act) => {
     case "approval":
     case "question":
     case "secret":
+    case "delegate":
       return `[[script:${act._tag}]]`;
     case "speak":
       return `[[script:speak text=${act.text}]]`;
@@ -238,7 +239,64 @@ describe("Engine conformance, real engine only", () => {
         const shell = threads.find((thread) => thread.id === threadId);
 
         assert.isDefined(shell);
-        assert.strictEqual(workInShell(shell, ["no-such-task"]), "none");
+        assert.deepStrictEqual(workInShell(shell, [{ taskId: "no-such-task", turnId: null }]), []);
+      }).pipe(
+        Effect.provide(bench.pipe(Layer.provideMerge(realEngine), Layer.provideMerge(platform))),
+      ),
+    { timeout: 120_000 },
+  );
+
+  it.live(
+    "attributes a delegated task still running to the turn that delegated it, until Stop",
+    () =>
+      Effect.gen(function* () {
+        const engine = yield* Engine;
+        const bench = yield* Bench;
+        const { sessionId, queue } = yield* openWatched("delegated-work");
+        const delegating = yield* engine.dispatch({
+          key: bench.key("delegated-work"),
+          sessionId,
+          text: "[[script:delegate child=slow]]",
+          attachments: [],
+          delivery: { _tag: "start", freshContext: false },
+        });
+        const delegated = yield* until(
+          queue,
+          "turn-finished",
+          (event) => event.turnId === turnOf(delegating),
+        );
+        const synchronized = Effect.fnUntraced(function* (name: string) {
+          const token = SyncToken.make(bench.key(name));
+          yield* engine.synchronize({ sessionId, token });
+          return yield* until(queue, "synchronized", (event) => event.token === token);
+        });
+        const running = yield* synchronized("delegated-work-running");
+
+        yield* engine.stop({ key: bench.key("delegated-work-stop"), sessionId });
+        let stopped = yield* synchronized("delegated-work-stopped-0");
+        for (
+          let round = 1;
+          (isBackgroundWorkPending(stopped.backgroundWork) || stopped.runnableTurns.length > 0) &&
+          round < 20;
+          round++
+        ) {
+          yield* Effect.sleep("500 millis");
+          stopped = yield* synchronized(`delegated-work-stopped-${round}`);
+        }
+
+        assert.isTrue(delegated.backgroundWork);
+        assert.deepStrictEqual(running.backgroundWork, {
+          turns: [turnOf(delegating)],
+          unattributed: false,
+          stoppable: true,
+        });
+        // Stop ended the task, and left nothing to run in its place.
+        assert.deepStrictEqual(stopped.backgroundWork, {
+          turns: [],
+          unattributed: false,
+          stoppable: false,
+        });
+        assert.deepStrictEqual(stopped.runnableTurns, []);
       }).pipe(
         Effect.provide(bench.pipe(Layer.provideMerge(realEngine), Layer.provideMerge(platform))),
       ),
@@ -299,6 +357,7 @@ describe("Engine conformance, real engine only", () => {
         });
         assert.deepStrictEqual(waiting.cause, {
           _tag: "background",
+          origin: null,
         });
       }).pipe(
         Effect.provide(bench.pipe(Layer.provideMerge(realEngine), Layer.provideMerge(platform))),

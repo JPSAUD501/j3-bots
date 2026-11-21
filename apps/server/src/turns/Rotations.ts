@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { BotId, type Entry } from "@j3-bots/contracts";
-import { Engine, SessionId } from "@j3-bots/engine-t3";
+import { Engine, isBackgroundWorkPending, SessionId } from "@j3-bots/engine-t3";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -69,20 +69,28 @@ const encodeNote = Schema.encodeEffect(json(CatchUpNote));
  * session, and one never opened, run nothing: it is replaced at once. One the
  * engine could not resume is replaced once no turn runs or can run there,
  * whatever background work it still has, which the retirement ends, as for a
- * lost one. Any other waits until the session is quiet by the engine's own
- * stop rule: no turn, and no background work pending. For the operator's own
- * actions a Stop ran first, so it is quiet once that Stop settles; the run
- * limit waits for the work to end by itself, and its session takes new work
- * meanwhile.
+ * lost one. For the operator's own actions a Stop ran first: the session is
+ * replaced once that Stop settles and no turn or background work the engine's
+ * stop reaches is pending; work it does not reach, which only the retirement
+ * ends, does not hold it. The run limit waits until the session is quiet, no
+ * turn and no background work pending at all, for the work to end by itself,
+ * and its session takes new work meanwhile.
  */
-type Waits = "nothing" | "turns" | "everything";
+type Waits = "nothing" | "turns" | "stoppable" | "everything";
 
-const waitsFor = (session: Due): Waits =>
-  session.lost || session.engine_session_id === null
-    ? "nothing"
-    : session.rotation_reason === "context-recovered"
-      ? "turns"
-      : "everything";
+const waitsFor = (session: Due): Waits => {
+  if (session.lost || session.engine_session_id === null) return "nothing";
+  switch (session.rotation_reason) {
+    case "context-recovered":
+      return "turns";
+    case "provider-changed":
+    case "fresh-start":
+      return "stoppable";
+    case "runs":
+    case null:
+      return "everything";
+  }
+};
 
 /**
  * The rotator (`docs/architecture/server.md`, Rotation). It replaces each
@@ -303,9 +311,10 @@ export const layer = Layer.effect(
     /**
      * Whether the engine shows the session quiet as `waits` requires, from a
      * marker taken after its events are known: no turn it can still run, and
-     * for `everything` no background work pending, which counts work the
-     * adapter could not judge yet. `quiet-with-background` is quiet for
-     * `turns`, with background work the retirement ends.
+     * no background work pending, which counts work the adapter could not
+     * judge yet, for `everything`, or none the engine's stop reaches, for
+     * `stoppable`. `quiet-with-background` is quiet as `waits` requires, with
+     * background work the retirement ends.
      */
     const engineQuiet = Effect.fn("Rotations.engineQuiet")(function* (
       session: Due,
@@ -316,11 +325,11 @@ export const layer = Layer.effect(
         Effect.map(({ backgroundWork, runnableTurns }) =>
           runnableTurns.length > 0
             ? ("busy" as const)
-            : backgroundWork === "pending"
-              ? waits === "everything"
+            : !isBackgroundWorkPending(backgroundWork)
+              ? ("quiet" as const)
+              : waits === "everything" || (waits === "stoppable" && backgroundWork.stoppable)
                 ? ("background" as const)
-                : ("quiet-with-background" as const)
-              : ("quiet" as const),
+                : ("quiet-with-background" as const),
         ),
         Effect.catchTags({
           // The engine has no such session: recorded lost, and replaced as one.

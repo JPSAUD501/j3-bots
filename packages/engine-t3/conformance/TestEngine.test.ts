@@ -99,6 +99,17 @@ const bench = Layer.effect(
           return control
             .hostSpeech({ sessionId, turnId, text: act.text })
             .pipe(Effect.andThen(finish(sessionId, turnId)));
+        case "delegate":
+          // The task outlives the turn, as pending work, until its completion
+          // wakes the session; the engine names the delegating turn on it.
+          return control
+            .startBackgroundWork({ sessionId, turnId })
+            .pipe(
+              Effect.andThen(finish(sessionId, turnId)),
+              Effect.andThen(control.endBackgroundWork(sessionId)),
+              Effect.andThen(control.startEngineTurn(sessionId, turnId)),
+              Effect.asVoid,
+            );
       }
     };
 

@@ -553,7 +553,24 @@ export const scenarios = (it: Methods) => {
       yield* bench.perform({ sessionId, turnId: started.turnId, act: { _tag: "reply" } });
       yield* finished(events, started.turnId);
 
-      assert.deepStrictEqual(started.cause, { _tag: "background" });
+      assert.deepStrictEqual(started.cause, { _tag: "background", origin: null });
+    }),
+  );
+
+  it.effect("names the turn whose delegated task woke the session", () =>
+    Effect.gen(function* () {
+      const bench = yield* Bench;
+      const { sessionId, events, key } = yield* session("delegate");
+      const act = { _tag: "delegate" } as const;
+      const running = yield* dispatchTurn({ ...(yield* start(key("delegate"), act)), sessionId });
+      yield* events.next("turn-started");
+      yield* bench.perform({ sessionId, turnId: running.turnId, act });
+      yield* finished(events, running.turnId);
+      const wake = yield* events.next("turn-started");
+      yield* bench.perform({ sessionId, turnId: wake.turnId, act: { _tag: "reply" } });
+      yield* finished(events, wake.turnId);
+
+      assert.deepStrictEqual(wake.cause, { _tag: "background", origin: running.turnId });
     }),
   );
 

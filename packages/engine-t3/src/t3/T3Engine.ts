@@ -132,6 +132,7 @@ import {
   nothingToStop,
   queuedRuns,
   replacement,
+  reportedWorkOf,
   runnableTurns,
   startedTurn,
   toolsToResolve,
@@ -616,19 +617,20 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
    * runs out cannot say, so they count as pending: a Stop waits and
    * synchronizes again.
    */
-  const reportedWork = (sessionId: SessionId, mirror: Mirror) => {
+  const reportedWork = (sessionId: SessionId, mirror: Mirror): Effect.Effect<BackgroundWork> => {
     const work = backgroundWorkOf(mirror);
-    if (work._tag !== "undecided") return Effect.succeed<BackgroundWork>(work._tag);
+    if (work.undecided.length === 0) return Effect.succeed(work.pending);
     const threadId = ThreadId.make(sessionId);
     return rpc["orchestration.getThreadFamily"]({ threadId }).pipe(
       Effect.timeout(SHELL_READ_TIMEOUT),
       Effect.map(({ threads }) =>
         workInShell(
           threads.find((thread) => thread.id === threadId),
-          work.taskIds,
+          work.undecided,
         ),
       ),
-      Effect.orElseSucceed((): BackgroundWork => "pending"),
+      Effect.orElseSucceed(() => work.undecided),
+      Effect.map((pendingTools) => reportedWorkOf(mirror, work, pendingTools)),
     );
   };
 
