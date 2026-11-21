@@ -1,15 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import type { RoutineId, RoutineTrigger } from "@j3-bots/contracts";
+import { type RoutineId, type RoutineTrigger, ServerOrigin } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
+import { ServerConfig } from "../config.ts";
+import * as Domain from "../domain.ts";
 import * as Http from "../http.ts";
 import * as Listener from "../listener.ts";
 import * as TestDomain from "../testing/domain.ts";
@@ -17,7 +22,7 @@ import { command, createNewBot } from "../testing/turns.ts";
 import * as WebClient from "../web/WebClient.ts";
 import { WEBHOOK_RUNS_PER_MINUTE } from "./RoutineRuns.ts";
 import { Routines } from "./Routines.ts";
-import { WEBHOOK_BODY_LIMIT } from "./webhook.ts";
+import { route, WEBHOOK_BODY_LIMIT } from "./webhook.ts";
 
 const Answer = Schema.Struct({ run: Schema.String, status: Schema.String });
 
@@ -228,6 +233,93 @@ it.layer(
         requests.some((line) => line.includes("/hooks/…") && line.includes('"http.status":202')),
       );
       assert.isFalse(logged.some((line) => line.includes(secret)));
+    }),
+  );
+});
+
+/**
+ * A `POST` of `path` to the webhook route, its body a full 64 KiB, with how
+ * many times the route pulled on that body by the time it answered.
+ */
+const postCounted = (path: string) =>
+  Effect.gen(function* () {
+    let reads = 0;
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull: (controller) => {
+          reads += 1;
+          controller.enqueue(new Uint8Array(WEBHOOK_BODY_LIMIT).fill(0x61));
+          controller.close();
+        },
+      },
+      // Nothing is pulled before the route asks for it.
+      { highWaterMark: 0 },
+    );
+    const request = new Request(`http://127.0.0.1:3737${path}`, {
+      method: "POST",
+      body,
+      duplex: "half",
+      headers: { "content-length": String(WEBHOOK_BODY_LIMIT) },
+    });
+    const handle = yield* HttpRouter.toHttpEffect(route);
+    const response = yield* handle.pipe(
+      Effect.provideService(
+        HttpServerRequest.HttpServerRequest,
+        HttpServerRequest.fromWeb(request),
+      ),
+    );
+    return { status: response.status, headers: response.headers, reads };
+  }).pipe(Effect.scoped);
+
+it.layer(TestDomain.layer)("a webhook call's address, checked before its body", (it) => {
+  it.effect("answers a wrong secret and an unknown routine without reading the body", () =>
+    Effect.gen(function* () {
+      const { routineId, secret } = yield* webhookRoutine;
+      const wrong = `${secret.slice(0, -1)}${secret.endsWith("A") ? "B" : "A"}`;
+      for (const path of [`/hooks/${routineId}/${wrong}`, `/hooks/routine_nothere/${secret}`]) {
+        const answer = yield* postCounted(path);
+        assert.deepStrictEqual(
+          [answer.status, answer.reads, answer.headers["connection"]],
+          [404, 0, "close"],
+          path,
+        );
+      }
+
+      // The same body at the right address is read.
+      const taken = yield* postCounted(`/hooks/${routineId}/${secret}`);
+      assert.deepStrictEqual([taken.status, taken.reads], [202, 1]);
+    }),
+  );
+
+  it.effect("names where the server listens when no public origin is set", () =>
+    Effect.gen(function* () {
+      // The test listener: plain HTTP on every interface, port 3737.
+      const { url, routineId, secret } = yield* webhookRoutine;
+      const named = new URL(url);
+      assert.deepStrictEqual(
+        [named.protocol, named.port, named.pathname],
+        ["http:", "3737", `/hooks/${routineId}/${secret}`],
+      );
+    }),
+  );
+});
+
+/** The test configuration with a public origin set. */
+const withPublicOrigin = Layer.effect(
+  ServerConfig,
+  Effect.gen(function* () {
+    const config = yield* ServerConfig;
+    return { ...config, publicOrigin: Option.some(ServerOrigin.make("https://bots.example.com")) };
+  }),
+);
+
+it.layer(
+  Domain.layer.pipe(Layer.provideMerge(withPublicOrigin), Layer.provideMerge(TestDomain.machine)),
+)("a webhook behind a public origin", (it) => {
+  it.effect("names the public origin, with the routine's path", () =>
+    Effect.gen(function* () {
+      const { url, routineId, secret } = yield* webhookRoutine;
+      assert.strictEqual(url, `https://bots.example.com/hooks/${routineId}/${secret}`);
     }),
   );
 });

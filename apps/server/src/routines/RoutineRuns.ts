@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// @effect-diagnostics nodeBuiltinImport:off -- A comparison whose time does not depend on where two values differ comes only from node:crypto.
+import * as NodeCrypto from "node:crypto";
 import {
   BotId,
   NotFound,
@@ -16,8 +18,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as Digest from "effect/crypto/Digest";
-import * as Mac from "effect/crypto/Mac";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Ids } from "../Ids.ts";
@@ -153,8 +153,6 @@ export class WebhookRefused extends Schema.TaggedError<WebhookRefused>()("Webhoo
   reason: Schema.Literals(["unknown", "paused"]),
 }) {}
 
-const encoder = new TextEncoder();
-
 /**
  * A routine's runs (`docs/architecture/server.md`, Routines): each one is
  * recorded with the wake that runs it, in one transaction, so a run exists
@@ -187,9 +185,21 @@ export class RoutineRuns extends Context.Service<
     /** Runs the routine now at the operator's request, as a test: also a paused one. */
     readonly runNow: (routineId: RoutineId) => Effect.Effect<RunReceipt, NotFound>;
     /**
-     * A call of a routine's webhook. `secret` is compared in constant time;
-     * `body` reaches the bot as data. A `requestKey` already recorded for the
-     * routine records nothing and answers the run it recorded.
+     * Whether a webhook call names a webhook, checked before anything else of
+     * the call is read: `unknown` for a routine that does not exist, has
+     * another trigger or another secret. The secrets' digests are compared in
+     * time that does not depend on where they differ.
+     */
+    readonly admitWebhook: (input: {
+      readonly routineId: string;
+      readonly secret: string;
+    }) => Effect.Effect<void, WebhookRefused>;
+    /**
+     * A call of a routine's webhook, once admitted. The address is checked
+     * again, in the transaction that records the run, against a routine
+     * deleted or given a new secret since. `body` reaches the bot as data. A
+     * `requestKey` already recorded for the routine records nothing and
+     * answers the run it recorded.
      */
     readonly webhook: (input: {
       readonly routineId: string;
@@ -214,7 +224,6 @@ export const layer = Layer.effect(
     const ids = yield* Ids;
     const wakes = yield* Wakes;
     const changes = yield* ChangeLog;
-    const digest = yield* Digest.Digest;
 
     const routineRow = SqlSchema.findOneOption({
       Request: RoutineId,
@@ -434,15 +443,44 @@ export const layer = Layer.effect(
       );
     });
 
-    /** Whether `presented` is `secret`, in time that does not depend on where they differ. */
-    const sameSecret = Effect.fn("RoutineRuns.sameSecret")(function* (
-      presented: string,
-      secret: string,
-    ) {
-      // Equal-length digests, so not even the length of the secret shows.
-      const a = yield* digest.digest(Digest.sha256, encoder.encode(presented));
-      const b = yield* digest.digest(Digest.sha256, encoder.encode(secret));
-      return Mac.timingSafeEqual(a, b);
+    /**
+     * Whether `presented` is `secret`. Their digests are compared in time that
+     * does not depend on where they differ, and are of equal length, so not
+     * even the secret's length shows.
+     */
+    const sameSecret = (presented: string, secret: string): boolean => {
+      const digest = (text: string) =>
+        NodeCrypto.createHash("sha256").update(text, "utf8").digest();
+      return NodeCrypto.timingSafeEqual(digest(presented), digest(secret));
+    };
+
+    /**
+     * The webhook routine `routineId` names, if `secret` is its secret. The
+     * secret is compared even when there is no routine to compare it with.
+     */
+    const webhookRoutine = Effect.fn("RoutineRuns.webhookRoutine")(function* (input: {
+      readonly routineId: string;
+      readonly secret: string;
+    }) {
+      const id = Schema.decodeOption(RoutineId)(input.routineId);
+      const row = Option.isSome(id)
+        ? yield* routineRow(id.value).pipe(Effect.orDie)
+        : Option.none<typeof RoutineRow.Type>();
+      const secret = Option.match(row, {
+        onNone: () => null,
+        onSome: (found) => (found.trigger_json._tag === "webhook" ? found.webhook_secret : null),
+      });
+      const matches = sameSecret(input.secret, secret ?? "");
+      return secret !== null && matches ? row : Option.none<typeof RoutineRow.Type>();
+    });
+
+    const admitWebhook = Effect.fn("RoutineRuns.admitWebhook")(function* (input: {
+      readonly routineId: string;
+      readonly secret: string;
+    }) {
+      if (Option.isNone(yield* webhookRoutine(input))) {
+        return yield* new WebhookRefused({ reason: "unknown" });
+      }
     });
 
     const webhook = Effect.fn("RoutineRuns.webhook")(function* (input: {
@@ -451,20 +489,10 @@ export const layer = Layer.effect(
       readonly body: string;
       readonly requestKey: string | null;
     }) {
-      const unknown = new WebhookRefused({ reason: "unknown" });
-      const id = Schema.decodeOption(RoutineId)(input.routineId);
-      if (Option.isNone(id)) return yield* unknown;
       return yield* transaction(
         Effect.gen(function* () {
-          const row = yield* routineRow(id.value).pipe(Effect.orDie);
-          // The secret is compared even when there is no routine to compare it with.
-          const secret = Option.match(row, {
-            onNone: () => null,
-            onSome: (found) =>
-              found.trigger_json._tag === "webhook" ? found.webhook_secret : null,
-          });
-          const matches = yield* sameSecret(input.secret, secret ?? "");
-          if (Option.isNone(row) || secret === null || !matches) return yield* unknown;
+          const row = yield* webhookRoutine(input);
+          if (Option.isNone(row)) return yield* new WebhookRefused({ reason: "unknown" });
           const routine = row.value;
           if (input.requestKey !== null) {
             const earlier = yield* runWithKey({
@@ -502,6 +530,6 @@ export const layer = Layer.effect(
       );
     });
 
-    return RoutineRuns.of({ due, runNow, webhook, settle: settleEnded(null) });
+    return RoutineRuns.of({ due, runNow, admitWebhook, webhook, settle: settleEnded(null) });
   }),
-).pipe(Layer.provide(Digest.layerWebCrypto));
+);

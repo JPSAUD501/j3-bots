@@ -4,16 +4,33 @@
 # Coolify. It forwards HTTP and WebSocket traffic unchanged to the server's
 # port on the host. TLS ends at the platform's proxy in front of it. See
 # docs/operations/running-on-a-pi.md, "Serve it through a container".
+#
+# Caddy keeps no access log here, but it logs the request with every error it
+# answers, such as a 502 while the server restarts, and a webhook's path holds
+# its secret, in the URI and in headers such as X-Original-URL or Referer. So
+# every log line leaves out the whole request. The admin API is off. The
+# Caddyfile is written inside the container to keep this one file.
 services:
   proxy:
     image: caddy:2.10.2-alpine
+    entrypoint: ["/bin/sh", "-c"]
     command:
-      - caddy
-      - reverse-proxy
-      - --from
-      - :8080
-      - --to
-      - host.docker.internal:${J3_PORT:-3737}
+      - |
+        cat > /tmp/Caddyfile <<'CADDYFILE'
+        {
+        	admin off
+        	log default {
+        		format filter {
+        			request delete
+        			wrap json
+        		}
+        	}
+        }
+        :8080 {
+        	reverse_proxy host.docker.internal:${J3_PORT:-3737}
+        }
+        CADDYFILE
+        exec caddy run --adapter caddyfile --config /tmp/Caddyfile
     extra_hosts:
       - host.docker.internal:host-gateway
     expose:

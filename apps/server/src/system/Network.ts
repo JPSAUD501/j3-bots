@@ -114,23 +114,28 @@ const reachableHosts = Effect.fn("Network.reachableHosts")(function* (listener: 
 const decodeOrigin = Schema.decodeUnknownOption(ServerOrigin);
 
 /**
- * The origins another device reaches a listener at, best first: one for each
- * of its `reachableHosts`, at the port it bound, as a browser writes it (no
- * default port). Empty when there is none.
+ * The origins another device reaches the server at, best first, each once:
+ * its public origin, when one is set (`publicOrigin` in `config.json`), then
+ * one for each of the listener's `reachableHosts`, at the port it bound, as a
+ * browser writes it (no default port). Empty when there is none.
  */
-export const reachableOrigins = Effect.fn("Network.reachableOrigins")(function* (listener: {
-  readonly scheme: "http" | "https";
-  readonly address: string;
-  readonly port: number;
-  readonly names: ReadonlyArray<string>;
-}) {
+export const reachableOrigins = Effect.fn("Network.reachableOrigins")(function* (
+  listener: {
+    readonly scheme: "http" | "https";
+    readonly address: string;
+    readonly port: number;
+    readonly names: ReadonlyArray<string>;
+  },
+  publicOrigin: Option.Option<ServerOrigin>,
+) {
   const hosts = yield* reachableHosts(listener);
-  return hosts.flatMap((host) => {
+  const listened = hosts.flatMap((host) => {
     const url = URL.parse(
       `${listener.scheme}://${NetAddress.formatUrlHostString(host)}:${listener.port}`,
     );
     return url === null ? [] : Option.toArray(decodeOrigin(url.origin));
   });
+  return [...new Set([...Option.toArray(publicOrigin), ...listened])];
 });
 
 /**

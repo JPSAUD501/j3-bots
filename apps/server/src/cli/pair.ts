@@ -26,15 +26,15 @@ const NOT_RUNNING =
   "The server is not running, and pairing codes live in the running server. Start it with `systemctl --user start j3-bots` (or `j3-bots serve`), then run `j3-bots pair` again.";
 
 /**
- * Where a new device reaches the running server, as it listens, and what to
- * do there. Over HTTPS a browser accepts only a name on the certificate, so
- * no bare address is offered; plain HTTP is offered on the private addresses
- * it serves.
+ * Where a new device reaches the running server, and what to do there: its
+ * public origin first, when one is set, then where it listens. Over HTTPS a
+ * browser accepts only a name on the certificate, so no bare address is
+ * offered; plain HTTP is offered on the private addresses it serves.
  */
 const whereToOpen = (listener: ListenerStatus, origins: ReadonlyArray<ServerOrigin>) => {
   if (origins.length > 0) {
     return [
-      "The server listens at:",
+      "The server is reached at:",
       ...origins.map((origin) => `  ${origin}`),
       "On the new device, open J3 Bots at one of these addresses and enter the code.",
     ];
@@ -52,14 +52,15 @@ const encodeLink = Schema.encodeSync(PairingLink);
 
 const addressFlag = Flag.String("address").pipe(
   Flag.withDescription(
-    "The address the QR code carries, for the phone to open J3 Bots at: a bare http or https origin (scheme, host and port, no path), which the phone must reach exactly as given; https only if the server, or a proxy in front of it, serves https there. One of those the command lists, or an https address the server is reached at, such as a domain a proxy serves. The first one listed when left out.",
+    "The address the QR code carries, for the phone to open J3 Bots at: a bare http or https origin (scheme, host and port, no path), which the phone must reach exactly as given; https only if the server, or a proxy in front of it, serves https there. One of those the command lists, or an https address the server is reached at, such as a domain a proxy serves. When left out, the first one listed that is not localhost or another loopback address; the command cannot tell which of them the phone reaches.",
   ),
   Flag.optional,
 );
 
 /**
  * The origin the QR code carries: the one the operator chose, which must be a
- * bare origin the server lists or an `https:` one, else the first it lists.
+ * bare origin the server lists or an `https:` one, else the first it lists
+ * that names another device, so not `localhost` or another loopback address.
  * None when there is no such origin, as on a server that listens on loopback
  * only. A choice that does not qualify is refused before a code is made.
  */
@@ -136,7 +137,10 @@ export const pairCommand = Command.make("pair", { address: addressFlag }).pipe(
       const status = yield* userFacing(admin.status(socket));
       if (Option.isNone(status)) return yield* refuse(NOT_RUNNING);
       const { listener } = status.value;
-      const origins = yield* reachableOrigins(listener);
+      const origins = yield* reachableOrigins(
+        listener,
+        Option.fromUndefinedOr(status.value.publicOrigin),
+      );
       const carried = yield* carriedOrigin(origins, address);
       const grant = yield* userFacing(admin.startPairing(socket));
       if (Option.isNone(grant)) return yield* refuse(NOT_RUNNING);

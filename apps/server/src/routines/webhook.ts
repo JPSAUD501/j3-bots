@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { RoutineRun } from "@j3-bots/contracts";
+import { type RateLimited, RoutineRun } from "@j3-bots/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -70,22 +70,39 @@ const decoder = new TextDecoder("utf-8", { fatal: true });
 
 const empty = (status: number) => HttpServerResponse.empty({ status });
 
+/** `Retry-After` for a call refused until `retryAt`: whole seconds, at least one. */
+const retryAfter = (limited: RateLimited) =>
+  Effect.map(DateTime.now, (now) =>
+    String(Math.max(1, Math.ceil(Duration.toSeconds(DateTime.distance(now, limited.retryAt))))),
+  );
+
+/**
+ * A refusal answered before the body is read. The connection is closed with
+ * it, so Node does not go on to read the rest of the body to keep it open:
+ * what the caller already sent is discarded as it closes.
+ */
+const refusedUnread = HttpServerResponse.empty({ status: 404, headers: { connection: "close" } });
+
 /**
  * A routine's webhook (`docs/architecture/server.md`, Routines): `POST` with
  * any body of UTF-8 text, which reaches the bot as data. The secret in the
- * path is the credential. Answers 202 with the run it recorded, `running` or
- * `skipped`; 200 with the earlier run for a repeated `Idempotency-Key`; 404
- * for an address that names no webhook, a wrong secret included; 409 while
- * the routine is paused; 413 past `WEBHOOK_BODY_LIMIT`; 400 for a body that is
- * not UTF-8 or a key that is blank or too long; 429 with `Retry-After` past
- * the routine's runs per minute.
+ * path is the credential, checked before the body or a header it acts on
+ * is read. Answers 202 with the run it recorded, `running` or `skipped`; 200
+ * with the earlier run for a repeated `Idempotency-Key`; 404 for an address
+ * that names no webhook, a wrong secret included; 409 while the routine is
+ * paused; 413 past `WEBHOOK_BODY_LIMIT`; 400 for a body that is not UTF-8 or
+ * a key that is blank or too long; 429 with `Retry-After` past the routine's
+ * runs per minute.
  */
 export const route = HttpRouter.add(
   "POST",
   `${WEBHOOK_PATH}/:routineId/:secret`,
   Effect.gen(function* () {
     const params = yield* HttpRouter.schemaPathParams(Params).pipe(Effect.option);
-    if (Option.isNone(params)) return empty(404);
+    if (Option.isNone(params)) return refusedUnread;
+    const runs = yield* RoutineRuns;
+    const admitted = yield* runs.admitWebhook(params.value).pipe(Effect.result);
+    if (admitted._tag === "Failure") return refusedUnread;
     const request = yield* HttpServerRequest.HttpServerRequest;
     const key = request.headers["idempotency-key"];
     if (key !== undefined && (key.trim() === "" || key.length > REQUEST_KEY_LIMIT)) {
@@ -99,7 +116,6 @@ export const route = HttpRouter.add(
       Effect.try({ try: () => decoder.decode(bytes.success), catch: () => "not UTF-8" }),
     );
     if (Option.isNone(body)) return empty(400);
-    const runs = yield* RoutineRuns;
     return yield* runs.webhook({ ...params.value, body: body.value, requestKey: key ?? null }).pipe(
       Effect.flatMap((receipt) =>
         HttpServerResponse.schemaJson(RunAnswer)(
@@ -110,27 +126,18 @@ export const route = HttpRouter.add(
       Effect.catchTags({
         WebhookRefused: (refused) => Effect.succeed(empty(refused.reason === "paused" ? 409 : 404)),
         RateLimited: (limited) =>
-          Effect.map(DateTime.now, (now) =>
-            HttpServerResponse.empty({
-              status: 429,
-              headers: {
-                "retry-after": String(
-                  Math.max(
-                    1,
-                    Math.ceil(Duration.toSeconds(DateTime.distance(now, limited.retryAt))),
-                  ),
-                ),
-              },
-            }),
+          Effect.map(retryAfter(limited), (seconds) =>
+            HttpServerResponse.empty({ status: 429, headers: { "retry-after": seconds } }),
           ),
       }),
-      Effect.orDie,
-      // The request log leaves out what went wrong with a request under
-      // `WEBHOOK_PATH`, since it can carry the request. Nothing here does: the
-      // secret is compared in memory, never bound into a query.
-      Effect.catchDefect((defect) =>
-        Effect.logError("A webhook call failed", Cause.die(defect)).pipe(Effect.as(empty(500))),
-      ),
     );
-  }),
+  }).pipe(
+    Effect.orDie,
+    // The request log leaves out what went wrong with a request under
+    // `WEBHOOK_PATH`, since it can carry the request. Nothing here does: the
+    // secret is compared in memory, never bound into a query.
+    Effect.catchDefect((defect) =>
+      Effect.logError("A webhook call failed", Cause.die(defect)).pipe(Effect.as(empty(500))),
+    ),
+  ),
 );

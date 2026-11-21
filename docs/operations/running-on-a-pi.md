@@ -128,7 +128,8 @@ To serve the public address instead, set `host` to it and `tls` to a certificate
   "toolPort": 3739,
   "enginePort": 3738,
   "webClient": null,
-  "tls": null
+  "tls": null,
+  "publicOrigin": null
 }
 ```
 
@@ -144,7 +145,7 @@ j3-bots pair
 Pairing code: 7Q2MV-K9XDA
 
 It works once, for the next 5 minutes.
-The server listens at:
+The server is reached at:
   http://192.168.1.40:3737
   http://100.101.102.103:3737
 On the new device, open J3 Bots at one of these addresses and enter the code.
@@ -156,7 +157,7 @@ For another address, run `j3-bots pair --address <address>`.
 
 `pair` asks the running server for the code over its admin socket, `~/.j3-bots/admin.sock`. Only this user can connect to that socket, so the command works only on the Pi, as the user that runs the service. The addresses come from the server too: the port and scheme it listens on and, with `lan`, the Pi's private addresses, leaving out container and virtual-network interfaces such as `docker0`.
 
-On the new device, open one of those addresses in a browser: the server serves the web client there, which asks for the code. On a phone, scan the QR code with the camera instead: it opens the address it carries, at `/pair`, in the browser with the code filled in, and you check the server it names and press Pair. The QR code carries the first address listed, and the addresses are listed in the order the Pi lists its network interfaces, so which network comes first depends on the Pi, not on a rule. For a phone that reaches the Pi on another of them, such as over Tailscale, name that address: `j3-bots pair --address http://100.101.102.103:3737`. `--address` takes a bare address (scheme, host and port, no path) that the phone reaches exactly as written: one of the listed addresses, or an `https` address the Pi is reached at, such as a domain a proxy serves; `https` only where the server or its proxy serves HTTPS. Any other value is refused before a code is made. The QR code is printed last, under the lines that say where it goes; the terminal must be large enough for those lines, the QR code and the prompt after it. When it is not, or when the output goes to a file or a pipe, `pair` prints the link as text instead and says how large the terminal must be. A device already paired shows the same in Settings → Devices, where you can pick another address for the QR code. A code typed in lower case, or with spaces or dashes, works too. `j3-bots doctor` says whether the server serves the web client.
+On the new device, open one of those addresses in a browser: the server serves the web client there, which asks for the code. On a phone, scan the QR code with the camera instead: it opens the address it carries, at `/pair`, in the browser with the code filled in, and you check the server it names and press Pair. The QR code carries the first address listed that is not `localhost` or another loopback address: `publicOrigin` when it is set ([Serve it through a container](#serve-it-through-a-container)), then the Pi's addresses in the order the Pi lists its network interfaces, so which network comes first depends on the Pi, not on a rule. For a phone that reaches the Pi on another of them, such as over Tailscale, name that address: `j3-bots pair --address http://100.101.102.103:3737`. `--address` takes a bare address (scheme, host and port, no path) that the phone reaches exactly as written: one of the listed addresses, or an `https` address the Pi is reached at, such as a domain a proxy serves; `https` only where the server or its proxy serves HTTPS. Any other value is refused before a code is made. The QR code is printed last, under the lines that say where it goes; the terminal must be large enough for those lines, the QR code and the prompt after it. When it is not, or when the output goes to a file or a pipe, `pair` prints the link as text instead and says how large the terminal must be. A device already paired shows the same in Settings → Devices, where you can pick another address for the QR code. A code typed in lower case, or with spaces or dashes, works too. `j3-bots doctor` says whether the server serves the web client.
 
 A browser treats a plain-HTTP address other than `localhost` as insecure, and on such an address it does not install J3 Bots as an app (a PWA). To install it on a phone, serve HTTPS: put a certificate and key in `tls` (paths relative to the data directory work), or serve it through a platform that holds the certificate ([Serve it through a container](#serve-it-through-a-container)). With Tailscale, `tailscale cert <machine>.<tailnet>.ts.net` issues one for the Pi's tailnet name. Over HTTPS, `pair` prints the names on the certificate, such as `https://<machine>.<tailnet>.ts.net:3737`, and no bare addresses, which the browser would not accept. A wildcard name names no one host, so it is not printed; for a certificate with only wildcards, open a name it covers.
 
@@ -165,10 +166,13 @@ A browser treats a plain-HTTP address other than `localhost` as insecure, and on
 Some platforms publish only containers, behind a proxy of their own that holds the certificate: Coolify, for one, or a tunnel that does the same. For them, [`deploy/container-proxy/compose.yaml`](../../deploy/container-proxy/compose.yaml) runs a small Caddy container that forwards HTTP and WebSocket traffic, unchanged, to the server on the host. The server keeps running as its systemd user service.
 
 1. Leave `host` at `"lan"` and `tls` at `null` ([Configuration](#configuration)). The container reaches the server at `host.docker.internal`, which Docker points at the host's address on its bridge network. That address is private, so `lan` serves it.
-2. On the platform, create a Docker Compose app from this repository, with `deploy/container-proxy/compose.yaml`, on the machine that runs J3 Bots. Give its `proxy` service your domain on port 8080, such as `https://bots.example.com:8080`. If the server listens on a port other than 3737, set `J3_PORT` to it.
-3. Deploy. The container counts as healthy while the server answers, so the platform routes to it only then.
+2. Set `publicOrigin` to your domain, such as `"https://bots.example.com"` (no path, no trailing `/`), and restart the service. A webhook routine's address then names the domain, which the services that call it can reach, and `j3-bots pair` lists the domain first.
+3. On the platform, create a Docker Compose app from this repository, with `deploy/container-proxy/compose.yaml`, on the machine that runs J3 Bots. Give its `proxy` service your domain on port 8080, such as `https://bots.example.com:8080`. If the server listens on a port other than 3737, set `J3_PORT` to it.
+4. Deploy. The container counts as healthy while the server answers, so the platform routes to it only then.
 
-On a new device, open your domain and pair as usual. `j3-bots pair` prints the server's own addresses, not the domain; for a QR code to the domain, run `j3-bots pair --address https://bots.example.com:8080`. Devices, opened at the domain, puts the domain in its QR code.
+On a new device, open your domain and pair as usual. With `publicOrigin` set, `j3-bots pair` lists the domain first and its QR code carries it; Devices, opened at the domain, puts the domain in its QR code too.
+
+A webhook's address holds its secret in the path, so whatever logs request paths can keep it. The server leaves it out of its own log, and the container keeps no access log and leaves the whole request, its path and headers, out of every line it does log. The platform's own proxy in front of the container is another matter: Coolify's, for one, can keep access logs with paths, depending on its settings. Check them if you use webhooks. If a webhook's address may have leaked, change its routine to a schedule and back to a webhook, which gives it a new address.
 
 The server authenticates every request itself, with the device's token, and sets no cookies, so the proxy needs no settings for cookies, origins or WebSockets. A proxy that asks for a sign-in first, such as a single sign-on gate, works in front of it too. The web client sends credentials when it asks for its manifest, so the browser still offers to install it. Behind such a gate, sign in on the phone before you scan a QR code, or pair by typing the code instead: a phone that is not signed in yet is sent to the identity provider's page, and the browser carries the link's fragment, which is the pairing code, along with that redirect to the provider's address (**Verified** in Chromium with a cross-origin redirect).
 

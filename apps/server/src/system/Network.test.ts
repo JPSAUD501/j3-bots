@@ -3,7 +3,9 @@
 import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 import { assert, it } from "@effect/vitest";
+import { ServerOrigin } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { guardConnections, isPrivateAddress, Network, reachableOrigins } from "./Network.ts";
 
 /**
@@ -60,22 +62,38 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const lan = { scheme: "http", address: "0.0.0.0", port: 3737, names: [] } as const;
-      assert.deepStrictEqual(yield* reachableOrigins(lan), [
+      assert.deepStrictEqual(yield* reachableOrigins(lan, Option.none()), [
         "http://192.168.0.20:3737",
         "http://10.0.0.7:3737",
       ]);
-      assert.deepStrictEqual(yield* reachableOrigins({ ...lan, address: "192.168.0.20" }), [
-        "http://192.168.0.20:3737",
-      ]);
+      assert.deepStrictEqual(
+        yield* reachableOrigins({ ...lan, address: "192.168.0.20" }, Option.none()),
+        ["http://192.168.0.20:3737"],
+      );
       const https = { scheme: "https", address: "0.0.0.0", names: ["j3.example.com"] } as const;
-      assert.deepStrictEqual(yield* reachableOrigins({ ...https, port: 8443 }), [
+      assert.deepStrictEqual(yield* reachableOrigins({ ...https, port: 8443 }, Option.none()), [
         "https://j3.example.com:8443",
       ]);
       // As a browser writes it, so a link carries the origin a page there has.
-      assert.deepStrictEqual(yield* reachableOrigins({ ...https, port: 443 }), [
+      assert.deepStrictEqual(yield* reachableOrigins({ ...https, port: 443 }, Option.none()), [
         "https://j3.example.com",
       ]);
-      assert.deepStrictEqual(yield* reachableOrigins({ ...https, port: 443, names: [] }), []);
+      assert.deepStrictEqual(
+        yield* reachableOrigins({ ...https, port: 443, names: [] }, Option.none()),
+        [],
+      );
+
+      // A public origin comes first, and once.
+      const reached = (origin: string) => Option.some(ServerOrigin.make(origin));
+      assert.deepStrictEqual(yield* reachableOrigins(lan, reached("https://bots.example.com")), [
+        "https://bots.example.com",
+        "http://192.168.0.20:3737",
+        "http://10.0.0.7:3737",
+      ]);
+      assert.deepStrictEqual(
+        yield* reachableOrigins({ ...https, port: 443 }, reached("https://j3.example.com")),
+        ["https://j3.example.com"],
+      );
     }).pipe(
       Effect.provideService(
         Network,
