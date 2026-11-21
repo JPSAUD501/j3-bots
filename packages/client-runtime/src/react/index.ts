@@ -184,6 +184,7 @@ export const useRecentTurns = (
 
 export { type BotEdit, type ProfileFieldProblem, useBotEdit } from "./botEdit.ts";
 export { type MemoryEdit, type MemoryReading, useMemoryEdit } from "./memoryEdit.ts";
+export { type ProfileEdits, type ProfileForm, useProfileEdits, useProfileForm } from "./profile.ts";
 export {
   type RoomForm,
   type RoomFormFailure,

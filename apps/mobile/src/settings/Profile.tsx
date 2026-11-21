@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { SettingsSaves } from "@j3-bots/client-runtime";
+import { knownTimeZone } from "@j3-bots/client-runtime/presentation";
 import {
-  editsAfterFailedSave,
-  knownTimeZone,
-  noEdits,
-  settingsPatch,
-  type SettingsEdits,
-} from "@j3-bots/client-runtime/presentation";
-import { useJ3Client, useReadable, useSettings } from "@j3-bots/client-runtime/react";
+  useJ3Client,
+  useProfileEdits,
+  useProfileForm,
+  useReadable,
+  useSettings,
+} from "@j3-bots/client-runtime/react";
 import type { NotificationSettingsChange, Settings } from "@j3-bots/contracts";
 import { getCalendars } from "expo-localization";
 import { useState } from "react";
@@ -36,68 +36,47 @@ export function YouSection(props: { readonly connected: boolean }) {
  * sends only the fields the operator changed. While the form's save is under
  * way the form shows what it sends and takes no edit. A field the operator
  * left alone shows the saved value as it arrives; one they changed keeps
- * their edit until the form saves it. The zone is written as the system
- * names it; this phone's own is one press away.
+ * their edit until the form saves it. The zone is typed as the system names
+ * it, in any case, and checked once the operator leaves the field or saves;
+ * this phone's own is one press away.
  */
 function YouForm(props: { readonly settings: Settings; readonly connected: boolean }) {
   const { t } = useI18n();
   const client = useJ3Client();
   const save: SettingsSaves["profile"] = useReadable(client.settingsSaves.profile);
   const { settings, connected } = props;
-  const [edits, setEdits] = useState<SettingsEdits>(() =>
-    save._tag === "failed" ? editsAfterFailedSave(noEdits, save.changes) : noEdits,
-  );
-  const [lastSave, setLastSave] = useState(save);
-  if (lastSave !== save) {
-    setLastSave(save);
-    if (save._tag === "saved") setEdits(noEdits);
-    if (save._tag === "failed") setEdits((current) => editsAfterFailedSave(current, save.changes));
-  }
-  // How a save ended shows only for one this form saw under way, until the next edit.
-  const [watching, setWatching] = useState(save._tag === "saving");
-  const saving = save._tag === "saving";
-  const sending = saving ? save.changes : null;
-  const name =
-    edits.name ??
-    (sending?.operatorName === undefined ? settings.operatorName : sending.operatorName) ??
-    "";
-  const zone = edits.zone ?? sending?.timeZone ?? settings.timeZone;
-  const phoneZone = getCalendars()[0]?.timeZone ?? null;
-  const patch = settingsPatch(settings, edits);
-  const zoneUnknown = edits.zone !== null && knownTimeZone(edits.zone) === null;
-  const status = watching && !saving ? save._tag : null;
-  const edit = (change: Partial<SettingsEdits>) => {
-    if (saving) return;
-    setEdits((current) => ({ ...current, ...change }));
-    setWatching(false);
-  };
+  const profile = useProfileEdits(save);
+  const form = useProfileForm({ settings, save, profile, connected });
+  const deviceZone = getCalendars()[0]?.timeZone ?? null;
+  const phoneZone = deviceZone === null ? null : knownTimeZone(deviceZone);
   return (
     <View className="gap-4">
       <TextField
         label={t("settings.name")}
-        value={name}
+        value={form.name}
         maxLength={200}
         placeholder={t("settings.name.placeholder")}
-        readOnly={saving}
+        readOnly={form.saving}
         autoCapitalize="words"
-        onChange={(value) => edit({ name: value })}
+        onChange={form.editName}
       />
       <View className="gap-2">
         <TextField
           label={t("settings.timeZone")}
-          value={zone}
-          readOnly={saving}
+          value={form.zone}
+          readOnly={form.saving}
           autoCapitalize="none"
           hint={t("settings.timeZone.hint")}
-          error={zoneUnknown ? t("settings.timeZone.invalid") : null}
-          onChange={(value) => edit({ zone: value })}
+          error={form.zoneUnknown ? t("settings.timeZone.invalid") : null}
+          onChange={form.editZone}
+          onBlur={form.checkZone}
         />
-        {phoneZone !== null && phoneZone !== zone && knownTimeZone(phoneZone) !== null && (
+        {phoneZone !== null && phoneZone !== form.zone && (
           <View className="items-start">
             <Button
               label={t("settings.timeZone.usePhone", { zone: phoneZone.replaceAll("_", " ") })}
-              disabled={saving}
-              onPress={() => edit({ zone: phoneZone })}
+              disabled={form.saving}
+              onPress={() => form.editZone(phoneZone)}
             />
           </View>
         )}
@@ -106,24 +85,31 @@ function YouForm(props: { readonly settings: Settings; readonly connected: boole
         <Button
           variant="primary"
           label={t("settings.save")}
-          disabled={patch._tag !== "changes" || saving || !connected}
-          onPress={() => {
-            if (patch._tag !== "changes" || saving || !connected) return;
-            setWatching(true);
-            void client.updateSettings({ section: "profile", changes: patch.changes });
-          }}
+          disabled={!form.canSave}
+          onPress={() =>
+            form.submit((changes) => void client.updateSettings({ section: "profile", changes }))
+          }
         />
-        {status === "saved" && (
+        {form.status === "saved" && (
           <Text accessibilityLiveRegion="polite" className="text-sm text-muted-foreground">
             {t("settings.saved")}
           </Text>
         )}
-        <Problem>{status === "failed" ? t("settings.saveFailed") : null}</Problem>
+        <Problem>{form.status === "failed" ? t("settings.saveFailed") : null}</Problem>
       </View>
       {!connected && <Quiet>{t("settings.save.offline")}</Quiet>}
     </View>
   );
 }
+
+/** Whether this phone shows notifications: not asked yet, allowed, or refused. */
+type PhoneNotificationAccess = "default" | "granted" | "denied";
+
+/** What this phone does about notifications, in words, once it was asked. */
+const accessLine = {
+  granted: "settings.notifications.phone.granted",
+  denied: "settings.notifications.phone.denied",
+} as const satisfies Record<Exclude<PhoneNotificationAccess, "default">, string>;
 
 /**
  * Whether J3 Bots notifies the operator and how much a notification says,
@@ -134,10 +120,14 @@ function YouForm(props: { readonly settings: Settings; readonly connected: boole
 export function NotificationsSection(props: {
   readonly connected: boolean;
   /**
-   * Asks to allow notifications on this phone, then registers it with the
-   * server. Absent until this build can receive pushes.
+   * Whether this phone shows notifications, and what asks to allow them and
+   * then registers the phone with the server. Absent until this build can
+   * receive pushes.
    */
-  readonly allowOnThisPhone?: () => void;
+  readonly thisPhone?: {
+    readonly access: PhoneNotificationAccess;
+    readonly allow: () => void;
+  };
 }) {
   const { t } = useI18n();
   const client = useJ3Client();
@@ -171,14 +161,18 @@ export function NotificationsSection(props: {
       />
       {shown.enabled && (
         <>
-          {props.allowOnThisPhone !== undefined && (
-            <View className="items-start">
-              <Button
-                label={t("settings.notifications.allowPhone")}
-                onPress={props.allowOnThisPhone}
-              />
-            </View>
-          )}
+          {props.thisPhone !== undefined &&
+            (props.thisPhone.access === "default" ? (
+              <View className="items-start gap-1.5">
+                <Quiet>{t("settings.notifications.phone.default")}</Quiet>
+                <Button
+                  label={t("settings.notifications.allowPhone")}
+                  onPress={props.thisPhone.allow}
+                />
+              </View>
+            ) : (
+              <Quiet>{t(accessLine[props.thisPhone.access])}</Quiet>
+            ))}
           <SwitchRow
             label={t("settings.notifications.previews")}
             hint={t("settings.notifications.previews.hint")}

@@ -3,7 +3,7 @@ import { PairingLink, type PairingLinkTarget } from "@j3-bots/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Linking, Modal, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useI18n } from "../i18n.ts";
@@ -15,8 +15,9 @@ const decodeLink = Schema.decodeUnknownOption(PairingLink);
  * The camera over the whole screen, reading the QR code a paired device or
  * `j3-bots pair` shows. The first pairing link it reads is handed over, to
  * fill in the pairing screen: it never pairs by itself. The camera is asked
- * for when the scanner opens; refused, the scanner says so and offers the
- * phone's settings.
+ * for once, as the scanner opens. Refused, the scanner says so and offers to
+ * ask again, or, once the system no longer lets the app ask (on Android 11
+ * and later, after a second refusal), the phone's settings.
  */
 export function PairingScanner(props: {
   readonly onScanned: (target: PairingLinkTarget) => void;
@@ -24,15 +25,10 @@ export function PairingScanner(props: {
 }) {
   const { t } = useI18n();
   const insets = useSafeAreaInsets();
-  const [permission, requestPermission] = useCameraPermissions();
+  const [permission, requestPermission] = useCameraPermissions({ request: true });
   // A code that is not a pairing link says so, until one that is comes into view.
   const [wrongCode, setWrongCode] = useState(false);
   const handed = useRef(false);
-  const status = permission?.status ?? null;
-  const canAskAgain = permission?.canAskAgain ?? true;
-  useEffect(() => {
-    if (status !== null && status !== "granted" && canAskAgain) void requestPermission();
-  }, [status, canAskAgain, requestPermission]);
 
   return (
     <Modal visible animationType="slide" onRequestClose={props.onClose}>
@@ -68,14 +64,26 @@ export function PairingScanner(props: {
               )}
             </View>
           </View>
-        ) : permission !== null && !permission.granted && !permission.canAskAgain ? (
-          <Centered>
-            <Body>{t("pairing.scan.denied")}</Body>
-            <Button
-              label={t("pairing.scan.openSettings")}
-              onPress={() => void Linking.openSettings()}
-            />
-          </Centered>
+        ) : permission?.status === "denied" ? (
+          permission.canAskAgain ? (
+            <Centered>
+              <Body>{t("pairing.scan.refused")}</Body>
+              <Button
+                variant="primary"
+                label={t("pairing.scan.allow")}
+                onPress={() => void requestPermission()}
+              />
+            </Centered>
+          ) : (
+            <Centered>
+              <Body>{t("pairing.scan.denied")}</Body>
+              <Button
+                variant="primary"
+                label={t("pairing.scan.openSettings")}
+                onPress={() => void Linking.openSettings()}
+              />
+            </Centered>
+          )
         ) : (
           // Asking, or about to: the system's question is on screen.
           <View className="flex-1" />

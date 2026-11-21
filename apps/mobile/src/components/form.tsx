@@ -65,6 +65,7 @@ export function TextField(props: {
   readonly multiline?: boolean;
   readonly numeric?: boolean;
   readonly autoCapitalize?: "none" | "sentences" | "words";
+  readonly onBlur?: () => void;
 }) {
   const placeholderColor = useColor("accent-muted-foreground");
   const error = props.error ?? null;
@@ -77,6 +78,7 @@ export function TextField(props: {
         aria-invalid={error !== null}
         value={props.value}
         onChangeText={props.onChange}
+        onBlur={props.onBlur}
         editable={props.readOnly !== true}
         placeholder={props.placeholder}
         placeholderTextColor={placeholderColor}

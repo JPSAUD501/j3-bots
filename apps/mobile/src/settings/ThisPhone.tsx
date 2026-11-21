@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { useJ3Client, useReadable } from "@j3-bots/client-runtime/react";
+import { LANGUAGES } from "@j3-bots/contracts";
+import { LANGUAGE_NAMES } from "@j3-bots/i18n";
 import { useState } from "react";
 import { Text, View } from "react-native";
 import { ChoiceRow, confirm, Problem, Quiet, Section } from "../components/form.tsx";
@@ -45,10 +47,10 @@ export function ThisPhoneSection() {
     { value: "light", label: t("settings.light") },
     { value: "dark", label: t("settings.dark") },
   ];
+  // Each language is named in itself, so it can be found from any other.
   const languages: ReadonlyArray<{ readonly value: LanguageChoice; readonly label: string }> = [
     { value: "system", label: t("settings.system") },
-    { value: "en", label: "English" },
-    { value: "pt-BR", label: "Português (Brasil)" },
+    ...LANGUAGES.map((language) => ({ value: language, label: LANGUAGE_NAMES[language] })),
   ];
   return (
     <Section title={t("settings.thisDevice")}>

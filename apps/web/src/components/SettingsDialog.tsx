@@ -4,6 +4,7 @@ import {
   type Device,
   type DeviceId,
   type EngineStatus,
+  LANGUAGES,
   type NotificationSettingsChange,
   type PairingCode,
   PairingLink,
@@ -14,15 +15,10 @@ import * as Schema from "effect/Schema";
 import { SettingsIcon, XIcon } from "lucide-react";
 import { useId, useState } from "react";
 import type { PairingOffer, SettingsSaves } from "@j3-bots/client-runtime";
-import {
-  clockTime,
-  editsAfterFailedSave,
-  noEdits,
-  settingsPatch,
-  type SettingsEdits,
-} from "@j3-bots/client-runtime/presentation";
+import { clockTime } from "@j3-bots/client-runtime/presentation";
+import { type ProfileEdits, useProfileEdits, useProfileForm } from "@j3-bots/client-runtime/react";
 import { useI18n, usePresentation } from "../app/context";
-import type { KeyWith } from "@j3-bots/i18n";
+import { type KeyWith, LANGUAGE_NAMES } from "@j3-bots/i18n";
 import {
   setAppearance,
   setLanguage,
@@ -88,25 +84,9 @@ interface SettingsButtonProps {
   readonly intents: SettingsIntents;
 }
 
-/**
- * The profile form's unsaved edits, held outside the dialog: Settings closed
- * for the operator, as when a notification opens a conversation, keeps them;
- * closing it themselves discards them. A save of the form that ends saved
- * leaves nothing unsaved; one that failed leaves what it sent, so reopening
- * Settings never loses it.
- */
-function useProfileEdits(save: SettingsSaves["profile"]) {
-  const kept = () =>
-    save._tag === "failed" ? editsAfterFailedSave(noEdits, save.changes) : noEdits;
-  const [edits, setEdits] = useState(kept);
-  const [lastSave, setLastSave] = useState(save);
-  if (lastSave !== save) {
-    setLastSave(save);
-    if (save._tag === "saved") setEdits(noEdits);
-    if (save._tag === "failed") setEdits((current) => editsAfterFailedSave(current, save.changes));
-  }
-  return { edits, setEdits, discard: () => setEdits(kept()) };
-}
+// The profile form's unsaved edits are held outside the dialog: Settings
+// closed for the operator, as when a notification opens a conversation,
+// keeps them; closing it themselves discards them.
 
 /**
  * The roster's footer: opens everything that is not about one bot. Opening
@@ -172,8 +152,7 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
               <YouSection
                 settings={data.settings}
                 save={data.settingsSaves.profile}
-                edits={profile.edits}
-                onEdit={profile.setEdits}
+                profile={profile}
                 connected={data.connected}
                 onSave={intents.updateSettings}
               />
@@ -273,9 +252,8 @@ function YouSection({
 interface YouFormProps {
   readonly settings: Settings;
   readonly save: SettingsSaves["profile"];
-  /** What the operator changed and has not saved, kept by `useProfileEdits`. */
-  readonly edits: SettingsEdits;
-  readonly onEdit: (update: (edits: SettingsEdits) => SettingsEdits) => void;
+  /** What the operator changed and has not saved, held by `SettingsButton`. */
+  readonly profile: ProfileEdits;
   readonly connected: boolean;
   readonly onSave: SettingsIntents["updateSettings"];
 }
@@ -288,30 +266,18 @@ interface YouFormProps {
  * value as it arrives; one they changed keeps their edit until the form saves
  * it.
  */
-function YouForm({ settings, save, edits, onEdit, connected, onSave }: YouFormProps) {
+function YouForm({ settings, save, profile, connected, onSave }: YouFormProps) {
   const { t } = useI18n();
   const nameId = useId();
   const zoneId = useId();
   const offlineId = useId();
-  // How a save ended shows only for one this form saw under way, until the next edit.
-  const [watching, setWatching] = useState(save._tag === "saving");
-  const saving = save._tag === "saving";
-  const sending = saving ? save.changes : null;
-  const name =
-    edits.name ??
-    (sending?.operatorName === undefined ? settings.operatorName : sending.operatorName) ??
-    "";
-  const zone = edits.zone ?? sending?.timeZone ?? settings.timeZone;
-  const patch = settingsPatch(settings, edits);
-  const status = watching && !saving ? save._tag : null;
+  const form = useProfileForm({ settings, save, profile, connected });
   return (
     <form
       className="flex flex-col gap-3"
       onSubmit={(event) => {
         event.preventDefault();
-        if (patch._tag !== "changes" || saving || !connected) return;
-        setWatching(true);
-        onSave({ section: "profile", changes: patch.changes });
+        form.submit((changes) => onSave({ section: "profile", changes }));
       }}
     >
       <div className="flex flex-col gap-1">
@@ -320,16 +286,12 @@ function YouForm({ settings, save, edits, onEdit, connected, onSave }: YouFormPr
         </label>
         <input
           id={nameId}
-          value={name}
+          value={form.name}
           maxLength={200}
           autoComplete="name"
           placeholder={t("settings.name.placeholder")}
-          readOnly={saving}
-          onChange={(event) => {
-            const value = event.currentTarget.value;
-            onEdit((current) => ({ ...current, name: value }));
-            setWatching(false);
-          }}
+          readOnly={form.saving}
+          onChange={(event) => form.editName(event.currentTarget.value)}
           className={fieldClass}
         />
       </div>
@@ -339,17 +301,12 @@ function YouForm({ settings, save, edits, onEdit, connected, onSave }: YouFormPr
         </label>
         <select
           id={zoneId}
-          value={zone}
-          aria-readonly={saving}
-          onChange={(event) => {
-            if (saving) return;
-            const value = event.currentTarget.value;
-            onEdit((current) => ({ ...current, zone: value }));
-            setWatching(false);
-          }}
+          value={form.zone}
+          aria-readonly={form.saving}
+          onChange={(event) => form.editZone(event.currentTarget.value)}
           className={fieldClass}
         >
-          {timeZones(zone).map((value) => (
+          {timeZones(form.zone).map((value) => (
             <option key={value} value={value}>
               {value.replaceAll("_", " ")}
             </option>
@@ -361,14 +318,16 @@ function YouForm({ settings, save, edits, onEdit, connected, onSave }: YouFormPr
         <Button
           type="submit"
           size="sm"
-          aria-disabled={patch._tag !== "changes" || saving || !connected}
+          aria-disabled={!form.canSave}
           aria-describedby={connected ? undefined : offlineId}
         >
           {t("settings.save")}
         </Button>
         <p role="status" className="text-xs text-muted-foreground">
-          {status === "saved" && t("settings.saved")}
-          {status === "failed" && <span className="text-blocked">{t("settings.saveFailed")}</span>}
+          {form.status === "saved" && t("settings.saved")}
+          {form.status === "failed" && (
+            <span className="text-blocked">{t("settings.saveFailed")}</span>
+          )}
         </p>
       </div>
       {!connected && (
@@ -791,8 +750,7 @@ function BrowserSection({
   // Each language is named in itself, so it can be found from any other.
   const languages: ReadonlyArray<{ value: LanguageChoice; label: string }> = [
     { value: "system", label: t("settings.system") },
-    { value: "en", label: "English" },
-    { value: "pt-BR", label: "Português (Brasil)" },
+    ...LANGUAGES.map((language) => ({ value: language, label: LANGUAGE_NAMES[language] })),
   ];
   return (
     <Section title={t(server === undefined ? "settings.browser" : "settings.thisDevice")}>

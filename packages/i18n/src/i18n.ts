@@ -65,6 +65,12 @@ type PluralArgs<B extends PluralKey> =
       : [params: Readonly<Record<P, string | number>>]
     : never;
 
+/** Each language named in itself, so it can be found from any other. */
+export const LANGUAGE_NAMES: Record<Language, string> = {
+  en: "English",
+  "pt-BR": "Português (Brasil)",
+};
+
 const catalogs: Record<Language, Catalog> = { en, "pt-BR": ptBR };
 
 export interface I18n {

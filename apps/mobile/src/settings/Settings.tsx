@@ -55,7 +55,7 @@ export function SettingsScreen() {
       />
       <YouSection connected={connected} />
       {/* Without pushes in this build, the section offers nothing for this phone itself:
-          once the app receives them, it passes `allowOnThisPhone`. */}
+          once the app receives them, it passes `thisPhone`, its access and `allow`. */}
       <NotificationsSection connected={connected} />
       <DevicesSection connected={connected} />
       <ServerSection />

@@ -475,6 +475,9 @@ export const en = {
   "pairing.scan.notPairing": "That QR code doesn’t pair a device with J3 Bots.",
   "pairing.scan.denied":
     "J3 Bots can’t use the camera. Allow it in the phone’s settings, or type the address and the code.",
+  "pairing.scan.refused":
+    "J3 Bots can’t use the camera without your permission. Allow it, or type the address and the code.",
+  "pairing.scan.allow": "Allow the camera",
   "pairing.scan.openSettings": "Open the phone’s settings",
   "pairing.scan.close": "Close",
   "pairing.invalid":
@@ -680,6 +683,10 @@ export const en = {
     "Notifications include the first line of the message. Anyone who can see your screen can read it.",
   "settings.notifications.allow": "Allow notifications in this browser",
   "settings.notifications.allowPhone": "Allow notifications on this phone",
+  "settings.notifications.phone.default": "This phone shows none until you allow them.",
+  "settings.notifications.phone.granted": "This phone shows notifications.",
+  "settings.notifications.phone.denied":
+    "This phone blocks notifications from J3 Bots. Allow them in the phone’s settings.",
   "settings.notifications.browser.default": "This browser shows none until you allow them.",
   "settings.notifications.browser.granted": "This browser shows notifications.",
   "settings.notifications.browser.denied":
@@ -695,6 +702,7 @@ export const en = {
   "settings.device.lastSeen": "Last seen {when}",
   "settings.device.pushOn": "Push notifications on",
   "settings.device.revoke": "Sign out",
+  "settings.device.revoke.named": "Sign out {name}",
   "settings.device.revoke.title": "Sign out {name}?",
   "settings.device.revoke.body": "{name} loses access at once. Pairing it again takes a new code.",
   "settings.device.revoke.cancel": "Keep it",

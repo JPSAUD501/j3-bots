@@ -482,6 +482,9 @@ const sentences = {
   "pairing.scan.notPairing": "Esse QR code não pareia um dispositivo com o J3 Bots.",
   "pairing.scan.denied":
     "O J3 Bots não pode usar a câmera. Permita nos ajustes do celular, ou digite o endereço e o código.",
+  "pairing.scan.refused":
+    "O J3 Bots não pode usar a câmera sem a sua permissão. Permita, ou digite o endereço e o código.",
+  "pairing.scan.allow": "Permitir a câmera",
   "pairing.scan.openSettings": "Abrir os ajustes do celular",
   "pairing.scan.close": "Fechar",
   "pairing.invalid":
@@ -693,6 +696,10 @@ const sentences = {
     "As notificações trazem a primeira linha da mensagem. Quem vir a sua tela consegue ler.",
   "settings.notifications.allow": "Permitir notificações neste navegador",
   "settings.notifications.allowPhone": "Permitir notificações neste celular",
+  "settings.notifications.phone.default": "Este celular não mostra nenhuma até você permitir.",
+  "settings.notifications.phone.granted": "Este celular mostra notificações.",
+  "settings.notifications.phone.denied":
+    "Este celular bloqueia as notificações do J3 Bots. Permita nos ajustes do celular.",
   "settings.notifications.browser.default": "Este navegador não mostra nenhuma até você permitir.",
   "settings.notifications.browser.granted": "Este navegador mostra notificações.",
   "settings.notifications.browser.denied":
@@ -708,6 +715,7 @@ const sentences = {
   "settings.device.lastSeen": "Visto por último {when}",
   "settings.device.pushOn": "Notificações push ativadas",
   "settings.device.revoke": "Desconectar",
+  "settings.device.revoke.named": "Desconectar {name}",
   "settings.device.revoke.title": "Desconectar {name}?",
   "settings.device.revoke.body":
     "{name} perde o acesso na hora. Para parear de novo, é preciso um código novo.",

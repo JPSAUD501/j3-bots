@@ -131,7 +131,13 @@ function DeviceRow(props: {
                 ? t("settings.device.revoke.pending")
                 : t("settings.device.revoke")
             }
-            accessibilityLabel={t("settings.device.revoke.title", { name: device.name })}
+            // Names the device, as a row of buttons each saying "Sign out" would not; while
+            // pending it says so, as the button shows.
+            accessibilityLabel={
+              state === "pending"
+                ? t("settings.device.revoke.pending")
+                : t("settings.device.revoke.named", { name: device.name })
+            }
             disabled={state === "pending"}
             onPress={() =>
               confirm({
