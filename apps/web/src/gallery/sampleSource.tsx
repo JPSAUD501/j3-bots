@@ -16,6 +16,9 @@ import {
   type BotState,
   type Entry,
   type EntryTarget,
+  type Mentions,
+  type Room,
+  type RoomId,
   type RosterItem,
 } from "@j3-bots/contracts";
 import { avatarShapeNames, botColors } from "@j3-bots/design-tokens";
@@ -74,6 +77,15 @@ function updateEntry(state: State, entryId: EntryId, update: (entry: Entry) => E
     : withEntries(state, key, (es) => es.map((e) => (e.id === entryId ? update(e) : e)));
 }
 
+function updateRoom(state: State, roomId: RoomId, update: (room: Room) => Room): State {
+  return {
+    ...state,
+    roster: state.roster.map((item) =>
+      item._tag === "room" && item.room.id === roomId ? { ...item, room: update(item.room) } : item,
+    ),
+  };
+}
+
 function updateBot(state: State, botId: BotId, update: (bot: Bot) => Bot): State {
   return {
     ...state,
@@ -103,6 +115,7 @@ function message(
   author: Entry["author"],
   text: string,
   attachments: Extract<Entry, { _tag: "message" }>["attachments"] = [],
+  mentions: Mentions = { _tag: "bots", ids: [] },
 ): DraftEntry {
   return {
     _tag: "message",
@@ -111,7 +124,7 @@ function message(
     createdAt: now(),
     text,
     attachments,
-    mentions: { _tag: "bots", ids: [] },
+    mentions,
     delivery: { _tag: "delivered" },
     commandId: null,
   };
@@ -229,7 +242,7 @@ function sampleIntents({ get, update }: Store): ShellIntents {
     restoreDraft: nothing,
     retryDrafts: () => Promise.resolve(true),
     dismissDraftOffer: nothing,
-    sendDraft: (target) => {
+    sendDraft: (target, mentions) => {
       const key = keyOf(target);
       const draft = get().drafts[key] ?? blankDraft;
       const text = draft.text.trim();
@@ -239,19 +252,25 @@ function sampleIntents({ get, update }: Store): ShellIntents {
       if (text === "" && attachments.length === 0) return;
       update((s) => ({
         ...withEntries(s, key, (es) =>
-          appended(es, message({ _tag: "operator" }, text, attachments)),
+          appended(es, message({ _tag: "operator" }, text, attachments, mentions)),
         ),
         drafts: { ...s.drafts, [key]: blankDraft },
       }));
-      // In a room, the host answers what is addressed to nobody.
+      // In a room, the first bot addressed answers, or the host when nobody is.
       const room = get().roster.find(
         (i) => i._tag === "room" && target._tag === "room" && i.room.id === target.roomId,
       );
+      const addressed =
+        mentions?._tag === "everyone"
+          ? room?._tag === "room"
+            ? room.room.members[0]
+            : undefined
+          : mentions?.ids[0];
       const host =
         target._tag === "conversation"
           ? target.botId
           : room?._tag === "room"
-            ? room.room.hostId
+            ? (addressed ?? room.room.hostId)
             : null;
       if (host !== null)
         replyLater(
@@ -405,7 +424,41 @@ function sampleIntents({ get, update }: Store): ShellIntents {
     markRead: nothing,
     setShown: nothing,
     newBot: nothing,
+    // The room form belongs to the client runtime's source; the sample has no dialog for it.
     newRoom: nothing,
+    editRoom: nothing,
+    archiveRoom: (roomId) => {
+      update((s) =>
+        updateRoom(s, roomId, (room) =>
+          room.status === "archived" ? room : { ...room, status: "archived", archivedAt: now() },
+        ),
+      );
+      return Promise.resolve();
+    },
+    unarchiveRoom: (roomId) => {
+      update((s) =>
+        updateRoom(s, roomId, (room) =>
+          room.status === "active" || room.hostId === null || room.members.length < 2
+            ? room
+            : {
+                id: room.id,
+                name: room.name,
+                hopLimit: room.hopLimit,
+                pinned: room.pinned,
+                createdAt: room.createdAt,
+                status: "active",
+                members: room.members,
+                hostId: room.hostId,
+              },
+        ),
+      );
+      return Promise.resolve();
+    },
+    deleteRoom: (roomId) =>
+      update((s) => ({
+        ...s,
+        roster: s.roster.filter((item) => !(item._tag === "room" && item.room.id === roomId)),
+      })),
     editProfile: nothing,
     freshStart: nothing,
     refreshSettings: nothing,

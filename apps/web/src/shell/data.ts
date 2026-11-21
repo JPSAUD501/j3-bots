@@ -17,7 +17,9 @@ import type {
   EntryTarget,
   MemoryFile,
   MemoryPath,
+  Mentions,
   PairingCode,
+  RoomId,
   RosterItem,
   Routine,
   Settings,
@@ -102,8 +104,11 @@ export interface ShellIntents extends TimelineIntents {
   readonly setDraftText: (target: EntryTarget, text: string) => void;
   readonly attachFiles: (target: EntryTarget, files: ReadonlyArray<File>) => void;
   readonly detachFile: (target: EntryTarget, key: string) => void;
-  /** Sends the draft once, however often it is called, and clears it. */
-  readonly sendDraft: (target: EntryTarget) => void;
+  /**
+   * Sends the draft once, however often it is called, and clears it.
+   * `mentions` only applies in a room; leaving it out mentions nobody.
+   */
+  readonly sendDraft: (target: EntryTarget, mentions?: Mentions) => void;
   /** Puts back the text another tab replaced. */
   readonly restoreDraft: (target: EntryTarget) => void;
   /** Lets go of the text another tab replaced. */
@@ -125,8 +130,17 @@ export interface ShellIntents extends TimelineIntents {
   /** Resolves with the new bot's id once the server has created it. */
   readonly createBot: (name: string, primary: boolean) => Promise<BotId>;
   readonly newBot: () => void;
-  /** Absent until rooms can be made. */
-  readonly newRoom?: () => void;
+  readonly newRoom: () => void;
+  /** Opens the form that changes a room's name, members, host and hop limit. */
+  readonly editRoom: (roomId: RoomId) => void;
+  /** Resolves once the server answered, whatever it said. */
+  readonly archiveRoom: (roomId: RoomId) => Promise<void>;
+  /**
+   * Unarchives the room, or opens the form that gives it the members and the
+   * host it needs first. Resolves like `archiveRoom`.
+   */
+  readonly unarchiveRoom: (roomId: RoomId) => Promise<void>;
+  readonly deleteRoom: (roomId: RoomId) => void;
   /** Opens the form that edits a bot's profile, model and permission mode. Absent where there is none. */
   readonly editProfile?: (botId: BotId) => void;
   readonly openMemoryFile: (botId: BotId, path: MemoryPath) => void;

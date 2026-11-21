@@ -11,7 +11,7 @@ import type {
 import { useEffect, useEffectEvent, useId, useRef, useState, type ReactElement } from "react";
 import { BotsProvider, useI18n } from "../app/context";
 import { AppShell, type Region } from "../components/AppShell";
-import { Composer } from "../components/Composer";
+import { Composer, type MentionCandidate } from "../components/Composer";
 import { ConversationHeader } from "../components/ConversationHeader";
 import { BotDetails, RoomDetails } from "../components/DetailsPanel";
 import {
@@ -35,6 +35,7 @@ import {
 import type { ShellData, ShellIntents } from "./data";
 import { isCovered, useCovered } from "../lib/covered";
 import { useNewestSeen } from "../lib/useNewestSeen";
+import { mentionsIn } from "../presentation/mentions";
 import { useShellLayout } from "./layout";
 import { isEditable, shellShortcuts } from "./shortcuts";
 
@@ -263,6 +264,16 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
     const draft = data.draft(target);
     const offer = data.offer(target);
     const recipient = item._tag === "bot" ? item.bot.profile.name : item.room.name;
+    // An archived room takes no messages: no composer, and a way to unarchive it.
+    const archivedRoom = item._tag === "room" && item.room.status === "archived" ? item.room : null;
+    // In a room, `@` mentions its members, by the names the roster shows.
+    const mentionable: ReadonlyArray<MentionCandidate> | undefined =
+      item._tag === "room"
+        ? item.room.members.flatMap((id) => {
+            const bot = bots.find((candidate) => candidate.id === id);
+            return bot ? [{ id, name: bot.profile.name, avatar: bot.profile.avatar }] : [];
+          })
+        : undefined;
     const toggleDetails = () => navigation.setDetailsOpen(!detailsOpen);
     const goToEntry = (entryId: EntryId) => {
       const card = timeline?.querySelector<HTMLElement>(`[data-entry-id="${CSS.escape(entryId)}"]`);
@@ -332,31 +343,50 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
           </div>
         )}
         <div className="mx-auto w-full max-w-(--layout-text-column) px-3 pt-1 pb-[max(--spacing(3),env(safe-area-inset-bottom))] @tablet:px-6">
-          <Composer
-            draftKey={rosterKeyText(rosterKeyOf(item))}
-            recipient={recipient}
-            value={draft.text}
-            onValueChange={(value) => intents.setDraftText(target, value)}
-            files={draft.files}
-            sending={draft.sending}
-            loading={data.draftsLoading}
-            {...(data.draftsFailed ? { unread: { onRetry: intents.retryDrafts } } : {})}
-            notSaved={data.draftNotSaved(target)}
-            onAttachFiles={(files) => intents.attachFiles(target, files)}
-            onDetachFile={(fileKey) => intents.detachFile(target, fileKey)}
-            onSend={() => intents.sendDraft(target)}
-            {...(dictate ? { onDictate: () => dictate(target) } : {})}
-            {...(offer === null
-              ? {}
-              : {
-                  replaced: {
-                    revision: offer,
-                    onRestore: () => intents.restoreDraft(target),
-                    onDismiss: () => intents.dismissDraftOffer(target),
-                  },
-                })}
-            inputRef={composerRef}
-          />
+          {archivedRoom === null ? (
+            <Composer
+              draftKey={rosterKeyText(rosterKeyOf(item))}
+              recipient={recipient}
+              value={draft.text}
+              onValueChange={(value) => intents.setDraftText(target, value)}
+              files={draft.files}
+              sending={draft.sending}
+              loading={data.draftsLoading}
+              {...(data.draftsFailed ? { unread: { onRetry: intents.retryDrafts } } : {})}
+              notSaved={data.draftNotSaved(target)}
+              onAttachFiles={(files) => intents.attachFiles(target, files)}
+              onDetachFile={(fileKey) => intents.detachFile(target, fileKey)}
+              onSend={() =>
+                intents.sendDraft(
+                  target,
+                  mentionable === undefined ? undefined : mentionsIn(draft.text, mentionable),
+                )
+              }
+              {...(dictate ? { onDictate: () => dictate(target) } : {})}
+              {...(offer === null
+                ? {}
+                : {
+                    replaced: {
+                      revision: offer,
+                      onRestore: () => intents.restoreDraft(target),
+                      onDismiss: () => intents.dismissDraftOffer(target),
+                    },
+                  })}
+              inputRef={composerRef}
+              {...(mentionable === undefined ? {} : { mentionable })}
+            />
+          ) : (
+            <div className="flex flex-wrap items-center justify-center gap-x-2 py-2 text-center text-xs text-muted-foreground">
+              <p>{t("room.composerArchived", { name: archivedRoom.name })}</p>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void intents.unarchiveRoom(archivedRoom.id)}
+              >
+                {t("room.unarchive", { name: archivedRoom.name })}
+              </Button>
+            </div>
+          )}
         </div>
       </>
     );
@@ -385,9 +415,16 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
           />
         );
       } else {
+        const { room } = item;
         details = (
           <RoomDetails
             room={item.room}
+            intents={{
+              editRoom: () => intents.editRoom(room.id),
+              archiveRoom: () => intents.archiveRoom(room.id),
+              unarchiveRoom: () => intents.unarchiveRoom(room.id),
+              deleteRoom: () => intents.deleteRoom(room.id),
+            }}
             onClose={close}
             headingRef={detailsHeadingRef}
             headingId={detailsHeadingId}

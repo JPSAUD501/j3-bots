@@ -6,6 +6,7 @@ import {
   createJ3Client,
   type Draft,
   type DraftChangedElsewhere,
+  type IntentFailure,
   type J3Client,
   type Loaded,
   type MemoryEdit,
@@ -38,6 +39,7 @@ import type {
   MemoryPath,
   MemoryScope,
   Notification,
+  Room,
   RoomId,
   WorkStep,
 } from "@j3-bots/contracts";
@@ -48,6 +50,7 @@ import {
   useCallback,
   useEffect,
   useEffectEvent,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -59,6 +62,7 @@ import { memoryLabel } from "../components/DetailsPanel";
 import { EditBotDialog } from "../components/EditBotDialog";
 import { MemoryViewer, type MemoryReading } from "../components/MemoryViewer";
 import { NewBotDialog } from "../components/NewBotDialog";
+import { RoomDialog, type RoomFormMode, type RoomSubmission } from "../components/RoomDialog";
 import { guessDeviceName, Incompatible, Pairing, StorageFailed } from "../components/Pairing";
 import { type Notice, Toast } from "../components/Toast";
 import { notificationAccess } from "../preferences/notifications";
@@ -76,6 +80,14 @@ import { deliverFile, reserveWindow } from "./openFile";
 import { platform } from "./platform";
 
 let started: Promise<J3Client> | null = null;
+
+/** What the room form is open for. A room is named by id and read from the roster. */
+type RoomFormTarget =
+  | { readonly _tag: "create" }
+  | { readonly _tag: "edit" | "unarchive"; readonly roomId: RoomId };
+
+const creatingRoom = { _tag: "create" } as const satisfies RoomFormTarget & RoomFormMode;
+
 /** One client for the page, made on first use. */
 const client = () => (started ??= createJ3Client(platform));
 
@@ -300,11 +312,13 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   const [newBot, setNewBot] = useState(false);
   const [memoryView, setMemoryView] = useState<MemoryView | null>(null);
   const [editingBot, setEditingBot] = useState<BotId | null>(null);
+  const [roomForm, setRoomForm] = useState<RoomFormTarget | null>(null);
   // Whether New bot, the bot editor and the memory viewer hold what the
   // operator typed and has not saved yet, as they report.
   const [newBotUnsaved, setNewBotUnsaved] = useState(false);
   const [botEditUnsaved, setBotEditUnsaved] = useState(false);
   const [memoryEditing, setMemoryEditing] = useState(false);
+  const [roomFormUnsaved, setRoomFormUnsaved] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Without a roster, Settings has no button and closes without saying so.
   if (settingsOpen && (roster === null || roster.length === 0)) setSettingsOpen(false);
@@ -317,10 +331,14 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   const openMemoryKey =
     memoryView === null ? null : memorySaveKey(memoryScopeOf(memoryView), memoryView.path);
   // What is open now, for a save that ends after its form closed.
-  const open = useRef<{ bot: BotId | null; memory: string | null }>({ bot: null, memory: null });
+  const open = useRef<{
+    bot: BotId | null;
+    memory: string | null;
+    room: RoomFormTarget | null;
+  }>({ bot: null, memory: null, room: null });
   useEffect(() => {
-    open.current = { bot: editingBot, memory: openMemoryKey };
-  }, [editingBot, openMemoryKey]);
+    open.current = { bot: editingBot, memory: openMemoryKey, room: roomForm };
+  }, [editingBot, openMemoryKey, roomForm]);
   const say = useSay();
 
   const view: ConversationView =
@@ -357,6 +375,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
     if (!newBotUnsaved) setNewBot(false);
     if (!botEditUnsaved) setEditingBot(null);
     if (!memoryEditing) setMemoryView(null);
+    if (!roomFormUnsaved) setRoomForm(null);
     // Opening it drops the details from the address, which closes them.
     if (opened._tag === "conversation") {
       void navigate({ to: "/bots/$botId", params: { botId: opened.botId } });
@@ -528,6 +547,86 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
 
   const goToBot = (botId: BotId) => navigate({ to: "/bots/$botId", params: { botId } });
 
+  const roomOf = (roomId: RoomId): Room | null =>
+    roster?.flatMap((row) =>
+      row._tag === "room" && row.room.id === roomId ? [row.room] : [],
+    )[0] ?? null;
+  const roomFormRoom =
+    roomForm === null || roomForm._tag === "create" ? null : roomOf(roomForm.roomId);
+  // A room deleted while its form is open closes the form.
+  if (roomForm !== null && roomForm._tag !== "create" && roster !== null && roomFormRoom === null) {
+    setRoomForm(null);
+  }
+  // Kept while the target and the room stay the same, as the dialog asks.
+  const roomFormMode = useMemo(
+    (): RoomFormMode | null =>
+      roomForm === null
+        ? null
+        : roomForm._tag === "create"
+          ? creatingRoom
+          : roomFormRoom && { _tag: roomForm._tag, room: roomFormRoom },
+    [roomForm, roomFormRoom],
+  );
+
+  /**
+   * Sends what the room form holds. Once the server has it the form closes,
+   * and a new room opens; a failure stays in the form, or, once it has
+   * closed, a toast says so.
+   */
+  const submitRoom = (
+    asked: RoomFormTarget,
+    submission: RoomSubmission,
+  ): Promise<IntentFailure | null> => {
+    const stillOpen = () => open.current.room === asked;
+    const close = () => setRoomForm((current) => (current === asked ? null : current));
+    if (submission._tag === "create") {
+      return j3.createRoom(submission.draft).then((result) => {
+        if (!stillPaired()) return null;
+        if (result._tag === "done") {
+          close();
+          void navigate({ to: "/rooms/$roomId", params: { roomId: result.value.id } });
+          return null;
+        }
+        if (!stillOpen()) say(t("roomForm.createFailedClosed", { name: submission.draft.name }));
+        return result.failure;
+      });
+    }
+    if (asked._tag === "create") return Promise.resolve(null);
+    const name = roomOf(asked.roomId)?.name ?? "";
+    return j3.updateRoom(asked.roomId, submission.changes).then((result) => {
+      if (!stillPaired()) return null;
+      if (result._tag === "done") {
+        close();
+        return null;
+      }
+      if (!stillOpen()) say(t("roomForm.failedClosed", { name }));
+      return result.failure;
+    });
+  };
+
+  const unarchiveRoom = (roomId: RoomId): Promise<void> => {
+    const room = roomOf(roomId);
+    if (room === null) return Promise.resolve();
+    // A room deleting bots left too small needs members and a host before it can take messages.
+    if (room.members.length < 2 || room.hostId === null) {
+      setRoomForm({ _tag: "unarchive", roomId });
+      return Promise.resolve();
+    }
+    return j3.updateRoom(roomId, { archived: false }).then((result) => {
+      if (result._tag === "done" || !stillPaired()) return;
+      const { failure } = result;
+      if (
+        failure._tag === "refused" &&
+        failure.error._tag === "Invalid" &&
+        failure.error.reason === "room-members"
+      ) {
+        setRoomForm({ _tag: "unarchive", roomId });
+      } else {
+        say(t("room.unarchiveFailed", { name: room.name }));
+      }
+    });
+  };
+
   const intents: ShellIntents = {
     // An answer too long to reach the bot leaves the card open, with what was typed, to shorten.
     answerQuestion: (entryId, answers) =>
@@ -593,8 +692,8 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
     restoreDraft: j3.restoreDraft,
     retryDrafts: j3.retryDrafts,
     dismissDraftOffer: j3.dismissDraftOffer,
-    sendDraft: (asked) =>
-      void j3.sendDraft(asked).then((result) => {
+    sendDraft: (asked, mentions) =>
+      void j3.sendDraft(asked, mentions).then((result) => {
         if (result === "not-kept") say(t("composer.notKept"));
       }),
     loadOlder: (asked) => {
@@ -611,6 +710,23 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
         return result.value.id;
       }),
     newBot: () => setNewBot(true),
+    newRoom: () => setRoomForm(creatingRoom),
+    editRoom: (roomId) => setRoomForm({ _tag: "edit", roomId }),
+    archiveRoom: (roomId) =>
+      j3.updateRoom(roomId, { archived: true }).then((result) => {
+        if (result._tag === "failed" && stillPaired()) {
+          say(t("room.archiveFailed", { name: roomOf(roomId)?.name ?? "" }));
+        }
+      }),
+    unarchiveRoom,
+    deleteRoom: (roomId) => {
+      const name = roomOf(roomId)?.name ?? "";
+      void j3.deleteRoom(roomId).then((result) => {
+        if (!stillPaired()) return;
+        if (result._tag === "done") void navigate({ to: "/" });
+        else say(t("room.deleteFailed", { name }));
+      });
+    },
     editProfile: setEditingBot,
     openMemoryFile,
     freshStart: (botId, name) =>
@@ -680,6 +796,18 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
             void goToBot(botId);
           })
         }
+      />
+      <RoomDialog
+        mode={roomFormMode}
+        bots={(roster ?? []).flatMap((row) => (row._tag === "bot" ? [row.bot] : []))}
+        defaultHopLimit={data.settings?.budgets.hops ?? null}
+        connected={data.connected}
+        unsaved={roomFormUnsaved}
+        onUnsavedChange={setRoomFormUnsaved}
+        onSubmit={(submission) =>
+          roomForm === null ? Promise.resolve(null) : submitRoom(roomForm, submission)
+        }
+        onClose={() => setRoomForm(null)}
       />
       <EditBotDialog
         bot={editingBotValue}

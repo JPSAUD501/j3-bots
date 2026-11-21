@@ -81,6 +81,8 @@ export {
   freshStartAction,
   type MemoryEdit,
   memorySaveKey,
+  type RoomChanges,
+  type RoomDraft,
   type Save,
   type SaveResult,
 } from "./stores/Details.ts";

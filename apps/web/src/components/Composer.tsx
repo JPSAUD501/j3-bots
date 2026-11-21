@@ -6,19 +6,42 @@ import {
   messageProblem,
 } from "@j3-bots/client-runtime";
 import {
+  type Avatar,
   MAX_ATTACHMENT_SIZE,
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_INLINE_IMAGE_SIZE,
   MAX_INLINE_IMAGES_SIZE,
   MAX_MESSAGE_LENGTH,
 } from "@j3-bots/contracts";
-import { ArrowUpIcon, FileIcon, MicIcon, PlusIcon, XIcon } from "lucide-react";
-import { useId, useRef, useState, type RefObject } from "react";
+import { ArrowUpIcon, FileIcon, MicIcon, PlusIcon, UsersIcon, XIcon } from "lucide-react";
+import {
+  type KeyboardEvent,
+  type RefObject,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { useI18n } from "../app/context";
 import type { I18n } from "../i18n/i18n";
 import { cn } from "../lib/cn";
+import {
+  EVERYONE,
+  insertMention,
+  type Mentionable,
+  type MentionOption,
+  mentionOptions,
+  mentionQuery,
+  movedOption,
+} from "../presentation/mentions";
+import { AvatarShape } from "./BotAvatar";
 import { fileSize } from "./FileCard";
 import { Button } from "./ui/button";
+
+/** A room member the composer offers after `@`, drawn by its shape. */
+export interface MentionCandidate extends Mentionable {
+  readonly avatar: Avatar;
+}
 
 interface ComposerProps {
   /** Which draft this is. Files the composer did not take are forgotten when it changes. */
@@ -60,6 +83,11 @@ interface ComposerProps {
     readonly onDismiss: () => void;
   };
   readonly inputRef?: RefObject<HTMLTextAreaElement | null>;
+  /**
+   * In a room, its members: typing `@` offers them and `@everyone`, and a
+   * pick puts the name in the text, which is what addresses the message.
+   */
+  readonly mentionable?: ReadonlyArray<MentionCandidate>;
 }
 
 /** Why a file cannot go, in one sentence. */
@@ -122,7 +150,10 @@ const nameOf = (file: DraftFile) => (file._tag === "ready" ? file.attachment.nam
  * device could not keep says so quietly below the pill until it is kept. Text
  * replaced in another tab is offered back above the pill until the operator
  * restores or dismisses it; either way the focus returns to the field. The
- * field draws no ring of its own: the pill takes the focus outline.
+ * field draws no ring of its own: the pill takes the focus outline. In a room,
+ * `@` opens a list of the members and `@everyone` above the pill: arrow keys
+ * move through it, Enter or Tab picks, Escape closes it until the next `@`,
+ * and a tap picks without taking the focus from the field.
  */
 export function Composer({
   draftKey,
@@ -140,6 +171,7 @@ export function Composer({
   onDictate,
   replaced,
   inputRef,
+  mentionable,
 }: ComposerProps) {
   const i18n = useI18n();
   const { t } = i18n;
@@ -169,6 +201,13 @@ export function Composer({
   const send = () => {
     if (ready) onSend();
   };
+  const mention = useMentionPicker({
+    draftKey,
+    value,
+    onValueChange,
+    field: fieldRef,
+    members: frozen ? undefined : mentionable,
+  });
   const attach = (list: FileList | null) => {
     if (!onAttachFiles || list === null || list.length === 0) return;
     setNotTaken(frozen);
@@ -274,6 +313,19 @@ export function Composer({
       <p role="status" className="sr-only">
         {failures.join(" ")}
       </p>
+      {/* Over the conversation, not in the composer's flow, so nothing above it moves. */}
+      {mention.open && (
+        <div className="relative">
+          <MentionList
+            id={mention.listId}
+            options={mention.options}
+            members={mentionable ?? []}
+            active={mention.active}
+            optionId={mention.optionId}
+            onPick={mention.pick}
+          />
+        </div>
+      )}
       <div className="flex items-end gap-1 rounded-pill border border-input bg-surface p-1 shadow-xs has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:outline-offset-2 has-[textarea:focus-visible]:outline-accent">
         {onAttachFiles && (
           <>
@@ -309,8 +361,13 @@ export function Composer({
           onChange={(event) => {
             setNotTaken(false);
             onValueChange(event.currentTarget.value);
+            mention.follow(event.currentTarget);
           }}
+          onSelect={(event) => mention.follow(event.currentTarget)}
+          onFocus={(event) => mention.follow(event.currentTarget)}
+          onBlur={mention.leave}
           onKeyDown={(event) => {
+            if (mention.onKeyDown(event)) return;
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
               event.preventDefault();
               send();
@@ -323,6 +380,7 @@ export function Composer({
           }}
           placeholder={label}
           aria-label={label}
+          {...mention.fieldProps}
           data-composer=""
           className="field-sizing-content max-h-(--layout-composer-max-height) min-h-8 flex-1 resize-none bg-transparent px-1 py-1.5 text-base outline-none placeholder:text-muted-foreground pointer-coarse:min-h-(--layout-touch-target) pointer-coarse:py-2.5 pointer-coarse:text-lg"
         />
@@ -435,5 +493,176 @@ function DraftFileChip({
         />
       )}
     </li>
+  );
+}
+
+/**
+ * What the composer needs to offer mentions: whether the list is open, what
+ * it offers and which option is active, and the field's handlers that follow
+ * the caret and the keys. Without `members` it never opens.
+ */
+function useMentionPicker({
+  draftKey,
+  value,
+  onValueChange,
+  field,
+  members,
+}: {
+  draftKey: string;
+  value: string;
+  onValueChange: (value: string) => void;
+  field: RefObject<HTMLTextAreaElement | null>;
+  members: ReadonlyArray<Mentionable> | undefined;
+}) {
+  const listId = useId();
+  // Where the caret is while the field has focus; null while it has none.
+  const [caret, setCaret] = useState<number | null>(null);
+  // The `@` the operator closed the list on, which reopens only at another one.
+  const [dismissed, setDismissed] = useState<number | null>(null);
+  const [active, setActive] = useState(0);
+  // Another draft's caret says nothing about this one: it is followed again from the next edit.
+  const [caretFor, setCaretFor] = useState(draftKey);
+  if (caretFor !== draftKey) {
+    setCaretFor(draftKey);
+    setCaret(null);
+    setDismissed(null);
+  }
+  // Where the caret goes once a pick has reached the field.
+  const placeCaret = useRef<number | null>(null);
+
+  const query = members === undefined || caret === null ? null : mentionQuery(value, caret);
+  const options =
+    query === null || members === undefined ? [] : mentionOptions(query.query, members);
+  const open = query !== null && query.start !== dismissed && options.length > 0;
+  // A new query starts at the first option.
+  const queryKey = query === null ? null : `${query.start}:${query.query}`;
+  const [activeFor, setActiveFor] = useState(queryKey);
+  if (activeFor !== queryKey) {
+    setActiveFor(queryKey);
+    setActive(0);
+  }
+  const current = Math.min(active, Math.max(options.length - 1, 0));
+  const optionId = (index: number) => `${listId}-${index}`;
+
+  useLayoutEffect(() => {
+    const at = placeCaret.current;
+    const element = field.current;
+    if (at === null || element === null || element.value !== value) return;
+    placeCaret.current = null;
+    element.setSelectionRange(at, at);
+    setCaret(at);
+  }, [field, value]);
+
+  const pick = (option: MentionOption) => {
+    if (query === null || caret === null) return;
+    const next = insertMention(value, caret, query, option);
+    placeCaret.current = next.caret;
+    onValueChange(next.text);
+  };
+
+  return {
+    open,
+    options,
+    active: current,
+    listId,
+    optionId,
+    pick,
+    /** Follows the caret of the field after an edit, a move or a focus. */
+    follow: (element: HTMLTextAreaElement) => {
+      setCaret(element.selectionStart === element.selectionEnd ? element.selectionStart : null);
+      if (
+        dismissed !== null &&
+        mentionQuery(element.value, element.selectionStart)?.start !== dismissed
+      ) {
+        setDismissed(null);
+      }
+    },
+    leave: () => setCaret(null),
+    /** Handles the key when the list is open; true when it took it. */
+    onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => {
+      if (!open || query === null || event.nativeEvent.isComposing) return false;
+      const option = options[current];
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        setActive(movedOption(current, event.key === "ArrowDown" ? 1 : -1, options.length));
+      } else if ((event.key === "Enter" || event.key === "Tab") && !event.shiftKey && option) {
+        pick(option);
+      } else if (event.key === "Escape") {
+        setDismissed(query.start);
+      } else {
+        return false;
+      }
+      event.preventDefault();
+      return true;
+    },
+    fieldProps:
+      members === undefined
+        ? {}
+        : ({
+            role: "combobox",
+            "aria-multiline": true,
+            "aria-autocomplete": "list",
+            "aria-expanded": open,
+            "aria-controls": open ? listId : undefined,
+            "aria-activedescendant": open ? optionId(current) : undefined,
+          } as const),
+  };
+}
+
+/** The members and `@everyone` the operator can mention, above the pill. */
+export function MentionList({
+  id,
+  options,
+  members,
+  active,
+  optionId,
+  onPick,
+}: {
+  id: string;
+  options: ReadonlyArray<MentionOption>;
+  members: ReadonlyArray<MentionCandidate>;
+  active: number;
+  optionId: (index: number) => string;
+  onPick: (option: MentionOption) => void;
+}) {
+  const { t } = useI18n();
+  const avatars = new Map(members.map((member) => [member.id, member.avatar]));
+  return (
+    <ul
+      id={id}
+      role="listbox"
+      aria-label={t("mention.label")}
+      className="absolute start-0 bottom-0 z-10 flex max-h-60 w-full max-w-72 flex-col overflow-y-auto overscroll-contain rounded-lg border border-border bg-surface p-1 shadow-lg"
+    >
+      {options.map((option, index) => {
+        const avatar = option._tag === "bot" ? avatars.get(option.id) : undefined;
+        return (
+          <li
+            key={option._tag === "bot" ? option.id : EVERYONE}
+            id={optionId(index)}
+            role="option"
+            aria-selected={index === active}
+            // The field keeps the focus, so the keyboard stays up on a touch screen.
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={() => onPick(option)}
+            className="flex min-h-8 cursor-default items-center gap-2 rounded-md px-2 text-sm aria-selected:bg-muted pointer-coarse:min-h-(--layout-touch-target)"
+          >
+            {option._tag === "bot" ? (
+              <>
+                {avatar && <AvatarShape avatar={avatar} size={20} />}
+                <span className="min-w-0 truncate">{option.name}</span>
+              </>
+            ) : (
+              <>
+                <UsersIcon aria-hidden className="size-5 shrink-0 text-muted-foreground" />
+                <span>@{EVERYONE}</span>
+                <span className="min-w-0 truncate text-xs text-muted-foreground">
+                  {t("mention.everyone")}
+                </span>
+              </>
+            )}
+          </li>
+        );
+      })}
+    </ul>
   );
 }

@@ -18,6 +18,8 @@ import type {
   Mentions,
   Notification,
   PairingCode,
+  Room,
+  RoomId,
   RosterItem,
   Routine,
   RoutineId,
@@ -196,7 +198,8 @@ export interface J3Client {
   ) => void;
   readonly detachFile: (target: EntryTarget, key: string) => void;
   /** Sends the draft once and clears it. */
-  readonly sendDraft: (target: EntryTarget) => Promise<Drafts.DraftSendResult>;
+  /** `mentions` only applies in a room; leaving it out mentions nobody. */
+  readonly sendDraft: (target: EntryTarget, mentions?: Mentions) => Promise<Drafts.DraftSendResult>;
   /**
    * Calls `listener` for each draft another window sent or changed under this
    * one; see `Drafts.changedElsewhere`. Returns the function that stops it.
@@ -265,6 +268,12 @@ export interface J3Client {
   readonly dismissBotSave: (botId: BotId) => void;
   readonly freshStart: (botId: BotId) => Promise<Actions.IntentResult>;
   readonly deleteBot: (botId: BotId, deleteFiles: boolean) => Promise<Actions.IntentResult>;
+  readonly createRoom: (draft: Details.RoomDraft) => Promise<Actions.IntentResult<Room>>;
+  readonly updateRoom: (
+    roomId: RoomId,
+    changes: Details.RoomChanges,
+  ) => Promise<Actions.IntentResult<Room>>;
+  readonly deleteRoom: (roomId: RoomId) => Promise<Actions.IntentResult>;
   readonly retryMessage: (entryId: EntryId) => Promise<Actions.IntentResult>;
   readonly retryNotice: (entryId: EntryId) => Promise<Actions.IntentResult>;
   readonly answerCard: (
@@ -444,7 +453,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     setDraftText: (target, text) => run.sync(services.drafts.setText(target, text)),
     attachFiles: (target, files) => fire(services.drafts.attach(target, files)),
     detachFile: (target, key) => fire(services.drafts.detach(target, key)),
-    sendDraft: (target) => run.promise(services.drafts.send(target)),
+    sendDraft: (target, mentions) => run.promise(services.drafts.send(target, mentions)),
     onDraftChangedElsewhere: (listener) => listen(services.drafts.changedElsewhere, listener),
     draftOffers: services.drafts.offers,
     draftsSwitching: services.drafts.switching,
@@ -491,6 +500,9 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     dismissBotSave: services.details.dismissBotSave,
     freshStart: (botId) => run.promise(services.details.freshStart(botId)),
     deleteBot: (botId, deleteFiles) => run.promise(services.details.deleteBot(botId, deleteFiles)),
+    createRoom: (draft) => run.promise(services.details.createRoom(draft)),
+    updateRoom: (roomId, changes) => run.promise(services.details.updateRoom(roomId, changes)),
+    deleteRoom: (roomId) => run.promise(services.details.deleteRoom(roomId)),
     retryMessage: (entryId) => run.promise(conversations.retryMessage(entryId)),
     retryNotice: (entryId) => run.promise(conversations.retryNotice(entryId)),
     answerCard: (entryId, answer) => run.promise(conversations.answerCard(entryId, answer)),
