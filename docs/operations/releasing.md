@@ -1,10 +1,22 @@
-# Releasing the desktop app
+# Releasing J3 Bots
 
-A release of the desktop app is a version tag. Pushing one builds the packages on Linux, macOS and Windows and uploads them to a draft GitHub release. A maintainer checks the draft and publishes it. Installed apps are offered a release only once it is published. An AppImage and a Windows install then download it in the background and offer "Restart to update" in Settings → This device; a deb and a Mac build say it is out and link to it ([Clients: desktop](../architecture/clients.md#desktop)).
+A release is a version tag, with one version for the server, the web client it serves and the desktop app. Pushing the tag builds the desktop packages on Linux, macOS and Windows and the server's archives on x64 and arm64 Linux, and uploads them to a draft GitHub release. A maintainer checks the draft and publishes it. Installed apps are offered a release, and `install.sh` finds it, only once it is published. An AppImage and a Windows install then download it in the background and offer "Restart to update" in Settings → This device; a deb and a Mac build say it is out and link to it ([Clients: desktop](../architecture/clients.md#desktop)).
 
 The builds are unsigned for now. Signing is future work: see [Signing](#signing) below.
 
 ## What a release contains
+
+The server:
+
+| File | What it is |
+| --- | --- |
+| `j3-bots-<version>-linux-x64.tar.gz`, `j3-bots-<version>-linux-arm64.tar.gz` | The server, its web client and the Node it runs on ([decision 0015](../decisions/0015-a-release-is-a-self-contained-archive.md)) |
+| `SHA256SUMS` | The SHA-256 of both archives and of `install.sh`, as `sha256sum` writes them |
+| `install.sh` | The installer: `curl -fsSL https://github.com/JPSAUD501/j3-bots/releases/latest/download/install.sh \| sh` |
+
+`install.sh` installs the latest release unless `--version` names one: it reads the repository's `releases/latest` page, which never names a pre-release or a draft, and refuses an answer that is not a plain `x.y.z` (**Read** in T3 Code's `scripts/install.sh` at `db51b67`, `:190-197`, which reads the same page). A pre-release is installed only by name: `sh -s -- --version 1.4.0-rc.1`. It downloads the archive for the machine's architecture, resuming a download an earlier run left unfinished, and installs it only if its digest is the one in `SHA256SUMS`. The [Raspberry Pi guide](running-on-a-pi.md#install) describes what it installs where.
+
+The desktop app:
 
 | Platform | Packages | Feed | Updates itself |
 | --- | --- | --- | --- |
@@ -25,21 +37,21 @@ The feed files are electron-updater's: the version, each file's name, size and S
    git push origin v1.4.0
    ```
 
-4. Watch the **Release** workflow in the repository's Actions tab. Its first job creates a draft release for the tag, saying the builds are unsigned, and marks it a pre-release when the version has a suffix. Then one job per platform builds the web client and the app and packages it with the tag's version. A last job checks that the release is still a draft and uploads every package and feed file to it. The platform jobs take about 10 to 20 minutes (**Assumed**: not yet run on GitHub's runners).
-5. Open the draft under Releases. Check that it has every file in the table above, then add what changed to its description.
+4. Watch the **Release** workflow in the repository's Actions tab. Its first job creates a draft release for the tag, saying the builds are unsigned, and marks it a pre-release when the version has a suffix. Then one job per desktop platform builds the web client and the app and packages it with the tag's version, and one job per Linux architecture builds the server's archive with the tag's version and runs the same smoke as CI on it: the archive with no Node on `PATH`, and `install.sh` from a local mirror. Another job writes `SHA256SUMS`. A last job checks that the release is still a draft and uploads every package, feed file, archive, `SHA256SUMS` and `install.sh` to it. The platform jobs take about 10 to 20 minutes (**Assumed**: not yet run on GitHub's runners).
+5. Open the draft under Releases. Check that it has every file in the tables above, then add what changed to its description.
 6. Publish it. Leave a pre-release marked as one. Apps on a release version read GitHub's latest release, which skips pre-releases, and look in it for `latest-linux.yml`, `latest-mac.yml` or `latest.yml`; a pre-release published as a release has them too, so every installed app would take it as an update (**Read** in electron-updater 6.8.9, `providers/GitHubProvider.js`, `getLatestTagName`, and `AppUpdater.js`, which turns pre-releases on only for an app that runs one). The workflow refuses to upload to a draft whose pre-release mark disagrees with its tag, as one drafted by hand before the tag was pushed can.
 
 Installed apps check at start and every six hours, so most see a release within six hours of its publication. Until the first release is published, their check fails and Settings says it couldn't get the latest version.
 
 ## If something goes wrong
 
-- **A package job failed.** Fix the cause on `main`, delete the draft release and the tag (`git push --delete origin v1.4.0`, then `git tag -d v1.4.0`), and tag again. Never move a published tag: installed apps may already have the version it named.
+- **A package or server job failed.** Fix the cause on `main`, delete the draft release and the tag (`git push --delete origin v1.4.0`, then `git tag -d v1.4.0`), and tag again. Never move a published tag: installed apps may already have the version it named.
 - **A published release is broken.** Publish a newer version that fixes it. electron-updater does not downgrade, so withdrawing the release only stops apps that have not downloaded it yet.
 - **The tag is not a version.** The workflow's first job refuses any tag that is not `v` and a semver version (no leading zeros, no empty part in the suffix), before anything is built.
 
 ## What the workflow may do
 
-`.github/workflows/release.yml` runs only when a tag matching `v*` is pushed: never on a pull request, so code from a fork never runs in it. It is the only workflow with `contents: write`, and only two of its jobs have it, neither of which checks out or runs code from the repository: the one that creates the draft, and the one that uploads to it, which takes the files the other jobs built as artifacts and refuses to upload to a release that is no longer a draft. The jobs that install dependencies and build have `contents: read`, as every other workflow does. A job added later, such as one that builds the server's archives, hands its files over as an artifact named `release-<something>` and is added to the upload job's `needs`, which otherwise starts without waiting for it and leaves its files out; the upload job refuses two files with the same name. The workflow uses the run's own `GITHUB_TOKEN` and no other secret. Its actions are pinned by commit, as in every workflow.
+`.github/workflows/release.yml` runs only when a tag matching `v*` is pushed: never on a pull request, so code from a fork never runs in it. It is the only workflow with `contents: write`, and only two of its jobs have it, neither of which checks out or runs code from the repository: the one that creates the draft, and the one that uploads to it, which takes the files the other jobs built as artifacts and refuses to upload to a release that is no longer a draft. The jobs that install dependencies and build have `contents: read`, as every other workflow does. Each job that builds hands its files over as an artifact named `release-<something>` and is in the upload job's `needs`, which otherwise starts without waiting for it and leaves its files out: the desktop jobs, the server jobs, and the one that writes `SHA256SUMS`, which reads the archives and runs none of them. A job added later is added there too. The upload job refuses two files with the same name. The workflow uses the run's own `GITHUB_TOKEN` and no other secret. Its actions are pinned by commit, as in every workflow.
 
 ## Signing
 
@@ -50,6 +62,27 @@ Nothing is signed yet, and the workflow holds no signing secret.
 - **Linux** packages are not signed by convention; the feed's checksums are what electron-updater checks.
 
 Adding signing means secrets in the release workflow, used only by the jobs that build, and `publisherName` in the Windows build so that electron-updater verifies an update's signature before installing it.
+
+## Trying an install locally
+
+`J3_RELEASE_BASE_URL` points `install.sh` at a mirror of the release page that serves `latest` and `download/v<version>/<file>`:
+
+```sh
+pnpm release
+version=0.0.0   # what the archive's name says
+mkdir -p mirror/download/v$version
+cp dist/release/j3-bots-$version-linux-*.tar.gz scripts/install.sh mirror/download/v$version/
+(cd mirror/download/v$version && sha256sum -- *.tar.gz install.sh > SHA256SUMS)
+printf '{"tag_name":"v%s"}' "$version" > mirror/latest
+```
+
+Serve `mirror/` from a port with any static HTTP server, then, as the user to install for:
+
+```sh
+curl -fsSL http://127.0.0.1:<port>/download/v$version/install.sh | J3_RELEASE_BASE_URL=http://127.0.0.1:<port> sh
+```
+
+`j3-bots uninstall --delete-data` removes it again, data included. CI does the same without the service, in the server's release smoke (`apps/server/smoke/install.test.ts`).
 
 ## Building packages locally
 

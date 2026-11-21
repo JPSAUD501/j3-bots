@@ -33,11 +33,13 @@ Source maps are left out. The launcher resolves its own location, so the folder 
 
 **`THIRD_PARTY_NOTICES` is made from what the bundles hold.** Both builds record, through a plugin (`scripts/bundle-inputs.ts`), every module in their output and every file an asset was emitted from, after tree shaking. Each input is attributed to the package that holds it; J3 Bots' own packages are left out, and for every other one the notices give its name, version, declared license and the license and notice files it ships. A package that declares no license and ships no license file fails the build. Three inputs no bundler records are named by hand: Node itself, whose license comes from its tarball; Tailwind CSS, whose base styles its compiler writes into the web client's stylesheet without making them a module; and Rolldown, whose runtime helpers it writes into both bundles. Rolldown ships inside `@voidzero-dev/vite-plus-core`, which is listed with its license file, Rolldown's notice among those it carries.
 
+**Installed, a release lives outside the data directory.** `install.sh`, a release asset, unpacks a release into `~/.local/share/j3-bots/versions/<version>/` (`$XDG_DATA_HOME/j3-bots`, or `J3_INSTALL_DIR`) and writes the `j3-bots` command, `~/.local/bin/j3-bots` (or `J3_BIN_DIR`): a three-line `sh` script whose last line runs one version, `exec '<install>/versions/<version>/bin/j3-bots' "$@"`. Where it wrote that command is recorded, one line, in `<install>/launcher`. The data directory, `~/.j3-bots`, holds only what the server keeps, so a version can be replaced, or every version removed (`j3-bots uninstall`), without touching it, and deleting the data never deletes the code that would restore it. A release finds its install from its own path: one whose folder is in a `versions/` folder was installed by `install.sh`.
+
 **`j3-bots engine fetch`** installs the engine the release is pinned to, as the server's first start would, without starting it, so a new release's engine can be in place before its server starts.
 
 ## Consequences
 
-- A host needs no Node, pnpm or Git: unpacking needs `tar`, and running needs `sh`. Installing (P2) adds a downloader and a checksum tool.
+- A host needs no Node, pnpm or Git: unpacking needs `tar`, and running needs `sh`. Installing adds `curl` or `wget` and `sha256sum` or `shasum`.
 - Linux with systemd only, as the service and the engine's provider launch already are. The engine also ships `darwin-arm64`, so macOS stays possible with a launchd unit.
 - Each archive is about 50 MB, most of it Node. The same bundles go into both archives; only Node differs.
 - A Node upgrade is one change to `package.json`, and CI runs every check and the archive's smoke on it.

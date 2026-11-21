@@ -2,18 +2,19 @@
 name: Release
 
 # Builds a release when a version tag is pushed: a draft GitHub release for
-# the tag, the desktop app's packages with electron-updater's feed files, and
-# then their upload to the draft. A maintainer reads the draft and publishes
-# it: installed apps are offered only a published release. See
-# docs/operations/releasing-the-desktop-app.md.
+# the tag; the desktop app's packages with electron-updater's feed files; the
+# server's archives for linux-x64 and linux-arm64, with SHA256SUMS and
+# scripts/install.sh; and then their upload to the draft. A maintainer reads
+# the draft and publishes it: installed apps are offered, and install.sh
+# finds, only a published release. See docs/operations/releasing.md.
 #
 # Only a pushed `v*` tag runs it, never a pull request, so no code from a fork
 # runs here. It uses the run's own GITHUB_TOKEN and no other secret: the
 # builds are unsigned. Only the two jobs that run no code from the repository
 # may write: `draft` creates the release and `publish` uploads to it. The jobs
 # that build read, and hand what they built to `publish` as `release-*`
-# artifacts; a job added later hands its files over the same way and is
-# added to `publish`'s `needs`, or its files are left out.
+# artifacts; each such job is in `publish`'s `needs`, which a job added later
+# joins too, or its files are left out.
 on:
   push:
     tags: ["v*"]
@@ -73,7 +74,7 @@ jobs:
           fi
           gh release create "$GITHUB_REF_NAME" --draft "${prerelease[@]}" --verify-tag \
             --title "J3 Bots $VERSION" \
-            --notes "Unsigned builds. macOS and Windows warn before opening an unsigned app. A Mac build and the deb say when a newer version is out; the AppImage and the Windows install update themselves. Linux packages need no signature."
+            --notes "Unsigned builds. macOS and Windows warn before opening an unsigned app. A Mac build and the deb say when a newer version is out; the AppImage and the Windows install update themselves. Linux packages need no signature. The server installs on x64 and arm64 Linux with systemd: \`curl -fsSL https://github.com/$GH_REPO/releases/download/$GITHUB_REF_NAME/install.sh | sh -s -- --version $VERSION\`. SHA256SUMS holds the digest of each server archive and of install.sh."
 
   desktop:
     name: Desktop (${{ matrix.name }})
@@ -145,9 +146,115 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  server:
+    name: Server (${{ matrix.platform }})
+    needs: draft
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            runner: ubuntu-24.04
+          - platform: linux-arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
+        with:
+          node-version-file: package.json
+          run-install: true
+
+      # The tag names the version the archive carries, as it does the desktop
+      # packages': the server reads its version from its package.json, which
+      # only this run's copy changes.
+      - name: Version from the tag
+        working-directory: apps/server
+        env:
+          VERSION: ${{ needs.draft.outputs.version }}
+        run: npm pkg set version="$VERSION"
+
+      # The web client and the server bundle, with the pinned Node for this
+      # runner's platform, checked against its checksum in package.json.
+      - name: Build
+        run: vp run release
+
+      # What CI runs on every pull request, on the archive that is published:
+      # the archive with no Node on PATH, and install.sh from a local mirror.
+      - name: Smoke
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          archive=$(ls "$GITHUB_WORKSPACE"/dist/release/j3-bots-*-"$PLATFORM".tar.gz)
+          J3_RELEASE_ARCHIVE="$archive" vp run --filter @j3-bots/server smoke:release
+
+      - name: Hand the archive to the publish job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-server-${{ matrix.platform }}
+          path: dist/release/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  # SHA256SUMS of both archives and install.sh, which install.sh checks a
+  # download against. It reads files and runs none of them.
+  checksums:
+    name: Checksums and install script
+    needs: server
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout the install script
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/install.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Download the archives
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-server-linux-*
+          path: server
+          merge-multiple: true
+
+      - name: Write SHA256SUMS
+        run: |
+          mkdir checksums
+          cp scripts/install.sh checksums/
+          (cd server && sha256sum -- *.tar.gz) > checksums/SHA256SUMS
+          (cd checksums && sha256sum -- install.sh) >> checksums/SHA256SUMS
+          cat checksums/SHA256SUMS
+
+      - name: Hand them to the publish job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-server-checksums
+          path: |
+            checksums/SHA256SUMS
+            checksums/install.sh
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
     name: Upload to the draft
-    needs: [draft, desktop]
+    needs: [draft, desktop, server, checksums]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
