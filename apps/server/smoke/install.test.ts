@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- the mirror is a node:http server that can cut a download short, and its SHA256SUMS is made with node:crypto.
+// @effect-diagnostics nodeBuiltinImport:off -- the mirror is a node:http server, and its SHA256SUMS is made with node:crypto.
 import * as NodeCrypto from "node:crypto";
 import * as NodeHttp from "node:http";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -13,61 +13,29 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import { runToEnd, searchPathWithoutNode } from "./host.ts";
 
 // scripts/install.sh, run as a stranger runs it, against a static mirror of a
-// GitHub release that holds the archive `pnpm release` built: the latest
-// release is found, a cut download resumes, the archive is checked against
-// SHA256SUMS, and `j3-bots uninstall --delete-data` takes everything away
-// again. The service is left out (`--no-service`): a CI runner has no systemd
-// user manager to run it in. Needs the archive in J3_RELEASE_ARCHIVE.
+// GitHub release that holds the archive `pnpm release` built: the archive is
+// checked against SHA256SUMS and installed, and `j3-bots uninstall
+// --delete-data` takes everything away again. The service is left out
+// (`--no-service`): a CI runner has no systemd user manager to run it in.
+// Needs the archive in J3_RELEASE_ARCHIVE.
 
 const INSTALL_SCRIPT = `${import.meta.dirname}/../../../scripts/install.sh`;
 
-/** One request the mirror answered. */
-interface Served {
-  readonly path: string;
-  readonly range: string | undefined;
-}
-
-/**
- * A mirror of a release page, `J3_RELEASE_BASE_URL`, serving `files` by path:
- * ranges as GitHub's downloads do, and the first request for `cut` cut off
- * halfway, as a dropped connection would.
- */
-const mirror = (files: ReadonlyMap<string, Uint8Array>, cut?: string) =>
+/** A mirror of a release page, `J3_RELEASE_BASE_URL`, serving `files` by path and noting each path asked for. */
+const mirror = (files: ReadonlyMap<string, Uint8Array>) =>
   Effect.acquireRelease(
-    Effect.callback<{ readonly url: string; readonly served: Array<Served>; close: () => void }>(
+    Effect.callback<{ readonly url: string; readonly served: Array<string>; close: () => void }>(
       (resume) => {
-        const served: Array<Served> = [];
-        let cutting = cut;
+        const served: Array<string> = [];
         const server = NodeHttp.createServer((request, response) => {
           const path = request.url ?? "/";
-          served.push({ path, range: request.headers.range });
+          served.push(path);
           const body = files.get(path);
           if (body === undefined) {
             response.writeHead(404).end();
             return;
           }
-          const from = /^bytes=(\d+)-$/.exec(request.headers.range ?? "")?.[1];
-          if (from !== undefined) {
-            const start = Number(from);
-            if (start >= body.byteLength) {
-              response.writeHead(416, { "content-range": `bytes */${body.byteLength}` }).end();
-              return;
-            }
-            response.writeHead(206, {
-              "content-length": body.byteLength - start,
-              "content-range": `bytes ${start}-${body.byteLength - 1}/${body.byteLength}`,
-            });
-            response.end(body.subarray(start));
-            return;
-          }
-          response.writeHead(200, { "content-length": body.byteLength, "accept-ranges": "bytes" });
-          if (path === cutting) {
-            cutting = undefined;
-            response.write(body.subarray(0, Math.floor(body.byteLength / 2)), () =>
-              request.socket.destroy(),
-            );
-            return;
-          }
+          response.writeHead(200, { "content-length": body.byteLength });
           response.end(body);
         });
         server.listen(0, "127.0.0.1", () => {
@@ -93,29 +61,19 @@ const strangersHost = (replaced: Readonly<Record<string, string>> = {}) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const archive = yield* Config.String("J3_RELEASE_ARCHIVE");
-    const name = path.basename(archive);
-    const parts = /^j3-bots-(.+)-linux-(x64|arm64)\.tar\.gz$/.exec(name);
-    if (parts?.[1] === undefined) return yield* Effect.die(`${archive} is not a release archive.`);
-    const version = parts[1];
     const scratch = yield* fs.realPath(
       yield* fs.makeTempDirectoryScoped({ prefix: "j3-install-" }),
     );
     const home = path.join(scratch, "home");
     yield* fs.makeDirectory(home);
-    const env = {
-      PATH: yield* searchPathWithoutNode(path.join(scratch, "commands"), replaced),
-      HOME: home,
-      LANG: "C.UTF-8",
-    };
     return {
       fs,
       path,
-      version,
-      name,
-      bytes: yield* fs.readFile(archive),
-      home,
-      env,
+      env: {
+        PATH: yield* searchPathWithoutNode(path.join(scratch, "commands"), replaced),
+        HOME: home,
+        LANG: "C.UTF-8",
+      },
       /** The folders install.sh puts things in by default. */
       install: path.join(home, ".local", "share", "j3-bots"),
       launcher: path.join(home, ".local", "bin", "j3-bots"),
@@ -123,51 +81,66 @@ const strangersHost = (replaced: Readonly<Record<string, string>> = {}) =>
     };
   });
 
-/** A release page with one release, `version`, the latest. */
-const releasePage = (version: string, archive: string, bytes: Uint8Array, digest = sha256(bytes)) =>
+/** The archive `pnpm release` built, and the version its name says. */
+const releaseArchive = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const archive = yield* Config.String("J3_RELEASE_ARCHIVE");
+  const name = path.basename(archive);
+  const version = /^j3-bots-(.+)-linux-(x64|arm64)\.tar\.gz$/.exec(name)?.[1];
+  if (version === undefined) return yield* Effect.die(`${archive} is not a release archive.`);
+  return { name, version, bytes: yield* fs.readFile(archive) };
+});
+
+const encoded = (text: string) => new TextEncoder().encode(text);
+
+/** One release on a release page, `version`, with its archive and its SHA256SUMS. */
+const releaseFiles = (
+  version: string,
+  archive: string,
+  bytes: Uint8Array,
+  digest = sha256(bytes),
+) =>
   new Map<string, Uint8Array>([
-    ["/latest", new TextEncoder().encode(`{"id":1,"tag_name":"v${version}","update_url":"/"}`)],
     [`/download/v${version}/${archive}`, bytes],
-    [`/download/v${version}/SHA256SUMS`, new TextEncoder().encode(`${digest}  ${archive}\n`)],
+    [`/download/v${version}/SHA256SUMS`, encoded(`${digest}  ${archive}\n`)],
   ]);
+
+/** The answer of a release page's `latest`, asked for JSON, when `tag` is the latest release. */
+const latestPage = (tag: string) => encoded(`{"id":1,"tag_name":"${tag}","update_url":"/"}`);
 
 it.layer(NodeServices.layer, { excludeTestServices: true })("install.sh", (it) => {
   it.effect(
-    "installs the latest release with one command, resuming a cut download, and uninstall removes it all",
+    "installs a release with one command, and uninstall removes it all",
     () =>
       Effect.gen(function* () {
         const host = yield* strangersHost();
-        const { fs, path, version } = host;
-        const files = releasePage(version, host.name, host.bytes);
+        const { fs, path } = host;
+        const { name, version, bytes } = yield* releaseArchive;
+        const files = releaseFiles(version, name, bytes);
         files.set(
           `/download/v${version}/install.sh`,
           yield* fs.readFile(path.resolve(INSTALL_SCRIPT)),
         );
-        const archivePath = `/download/v${version}/${host.name}`;
-        const site = yield* mirror(files, archivePath);
+        const site = yield* mirror(files);
         const env = { ...host.env, J3_RELEASE_BASE_URL: site.url };
         // Data a stranger already has, which only --delete-data deletes.
         yield* fs.makeDirectory(path.join(host.data, "bots"), { recursive: true, mode: 0o700 });
 
-        const oneLiner = ChildProcess.make(
-          "sh",
-          [
-            "-c",
-            'curl -fsSL "$0" | sh -s -- --no-service',
-            `${site.url}/download/v${version}/install.sh`,
-          ],
-          { env, extendEnv: false },
+        // By name, as a pre-release is installed: what a tag's own release notes say to run.
+        const installed = yield* runToEnd(
+          ChildProcess.make(
+            "sh",
+            [
+              "-c",
+              'curl -fsSL "$0" | sh -s -- --version "$1" --no-service',
+              `${site.url}/download/v${version}/install.sh`,
+              version,
+            ],
+            { env, extendEnv: false },
+          ),
         );
-        const cut = yield* runToEnd(oneLiner);
-        assert.notStrictEqual(cut.exitCode, 0, cut.output);
-        assert.include(cut.output, "Run this again: it resumes where it stopped.");
-        assert.isFalse(yield* fs.exists(host.launcher));
-
-        const installed = yield* runToEnd(oneLiner);
         assert.strictEqual(installed.exitCode, 0, installed.output);
-        const resumed = site.served.filter((request) => request.path === archivePath);
-        assert.strictEqual(resumed.length, 2);
-        assert.match(resumed[1]?.range ?? "", /^bytes=[1-9]\d*-$/);
         // doctor ran on the release's Node, and the next steps were said.
         assert.include(installed.output, "Node 26.", installed.output);
         assert.include(installed.output, `J3 Bots ${version} is installed: ${host.launcher}`);
@@ -195,25 +168,48 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("install.sh", (it) =
     Duration.toMillis(Duration.minutes(3)),
   );
 
+  it.effect("installs the release the latest page names, and never a pre-release from it", () =>
+    Effect.gen(function* () {
+      const host = yield* strangersHost();
+      const run = (files: ReadonlyMap<string, Uint8Array>) =>
+        Effect.gen(function* () {
+          const site = yield* mirror(files);
+          const result = yield* runToEnd(
+            ChildProcess.make("sh", [host.path.resolve(INSTALL_SCRIPT), "--no-service"], {
+              env: { ...host.env, J3_RELEASE_BASE_URL: site.url },
+              extendEnv: false,
+            }),
+          );
+          return { ...result, served: [...site.served] };
+        });
+
+      const stable = yield* run(new Map([["/latest", latestPage("v9.9.9")]]));
+      assert.deepStrictEqual(stable.served, ["/latest", "/download/v9.9.9/SHA256SUMS"]);
+
+      const pre = yield* run(new Map([["/latest", latestPage("v9.9.9-rc.1")]]));
+      assert.notStrictEqual(pre.exitCode, 0, pre.output);
+      assert.include(pre.output, "is not a stable version");
+      assert.deepStrictEqual(pre.served, ["/latest"]);
+      assert.isFalse(yield* host.fs.exists(host.install));
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("refuses an archive that does not match SHA256SUMS, and installs nothing", () =>
     Effect.gen(function* () {
       const host = yield* strangersHost();
-      const { fs, path, version } = host;
-      const site = yield* mirror(
-        releasePage(version, host.name, host.bytes, sha256(new TextEncoder().encode("other"))),
-      );
+      const { name, version, bytes } = yield* releaseArchive;
+      const site = yield* mirror(releaseFiles(version, name, bytes, sha256(encoded("other"))));
       const refused = yield* runToEnd(
         ChildProcess.make(
           "sh",
-          [path.resolve(INSTALL_SCRIPT), "--version", `v${version}`, "--no-service"],
+          [host.path.resolve(INSTALL_SCRIPT), "--version", `v${version}`, "--no-service"],
           { env: { ...host.env, J3_RELEASE_BASE_URL: site.url }, extendEnv: false },
         ),
       );
       assert.notStrictEqual(refused.exitCode, 0, refused.output);
       assert.include(refused.output, "does not match its checksum in SHA256SUMS");
-      // No version, no download left over, no command.
-      assert.deepStrictEqual(yield* fs.readDirectory(path.join(host.install, "versions")), []);
-      assert.isFalse(yield* fs.exists(host.launcher));
+      assert.isFalse(yield* host.fs.exists(host.install));
+      assert.isFalse(yield* host.fs.exists(host.launcher));
     }).pipe(Effect.scoped),
   );
 
@@ -232,7 +228,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("install.sh", (it) =
         ];
         for (const { replaced, args, says } of cases) {
           const host = yield* strangersHost(replaced);
-          const site = yield* mirror(releasePage(host.version, host.name, host.bytes));
+          const site = yield* mirror(new Map([["/latest", latestPage("v9.9.9")]]));
           const refused = yield* runToEnd(
             ChildProcess.make("sh", [host.path.resolve(INSTALL_SCRIPT), ...args], {
               env: { ...host.env, J3_RELEASE_BASE_URL: site.url },

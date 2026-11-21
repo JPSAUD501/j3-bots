@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as ServerConfig from "../config.ts";
 import { HOME_ENTRIES } from "../home/entries.ts";
 import type { Installation } from "../installation.ts";
-import { isWithin } from "../paths.ts";
 import { socketOwner } from "../service/owner.ts";
 import * as Unit from "../service/unit.ts";
 import { Systemd } from "../system/Systemd.ts";
 import {
+  installedVersions,
   installFolder,
   isOwnLauncher,
   LAUNCHER_RECORD,
@@ -21,12 +21,14 @@ import {
 } from "./layout.ts";
 
 // `j3-bots uninstall`: undoes `scripts/install.sh`. It stops and removes the
-// service, then removes the j3-bots command and every version, and with
-// `deleteData` the data directory. Refusals come first and change nothing.
+// service, then removes the j3-bots command and what install.sh put in the
+// install folder, and with `deleteData` J3 Bots' entries in the data
+// directory. It removes nothing it did not write. Refusals come first and
+// change nothing.
 
 /** Why nothing was removed. */
 class UninstallRefused extends Schema.TaggedError<UninstallRefused>()("UninstallRefused", {
-  reason: Schema.Literals(["checkout", "unpacked", "no-systemd", "server-outside", "user-home"]),
+  reason: Schema.Literals(["checkout", "unpacked", "no-systemd", "server-outside"]),
   /** The folder the refusal is about: the release, the data directory. */
   subject: Schema.String,
 }) {
@@ -35,20 +37,18 @@ class UninstallRefused extends Schema.TaggedError<UninstallRefused>()("Uninstall
       case "checkout":
         return "This j3-bots runs from a checkout, which install.sh did not install, so there is nothing for it to remove. `j3-bots service uninstall` removes the service; the checkout and the data directory are yours to delete.";
       case "unpacked":
-        return `This release was unpacked in ${this.subject} by hand, not installed by install.sh, so there is nothing for it to remove. \`j3-bots service uninstall\` removes the service; the release and the data directory are yours to delete.`;
+        return `This release in ${this.subject} was not installed by install.sh, so there is nothing for it to remove. \`j3-bots service uninstall\` removes the service; the release and the data directory are yours to delete.`;
       case "no-systemd":
         return "The service is installed, but there is no systemd user manager to stop it with. Log in to a systemd session as this user (not with sudo), then run this again. Nothing was removed.";
       case "server-outside":
         return `A J3 Bots server outside the service is running for ${this.subject}. Stop it, then run this again. Nothing was removed.`;
-      case "user-home":
-        return `The data directory is ${this.subject}, which is or holds your home folder, so it is not deleted. Nothing was removed.`;
     }
   }
 }
 
 /** What an uninstall would remove, found before anything is. */
 export interface UninstallPlan {
-  /** The install folder: `versions/` and the record of the command. */
+  /** The install folder: what install.sh put in `versions/`, and the record of the command. */
   readonly install: string;
   /** The service's unit, when it is installed. */
   readonly unitFile: Option.Option<string>;
@@ -93,11 +93,44 @@ interface Uninstalled {
   readonly launcher: Option.Option<{ readonly path: string; readonly removed: boolean }>;
   /** Whether the install folder is gone: it is kept when it holds something else. */
   readonly installRemoved: boolean;
-  /** Whether the data directory was deleted, as asked; false also when there was none. */
-  readonly dataDeleted: boolean;
+  /** What became of the data directory, when its deletion was asked for. */
+  readonly data: Option.Option<DataDeletion>;
 }
 
-/** Removes what `plan` found, and with `deleteData` the data directory. */
+/**
+ * The data directory after J3 Bots' entries in it were deleted: `deleted`
+ * with them; `kept`, holding other files; `link-kept`, a link whose folder
+ * had them, both kept; `absent`, there was none.
+ */
+export type DataDeletion = "deleted" | "kept" | "link-kept" | "absent";
+
+/** Removes `folder` if it is a folder that holds nothing, and says whether it did. */
+const removeIfEmpty = Effect.fnUntraced(function* (folder: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const left = yield* fs.readDirectory(folder).pipe(Effect.option);
+  if (Option.isNone(left) || left.value.length > 0) return false;
+  // Empty, as checked: `recursive` is what lets `rm` take a folder at all.
+  yield* fs.remove(folder, { recursive: true });
+  return true;
+});
+
+/** Deletes J3 Bots' entries in the data directory `home`, and `home` if that empties it. */
+const deleteOwnData = Effect.fnUntraced(function* (
+  home: string,
+): Effect.fn.Return<DataDeletion, PlatformError.PlatformError, FileSystem.FileSystem | Path.Path> {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const info = yield* fs.lstat(home).pipe(Effect.option);
+  if (Option.isNone(info)) return "absent";
+  for (const entry of Object.values(HOME_ENTRIES)) {
+    // A link among them goes, not what it points to.
+    yield* fs.remove(path.join(home, entry), { recursive: true, force: true });
+  }
+  if (info.value.type === "SymbolicLink") return "link-kept";
+  return (yield* removeIfEmpty(home)) ? "deleted" : "kept";
+});
+
+/** Removes what `plan` found, and with `deleteData` J3 Bots' data. */
 export const uninstall = Effect.fn("install.uninstall")(function* (
   found: UninstallPlan,
   options: { readonly deleteData: boolean },
@@ -107,10 +140,6 @@ export const uninstall = Effect.fn("install.uninstall")(function* (
   const systemd = yield* Systemd;
 
   if (options.deleteData) {
-    const userHome = path.resolve(yield* Config.NonEmptyString("HOME"));
-    if (isWithin(path.resolve(found.home), userHome)) {
-      return yield* new UninstallRefused({ reason: "user-home", subject: found.home });
-    }
     // The service's own server stops with it; another one would keep writing.
     const { owner } = yield* socketOwner(path.join(found.home, HOME_ENTRIES.adminSocket));
     if (owner === "other" || owner === "unknown") {
@@ -132,19 +161,22 @@ export const uninstall = Effect.fn("install.uninstall")(function* (
     launcher = Option.some({ path: recorded.value, removed });
   }
 
-  yield* fs.remove(path.join(found.install, VERSIONS), { recursive: true, force: true });
+  for (const version of yield* installedVersions(found.install)) {
+    yield* fs.remove(version, { recursive: true });
+  }
+  yield* removeIfEmpty(path.join(found.install, VERSIONS));
+  // Last: without it, the folder is no longer an install.
   yield* fs.remove(path.join(found.install, LAUNCHER_RECORD), { force: true });
-  const left = yield* fs.readDirectory(found.install).pipe(Effect.orElseSucceed(() => []));
-  // Empty, as checked: `recursive` is what lets `rm` take a folder at all.
-  if (left.length === 0) yield* fs.remove(found.install, { recursive: true });
+  const installRemoved = yield* removeIfEmpty(found.install);
 
-  const dataDeleted = options.deleteData && (yield* fs.exists(found.home));
-  if (dataDeleted) yield* fs.remove(found.home, { recursive: true });
+  const data = options.deleteData
+    ? Option.some(yield* deleteOwnData(found.home))
+    : Option.none<DataDeletion>();
 
   return {
     serviceRemoved: Option.isSome(found.unitFile),
     launcher,
-    installRemoved: left.length === 0,
-    dataDeleted,
+    installRemoved,
+    data,
   } satisfies Uninstalled;
 });

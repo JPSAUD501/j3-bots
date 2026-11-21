@@ -29,11 +29,21 @@ const outsider = Schema.decodeSync(Schema.toCodecJson(AdminStatus))({
   webClient: "served",
 });
 
+/** The text install.sh writes for the command that runs the release at `release`. */
+const ownLauncher = (release: string) =>
+  `#!/bin/sh\n# J3 Bots, installed by install.sh. \`j3-bots uninstall\` removes it.\nexec '${release}/bin/j3-bots' "$@"\n`;
+
 interface Machine {
   /** Where the release that runs is, under the install folder; `versions/0.1.0` by default. */
   readonly release?: ReadonlyArray<string>;
+  /** Whether install.sh recorded its command in the install folder; it did by default. */
+  readonly recorded?: boolean;
   /** The text of the command the install recorded; install.sh's own by default. */
   readonly launcher?: (install: string) => string;
+  /** Files of the user's, by path under the scratch folder; a path ending in `/` is a folder. */
+  readonly userFiles?: ReadonlyArray<string>;
+  /** Whether the data directory `data` is a link to the folder `linked-data`. */
+  readonly dataIsLink?: boolean;
   /** Whether the service is installed, and the data directory its unit names, under the scratch folder. */
   readonly unitHome: Option.Option<string>;
   /** `J3_HOME` in this shell, relative to the scratch folder. */
@@ -59,15 +69,35 @@ const uninstallOn = (machine: Machine, options: { readonly deleteData: boolean }
       yield* fs.makeDirectory(path.join(version, "bin"), { recursive: true });
       yield* fs.writeFileString(path.join(version, "release.json"), "{}");
     }
+    // What an interrupted install.sh leaves: a staging folder.
+    yield* fs.makeDirectory(path.join(install, "versions", ".staging-a1B2c3", "j3-bots"), {
+      recursive: true,
+    });
     yield* fs.makeDirectory(at("bin"));
     yield* fs.writeFileString(
       launcher,
-      machine.launcher?.(install) ??
-        `#!/bin/sh\n# J3 Bots, installed by install.sh.\nexec '${install}/versions/0.1.0/bin/j3-bots' "$@"\n`,
+      machine.launcher?.(install) ?? ownLauncher(path.join(install, "versions", "0.1.0")),
     );
-    yield* fs.writeFileString(path.join(install, "launcher"), `${launcher}\n`);
-    for (const home of [at("data"), at("other-data")]) {
+    if (machine.recorded ?? true) {
+      yield* fs.writeFileString(path.join(install, "launcher"), `${launcher}\n`);
+    }
+    const dataHomes = [
+      machine.dataIsLink === true ? at("linked-data") : at("data"),
+      at("other-data"),
+    ];
+    for (const home of dataHomes) {
       yield* fs.makeDirectory(path.join(home, "bots"), { recursive: true });
+      yield* fs.writeFileString(path.join(home, "j3.sqlite"), "");
+      yield* fs.writeFileString(path.join(home, "j3.sqlite-wal"), "");
+    }
+    if (machine.dataIsLink === true) yield* fs.symlink(at("linked-data"), at("data"));
+    for (const file of machine.userFiles ?? []) {
+      if (file.endsWith("/")) {
+        yield* fs.makeDirectory(at(file), { recursive: true });
+      } else {
+        yield* fs.makeDirectory(path.dirname(at(file)), { recursive: true });
+        yield* fs.writeFileString(at(file), "mine");
+      }
     }
     if (Option.isSome(machine.unitHome)) {
       yield* fs.makeDirectory(path.dirname(unitFile), { recursive: true });
@@ -144,6 +174,8 @@ const uninstallOn = (machine: Machine, options: { readonly deleteData: boolean }
       Effect.exit,
     );
     const exists = (...parts: ReadonlyArray<string>) => fs.exists(at(...parts));
+    const userFiles: Record<string, boolean> = {};
+    for (const file of machine.userFiles ?? []) userFiles[file] = yield* exists(file);
     return {
       exit,
       calls,
@@ -154,8 +186,21 @@ const uninstallOn = (machine: Machine, options: { readonly deleteData: boolean }
         data: yield* exists("data"),
         otherData: yield* exists("other-data"),
       },
+      /** Whether each of the user's files is still there. */
+      userFiles,
+      /** What is left in the install folder and in the data directory, by name. */
+      inInstall: yield* listed(fs, install),
+      inVersions: yield* listed(fs, path.join(install, "versions")),
+      inData: yield* listed(fs, at("data")),
     };
   }).pipe(Effect.scoped);
+
+/** The names in `folder`, sorted; none when it is gone. */
+const listed = (fs: FileSystem.FileSystem, folder: string) =>
+  fs.readDirectory(folder).pipe(
+    Effect.map((names) => names.toSorted()),
+    Effect.orElseSucceed((): ReadonlyArray<string> => []),
+  );
 
 const failure = (exit: Exit.Exit<unknown, unknown>) =>
   Exit.isFailure(exit) ? Option.getOrUndefined(Exit.findErrorOption(exit)) : undefined;
@@ -163,14 +208,14 @@ const failure = (exit: Exit.Exit<unknown, unknown>) =>
 it.layer(NodeServices.layer)("uninstall", (it) => {
   it.effect("removes the service, the command and every version, and keeps the data", () =>
     Effect.gen(function* () {
-      const { exit, calls, left } = yield* uninstallOn(
+      const { exit, calls, left, inData } = yield* uninstallOn(
         { unitHome: Option.some("data") },
         { deleteData: false },
       );
       assert.isTrue(Exit.isSuccess(exit), String(exit));
       if (Exit.isSuccess(exit)) {
         assert.isTrue(exit.value.serviceRemoved);
-        assert.isFalse(exit.value.dataDeleted);
+        assert.isTrue(Option.isNone(exit.value.data));
       }
       assert.deepStrictEqual(calls, ["disable and stop j3-bots.service", "reload"]);
       assert.deepStrictEqual(left, {
@@ -180,6 +225,7 @@ it.layer(NodeServices.layer)("uninstall", (it) => {
         data: true,
         otherData: true,
       });
+      assert.deepStrictEqual(inData, ["bots", "j3.sqlite", "j3.sqlite-wal"]);
     }),
   );
 
@@ -190,6 +236,7 @@ it.layer(NodeServices.layer)("uninstall", (it) => {
         { deleteData: true },
       );
       assert.isTrue(Exit.isSuccess(exit), String(exit));
+      if (Exit.isSuccess(exit)) assert.deepStrictEqual(exit.value.data, Option.some("deleted"));
       assert.isFalse(left.data);
       assert.isTrue(left.otherData);
       assert.isFalse(left.install);
@@ -210,14 +257,63 @@ it.layer(NodeServices.layer)("uninstall", (it) => {
     }),
   );
 
+  it.effect("deletes only J3 Bots' entries from a data directory that holds other files", () =>
+    Effect.gen(function* () {
+      const { exit, left, userFiles, inData } = yield* uninstallOn(
+        { unitHome: Option.none(), userFiles: ["data/notes.txt", "data/photos/"] },
+        { deleteData: true },
+      );
+      assert.isTrue(Exit.isSuccess(exit), String(exit));
+      if (Exit.isSuccess(exit)) assert.deepStrictEqual(exit.value.data, Option.some("kept"));
+      assert.isTrue(left.data);
+      assert.deepStrictEqual(inData, ["notes.txt", "photos"]);
+      assert.deepStrictEqual(userFiles, { "data/notes.txt": true, "data/photos/": true });
+    }),
+  );
+
+  it.effect("through a data directory that is a link, deletes the entries and keeps the link", () =>
+    Effect.gen(function* () {
+      const { exit, left, inData } = yield* uninstallOn(
+        { unitHome: Option.none(), dataIsLink: true },
+        { deleteData: true },
+      );
+      assert.isTrue(Exit.isSuccess(exit), String(exit));
+      if (Exit.isSuccess(exit)) assert.deepStrictEqual(exit.value.data, Option.some("link-kept"));
+      assert.isTrue(left.data);
+      assert.deepStrictEqual(inData, []);
+    }),
+  );
+
+  it.effect("keeps what install.sh did not put in the install folder", () =>
+    Effect.gen(function* () {
+      const { exit, left, userFiles, inInstall, inVersions } = yield* uninstallOn(
+        {
+          unitHome: Option.none(),
+          userFiles: [
+            "share/j3-bots/versions/notes.txt",
+            "share/j3-bots/versions/mine/",
+            "share/j3-bots/backup.tar",
+          ],
+        },
+        { deleteData: false },
+      );
+      assert.isTrue(Exit.isSuccess(exit), String(exit));
+      if (Exit.isSuccess(exit)) assert.isFalse(exit.value.installRemoved);
+      assert.isFalse(left.launcher);
+      assert.deepStrictEqual(inInstall, ["backup.tar", "versions"]);
+      assert.deepStrictEqual(inVersions, ["mine", "notes.txt"]);
+      assert.isTrue(Object.values(userFiles).every(Boolean), JSON.stringify(userFiles));
+    }),
+  );
+
   it.effect("keeps a command at the recorded path that install.sh did not write", () =>
     Effect.gen(function* () {
       const { exit, left } = yield* uninstallOn(
         {
           unitHome: Option.none(),
-          // Someone else's wrapper, though it runs one of the versions.
+          // The user's own wrapper: install.sh's three lines but for the comment.
           launcher: (install) =>
-            `#!/bin/sh\nexport J3_PORT=4000\nexec '${install}/versions/0.1.0/bin/j3-bots' "$@"\n`,
+            `#!/bin/sh\n# My J3 Bots.\nexec '${install}/versions/0.1.0/bin/j3-bots' "$@"\n`,
         },
         { deleteData: false },
       );
@@ -251,28 +347,29 @@ it.layer(NodeServices.layer)("uninstall", (it) => {
     }),
   );
 
-  it.effect("never deletes a data directory that is or holds the user's home", () =>
-    Effect.gen(function* () {
-      const { exit, left } = yield* uninstallOn(
-        { unitHome: Option.none(), shellHome: "." },
-        { deleteData: true },
-      );
-      assert.deepInclude(failure(exit), { _tag: "UninstallRefused", reason: "user-home" });
-      assert.isTrue(left.install);
-      assert.isTrue(left.data);
-    }),
-  );
-
-  it.effect("removes nothing from a release that install.sh did not install", () =>
-    Effect.gen(function* () {
-      const { exit, left } = yield* uninstallOn(
-        { unitHome: Option.some("data"), release: ["unpacked", "j3-bots-0.1.0-linux-x64"] },
-        { deleteData: true },
-      );
-      assert.deepInclude(failure(exit), { _tag: "UninstallRefused", reason: "unpacked" });
-      assert.isTrue(left.unit);
-      assert.isTrue(left.install);
-      assert.isTrue(left.data);
-    }),
+  it.effect(
+    "removes nothing from a release in a versions folder that install.sh did not record",
+    () =>
+      Effect.gen(function* () {
+        const { exit, left, userFiles, inVersions } = yield* uninstallOn(
+          {
+            unitHome: Option.some("data"),
+            release: ["versions", "j3-bots-0.1.0-linux-x64"],
+            recorded: false,
+            userFiles: ["share/j3-bots/versions/notes.txt"],
+          },
+          { deleteData: true },
+        );
+        assert.deepInclude(failure(exit), { _tag: "UninstallRefused", reason: "unpacked" });
+        assert.isTrue(left.unit);
+        assert.isTrue(left.data);
+        assert.deepStrictEqual(inVersions, [
+          ".staging-a1B2c3",
+          "0.0.9",
+          "j3-bots-0.1.0-linux-x64",
+          "notes.txt",
+        ]);
+        assert.deepStrictEqual(userFiles, { "share/j3-bots/versions/notes.txt": true });
+      }),
   );
 });

@@ -33,16 +33,22 @@ As the user J3 Bots runs as, never as root:
 curl -fsSL https://github.com/JPSAUD501/j3-bots/releases/latest/download/install.sh | sh
 ```
 
+That address answers only once a release that is not a pre-release is published. A pre-release is installed from its own tag, by name:
+
+```sh
+curl -fsSL https://github.com/JPSAUD501/j3-bots/releases/download/v0.1.0-rc.1/install.sh | sh -s -- --version 0.1.0-rc.1
+```
+
 `install.sh` refuses root, a system other than x64 or arm64 Linux, and, unless given `--no-service`, a user with no systemd user manager. Then it:
 
-- finds the latest release, or the one `--version` names (`sh -s -- --version 0.1.0-rc.1` for a pre-release, which it never picks by itself);
-- downloads the archive for this machine and checks it against the release's `SHA256SUMS`. An interrupted download resumes when you run it again;
+- finds the latest release, or the one `--version` names (a pre-release, which it never picks by itself, only so);
+- downloads the archive for this machine and checks it against the release's `SHA256SUMS`;
 - unpacks it into `~/.local/share/j3-bots/versions/<version>/`, outside the data directory;
 - writes the `j3-bots` command, `~/.local/bin/j3-bots`, which runs that version, and records where it is in `~/.local/share/j3-bots/launcher`;
 - runs `j3-bots doctor`, then `j3-bots service install` ([First run](#first-run) says what both do), unless `--no-service`;
 - says what is next: connect the providers, then pair.
 
-`J3_INSTALL_DIR` and `J3_BIN_DIR` move the first two folders, and `J3_HOME` the data directory. Run it again to install the same version again, as a repair. It refuses to install another version over an installed one: `j3-bots update` moves an install to another version, and `j3-bots uninstall` removes it.
+`J3_INSTALL_DIR` and `J3_BIN_DIR` move the first two folders, and `J3_HOME` the data directory. Run it again to install the same version again, as a repair. It refuses to install another version over an installed one: to change version, run `j3-bots uninstall` (your data is kept), then the command above again.
 
 ### From a checkout
 
@@ -249,7 +255,7 @@ To restore:
 j3-bots uninstall
 ```
 
-This undoes `install.sh`: it stops the service, disables it and deletes its unit, then deletes the `j3-bots` command and every version in `~/.local/share/j3-bots`. A command at the recorded path that `install.sh` did not write is kept. The data directory stays, and the command names it: the one the unit ran with, which `service status` also shows. `j3-bots uninstall --delete-data` deletes it too, after asking; `--yes` answers for a script. It refuses, and removes nothing, while a server you started yourself runs for that data directory, or when the data directory is or holds your home folder.
+This undoes `install.sh`, and removes only what it wrote: it stops the service, disables it and deletes its unit, then deletes the `j3-bots` command, each version `install.sh` unpacked in `~/.local/share/j3-bots/versions/` and the record of the command, and then each of those two folders if that leaves it empty. A command at the recorded path that is not exactly the one `install.sh` writes is kept, and so is anything else you put in those folders. A release you unpacked yourself is not an install: `uninstall` refuses it and removes nothing. The data directory stays, and the command names it: the one the unit ran with, which `service status` also shows. `j3-bots uninstall --delete-data` deletes J3 Bots' data in it too, after asking; `--yes` answers for a script. That is every entry the server keeps there ([Server: data](../architecture/server.md#data)), and then the data directory if that leaves it empty: a file of yours in it is kept, and so is the folder. When the data directory is a link, the link and the folder it points to are kept. It refuses, and removes nothing, while a server you started yourself runs for that data directory.
 
 From a checkout, `j3-bots service uninstall` stops the service, disables it and deletes its unit, and keeps the data directory; the checkout and the data directory are yours to delete.
 

@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stdio from "effect/Stdio";
 import { Command, Flag, Prompt } from "effect/cli";
-import { plan, uninstall } from "../install/uninstall.ts";
+import { type DataDeletion, plan, uninstall } from "../install/uninstall.ts";
 import { installation } from "../installation.ts";
 import * as Unit from "../service/unit.ts";
 import { refuse, userFacing } from "./errors.ts";
@@ -12,7 +12,7 @@ import { refuse, userFacing } from "./errors.ts";
 const deleteDataFlag = Flag.Boolean("delete-data").pipe(
   Flag.withDefault(false),
   Flag.withDescription(
-    "Also delete the data directory: every bot, conversation, memory and provider sign-in. Asks first.",
+    "Also delete J3 Bots' data: every bot, conversation, memory and provider sign-in. Asks first.",
   ),
 );
 
@@ -23,12 +23,27 @@ const yesFlag = Flag.Boolean("yes").pipe(
   ),
 );
 
+/** What became of the data directory in `home`, in a sentence. */
+const dataLine = (home: string, data: Option.Option<DataDeletion>) => {
+  if (Option.isNone(data)) return `Your data in ${home} is kept. \`--delete-data\` deletes it.`;
+  switch (data.value) {
+    case "deleted":
+      return `Deleted the data directory, ${home}.`;
+    case "kept":
+      return `Deleted J3 Bots' data in ${home}. It holds other files, so it is kept.`;
+    case "link-kept":
+      return `Deleted J3 Bots' data in the folder ${home} links to. The link and that folder are kept.`;
+    case "absent":
+      return `There was no data directory at ${home}.`;
+  }
+};
+
 export const uninstallCommand = Command.make("uninstall", {
   deleteData: deleteDataFlag,
   yes: yesFlag,
 }).pipe(
   Command.withDescription(
-    "Remove what install.sh installed: the service, the j3-bots command and every version. The data directory is kept unless --delete-data.",
+    "Remove what install.sh installed: the service, the j3-bots command and the versions it unpacked. The data directory is kept unless --delete-data.",
   ),
   Command.withHandler(({ deleteData, yes }) =>
     Effect.gen(function* () {
@@ -36,12 +51,12 @@ export const uninstallCommand = Command.make("uninstall", {
       if (deleteData && !yes) {
         if (!(yield* (yield* Stdio.Stdio).stdinIsTerminal)) {
           return yield* refuse(
-            `Deleting the data directory ${found.home} needs a yes, and there is no terminal to ask on. Nothing was removed. Run this again with --yes to delete it.`,
+            `Deleting J3 Bots' data in ${found.home} needs a yes, and there is no terminal to ask on. Nothing was removed. Run this again with --yes to delete it.`,
           );
         }
         const sure = yield* Prompt.run(
           Prompt.Confirm({
-            message: `Delete ${found.home} too, with every bot, conversation, memory and provider sign-in in it? This cannot be undone.`,
+            message: `Delete J3 Bots' data in ${found.home} too, every bot, conversation, memory and provider sign-in? This cannot be undone.`,
             initial: false,
           }),
         ).pipe(Effect.orElseSucceed(() => false));
@@ -61,16 +76,10 @@ export const uninstallCommand = Command.make("uninstall", {
       }
       lines.push(
         done.installRemoved
-          ? `Removed every version, and ${found.install}.`
-          : `Removed every version. ${found.install} holds other files, so it is kept.`,
+          ? `Removed the installed versions, and ${found.install}.`
+          : `Removed the installed versions. ${found.install} holds other files, so it is kept.`,
       );
-      lines.push(
-        done.dataDeleted
-          ? `Deleted the data directory, ${found.home}.`
-          : deleteData
-            ? `There was no data directory at ${found.home}.`
-            : `Your data in ${found.home} is kept. \`--delete-data\` deletes it.`,
-      );
+      lines.push(dataLine(found.home, done.data));
       yield* Console.log(lines.join("\n"));
     }),
   ),

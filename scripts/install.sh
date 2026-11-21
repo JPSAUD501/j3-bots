@@ -7,7 +7,7 @@
 # no Node, Git or root. After T3 Code's scripts/install.sh.
 #
 #   curl -fsSL https://github.com/JPSAUD501/j3-bots/releases/latest/download/install.sh | sh
-#   curl -fsSL <that URL> | sh -s -- --version 0.1.0-rc.1
+#   curl -fsSL https://github.com/JPSAUD501/j3-bots/releases/download/v0.1.0-rc.1/install.sh | sh -s -- --version 0.1.0-rc.1
 #
 # Options:
 #   --version <version>  install this release, a pre-release included
@@ -21,15 +21,19 @@
 #   J3_HOME              the data directory (default: ~/.j3-bots)
 #   J3_RELEASE_BASE_URL  the releases page, or a mirror of it that serves
 #                        <base>/latest and <base>/download/v<version>/<file>
-#                        (default: https://github.com/JPSAUD501/j3-bots/releases)
+#                        (default: https://github.com/JPSAUD501/j3-bots/releases).
+#                        The mirror is trusted as the publisher: it serves the
+#                        SHA256SUMS the archive is checked against. For tests
+#                        and self-hosted mirrors.
 #
 # What it installs (docs/decisions/0015-a-release-is-a-self-contained-archive.md):
 #
 #   $J3_INSTALL_DIR/versions/<version>/   one unpacked release archive
-#   $J3_INSTALL_DIR/launcher              the path of the command below
+#   $J3_INSTALL_DIR/launcher              the path of the command below, which
+#                                         marks the folder as an install
 #   $J3_BIN_DIR/j3-bots                   runs one of those versions
 #
-# `j3-bots uninstall` removes all three, and the service.
+# `j3-bots uninstall` removes those, and the service, and nothing else.
 set -eu
 
 base_url="${J3_RELEASE_BASE_URL:-https://github.com/JPSAUD501/j3-bots/releases}"
@@ -144,20 +148,25 @@ versions_dir="$install_dir/versions"
 launcher="$bin_dir/j3-bots"
 record="$install_dir/launcher"
 
+# The whole text of the command that runs the release at $1. Only a command
+# that is exactly this is install.sh's, here and to `j3-bots uninstall`
+# (apps/server/src/install/layout.ts, which has the same text).
+launcher_text() {
+  say '#!/bin/sh'
+  say "# J3 Bots, installed by install.sh. \`j3-bots uninstall\` removes it."
+  say "exec '$1/bin/j3-bots' \"\$@\""
+}
+
 # The version a command at $1 runs, when install.sh wrote it for this install;
-# nothing for anything else, such as a link to a checkout.
+# nothing for anything else, such as a link to a checkout or a wrapper.
 installed_version() {
   [ -f "$1" ] && [ ! -L "$1" ] && [ "$(wc -l < "$1")" -eq 3 ] || return 0
-  [ "$(sed -n '1p' "$1")" = '#!/bin/sh' ] || return 0
-  case "$(sed -n '2p' "$1")" in "# "*) ;; *) return 0 ;; esac
   line="$(sed -n '3p' "$1")"
-  case "$line" in
-    "exec '$versions_dir/"*"/bin/j3-bots' \"\$@\"") ;;
-    *) return 0 ;;
-  esac
   found="${line#"exec '$versions_dir/"}"
   found="${found%"/bin/j3-bots' \"\$@\""}"
-  case "$found" in */*) return 0 ;; esac
+  case "$found" in "" | . | .. | */* | *"'"*) return 0 ;; esac
+  # $(…) drops the last newlines; with three lines counted, equal text is equal bytes.
+  [ "$(cat "$1")" = "$(launcher_text "$versions_dir/$found")" ] || return 0
   printf '%s' "$found"
 }
 
@@ -190,22 +199,16 @@ fetch() {
   fi
 }
 
-# Downloads <url> into <file>, resuming what an interrupted run left there.
+# Downloads <url> into <file>, with a progress bar on a terminal.
 download() {
   if [ "$downloader" = curl ]; then
     progress=-sS
     if [ -t 2 ]; then progress=--progress-bar; fi
-    status="$(curl -fL "$progress" --retry 3 --retry-delay 2 -C - -w '%{http_code}' -o "$2" "$1")" && return 0
-    # 416: what is there is as long as the file, or longer, and is not it. Start again.
-    [ "$status" = 416 ] || return 1
-    rm -f "$2"
     curl -fL "$progress" --retry 3 --retry-delay 2 -o "$2" "$1"
   else
-    if [ -t 2 ]; then
-      wget -c --progress=bar --tries=3 -O "$2" "$1"
-    else
-      wget -c -q --tries=3 -O "$2" "$1"
-    fi
+    progress=-q
+    if [ -t 2 ]; then progress=--progress=bar; fi
+    wget "$progress" --tries=3 -O "$2" "$1"
   fi
 }
 
@@ -220,7 +223,7 @@ if [ -z "$version" ]; then
 fi
 
 if [ -n "$current" ] && [ "$current" != "$version" ]; then
-  fail "J3 Bots $current is installed in $install_dir. This script installs only where none is, or the same version again; \`j3-bots update\` moves an install to another version, and \`j3-bots uninstall\` removes it."
+  fail "J3 Bots $current is installed in $install_dir. This script installs only where none is, or the same version again. To install $version instead, run \`j3-bots uninstall\` (your data is kept), then this again."
 fi
 
 # --- The release -------------------------------------------------------------
@@ -234,32 +237,26 @@ if [ -f "$target/release.json" ] && [ -x "$target/bin/j3-bots" ]; then
   say "J3 Bots $version is already in $target."
 else
   say "Installing J3 Bots $version for linux-$arch."
-  mkdir -p "$versions_dir"
   fetch "$download_url/SHA256SUMS" "$work/SHA256SUMS" ||
     fail "Could not download $download_url/SHA256SUMS. Check the version (a pre-release by its full name, such as 0.1.0-rc.1) and the network."
   expected="$(awk -v name="$archive" '$2 == name || $2 == "*" name { print $1; exit }' "$work/SHA256SUMS")"
   [ -n "$expected" ] || fail "J3 Bots $version has no archive for linux-$arch."
 
-  # Kept between runs, so an interrupted download resumes. Never written through a link.
-  partial="$versions_dir/.$archive.partial"
-  if [ -L "$partial" ] || { [ -e "$partial" ] && [ ! -f "$partial" ]; }; then rm -rf "$partial"; fi
-  if ! { [ -f "$partial" ] && [ "$(checksum "$partial")" = "$expected" ]; }; then
-    download "$download_url/$archive" "$partial" ||
-      fail "The download of $download_url/$archive stopped. Run this again: it resumes where it stopped."
-    if [ "$(checksum "$partial")" != "$expected" ]; then
-      rm -f "$partial"
-      fail "$archive does not match its checksum in SHA256SUMS, so it was deleted and nothing was installed. Run this again; if it happens again, the download is being changed on the way."
-    fi
-  fi
+  download "$download_url/$archive" "$work/$archive" ||
+    fail "Could not download $download_url/$archive. Check the network, then run this again."
+  [ "$(checksum "$work/$archive")" = "$expected" ] ||
+    fail "$archive does not match its checksum in SHA256SUMS, so nothing was installed. Run this again; if it happens again, the download is being changed on the way."
 
+  # Unpacked beside the versions, so the move into place is a rename.
+  mkdir -p "$versions_dir"
   staging="$(mktemp -d "$versions_dir/.staging-XXXXXX")"
-  tar -xzf "$partial" -C "$staging" || fail "Could not unpack $archive."
+  tar -xzf "$work/$archive" -C "$staging" || fail "Could not unpack $archive."
   [ -f "$staging/$stem/release.json" ] || fail "$archive is not a J3 Bots release: it has no $stem/release.json."
   "$staging/$stem/bin/j3-bots" --version > /dev/null ||
     fail "J3 Bots $version does not run on this machine; nothing was installed."
   rm -rf "$target"
   mv "$staging/$stem" "$target"
-  rm -rf "$staging" "$partial"
+  rm -rf "$staging"
   staging=
 fi
 
@@ -267,11 +264,7 @@ fi
 
 mkdir -p "$bin_dir"
 next="$(mktemp "$bin_dir/.j3-bots.XXXXXX")"
-{
-  say '#!/bin/sh'
-  say "# J3 Bots, installed by install.sh. \`j3-bots uninstall\` removes it."
-  say "exec '$target/bin/j3-bots' \"\$@\""
-} > "$next"
+launcher_text "$target" > "$next"
 chmod 755 "$next"
 mv -f "$next" "$launcher"
 printf '%s\n' "$launcher" > "$work/launcher"

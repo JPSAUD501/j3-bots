@@ -3,17 +3,16 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import type { Installation } from "../installation.ts";
+import { type Installation, RELEASE_MANIFEST } from "../installation.ts";
 
 // Where `scripts/install.sh` puts J3 Bots on a host, outside the data
 // directory (docs/decisions/0015-a-release-is-a-self-contained-archive.md):
 //
 //   <install>/versions/<version>/   one unpacked release archive each
-//   <install>/launcher              the path of the j3-bots command, one line
-//   <bin>/j3-bots                   the command, which runs one of the versions:
-//                                     #!/bin/sh
-//                                     # <a comment>
-//                                     exec '<install>/versions/<version>/bin/j3-bots' "$@"
+//   <install>/versions/.staging-*   where one is unpacked before it is moved into place
+//   <install>/launcher              the path of the j3-bots command, one line;
+//                                   a folder is an install only when it has one
+//   <bin>/j3-bots                   the command, `launcherText` of one version
 //
 // `<install>` is `$XDG_DATA_HOME/j3-bots`, `~/.local/share/j3-bots` or
 // `J3_INSTALL_DIR`, and `<bin>` is `~/.local/bin` or `J3_BIN_DIR`.
@@ -24,25 +23,34 @@ export const VERSIONS = "versions";
 /** The file in `<install>` that names the j3-bots command install.sh wrote. */
 export const LAUNCHER_RECORD = "launcher";
 
-/**
- * The whole text of the command install.sh writes: three lines, a comment in
- * the middle, and the release it runs in the last.
- */
-const LAUNCHER = /^#!\/bin\/sh\n# [^\n]*\nexec '([^'\n]+)\/bin\/j3-bots' "\$@"\n$/;
+/** A folder install.sh unpacks a release into, in `versions/`: `mktemp -d .staging-XXXXXX`. */
+const STAGING = /^\.staging-[A-Za-z0-9]{6}$/;
+
+/** The whole text of the command install.sh writes to run the release at `release`. */
+const launcherText = (release: string) =>
+  `#!/bin/sh\n# J3 Bots, installed by install.sh. \`j3-bots uninstall\` removes it.\nexec '${release}/bin/j3-bots' "$@"\n`;
+
+/** The release a command written by `launcherText` runs. */
+const LAUNCHED_RELEASE = /\nexec '([^'\n]+)\/bin\/j3-bots' "\$@"\n$/;
 
 /**
  * The install folder of `installation`: the folder whose `versions/` holds
- * it. `None` for a checkout, and for a release unpacked anywhere else.
+ * it, when install.sh recorded its command there. `None` for a checkout, and
+ * for a release unpacked anywhere else.
  */
 export const installFolder = Effect.fn("install.installFolder")(function* (
   installation: Installation,
 ) {
+  const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const { layout } = installation;
   if (layout._tag !== "release") return Option.none<string>();
   const versions = path.dirname(layout.root);
-  return path.basename(versions) === VERSIONS
-    ? Option.some(path.dirname(versions))
+  if (path.basename(versions) !== VERSIONS) return Option.none<string>();
+  const install = path.dirname(versions);
+  const record = yield* fs.lstat(path.join(install, LAUNCHER_RECORD)).pipe(Effect.option);
+  return Option.isSome(record) && record.value.type === "File"
+    ? Option.some(install)
     : Option.none<string>();
 });
 
@@ -54,7 +62,8 @@ const resolved = Effect.fnUntraced(function* (location: string) {
 
 /**
  * Whether `file` is a command install.sh wrote for the install at `install`:
- * a plain file, not a link, that runs a version in its `versions/`.
+ * a plain file, not a link, whose text is exactly `launcherText` of a version
+ * in its `versions/`.
  */
 export const isOwnLauncher = Effect.fn("install.isOwnLauncher")(function* (
   file: string,
@@ -66,8 +75,9 @@ export const isOwnLauncher = Effect.fn("install.isOwnLauncher")(function* (
   if (Option.isNone(info) || info.value.type !== "File") return false;
   const text = yield* fs.readFileString(file).pipe(Effect.option);
   if (Option.isNone(text)) return false;
-  const release = LAUNCHER.exec(text.value)?.[1];
-  if (release === undefined || !path.isAbsolute(release)) return false;
+  const release = LAUNCHED_RELEASE.exec(text.value)?.[1];
+  if (release === undefined || text.value !== launcherText(release)) return false;
+  if (!path.isAbsolute(release)) return false;
   const version = path.basename(release);
   if (version === "" || version === "." || version === "..") return false;
   return (
@@ -84,4 +94,28 @@ export const recordedLauncher = Effect.fn("install.recordedLauncher")(function* 
     const launcher = recorded.trim();
     return path.isAbsolute(launcher) ? Option.some(launcher) : Option.none();
   });
+});
+
+/**
+ * What install.sh put in `versions/` of the install at `install`: each folder
+ * that holds a release (a `release.json`), and each staging folder an
+ * interrupted run left. Anything else there is not its own.
+ */
+export const installedVersions = Effect.fn("install.installedVersions")(function* (
+  install: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const versions = path.join(install, VERSIONS);
+  const names = yield* fs.readDirectory(versions).pipe(Effect.orElseSucceed(() => []));
+  const own: Array<string> = [];
+  for (const name of names) {
+    const entry = path.join(versions, name);
+    const info = yield* fs.lstat(entry).pipe(Effect.option);
+    if (Option.isNone(info) || info.value.type !== "Directory") continue;
+    if (STAGING.test(name) || (yield* fs.exists(path.join(entry, RELEASE_MANIFEST)))) {
+      own.push(entry);
+    }
+  }
+  return own;
 });

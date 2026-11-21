@@ -12,9 +12,9 @@ The server:
 | --- | --- |
 | `j3-bots-<version>-linux-x64.tar.gz`, `j3-bots-<version>-linux-arm64.tar.gz` | The server, its web client and the Node it runs on ([decision 0015](../decisions/0015-a-release-is-a-self-contained-archive.md)) |
 | `SHA256SUMS` | The SHA-256 of both archives and of `install.sh`, as `sha256sum` writes them |
-| `install.sh` | The installer: `curl -fsSL https://github.com/JPSAUD501/j3-bots/releases/latest/download/install.sh \| sh` |
+| `install.sh` | The installer: `curl -fsSL https://github.com/JPSAUD501/j3-bots/releases/latest/download/install.sh \| sh`, and for a pre-release `curl -fsSL https://github.com/JPSAUD501/j3-bots/releases/download/v1.4.0-rc.1/install.sh \| sh -s -- --version 1.4.0-rc.1` |
 
-`install.sh` installs the latest release unless `--version` names one: it reads the repository's `releases/latest` page, which never names a pre-release or a draft, and refuses an answer that is not a plain `x.y.z` (**Read** in T3 Code's `scripts/install.sh` at `db51b67`, `:190-197`, which reads the same page). A pre-release is installed only by name: `sh -s -- --version 1.4.0-rc.1`. It downloads the archive for the machine's architecture, resuming a download an earlier run left unfinished, and installs it only if its digest is the one in `SHA256SUMS`. The [Raspberry Pi guide](running-on-a-pi.md#install) describes what it installs where.
+`install.sh` installs the latest release unless `--version` names one: it reads the repository's `releases/latest` page, which never names a pre-release or a draft, and refuses an answer that is not a plain `x.y.z` (**Read** in T3 Code's `scripts/install.sh` at `db51b67`, `:190-197`, which reads the same page). A pre-release is installed only by name, and from its own tag's address: `releases/latest/download/install.sh` answers only once a release that is not a pre-release is published, so until then the per-tag form above is the only one that works. It downloads the archive for the machine's architecture into a private temporary folder and installs it only if its digest is the one in `SHA256SUMS`. The [Raspberry Pi guide](running-on-a-pi.md#install) describes what it installs where.
 
 The desktop app:
 
@@ -65,7 +65,7 @@ Adding signing means secrets in the release workflow, used only by the jobs that
 
 ## Trying an install locally
 
-`J3_RELEASE_BASE_URL` points `install.sh` at a mirror of the release page that serves `latest` and `download/v<version>/<file>`:
+`J3_RELEASE_BASE_URL` points `install.sh` at a mirror of the release page that serves `latest` and `download/v<version>/<file>`. The mirror serves both the archive and the `SHA256SUMS` it is checked against, so the check proves the download is the mirror's, not that the release is genuine: the override trusts the mirror as the publisher, and is for tests and self-hosted mirrors.
 
 ```sh
 pnpm release
