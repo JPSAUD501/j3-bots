@@ -650,11 +650,21 @@ it.effect(
         changes: { permissionMode: "supervised" },
       });
       yield* until(sideSessions(bot.id).pipe(Effect.map((opened) => opened.length === 2)));
+      const [, second] = yield* sideSessions(bot.id);
+      assert.isDefined(second);
       yield* control.finishTurn({ sessionId: main, turnId: turn, outcome: { _tag: "completed" } });
       yield* turnEnded(bot.id);
-      yield* (yield* RoutineRunner).pass;
+      // A freed slot nudges no runner: it looks again on its own, which a pass stands for.
+      const runner = yield* RoutineRunner;
+      yield* until(
+        runner.pass.pipe(
+          Effect.andThen(timesSent(second, INSTRUCTION)),
+          Effect.map((n) => n === 1),
+        ),
+      );
 
       const side = yield* sideTurn(routine.id, first);
+      assert.strictEqual(side.engine_session_id, second);
       assert.strictEqual(
         yield* control.sessionPermissionMode(side.engine_session_id),
         "supervised",
