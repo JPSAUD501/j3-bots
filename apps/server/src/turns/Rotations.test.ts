@@ -328,6 +328,44 @@ it.effect(
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect(
+  "replaces a session for a provider change over background work its Stop does not reach, which the retirement ends",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const sql = yield* SqlClient.SqlClient;
+      const stops = yield* Stops;
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      yield* sendToBot(bot.id, "Start the dev server.");
+      const started = yield* nextTurn(bot.id);
+      // As an old provider session's work after another client of the engine
+      // started a fresh context: the engine's stop does not reach it.
+      yield* control.startBackgroundWork({ sessionId: session, turnId: started, stoppable: false });
+      yield* finish(bot.id, session, started);
+
+      yield* (yield* Bots).update({
+        commandId: command(),
+        botId: bot.id,
+        changes: { model: TestDomain.OTHER_PROVIDER_MODEL },
+      });
+      // The move's Stop settles, though the work runs on.
+      yield* stops.runPending;
+      yield* TestClock.adjust(RETRY_TICK);
+      yield* stopSettled;
+      const [stopped] = yield* sql<{ readonly n: number }>`
+        SELECT COUNT(*) AS n FROM stop_targets WHERE stopped_at IS NOT NULL
+      `;
+      assert.isAbove(stopped?.n ?? 0, 0);
+      assert.isTrue(yield* control.backgroundWorkRunning(session));
+
+      yield* (yield* Rotations).rotateDue;
+      yield* sessionAfter(bot.id, session);
+      assert.isTrue(yield* retiredInEngine(session));
+      assert.isFalse(yield* control.backgroundWorkRunning(session));
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("holds a rotation for a run the engine took from a send the recovery gave up on", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;
