@@ -50,7 +50,7 @@ curl -fsSL https://github.com/JPSAUD501/j3-bots/releases/download/v0.1.0-rc.1/in
 
 `J3_INSTALL_DIR` and `J3_BIN_DIR` move the first two folders, and `J3_HOME` the data directory. The install folder, its `versions/` and the folder of the command must be yours and not writable by every account: what is in them runs as you, so `install.sh` refuses any other, and says which and why. A folder your own group may write, as `umask 002` makes them, is accepted. It writes its own folders with no write access for group or others, whatever your `umask`.
 
-Run it again with the same version to restore the command, its record and the service. It uses the release already in `versions/<version>/` as it is, so a damaged release there is fixed by `j3-bots uninstall`, then the command above again. It never removes a folder it did not make: a `versions/<version>/` that is not a release, with no `release.json`, is refused and kept. It refuses to install another version over an installed one: to change version, run `j3-bots uninstall` (your data is kept), then the command above again.
+Run it again with the same version to restore the command, its record and the service. It uses the release already in `versions/<version>/` as it is, so a damaged release there is fixed by `j3-bots uninstall`, then the command above again. It never removes a folder it did not make: a `versions/<version>/` that is not a release, with no `release.json`, is refused and kept. It refuses to install another version over an installed one: `j3-bots update` changes version ([Update](#update)).
 
 ### From a checkout
 
@@ -234,6 +234,33 @@ The server writes one JSON object per line. If `journalctl --user` shows nothing
 ## Update
 
 ```sh
+j3-bots update                    # to the latest release
+j3-bots update --version 0.2.0    # to this one, a pre-release included
+```
+
+The installed release runs the update, so it can always start itself again ([decision 0016](../decisions/0016-an-update-keeps-a-snapshot-to-roll-back-to.md)). It changes nothing while it prepares:
+
+- it checks for free space: twice the size of the databases plus 1 GB where the data directory is, and 512 MB where the install is;
+- it downloads the release for this machine and checks it against the release's `SHA256SUMS`, as `install.sh` does, into `~/.local/share/j3-bots/versions/<version>/`, and downloads the engine that release is pinned to beside the running one (`j3-bots engine fetch`);
+- if bots have work running, it asks before stopping it. `--yes` answers for a script; without a terminal to ask on, the update is refused unless it is given.
+
+Then it stops the service, copies the databases and the settings into a snapshot in `~/.j3-bots/backups/`, readable by you alone, and starts the new release with its own `service install`. It waits up to five minutes for the new server to answer with its engine ready, then points the `j3-bots` command at it. It keeps the release before, the two newest snapshots and the engine of each of those two releases, and removes older ones.
+
+If the new release does not start or its engine does not become ready, the update puts the snapshot back, starts the release before, says what failed, and changes nothing else: no turn ran on the new databases. `j3-bots doctor` names the newest snapshot.
+
+To go back after an update that worked:
+
+```sh
+j3-bots update --rollback
+```
+
+It says when the snapshot was taken and asks first (`--yes` answers for a script). The databases go back to that moment: conversations, rooms, routines, settings, paired devices and the engine's threads since then are lost. Bots' files on disk, their memory included, are not in the snapshot and stay as they are. What the rollback replaced is kept in the snapshot's folder, in `replaced-<time>/`. The rollback starts the release the snapshot was taken from and points the command at it.
+
+A release refuses a database a newer release migrated, and says which migration it does not know, so starting an older release by hand on newer data fails rather than run on it: roll back instead.
+
+From a checkout:
+
+```sh
 cd ~/j3-bots
 git pull
 pnpm install --frozen-lockfile
@@ -242,7 +269,7 @@ systemctl --user restart j3-bots
 j3-bots doctor
 ```
 
-The server migrates its database when it starts. If the new release pins another engine version, the server downloads that version on its first start. The server looks for the web client when it starts: if it was not built then, it is served only after a restart.
+A checkout's server migrates its database when it starts, and keeps no snapshot: back up first ([Back up](#back-up)). If the new code pins another engine version, the server downloads it on its first start. The server looks for the web client when it starts: if it was not built then, it is served only after a restart.
 
 ## Back up
 

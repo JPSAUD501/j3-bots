@@ -37,13 +37,17 @@ const migrations = SqliteMigrator.fromRecord({
   "12_room_integrity": Migration0012,
 });
 
-const Recorded = Schema.Struct({ migration_id: Schema.Int });
+const Recorded = Schema.Struct({ migration_id: Schema.Int, name: Schema.String });
 
 /**
  * Applies, in one transaction, every migration of `loader` the database has
- * not recorded yet. The migrator applies only those numbered past the last
- * one recorded, so a database that recorded one numbered later than a
- * migration it lacks is refused: that migration would never be applied.
+ * not recorded yet. Refused first, with nothing applied:
+ *
+ * - a database that records a migration `loader` does not have: a newer
+ *   release of J3 Bots wrote it, and this one cannot know what it changed;
+ * - a database that recorded one numbered later than a migration it lacks:
+ *   the migrator applies only those numbered past the last one recorded, so
+ *   that migration would never be applied.
  */
 export const migrate = Effect.fn("migrate")(function* (loader: Migrator.Loader) {
   const sql = yield* SqlClient.SqlClient;
@@ -54,11 +58,24 @@ export const migrate = Effect.fn("migrate")(function* (loader: Migrator.Loader) 
     const recorded = yield* SqlSchema.findAll({
       Request: Schema.Void,
       Result: Recorded,
-      execute: () => sql`SELECT migration_id FROM effect_sql_migrations`,
+      execute: () => sql`SELECT migration_id, name FROM effect_sql_migrations`,
     })(undefined).pipe(Effect.orDie);
+    const known = yield* loader;
+    const knownIds = new Set(known.map(([id]) => id));
+    const unknown = recorded.filter(({ migration_id }) => !knownIds.has(migration_id));
+    if (unknown.length > 0) {
+      return yield* new Migrator.MigrationError({
+        kind: "BadState",
+        message: `The database records ${unknown
+          .map(({ migration_id, name }) => `${migration_id}_${name}`)
+          .join(
+            ", ",
+          )}, which this release of J3 Bots does not know: a newer release migrated it. Run that release, or put back the database from before it with \`j3-bots update --rollback\``,
+      });
+    }
     const ids = new Set(recorded.map(({ migration_id }) => migration_id));
     const latest = Math.max(0, ...ids);
-    const skipped = (yield* loader).filter(([id]) => id < latest && !ids.has(id));
+    const skipped = known.filter(([id]) => id < latest && !ids.has(id));
     if (skipped.length > 0) {
       return yield* new Migrator.MigrationError({
         kind: "BadState",

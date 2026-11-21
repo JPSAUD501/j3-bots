@@ -308,3 +308,35 @@ export const fetchPinned = Effect.fn("engine.fetchPinned")(function* (options: {
     alreadyInstalled: before._tag === "installed",
   };
 });
+
+/**
+ * Removes each engine release installed under `home` that is not one of
+ * `keep`, by version: what an update of J3 Bots leaves is the engine of the
+ * release it installed and of the one before it, which a rollback starts
+ * again. Only a folder an install finished is removed; anything else in the
+ * runtime folder stays. Answers the versions it removed.
+ */
+export const pruneRuntimes = Effect.fn("engine.pruneRuntimes")(function* (options: {
+  readonly home: string;
+  readonly keep: ReadonlyArray<string>;
+  readonly isPrivate: (location: string) => Effect.Effect<boolean>;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const runtime = engineFolders(path, options.home).runtime;
+  const files = yield* makePrivateFiles(options.isPrivate).pipe(
+    Effect.provide(SecureRandom.layerWebCrypto),
+  );
+  const removed: Array<string> = [];
+  for (const version of yield* fs.readDirectory(runtime).pipe(Effect.orElseSucceed(() => []))) {
+    if (options.keep.includes(version)) continue;
+    const folder = path.join(runtime, version);
+    const finished = yield* fs
+      .exists(path.join(folder, INSTALLED_MARKER))
+      .pipe(Effect.orElseSucceed(() => false));
+    if (!finished) continue;
+    yield* files.remove(folder);
+    removed.push(version);
+  }
+  return removed;
+});

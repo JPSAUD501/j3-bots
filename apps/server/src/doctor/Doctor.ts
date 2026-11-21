@@ -13,6 +13,7 @@ import * as ServerConfig from "../config.ts";
 import { findHarness, type Harness, HARNESSES } from "../engine/harnesses.ts";
 import { PROVIDER_HOMES } from "../home/entries.ts";
 import * as Home from "../home/Home.ts";
+import { listSnapshots, takenAt } from "../install/snapshot.ts";
 import * as Installation from "../installation.ts";
 import { socketOwner } from "../service/owner.ts";
 import * as Unit from "../service/unit.ts";
@@ -134,6 +135,24 @@ const diskCheck = Effect.fn("doctor.disk")(function* (home: string) {
     );
   }
   return check("Disk space", "ok", `${amount} free where ${home} is.`);
+});
+
+/** The newest snapshot an update took, which `j3-bots update --rollback` puts back. */
+const snapshotCheck = Effect.fn("doctor.snapshot")(function* (home: string) {
+  const newest = (yield* listSnapshots(home))[0];
+  if (newest === undefined) {
+    return check(
+      "Snapshot",
+      "ok",
+      "None yet: `j3-bots update` copies the databases before it changes release.",
+    );
+  }
+  const { from, to } = newest.manifest;
+  return check(
+    "Snapshot",
+    "ok",
+    `${newest.folder}, taken at ${takenAt(newest)} by the update from J3 Bots ${from.version} to ${to.version}.`,
+  );
 });
 
 /** `http://192.168.1.20:3737`, `https://[fd7a::1]:3737`: where a listener is, for reading. */
@@ -661,6 +680,7 @@ export const diagnose = Effect.gen(function* () {
   );
   checks.push(yield* homeCheck(config.home));
   checks.push(yield* diskCheck(config.home));
+  checks.push(yield* snapshotCheck(config.home));
 
   // Only a server the report describes lends it live diagnostics.
   const status = live._tag === "described" ? Option.some(live.status) : Option.none();

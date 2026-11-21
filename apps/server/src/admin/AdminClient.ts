@@ -17,6 +17,8 @@ import {
   PairingOffer,
   ProviderConnectionOutcome,
   ProviderConnectionRequest,
+  RunningWorkReply,
+  ServerReadiness,
 } from "./protocol.ts";
 import * as Socket from "./socket.ts";
 
@@ -44,6 +46,13 @@ export class AdminClient extends Context.Service<
     readonly status: (
       socket: string,
     ) => Effect.Effect<Option.Option<AdminStatus>, AdminRequestFailed>;
+    /** The status reply, read only as far as `j3-bots update` needs it. */
+    readonly readiness: (
+      socket: string,
+    ) => Effect.Effect<Option.Option<ServerReadiness>, AdminRequestFailed>;
+    readonly runningWork: (
+      socket: string,
+    ) => Effect.Effect<Option.Option<RunningWorkReply>, AdminRequestFailed>;
     /**
      * A code for a new device, or until when pairing is locked. With `unlock`,
      * the lock is lifted first, so the answer is always a code.
@@ -117,6 +126,8 @@ export const layer = Layer.effect(
         );
     return AdminClient.of({
       status: ask(ADMIN_PATHS.status, "GET", AdminStatus, false),
+      readiness: ask(ADMIN_PATHS.status, "GET", ServerReadiness, false),
+      runningWork: ask(ADMIN_PATHS.runningWork, "GET", RunningWorkReply, false),
       startPairing: Effect.fn("AdminClient.startPairing")(function* (
         socket: string,
         options: { readonly unlock: boolean },

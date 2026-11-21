@@ -21,5 +21,6 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0013](0013-background-work-belongs-to-the-turn-that-started-it.md) | Background work belongs to the turn that started it | Accepted |
 | [0014](0014-push-goes-through-a-push-sender.md) | Push goes through a push sender, and Expo's service is the first | Proposed |
 | [0015](0015-a-release-is-a-self-contained-archive.md) | A release is a self-contained archive per Linux architecture | Accepted |
+| [0016](0016-an-update-keeps-a-snapshot-to-roll-back-to.md) | An update keeps a snapshot to roll back to | Accepted |
 
 When a decision is replaced, its record is rewritten to say what now holds and why the earlier choice was dropped.

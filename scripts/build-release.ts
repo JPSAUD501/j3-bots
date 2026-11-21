@@ -336,6 +336,10 @@ const version = required(
   text(readJson(NodePath.join(SERVER, "package.json")), "version"),
   "The version in apps/server/package.json",
 );
+const engine = required(
+  text(readJson(NodePath.join(ROOT, "engine.json")), "version"),
+  "The engine version in engine.json",
+);
 const name = `j3-bots-${version}-${platform}`;
 
 const work = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "j3-release-"));
@@ -366,7 +370,7 @@ try {
   }
   NodeFS.writeFileSync(
     NodePath.join(stage, "release.json"),
-    `${JSON.stringify({ version, platform, node: node.version }, null, 2)}\n`,
+    `${JSON.stringify({ version, platform, node: node.version, engine }, null, 2)}\n`,
   );
   NodeFS.writeFileSync(
     NodePath.join(stage, "THIRD_PARTY_NOTICES"),

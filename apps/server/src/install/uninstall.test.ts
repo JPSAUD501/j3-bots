@@ -147,6 +147,8 @@ const uninstallOn = (machine: Machine, options: { readonly deleteData: boolean }
           status: () => Effect.succeed(machine.answering ?? Option.none()),
           startPairing: () => Effect.die("uninstall never pairs"),
           connectProviders: () => Effect.die("uninstall never connects providers"),
+          readiness: () => Effect.die("uninstall never waits for an update"),
+          runningWork: () => Effect.die("uninstall never asks for running work"),
         }),
       ),
       Layer.succeed(
@@ -166,6 +168,7 @@ const uninstallOn = (machine: Machine, options: { readonly deleteData: boolean }
             Effect.sync(() => {
               calls.push(`disable and stop ${unit}`);
             }),
+          stop: () => Effect.die("uninstall disables the service as it stops it"),
         }),
       ),
     );

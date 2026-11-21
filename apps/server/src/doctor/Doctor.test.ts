@@ -203,6 +203,8 @@ const diagnoseIn = (changes: Partial<World> = {}) =>
               : Effect.succeed(world.server),
           startPairing: () => Effect.die("doctor never pairs"),
           connectProviders: () => Effect.die("doctor never connects providers"),
+          readiness: () => Effect.die("doctor never waits for an update"),
+          runningWork: () => Effect.die("doctor never asks for running work"),
         }),
       ),
       Layer.succeed(
@@ -216,6 +218,7 @@ const diagnoseIn = (changes: Partial<World> = {}) =>
           reload: Effect.die("doctor changes nothing"),
           enableAndRestart: () => Effect.die("doctor changes nothing"),
           disableAndStop: () => Effect.die("doctor changes nothing"),
+          stop: () => Effect.die("doctor changes nothing"),
         }),
       ),
     );

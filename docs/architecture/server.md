@@ -34,7 +34,7 @@ J3 Bots keeps two kinds of state, in two places, for two different readers.
 
 A column that holds one of a fixed set of values carries a `CHECK` listing them, as a push registration's provider and platform do. SQLite cannot change a `CHECK` in place, so a new push provider means rebuilding that table, in the migration that comes with its sender ([decision 0014](../decisions/0014-push-goes-through-a-push-sender.md)).
 
-Migrations are numbered and applied in order, each once. The migrator applies only those numbered past the last one the database recorded, so the server refuses to start on a database that recorded a later migration than one it lacks, naming the one missing, rather than run without it.
+Migrations are numbered and applied in order, each once. The migrator applies only those numbered past the last one the database recorded, so the server refuses to start on a database that recorded a later migration than one it lacks, naming the one missing, rather than run without it. It also refuses a database that records a migration it does not know, naming it: a newer release migrated it, and `j3-bots update --rollback` puts back the database from before ([decision 0016](../decisions/0016-an-update-keeps-a-snapshot-to-roll-back-to.md)).
 
 Entries are ordered by `order`, set when the entry is created and never changed. The change sequence that clients resume subscriptions with is separate: it records when an entry changed, not where it sits.
 
@@ -62,6 +62,8 @@ providers/
     skills/          the same
 state/
   shipped-skills.json  the SHA-256 of each shipped skill text the server wrote
+backups/
+  <snapshot>/        the databases and settings `j3-bots update` copied before it changed release
 ```
 
 Generated files are written by the server from the database and the memory files. A bot never edits them by hand, and the server rewrites them whenever their inputs change.
