@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Attachment, Bot } from "@j3-bots/contracts";
-import { type IntentFailure, type MessageStatus, messageStatus } from "@j3-bots/client-runtime";
+import { messageStatus, type IntentFailure, type MessageStatus } from "@j3-bots/client-runtime";
+import {
+  clockTime,
+  type GroupPosition,
+  type TimelineMessage,
+} from "@j3-bots/client-runtime/presentation";
 import { usePresentation } from "../app/context";
 import type { KeyWith } from "../i18n/i18n";
 import { cn } from "../lib/cn";
-import { clockTime } from "../lib/time";
 import { useFocusAfterActions } from "../lib/useFocusAfterActions";
-import type { GroupPosition, TimelineMessage } from "../presentation/timeline";
 import { AvatarShape } from "./BotAvatar";
 import { FileCard } from "./FileCard";
 import { MessageText } from "./MessageText";

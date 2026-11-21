@@ -2,26 +2,26 @@
 import { Dialog } from "@base-ui/react/dialog";
 import { Radio } from "@base-ui/react/radio";
 import { RadioGroup } from "@base-ui/react/radio-group";
-import type { BotChanges, Save } from "@j3-bots/client-runtime";
 import { type Bot, type EngineStatus, PermissionMode, PROFILE_LIMITS } from "@j3-bots/contracts";
 import * as Schema from "effect/Schema";
 import { XIcon } from "lucide-react";
 import { useEffect, useId, useState } from "react";
-import { useI18n } from "../app/context";
-import { cn } from "../lib/cn";
-import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
+import type { BotChanges, Save } from "@j3-bots/client-runtime";
 import {
-  type BotEdits,
   botPatch,
   editsAfterFailedBotSave,
   modelChoices,
   noBotEdits,
-  type ProfileField,
   sameModel,
+  shownSaveProblem,
   withChanges,
   withProfileEdit,
-} from "../presentation/botEdit";
-import { shownSaveProblem } from "../presentation/saves";
+  type BotEdits,
+  type ProfileField,
+} from "@j3-bots/client-runtime/presentation";
+import { useI18n } from "../app/context";
+import { cn } from "../lib/cn";
+import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
 import { permissionText } from "./DetailsPanel";
 import { Button } from "./ui/button";
 import { ChoiceIndicator, choiceRow } from "./ui/choice";

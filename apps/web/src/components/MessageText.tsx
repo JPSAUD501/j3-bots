@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { parseMessageText, type Inline } from "../presentation/messageText";
+import { parseMessageText, type Inline } from "@j3-bots/client-runtime/presentation";
 
 /** Message text with paragraphs, code and links. Plain text everywhere else; nothing is rendered as HTML. */
 export function MessageText({

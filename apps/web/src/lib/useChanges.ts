@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { useState } from "react";
-import { firstSeen, see } from "../presentation/changes";
+import { firstSeen, see } from "@j3-bots/client-runtime/presentation";
 
 /**
  * How many times `value` has changed since the component mounted: 0 on the

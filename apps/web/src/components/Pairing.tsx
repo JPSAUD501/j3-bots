@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { PairingFailure, PairResult, UnpairedReason } from "@j3-bots/client-runtime";
 import * as DateTime from "effect/DateTime";
 import { useEffect, useId, useRef, useState, type ReactElement } from "react";
+import type { PairingFailure, PairResult, UnpairedReason } from "@j3-bots/client-runtime";
+import { clockTime } from "@j3-bots/client-runtime/presentation";
 import { useI18n, usePresentation } from "../app/context";
-import { clockTime } from "../lib/time";
 import type { DesktopServer } from "../shell/data";
 import { Centered, Ensemble, Heading } from "./EmptyStates";
 import { ChangeServer } from "./ServerAddress";

@@ -9,6 +9,15 @@ import type {
   RosterItemKey,
 } from "@j3-bots/contracts";
 import { useEffect, useEffectEvent, useId, useRef, useState, type ReactElement } from "react";
+import {
+  addressed,
+  addresseeOf,
+  canStop,
+  filterRoster,
+  orderRoster,
+  rosterKeyOf,
+  rosterKeyText,
+} from "@j3-bots/client-runtime/presentation";
 import { BotsProvider, useI18n } from "../app/context";
 import { AppShell, type Region } from "../components/AppShell";
 import { Composer, type MentionCandidate } from "../components/Composer";
@@ -26,17 +35,10 @@ import { ChangeServer } from "../components/ServerAddress";
 import { SettingsButton, SignOutDevice } from "../components/SettingsDialog";
 import { Button } from "../components/ui/button";
 import { Timeline } from "../components/Timeline";
-import {
-  canStop,
-  filterRoster,
-  orderRoster,
-  rosterKeyOf,
-  rosterKeyText,
-} from "../presentation/roster";
 import type { ShellData, ShellIntents } from "./data";
 import { isCovered, useCovered } from "../lib/covered";
 import { useNewestSeen } from "../lib/useNewestSeen";
-import { addressed, addresseeOf, addresseeLine } from "../presentation/mentions";
+import { addresseeLine } from "../presentation/mentions";
 import { useShellLayout } from "./layout";
 import { isEditable, shellShortcuts } from "./shortcuts";
 

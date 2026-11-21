@@ -13,16 +13,16 @@ import type {
   RoutineId,
   WorkStep,
 } from "@j3-bots/contracts";
-import type { ConversationItem, MentionLabel } from "@j3-bots/client-runtime";
 import type * as Redacted from "effect/Redacted";
-import { useBots, useI18n } from "../app/context";
+import type { ConversationItem, MentionLabel } from "@j3-bots/client-runtime";
 import {
   addresseeOf,
+  buildTimeline,
   mentionedNames,
   mentionedWhoLeft,
-  resendLabel,
-} from "../presentation/mentions";
-import { buildTimeline } from "../presentation/timeline";
+} from "@j3-bots/client-runtime/presentation";
+import { useBots, useI18n } from "../app/context";
+import { resendLabel } from "../presentation/mentions";
 import { ApprovalCard } from "./ApprovalCard";
 import { HandoffCard } from "./HandoffCard";
 import { MessageBubble } from "./MessageBubble";

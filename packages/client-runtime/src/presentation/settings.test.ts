@@ -2,7 +2,7 @@
 import { type Settings, TimeZone } from "@j3-bots/contracts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
-import { editsAfterFailedSave, noEdits, settingsPatch } from "./settings";
+import { editsAfterFailedSave, noEdits, settingsPatch } from "./settings.ts";
 
 const zone = Schema.decodeSync(TimeZone);
 

@@ -2,9 +2,14 @@
 import type { RosterItem, RosterItemKey } from "@j3-bots/contracts";
 import { PlusIcon, SearchIcon } from "lucide-react";
 import { useState, type KeyboardEvent, type ReactElement, type ReactNode, type Ref } from "react";
+import {
+  filterRoster,
+  orderRoster,
+  ROOM_MEMBERS,
+  rosterKeyOf,
+  rosterKeyText,
+} from "@j3-bots/client-runtime/presentation";
 import { useBots, useI18n } from "../app/context";
-import { ROOM_MEMBERS } from "../presentation/roomForm";
-import { filterRoster, orderRoster, rosterKeyOf, rosterKeyText } from "../presentation/roster";
 import { RosterRow } from "./RosterRow";
 import { Button } from "./ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";

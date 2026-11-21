@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { RoomChanges, RoomDraft } from "@j3-bots/client-runtime";
+import type { RoomChanges, RoomDraft } from "../stores/Details.ts";
 import type { BotId, Room } from "@j3-bots/contracts";
 
 /** How many bots a room holds, as the server checks. */

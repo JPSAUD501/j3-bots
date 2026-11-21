@@ -3,13 +3,11 @@
 import {
   BotId,
   EntryId,
-  EntryOrder,
   ModelId,
   ProviderId,
   type Bot,
   type BotState,
   type EntryPreview,
-  type MessageEntry,
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import { createI18n, type Locale } from "../i18n/i18n";
@@ -31,27 +29,6 @@ export function context(
 }
 
 let next = 0;
-
-export function message(
-  createdAt: string,
-  author: MessageEntry["author"] = { _tag: "operator" },
-  text = "Hello",
-  extra: Partial<MessageEntry> = {},
-): MessageEntry {
-  return {
-    _tag: "message",
-    id: EntryId.make(`m${++next}`),
-    order: EntryOrder.make(next),
-    author,
-    createdAt: at(createdAt),
-    text,
-    attachments: [],
-    mentions: { _tag: "bots", ids: [] },
-    delivery: { _tag: "delivered" },
-    commandId: null,
-    ...extra,
-  };
-}
 
 /** A roster row's view of an entry. */
 export function preview(

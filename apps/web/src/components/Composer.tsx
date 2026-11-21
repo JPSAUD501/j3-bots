@@ -1,12 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
-  type DraftFile,
-  type DraftMention,
-  type FileProblem,
-  type MessageProblem,
-  messageProblem,
-} from "@j3-bots/client-runtime";
-import {
   type Avatar,
   MAX_ATTACHMENT_SIZE,
   MAX_ATTACHMENTS_PER_MESSAGE,
@@ -25,22 +18,29 @@ import {
   useRef,
   useState,
 } from "react";
-import { useI18n } from "../app/context";
-import type { I18n } from "../i18n/i18n";
-import { cn } from "../lib/cn";
 import {
-  EVERYONE,
-  type DraggedText,
+  messageProblem,
+  type DraftFile,
+  type DraftMention,
+  type FileProblem,
+  type MessageProblem,
+} from "@j3-bots/client-runtime";
+import {
   draggedText,
-  type FieldEdit,
+  EVERYONE,
   followInput,
   insertMention,
-  type Mentionable,
-  type MentionOption,
   mentionOptions,
   mentionQuery,
   movedOption,
-} from "../presentation/mentions";
+  type DraggedText,
+  type FieldEdit,
+  type Mentionable,
+  type MentionOption,
+} from "@j3-bots/client-runtime/presentation";
+import { useI18n } from "../app/context";
+import type { I18n } from "../i18n/i18n";
+import { cn } from "../lib/cn";
 import { AvatarShape } from "./BotAvatar";
 import { fileSize } from "./FileCard";
 import { Button } from "./ui/button";

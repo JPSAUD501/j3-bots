@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Dialog } from "@base-ui/react/dialog";
-import type { IntentFailure, RoomChanges, RoomDraft } from "@j3-bots/client-runtime";
 import type { Bot, BotId } from "@j3-bots/contracts";
 import { CheckIcon, XIcon } from "lucide-react";
 import { useEffect, useId, useState } from "react";
-import { useI18n } from "../app/context";
-import { cn } from "../lib/cn";
-import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
+import type { IntentFailure, RoomChanges, RoomDraft } from "@j3-bots/client-runtime";
 import {
   blankRoomForm,
   followRoom,
@@ -17,14 +14,17 @@ import {
   roomDraft,
   roomFormContext,
   roomFormOf,
-  type RoomFormMode,
-  type RoomFormProblem,
   roomFormTarget,
-  type RoomFormValues,
   sameRoomForm,
   withMember,
   withoutDeleted,
-} from "../presentation/roomForm";
+  type RoomFormMode,
+  type RoomFormProblem,
+  type RoomFormValues,
+} from "@j3-bots/client-runtime/presentation";
+import { useI18n } from "../app/context";
+import { cn } from "../lib/cn";
+import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
 import { AvatarShape } from "./BotAvatar";
 import { Button } from "./ui/button";
 import { ChoiceIndicator, choiceRow } from "./ui/choice";

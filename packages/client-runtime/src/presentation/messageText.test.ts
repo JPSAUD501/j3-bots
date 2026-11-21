@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vite-plus/test";
-import { parseMessageText } from "./messageText";
+import { parseMessageText } from "./messageText.ts";
 
 const inlinesOf = (text: string, mentionable: ReadonlyArray<string> = []) => {
   const [block] = parseMessageText(text, mentionable);

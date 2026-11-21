@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { BotId, RoomId, type Room } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { at } from "../test/fixtures";
+import { at } from "../../test/fixtures.ts";
 import {
   blankRoomForm,
   followRoom,
@@ -16,7 +16,7 @@ import {
   sameRoomForm,
   withMember,
   withoutDeleted,
-} from "./roomForm";
+} from "./roomForm.ts";
 
 const hal = BotId.make("hal");
 const scout = BotId.make("scout");

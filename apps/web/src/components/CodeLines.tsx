@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import type { CodeLineTone } from "@j3-bots/client-runtime/presentation";
 import { cn } from "../lib/cn";
-import type { CodeLineTone } from "../presentation/diff";
 
 const toneClass: Record<CodeLineTone, string> = {
   added: "bg-success/12",

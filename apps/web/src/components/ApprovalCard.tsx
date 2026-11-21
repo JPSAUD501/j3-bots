@@ -8,6 +8,7 @@ import type {
 import { Collapsible } from "@base-ui/react/collapsible";
 import { ChevronRightIcon, ShieldCheckIcon, ShieldXIcon, ShieldIcon } from "lucide-react";
 import { useId } from "react";
+import { diffTones } from "@j3-bots/client-runtime/presentation";
 import { useI18n } from "../app/context";
 import type { KeyWith } from "../i18n/i18n";
 import { cn } from "../lib/cn";
@@ -15,7 +16,6 @@ import { touchTarget } from "../lib/touchTarget";
 import { useFocusAfterActions } from "../lib/useFocusAfterActions";
 import { useFocusReplacement } from "../lib/useFocusReplacement";
 import { CardFrame } from "./CardFrame";
-import { diffTones } from "../presentation/diff";
 import { CodeLines } from "./CodeLines";
 import { Button } from "./ui/button";
 

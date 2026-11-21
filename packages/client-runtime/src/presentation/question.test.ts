@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Question } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { assembleAnswers, type QuestionDraft } from "./question";
+import { assembleAnswers, type QuestionDraft } from "./question.ts";
 
 const question = (id: string, extra: Partial<Question> = {}): Question => ({
   id,

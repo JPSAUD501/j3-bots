@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Save } from "@j3-bots/client-runtime";
+import type { Save } from "../stores/Details.ts";
 import { Conflict } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { shownSaveProblem } from "./saves";
+import { shownSaveProblem } from "./saves.ts";
 
 describe("shownSaveProblem", () => {
   const stale: Save<null> = {
