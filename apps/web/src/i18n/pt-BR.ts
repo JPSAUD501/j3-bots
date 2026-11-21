@@ -301,6 +301,8 @@ export const ptBR: Catalog = {
   "roomForm.members.invalid": "Escolha de dois a seis bots.",
   "roomForm.host": "Anfitrião",
   "roomForm.host.hint": "Responde o que você escreve sem mencionar ninguém.",
+  "roomForm.host.pick": "Escolha um anfitrião",
+  "roomForm.host.required": "Escolha o bot que é o anfitrião da sala.",
   "roomForm.hopLimit": "Respostas seguidas entre bots",
   "roomForm.hopLimit.hint":
     "Quantas vezes os bots podem responder uns aos outros antes de a sala esperar por você.",

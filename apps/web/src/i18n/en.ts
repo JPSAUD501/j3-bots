@@ -299,6 +299,8 @@ export const en = {
   "roomForm.members.invalid": "Pick two to six bots.",
   "roomForm.host": "Host",
   "roomForm.host.hint": "Answers what you write without mentioning anyone.",
+  "roomForm.host.pick": "Pick a host",
+  "roomForm.host.required": "Pick the bot that hosts the room.",
   "roomForm.hopLimit": "Bot replies in a row",
   "roomForm.hopLimit.hint":
     "How many times bots may reply to each other before the room waits for you.",

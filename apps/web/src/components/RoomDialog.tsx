@@ -15,6 +15,7 @@ import {
   ROOM_NAME_MAX,
   roomChanges,
   roomDraft,
+  roomFormContext,
   roomFormOf,
   type RoomFormMode,
   type RoomFormProblem,
@@ -62,7 +63,8 @@ const fieldClass =
  * A room's name, its bots, which of them hosts, and how many replies in a
  * row bots may trade before the room waits for the operator. The host
  * follows the bots picked: the one the operator chose while it stays in,
- * else the primary bot, else the first picked. What is missing is said once
+ * else the primary bot, else the first picked; a room the server has without
+ * a host shows none until the operator picks one. What is missing is said once
  * the operator tries to send; a refusal from the server is said in the footer,
  * or beside the bots when they are the reason, and keeps what was typed. What
  * the operator left alone follows the room as the server has it, so a change
@@ -93,6 +95,7 @@ export function RoomForm({
     membersError: useId(),
     host: useId(),
     hostHint: useId(),
+    hostError: useId(),
     hopLimit: useId(),
     hopLimitHint: useId(),
     hopLimitError: useId(),
@@ -104,6 +107,8 @@ export function RoomForm({
     () => initial ?? (room === null ? blankRoomForm : roomFormOf(room)),
   );
   const [values, setValues] = useState(start);
+  const primaryId = bots.find((bot) => bot.primary)?.id ?? null;
+  const context = roomFormContext(room, primaryId, defaultHopLimit);
   // Bots picked and then deleted elsewhere, by name, which leave the selection and are named under it.
   const [dropped, setDropped] = useState<ReadonlyArray<string>>([]);
   const [botsSeen, setBotsSeen] = useState(bots);
@@ -126,7 +131,7 @@ export function RoomForm({
     if (roomSeen !== room) {
       setRoomSeen(room);
       if (room !== null) {
-        const followed = followRoom(nextStart, nextValues, room);
+        const followed = followRoom(nextStart, nextValues, room, context);
         nextStart = followed.start;
         nextValues = followed.values;
       }
@@ -139,10 +144,9 @@ export function RoomForm({
   // What is missing shows once the operator tried to send, and follows the form from then on.
   const [tried, setTried] = useState(false);
 
-  const primaryId = bots.find((bot) => bot.primary)?.id ?? null;
-  const hostId = hostOf(values, primaryId);
-  const draft = room === null ? roomDraft(values, primaryId) : null;
-  const changes = room === null ? null : roomChanges(start, values, primaryId, defaultHopLimit);
+  const hostId = hostOf(values, context);
+  const draft = room === null ? roomDraft(values, context) : null;
+  const changes = room === null ? null : roomChanges(start, values, context);
   // What goes to the server, once nothing is missing.
   const submission: RoomSubmission | null =
     draft?._tag === "ready"
@@ -162,7 +166,7 @@ export function RoomForm({
         : null;
   const problems: ReadonlySet<RoomFormProblem> = tried && missing !== null ? missing : new Set();
   const full = values.members.length >= ROOM_MEMBERS.max;
-  const unsaved = !sameRoomForm(start, values, primaryId, defaultHopLimit);
+  const unsaved = !sameRoomForm(start, values, context);
   useEffect(() => {
     if (!unsaved || onUnsavedChange === undefined) return;
     onUnsavedChange(true);
@@ -356,13 +360,22 @@ export function RoomForm({
               id={ids.host}
               value={hostId ?? ""}
               disabled={busy}
-              aria-describedby={ids.hostHint}
+              aria-invalid={problems.has("host") || undefined}
+              aria-describedby={
+                problems.has("host") ? `${ids.hostHint} ${ids.hostError}` : ids.hostHint
+              }
               onChange={(event) => {
                 const picked = members.find((bot) => bot.id === event.currentTarget.value);
                 if (picked) change({ ...values, hostPick: picked.id });
               }}
               className={cn(fieldClass, "h-9 pointer-coarse:h-11")}
             >
+              {/* A room the server has without a host shows none until the operator picks one. */}
+              {hostId === null && (
+                <option value="" disabled>
+                  {t("roomForm.host.pick")}
+                </option>
+              )}
               {members.map((bot) => (
                 <option key={bot.id} value={bot.id}>
                   {bot.profile.name}
@@ -372,6 +385,11 @@ export function RoomForm({
             <p id={ids.hostHint} className="text-2xs text-muted-foreground">
               {t("roomForm.host.hint")}
             </p>
+            {problems.has("host") && (
+              <p id={ids.hostError} className="text-xs text-blocked">
+                {t("roomForm.host.required")}
+              </p>
+            )}
           </div>
         )}
 

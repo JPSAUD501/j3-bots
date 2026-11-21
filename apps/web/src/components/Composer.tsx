@@ -19,6 +19,7 @@ import {
   type KeyboardEvent,
   type RefObject,
   useEffect,
+  useEffectEvent,
   useId,
   useLayoutEffect,
   useRef,
@@ -31,8 +32,8 @@ import {
   EVERYONE,
   type DraggedText,
   draggedText,
-  followDrop,
-  followEdit,
+  type FieldEdit,
+  followInput,
   insertMention,
   type Mentionable,
   type MentionOption,
@@ -232,6 +233,36 @@ export function Composer({
     field: fieldRef,
     members: frozen ? undefined : mentionable,
   });
+  // Follows an edit of the field, with the mentions that still stand after it.
+  const follow = (field: HTMLTextAreaElement, input: Event) => {
+    setNotTaken(false);
+    const told = input instanceof InputEvent ? input : null;
+    const edit: FieldEdit = {
+      before: value,
+      after: field.value,
+      inputType: told?.inputType ?? null,
+      data: told?.data ?? null,
+      selection: selection.current,
+      now: [field.selectionStart, field.selectionEnd],
+    };
+    onValueChange(field.value, followInput(edit, mentions, dragged.current));
+    remember(field);
+    mention.follow(field);
+  };
+  // React reports no edit that leaves the text as it was, as text pasted over
+  // the same text, or the second half of a move WebKit has already made: the
+  // field's own event does.
+  const followUnchanged = useEffectEvent((input: Event) => {
+    const field = fieldRef.current;
+    if (field !== null && field.value === value) follow(field, input);
+  });
+  useEffect(() => {
+    const field = fieldRef.current;
+    if (field === null) return;
+    const listener = (input: Event) => followUnchanged(input);
+    field.addEventListener("input", listener);
+    return () => field.removeEventListener("input", listener);
+  }, [fieldRef]);
   const attach = (list: FileList | null) => {
     if (!onAttachFiles || list === null || list.length === 0) return;
     setNotTaken(frozen);
@@ -382,26 +413,7 @@ export function Composer({
           rows={1}
           value={value}
           readOnly={frozen}
-          onChange={(event) => {
-            const field = event.currentTarget;
-            setNotTaken(false);
-            const caret = field.selectionStart === field.selectionEnd ? field.selectionStart : null;
-            const [start, end] = selection.current ?? [0, 0];
-            const over: readonly [number, number] | null = start < end ? [start, end] : null;
-            const place = { replaced: over, caret };
-            const input =
-              event.nativeEvent instanceof InputEvent ? event.nativeEvent.inputType : null;
-            // A drop leaves the caret, or the text it selects, ending where the dropped text does.
-            const dropAt = field.selectionEnd - (field.value.length - value.length);
-            onValueChange(
-              field.value,
-              input === "insertFromDrop"
-                ? followDrop(value, field.value, dropAt, mentions, dragged.current)
-                : followEdit(value, field.value, place, mentions),
-            );
-            remember(field);
-            mention.follow(field);
-          }}
+          onChange={(event) => follow(event.currentTarget, event.nativeEvent)}
           onSelect={(event) => {
             remember(event.currentTarget);
             mention.follow(event.currentTarget);

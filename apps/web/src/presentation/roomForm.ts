@@ -18,7 +18,32 @@ export interface RoomFormValues {
   readonly hopLimit: string;
 }
 
-export type RoomFormProblem = "name" | "members" | "hop-limit";
+export type RoomFormProblem = "name" | "members" | "host" | "hop-limit";
+
+/** What reading the form takes beyond what the operator filled in. */
+export interface RoomFormContext {
+  /** The operator's primary bot, which hosts when it is a member and no host is picked. */
+  readonly primaryId: BotId | null;
+  /** The hop limit an empty field stands for; null until the settings are read. */
+  readonly defaultHopLimit: number | null;
+  /**
+   * Whether the form chooses a host the operator has not picked: for a new
+   * room, and for a room the server has with a host. A room the server has
+   * without one waits for the operator to pick it.
+   */
+  readonly choosesHost: boolean;
+}
+
+/** How the form reads its values for `room`, the room as the server has it now, or null for a new one. */
+export const roomFormContext = (
+  room: Room | null,
+  primaryId: BotId | null,
+  defaultHopLimit: number | null,
+): RoomFormContext => ({
+  primaryId,
+  defaultHopLimit,
+  choosesHost: room === null || room.hostId !== null,
+});
 
 /**
  * What the form is for: a new room, changing one, or giving an archived one
@@ -81,34 +106,40 @@ export function withoutDeleted(
 /**
  * The form moved onto `room` as the server has it now, from `start`, the room
  * as the form last had it: what the operator left alone follows the server,
- * the host among it, and what they changed stays as they changed it. The
- * form then compares with the room as it is, so it sends only what differs
- * from it.
+ * the host among it, and what they changed stays as they changed it. Changed
+ * means what `roomChanges` would send: a name that differs only in spaces
+ * around it, or a hop limit typed another way, is left alone. The form then
+ * compares with the room as it is, so it sends only what differs from it.
  */
 export function followRoom(
   start: RoomFormValues,
   values: RoomFormValues,
   room: Room,
+  context: RoomFormContext,
 ): { readonly start: RoomFormValues; readonly values: RoomFormValues } {
   const live = roomFormOf(room);
+  const changed = changedFields(start, values, context);
   return {
     start: live,
     values: {
-      name: values.name === start.name ? live.name : values.name,
-      members: sameOrder(values.members, start.members) ? live.members : values.members,
-      hostPick: values.hostPick === start.hostPick ? live.hostPick : values.hostPick,
-      hopLimit: values.hopLimit === start.hopLimit ? live.hopLimit : values.hopLimit,
+      name: changed.has("name") ? values.name : live.name,
+      members: changed.has("members") ? values.members : live.members,
+      hostPick: changed.has("host") ? values.hostPick : live.hostPick,
+      hopLimit: changed.has("hop-limit") ? values.hopLimit : live.hopLimit,
     },
   };
 }
 
 /**
- * Who hosts: the bot the operator picked while it is a member, else the
- * primary bot when it is one, else the first member picked.
+ * Who hosts: the bot the operator picked while it is a member; else, where
+ * the form chooses one, the primary bot when it is a member, else the first
+ * member picked. Null while there is none.
  */
-export function hostOf(values: RoomFormValues, primaryId: BotId | null): BotId | null {
+export function hostOf(values: RoomFormValues, context: RoomFormContext): BotId | null {
   const { members, hostPick } = values;
   if (hostPick !== null && members.includes(hostPick)) return hostPick;
+  if (!context.choosesHost) return null;
+  const { primaryId } = context;
   if (primaryId !== null && members.includes(primaryId)) return primaryId;
   return members[0] ?? null;
 }
@@ -133,22 +164,25 @@ function hopLimitOf(typed: string): number | null | "invalid" {
 }
 
 /**
- * What stops the form from being sent. An empty hop limit takes the default,
+ * What stops the form from being sent. A room the server has without a host
+ * needs one picked, as the server does. An empty hop limit takes the default,
  * so it is a problem only where no default is known to set it back to.
  */
 function roomFormProblems(
   values: RoomFormValues,
-  defaultHopLimit: number | null,
+  context: RoomFormContext,
   emptyHopLimit: "omit" | "default",
 ): ReadonlySet<RoomFormProblem> {
   const problems = new Set<RoomFormProblem>();
   if (values.name.trim() === "") problems.add("name");
   const count = values.members.length;
   if (count < ROOM_MEMBERS.min || count > ROOM_MEMBERS.max) problems.add("members");
+  // Without members there is no host to pick: the members are what is missing.
+  if (count > 0 && hostOf(values, context) === null) problems.add("host");
   const hopLimit = hopLimitOf(values.hopLimit);
   if (
     hopLimit === "invalid" ||
-    (hopLimit === null && emptyHopLimit === "default" && defaultHopLimit === null)
+    (hopLimit === null && emptyHopLimit === "default" && context.defaultHopLimit === null)
   ) {
     problems.add("hop-limit");
   }
@@ -160,9 +194,9 @@ type Checked<A> =
   | { readonly _tag: "invalid"; readonly problems: ReadonlySet<RoomFormProblem> };
 
 /** The new room the form describes. An empty hop limit is left to the server's default. */
-export function roomDraft(values: RoomFormValues, primaryId: BotId | null): Checked<RoomDraft> {
-  const problems = roomFormProblems(values, null, "omit");
-  const hostId = hostOf(values, primaryId);
+export function roomDraft(values: RoomFormValues, context: RoomFormContext): Checked<RoomDraft> {
+  const problems = roomFormProblems(values, context, "omit");
+  const hostId = hostOf(values, context);
   const hopLimit = hopLimitOf(values.hopLimit);
   if (problems.size > 0 || hostId === null || hopLimit === "invalid") {
     return { _tag: "invalid", problems };
@@ -184,54 +218,67 @@ const resolvedHopLimit = (values: RoomFormValues, defaultHopLimit: number | null
   return typed === null ? defaultHopLimit : typed;
 };
 
+type RoomField = "name" | "members" | "host" | "hop-limit";
+
+/**
+ * The fields where `values` say something else than `from`, as the server
+ * reads them: the name without the spaces around it, the bots in their
+ * order, the host the form gives, and the hop limit as a number, an empty
+ * one as the default.
+ */
+function changedFields(
+  from: RoomFormValues,
+  values: RoomFormValues,
+  context: RoomFormContext,
+): ReadonlySet<RoomField> {
+  const changed = new Set<RoomField>();
+  if (values.name.trim() !== from.name.trim()) changed.add("name");
+  if (!sameOrder(values.members, from.members)) changed.add("members");
+  if (hostOf(values, context) !== hostOf(from, context)) changed.add("host");
+  const { defaultHopLimit } = context;
+  if (resolvedHopLimit(values, defaultHopLimit) !== resolvedHopLimit(from, defaultHopLimit)) {
+    changed.add("hop-limit");
+  }
+  return changed;
+}
+
 /**
  * Whether `values` say the same as `opened`, where the form started: empty,
- * or the room as the server has it now. The same name, bots in the same
- * order, the same host and the same hop limit. An edit the operator undid
- * changes nothing.
+ * or the room as the server has it now. An edit the operator undid changes
+ * nothing.
  */
-export function sameRoomForm(
+export const sameRoomForm = (
   opened: RoomFormValues,
   values: RoomFormValues,
-  primaryId: BotId | null,
-  defaultHopLimit: number | null,
-): boolean {
-  return (
-    values.name.trim() === opened.name.trim() &&
-    sameOrder(values.members, opened.members) &&
-    hostOf(values, primaryId) === hostOf(opened, primaryId) &&
-    resolvedHopLimit(values, defaultHopLimit) === resolvedHopLimit(opened, defaultHopLimit)
-  );
-}
+  context: RoomFormContext,
+): boolean => changedFields(opened, values, context).size === 0;
 
 /**
  * What the form changes from `room`, the room as the server has it now, and
  * only that: a field changed elsewhere and left alone here follows the room
- * (`followRoom`), so it is not sent back. The host the form shows is sent
- * whenever the server's is not that one, as when it has none, or the bot
- * hosting it leaves the room in this change. An empty hop limit sets it back
- * to the default.
+ * (`followRoom`), so it is not sent back. The host the form gives is sent
+ * whenever the server's is not that one, as when the bot hosting it leaves
+ * the room in this change. An empty hop limit sets it back to the default.
  */
 export function roomChanges(
   room: RoomFormValues,
   values: RoomFormValues,
-  primaryId: BotId | null,
-  defaultHopLimit: number | null,
+  context: RoomFormContext,
 ): Checked<RoomChanges> {
-  const problems = roomFormProblems(values, defaultHopLimit, "default");
-  const hostId = hostOf(values, primaryId);
-  const hopLimit = resolvedHopLimit(values, defaultHopLimit);
+  const problems = roomFormProblems(values, context, "default");
+  const hostId = hostOf(values, context);
+  const hopLimit = resolvedHopLimit(values, context.defaultHopLimit);
   if (problems.size > 0 || hostId === null || hopLimit === null || hopLimit === "invalid") {
     return { _tag: "invalid", problems };
   }
-  const name = values.name.trim();
+  const changed = changedFields(room, values, context);
   return {
     _tag: "ready",
     value: {
-      ...(name === room.name.trim() ? {} : { name }),
-      ...(sameOrder(values.members, room.members) ? {} : { members: values.members }),
-      ...(hostId === room.hostPick ? {} : { hostId }),
-      ...(hopLimit === resolvedHopLimit(room, defaultHopLimit) ? {} : { hopLimit }),
+      ...(changed.has("name") ? { name: values.name.trim() } : {}),
+      ...(changed.has("members") ? { members: values.members } : {}),
+      ...(changed.has("host") ? { hostId } : {}),
+      ...(changed.has("hop-limit") ? { hopLimit } : {}),
     },
   };
 }

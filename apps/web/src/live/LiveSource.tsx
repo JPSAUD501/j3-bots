@@ -625,9 +625,15 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   const unarchiveRoom = (roomId: RoomId): Promise<void> => {
     const room = roomOf(roomId);
     if (room === null) return Promise.resolve();
+    // Opens the form to give the room what it needs. A form already open stays
+    // the operator's: what the room needs is said instead.
+    const askForMembers = () => {
+      if (open.current.room === null) setRoomForm({ _tag: "unarchive", roomId });
+      else say(t("room.unarchiveNeedsMembers", { name: room.name }));
+    };
     // A room deleting bots left too small needs members and a host before it can take messages.
     if (room.members.length < 2 || room.hostId === null) {
-      setRoomForm({ _tag: "unarchive", roomId });
+      askForMembers();
       return Promise.resolve();
     }
     return j3.updateRoom(roomId, { archived: false }).then((result) => {
@@ -638,9 +644,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
         failure.error._tag === "Invalid" &&
         failure.error.reason === "room-members"
       ) {
-        // A form the operator opened meanwhile stays theirs: the refusal is said instead.
-        if (open.current.room === null) setRoomForm({ _tag: "unarchive", roomId });
-        else say(t("room.unarchiveNeedsMembers", { name: room.name }));
+        askForMembers();
       } else {
         say(t("room.unarchiveFailed", { name: room.name }));
       }

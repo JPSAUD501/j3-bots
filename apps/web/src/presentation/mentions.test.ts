@@ -8,8 +8,9 @@ import {
   addresseeOf,
   addresseeLine,
   draggedText,
-  followDrop,
+  type FieldEdit,
   followEdit,
+  followInput,
   insertMention,
   type Mentionable,
   type MentionOption,
@@ -201,23 +202,85 @@ describe("followEdit", () => {
   });
 });
 
-describe("followDrop", () => {
-  it("moves the mentions in text dragged within the field, and keeps the others", () => {
+describe("followInput", () => {
+  const { text, mentions } = picked("ask @an", bot(ana));
+  /** An edit that left the text as it was, over the selection `[4, 9)`: "@Ana ". */
+  const unchanged = (inputType: string | null, data: string | null): FieldEdit => ({
+    before: text,
+    after: text,
+    inputType,
+    data,
+    selection: [4, 9],
+    now: [9, 9],
+  });
+
+  it("drops a mention the same text was pasted or typed over, which React reports no change for", () => {
+    expect(text).toBe("ask @Ana ");
+    expect(followInput(unchanged("insertFromPaste", "@Ana "), mentions, null)).toEqual([]);
+    // Some browsers do not tell what was pasted: it still replaced the selection.
+    expect(followInput(unchanged("insertFromPaste", null), mentions, null)).toEqual([]);
+  });
+
+  it("keeps the mentions through an edit that left the text as it was and did not replace the selection", () => {
+    // Text other than the selection's leaves the text as it was only somewhere else.
+    expect(followInput(unchanged("insertText", "x"), mentions, null)).toEqual(mentions);
+    expect(followInput(unchanged("historyUndo", null), mentions, null)).toEqual(mentions);
+  });
+
+  describe("text dragged within the field", () => {
     const first = picked("@an", bot(ana));
-    const { text, mentions } = picked(`${first.text}hi @sc`, bot(scout), first.mentions);
-    expect(text).toBe("@Ana hi @Scout ");
-    // "@Scout " dragged to the start: taken out where it was, then dropped in.
-    const source = [text.indexOf("@Scout"), text.length] as const;
-    const dragged = draggedText(text, source, mentions);
+    const draft = picked(`${first.text}hi @sc`, bot(scout), first.mentions);
+    // "@Scout " dragged to the start.
+    const source = [draft.text.indexOf("@Scout"), draft.text.length] as const;
+    const dragged = draggedText(draft.text, source, draft.mentions);
     const taken = "@Ana hi ";
-    const left = followEdit(text, taken, { replaced: source, caret: null }, mentions);
-    const dropped = "@Scout @Ana hi ";
-    const moved = followDrop(taken, dropped, 0, left, dragged);
-    expect(addressedTo(dropped, moved, ids)).toEqual({ _tag: "bots", ids: [scout.id, ana.id] });
-    // The same text dropped in from elsewhere was not picked.
-    expect(addressedTo(dropped, followDrop(taken, dropped, 0, left, null), ids)).toEqual({
-      _tag: "bots",
-      ids: [ana.id],
+    const moved = "@Scout @Ana hi ";
+    const drag = (
+      before: string,
+      after: string,
+      inputType: string,
+      now: readonly [number, number],
+    ): FieldEdit => ({ before, after, inputType, data: null, selection: source, now });
+
+    it("moves the mentions in it, taken out and then dropped in, as Chromium tells it", () => {
+      expect(draft.text).toBe("@Ana hi @Scout ");
+      const left = followInput(
+        drag(draft.text, taken, "deleteByDrag", [8, 8]),
+        draft.mentions,
+        dragged,
+      );
+      const dropped = followInput(drag(taken, moved, "insertFromDrop", [0, 7]), left, dragged);
+      expect(addressedTo(moved, dropped, ids)).toEqual({ _tag: "bots", ids: [scout.id, ana.id] });
+      // The same text dropped in from elsewhere was not picked.
+      const elsewhere = followInput(drag(taken, moved, "insertFromDrop", [0, 7]), left, null);
+      expect(addressedTo(moved, elsewhere, ids)).toEqual({ _tag: "bots", ids: [ana.id] });
+    });
+
+    it("moves the mentions in it when the first edit already sees it moved, as WebKit tells it", () => {
+      const first = followInput(
+        drag(draft.text, moved, "deleteByDrag", [0, 7]),
+        draft.mentions,
+        dragged,
+      );
+      expect(addressedTo(moved, first, ids)).toEqual({ _tag: "bots", ids: [scout.id, ana.id] });
+      // The second edit finds the text as it is: nothing is left to follow.
+      expect(followInput(drag(moved, moved, "insertFromDrop", [0, 7]), first, dragged)).toEqual(
+        first,
+      );
+    });
+
+    it("drops a mention the text was cut out of, already moved, and keeps the others", () => {
+      // "hi @Sc" dragged to the end, as WebKit tells it: Scout's mention is cut, Ana's stays.
+      const cut = draggedText(draft.text, [5, 11], draft.mentions);
+      const edit: FieldEdit = {
+        before: draft.text,
+        after: "@Ana out hi @Sc",
+        inputType: "deleteByDrag",
+        data: null,
+        selection: [5, 11],
+        now: [9, 15],
+      };
+      expect(followInput(edit, draft.mentions, cut)).toEqual([draft.mentions[0]]);
     });
   });
 });
