@@ -2,7 +2,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
-import { ConnectRequest, ConnectResult, DesktopState, HostedBridge } from "./index.ts";
+import { ConnectRequest, ConnectResult, DesktopState, HostedBridge, OpenRequest } from "./index.ts";
 
 const decodes = <S extends Schema.Constraint & { readonly DecodingServices: never }>(
   schema: S,
@@ -49,22 +49,31 @@ describe("the desktop bridge", () => {
     assert.isFalse(decodes(ConnectRequest, { address: "x".repeat(2049) }));
     assert.isFalse(decodes(ConnectRequest, { address: 3737 }));
     assert.isFalse(decodes(ConnectRequest, null));
+    assert.isTrue(decodes(OpenRequest, { sealed: "djEwAAAA" }));
+    assert.isFalse(decodes(OpenRequest, { sealed: "not base64!" }));
+    assert.isFalse(decodes(OpenRequest, { sealed: "" }));
+    // Not in base64's canonical form: each decodes, leniently, to no bytes or to other ones.
+    assert.isFalse(decodes(OpenRequest, { sealed: "A" }));
+    assert.isFalse(decodes(OpenRequest, { sealed: "djEwAAA" }));
+    assert.isFalse(decodes(OpenRequest, { sealed: "djEwAAB=" }));
+    assert.isTrue(decodes(OpenRequest, { sealed: "djEwAAA=" }));
   });
 
   it("finds the bridge only where the preload script put a whole one", () => {
+    const call = () => Promise.resolve(null);
     const calls = {
-      connect: () => Promise.resolve(null),
-      forgetServer: () => Promise.resolve(null),
+      connect: call,
+      forgetServer: call,
+      sealToken: call,
+      openToken: call,
+      networkStatus: call,
+      onResumed: call,
+      relaunch: call,
     };
-    assert.isTrue(decodes(HostedBridge, { state: { server: null }, ...calls }));
+    const state = { server: null };
+    assert.isTrue(decodes(HostedBridge, { state, ...calls }));
     assert.isFalse(decodes(HostedBridge, undefined));
-    assert.isFalse(decodes(HostedBridge, { state: { server: "nowhere" }, ...calls }));
-    assert.isFalse(
-      decodes(HostedBridge, {
-        state: { server: null },
-        connect: "yes",
-        forgetServer: calls.forgetServer,
-      }),
-    );
+    assert.isFalse(decodes(HostedBridge, { state: { ...state, server: "nowhere" }, ...calls }));
+    assert.isFalse(decodes(HostedBridge, { state, ...calls, connect: "yes" }));
   });
 });

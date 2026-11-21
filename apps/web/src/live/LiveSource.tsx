@@ -79,7 +79,7 @@ import {
 } from "./notify";
 import { deliverFile, reserveWindow } from "./openFile";
 import { desktop } from "./desktop";
-import { makePlatform } from "./platform";
+import { makePlatform, signInUnencrypted } from "./platform";
 
 let started: Promise<J3Client> | null = null;
 
@@ -209,6 +209,7 @@ function Gate({ children }: { children: ReactNode }) {
             defaultName={guessDeviceName(navigator.userAgent)}
             onPair={j3.pair}
             server={desktopServer}
+            restart={desktop?.relaunch}
           />
         </Screen>
       );
@@ -221,7 +222,14 @@ function Gate({ children }: { children: ReactNode }) {
     case "storage-failed":
       return (
         <Screen>
-          <StorageFailed onRetry={j3.reconnectNow} />
+          <StorageFailed
+            onRetry={j3.reconnectNow}
+            desktop={
+              desktop === null || desktopServer === undefined
+                ? undefined
+                : { server: desktopServer, restart: desktop.relaunch }
+            }
+          />
         </Screen>
       );
     case "offline":
@@ -472,6 +480,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   });
   useEffect(() => j3.onDraftChangedElsewhere(changedElsewhere), [j3]);
 
+  const storedUnencrypted = useReadable(signInUnencrypted);
   const data: ShellData = {
     engine: engine._tag === "ready" ? engine.value : null,
     engineStale: engine._tag === "ready" && engine.stale,
@@ -495,6 +504,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
     devices: devices._tag === "ready" ? devices.value : null,
     recentTurns: recentTurns.state,
     connected: connection._tag === "connected",
+    signInUnencrypted: storedUnencrypted,
   };
 
   // The latest memory read owns the viewer: each read, opening and closing

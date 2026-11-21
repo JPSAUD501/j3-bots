@@ -446,6 +446,8 @@ export const en = {
     "This page and the J3 Bots server are different versions. Reload the page.",
   "pairing.storageFailed":
     "Paired, but this browser wouldn’t keep the sign-in. Allow site data for this page and pair again.",
+  "pairing.storageFailed.desktop":
+    "Paired, but J3 Bots couldn’t store the sign-in encrypted on this device. Unlock your system’s keychain or keyring, restart J3 Bots, then pair again with a new code.",
 
   "server.title": "Where does J3 Bots run?",
   "server.body": "Enter the address of the machine that runs J3 Bots. {command} prints it there.",
@@ -479,8 +481,12 @@ export const en = {
   "gate.storage.title": "This browser won’t keep the sign-in",
   "gate.storage.body":
     "J3 Bots keeps this device’s sign-in in the browser’s site data, and the browser refused. Allow site data for this page, then try again.",
+  "gate.storage.desktopTitle": "This device’s sign-in can’t be read",
+  "gate.storage.desktopBody":
+    "J3 Bots couldn’t read the sign-in it keeps on this device for {address}. If your system’s keychain or keyring is locked, unlock it, then restart J3 Bots. Changing to another server, or to this one again, signs this device out here.",
   "gate.reload": "Reload",
   "gate.retry": "Try again",
+  "gate.restart": "Restart J3 Bots",
 
   "engine.starting.title": "The engine is starting",
   "engine.starting.body": "J3 Bots is starting its engine. This page updates when it’s ready.",
@@ -632,6 +638,9 @@ export const en = {
   "settings.pair.offline": "Available once this device is connected to J3 Bots again.",
   "settings.server": "Server",
   "settings.browser": "This browser",
+  "settings.thisDevice": "This device",
+  "settings.thisDevice.unencrypted":
+    "This computer had no keyring J3 Bots could use when it paired, so this device’s sign-in is stored without encryption. Anyone who can read your files here can use it. Pair this device again after unlocking your keychain or keyring to store it encrypted.",
   "settings.signOut": "Sign out this device",
   "settings.signOut.hint": "Signing out ends this device’s access and deletes what it keeps here.",
   "settings.signOut.pending": "Signing out…",

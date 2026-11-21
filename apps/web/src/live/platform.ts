@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
+  Cell,
   ClientStorage,
-  CredentialStorageError,
   CredentialStore,
-  type DeviceCredential,
   FileTransfer,
   type LocalRecord,
   LocalStorageError,
@@ -23,14 +22,16 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
-import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Socket from "effect/socket/Socket";
+import { type CredentialCell, type CredentialCodec, makeCredentialStore } from "./credentialStore";
+import { type Desktop, desktop } from "./desktop";
 import * as Idb from "./idb";
-import { type CredentialRecord, credentialRecord } from "./storedCredential";
+import { sealedCredential, storedProtection } from "./sealedCredential";
+import { credentialRecord, plainCredential } from "./storedCredential";
 
 const CREDENTIAL_KEY = "device";
 
@@ -40,17 +41,35 @@ const CREDENTIAL_KEY = "device";
  */
 const CREDENTIAL_CHANNEL = "j3-bots-credential";
 
-/** Whether what is stored is `credential`, as issued by `record`'s server. */
-const sameCredential =
-  (record: CredentialRecord, credential: DeviceCredential) => (stored: unknown) =>
-    Option.exists(
-      record.read(stored),
-      (found) =>
-        found.deviceId === credential.deviceId &&
-        Redacted.value(found.token) === Redacted.value(credential.token),
-    );
+/**
+ * The credential's one record in IndexedDB, beside the drafts and the
+ * outbox. `observe` is given each value read from it or stored in it.
+ */
+const credentialCell = (observe: (stored: unknown) => void): CredentialCell => ({
+  get: () =>
+    Idb.get("credentials", CREDENTIAL_KEY).then((stored) => {
+      observe(stored);
+      return stored;
+    }),
+  put: (value) => Idb.put("credentials", CREDENTIAL_KEY, value).then(() => observe(value)),
+  remove: (expected) =>
+    Idb.commit(
+      [{ store: "credentials", key: CREDENTIAL_KEY, value: null }],
+      [Idb.holding({ store: "credentials", key: CREDENTIAL_KEY, value: expected })],
+    ).then((removed) => {
+      if (removed) observe(undefined);
+      return removed;
+    }),
+});
 
-const credentials = (record: CredentialRecord) =>
+/**
+ * In the desktop app, whether the credential on disk keeps its token only
+ * obscured, as this page last read or stored it. Another window's change is
+ * read here as the client follows it.
+ */
+export const signInUnencrypted = new Cell(false);
+
+const credentials = (codec: CredentialCodec, cell: CredentialCell) =>
   Layer.effect(
     CredentialStore,
     Effect.gen(function* () {
@@ -58,39 +77,11 @@ const credentials = (record: CredentialRecord) =>
         Effect.sync(() => new BroadcastChannel(CREDENTIAL_CHANNEL)),
         (opened) => Effect.sync(() => opened.close()),
       );
-      // oxlint-disable-next-line unicorn/require-post-message-target-origin -- a BroadcastChannel stays within its origin and takes no target
-      const announce = Effect.sync(() => channel.postMessage(null));
-      const load = Effect.tryPromise({
-        try: () => Idb.get("credentials", CREDENTIAL_KEY),
-        catch: () => new CredentialStorageError({ operation: "load" }),
-      }).pipe(Effect.map(record.read));
-      return CredentialStore.of({
-        load,
-        save: Effect.fn("CredentialStore.save")((credential: DeviceCredential) =>
-          Effect.tryPromise({
-            try: () => Idb.put("credentials", CREDENTIAL_KEY, record.write(credential)),
-            catch: () => new CredentialStorageError({ operation: "save" }),
-          }).pipe(Effect.andThen(announce)),
-        ),
-        clear: Effect.fn("CredentialStore.clear")((credential: DeviceCredential) =>
-          Effect.tryPromise({
-            try: () =>
-              Idb.commit(
-                [{ store: "credentials", key: CREDENTIAL_KEY, value: null }],
-                [
-                  {
-                    store: "credentials",
-                    key: CREDENTIAL_KEY,
-                    holds: sameCredential(record, credential),
-                  },
-                ],
-              ),
-            catch: () => new CredentialStorageError({ operation: "clear" }),
-          }).pipe(
-            Effect.tap((cleared) => (cleared ? announce : Effect.void)),
-            Effect.andThen(load),
-          ),
-        ),
+      return makeCredentialStore({
+        codec,
+        cell,
+        // oxlint-disable-next-line unicorn/require-post-message-target-origin -- a BroadcastChannel stays within its origin and takes no target
+        announce: Effect.sync(() => channel.postMessage(null)),
         changes: Stream.fromEventListener(channel, "message").pipe(Stream.as(undefined)),
       });
     }),
@@ -99,13 +90,13 @@ const credentials = (record: CredentialRecord) =>
 const idbRecord = ({ table, key, value }: LocalRecord) => ({ store: table, key, value });
 
 /**
- * The expectation that the device's credential, issued by `record`'s server,
- * is `pairing`'s, read in the transaction it guards.
+ * The expectation that the device's credential, issued by the server `codec`
+ * reads for, is `pairing`'s, read in the transaction it guards.
  */
-const credentialOf = (record: CredentialRecord, pairing: DeviceId): Idb.IdbExpectation => ({
+const credentialOf = (codec: CredentialCodec, pairing: DeviceId): Idb.IdbExpectation => ({
   store: "credentials",
   key: CREDENTIAL_KEY,
-  holds: (stored) => Option.exists(record.read(stored), (found) => found.deviceId === pairing),
+  holds: (stored) => Option.contains(codec.pairingOf(stored), pairing),
 });
 
 /**
@@ -115,7 +106,7 @@ const credentialOf = (record: CredentialRecord, pairing: DeviceId): Idb.IdbExpec
 const STORAGE_CHANNEL = "j3-bots-storage";
 const decodeTable = Schema.decodeUnknownOption(LocalTable);
 
-const storage = (record: CredentialRecord) =>
+const storage = (codec: CredentialCodec) =>
   Layer.effect(
     ClientStorage,
     Effect.gen(function* () {
@@ -170,7 +161,7 @@ const storage = (record: CredentialRecord) =>
               try: () =>
                 Idb.commit(changes.map(idbRecord), [
                   ...expected.map((entry) => Idb.holding(idbRecord(entry))),
-                  ...(pairing === undefined ? [] : [credentialOf(record, pairing)]),
+                  ...(pairing === undefined ? [] : [credentialOf(codec, pairing)]),
                 ]),
               catch: () => new LocalStorageError({ operation: "write" }),
             }).pipe(
@@ -243,41 +234,62 @@ const locks = Layer.sync(WindowLocks, () =>
 );
 
 /** Uploads with `XMLHttpRequest`, the one browser API that reports upload progress. */
-const transfer = Layer.succeed(
-  FileTransfer,
-  FileTransfer.of({
-    upload: Effect.fn("FileTransfer.upload")((request: UploadRequest) =>
-      Effect.callback<UploadResponse, TransferFailed>((resume) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open("POST", request.url);
-        for (const [name, value] of Object.entries(request.headers)) {
-          xhr.setRequestHeader(name, value);
-        }
-        xhr.upload.onprogress = (event) => request.onProgress(event.loaded);
-        xhr.onload = () =>
-          resume(
-            Effect.succeed({ url: xhr.responseURL, status: xhr.status, body: xhr.responseText }),
-          );
-        xhr.onerror = () => resume(Effect.fail(new TransferFailed()));
-        xhr.send(request.body);
-        return Effect.sync(() => xhr.abort());
-      }),
-    ),
-  }),
-);
+const browserTransfer = FileTransfer.of({
+  upload: Effect.fn("FileTransfer.upload")((request: UploadRequest) =>
+    Effect.callback<UploadResponse, TransferFailed>((resume) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", request.url);
+      for (const [name, value] of Object.entries(request.headers)) {
+        xhr.setRequestHeader(name, value);
+      }
+      xhr.upload.onprogress = (event) => request.onProgress(event.loaded);
+      xhr.onload = () =>
+        resume(
+          Effect.succeed({ url: xhr.responseURL, status: xhr.status, body: xhr.responseText }),
+        );
+      xhr.onerror = () => resume(Effect.fail(new TransferFailed()));
+      xhr.send(request.body);
+      return Effect.sync(() => xhr.abort());
+    }),
+  ),
+});
 
 const statusNow = (): NetworkStatus => (navigator.onLine ? "online" : "offline");
 
-const network = Layer.succeed(
-  Network,
-  Network.of({
-    status: Effect.sync(statusNow),
-    changes: Stream.merge(
-      Stream.fromEventListener(window, "online"),
-      Stream.fromEventListener(window, "offline"),
-    ).pipe(Stream.map(statusNow)),
-  }),
+/** The page's own `online` and `offline` events. */
+const connectivityEvents = Stream.merge(
+  Stream.fromEventListener(window, "online"),
+  Stream.fromEventListener(window, "offline"),
 );
+
+const browserNetwork = Network.of({
+  status: Effect.sync(statusNow),
+  changes: connectivityEvents.pipe(Stream.map(statusNow)),
+});
+
+const statusOf = (online: boolean | null): NetworkStatus =>
+  online === null ? "unknown" : online ? "online" : "offline";
+
+/**
+ * The desktop app's network status, from the main process (`net.isOnline`),
+ * asked again on each of the page's connectivity events and told as the
+ * system wakes from sleep, when the client should try the server at once.
+ */
+const desktopNetwork = (app: Desktop) => {
+  const status = Effect.promise(() => app.online()).pipe(Effect.map(statusOf));
+  return Network.of({
+    status,
+    changes: Stream.merge(
+      connectivityEvents.pipe(Stream.mapEffect(() => status)),
+      Stream.callback<NetworkStatus>((queue) =>
+        Effect.acquireRelease(
+          Effect.sync(() => app.onResumed((online) => Queue.offerUnsafe(queue, statusOf(online)))),
+          (stop) => Effect.sync(stop),
+        ),
+      ),
+    ),
+  });
+};
 
 /**
  * The browser's platform, for the server at `server`. In a browser that is the
@@ -287,17 +299,29 @@ const network = Layer.succeed(
  * context there, so everything below works as on an HTTPS origin. The
  * credential is kept with the server that issued it, and is absent for any
  * other: clearing the page's storage on a change of server cannot be relied on
- * alone to keep a token from reaching a server that did not issue it.
+ * alone to keep a token from reaching a server that did not issue it. In the
+ * desktop app the token is kept only as the app sealed it with the system's
+ * key, and the network status comes from the app; the credential stays in
+ * the same database as the drafts and the outbox, so a write's pairing check
+ * is still one transaction. Files go up with `XMLHttpRequest` there too.
  */
 export const makePlatform = (server: URL): Layer.Layer<Platform> => {
-  const record = credentialRecord(server, window.location.origin);
+  const codec =
+    desktop === null
+      ? plainCredential(credentialRecord(server, window.location.origin))
+      : sealedCredential(server, desktop);
+  const cell = credentialCell((stored) =>
+    signInUnencrypted.set(
+      desktop !== null && Option.contains(storedProtection(server, stored), "unencrypted"),
+    ),
+  );
   return Layer.mergeAll(
     Layer.succeed(ServerAddress, { origin: server }),
-    credentials(record),
-    storage(record),
+    credentials(codec, cell),
+    storage(codec),
     locks,
-    transfer,
-    network,
+    Layer.succeed(FileTransfer, browserTransfer),
+    Layer.succeed(Network, desktop === null ? browserNetwork : desktopNetwork(desktop)),
     FetchHttpClient.layer,
     Socket.layerWebSocketConstructorGlobal,
     SecureRandom.layerWebCrypto,

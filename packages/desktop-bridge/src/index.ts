@@ -24,6 +24,16 @@ export const ServerOrigin = Schema.String.check(
 ).pipe(Schema.brand("ServerOrigin"));
 export type ServerOrigin = typeof ServerOrigin.Type;
 
+/**
+ * How a sealed device token is kept on disk: `encrypted` with a key the
+ * system keeps (the macOS Keychain, Windows DPAPI, a Linux secret service),
+ * or `unencrypted`, sealed where Linux had no secret service the app could
+ * use: then it is only obscured, and anyone who can read the profile can
+ * recover it.
+ */
+export const TokenProtection = Schema.Literals(["encrypted", "unencrypted"]);
+export type TokenProtection = typeof TokenProtection.Type;
+
 /** What the desktop app holds that the page needs before it starts. */
 export const DesktopState = Schema.Struct({
   /** The server the operator named, or `null` until they have. */
@@ -69,6 +79,55 @@ export type ConnectResult = typeof ConnectResult.Type;
 export const ForgetResult = Schema.Literals(["forgotten", "failed"]);
 export type ForgetResult = typeof ForgetResult.Type;
 
+/** A device token as the page asks the app to seal it, or the app answers it opened. */
+const Token = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1024));
+
+/**
+ * A sealed token, as the page stores it: base64 in its one canonical form
+ * (whole groups of four, padding where it belongs, no stray bits in the
+ * last character), never empty. A lenient decoder reads `A` as no bytes at
+ * all, and the system opens no bytes as an empty string, so a value is
+ * held to the form the app wrote before it is decoded.
+ */
+export const Sealed = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(4096),
+  Schema.isPattern(
+    /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/][AQgw]==|[A-Za-z0-9+/]{2}[AEIMQUYcgkosw048]=)?$/,
+  ),
+);
+
+export const SealRequest = Schema.Struct({ token: Token });
+export type SealRequest = typeof SealRequest.Type;
+
+export const SealResult = Schema.Union([
+  /** The token, encrypted for this profile, and how. */
+  Schema.TaggedStruct("sealed", { sealed: Sealed, protection: TokenProtection }),
+  Schema.TaggedStruct("failed", {}),
+]);
+export type SealResult = typeof SealResult.Type;
+
+export const OpenRequest = Schema.Struct({ sealed: Sealed });
+export type OpenRequest = typeof OpenRequest.Type;
+
+export const OpenResult = Schema.Union([
+  /** The token. */
+  Schema.TaggedStruct("opened", { token: Token }),
+  /** It decrypted, but not to a token this profile sealed: the record is damaged or not the app's. */
+  Schema.TaggedStruct("failed", {}),
+  /**
+   * The system did not open it now: its encryption is not available, or it
+   * refused, as while a keyring is locked or for a key it no longer has.
+   * Trying again later may open it.
+   */
+  Schema.TaggedStruct("unavailable", {}),
+]);
+export type OpenResult = typeof OpenResult.Type;
+
+/** Whether the system has a network (Electron's `net.isOnline`). */
+export const NetworkState = Schema.Struct({ online: Schema.Boolean });
+export type NetworkState = typeof NetworkState.Type;
+
 /** A function, called only to have its answer decoded. */
 const Callable = Schema.declare(
   (input: unknown): input is (...args: ReadonlyArray<unknown>) => unknown =>
@@ -77,11 +136,16 @@ const Callable = Schema.declare(
 
 /**
  * `window[BRIDGE_KEY]` as the page decodes it: a page in a browser finds
- * nothing there, and the desktop app's page finds its state and two calls.
+ * nothing there, and the desktop app's page finds its state and its calls.
  */
 export const HostedBridge = Schema.Struct({
   state: DesktopState,
   connect: Callable,
   forgetServer: Callable,
+  sealToken: Callable,
+  openToken: Callable,
+  networkStatus: Callable,
+  onResumed: Callable,
+  relaunch: Callable,
 });
 export type HostedBridge = typeof HostedBridge.Type;

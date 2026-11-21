@@ -11,6 +11,17 @@ const bridge: DesktopBridge = {
   state: ipcRenderer.sendSync(IPC_CHANNELS.state),
   connect: (address) => ipcRenderer.invoke(IPC_CHANNELS.connect, { address }),
   forgetServer: () => ipcRenderer.invoke(IPC_CHANNELS.forgetServer),
+  sealToken: (token) => ipcRenderer.invoke(IPC_CHANNELS.sealToken, { token }),
+  openToken: (sealed) => ipcRenderer.invoke(IPC_CHANNELS.openToken, { sealed }),
+  networkStatus: () => ipcRenderer.invoke(IPC_CHANNELS.network),
+  onResumed: (listener) => {
+    const forward = (_event: unknown, state: unknown) => listener(state);
+    ipcRenderer.on(IPC_CHANNELS.resumed, forward);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.resumed, forward);
+    };
+  },
+  relaunch: () => ipcRenderer.send(IPC_CHANNELS.relaunch),
 };
 
 contextBridge.exposeInMainWorld(BRIDGE_KEY, bridge);

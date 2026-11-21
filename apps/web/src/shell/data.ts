@@ -92,6 +92,11 @@ export interface ShellData {
   readonly recentTurns: RecentTurnsState;
   /** A connection to the server is open now. Pairing another device needs one. */
   readonly connected: boolean;
+  /**
+   * In the desktop app, this device's sign-in is stored only obscured, not
+   * encrypted, as Linux had no keyring the app could use when it was stored.
+   */
+  readonly signInUnencrypted: boolean;
 }
 
 /** A pairing code for another device, or why there is none. */

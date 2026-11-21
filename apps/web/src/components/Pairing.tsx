@@ -55,13 +55,15 @@ interface PairingProps {
    * screen that names it. A browser's server is the page's own, so it has none.
    */
   readonly server?: DesktopServer | undefined;
+  /** In the desktop app, restarts it, as once the system's keyring is unlocked. */
+  readonly restart?: (() => void) | undefined;
 }
 
 /**
  * The first screen on a new device: the code from `j3-bots pair` and a name
  * for the device. Once paired, the app opens by itself.
  */
-export function Pairing({ reason, onPair, defaultName, server }: PairingProps) {
+export function Pairing({ reason, onPair, defaultName, server, restart }: PairingProps) {
   const ctx = usePresentation();
   const { t, parts } = ctx.i18n;
   const codeId = useId();
@@ -104,7 +106,11 @@ export function Pairing({ reason, onPair, defaultName, server }: PairingProps) {
           ? t("pairing.incompatible")
           : t("gate.incompatible.desktopBody", { address: server.address });
       case "storage-failed":
-        return t("pairing.storageFailed");
+        // The code is spent and the device listed by now: in the desktop
+        // app, only a new process sees a keyring unlocked since it started.
+        return restart === undefined
+          ? t("pairing.storageFailed")
+          : t("pairing.storageFailed.desktop");
     }
   }
 
@@ -182,6 +188,11 @@ export function Pairing({ reason, onPair, defaultName, server }: PairingProps) {
           state.reason._tag === "incompatible-server" && (
             <Button onClick={() => window.location.reload()}>{t("gate.reload")}</Button>
           )}
+        {restart !== undefined &&
+          state._tag === "failed" &&
+          state.reason._tag === "storage-failed" && (
+            <Button onClick={restart}>{t("gate.restart")}</Button>
+          )}
       </form>
       {server !== undefined && (
         <div className="flex max-w-xs flex-col items-center gap-1 text-xs text-muted-foreground">
@@ -241,9 +252,38 @@ export function Incompatible({ server }: { server?: DesktopServer | undefined })
   );
 }
 
-/** The browser would not let the page keep this device's sign-in. */
-export function StorageFailed({ onRetry }: { onRetry: () => void }) {
+/**
+ * The browser would not let the page keep this device's sign-in. In the
+ * desktop app, whose server is `server`, the app could not read it, as while
+ * a keyring is locked: the app sees a keyring unlocked since only once it
+ * starts again, so the way on is to `restart` it. If it stays unreadable, changing servers
+ * leaves the sign-in behind.
+ */
+export function StorageFailed({
+  onRetry,
+  desktop,
+}: {
+  onRetry: () => void;
+  desktop?: { readonly server: DesktopServer; readonly restart: () => void } | undefined;
+}) {
   const { t } = useI18n();
+  if (desktop !== undefined) {
+    const { server, restart } = desktop;
+    return (
+      <Centered>
+        <Heading
+          title={t("gate.storage.desktopTitle")}
+          body={t("gate.storage.desktopBody", { address: server.address })}
+        />
+        <div className="flex flex-wrap items-start justify-center gap-2">
+          <Button variant="primary" onClick={restart}>
+            {t("gate.restart")}
+          </Button>
+          <ChangeServer address={server.address} onChange={server.forget} paired />
+        </div>
+      </Centered>
+    );
+  }
   return (
     <Centered>
       <Heading title={t("gate.storage.title")} body={t("gate.storage.body")} />

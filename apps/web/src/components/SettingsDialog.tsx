@@ -70,6 +70,7 @@ interface SettingsButtonProps {
     | "connected"
     | "roster"
     | "recentTurns"
+    | "signInUnencrypted"
   >;
   readonly intents: SettingsIntents;
 }
@@ -176,7 +177,11 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
                 onRevoke={intents.revokeDevice}
               />
               {intents.server !== undefined && <ServerSection server={intents.server} />}
-              <BrowserSection onSignOut={intents.signOut} />
+              <BrowserSection
+                onSignOut={intents.signOut}
+                server={intents.server}
+                unencrypted={data.signInUnencrypted}
+              />
             </div>
           </Dialog.Popup>
         </Dialog.Portal>
@@ -683,8 +688,21 @@ function ServerSection({ server }: { server: DesktopServer }) {
   );
 }
 
-/** Choices kept in this browser only, and signing this device out. */
-function BrowserSection({ onSignOut }: { onSignOut: SettingsIntents["signOut"] }) {
+/**
+ * Choices kept in this browser only, and signing this device out. In the
+ * desktop app, whose server is `server`, the same for this device, and that
+ * its sign-in is stored `unencrypted` when it is, as that is less safe than
+ * the operator would expect.
+ */
+function BrowserSection({
+  onSignOut,
+  server,
+  unencrypted,
+}: {
+  onSignOut: SettingsIntents["signOut"];
+  server: DesktopServer | undefined;
+  unencrypted: boolean;
+}) {
   const { t } = useI18n();
   const { appearance, language } = usePreferences();
   const appearanceId = useId();
@@ -701,7 +719,7 @@ function BrowserSection({ onSignOut }: { onSignOut: SettingsIntents["signOut"] }
     { value: "pt-BR", label: "Português (Brasil)" },
   ];
   return (
-    <Section title={t("settings.browser")}>
+    <Section title={t(server === undefined ? "settings.browser" : "settings.thisDevice")}>
       <div className="flex flex-col gap-1">
         <label htmlFor={appearanceId} className="text-xs">
           {t("settings.appearance")}
@@ -743,6 +761,9 @@ function BrowserSection({ onSignOut }: { onSignOut: SettingsIntents["signOut"] }
         </select>
       </div>
       <div className="flex flex-col gap-1.5 pt-1">
+        {unencrypted && (
+          <p className="text-xs text-muted-foreground">{t("settings.thisDevice.unencrypted")}</p>
+        )}
         <p className="text-xs text-muted-foreground">{t("settings.signOut.hint")}</p>
         <SignOutDevice onSignOut={onSignOut} />
       </div>
