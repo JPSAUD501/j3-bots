@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@j3-bots/contracts": "workspace:*",
+    "@j3-bots/design-tokens": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

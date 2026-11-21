@@ -93,7 +93,8 @@ packages/
   engine-t3/        engine adapter: the only T3-aware code
   client-runtime/   connection, state and commands shared by all clients
   prompts/          base prompt, wake envelopes, tool descriptions, with their tests
-  design-tokens/    colors, type, spacing, motion as data
+  design-tokens/    colors, type, spacing, motion, avatar shapes and marks as data;
+                    /raster draws avatars as PNG
   i18n/             interface sentences in every language, notification wording
 docs/
 ```

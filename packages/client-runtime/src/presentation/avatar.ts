@@ -1,16 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { BotState } from "@j3-bots/contracts";
+import type { AvatarLook } from "@j3-bots/design-tokens";
 
-/** The single mark drawn inside the avatar's shape. */
-export type AvatarMark = "dot" | "ring" | "arc" | "notch" | "slash" | "check" | "dotted";
 type AvatarMotion = "none" | "breathe" | "spin";
-/** A small mark on the avatar's corner for states that concern the operator. */
-export type AvatarBadge = "waiting" | "blocked" | "unread" | null;
 
-export interface AvatarAppearance {
-  readonly mark: AvatarMark;
+/** The mark inside the avatar's shape, how it moves, and the badge on its corner when the state concerns the operator. */
+export interface AvatarAppearance extends AvatarLook {
   readonly motion: AvatarMotion;
-  readonly badge: AvatarBadge;
 }
 
 /**

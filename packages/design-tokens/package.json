@@ -9,6 +9,10 @@
       "types": "./src/index.ts",
       "import": "./src/index.ts"
     },
+    "./raster": {
+      "types": "./src/raster/index.ts",
+      "import": "./src/raster/index.ts"
+    },
     "./web.css": "./generated/web.css",
     "./uniwind.css": "./generated/uniwind.css"
   },
@@ -16,6 +20,9 @@
     "generate": "node scripts/generate.ts",
     "typecheck": "effect-tsgo tsrs --noEmit",
     "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "dependencies": {
+    "fflate": "0.8.3"
   },
   "devDependencies": {
     "vite-plus": "catalog:"
