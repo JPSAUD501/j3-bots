@@ -210,7 +210,7 @@ function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
       closeNotificationsOutside(pairing, () => j3.pairing.get()).catch(unlisted);
     }
     if (ended === null || ended === pairing) return;
-    closeNotificationsOf(ended).catch(unlisted);
+    closeNotificationsOf(ended, desktop).catch(unlisted);
   }, [j3, pairing]);
   switch (connection._tag) {
     case "starting":
@@ -489,8 +489,15 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
     notificationIcon(notification, rows, systemTheme())
       .then((icon) =>
         showNotification(
-          { ...content, icon, tag: notification.entryId, target: notification.target, pairing },
+          {
+            ...content,
+            icon,
+            entryId: notification.entryId,
+            target: notification.target,
+            pairing,
+          },
           () => j3.pairing.get(),
+          desktop,
         ),
       )
       .catch(() => {

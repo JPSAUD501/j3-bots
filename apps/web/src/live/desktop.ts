@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import type { DeviceId } from "@j3-bots/contracts";
 import {
   BRIDGE_KEY,
   ConnectResult,
   ForgetResult,
   HostedBridge,
   NetworkState,
+  NotificationClick,
+  type NotificationRequest,
   OpenResult,
   SealResult,
   type TokenProtection,
@@ -56,6 +59,12 @@ export interface Desktop {
   readonly restartToUpdate: () => void;
   /** Tells the app whether a save is under way, which a restart waits for. */
   readonly reportSaving: (saving: boolean) => void;
+  /** Shows a notification with the system's own notifications. */
+  readonly notify: (request: NotificationRequest) => void;
+  /** Closes the notifications `pairing`, which ended, received. */
+  readonly closeNotifications: (pairing: DeviceId) => void;
+  /** Calls `listener` with each notification the operator clicks; answers a function that stops it. */
+  readonly onNotificationClick: (listener: (click: NotificationClick) => void) => () => void;
 }
 
 const decodeBridge = Schema.decodeUnknownOption(HostedBridge);
@@ -65,6 +74,7 @@ const decodeSeal = Schema.decodeUnknownOption(SealResult);
 const decodeOpen = Schema.decodeUnknownOption(OpenResult);
 const decodeNetwork = Schema.decodeUnknownOption(NetworkState);
 const decodeStatus = Schema.decodeUnknownOption(UpdateStatus);
+const decodeClick = Schema.decodeUnknownOption(NotificationClick);
 const hosted: unknown = Reflect.get(window, BRIDGE_KEY);
 
 /** What `call` answers, decoded; `null` when it throws, rejects or answers something else. */
@@ -112,6 +122,20 @@ export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
     onUpdate: (listener) => {
       const stop: unknown = bridge.onUpdate((status: unknown) =>
         Option.map(decodeStatus(status), listener),
+      );
+      return () => {
+        if (typeof stop === "function") stop();
+      };
+    },
+    notify: (request) => {
+      bridge.notify(request);
+    },
+    closeNotifications: (pairing) => {
+      bridge.closeNotifications({ pairing });
+    },
+    onNotificationClick: (listener) => {
+      const stop: unknown = bridge.onNotificationClick((click: unknown) =>
+        Option.map(decodeClick(click), listener),
       );
       return () => {
         if (typeof stop === "function") stop();

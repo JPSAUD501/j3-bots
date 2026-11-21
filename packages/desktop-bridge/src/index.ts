@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { ServerOrigin } from "@j3-bots/contracts";
+import { DeviceId, EntryId, EntryTarget, ServerOrigin } from "@j3-bots/contracts";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
@@ -171,6 +171,45 @@ export type UpdateStatus = typeof UpdateStatus.Type;
 export const SavingReport = Schema.Struct({ saving: Schema.Boolean });
 export type SavingReport = typeof SavingReport.Type;
 
+/** The eight bytes every PNG file begins with. */
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+
+/**
+ * An image the app shows: a PNG file, no larger than a notification's icon
+ * needs (a 192 px avatar is a few tens of kilobytes).
+ */
+export const Png = Schema.Uint8Array.check(
+  Schema.isMaxLength(1024 * 1024),
+  Schema.makeFilter((bytes: Uint8Array) =>
+    PNG_SIGNATURE.every((byte, index) => bytes[index] === byte),
+  ),
+);
+
+/**
+ * A notification the page shows, as it asks the app to put it on the
+ * system's screen: its text and icon, the conversation or room it is about,
+ * and the pairing that received it.
+ */
+export const NotificationRequest = Schema.Struct({
+  /** The entry it is about: the app shows one notification per entry. */
+  entryId: EntryId,
+  title: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1024)),
+  body: Schema.String.check(Schema.isMaxLength(4096)),
+  /** The still avatar of what it is about, or `null` for the app's icon. */
+  icon: Schema.NullOr(Png),
+  target: EntryTarget,
+  pairing: DeviceId,
+});
+export type NotificationRequest = typeof NotificationRequest.Type;
+
+/** A pairing that ended, whose notifications the page asks the app to close. */
+export const CloseNotificationsRequest = Schema.Struct({ pairing: DeviceId });
+export type CloseNotificationsRequest = typeof CloseNotificationsRequest.Type;
+
+/** A click on a notification: what it was about, and the pairing that received it. */
+export const NotificationClick = Schema.Struct({ target: EntryTarget, pairing: DeviceId });
+export type NotificationClick = typeof NotificationClick.Type;
+
 /** A function, called only to have its answer decoded. */
 const Callable = Schema.declare(
   (input: unknown): input is (...args: ReadonlyArray<unknown>) => unknown =>
@@ -195,5 +234,8 @@ export const HostedBridge = Schema.Struct({
   checkForUpdates: Callable,
   restartToUpdate: Callable,
   reportSaving: Callable,
+  notify: Callable,
+  closeNotifications: Callable,
+  onNotificationClick: Callable,
 });
 export type HostedBridge = typeof HostedBridge.Type;

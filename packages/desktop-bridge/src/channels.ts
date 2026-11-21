@@ -34,6 +34,12 @@ export const IPC_CHANNELS = {
   restartToUpdate: "j3bots:restart-to-update",
   /** `SavingReport`: whether a save is under way in the page. Not answered. */
   saving: "j3bots:saving",
+  /** `NotificationRequest`: shows a notification on the system's screen. Not answered. */
+  notify: "j3bots:notify",
+  /** `CloseNotificationsRequest`: closes those a pairing that ended received. Not answered. */
+  closeNotifications: "j3bots:close-notifications",
+  /** From the main process, as the operator clicks a notification: `NotificationClick`. */
+  notificationClicked: "j3bots:notification-clicked",
 } as const;
 
 /** What the preload script puts on `window[BRIDGE_KEY]`. Its answers are decoded by the page. */
@@ -54,4 +60,10 @@ export interface DesktopBridge {
   readonly checkForUpdates: () => void;
   readonly restartToUpdate: () => void;
   readonly reportSaving: (saving: boolean) => void;
+  /** Shows a notification (a `NotificationRequest`) on the system's screen. */
+  readonly notify: (request: unknown) => void;
+  /** Closes the notifications a pairing that ended received (a `CloseNotificationsRequest`). */
+  readonly closeNotifications: (request: unknown) => void;
+  /** Calls `listener` with each notification the operator clicks; answers a function that stops it. */
+  readonly onNotificationClick: (listener: (click: unknown) => void) => () => void;
 }

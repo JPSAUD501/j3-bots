@@ -38,40 +38,42 @@ let rasterizer: Promise<typeof import("@j3-bots/design-tokens/raster") | null> |
 export const loadRasterizer = () =>
   (rasterizer ??= import("@j3-bots/design-tokens/raster").catch(() => null));
 
-const dataUrl = (png: Uint8Array) => {
+/** `png` as a URL the browser can show, or the app's icon for `null`. */
+export const iconUrl = (png: Uint8Array | null) => {
+  if (png === null) return APP_ICON;
   let binary = "";
   for (const byte of png) binary += String.fromCharCode(byte);
   return `data:image/png;base64,${btoa(binary)}`;
 };
 
 /**
- * The icon of `notification`, in `theme`, as a URL the browser can show. A
- * bot's conversation shows the bot that wrote, in the look the notification
- * gives it (`notificationLook`); a room shows its first two members'
- * shapes, as the roster does. The app's icon stands in when there is no
- * avatar to draw, as for a room whose members are all gone from the roster,
- * or when the rasterizer could not be fetched.
+ * The icon of `notification`, in `theme`, as a PNG. A bot's conversation
+ * shows the bot that wrote, in the look the notification gives it
+ * (`notificationLook`); a room shows its first two members' shapes, as the
+ * roster does. `null`, for the app's icon, when there is no avatar to draw,
+ * as for a room whose members are all gone from the roster, or when the
+ * rasterizer could not be fetched.
  */
 export async function notificationIcon(
   notification: Notification,
   roster: ReadonlyArray<RosterItem>,
   theme: keyof Themed,
-): Promise<string> {
+): Promise<Uint8Array | null> {
   const bots = roster.flatMap((row) => (row._tag === "bot" ? [row.bot] : []));
   const bot = (id: BotId) => bots.find((candidate) => candidate.id === id);
   const { target } = notification;
   const draw = await loadRasterizer();
-  if (draw === null) return APP_ICON;
+  if (draw === null) return null;
   if (target._tag === "conversation") {
     const writer = bot(notification.botId);
-    if (writer === undefined) return APP_ICON;
+    if (writer === undefined) return null;
     const look = notificationLook(notification, writer.state);
-    return dataUrl(draw.renderStillAvatar(writer.profile.avatar, look, theme, ICON_SIZE));
+    return draw.renderStillAvatar(writer.profile.avatar, look, theme, ICON_SIZE);
   }
   const room = roster.flatMap((row) =>
     row._tag === "room" && row.room.id === target.roomId ? [row.room] : [],
   )[0];
   const members = (room?.members ?? []).flatMap((id) => bot(id)?.profile.avatar ?? []);
-  if (members.length === 0) return APP_ICON;
-  return dataUrl(draw.renderStillRoomAvatar(members, theme, ICON_SIZE));
+  if (members.length === 0) return null;
+  return draw.renderStillRoomAvatar(members, theme, ICON_SIZE);
 }
