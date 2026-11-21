@@ -245,12 +245,10 @@ export class Connection extends Context.Service<
     /** Skips the wait before the next attempt, and leaves `incompatible` and `storage-failed`. */
     readonly reconnectNow: Effect.Effect<void>;
     /**
-     * Whether the server says that `pairing` ended: it refused that pairing's
-     * credential to this window, or, asked now with the credential this
-     * window last held for it, refuses it. A credential another window
-     * deleted says nothing of the server by itself: that window may have
-     * heard the server refuse it, or only signed out here. False when the
-     * server cannot be reached, or this window never held `pairing`.
+     * Whether the server said that `pairing` ended: it refused that pairing's
+     * credential to this window, or to another window, which deleted the
+     * credential and left the refusal in its place. A credential another
+     * window deleted without one was only signed out here.
      */
     readonly endedOnServer: (pairing: DeviceId) => Effect.Effect<boolean>;
     /**
@@ -306,9 +304,6 @@ export const layer = Layer.effect(
     const slot = yield* SubscriptionRef.make<Slot>({ _tag: "closed" });
     const credential = yield* SubscriptionRef.make<Credential>({ _tag: "loading" });
     const pairing = new Cell<DeviceId | null>(null);
-    // The token of each pairing this window followed, kept once it lets go of
-    // it so that it can still ask the server whether that pairing ended.
-    const tokens = new Map<DeviceId, Redacted.Redacted<DeviceToken>>();
     /**
      * Changes the credential this window holds, and the pairing it follows
      * with it, in one step: nothing reads one changed and the other not.
@@ -317,9 +312,6 @@ export const layer = Layer.effect(
       SubscriptionRef.updateEffect(credential, (current) =>
         Effect.sync(() => {
           const followed = next(current);
-          if (followed._tag === "paired") {
-            tokens.set(followed.credential.deviceId, followed.credential.token);
-          }
           pairing.set(followed._tag === "paired" ? followed.credential.deviceId : null);
           return followed;
         }),
@@ -349,11 +341,16 @@ export const layer = Layer.effect(
       a.deviceId === b.deviceId && Redacted.value(a.token) === Redacted.value(b.token);
 
     /**
-     * Deletes `ended` from storage and follows what is left: nothing, or a
-     * pairing another window made after this one last read the credential.
+     * Deletes `ended` from storage, with the server's refusal when it is why,
+     * and follows what is left: nothing, or a pairing another window made
+     * after this one last read the credential.
      */
-    const end = (ended: DeviceCredential, reason: Exclude<UnpairedReason, "new">) =>
-      store.clear(ended).pipe(
+    const end = (
+      ended: DeviceCredential,
+      reason: Exclude<UnpairedReason, "new">,
+      refusedByServer: boolean,
+    ) =>
+      store.clear(ended, refusedByServer).pipe(
         Effect.flatMap((left) => {
           const newer = Option.filter(left, (found) => !sameCredential(found, ended));
           return follow(() =>
@@ -520,7 +517,7 @@ export const layer = Layer.effect(
             // The server refused this credential. The refusal may come late,
             // after another window paired anew: that pairing stays.
             refused.add(current.credential.deviceId);
-            yield* end(current.credential, "signed-out").pipe(
+            yield* end(current.credential, "signed-out", true).pipe(
               Effect.catchTag("CredentialStorageError", (error) =>
                 Effect.logWarning("The revoked credential stays in storage", error).pipe(
                   Effect.andThen(follow(() => ({ _tag: "none", reason: "signed-out" }))),
@@ -603,7 +600,7 @@ export const layer = Layer.effect(
         // here, or the credential that ended may still be there.
         const stored = yield* store.load;
         if (Option.isSome(stored) && stored.value.deviceId === pairing) {
-          return yield* end(stored.value, reason);
+          return yield* end(stored.value, reason, false);
         }
         return yield* follow(() =>
           Option.match(stored, {
@@ -614,7 +611,7 @@ export const layer = Layer.effect(
       }
       // This window already follows a pairing made since: it stays.
       if (current.credential.deviceId !== pairing) return "paired-anew";
-      return yield* end(current.credential, reason);
+      return yield* end(current.credential, reason, false);
     });
 
     const awaitSession = (after: number) =>
@@ -718,24 +715,19 @@ export const layer = Layer.effect(
           ),
         ),
       ),
-      endedOnServer: Effect.fn("Connection.endedOnServer")(function* (held: DeviceId) {
-        if (refused.has(held)) return true;
-        const token = tokens.get(held);
-        if (token === undefined) return false;
-        // The ticket route is the server's word on a credential. A ticket it
-        // grants goes unused and expires.
-        return yield* http.socketTicket(token).pipe(
-          Effect.as(false),
-          Effect.catchTags({
-            NotAuthenticated: () =>
-              Effect.sync(() => {
-                refused.add(held);
-                return true;
-              }),
-            ServerUnreachable: () => Effect.succeed(false),
-          }),
-        );
-      }),
+      endedOnServer: Effect.fn("Connection.endedOnServer")((held: DeviceId) =>
+        refused.has(held)
+          ? Effect.succeed(true)
+          : store.refusedPairing.pipe(
+              Effect.map((found) => Option.contains(found, held)),
+              Effect.catchTag("CredentialStorageError", (error) =>
+                Effect.logWarning(
+                  "Whether the server refused the device could not be read",
+                  error,
+                ).pipe(Effect.as(false)),
+              ),
+            ),
+      ),
       reconnectNow: Queue.offer(wakes, void 0).pipe(Effect.asVoid),
       call,
       eachSession,

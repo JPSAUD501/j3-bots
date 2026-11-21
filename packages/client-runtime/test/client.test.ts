@@ -1345,16 +1345,30 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           yield* waitFor(onA.state, (state) => state.phase === "ready");
           yield* waitFor(onB.state, (state) => state.phase === "ready");
 
+          const text = "written on the train";
           yield* a.network.set("offline");
           yield* waitFor(a.connection.state, (state) => state._tag === "offline");
-          yield* a.drafts.setText(target, "written on the train");
+          yield* a.drafts.setText(target, text);
           assert.strictEqual(yield* a.drafts.send(target), "sent");
           const [outgoing] = outgoingIn(onA.state.get());
           if (outgoing === undefined) return assert.fail("The message is not shown as on its way");
-          const isIt = (item: ConversationItem) =>
-            item._tag === "message" && item.commandId === outgoing.commandId;
+          // Any copy counts, whatever command made it.
+          const isIt = (item: ConversationItem) => item._tag === "message" && item.text === text;
 
           yield* a.network.set("online");
+          yield* whenStored(a.storage, "outbox", outgoing.commandId, sent);
+          const kept = yield* (yield* Server.Entries).latest(target, 100);
+          assert.strictEqual(
+            kept.filter((entry) => entry._tag === "message" && entry.text === text).length,
+            1,
+          );
+          const { sends } = yield* Fakes;
+          const sentCommands = yield* Queue.clear(sends);
+          assert.deepStrictEqual(
+            sentCommands.filter((commandId) => commandId === outgoing.commandId),
+            [outgoing.commandId],
+          );
+
           const onBNow = yield* waitFor(onB.state, (state) => state.items.some(isIt));
           assert.strictEqual(onBNow.items.filter(isIt).length, 1);
           const onANow = yield* waitFor(
@@ -1362,7 +1376,6 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
             (state) => outgoingIn(state).length === 0 && state.items.some(isIt),
           );
           assert.strictEqual(onANow.items.filter(isIt).length, 1);
-          yield* whenStored(a.storage, "outbox", outgoing.commandId, sent);
         }),
       ),
   );
@@ -1381,9 +1394,10 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           _tag: "done",
           value: undefined,
         });
-        // B's pairing ended, and its drafts went with it.
+        // B's pairing ended, and its drafts went with it, there and on the device.
         yield* waitFor(b.connection.state, (state) => state._tag === "unpaired");
         yield* waitFor(b.drafts.state, (drafts) => drafts.size === 0);
+        yield* whenStored(b.storage, "drafts", key, (record) => !present(record));
 
         assert.strictEqual(a.drafts.state.get().get(key)?.text, "half a reply on A");
         assert.isTrue(
@@ -3199,7 +3213,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
       // The pairing ends, and the browser closes before its text is erased.
       if (Option.isNone(credential)) return assert.fail("The pairing was not saved");
-      yield* device.credentials().clear(credential.value).pipe(Effect.orDie);
+      yield* device.credentials().clear(credential.value, true).pipe(Effect.orDie);
 
       yield* Effect.gen(function* () {
         assert.strictEqual((yield* Drafts).state.get().size, 0);

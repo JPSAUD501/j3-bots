@@ -150,6 +150,8 @@ interface CredentialWatcher {
  */
 const makeCredentials = () => {
   let stored = Option.none<DeviceCredential>();
+  // Held in the credential's place, as the one record a browser keeps.
+  let refusedPairing = Option.none<DeviceId>();
   const watchers = new Set<CredentialWatcher>();
   const changed = (window: object) =>
     Effect.sync(() => {
@@ -158,6 +160,7 @@ const makeCredentials = () => {
   return {
     seed: (credential: DeviceCredential) => {
       stored = Option.some(credential);
+      refusedPairing = Option.none();
     },
     /** The pairing whose credential the device holds now. */
     pairing: (): DeviceId | null =>
@@ -168,8 +171,9 @@ const makeCredentials = () => {
         save: (credential) =>
           Effect.sync(() => {
             stored = Option.some(credential);
+            refusedPairing = Option.none();
           }).pipe(Effect.andThen(changed(window))),
-        clear: (credential) =>
+        clear: (credential, refusedByServer) =>
           Effect.suspend(() => {
             const held = Option.exists(
               stored,
@@ -179,8 +183,10 @@ const makeCredentials = () => {
             );
             if (!held) return Effect.succeed(stored);
             stored = Option.none();
+            refusedPairing = refusedByServer ? Option.some(credential.deviceId) : Option.none();
             return changed(window).pipe(Effect.as(stored));
           }),
+        refusedPairing: Effect.sync(() => refusedPairing),
         changes: Stream.callback<void>((queue) =>
           Effect.acquireRelease(
             Effect.sync(() => {

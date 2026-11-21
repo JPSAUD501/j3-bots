@@ -18,8 +18,8 @@ export type SignOutResult =
   | { readonly _tag: "signed-out" }
   /**
    * Its credential is deleted here, but the server never confirmed its access
-   * ended: it was out of reach, or it still takes the credential another
-   * window deleted here first. The server may still list it.
+   * ended: it was out of reach, or another window signed out here first,
+   * without the server's word. The server may still list it.
    */
   | { readonly _tag: "still-listed" }
   /**
@@ -66,8 +66,9 @@ export const layer = Layer.effect(
           return result.failure.error._tag === "NotFound";
         // Revoking closes this device's socket before the answer can arrive,
         // and the server refuses its credential on the next: that is its word.
-        // Another window may hear it first and delete the credential, or may
-        // have deleted it signing out here only: the server says which.
+        // Another window may hear it first: it deletes the credential and
+        // leaves the refusal in its place. One that only signed out here
+        // leaves nothing.
         case "not-paired":
           return yield* connection.endedOnServer(pairing);
         case "unexpected":
