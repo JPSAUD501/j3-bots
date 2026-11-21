@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Schema from "effect/Schema";
-import { DeviceId, Label } from "./base.ts";
+import { DeviceId, EntryId, Label } from "./base.ts";
+import { EntryTarget } from "./entry.ts";
 
 /** A paired client. */
 export const Device = Schema.Struct({
@@ -55,6 +56,19 @@ export const PushRegistration = Schema.Struct({
   language: Language,
 });
 export type PushRegistration = typeof PushRegistration.Type;
+
+/**
+ * What a push carries for the app beside its title and body: the device it
+ * was sent to, which a device that paired again since no longer is, and the
+ * entry it is about, in its conversation or room. A push service hands it to
+ * the app as it was sent, so it is JSON and nothing else.
+ */
+export const PushData = Schema.Struct({
+  deviceId: DeviceId,
+  target: EntryTarget,
+  entryId: EntryId,
+});
+export type PushData = typeof PushData.Type;
 
 /**
  * Crockford base32 without the ambiguous letters, in upper case. Clients

@@ -1,12 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type {
-  DeviceId,
-  EntryId,
-  EntryTarget,
-  PushPlatform,
-  PushProvider,
-  PushToken,
-} from "@j3-bots/contracts";
+import type { PushData, PushPlatform, PushProvider, PushToken } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -34,11 +27,7 @@ export interface PushMessage {
   readonly title: string;
   readonly body: string;
   /** What the app opens when the notification is tapped. */
-  readonly data: {
-    readonly deviceId: DeviceId;
-    readonly target: EntryTarget;
-    readonly entryId: EntryId;
-  };
+  readonly data: PushData;
 }
 
 /**

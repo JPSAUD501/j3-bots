@@ -59,6 +59,8 @@ import {
 } from "@j3-bots/client-runtime";
 import {
   handoffPeer,
+  notificationOpening,
+  type OpenedNotification,
   type RoomFormMode,
   roomStopFailed,
 } from "@j3-bots/client-runtime/presentation";
@@ -442,12 +444,13 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   // What the server says no device has in view, shown by the browser once the
   // operator allowed it. A click focuses a window and opens the conversation
   // or room, whose newest entry is what the notification was about, if the
-  // window still follows the pairing that received it. Settings, the details
-  // and the dialogs over it close, and the profile form in Settings keeps what
-  // the operator typed. New bot holding a name, and the bot editor or the
-  // memory viewer holding an edit, stay open, with the conversation opened
-  // under them: the click never throws typing away, and closing the dialog
-  // lands on what the notification was about. A save under way is not given up on.
+  // window still follows the pairing that received it and the roster still
+  // lists what it is about. Settings, the details and the dialogs over it
+  // close, and the profile form in Settings keeps what the operator typed.
+  // New bot holding a name, and the bot editor or the memory viewer holding
+  // an edit, stay open, with the conversation opened under them: the click
+  // never throws typing away, and closing the dialog lands on what the
+  // notification was about. A save under way is not given up on.
   const openTarget = useEffectEvent((opened: EntryTarget) => {
     setSettingsOpen(false);
     if (!newBotUnsaved) setNewBot(false);
@@ -513,13 +516,19 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   useEffect(() => {
     if (pairing !== null && notificationAccess() === "granted") void loadRasterizer();
   }, [pairing]);
-  useEffect(
-    () =>
-      onNotificationClick((click) => {
-        if (click.pairing === pairing && j3.pairing.get() === pairing) openTarget(click.target);
-      }),
-    [j3, pairing],
-  );
+  // A click opens what the runtime decides (`notificationOpening`). One that
+  // came before the roster loaded, as in a window opened for it, waits for it.
+  const waitingClick = useRef<OpenedNotification | null>(null);
+  const openClicked = useEffectEvent((click: OpenedNotification) => {
+    const opening = notificationOpening(click, stillPaired() ? pairing : null, j3.roster.get());
+    waitingClick.current = opening._tag === "wait" ? click : null;
+    if (opening._tag === "open") openTarget(opening.target);
+  });
+  useEffect(() => onNotificationClick(openClicked), []);
+  useEffect(() => {
+    const waiting = waitingClick.current;
+    if (waiting !== null && listedRoster._tag === "ready") openClicked(waiting);
+  }, [listedRoster]);
 
   // Another tab sent or changed a draft under this one, and this tab shows it
   // as stored. Text of this tab's that the device never kept is offered back

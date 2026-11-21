@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import type { OpenedNotification } from "@j3-bots/client-runtime/presentation";
 import { DeviceId, type EntryId, EntryTarget } from "@j3-bots/contracts";
 import type { NotificationText } from "@j3-bots/i18n";
 import * as Option from "effect/Option";
@@ -7,13 +8,7 @@ import { NOTIFICATION_CLICK } from "../../pwa/notificationClick";
 import type { Desktop } from "./desktop";
 import { iconUrl } from "./notificationIcon";
 
-/** A click on a notification: what it was about, and the pairing that received it. */
-interface NotificationClick {
-  readonly target: EntryTarget;
-  readonly pairing: DeviceId;
-}
-
-interface ShownNotification extends NotificationText, NotificationClick {
+interface ShownNotification extends NotificationText, OpenedNotification {
   /**
    * The entry it is about, its tag: every window of the browser shows the
    * notifications the server sends, and the browser keeps one per tag.
@@ -36,11 +31,11 @@ async function activeServiceWorker(): Promise<ServiceWorkerRegistration | null> 
 /** Notifications this page showed itself, where there is no service worker. */
 const shownByPage = new Set<{ readonly notification: Notification; readonly pairing: DeviceId }>();
 
-const handlers = new Set<(click: NotificationClick) => void>();
+const handlers = new Set<(click: OpenedNotification) => void>();
 /** A click no window handled yet, as in a window opened for it that is still starting. */
-let pending: NotificationClick | null = null;
+let pending: OpenedNotification | null = null;
 
-function clicked(click: NotificationClick) {
+function clicked(click: OpenedNotification) {
   if (handlers.size === 0) {
     pending = click;
     return;
@@ -200,7 +195,7 @@ export function listenForNotificationClicks(app: Desktop | null): void {
  * Calls `handle` with each notification click, starting with one that
  * arrived before anything handled it. Returns the function that stops.
  */
-export function onNotificationClick(handle: (click: NotificationClick) => void): () => void {
+export function onNotificationClick(handle: (click: OpenedNotification) => void): () => void {
   handlers.add(handle);
   if (pending !== null) {
     const click = pending;
