@@ -254,11 +254,18 @@ export const applyEvent = (mirror: Mirror, event: OrchestrationV2DomainEvent): b
     case "provider-session.attached":
     case "provider-session.updated":
       // As for a provider thread: only `backgroundWorkOf` reads it. The
-      // engine binds a session to the thread when it is attached and unbinds
-      // it when it is detached; an update changes only its status (**Read**
-      // at `db51b67`, `ProjectionStore.ts`, L2773-2826). An update for a
-      // session not attached, such as a late one after its detach, binds
-      // nothing.
+      // engine's stored projection binds a session to the thread when it is
+      // attached and unbinds it when it is detached; an update changes only
+      // its status (**Read** at `db51b67`, `ProjectionStore.ts`, L2773-2826).
+      // The engine reads a thread's sessions through those bindings: the
+      // records a command such as the stop starts from, the snapshots
+      // (`readCanonicalProjection`, L4312-4335) and recovery (L5705-5720).
+      // Its in-memory projector upserts a session on an update too
+      // (`applyToProjection`, L1129-1134), but it only folds a command's own
+      // events onto the records that command read from the store, so the
+      // bindings are what the next command sees, and the adapter follows
+      // them: an update for a session not attached, such as a late one after
+      // its detach, binds nothing.
       if (
         event.type === "provider-session.attached" ||
         mirror.providerSessions.has(event.payload.id)
@@ -797,8 +804,6 @@ type Reach = "target" | "item" | "kept";
 interface PendingEntry {
   readonly runId: string | null;
   readonly reach: Reach;
-  /** The child thread a subagent runs in, if it names one. */
-  readonly childThreadId: string | null;
 }
 
 /**
@@ -822,10 +827,14 @@ interface PendingEntry {
  *
  * Work is listed in the order the engine reads it, the latest run's provider
  * thread's tasks, then live items by ordinal (`ProjectionStore.ts`, L3911),
- * then the kept provider threads' tasks: one entry per task id, and one per
- * child thread among subagents, the first listed, as follow-ups can share a
- * child thread and the rule counts agents (L318-326). Each piece is
- * attributed to the run the engine gives it: a task's `runId`, which the
+ * then the kept provider threads' tasks, one entry per task id. The engine's
+ * rule then keeps one subagent per child thread, as follow-ups can share a
+ * child thread and it counts agents (`orchestrationV2PendingBackgroundWork.ts`,
+ * L318-326). That never empties a list, so
+ * whether the stop fires is read before it, and the session's work keeps
+ * every follow-up: it says which turns own pending work, not how many agents
+ * run, and a follow-up from another turn is that turn's work too. Each piece
+ * is attributed to the run the engine gives it: a task's `runId`, which the
  * projection stamps (`attributeTasks`), or an item's own.
  */
 export const backgroundWorkOf = (mirror: Mirror): MirroredWork => {
@@ -844,11 +853,7 @@ export const backgroundWorkOf = (mirror: Mirror): MirroredWork => {
       for (const task of thread.pendingBackgroundTasks ?? []) {
         if (task.taskId.length === 0 || listed.has(task.taskId)) continue;
         listed.add(task.taskId);
-        entries.push({
-          runId: task.runId ?? null,
-          reach,
-          childThreadId: task.kind === "subagent" ? (task.childThreadId ?? null) : null,
-        });
+        entries.push({ runId: task.runId ?? null, reach });
       }
     }
   };
@@ -880,11 +885,7 @@ export const backgroundWorkOf = (mirror: Mirror): MirroredWork => {
       undecided.push({ taskId, turnId: item.runId === null ? null : TurnId.make(item.runId) });
       continue;
     }
-    entries.push({
-      runId: item.runId,
-      reach: "item",
-      childThreadId: item.type === "subagent" ? item.childThreadId : null,
-    });
+    entries.push({ runId: item.runId, reach: "item" });
   }
   listTasks(
     providerThreads.filter(
@@ -892,16 +893,9 @@ export const backgroundWorkOf = (mirror: Mirror): MirroredWork => {
     ),
     "kept",
   );
-  const children = new Set<string>();
-  const counted = entries.filter((entry) => {
-    if (entry.childThreadId === null) return true;
-    if (children.has(entry.childThreadId)) return false;
-    children.add(entry.childThreadId);
-    return true;
-  });
   const active = mirror.thread?.activeProviderThreadId ?? null;
   const fires =
-    counted.some((entry) => entry.reach === "item") ||
+    entries.some((entry) => entry.reach === "item") ||
     providerThreads.some(
       (thread) =>
         (active === null || thread.id === active) &&
@@ -910,8 +904,8 @@ export const backgroundWorkOf = (mirror: Mirror): MirroredWork => {
   return {
     pending: workBy(
       mirror,
-      counted.map((entry) => entry.runId),
-      fires && counted.some((entry) => entry.reach !== "kept"),
+      entries.map((entry) => entry.runId),
+      fires && entries.some((entry) => entry.reach !== "kept"),
     ),
     undecided,
   };

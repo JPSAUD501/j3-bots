@@ -738,10 +738,11 @@ describe("backgroundWorkOf", () => {
     assert.deepStrictEqual(backgroundWorkOf(mirror).pending, NONE);
   });
 
-  // Follow-ups can share a child thread, and the engine's rule counts agents:
-  // the first one listed stays (**Read** at `db51b67`,
-  // `orchestrationV2PendingBackgroundWork.ts`, L318-326).
-  it("counts the subagents of one child thread once, for the run that listed it first", () => {
+  // Follow-ups can share a child thread, and the engine's rule counts agents,
+  // one per child thread (**Read** at `db51b67`,
+  // `orchestrationV2PendingBackgroundWork.ts`, L318-326). Each follow-up is
+  // still the work of the turn that sent it.
+  it("keeps every turn that sent a follow-up to a shared child thread", () => {
     const mirror = emptyMirror();
     const first = { taskId: "task-1", kind: "subagent", childThreadId: "thread-child" };
     const followUp = { taskId: "task-2", kind: "subagent", childThreadId: "thread-child" };
@@ -751,7 +752,47 @@ describe("backgroundWorkOf", () => {
     applyEvent(mirror, run("running", 2));
     applyEvent(mirror, providerThread([], [first, followUp], "run-2"));
     applyEvent(mirror, run("completed", 2));
-    assert.deepStrictEqual(backgroundWorkOf(mirror).pending, pendingIn(["run-1"]));
+    assert.deepStrictEqual(backgroundWorkOf(mirror).pending, pendingIn(["run-1", "run-2"]));
+  });
+
+  // The engine's stop fires on its rule's list, which reads the active
+  // provider thread's tasks and the live items before it keeps one subagent
+  // per child thread (**Read** at `db51b67`,
+  // `orchestrationV2PendingBackgroundWork.ts`, L289-326; `Orchestrator.ts`,
+  // L14165-14178).
+  it("counts a live subagent item as firing the stop, though another provider thread lists its child thread first", () => {
+    const mirror = emptyMirror();
+    applyEvent(
+      mirror,
+      event("thread.created", { ...appThread, activeProviderThreadId: "provider-thread-1" }),
+    );
+    applyEvent(mirror, run("completed", 1));
+    const onFresh = { providerThreadId: "provider-thread-2" };
+    applyEvent(mirror, run("running", 2, onFresh));
+    const fresh = { id: "provider-thread-2", firstRunOrdinal: 2 };
+    const task = { taskId: "task-child", kind: "subagent", childThreadId: "thread-child" };
+    applyEvent(mirror, providerThread([], [task], "run-2", fresh));
+    applyEvent(
+      mirror,
+      item({
+        id: "item-child",
+        runId: "run-2",
+        type: "subagent",
+        subagentId: "node-child",
+        origin: "provider_native",
+        driver: "claudeAgent",
+        providerInstanceId: "claude",
+        childThreadId: "thread-child",
+        prompt: "Review the change",
+        result: null,
+        status: "running",
+      }),
+    );
+    applyEvent(mirror, run("completed", 2, onFresh));
+    // A late report from the old provider thread makes it active, with no
+    // task of its own: the live item alone fires the stop.
+    applyEvent(mirror, providerThread([]));
+    assert.deepStrictEqual(backgroundWorkOf(mirror).pending, pendingIn(["run-2"]));
   });
 
   it("leaves a monitor the agent does not await to wake the session on its own", () => {
