@@ -36,8 +36,8 @@ export type GhEvent =
   | { readonly type: "gh-change"; readonly command: string }
   /** acme/docs's CI runs, or a run's jobs, logs or annotations, were shown. */
   | { readonly type: "build-read" }
-  /** A list of acme/docs's pull requests was shown. */
-  | { readonly type: "pull-requests-read" }
+  /** A list of acme/docs's pull requests was shown, holding these numbers. */
+  | { readonly type: "pull-requests-read"; readonly numbers: ReadonlyArray<number> }
   /** One pull request was shown. */
   | { readonly type: "pull-request-read"; readonly number: number };
 
@@ -570,9 +570,14 @@ class Data {
     const limit = count(flag(parsed, "limit"), 30);
     if (typeof limit !== "number") return limit;
     const pulls = this.#github.pullRequests
-      .filter((pull) => state === "all" || pull.state === state)
+      // As on GitHub, a merged pull request is also closed.
+      .filter(
+        (pull) =>
+          state === "all" || pull.state === state || (state === "closed" && pull.state !== "open"),
+      )
       .toSorted((a, b) => b.number - a.number)
       .slice(0, limit);
+    const numbers = pulls.map((pull) => pull.number);
     const fields = flag(parsed, "json");
     if (fields !== undefined) {
       const picked = pick(
@@ -580,10 +585,10 @@ class Data {
         pulls.map((pull) => this.#pullFields(pull)),
         Object.keys(this.#pullFields(EMPTY_PULL)),
       );
-      if (picked.status === 0) this.#record({ type: "pull-requests-read" });
+      if (picked.status === 0) this.#record({ type: "pull-requests-read", numbers });
       return picked;
     }
-    this.#record({ type: "pull-requests-read" });
+    this.#record({ type: "pull-requests-read", numbers });
     if (pulls.length === 0)
       return ok(`no ${state === "all" ? "" : `${state} `}pull requests in ${REPO}\n`);
     return ok(
@@ -728,16 +733,14 @@ class Data {
     }
     if (rest === "/pulls") {
       const state = query("state") ?? "open";
-      this.#record({ type: "pull-requests-read" });
-      return json(
-        this.#github.pullRequests
-          .filter(
-            (pull) =>
-              state === "all" || (state === "open" ? pull.state === "open" : pull.state !== "open"),
-          )
-          .toSorted((a, b) => b.number - a.number)
-          .map((pull) => this.#apiPull(pull)),
-      );
+      const pulls = this.#github.pullRequests
+        .filter(
+          (pull) =>
+            state === "all" || (state === "open" ? pull.state === "open" : pull.state !== "open"),
+        )
+        .toSorted((a, b) => b.number - a.number);
+      this.#record({ type: "pull-requests-read", numbers: pulls.map((pull) => pull.number) });
+      return json(pulls.map((pull) => this.#apiPull(pull)));
     }
     if ((match = /^\/pulls\/(\d+)$/.exec(rest)) !== null) {
       const number = Number(match[1]);

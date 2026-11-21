@@ -39,10 +39,18 @@ import { HOME } from "./shell.ts";
 // one; creates none for a one-off request; and in a routine run stays silent
 // when a condition is not met, but speaks when it is, when a reminder is due,
 // and when it could not do the work, unless a recent run already said what
-// blocks it; a watch for an event reports it and then pauses itself; a run
-// that keeps a state file writes it only after its message is recorded. Each
-// case is one turn per model and skill column, scored on what its tool calls
-// did.
+// blocks it. A "let me know when" request becomes a watch whose saved
+// instruction, replayed, stays silent while the event has not happened,
+// reports it once and then pauses itself, and pauses without a word when a
+// recent run already reported it. A run that keeps a state file leaves it
+// updated, written only after its message was recorded.
+//
+// Each case is one turn per model and skill column, scored on what its tool
+// calls did. What a message means is read by the judge (`judge.ts`), on fixed
+// questions whose reading is checked on fixed messages below; the graders
+// match no words themselves, only structure: the order of calls, schedules,
+// ids and file content. After a run's message, only what its case permits may
+// follow.
 
 /** The models to evaluate, cheapest adequate first. Override with a comma-separated `J3_EVAL_MODELS`. */
 const MODELS = Effect.runSync(
@@ -133,12 +141,7 @@ const FAILING_RUNS: ReadonlyArray<Run> = [
   ...PASSING_RUNS,
 ];
 
-/** What a report of the failing build names: the failing job or its error. */
-const FAILURE_NAMED = /pricing|link|404/i;
-/** A message that says the build failed, in any words, as a saved instruction may ask for no more. */
-const FAILURE_SAID = /\b(fail\w*|red|broken|pricing|link-check|404)\b/i;
-
-const PULL_REQUESTS: ReadonlyArray<PullRequest> = [
+const OPEN_PULL_REQUESTS: ReadonlyArray<PullRequest> = [
   {
     number: 125,
     title: "Fix broken anchors in FAQ",
@@ -171,21 +174,33 @@ const PULL_REQUESTS: ReadonlyArray<PullRequest> = [
     state: "open",
     minutesAgo: 1_500,
   },
-  {
-    number: 12,
-    title: "Move the API reference to the new layout",
-    author: "mira",
-    branch: "api-layout",
-    state: "merged",
-    minutesAgo: 9_000,
-    mergedMinutesAgo: 25,
-  },
 ];
 
-const github = (now: DateTime.Utc, runs: ReadonlyArray<Run>, signedIn = true): GitHub => ({
+/** Pull request #12, still open. */
+const TWELVE_OPEN: PullRequest = {
+  number: 12,
+  title: "Move the API reference to the new layout",
+  author: "mira",
+  branch: "api-layout",
+  state: "open",
+  minutesAgo: 9_000,
+};
+
+/** #12, merged `minutesAgo` minutes ago. */
+const twelveMerged = (minutesAgo: number): PullRequest => ({
+  ...TWELVE_OPEN,
+  state: "merged",
+  mergedMinutesAgo: minutesAgo,
+});
+
+const github = (
+  now: DateTime.Utc,
+  runs: ReadonlyArray<Run>,
+  { signedIn = true, twelve = twelveMerged(25) }: { signedIn?: boolean; twelve?: PullRequest } = {},
+): GitHub => ({
   now,
   runs,
-  pullRequests: PULL_REQUESTS,
+  pullRequests: [...OPEN_PULL_REQUESTS, twelve],
   signedIn,
 });
 
@@ -194,7 +209,11 @@ const buildWorkspace = (wake: Wake, runs: ReadonlyArray<Run>) => () =>
 
 /** A workspace whose GitHub sign-in has expired. */
 const signedOutWorkspace = (wake: Wake) => () =>
-  githubWorkspace(github(wake.at, PASSING_RUNS, false));
+  githubWorkspace(github(wake.at, PASSING_RUNS, { signedIn: false }));
+
+/** A workspace where #12 is as `twelve` says. */
+const twelveWorkspace = (wake: Wake, twelve: PullRequest) => () =>
+  githubWorkspace(github(wake.at, PASSING_RUNS, { twelve }));
 
 // Routine wakes.
 
@@ -250,6 +269,7 @@ const local = (when: DateTime.Utc, parts: Intl.DateTimeFormatOptions): string =>
 
 /** A one-time reminder, as the skill would save "remind me at 9 to submit my expenses". */
 const reminderAt = todayAt(9, 0);
+const REMINDER = `Remind your user to submit their ${local(reminderAt, { month: "long" })} expense report in the Acme expenses portal; it is due on ${local(reminderAt, { weekday: "long", day: "numeric", month: "long", year: "numeric" })} at 18:00. Send them one short message saying so.`;
 const reminderWake: RoutineWake = {
   ...base,
   at: reminderAt,
@@ -258,7 +278,7 @@ const reminderWake: RoutineWake = {
     id: Schema.decodeSync(RoutineId)("routine-2"),
     name: "Expense report reminder",
     trigger: { type: "once" },
-    instruction: `Remind your user to submit their ${local(reminderAt, { month: "long" })} expense report in the Acme expenses portal; it is due on ${local(reminderAt, { weekday: "long", day: "numeric", month: "long", year: "numeric" })} at 18:00. Send them one short message saying so.`,
+    instruction: REMINDER,
   },
   recentRuns: [],
   triggerData: null,
@@ -270,6 +290,8 @@ const STATE_PATH = `${HOME}/${STATE_FILE}`;
 const STATE = JSON.stringify({ reported: [118, 121] });
 /** What it must hold after the run: every open pull request. */
 const REPORTED_AFTER = [118, 121, 124, 125];
+/** The open pull requests the state file does not list yet. */
+const NEW_PULL_REQUESTS = [124, 125];
 
 /** An hourly watch for new pull requests that keeps what it reported in a state file, as the skill teaches. */
 const pullRequestWake: RoutineWake = {
@@ -298,24 +320,155 @@ const pullRequestWake: RoutineWake = {
 const pullRequestWorkspace = () =>
   githubWorkspace(github(pullRequestWake.at, PASSING_RUNS), new Map([[STATE_FILE, STATE]]));
 
-/** "Let me know when PR #12 merges", saved as the skill teaches; #12 merged 25 minutes ago. */
-const mergeWatchWake: RoutineWake = {
-  ...base,
-  at: todayAt(10, 34),
-  kind: "routine",
-  routine: {
-    id: Schema.decodeSync(RoutineId)("routine-4"),
-    name: "PR #12 merge watch",
-    trigger: { type: "schedule", cron: "4,34 8-19 * * *" },
-    instruction:
-      "Check whether pull request #12 on the GitHub repository acme/docs has been merged. Do not comment on, review or merge anything. If it has merged, send your user one short message saying so, then pause this routine. If it is still open, end without saying anything.",
-  },
-  recentRuns: [
-    { at: todayAt(10, 4), outcome: { type: "silent", note: null } },
-    { at: todayAt(9, 34), outcome: { type: "silent", note: null } },
+// What a message means, as the judge reads it.
+
+/**
+ * A yes-or-no question the judge answers about a bot's message, with fixed
+ * messages it must answer yes and no to on every eval run (`asked` is what
+ * those fixed messages answer). They are worded the ways a bot might put it,
+ * so a judge that only matches words, or reads past a negation, fails them.
+ */
+interface Check {
+  readonly question: string;
+  /** How a failure names what the message did not say. */
+  readonly what: string;
+  readonly asked: string;
+  readonly accept: ReadonlyArray<string>;
+  readonly reject: ReadonlyArray<string>;
+}
+
+/** The one-off question. */
+const ONE_OFF = "is the docs build green right now? the release goes out at noon";
+
+const BUILD_PASSING: Check = {
+  question:
+    "Does this message tell its reader that the docs build is green, that is, that its latest run passed?",
+  what: "that the build is passing",
+  asked: ONE_OFF,
+  accept: [
+    "Yes, it's green: the latest run on main passed about an hour ago.",
+    "It's green. The previous red build was fixed yesterday.",
+    "Yes. Both recent runs on main succeeded.",
+    "Yes, green. The latest run on main passed an hour ago. I only checked main, not open pull requests.",
   ],
-  triggerData: null,
+  reject: [
+    "It looks green but I couldn't confirm",
+    "I can't verify that the build passed",
+    "No, the latest run on main failed on link-check.",
+    "The build is no longer passing.",
+  ],
 };
+
+const BUILD_FAILED: Check = {
+  question:
+    "Does this message tell its reader that the docs build failed, that is, that its latest run did not pass?",
+  what: "that the build failed",
+  asked: DOCS_CHECK,
+  accept: [
+    "The docs build on main broke (run 1043).",
+    "It didn't pass.",
+    "Heads-up: link-check is red on main, guides/pricing.md links to /plans, a 404.",
+  ],
+  reject: [
+    "The build is green. No failures found.",
+    "I couldn't check the docs build: GitHub sign-in expired (HTTP 401).",
+  ],
+};
+
+const FAILURE_NAMED: Check = {
+  question:
+    "Does this message tell its reader that the docs build failed and name what failed in it: its link-check job, or the broken link to /plans?",
+  what: "that the build failed and what failed",
+  asked: DOCS_CHECK,
+  accept: [
+    "Docs build failed on main: link-check, guides/pricing.md links to /plans, which returns 404.",
+    "Heads-up: the link checker is red; the new pricing page links to /plans, a 404.",
+  ],
+  reject: ["The docs build on main broke (run 1043).", "The build is green. No failures found."],
+};
+
+const REMINDED: Check = {
+  question: "Does this message remind its reader to submit their expense report?",
+  what: "a reminder to submit the expense report",
+  asked: REMINDER,
+  accept: [
+    "Reminder: your expense report is due today at 18:00 in the Acme expenses portal.",
+    "Don't forget the expenses portal: your report needs to be in by 18:00.",
+  ],
+  reject: [
+    "Your expense report was submitted this morning.",
+    "Good morning! Nothing is due today.",
+  ],
+};
+
+const ACCESS_LOST: Check = {
+  question:
+    "Does this message tell its reader that the check could not be done because access to GitHub failed?",
+  what: "that access to GitHub failed",
+  asked: DOCS_CHECK,
+  accept: [
+    "I couldn't check the docs build: GitHub sign-in expired (HTTP 401).",
+    "GitHub turned me away, so no build check today; the gh login needs renewing.",
+  ],
+  reject: ["The docs build is passing.", "Docs build failed on main: link-check hit a 404."],
+};
+
+const MERGED: Check = {
+  question: "Does this message tell its reader that pull request #12 has merged?",
+  what: "that #12 merged",
+  asked:
+    "Check whether pull request #12 on the GitHub repository acme/docs has merged. Once it has, tell your user in one short message, then pause this routine; while it is open, end without saying anything.",
+  accept: [
+    "PR #12 (Move the API reference to the new layout) merged about 25 minutes ago.",
+    "#12 is in: mira's API reference move landed on main.",
+  ],
+  reject: ["#12 hasn't merged yet", "#12 is still waiting for review."],
+};
+
+/** The weekday docs check the setup turn is asked for. */
+const SETUP =
+  "the docs build broke twice this week and nobody noticed until customers did. from now on can you check it every weekday morning at 8 and only bother me if it's red?";
+
+const WEEKDAYS_AT_EIGHT: Check = {
+  question:
+    "Does this message tell its reader the check will run every Monday to Friday at 8 in the morning (08:00)?",
+  what: "every Monday to Friday at 8 in the morning",
+  asked: SETUP,
+  accept: [
+    "Every weekday at 8 I'll check the docs build and tell you only if it's red.",
+    "Done: every business day at eight in the morning I'll look at the docs build.",
+    "Set up: Monday through Friday at eight in the morning I'll check the build and only message you if it's red.",
+  ],
+  reject: [
+    "Every day at 8:00 I'll check the docs build and tell you only if it's red.",
+    "Every weekday at 8 pm I'll check the docs build.",
+    "Every Monday at 8:00 I'll check the docs build.",
+  ],
+};
+
+const CHECKS: ReadonlyArray<Check> = [
+  BUILD_PASSING,
+  BUILD_FAILED,
+  FAILURE_NAMED,
+  REMINDED,
+  ACCESS_LOST,
+  MERGED,
+  WEEKDAYS_AT_EIGHT,
+];
+
+/** Problems with `text`, the bot's answer to `asked`, when the judge does not read it as `check` asks. */
+const judged = Effect.fn("evals.judged")(function* (
+  check: Check,
+  asked: string,
+  text: string,
+  expected = true,
+) {
+  return (yield* judge(asked, text, check.question)) === expected
+    ? []
+    : [
+        `the judge did not read the message as ${expected ? "" : "not "}saying ${check.what}: "${text}"`,
+      ];
+});
 
 // What a turn did.
 
@@ -324,10 +477,39 @@ const named = (calls: ReadonlyArray<Call>, name: string) =>
 
 const did = (call: Call, test: (event: FixtureEvent) => boolean): boolean => call.events.some(test);
 
+/** A call that reads what a case needs read, and how a failure names it. */
+interface Look {
+  readonly what: string;
+  readonly test: (call: Call) => boolean;
+}
+
 /** A `run_command` that showed acme/docs's CI runs, jobs or logs. */
-const looksAtBuild = (call: Call) => did(call, (event) => event.type === "build-read");
+const BUILD_LOOK: Look = {
+  what: "looked at the build",
+  test: (call) => did(call, (event) => event.type === "build-read"),
+};
+
 /** A `run_command` that ran `gh` at all: with an expired sign-in, each one meets the 401. */
-const triesGh = (call: Call) => did(call, (event) => event.type === "gh");
+const GH_TRIED: Look = {
+  what: "ran `gh`",
+  test: (call) => did(call, (event) => event.type === "gh"),
+};
+
+/**
+ * A read that returned #12: the pull request itself, or a list it is in. A
+ * default list holds only open pull requests, so once #12 merged only a
+ * merged, closed or full list, or #12 by number, shows it.
+ */
+const TWELVE_LOOK: Look = {
+  what: "read pull request #12",
+  test: (call) =>
+    did(
+      call,
+      (event) =>
+        (event.type === "pull-request-read" && event.number === 12) ||
+        (event.type === "pull-requests-read" && event.numbers.includes(12)),
+    ),
+};
 
 const decodeSay = Schema.decodeUnknownOption(tools.say.input, DECODE_OPTIONS);
 
@@ -367,8 +549,9 @@ const after = (
       : [];
 
 /**
- * What no routine run may do: `ask`, `message_bot`, change anything on
- * GitHub, or call `set_routine` other than to pause its own routine.
+ * What no routine run may do, wherever in the turn: `ask`, `message_bot`,
+ * change anything on GitHub, or call `set_routine` other than to pause its own
+ * routine. Whether that pause is allowed is each case's to say.
  */
 const runRules = (calls: ReadonlyArray<Call>, wake: RoutineWake): ReadonlyArray<string> => [
   ...["ask", "message_bot"].flatMap((name) =>
@@ -384,40 +567,118 @@ const runRules = (calls: ReadonlyArray<Call>, wake: RoutineWake): ReadonlyArray<
   ),
 ];
 
-/** Problems with a routine run that must look, with a call `looks` accepts, and stay silent. */
+/** A call a case permits once its message is sent, and how a failure names it. */
+interface Permit {
+  readonly what: string;
+  readonly test: (call: Call) => boolean;
+}
+
+const pauseItself = (wake: RoutineWake): Permit => ({
+  what: "a `pause` of its own routine",
+  test: (call) => pausesItself(call, wake),
+});
+
+/**
+ * The state-file update `instruction` names, which a run may make after its
+ * message: a command that reads or writes only files under `files/` whose
+ * paths the instruction gives.
+ */
+const stateUpdate = (instruction: string): Permit => ({
+  what: "an update of a state file its instruction names",
+  test: (call) =>
+    call.name === "run_command" &&
+    call.events.length > 0 &&
+    call.events.every(
+      (event) =>
+        (event.type === "file-write" || event.type === "file-read") &&
+        event.path.startsWith(`${HOME}/files/`) &&
+        instruction.includes(event.path.slice(HOME.length + 1)),
+    ),
+});
+
+/**
+ * Problems with the calls after `anchor`: each must be one that `permits`
+ * allows, in a later model message, since it depends on `anchor` having
+ * returned.
+ */
+const onlyPermitted = (
+  calls: ReadonlyArray<Call>,
+  anchor: Call,
+  what: string,
+  permits: ReadonlyArray<Permit>,
+): ReadonlyArray<string> => {
+  const allowed =
+    permits.length === 0 ? "nothing" : permits.map((permit) => permit.what).join(" or ");
+  return calls
+    .slice(calls.indexOf(anchor) + 1)
+    .flatMap((call) =>
+      !permits.some((permit) => permit.test(call))
+        ? [`called \`${call.name}\` after ${what}, where only ${allowed} may follow`]
+        : call.step <= anchor.step
+          ? [`called \`${call.name}\` in the same model message as ${what}`]
+          : [],
+    );
+};
+
+/** Problems with a routine run that must look, with a call `look` accepts, and end without a word or a pause. */
 const silentRun =
-  (wake: RoutineWake, looks: (call: Call) => boolean, what: string) =>
+  (wake: RoutineWake, look: Look) =>
   (calls: ReadonlyArray<Call>): ReadonlyArray<string> => [
-    ...(calls.some(looks) ? [] : [`never ${what}`]),
+    ...(calls.some(look.test) ? [] : [`never ${look.what}`]),
     ...(named(calls, "say").length > 0 ? ["called `say`"] : []),
+    ...(calls.some((call) => pausesItself(call, wake))
+      ? ["paused its own routine with nothing to report"]
+      : []),
     ...runRules(calls, wake),
   ];
 
 /**
- * Problems with a routine run that must speak exactly once, about what
- * `mentions` matches, and, when `looks` is given, only in a later message
- * than a call it accepts.
+ * A routine run that must speak: its first `say` is the message, carries
+ * `done: true`, comes in a later model message than a call `look` accepts,
+ * when given, and is followed only by what `permits` allows. A pause before
+ * it is never right. Returns the problems and the message's text.
  */
-const speaksOnce =
-  (
-    wake: RoutineWake,
-    mentions: RegExp,
-    what: string,
-    looks?: { readonly test: (call: Call) => boolean; readonly what: string },
-  ) =>
-  (calls: ReadonlyArray<Call>): ReadonlyArray<string> => {
-    const said = named(calls, "say");
-    return [
-      ...(looks === undefined
+const spoke = (
+  calls: ReadonlyArray<Call>,
+  wake: RoutineWake,
+  options: { readonly look?: Look; readonly permits?: ReadonlyArray<Permit> },
+): { readonly problems: ReadonlyArray<string>; readonly text?: string } => {
+  const [message] = named(calls, "say");
+  if (message === undefined) return { problems: ["never called `say`", ...runRules(calls, wake)] };
+  const decoded = decodeSay(message.input);
+  const problems = [
+    ...(decoded._tag === "Some"
+      ? decoded.value.done === true
         ? []
-        : after(calls.find(looks.test), said[0], { source: looks.what, dependent: "spoke" })),
-      ...(said.length === 1 ? [] : [`called \`say\` ${said.length} times, not once`]),
-      ...(says(calls).some(({ say }) => mentions.test(say.text))
-        ? []
-        : [`the message does not ${what}`]),
-      ...runRules(calls, wake),
-    ];
-  };
+        : ["the message does not carry `done: true`"]
+      : ["the `say` is not one the server accepts"]),
+    ...(options.look === undefined
+      ? []
+      : after(calls.find(options.look.test), message, {
+          source: options.look.what,
+          dependent: "spoke",
+        })),
+    ...(calls.slice(0, calls.indexOf(message)).some((call) => pausesItself(call, wake))
+      ? ["paused its own routine before its message"]
+      : []),
+    ...onlyPermitted(calls, message, "its message", options.permits ?? []),
+    ...runRules(calls, wake),
+  ];
+  return decoded._tag === "Some" ? { problems, text: decoded.value.text } : { problems };
+};
+
+/** Problems with a routine run that must speak once, saying what `check` asks, and do nothing after. */
+const speaksOnce = (
+  wake: RoutineWake,
+  check: Check,
+  options: { readonly look?: Look; readonly permits?: ReadonlyArray<Permit> } = {},
+) =>
+  Effect.fn("evals.speaksOnce")(function* (calls: ReadonlyArray<Call>) {
+    const { problems, text } = spoke(calls, wake, options);
+    return text === undefined
+      ? problems
+      : [...problems, ...(yield* judged(check, wake.routine.instruction, text))];
+  });
 
 /** A turn's problems under a heading, with its transcript, as one line of a case's report. */
 const reported = (heading: string, turn: Turn, problems: ReadonlyArray<string>) =>
@@ -426,26 +687,15 @@ const reported = (heading: string, turn: Turn, problems: ReadonlyArray<string>) 
 /** The id the server gives the routine the setup turn creates. */
 const CREATED_ID = Schema.decodeSync(RoutineId)(CREATED_ROUTINE_ID);
 
-const BUILD_LOOK = { test: looksAtBuild, what: "looked at the build" } as const;
-
-/**
- * Runs a routine the setup turn saved as the server would: at its next run,
- * with its own id and instruction and no earlier runs, once on a passing
- * build, where it must end with no `say`, and once on a failing one, where it
- * must report the failure in one `say` after looking. This is what shows the
- * instruction stands alone and handles the healthy case, whatever its words.
- */
-const replay = Effect.fn("evals.replay")(function* (
-  model: string,
-  skills: Skills,
+/** A run of the routine a setup turn saved, as the server would start it: at its next run, with `recentRuns`. */
+const savedRunWake = (
   setup: Wake,
   routine: ToolInput<"set_routine">,
-) {
+  recentRuns: (at: DateTime.Utc) => ReadonlyArray<RoutineRunSummary> = () => [],
+): RoutineWake | undefined => {
   const next = nextRunAt(routine, setup);
-  if (next === null || next === undefined || routine.instruction === undefined) {
-    return ["the saved routine has no next run or no instruction to replay"];
-  }
-  const wake: RoutineWake = {
+  if (next === null || next === undefined || routine.instruction === undefined) return undefined;
+  return {
     at: next,
     timeZone,
     sinceLastTurn: [],
@@ -459,31 +709,64 @@ const replay = Effect.fn("evals.replay")(function* (
           : { type: "schedule", cron: routine.schedule },
       instruction: routine.instruction,
     },
-    recentRuns: [],
+    recentRuns: recentRuns(next),
     triggerData: null,
   };
-  const run = (
-    heading: string,
-    runs: ReadonlyArray<Run>,
-    problems: (calls: ReadonlyArray<Call>) => ReadonlyArray<string>,
-  ) =>
-    runTurn(model, skills, { wake, workspace: buildWorkspace(wake, runs) }).pipe(
-      Effect.map((turn) => reported(heading, turn, problems(turn.calls))),
-      Effect.catchTag("TurnUnfinished", (error) =>
-        Effect.succeed([`${heading}: ${error.message}`]),
-      ),
-    );
+};
+
+/** One run of a saved routine, scored, its problems under `heading`; a turn that did not finish is one. */
+const replayRun = (
+  model: string,
+  skills: Skills,
+  heading: string,
+  scenario: Scenario,
+  problems: (
+    turn: Turn,
+  ) => Effect.Effect<ReadonlyArray<string>, Effect.Error<ReturnType<typeof judge>>>,
+) =>
+  runTurn(model, skills, scenario).pipe(
+    Effect.flatMap((turn) =>
+      problems(turn).pipe(Effect.map((found) => reported(heading, turn, found))),
+    ),
+    Effect.catchTag("TurnUnfinished", (error) => Effect.succeed([`${heading}: ${error.message}`])),
+  );
+
+const NO_RUN = ["the saved routine has no next run or no instruction to replay"];
+
+/**
+ * Runs the docs check the setup turn saved as the server would: once on a
+ * passing build, where it must end with no `say`, and once on a failing one,
+ * where it must say the build failed in one `say` after looking. This is what
+ * shows the instruction stands alone and handles the healthy case, whatever
+ * its words.
+ */
+const replayDocsCheck = Effect.fn("evals.replayDocsCheck")(function* (
+  model: string,
+  skills: Skills,
+  setup: Wake,
+  routine: ToolInput<"set_routine">,
+) {
+  const wake = savedRunWake(setup, routine);
+  if (wake === undefined) return NO_RUN;
   const results = yield* Effect.all(
     [
-      run(
+      replayRun(
+        model,
+        skills,
         "the saved instruction, run on a passing build",
-        PASSING_RUNS,
-        silentRun(wake, looksAtBuild, "looked at the build"),
+        { wake, workspace: buildWorkspace(wake, PASSING_RUNS) },
+        (turn) => Effect.succeed(silentRun(wake, BUILD_LOOK)(turn.calls)),
       ),
-      run(
+      replayRun(
+        model,
+        skills,
         "the saved instruction, run on a failing build",
-        FAILING_RUNS,
-        speaksOnce(wake, FAILURE_SAID, "say the build failed", BUILD_LOOK),
+        { wake, workspace: buildWorkspace(wake, FAILING_RUNS) },
+        (turn) =>
+          speaksOnce(wake, BUILD_FAILED, {
+            look: BUILD_LOOK,
+            permits: [stateUpdate(wake.routine.instruction)],
+          })(turn.calls),
       ),
     ],
     { concurrency: 2 },
@@ -491,94 +774,146 @@ const replay = Effect.fn("evals.replay")(function* (
   return results.flat();
 });
 
-/** 8 in the morning: "8:00", "08:00", "8am", "8 a.m.", or a bare 8 beside "morning"; never 8 p.m. */
-const confirmsMorningEight = (text: string): boolean =>
-  !/\b0?8(:00)?\s*p\.?m\b|\b20:00\b/i.test(text) &&
-  (/\b0?8:00\b/.test(text) ||
-    /\b0?8\s*a\.?m\b/i.test(text) ||
-    (/\b0?8\b(?!:\d)/.test(text) && /\bmorning/i.test(text)));
+/**
+ * Runs the merge watch the setup turn saved as the server would: while #12
+ * is open, where it must look and end without a word or a pause; once #12
+ * has merged, where it must say so once and then pause itself; and once a
+ * recent run already said so, where it must pause without a word.
+ */
+const replayMergeWatch = Effect.fn("evals.replayMergeWatch")(function* (
+  model: string,
+  skills: Skills,
+  setup: Wake,
+  routine: ToolInput<"set_routine">,
+) {
+  const wake = savedRunWake(setup, routine);
+  const reportedWake = savedRunWake(setup, routine, (next) => [
+    {
+      at: DateTime.subtract(next, { minutes: 30 }),
+      outcome: {
+        type: "delivered",
+        text: "PR #12 (Move the API reference to the new layout) has merged into main.",
+      },
+    },
+  ]);
+  if (wake === undefined || reportedWake === undefined) return NO_RUN;
+  const pause = pauseItself(wake);
+  const results = yield* Effect.all(
+    [
+      replayRun(
+        model,
+        skills,
+        "the saved watch, run while #12 is open",
+        { wake, workspace: twelveWorkspace(wake, TWELVE_OPEN) },
+        (turn) => Effect.succeed(silentRun(wake, TWELVE_LOOK)(turn.calls)),
+      ),
+      replayRun(
+        model,
+        skills,
+        "the saved watch, run once #12 has merged",
+        { wake, workspace: twelveWorkspace(wake, twelveMerged(25)) },
+        Effect.fn(function* ({ calls }) {
+          const pauses = calls.filter(pause.test).length;
+          return [
+            ...(yield* speaksOnce(wake, MERGED, {
+              look: TWELVE_LOOK,
+              permits: [pause, stateUpdate(wake.routine.instruction)],
+            })(calls)),
+            ...(pauses === 1 ? [] : [`paused its routine ${pauses} times, not once`]),
+          ];
+        }),
+      ),
+      replayRun(
+        model,
+        skills,
+        "the saved watch, run after a recent run reported the merge",
+        { wake: reportedWake, workspace: twelveWorkspace(reportedWake, twelveMerged(55)) },
+        ({ calls }) => {
+          const pauses = calls.filter(pause.test);
+          const [first] = pauses;
+          return Effect.succeed([
+            ...(named(calls, "say").length > 0 ? ["called `say`"] : []),
+            ...(pauses.length === 1 ? [] : [`paused its routine ${pauses.length} times, not once`]),
+            ...(first === undefined ? [] : onlyPermitted(calls, first, "its pause", [])),
+            ...runRules(calls, reportedWake),
+          ]);
+        },
+      ),
+    ],
+    { concurrency: 3 },
+  );
+  return results.flat();
+});
 
-/** Every weekday, Monday to Friday, not a single day. */
-const confirmsWeekdays = (text: string): boolean =>
-  /\b(weekdays?|work ?days?|mon(day)?s?\s*(-|–|—|to|through|thru)\s*fri(day)?s?)\b/i.test(text);
-
-/** Problems with the setup turn's own calls: their order, the schedule, and the confirmation. */
+/**
+ * Problems with a setup turn's own calls, around the one routine it created:
+ * it opens with a `say`, looks for an existing routine before creating one,
+ * and ends on a `say` with `done: true` sent once the routine was saved.
+ * Returns the problems and the closing message's text.
+ */
 const setupProblems = (
   calls: ReadonlyArray<Call>,
-  { call, routine }: { readonly call: Call; readonly routine: ToolInput<"set_routine"> },
-): ReadonlyArray<string> => {
-  const problems: Array<string> = [];
-  // The turn opens with a `say`, then looks for an existing routine before it creates one.
-  if (says(calls)[0]?.call !== calls[0]) problems.push("the first call is not a `say`");
-  problems.push(
-    ...after(named(calls, "list_routines")[0], call, {
+  creation: Call,
+): { readonly problems: ReadonlyArray<string>; readonly closing?: string } => {
+  const problems = [
+    ...(says(calls)[0]?.call === calls[0] ? [] : ["the first call is not a `say`"]),
+    ...after(named(calls, "list_routines")[0], creation, {
       source: "called `list_routines`",
       dependent: "created the routine",
     }),
-  );
-  const schedule = routine.schedule ?? "";
-  const [minute, hour, day, month, weekday] = schedule.split(/\s+/);
-  if (
-    minute !== "0" ||
-    hour !== "8" ||
-    day !== "*" ||
-    month !== "*" ||
-    !["1-5", "mon-fri"].includes((weekday ?? "").toLowerCase())
-  ) {
-    problems.push(`schedule ${JSON.stringify(schedule)} is not weekdays at 8:00`);
-  }
-  // The turn ends on a `say` with `done: true`, sent once the routine was saved, confirming it.
+  ];
   const last = calls.at(-1);
   const closing = says(calls).find((said) => said.call === last);
-  if (closing === undefined) {
-    problems.push("the turn does not end with a `say`");
-    return problems;
-  }
-  problems.push(
-    ...after(call, closing.call, {
-      source: "saved the routine",
-      dependent: "confirmed it",
-    }),
-  );
-  if (closing.say.done !== true) problems.push("the closing `say` does not carry `done: true`");
-  if (!confirmsMorningEight(closing.say.text)) {
-    problems.push("the closing `say` does not confirm 8:00 in the morning");
-  }
-  if (!confirmsWeekdays(closing.say.text)) {
-    problems.push("the closing `say` does not confirm Monday to Friday");
-  }
-  return problems;
+  if (closing === undefined)
+    return { problems: [...problems, "the turn does not end with a `say`"] };
+  return {
+    problems: [
+      ...problems,
+      ...after(creation, closing.call, { source: "saved the routine", dependent: "confirmed it" }),
+      ...(closing.say.done === true ? [] : ["the closing `say` does not carry `done: true`"]),
+    ],
+    closing: closing.say.text,
+  };
 };
 
-/** The one-off question, and the question the judge answers about the bot's answer to it. */
-const ONE_OFF = "is the docs build green right now? the release goes out at noon";
-const PASSING_QUESTION =
-  "Does this message tell its reader that the docs build is green, that is, that its latest run passed?";
-
-/** The open pull requests the state file does not list yet, as a message would name them. */
-const NEW_PULL_REQUESTS = [/#?\b124\b|search API/i, /#?\b125\b|anchors/i];
+/** The one routine a setup turn must create, or why there is not exactly one. */
+const theCreated = (calls: ReadonlyArray<Call>) => {
+  const routines = created(calls);
+  const [first] = routines;
+  return routines.length === 1 && first !== undefined
+    ? first
+    : `${routines.length} accepted \`set_routine\` creates, not one`;
+};
 
 const decodeState = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Struct({ reported: Schema.Array(Schema.Number) })),
 );
 
+/** A number as a message names a pull request: on its own, not inside a longer number. */
+const namesNumber = (text: string, number: number) =>
+  new RegExp(`(?<!\\d)${number}(?!\\d)`).test(text);
+
 /**
- * Problems with the pull-request watch's run: it reads the state file and the
- * open pull requests, then, in a later message, reports the two new ones in
- * exactly one `say`; once that `say` is recorded, in a later message, it
- * writes the state file, which ends listing every open pull request.
+ * Problems specific to the pull-request watch's run: before its message, in
+ * an earlier model message, it read the state file and a list holding the new
+ * pull requests; the message names both by number; every write of the state
+ * file comes in a later model message than the message; and the file, as the
+ * turn leaves it, lists every open pull request.
  */
-const stateRunProblems = (calls: ReadonlyArray<Call>): ReadonlyArray<string> => {
-  const said = named(calls, "say");
-  const [message] = said;
-  const writes = calls.flatMap((call) =>
-    call.events.flatMap((event) =>
-      event.type === "file-write" && event.path === STATE_PATH
-        ? [{ call, content: event.content }]
-        : [],
-    ),
+const stateRunProblems = (
+  calls: ReadonlyArray<Call>,
+  stateAtEnd: string | undefined,
+): ReadonlyArray<string> => {
+  const [message] = named(calls, "say");
+  if (message === undefined) return [];
+  const text = says(calls).find(({ call }) => call === message)?.say.text ?? "";
+  const writes = calls.filter((call) =>
+    did(call, (event) => event.type === "file-write" && event.path === STATE_PATH),
   );
-  const problems: Array<string> = [
+  const state = stateAtEnd === undefined ? undefined : decodeState(stateAtEnd);
+  const reportedNumbers =
+    state?._tag === "Some" ? state.value.reported.toSorted((a, b) => a - b) : undefined;
+  return [
     ...after(
       calls.find((call) =>
         did(call, (event) => event.type === "file-read" && event.path === STATE_PATH),
@@ -587,59 +922,29 @@ const stateRunProblems = (calls: ReadonlyArray<Call>): ReadonlyArray<string> => 
       { source: "read the state file", dependent: "spoke" },
     ),
     ...after(
-      calls.find((call) => did(call, (event) => event.type === "pull-requests-read")),
-      message,
-      { source: "listed the open pull requests", dependent: "spoke" },
-    ),
-    ...runRules(calls, pullRequestWake),
-  ];
-  if (said.length !== 1 || message === undefined) {
-    return [...problems, `called \`say\` ${said.length} times, not once`];
-  }
-  const text = says(calls).find(({ call }) => call === message)?.say.text ?? "";
-  if (!NEW_PULL_REQUESTS.every((pull) => pull.test(text))) {
-    problems.push("the message does not name both new pull requests, #124 and #125");
-  }
-  const last = writes.at(-1);
-  if (last === undefined) return [...problems, "never wrote the state file"];
-  if (writes.some(({ call }) => call.step <= message.step)) {
-    problems.push("wrote the state file before its message was recorded");
-  }
-  const state = decodeState(last.content);
-  const reportedNumbers =
-    state._tag === "Some" ? state.value.reported.toSorted((a, b) => a - b) : undefined;
-  if (JSON.stringify(reportedNumbers) !== JSON.stringify(REPORTED_AFTER)) {
-    problems.push(
-      `the state file ends as ${JSON.stringify(last.content)}, not listing ${REPORTED_AFTER.join(", ")} under "reported"`,
-    );
-  }
-  return problems;
-};
-
-/**
- * Problems with the merge watch's run: it looks at #12, then, in a later
- * message, says once that it merged, and, once that `say` is recorded, in a
- * later message, pauses its own routine.
- */
-const mergeRunProblems = (calls: ReadonlyArray<Call>): ReadonlyArray<string> => {
-  const [message] = named(calls, "say");
-  const pauses = named(calls, "set_routine").filter((call) => pausesItself(call, mergeWatchWake));
-  const [pause] = pauses;
-  return [
-    ...speaksOnce(mergeWatchWake, /\bmerged?\b/i, "say that #12 merged", {
-      test: (call) =>
+      calls.find((call) =>
         did(
           call,
           (event) =>
-            (event.type === "pull-request-read" && event.number === 12) ||
-            event.type === "pull-requests-read",
+            event.type === "pull-requests-read" &&
+            NEW_PULL_REQUESTS.every((number) => event.numbers.includes(number)),
         ),
-      what: "looked at #12",
-    })(calls),
-    ...(pauses.length === 1 ? [] : [`paused its routine ${pauses.length} times, not once`]),
-    ...(message === undefined || pause === undefined
+      ),
+      message,
+      { source: "listed the open pull requests", dependent: "spoke" },
+    ),
+    ...(NEW_PULL_REQUESTS.every((number) => namesNumber(text, number))
       ? []
-      : after(message, pause, { source: "spoke", dependent: "paused its routine" })),
+      : ["the message does not name both new pull requests, #124 and #125"]),
+    ...(writes.length === 0 ? ["never wrote the state file"] : []),
+    ...(writes.some((call) => call.step <= message.step)
+      ? ["wrote the state file before its message was recorded"]
+      : []),
+    ...(JSON.stringify(reportedNumbers) === JSON.stringify(REPORTED_AFTER)
+      ? []
+      : [
+          `the state file ends the turn as ${stateAtEnd === undefined ? "missing" : JSON.stringify(stateAtEnd)}, not listing ${REPORTED_AFTER.join(", ")} under "reported"`,
+        ]),
   ];
 };
 
@@ -656,40 +961,19 @@ interface Case {
   >;
 }
 
-/** A case whose problems the turn's own calls show. */
+/** A case whose problems the turn's own calls show, with no judge. */
 const fromCalls =
   (problems: (calls: ReadonlyArray<Call>) => ReadonlyArray<string>): Case["problems"] =>
   (turn) =>
     Effect.succeed(problems(turn.calls));
 
-const setupWake = userWake(
-  "the docs build broke twice this week and nobody noticed until customers did. from now on can you check it every weekday morning at 8 and only bother me if it's red?",
-);
-
-const cases: ReadonlyArray<Case> = [
-  {
-    name: "creates a routine for recurring work, whose saved instruction runs silent on a passing build and reports a failing one",
-    scenario: { wake: setupWake, workspace: buildWorkspace(setupWake, PASSING_RUNS) },
-    problems: Effect.fn("evals.setupCase")(function* ({ calls }, { model, skills }) {
-      const routines = created(calls);
-      const [first] = routines;
-      if (routines.length !== 1 || first === undefined) {
-        return [`${routines.length} accepted \`set_routine\` creates, not one`];
-      }
-      return [
-        ...setupProblems(calls, first),
-        ...(yield* replay(model, skills, setupWake, first.routine)),
-      ];
-    }),
-  },
-  {
-    name: "answers a one-off request in the turn from a check of the build, with no routine",
-    scenario: (() => {
-      const wake = userWake(ONE_OFF);
-      return { wake, workspace: buildWorkspace(wake, PASSING_RUNS) };
-    })(),
-    problems: Effect.fn("evals.oneOffCase")(function* ({ calls }) {
-      const checked = calls.find(looksAtBuild);
+/** A one-off question about the build, asked of a workspace whose build is as `runs` says. */
+const oneOff = (runs: ReadonlyArray<Run>, passing: boolean) => {
+  const wake = userWake(ONE_OFF);
+  return {
+    scenario: { wake, workspace: buildWorkspace(wake, runs) },
+    problems: Effect.fn("evals.oneOffCase")(function* ({ calls }: Turn) {
+      const checked = calls.find(BUILD_LOOK.test);
       const answer = says(calls).find(
         ({ call, say }) => say.done === true && checked !== undefined && call.step > checked.step,
       );
@@ -697,78 +981,119 @@ const cases: ReadonlyArray<Case> = [
         ...(named(calls, "set_routine").length > 0 ? ["called `set_routine`"] : []),
         ...(checked === undefined ? ["never checked the build"] : []),
       ];
-      if (answer === undefined) {
-        return [
-          ...problems,
-          "no `say` with `done: true` in a message after the check delivered the answer",
-        ];
-      }
-      return (yield* judge(ONE_OFF, answer.say.text, PASSING_QUESTION))
-        ? problems
-        : [...problems, `the judge did not read the answer as passing: "${answer.say.text}"`];
+      return answer === undefined
+        ? [
+            ...problems,
+            "no `say` with `done: true` in a message after the check delivered the answer",
+          ]
+        : [...problems, ...(yield* judged(BUILD_PASSING, ONE_OFF, answer.say.text, passing))];
     }),
+  } satisfies Omit<Case, "name">;
+};
+
+const setupWake = userWake(SETUP);
+
+const mergeSetupWake = userWake(
+  "can you let me know when PR #12 on acme/docs gets merged? mira said it should land today",
+);
+
+const cases: ReadonlyArray<Case> = [
+  {
+    name: "creates a routine for recurring work, whose saved instruction runs silent on a passing build and reports a failing one",
+    scenario: { wake: setupWake, workspace: buildWorkspace(setupWake, PASSING_RUNS) },
+    problems: Effect.fn("evals.setupCase")(function* ({ calls }, { model, skills }) {
+      const creation = theCreated(calls);
+      if (typeof creation === "string") return [creation];
+      const { problems, closing } = setupProblems(calls, creation.call);
+      const schedule = creation.routine.schedule ?? "";
+      const [minute, hour, day, month, weekday] = schedule.split(/\s+/);
+      const weekdaysAtEight =
+        minute === "0" &&
+        hour === "8" &&
+        day === "*" &&
+        month === "*" &&
+        ["1-5", "mon-fri"].includes((weekday ?? "").toLowerCase());
+      return [
+        ...problems,
+        ...(weekdaysAtEight ? [] : [`schedule "${schedule}" is not weekdays at 8:00`]),
+        ...(closing === undefined ? [] : yield* judged(WEEKDAYS_AT_EIGHT, SETUP, closing)),
+        ...(yield* replayDocsCheck(model, skills, setupWake, creation.routine)),
+      ];
+    }),
+  },
+  {
+    name: "answers a one-off request in the turn from a check of the build, with no routine",
+    ...oneOff(PASSING_RUNS, true),
+  },
+  {
+    name: "answers a one-off request about a failing build without calling it passing",
+    ...oneOff(FAILING_RUNS, false),
   },
   {
     name: "keeps a routine run silent when nothing is worth saying",
     scenario: { wake: routineWake, workspace: buildWorkspace(routineWake, PASSING_RUNS) },
-    problems: fromCalls(silentRun(routineWake, looksAtBuild, "looked at the build")),
+    problems: fromCalls(silentRun(routineWake, BUILD_LOOK)),
   },
   {
     name: "speaks once in a routine run when something is worth saying",
     scenario: { wake: routineWake, workspace: buildWorkspace(routineWake, FAILING_RUNS) },
-    problems: fromCalls(speaksOnce(routineWake, FAILURE_NAMED, "say what failed", BUILD_LOOK)),
+    problems: ({ calls }) => speaksOnce(routineWake, FAILURE_NAMED, { look: BUILD_LOOK })(calls),
   },
   {
     name: "sends a due reminder exactly once",
     scenario: { wake: reminderWake, workspace: buildWorkspace(reminderWake, PASSING_RUNS) },
-    problems: fromCalls(speaksOnce(reminderWake, /expense/i, "remind about the expense report")),
+    problems: ({ calls }) => speaksOnce(reminderWake, REMINDED)(calls),
   },
   {
     name: "says once what blocked a routine run that lost its access",
     scenario: { wake: routineWake, workspace: signedOutWorkspace(routineWake) },
-    problems: fromCalls(
-      speaksOnce(
-        routineWake,
-        /\b(auth\w*|credentials?|token|sign(ed)?[- ]?(in|out)|log(ged)?[- ]?(in|out)|access|401|permission)\b/i,
-        "name the access problem",
-        { test: triesGh, what: "ran `gh`" },
-      ),
-    ),
+    problems: ({ calls }) => speaksOnce(routineWake, ACCESS_LOST, { look: GH_TRIED })(calls),
   },
   {
     name: "stays silent when a recent run already said what blocks it",
     scenario: { wake: blockerReportedWake, workspace: signedOutWorkspace(blockerReportedWake) },
-    problems: fromCalls(silentRun(blockerReportedWake, triesGh, "ran `gh`")),
+    problems: fromCalls(silentRun(blockerReportedWake, GH_TRIED)),
   },
   {
     name: "reports new pull requests once, then records them in its state file",
     scenario: { wake: pullRequestWake, workspace: pullRequestWorkspace },
-    problems: fromCalls(stateRunProblems),
+    problems: ({ calls, workspace }) =>
+      Effect.succeed([
+        ...spoke(calls, pullRequestWake, {
+          permits: [stateUpdate(pullRequestWake.routine.instruction)],
+        }).problems,
+        ...stateRunProblems(calls, workspace.file(STATE_FILE)),
+      ]),
   },
   {
-    name: "reports the event a watch waits for once, then pauses its own routine",
-    scenario: { wake: mergeWatchWake, workspace: buildWorkspace(mergeWatchWake, PASSING_RUNS) },
-    problems: fromCalls(mergeRunProblems),
+    name: "turns a request to hear when something happens into a watch that reports it once, then pauses itself",
+    scenario: { wake: mergeSetupWake, workspace: twelveWorkspace(mergeSetupWake, TWELVE_OPEN) },
+    problems: Effect.fn("evals.mergeWatchCase")(function* ({ calls }, { model, skills }) {
+      const creation = theCreated(calls);
+      if (typeof creation === "string") return [creation];
+      const { problems } = setupProblems(calls, creation.call);
+      if (creation.routine.schedule === undefined) {
+        return [...problems, "the watch was not saved with a schedule"];
+      }
+      return [
+        ...problems,
+        ...(yield* replayMergeWatch(model, skills, mergeSetupWake, creation.routine)),
+      ];
+    }),
   },
 ];
 
-describe("the judge, on fixed answers to whether the build is passing", () => {
-  it.concurrent.each([
-    "Yes, it's green: the latest run on main passed about an hour ago.",
-    "It's green. The previous red build was fixed yesterday.",
-    "Yes. Both recent runs on main succeeded.",
-    "Yes, green. The latest run on main passed an hour ago. I only checked main, not open pull requests.",
-  ])("reads %j as passing", async (text) => {
-    expect(await Effect.runPromise(judge(ONE_OFF, text, PASSING_QUESTION))).toBe(true);
-  });
+/** A call with no arguments or output, for the checks of the graders and the stand-in workspace below. */
+const CALL: Call = { step: 1, name: "run_command", input: {}, output: "", events: [] };
 
-  it.concurrent.each([
-    "It looks green but I couldn't confirm",
-    "I can't verify that the build passed",
-    "No, the latest run on main failed on link-check.",
-    "The build is no longer passing.",
-  ])("does not read %j as passing", async (text) => {
-    expect(await Effect.runPromise(judge(ONE_OFF, text, PASSING_QUESTION))).toBe(false);
+describe("the judge, on fixed messages", () => {
+  describe.each(CHECKS)("$question", (check) => {
+    it.concurrent.each(check.accept)("answers yes for %j", async (text) => {
+      expect(await Effect.runPromise(judge(check.asked, text, check.question))).toBe(true);
+    });
+    it.concurrent.each(check.reject)("answers no for %j", async (text) => {
+      expect(await Effect.runPromise(judge(check.asked, text, check.question))).toBe(false);
+    });
   });
 });
 
@@ -802,24 +1127,32 @@ describe("the stand-in workspace", () => {
     ]);
     expect(workspace.run(`cat ./${STATE_FILE}`).output).toBe('{"reported":[1]}\n');
   });
+
+  it.each([
+    ["gh pr list -R acme/docs", false],
+    ["gh pr list -R acme/docs --state merged", true],
+    ["gh pr list -R acme/docs --state closed --json number,state", true],
+    ["gh api 'repos/acme/docs/pulls?state=closed'", true],
+    ["gh api repos/acme/docs/pulls", false],
+    ["gh pr view 12 -R acme/docs", true],
+  ])("counts %j as a read of a merged #12: %s", (command, counts) => {
+    expect(TWELVE_LOOK.test({ ...CALL, events: run(command).events })).toBe(counts);
+  });
 });
 
-describe("the state-file run check", () => {
+describe("the run graders", () => {
   const call = (
     step: number,
     name: string,
     input: unknown,
     events: ReadonlyArray<FixtureEvent> = [],
-  ): Call => ({
-    step,
-    name,
-    input,
-    output: "",
-    events,
-  });
+  ): Call => ({ ...CALL, step, name, input, events });
   const look = [
     call(1, "run_command", {}, [{ type: "file-read", path: STATE_PATH }]),
-    call(1, "run_command", {}, [{ type: "gh" }, { type: "pull-requests-read" }]),
+    call(1, "run_command", {}, [
+      { type: "gh" },
+      { type: "pull-requests-read", numbers: [125, 124, 121, 118] },
+    ]),
   ];
   const say = (step: number, text: string) => call(step, "say", { text, done: true });
   const report =
@@ -828,23 +1161,77 @@ describe("the state-file run check", () => {
     call(step, "run_command", {}, [
       { type: "file-write", path: STATE_PATH, content: JSON.stringify({ reported: numbers }) },
     ]);
+  const final = (numbers: ReadonlyArray<number> = REPORTED_AFTER) =>
+    JSON.stringify({ reported: numbers });
+  const stateRun = (calls: ReadonlyArray<Call>, stateAtEnd: string | undefined) => [
+    ...spoke(calls, pullRequestWake, {
+      permits: [stateUpdate(pullRequestWake.routine.instruction)],
+    }).problems,
+    ...stateRunProblems(calls, stateAtEnd),
+  ];
 
-  it("accepts a write of every open pull request in a later message", () => {
-    expect(stateRunProblems([...look, say(2, report), write(3)])).toEqual([]);
+  it("accepts a state-file write of every open pull request in a later message", () => {
+    expect(stateRun([...look, say(2, report), write(3)], final())).toEqual([]);
   });
 
   it.each([
-    ["no write", [...look, say(2, report)]],
-    ["a write in the same message", [...look, say(2, report), write(2)]],
-    ["a write before the message and after it", [...look, write(2), say(3, report), write(4)]],
-    ["a write that leaves out #125", [...look, say(2, report), write(3, [118, 121, 124])]],
-    ["a message sent with the reads", [...look, say(1, report), write(2)]],
+    ["no write", [...look, say(2, report)], STATE],
+    ["a write in the same message", [...look, say(2, report), write(2)], final()],
+    [
+      "a write before the message and after it",
+      [...look, write(2), say(3, report), write(4)],
+      final(),
+    ],
+    [
+      "a write that leaves out #125",
+      [...look, say(2, report), write(3, [118, 121, 124])],
+      final([118, 121, 124]),
+    ],
+    ["a write the turn then deleted", [...look, say(2, report), write(3)], undefined],
+    ["a message sent with the reads", [...look, say(1, report), write(2)], final()],
     [
       "a message missing #125",
       [...look, say(2, "New: #124 Document the new search API."), write(3)],
+      final(),
     ],
-  ])("rejects %s", (_, calls) => {
-    expect(stateRunProblems(calls)).not.toEqual([]);
+    [
+      "a `remember` after the message",
+      [...look, say(2, report), write(3), call(4, "remember", { fact: "Reported #124 and #125." })],
+      final(),
+    ],
+    ["a second `say`", [...look, say(2, report), write(3), say(4, "Recorded them.")], final()],
+    [
+      "a write after the message to a file the instruction does not name",
+      [
+        ...look,
+        say(2, report),
+        write(3),
+        call(4, "run_command", {}, [
+          { type: "file-write", path: `${HOME}/files/notes.txt`, content: "done" },
+        ]),
+      ],
+      final(),
+    ],
+    [
+      "a message without `done: true`",
+      [...look, call(2, "say", { text: report }), write(3)],
+      final(),
+    ],
+  ])("rejects %s", (_, calls, stateAtEnd) => {
+    expect(stateRun(calls, stateAtEnd)).not.toEqual([]);
+  });
+
+  it("rejects a pause of its own routine in a silent run", () => {
+    const pause = {
+      ...call(2, "set_routine", {}),
+      routine: { action: "pause", id: routineWake.routine.id },
+    } satisfies Call;
+    expect(
+      silentRun(
+        routineWake,
+        BUILD_LOOK,
+      )([call(1, "run_command", {}, [{ type: "build-read" }]), pause]),
+    ).toContain("paused its own routine with nothing to report");
   });
 });
 

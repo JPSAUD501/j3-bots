@@ -52,6 +52,7 @@ export interface FunctionTool {
 const ChatRequest = Schema.Struct({
   model: Schema.String,
   messages: Schema.Array(Message),
+  temperature: Schema.optionalKey(Schema.Number),
   tools: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({
@@ -92,11 +93,17 @@ interface Reply {
   readonly finishReason: string | null;
 }
 
+/** How to sample: `temperature` 0 for an answer that should not vary between runs. */
+interface Sampling {
+  readonly temperature?: number;
+}
+
 /** Sends a conversation to `model` and returns its next message; with no tools, it can only answer in text. */
 export const complete = Effect.fn("evals.complete")(function* (
   model: string,
   messages: ReadonlyArray<Message>,
   tools: ReadonlyArray<FunctionTool>,
+  sampling: Sampling = {},
 ) {
   const baseUrl = yield* Config.NonEmptyString("J3_EVAL_BASE_URL");
   const apiKey = yield* Config.Redacted("J3_EVAL_API_KEY");
@@ -109,9 +116,12 @@ export const complete = Effect.fn("evals.complete")(function* (
     `${baseUrl.replace(/\/+$/, "")}/v1/chat/completions`,
   ).pipe(
     HttpClientRequest.bearerToken(apiKey),
-    HttpClientRequest.schemaBodyJson(ChatRequest)(
-      tools.length === 0 ? { model, messages } : { model, messages, tools },
-    ),
+    HttpClientRequest.schemaBodyJson(ChatRequest)({
+      model,
+      messages,
+      ...(tools.length === 0 ? {} : { tools }),
+      ...(sampling.temperature === undefined ? {} : { temperature: sampling.temperature }),
+    }),
   );
   const response = yield* client.execute(request);
   const body = yield* HttpClientResponse.schemaBodyJson(ChatResponse)(response);

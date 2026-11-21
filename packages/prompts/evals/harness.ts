@@ -106,10 +106,11 @@ interface ReplyText {
   readonly text: string;
 }
 
-/** One turn: the tools the model called, in order, and the reply text it wrote. */
+/** One turn: the tools the model called, in order, the reply text it wrote, and its workspace as the turn left it. */
 export interface Turn {
   readonly calls: ReadonlyArray<Call>;
   readonly text: ReadonlyArray<ReplyText>;
+  readonly workspace: Workspace<GhEvent>;
 }
 
 /**
@@ -284,7 +285,7 @@ export const runTurn = Effect.fn("evals.runTurn")(
     ];
     const calls: Array<Call> = [];
     const text: Array<ReplyText> = [];
-    const turn: Turn = { calls, text };
+    const turn: Turn = { calls, text, workspace };
     for (let step = 1; step <= MAX_STEPS; step++) {
       const reply = yield* complete(model, messages, tools);
       if (reply.content !== null && reply.content.trim() !== "") {

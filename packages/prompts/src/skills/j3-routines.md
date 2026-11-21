@@ -48,7 +48,7 @@ Fill a gap with a sensible default and state it in your confirmation ("every wee
 | "every half hour during work hours" | `4,34 9-16 * * 1-5` (9:04 to 16:34) |
 | "first of the month" | `17 9 1 * *` |
 
-**`at`: once,** at a local time in your user's zone, such as `2027-03-04T09:00`. It must lie ahead, and the server pauses it after it runs; you do not need to. To run it again later, `update` it with a new future `at`; `resume` would leave it with a time already past. "Remind me tomorrow at nine" is an `at`, not a schedule.
+**`at`: once,** at a local time in your user's zone, such as `2027-03-04T09:00`. It must lie ahead, and the server pauses it after it runs; neither you nor its run needs to. To run it again once its time has passed, `update` it with a new future `at`: that update turns it back on, and `resume` alone is refused, since its time is past. "Remind me tomorrow at nine" is an `at`, not a schedule.
 
 **`webhook`: when another system calls in.** Use it when the sender can reach this server's address; a hosted service usually cannot reach a server on a home network. In your confirmation, tell your user the routine is waiting for its first delivery. The sender's own delivery result (a repository webhook lists its recent deliveries and their responses) proves the address is reachable; a run in `list_routines` alone does not, since a run started on demand is recorded too. Whether the work then ran shows in that run's status: a delivery that arrives while the previous run is still going is `skipped`. Use a schedule instead only when the sender cannot reach this server and checking on a schedule does the job.
 
@@ -69,7 +69,7 @@ The run will know only what the instruction says, plus your memory and files. Wr
 4. **What the run may and may not do.** A run follows your instructions, so the rules about sends and destructive steps hold there too.
 5. **The delivery line,** last: what to send your user, and when (see the next section).
 
-**Make every step safe to run twice.** A run that fails before it says anything is retried in a fresh session, up to three attempts in all; an envelope the engine refuses, or a Stop, ends it at once. A retry does not know what the failed attempt already did, and cannot tell that it is a retry at all. For each send, publish, purchase or other change the instruction asks for, say how the run makes repeating it harmless:
+**Make every step safe to run twice.** A run that fails before it says anything is retried in a fresh session, up to three attempts in all; an envelope the engine refuses, or a Stop, ends it at once. A retry does not know what the failed attempt already did, and cannot tell that it is a retry at all. The run's own message to your user is never repeated this way, since a run that has said anything is not retried. For each other send, publish, purchase or change the instruction asks for, say how the run makes repeating it harmless:
 
 - an idempotency key the destination honors. Use a stable source id that identifies this intended action, such as the id of the event that triggered the run or of the business record the step is about (an invoice number, an issue number): retries reuse it, and each separately requested send gets its own. Never the routine's id alone, which would suppress every later occurrence, and never a date or time: a run sees the current time, not the time it was scheduled for, and a routine that runs twice a day would repeat a date;
 - or a look at the destination for that exact action first (the message in the sent folder, an open issue with that title).
@@ -92,7 +92,7 @@ The delivery line decides whether a run speaks. Write it explicitly, because the
 - **Reports your user wants every time** (a daily summary, a morning all-clear they asked for): speak when due.
 - **Conditional reports** (watching, checks, "tell me if"): speak only when the condition holds. When it does not, the run ends without calling `say` at all: no "all clear", no summary of what it checked. This is the usual case, and a silent run is a successful run.
 - **Digests:** speak only when there is something to list, unless your user asked for one every time. Say which you chose in your confirmation.
-- **Until an event:** for "let me know when X", the delivery line says to tell your user once X has happened and then `pause` this routine. The pause waits until the message has returned; during a run, `pause` of the current routine is the only `set_routine` action available.
+- **Until an event:** for "let me know when X", a watch that checks on a schedule until X happens (not once at a guessed time) and then ends, the delivery line reads: "Once X has happened, tell your user in one short message, then pause this routine; if a recent run already told them, just pause." Such a watch needs no state file: the pause ends it, and the recent runs show what it said. The pause waits until the message has returned; during a run, `pause` of the current routine, by the id in the wake with no lookup, is the only `set_routine` action available.
 
 Whatever the delivery line says, a run that could not do its work (access lost, a source gone) tells your user in one sentence what blocked it; otherwise lost access would look like a quiet week. When one of the recent runs already said so, the run ends silently. A wake lists at most the five newest settled runs, so a lasting blocker is reported again about once every six runs. For a frequent check that is often, so the sentence also says the report will return until the blocker is fixed and that your user can pause the routine.
 
@@ -114,7 +114,7 @@ A routine your user asked for needs nothing further, as long as its instruction 
 2. Call `list_routines`, then decide:
    - an enabled routine that already does exactly this: reuse it and change nothing;
    - one that does exactly this but is paused, and your user wants it running again (asking for it again counts): `resume` it, and check in what the tool returns that it is enabled;
-   - your user asked to change an existing routine: `update` it, keeping every field they did not ask to change;
+   - your user asked to change an existing routine: `update` it, keeping every field they did not ask to change. An `update` does not turn a paused routine back on, with one exception: a one-time routine whose time has passed, given a new future `at`. So to change a paused routine and have it running, `update` it and then `resume` it, unless it is that one-time case; check `enabled` in what the tool returns;
    - they asked for an additional, different trigger ("also at noon on weekends"): leave the existing routine as it is and `create` a separate one.
 3. Choose the trigger and write the instruction.
 4. If it helps, check quickly that the sources are reachable, reading only, and preview a report locally if that is useful. Leave every delivery and every change to the scheduled run.
