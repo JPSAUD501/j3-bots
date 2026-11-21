@@ -26,17 +26,15 @@ export default Effect.gen(function* () {
     CREATE INDEX turns_background_pending ON turns (session_id)
     WHERE background_pending = 1
   `;
-  // When the engine last showed that work pending: the turn's end, or the
-  // latest report that listed it. A turn the engine starts for work it does
-  // not name counts its hops from the most recent of these.
-  yield* sql`ALTER TABLE turns ADD COLUMN background_seen_at TEXT`;
-  // The hop count such a turn took from them, kept so the turns that go on
-  // with its own work count from it after their flags cleared.
+  // The hop count a turn the engine starts for work it does not name takes
+  // from the turns with work flagged when it is admitted, kept so the turns
+  // that go on with its own work count from it after those flags cleared.
   yield* sql`ALTER TABLE turns ADD COLUMN borrowed_hops INTEGER`;
 
   // A turn ended while turns of the session had background work flagged: the
   // Stop runner asks the engine for a report once nothing runs, which clears
-  // the flags of work that ended.
+  // the flags of work that ended. Any report is the check: a turn that ran
+  // or waited during it makes it due again when it ends.
   yield* sql`
     ALTER TABLE sessions ADD COLUMN background_check_due INTEGER NOT NULL DEFAULT 0
       CHECK (background_check_due IN (0, 1))

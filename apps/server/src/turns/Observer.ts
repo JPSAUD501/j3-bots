@@ -41,6 +41,7 @@ import { Ids } from "../Ids.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { json, Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
+import { hopCounts } from "./hopCounts.ts";
 import { liveTarget as liveTargetOf } from "./liveTarget.ts";
 import { DISPATCH_COLUMNS, DispatchRow, dispatchOfKey, Ledger, type WakeRow } from "./Ledger.ts";
 import {
@@ -274,6 +275,7 @@ export const layer = Layer.effect(
     const workSteps = yield* WorkSteps;
     const scope = yield* Effect.scope;
     const stops = stopTargets(sql);
+    const chains = hopCounts(sql);
     const { notify } = notices(sql, entries);
     const spoken = routineSpeech(sql, ids, changes);
     const { sessionLost } = sessionLoss(sql, entries, ledger, workSteps, signals);
@@ -568,6 +570,9 @@ export const layer = Layer.effect(
           admitted_room_id = (SELECT id FROM rooms WHERE id = ${columns.roomId})
         WHERE id = ${session.id}
       `;
+      // A harness's wake takes its hop count now, from the flags that show
+      // what may have woken it, before its own work can clear them.
+      if (cause._tag !== "dispatch" && origin === null) yield* chains.borrow(session.id, turnId);
       // A Stop round already sent missed this turn, or the engine applied a
       // key a Stop had fenced: it is stopped on sight.
       if (yield* stops.openRound(session.id, fencedBy)) yield* sql.afterCommit(signals.stops.fire);
@@ -578,8 +583,9 @@ export const layer = Layer.effect(
      * started it: each listed turn's work may still run, as of the report.
      * The report lists work only while no turn runs or waits
      * (`BackgroundWork`), so only then does a turn it leaves out have none
-     * left, and the session's check is done (`Stops`); otherwise what was
-     * known stands.
+     * left; otherwise what was known stands. Either way the session's check
+     * is done (`Stops`): the end of a turn that ran or waited makes it due
+     * again.
      */
     const backgroundReported = Effect.fn("Observer.backgroundReported")(function* (
       session: Watched,
@@ -588,10 +594,11 @@ export const layer = Layer.effect(
       const listed = event.backgroundWork.turns;
       if (listed.length > 0) {
         yield* sql`
-          UPDATE turns SET background_pending = 1, background_seen_at = ${timeText(event.at)}
+          UPDATE turns SET background_pending = 1
           WHERE session_id = ${session.id} AND ${sql.in("engine_turn_id", listed)}
         `;
       }
+      yield* sql`UPDATE sessions SET background_check_due = 0 WHERE id = ${session.id}`;
       if (event.runnableTurns.length > 0) return;
       if ((yield* openTurnRows(session.id).pipe(Effect.orDie)).length > 0) return;
       yield* sql`
@@ -599,7 +606,6 @@ export const layer = Layer.effect(
         WHERE session_id = ${session.id} AND background_pending = 1
           ${listed.length === 0 ? sql`` : sql`AND NOT ${sql.in("engine_turn_id", listed)}`}
       `;
-      yield* sql`UPDATE sessions SET background_check_due = 0 WHERE id = ${session.id}`;
     }, Effect.orDie);
 
     /** A dispatch the engine may yet take, or may have taken unseen. */
@@ -712,7 +718,7 @@ export const layer = Layer.effect(
         // by this turn until the engine no longer reports the work.
         if (end.backgroundWork) {
           yield* sql`
-            UPDATE turns SET background_pending = 1, background_seen_at = ${timeText(end.at)}
+            UPDATE turns SET background_pending = 1
             WHERE session_id = ${session.id} AND engine_turn_id = ${end.turnId}
           `;
         }

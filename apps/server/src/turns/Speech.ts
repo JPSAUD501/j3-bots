@@ -43,6 +43,7 @@ import {
   TurnToolRetry,
   TurnTools,
 } from "../tools/TurnTools.ts";
+import { hopCounts } from "./hopCounts.ts";
 import { Ledger } from "./Ledger.ts";
 import { liveTarget } from "./liveTarget.ts";
 import { mediaTypeOf } from "./mediaTypes.ts";
@@ -121,12 +122,6 @@ const answer = (result: Schema.Json) =>
     onSome: ({ reason }) => Effect.fail(new TurnToolRefused({ reason })),
   });
 
-const Carried = Schema.Struct({
-  operator: Schema.BooleanFromBit,
-  furthest: Schema.Int,
-  rooted: Schema.BooleanFromBit,
-});
-
 /** A request as its stored result is looked up: under its id, for its caller and its tool. */
 const RequestKey = Schema.Struct({
   requestId: Schema.String,
@@ -180,6 +175,7 @@ export const layer = Layer.effect(
     const wakes = yield* Wakes;
     const ids = yield* Ids;
     const stops = stopTargets(sql);
+    const chains = hopCounts(sql);
     const { notify } = notices(sql, entries);
     const readWorkspaceFile = yield* workspaceReader;
     const targetOf = liveTarget(sql);
@@ -382,138 +378,19 @@ export const layer = Layer.effect(
     const deliveredBy = (found: Pin) =>
       turnDispatches({ sessionId: found.sessionId, turnId: found.turnId }).pipe(Effect.orDie);
 
-    /**
-     * The turn and the turns whose work it goes on with, as a subquery of
-     * engine turn ids: the turn a continuation resumes, and the turn whose
-     * background work woke the session when the engine names it
-     * (`turns.origin_turn_id`). They count as one turn for budgets and Stops.
-     */
-    const chainSql = (sessionId: SessionRowId, turnId: TurnId) => sql`
-      WITH RECURSIVE sp_chain (turn_id) AS (
-        SELECT ${turnId}
-        UNION
-        SELECT sp_link.origin_turn_id FROM turns sp_link
-        JOIN sp_chain ON sp_link.engine_turn_id = sp_chain.turn_id
-        WHERE sp_link.session_id = ${sessionId} AND sp_link.origin_turn_id IS NOT NULL
-      )
-      SELECT turn_id FROM sp_chain
-    `;
+    const deliveredSql = (found: Pin) => chains.deliveredInSql(found.sessionId, found.turnId);
+    const chainOf = (found: Pin) => chains.chainSql(found.sessionId, found.turnId);
 
-    /** The dispatches the turn's chain delivered, as a subquery. */
-    const deliveredInSql = (sessionId: SessionRowId, turnId: TurnId) => sql`
-      SELECT sp_dispatch.id FROM dispatches sp_dispatch
-      WHERE sp_dispatch.session_id = ${sessionId}
-        AND sp_dispatch.engine_turn_id IN (${chainSql(sessionId, turnId)})
-        AND sp_dispatch.status IN ('accepted', 'delivered', 'finished')
-    `;
-    const deliveredSql = (found: Pin) => deliveredInSql(found.sessionId, found.turnId);
-
-    /**
-     * What a turn's chain carries that budgets count: whether the operator's
-     * word, as a wake or a steer the engine accepted, the furthest hop count
-     * of the wakes and held messages it delivers, and whether any dispatch
-     * began it at all (`rooted`): a turn the engine started on its own for
-     * work it does not name has none.
-     */
-    const carriedIn = (sessionId: SessionRowId, turnId: TurnId) =>
-      SqlSchema.findAll({
-        Request: Schema.Void,
-        Result: Carried,
-        execute: () => sql`
-          WITH carried AS (
-            SELECT cw.kind, cw.hops, cw.source_entry_id FROM wakes cw
-            WHERE cw.dispatch_id IN (${deliveredInSql(sessionId, turnId)})
-          )
-          SELECT
-            EXISTS (
-              SELECT 1 FROM carried c
-              WHERE c.kind = 'user' OR EXISTS (
-                SELECT 1 FROM entries e
-                WHERE e.id = c.source_entry_id AND e.author_kind = 'operator'
-              )
-            ) AS operator,
-            MAX(
-              COALESCE((SELECT MAX(hops) FROM carried), 0),
-              COALESCE((
-                SELECT MAX(hm.hops) FROM held_messages hm
-                WHERE hm.consumed_dispatch_id IN (${deliveredInSql(sessionId, turnId)})
-              ), 0)
-            ) AS furthest,
-            EXISTS (${deliveredInSql(sessionId, turnId)}) AS rooted
-        `,
-      })(undefined).pipe(
-        Effect.orDie,
-        Effect.map(([row]) => row ?? { operator: false, furthest: 0, rooted: false }),
-      );
-    const carriedBy = (found: Pin) => carriedIn(found.sessionId, found.turnId);
-
-    /**
-     * The hop count of a wake a chain causes (`docs/architecture/server.md`,
-     * Budgets): 1 when it carries the operator's word, as a wake or a steer,
-     * so the chain starts again whenever they speak; otherwise one more than
-     * the furthest wake or held message it delivers.
-     */
-    const hopsOf = (carried: typeof Carried.Type) => (carried.operator ? 1 : carried.furthest + 1);
-
-    /**
-     * The hop count of a wake the pinned turn causes. A turn the engine
-     * started on its own for work it does not name (a harness's wake) never
-     * counts as the operator's: it counts as the furthest of the session's
-     * turns whose background work the engine showed pending most recently
-     * (`turns.background_seen_at`), any of which may be what woke it; an
-     * older flag may have outlived its work until the engine's next report.
-     * It keeps that count on its own row (`turns.borrowed_hops`), so the
-     * turns that go on with its own work count from it once those flags have
-     * cleared. With none of them it cannot be traced, and causes no wake
-     * (`null`).
-     */
-    const hopCount = Effect.fn("Speech.hopCount")(function* (found: Pin) {
-      const carried = yield* carriedBy(found);
-      if (carried.rooted) return hopsOf(carried);
-      const [borrowed] = yield* SqlSchema.findAll({
-        Request: Schema.Void,
-        Result: Schema.Struct({ hops: Schema.NullOr(Schema.Int) }),
-        execute: () => sql`
-          SELECT MAX(hb_turn.borrowed_hops) AS hops FROM turns hb_turn
-          WHERE hb_turn.session_id = ${found.sessionId}
-            AND hb_turn.engine_turn_id IN (${chainSql(found.sessionId, found.turnId)})
-        `,
-      })(undefined).pipe(Effect.orDie);
-      if (borrowed !== undefined && borrowed.hops !== null) return borrowed.hops;
-      const flagged = sql`
-        hc_turn.session_id = ${found.sessionId} AND hc_turn.background_pending = 1
-          AND hc_turn.engine_turn_id NOT IN (${chainSql(found.sessionId, found.turnId)})
-      `;
-      const candidates = yield* SqlSchema.findAll({
-        Request: Schema.Void,
-        Result: Schema.Struct({ engine_turn_id: TurnId }),
-        execute: () => sql`
-          SELECT hc_turn.engine_turn_id FROM turns hc_turn
-          WHERE ${flagged} AND hc_turn.background_seen_at = (
-            SELECT MAX(hc_turn.background_seen_at) FROM turns hc_turn WHERE ${flagged}
-          )
-        `,
-      })(undefined).pipe(Effect.orDie);
-      let count: number | null = null;
-      for (const candidate of candidates) {
-        const theirs = yield* carriedIn(found.sessionId, candidate.engine_turn_id);
-        if (theirs.rooted) count = Math.max(count ?? 0, hopsOf(theirs));
-      }
-      if (count !== null) {
-        yield* sql`
-          UPDATE turns SET borrowed_hops = ${count}
-          WHERE session_id = ${found.sessionId} AND engine_turn_id = ${found.turnId}
-        `.pipe(Effect.orDie);
-      }
-      return count;
-    });
+    /** The hop count of a wake the pinned turn causes (`hopCounts`), or `null`. */
+    const hopCount = (found: Pin) => chains.hopCount(found.sessionId, found.turnId);
 
     /**
      * Whether the operator spoke in the pinned turn itself: a wake of theirs
-     * started it, or a steer of theirs reached it. A continuation, or a turn
-     * the engine started for a turn's background work, inherits no such
-     * word: its chain's hops start again from the operator, but its fan-out
-     * counts.
+     * started it, or the engine took a steer of theirs into it (`steered`
+     * into this very turn). A continuation, or a turn the engine started for
+     * a turn's background work, inherits no such word: its chain's hops
+     * start again from the operator, but its fan-out counts. So does the
+     * continuation of a steer the engine made a turn of its own (`new-turn`).
      */
     const operatorSpokeIn = (found: Pin) =>
       SqlSchema.findAll({
@@ -528,7 +405,11 @@ export const layer = Layer.effect(
             WHERE os_dispatch.session_id = ${found.sessionId}
               AND os_dispatch.engine_turn_id = ${found.turnId}
               AND os_dispatch.status IN ('accepted', 'delivered', 'finished')
-              AND (os_dispatch.delivery = 'steer' OR os_turn.origin_turn_id IS NULL)
+              AND (
+                (os_dispatch.disposition = 'steered'
+                  AND os_dispatch.disposition_turn_id = ${found.turnId})
+                OR os_turn.origin_turn_id IS NULL
+              )
               AND (os_wake.kind = 'user' OR EXISTS (
                 SELECT 1 FROM entries os_entry
                 WHERE os_entry.id = os_wake.source_entry_id AND os_entry.author_kind = 'operator'
@@ -574,12 +455,12 @@ export const layer = Layer.effect(
             EXISTS (
               SELECT 1 FROM turns ws_turn
               WHERE ws_turn.session_id = ${found.sessionId} AND ws_turn.stop_id IS NOT NULL
-                AND ws_turn.engine_turn_id IN (${chainSql(found.sessionId, found.turnId)})
+                AND ws_turn.engine_turn_id IN (${chainOf(found)})
             ) AS stopped,
             (
               SELECT MIN(ws_dispatch.seq) FROM dispatches ws_dispatch
               WHERE ws_dispatch.session_id = ${found.sessionId}
-                AND ws_dispatch.engine_turn_id IN (${chainSql(found.sessionId, found.turnId)})
+                AND ws_dispatch.engine_turn_id IN (${chainOf(found)})
             ) AS seq
         `,
       })(undefined).pipe(Effect.orDie);
@@ -599,7 +480,7 @@ export const layer = Layer.effect(
           SELECT DISTINCT h.recipient_bot_id FROM handoffs h
           JOIN tool_calls c ON c.id = h.tool_call_id
           WHERE c.session_id = ${found.sessionId}
-            AND c.engine_turn_id IN (${chainSql(found.sessionId, found.turnId)})
+            AND c.engine_turn_id IN (${chainOf(found)})
         `,
       })(undefined).pipe(
         Effect.orDie,

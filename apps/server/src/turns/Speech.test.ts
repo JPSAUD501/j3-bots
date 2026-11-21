@@ -1502,43 +1502,57 @@ it.effect("counts the operator's turn's background completion against the fan-ou
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
-it.effect("keeps the hop count a harness's wake borrowed for the work it delegates", () =>
+/**
+ * Bo, in the operator's turn, wakes Ana, whose turn starts a build: hop 1.
+ * The build ends, and its notice wakes Ana with a turn that names none,
+ * which delegates a report before it messages anyone and ends. The report
+ * the engine gives then lists only the notice's work.
+ */
+const delegatingNotice = Effect.gen(function* () {
+  const control = yield* TestEngineControl;
+  const sql = yield* SqlClient.SqlClient;
+  const ana = yield* createBot("Ana");
+  const anaSession = yield* engineSession(ana.id);
+  const bo = yield* createBot("Bo");
+  yield* wokenBy(bo.id, ana.id, "Watch the build.", true);
+  const watching = yield* nextTurn(ana.id);
+  yield* control.startBackgroundWork({ sessionId: anaSession, turnId: watching });
+  yield* finished(ana.id, anaSession, watching);
+
+  yield* control.endBackgroundWork(anaSession);
+  const notice = yield* control.startEngineTurn(anaSession);
+  yield* nextTurn(ana.id, watching);
+  yield* control.startBackgroundWork({ sessionId: anaSession, turnId: notice });
+  yield* finished(ana.id, anaSession, notice);
+  const session = yield* mainSessionId(ana.id);
+  yield* until(
+    Effect.map(
+      sql<{ readonly pending: number }>`
+        SELECT background_pending AS pending FROM turns
+        WHERE session_id = ${session} AND engine_turn_id = ${watching}
+      `.pipe(Effect.orDie),
+      ([row]) => row?.pending === 0,
+    ),
+  );
+  return { ana, anaSession, notice };
+});
+
+/** The hop counts of the messages held for the bot. */
+const heldHops = (botId: BotId) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql<{ readonly hops: number }>`
+      SELECT hops FROM held_messages WHERE recipient_bot_id = ${botId}
+    `.pipe(Effect.orDie);
+    return rows.map((row) => row.hops);
+  });
+
+it.effect("keeps the hop count a harness's wake took on admission for the work it delegates", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;
-    const sql = yield* SqlClient.SqlClient;
     yield* chainLimits({ hops: 2, fanOut: 3 });
-    const ana = yield* createBot("Ana");
-    const anaSession = yield* engineSession(ana.id);
-    const [bo, cy, dee] = [yield* createBot("Bo"), yield* createBot("Cy"), yield* createBot("Dee")];
-    // Bo, in the operator's turn, wakes Ana, whose turn starts a build: hop 1.
-    yield* wokenBy(bo.id, ana.id, "Watch the build.", true);
-    const watching = yield* nextTurn(ana.id);
-    yield* control.startBackgroundWork({ sessionId: anaSession, turnId: watching });
-    yield* finished(ana.id, anaSession, watching);
-
-    // The build ends, and its notice wakes Ana with a turn that names none:
-    // it counts from the turn whose work was pending, and delegates a report.
-    yield* control.endBackgroundWork(anaSession);
-    const notice = yield* control.startEngineTurn(anaSession);
-    yield* nextTurn(ana.id, watching);
-    const told = yield* messageTeammate(anaSession, notice, {
-      to: cy.id,
-      text: "The build passed.",
-      urgent: false,
-    });
-    assert.strictEqual(told._tag, "result");
-    yield* control.startBackgroundWork({ sessionId: anaSession, turnId: notice });
-    yield* finished(ana.id, anaSession, notice);
-    const session = yield* mainSessionId(ana.id);
-    yield* until(
-      Effect.map(
-        sql<{ readonly pending: number }>`
-          SELECT background_pending AS pending FROM turns
-          WHERE session_id = ${session} AND engine_turn_id = ${watching}
-        `.pipe(Effect.orDie),
-        ([row]) => row?.pending === 0,
-      ),
-    );
+    const { ana, anaSession, notice } = yield* delegatingNotice;
+    const dee = yield* createBot("Dee");
 
     // The report's turn goes on with the notice's work, and with its count.
     const reporting = yield* control.startEngineTurn(anaSession, notice);
@@ -1549,9 +1563,71 @@ it.effect("keeps the hop count a harness's wake borrowed for the work it delegat
       urgent: false,
     });
     assert.strictEqual(reply._tag, "result");
-    const held = yield* sql<{ readonly hops: number }>`
-      SELECT hops FROM held_messages WHERE recipient_bot_id = ${dee.id}
-    `.pipe(Effect.orDie);
-    assert.deepStrictEqual(held, [{ hops: 2 }]);
+    assert.deepStrictEqual(yield* heldHops(dee.id), [2]);
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("counts a harness's wake from another such wake whose work is pending", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    yield* chainLimits({ hops: 2, fanOut: 3 });
+    const { ana, anaSession, notice } = yield* delegatingNotice;
+    const dee = yield* createBot("Dee");
+
+    // Another harness's wake, naming no turn: the notice's work may be what
+    // woke it, so it counts as the notice does.
+    const woken = yield* control.startEngineTurn(anaSession);
+    yield* nextTurn(ana.id, notice);
+    const reply = yield* messageTeammate(anaSession, woken, {
+      to: dee.id,
+      text: "The report is attached.",
+      urgent: false,
+    });
+    assert.strictEqual(reply._tag, "result");
+    assert.deepStrictEqual(yield* heldHops(dee.id), [2]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "counts the fan-out of the continuation of an operator's steer the engine ran as a turn of its own",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      yield* chainLimits({ hops: 5, fanOut: 1 });
+      const { bot: ana, session, turnId } = yield* working("Plan the launch.");
+      const [bo, cy] = [yield* createBot("Bo"), yield* createBot("Cy")];
+
+      // The operator's steer reaches the engine once the turn completed: the
+      // engine runs it as a turn of its own, which hits the usage limit.
+      const steering = yield* control.holdNext("dispatch");
+      yield* sendToBot(ana.id, "Get Bo and Cy started.");
+      yield* steering.entered;
+      yield* control.finishTurn({ sessionId: session, turnId, outcome: { _tag: "completed" } });
+      yield* steering.release;
+      const steered = yield* nextTurn(ana.id, turnId);
+      const resumesAt = DateTime.addDuration(yield* DateTime.now, Duration.hours(1));
+      yield* control.finishTurn({
+        sessionId: session,
+        turnId: steered,
+        outcome: { _tag: "failed", failure: "usage-limit", retryAt: resumesAt },
+        continuation: { resumesAt },
+      });
+      yield* turnEnded(ana.id);
+
+      // Its continuation carries no word of the operator's of its own.
+      const resumed = yield* control.resumeContinuation({ sessionId: session, turnId: steered });
+      yield* nextTurn(ana.id, steered);
+      const first = yield* messageTeammate(session, resumed, {
+        to: bo.id,
+        text: "Start on the launch.",
+        urgent: false,
+      });
+      assert.strictEqual(first._tag, "result");
+      const second = yield* messageTeammate(session, resumed, {
+        to: cy.id,
+        text: "Start on the launch.",
+        urgent: false,
+      });
+      assert.include(refusal(second), "at most 1 teammate");
+    }).pipe(Effect.provide(TestDomain.layer)),
 );

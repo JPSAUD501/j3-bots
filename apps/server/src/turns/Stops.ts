@@ -357,12 +357,15 @@ export const layer = Layer.effect(
 
     /**
      * Whether the session has work for an audience other than the room: a
-     * turn running, or a dispatch the engine took whose turn no event shows
-     * yet, as the operator's steer into that turn. A room's Stop sends no
-     * round then, since the engine's stop would end that work too. A dispatch
-     * the engine queued does not count: it waits behind a turn, which counts
-     * if it is another audience's, and the engine drops it if it is the
-     * room's. The turn's end, and the dispatch's settling, nudge the runner.
+     * turn running, or a dispatch the engine took whose turn has not ended
+     * as far as the events show: it may be starting, or running unseen, as
+     * may the operator's steer into a turn that ended meanwhile. A room's
+     * Stop sends no round then, since the engine's stop would end that work
+     * too. Except a dispatch whose turn the engine queued and the events have
+     * not shown start, while it cannot start: the room's own turn runs ahead
+     * of it, or the engine holds the queue. The room's Stop then cancels it
+     * with the room's work. The turn's end, and the dispatch's settling,
+     * nudge the runner.
      */
     const runsOtherAudience = (sessionId: SessionRowId, roomId: RoomId) =>
       sql<{ readonly n: number }>`
@@ -372,8 +375,34 @@ export const layer = Layer.effect(
         UNION ALL
         SELECT 1 AS n FROM dispatches oa_dispatch
         WHERE oa_dispatch.session_id = ${sessionId} AND oa_dispatch.status = 'accepted'
-          AND oa_dispatch.engine_turn_id IS NULL AND oa_dispatch.disposition IS NOT 'queued'
           AND NOT (oa_dispatch.audience = 'room' AND oa_dispatch.audience_room_id = ${roomId})
+          AND NOT EXISTS (
+            SELECT 1 FROM turns oa_ended
+            WHERE oa_ended.session_id = ${sessionId}
+              AND oa_ended.engine_turn_id = oa_dispatch.engine_turn_id
+              AND oa_ended.finished_at IS NOT NULL
+          )
+          AND NOT (
+            oa_dispatch.engine_turn_id IS NOT NULL
+            AND (oa_dispatch.disposition IS NULL OR oa_dispatch.disposition = 'queued')
+            AND NOT EXISTS (
+              SELECT 1 FROM turns oa_seen
+              WHERE oa_seen.session_id = ${sessionId}
+                AND oa_seen.engine_turn_id = oa_dispatch.engine_turn_id
+            )
+            AND (
+              EXISTS (
+                SELECT 1 FROM turns oa_room
+                WHERE oa_room.session_id = ${sessionId} AND oa_room.finished_at IS NULL
+                  AND oa_room.audience = 'room' AND oa_room.audience_room_id = ${roomId}
+              )
+              OR EXISTS (
+                SELECT 1 FROM sessions oa_session
+                WHERE oa_session.id = ${sessionId} AND oa_session.queue_held_cursor IS NOT NULL
+                  AND oa_session.queue_held_cursor IS NOT oa_session.queue_resumed_cursor
+              )
+            )
+          )
         LIMIT 1
       `.pipe(
         Effect.orDie,
@@ -501,11 +530,16 @@ export const layer = Layer.effect(
      * them. The round is issued, durably, before the call. A room's round is
      * judged again in the gate, where a send into the session is claimed: it
      * waits while other work runs or a dispatch's answer is not known, and
-     * settles unsent once nothing of the room is left there.
+     * settles unsent once nothing of the room is left there. When all the
+     * room has left is background work its turns started, the round goes
+     * only on a report of the engine's taken this pass (`refreshed`), with
+     * the room's turns already ended: without one, it waits for the next
+     * pass, which asks for it first.
      */
     const sendRound = Effect.fn("Stops.sendRound")(function* (
       round: Round,
       engineSessionId: SessionId,
+      refreshed: boolean,
     ) {
       const roomId = round.room_id;
       const judged =
@@ -516,7 +550,8 @@ export const layer = Layer.effect(
               const left = yield* roomWork({ sessionId: round.session_id, roomId }).pipe(
                 Effect.orDie,
               );
-              if (left.running || left.flagged) return "send" as const;
+              if (left.running) return "send" as const;
+              if (left.flagged) return refreshed ? ("send" as const) : ("refresh" as const);
               yield* transaction(settleUnsent(round)).pipe(Effect.orDie);
               return "settled" as const;
             });
@@ -524,6 +559,7 @@ export const layer = Layer.effect(
         Effect.gen(function* () {
           const verdict = yield* judged;
           if (verdict === "held") return "done" satisfies Progress;
+          if (verdict === "refresh") return "deferred" satisfies Progress;
           if (verdict === "settled") {
             yield* settledSession;
             return "done" satisfies Progress;
@@ -651,18 +687,28 @@ export const layer = Layer.effect(
         // engine's stop ends the whole session. When all it has left to end
         // is background work the room's turns started, the engine is asked
         // first whether that work still runs: a report that no longer lists
-        // it clears their flags, and the target settles with no round.
+        // it clears their flags, and the target settles with no round. The
+        // report is asked for outside the gate, which no step holds while it
+        // waits for events; one that cannot be had now leaves the round for
+        // a later pass, since the flags alone may be stale.
+        let refreshed = false;
         if (round.room_id !== null) {
           if (yield* roomRoundHeld(round.session_id, round.room_id)) continue;
           const left = yield* roomWork({ sessionId: round.session_id, roomId: round.room_id }).pipe(
             Effect.orDie,
           );
           if (!left.running && left.flagged) {
-            // A report that cannot be had now leaves the round to be sent.
-            yield* observer.synchronize(round.session_id, engineSessionId).pipe(Effect.ignore);
+            refreshed = yield* observer.synchronize(round.session_id, engineSessionId).pipe(
+              Effect.as(true),
+              Effect.orElseSucceed(() => false),
+            );
+            if (!refreshed) {
+              sending = "deferred";
+              continue;
+            }
           }
         }
-        const progress = yield* sendRound(round, engineSessionId);
+        const progress = yield* sendRound(round, engineSessionId, refreshed);
         if (progress === "unavailable") return progress;
         if (progress === "deferred") sending = progress;
       }
@@ -728,7 +774,8 @@ export const layer = Layer.effect(
 
     /**
      * Sessions where a turn ended while turns of theirs had background work
-     * flagged (`Observer`), and where nothing runs now.
+     * flagged (`Observer`), with no report of the engine's since, and no turn
+     * the events show running.
      */
     const backgroundDue = SqlSchema.findAll({
       Request: Schema.Void,
@@ -746,11 +793,13 @@ export const layer = Layer.effect(
     });
 
     /**
-     * Asks the engine for the session's background work while nothing runs:
-     * its report clears the flags of the turns whose work it no longer lists,
-     * and the check is due no more until another turn ends (`Observer`). So
-     * a flag does not outlive its work for long, whether or not a Stop ever
-     * looks at it. A defect is logged, and the check waits for its next pass.
+     * Asks the engine for the session's background work while no turn runs.
+     * Any report, this one or another's, makes the check due no more
+     * (`Observer`): one taken while nothing runs or waits clears the flags of
+     * the turns whose work it no longer lists, and the end of a turn that ran
+     * or waited during it makes the check due again. So a flag does not
+     * outlive its work for long, whether or not a Stop ever looks at it. A
+     * defect is logged, and the check waits for its next pass.
      */
     const checkBackground = Effect.fn("Stops.checkBackground")(
       function* (session: { readonly id: SessionRowId; readonly engine_session_id: SessionId }) {
