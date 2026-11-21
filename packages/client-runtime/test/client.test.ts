@@ -849,6 +849,50 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
     }).pipe(Effect.provide(client())),
   );
 
+  it.effect("says the server ended access when another tab heard it first", () =>
+    Effect.gen(function* () {
+      const { device, credential } = yield* pairedDevice("Heard elsewhere");
+      if (Option.isNone(credential)) return assert.fail("The pairing was not saved");
+      const tickets = yield* Latch.make(true);
+
+      yield* Effect.gen(function* () {
+        const other = yield* Connection;
+        yield* waitFor(other.state, isConnected);
+
+        yield* Effect.gen(function* () {
+          const leaving = yield* Connection;
+          yield* waitFor(leaving.state, isConnected);
+          // The revocation reaches the server; its answer never comes back,
+          // and this tab asks for no new socket until the other tab followed.
+          yield* (yield* TestPlatform.TestNetwork).loseReplies(true);
+          yield* tickets.close;
+          const signingOut = yield* (yield* SignOut).run.pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+
+          // The other tab hears the server refuse the device, and deletes its credential.
+          yield* waitFor(other.state, (state) => state._tag === "unpaired");
+          yield* waitFor(leaving.state, (state) => state._tag === "unpaired");
+          yield* tickets.open;
+
+          assert.deepStrictEqual(yield* Fiber.join(signingOut), { _tag: "signed-out" });
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(client(credential, device, heldAt(HTTP_PATHS.socketTicket, tickets))),
+        );
+
+        const listed = yield* (yield* Server.Devices).list(credential.value.deviceId);
+        assert.isFalse(
+          listed.some((listedDevice) => listedDevice.id === credential.value.deviceId),
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.ensuring(tickets.open),
+        Effect.provide(client(credential, device)),
+      );
+    }),
+  );
+
   it.effect("counts a socket ticket that never comes as the server out of reach", () =>
     Effect.gen(function* () {
       const device = TestPlatform.makeDevice();

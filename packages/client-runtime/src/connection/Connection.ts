@@ -245,11 +245,14 @@ export class Connection extends Context.Service<
     /** Skips the wait before the next attempt, and leaves `incompatible` and `storage-failed`. */
     readonly reconnectNow: Effect.Effect<void>;
     /**
-     * Whether the server itself refused `pairing`'s credential to this window:
-     * its own word that the pairing ended. A credential another window
-     * deleted, or one this window let go of, says nothing of the server.
+     * Whether the server says that `pairing` ended: it refused that pairing's
+     * credential to this window, or, asked now with the credential this
+     * window last held for it, refuses it. A credential another window
+     * deleted says nothing of the server by itself: that window may have
+     * heard the server refuse it, or only signed out here. False when the
+     * server cannot be reached, or this window never held `pairing`.
      */
-    readonly refusedByServer: (pairing: DeviceId) => boolean;
+    readonly endedOnServer: (pairing: DeviceId) => Effect.Effect<boolean>;
     /**
      * Runs `use` on the open socket, waiting for one if there is none. If the
      * socket drops before `use` finishes, runs it again on the next socket, so
@@ -303,6 +306,9 @@ export const layer = Layer.effect(
     const slot = yield* SubscriptionRef.make<Slot>({ _tag: "closed" });
     const credential = yield* SubscriptionRef.make<Credential>({ _tag: "loading" });
     const pairing = new Cell<DeviceId | null>(null);
+    // The token of each pairing this window followed, kept once it lets go of
+    // it so that it can still ask the server whether that pairing ended.
+    const tokens = new Map<DeviceId, Redacted.Redacted<DeviceToken>>();
     /**
      * Changes the credential this window holds, and the pairing it follows
      * with it, in one step: nothing reads one changed and the other not.
@@ -311,6 +317,9 @@ export const layer = Layer.effect(
       SubscriptionRef.updateEffect(credential, (current) =>
         Effect.sync(() => {
           const followed = next(current);
+          if (followed._tag === "paired") {
+            tokens.set(followed.credential.deviceId, followed.credential.token);
+          }
           pairing.set(followed._tag === "paired" ? followed.credential.deviceId : null);
           return followed;
         }),
@@ -709,7 +718,24 @@ export const layer = Layer.effect(
           ),
         ),
       ),
-      refusedByServer: (held) => refused.has(held),
+      endedOnServer: Effect.fn("Connection.endedOnServer")(function* (held: DeviceId) {
+        if (refused.has(held)) return true;
+        const token = tokens.get(held);
+        if (token === undefined) return false;
+        // The ticket route is the server's word on a credential. A ticket it
+        // grants goes unused and expires.
+        return yield* http.socketTicket(token).pipe(
+          Effect.as(false),
+          Effect.catchTags({
+            NotAuthenticated: () =>
+              Effect.sync(() => {
+                refused.add(held);
+                return true;
+              }),
+            ServerUnreachable: () => Effect.succeed(false),
+          }),
+        );
+      }),
       reconnectNow: Queue.offer(wakes, void 0).pipe(Effect.asVoid),
       call,
       eachSession,
