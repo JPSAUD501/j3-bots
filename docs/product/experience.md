@@ -10,7 +10,7 @@ The operator installs J3 Bots on a machine that stays on, and opens the web clie
 
 1. J3 Bots checks that the engine is running and that at least one provider is signed in. If none is, it says which command signs one in and waits. It does not ask for API keys.
 2. The operator creates their first bot by giving it a name. J3 Bots suggests making it the primary bot.
-3. The conversation opens and **the bot speaks first**. It asks what the operator wants it for, one question at a time, and saves the answers as its job and its first memories. There is no settings form to fill in.
+3. The conversation opens and **the bot speaks first**: a short hello, then, if its job already says what to do, the work; otherwise one question about what the operator needs. It asks one question at a time and saves the answers as its first memories. There is no settings form to fill in. If the operator writes before the bot has spoken, the bot answers that instead of greeting.
 4. The moment the operator hands it something real, the bot drops the questions and does the work.
 
 ### Talking to a bot
