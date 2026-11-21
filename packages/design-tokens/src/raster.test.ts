@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- decodes the PNG the build writes, as an image viewer would.
-import { avatarShapes } from "@j3-bots/design-tokens";
 import { crc32, inflateSync } from "node:zlib";
 import { describe, expect, it } from "vite-plus/test";
+import { avatarShapes } from "./avatarShapes.ts";
 import { Canvas, coverage, flattenPath } from "./raster.ts";
 
 const sum = (values: Float32Array) => values.reduce((total, v) => total + v, 0);
@@ -27,6 +26,7 @@ describe("coverage", () => {
 });
 
 describe("png", () => {
+  // Decoded with Node's own zlib, as an image viewer would decode it.
   it("writes chunks with valid checksums whose image data gives back the pixels", () => {
     const canvas = new Canvas(3, 2, [10, 20, 30]);
     canvas.fill(flattenPath("M0 0L1 0L1 1L0 1Z"), [200, 100, 50]);

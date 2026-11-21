@@ -1,29 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Avatar, BotState } from "@j3-bots/contracts";
 import {
+  avatarBadges,
+  avatarMarks,
+  avatarMarkStroke,
+  avatarProportions,
   avatarShapes,
-  botPalette,
-  type AvatarShapeName,
+  resolveAvatar,
+  type AvatarMarkName,
+  type AvatarMarkPart,
   type BotColor,
 } from "@j3-bots/design-tokens";
 import type { CSSProperties } from "react";
-import {
-  avatarAppearance,
-  type AvatarBadge,
-  type AvatarMark,
-} from "@j3-bots/client-runtime/presentation";
+import { avatarAppearance } from "@j3-bots/client-runtime/presentation";
 import { useChanges } from "../lib/useChanges";
-
-const isShape = (token: string): token is AvatarShapeName => Object.hasOwn(avatarShapes, token);
-const isColor = (token: string): token is BotColor => Object.hasOwn(botPalette, token);
-
-/** An avatar's tokens as this client draws them; unknown tokens fall back instead of failing. */
-function resolve(avatar: Avatar) {
-  return {
-    shape: avatarShapes[isShape(avatar.shape) ? avatar.shape : "circle"],
-    color: isColor(avatar.color) ? avatar.color : "gray",
-  };
-}
 
 const colorStyle = (color: BotColor): CSSProperties => ({ color: `var(--bot-${color})` });
 
@@ -54,13 +44,13 @@ export function BotAvatar({
   still = false,
   label,
 }: BotAvatarProps) {
-  const { shape, color } = resolve(avatar);
+  const { shape: shapeName, color } = resolveAvatar(avatar);
+  const shape = avatarShapes[shapeName];
   const look = avatarAppearance(state, unread);
+  const { markScale, badge } = avatarProportions(size);
   // Keys on the count of changes restart the one-time animations on each change.
   const changes = useChanges(look.mark);
   const changed = changes > 0;
-  // Small avatars draw a larger mark so it stays legible.
-  const markScale = size <= 28 ? 1.3 : 1;
   return (
     <svg
       width={size}
@@ -77,91 +67,75 @@ export function BotAvatar({
       </g>
       <g transform={`translate(${shape.mark.x} ${shape.mark.y}) scale(${markScale})`}>
         <g key={changes} className={changed ? "avatar-mark-in" : undefined}>
-          <Mark mark={look.mark} />
+          <Mark mark={look.mark} motion={MOTION_CLASS[look.motion]} />
         </g>
       </g>
-      {look.badge && <Badge badge={look.badge} small={size <= 28} />}
+      {look.badge && (
+        <circle
+          cx={badge.center}
+          cy={badge.center}
+          r={badge.r}
+          fill={`var(--${avatarBadges[look.badge]})`}
+          // Cuts the badge out of whatever the avatar sits on.
+          stroke="var(--avatar-cutout, var(--background))"
+          strokeWidth={badge.cutout}
+        />
+      )}
     </svg>
   );
 }
 
+const MOTION_CLASS = { none: undefined, breathe: "avatar-breathe", spin: "avatar-spin" } as const;
+
 const INK = "var(--avatar-ink)";
-const STROKE = 7;
-const R = 12;
 
-/** A point on the mark's circle; 0° is the top, angles grow clockwise. */
-const at = (degrees: number) => {
-  const rad = ((degrees - 90) * Math.PI) / 180;
-  return `${(R * Math.cos(rad)).toFixed(2)} ${(R * Math.sin(rad)).toFixed(2)}`;
-};
+/** The mark's parts; a mark of one part moves by itself, one of several as a group. */
+function Mark({ mark, motion }: { mark: AvatarMarkName; motion: string | undefined }) {
+  const parts: ReadonlyArray<AvatarMarkPart> = avatarMarks[mark];
+  const [only] = parts;
+  if (parts.length === 1 && only !== undefined) return <MarkPart part={only} className={motion} />;
+  return (
+    <g className={motion}>
+      {parts.map((part) => (
+        // A mark never repeats a part, so a part's data names it.
+        <MarkPart key={JSON.stringify(part)} part={part} />
+      ))}
+    </g>
+  );
+}
 
-function Mark({ mark }: { mark: AvatarMark }) {
+function MarkPart({ part, className }: { part: AvatarMarkPart; className?: string | undefined }) {
   const stroke = {
     fill: "none",
     stroke: INK,
-    strokeWidth: STROKE,
+    strokeWidth: avatarMarkStroke,
     strokeLinecap: "round",
   } as const;
-  switch (mark) {
-    case "dot":
-      return <circle r={9} fill={INK} />;
-    case "ring":
-      return <circle r={R} className="avatar-breathe" {...stroke} />;
-    case "arc":
+  switch (part.kind) {
+    case "disc":
+      return <circle r={part.r} className={className} fill={INK} />;
+    case "circle":
       return (
-        <g className="avatar-spin">
-          <circle r={R} {...stroke} strokeOpacity={0.35} />
-          <path d={`M${at(-50)}A${R} ${R} 0 0 1 ${at(60)}`} {...stroke} />
-        </g>
+        <circle
+          r={part.r}
+          className={className}
+          {...stroke}
+          strokeOpacity={part.opacity}
+          strokeDasharray={part.dash?.join(" ")}
+        />
       );
-    case "notch":
-      // An open ring, its gap at the top: something is missing, and it is the operator's part.
-      // The gap is wide enough that the ring never reads as a power symbol.
-      return <path d={`M${at(58)}A${R} ${R} 0 1 1 ${at(-58)}`} {...stroke} />;
-    case "slash":
-      return (
-        <g {...stroke}>
-          <circle r={R} />
-          <path d="M-8.5 8.5L8.5 -8.5" />
-        </g>
-      );
-    case "check":
-      return <path d="M-10 0.5L-3.5 7L10 -6.5" {...stroke} strokeLinejoin="round" />;
-    case "dotted":
-      return (
-        <circle r={R} {...stroke} strokeDasharray={`0.01 ${((2 * Math.PI * R) / 6).toFixed(2)}`} />
-      );
+    case "path":
+      return <path d={part.d} className={className} {...stroke} strokeLinejoin={part.join} />;
   }
-}
-
-const BADGE_FILL: Record<NonNullable<AvatarBadge>, string> = {
-  waiting: "var(--waiting)",
-  blocked: "var(--blocked)",
-  unread: "var(--accent)",
-};
-
-function Badge({ badge, small }: { badge: NonNullable<AvatarBadge>; small: boolean }) {
-  const r = small ? 17 : 14;
-  return (
-    <circle
-      cx={100 - r + 2}
-      cy={100 - r + 2}
-      r={r}
-      fill={BADGE_FILL[badge]}
-      // Cuts the badge out of whatever the avatar sits on.
-      stroke="var(--avatar-cutout, var(--background))"
-      strokeWidth={6}
-    />
-  );
 }
 
 /** A silhouette alone, for places that show who without a state, such as a room's avatar. */
 export function AvatarShape({ avatar, size }: { avatar: Avatar; size: number }) {
-  const { shape, color } = resolve(avatar);
+  const { shape, color } = resolveAvatar(avatar);
   return (
     <svg width={size} height={size} viewBox="0 0 100 100" style={colorStyle(color)} aria-hidden>
       <path
-        d={shape.path}
+        d={avatarShapes[shape].path}
         fill="currentColor"
         stroke="var(--avatar-cutout, var(--background))"
         strokeWidth={10}
