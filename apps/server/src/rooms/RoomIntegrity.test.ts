@@ -5,10 +5,12 @@ import type { TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
+import * as Domain from "../domain.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
   finish,
@@ -43,7 +45,7 @@ import {
   turnEnded,
   until,
 } from "../testing/turns.ts";
-import { DispatchSeq, SYNC_DEADLINE } from "../turns/model.ts";
+import { DispatchSeq, ROOM_ROUND_HOLD_BOUND, SYNC_DEADLINE } from "../turns/model.ts";
 import { BotTools } from "../tools/BotTools.ts";
 import { Pipeline } from "../turns/Pipeline.ts";
 import { RETRY_TICK } from "../turns/reconciler.ts";
@@ -551,6 +553,98 @@ it.effect(
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect(
+  "sends a room's Stop once its bound passed while a turn no event shows never starts",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
+      const members = [hal, ana];
+      const room = yield* roomWith(hal, [ana]);
+      yield* operatorWrites(room.id, members, "Watch the build.", nobody);
+      const watching = yield* nextTurn(hal.bot.id);
+      yield* control.startBackgroundWork({ sessionId: hal.session, turnId: watching });
+      yield* finish(hal, watching, members);
+
+      // A harness's wake starts a turn whose provider never starts.
+      yield* control.holdNextStartup(hal.session);
+      yield* control.startEngineTurn(hal.session);
+      yield* (yield* Rooms).stop({ commandId: command(), roomId: room.id });
+      yield* (yield* Stops).runPending;
+      assert.strictEqual(yield* issuedRounds, 0);
+
+      yield* TestClock.adjust(ROOM_ROUND_HOLD_BOUND);
+      yield* stopSettled;
+      assert.isFalse(yield* backgroundRuns(hal));
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "sends a room's Stop once its bound passed while the private turn the engine took never shows, which fails as stopped",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const sql = yield* SqlClient.SqlClient;
+      const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
+      const members = [hal, ana];
+      const room = yield* roomWith(hal, [ana]);
+      yield* operatorWrites(room.id, members, "Watch the build.", nobody);
+      const watching = yield* nextTurn(hal.bot.id);
+      yield* control.startBackgroundWork({ sessionId: hal.session, turnId: watching });
+      yield* finish(hal, watching, members);
+
+      // The engine takes the operator's message, and its turn never starts.
+      yield* control.holdNextStartup(hal.session);
+      const message = yield* sendToBot(hal.bot.id, "What is left today?");
+      const session = yield* mainSessionId(hal.bot.id);
+      yield* until(
+        Effect.map(
+          sql<{ readonly n: number }>`
+            SELECT COUNT(*) AS n FROM dispatches
+            WHERE session_id = ${session} AND status = 'accepted' AND disposition = 'started'
+          `.pipe(Effect.orDie),
+          ([row]) => (row?.n ?? 0) > 0,
+        ),
+      );
+      yield* (yield* Rooms).stop({ commandId: command(), roomId: room.id });
+      yield* (yield* Stops).runPending;
+      assert.strictEqual(yield* issuedRounds, 0);
+
+      yield* TestClock.adjust(ROOM_ROUND_HOLD_BOUND);
+      yield* stopSettled;
+      assert.isFalse(yield* backgroundRuns(hal));
+      yield* failedAs(message, "stopped");
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("holds a room's Stop past its bound while a private turn visibly runs", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
+    const members = [hal, ana];
+    const room = yield* roomWith(hal, [ana]);
+    yield* operatorWrites(room.id, members, "Watch the build.", nobody);
+    const watching = yield* nextTurn(hal.bot.id);
+    yield* control.startBackgroundWork({ sessionId: hal.session, turnId: watching });
+    yield* finish(hal, watching, members);
+
+    yield* sendToBot(hal.bot.id, "What is left today?");
+    const privately = yield* nextTurn(hal.bot.id, watching);
+    yield* (yield* Rooms).stop({ commandId: command(), roomId: room.id });
+    yield* (yield* Stops).runPending;
+    yield* TestClock.adjust(ROOM_ROUND_HOLD_BOUND);
+    yield* (yield* Stops).runPending;
+    assert.strictEqual(yield* issuedRounds, 0);
+    assert.isTrue(yield* backgroundRuns(hal));
+
+    // The turn ends on its own: the room's Stop then ends the build.
+    yield* finish(hal, privately, members);
+    yield* until(Effect.map(backgroundRuns(hal), (runs) => !runs));
+    yield* TestClock.adjust(RETRY_TICK);
+    yield* stopSettled;
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 /** Whether the engine's latest hold of the member's queue was resumed. */
 const queueResumed = (one: Member) =>
   Effect.gen(function* () {
@@ -599,6 +693,48 @@ it.effect(
       assert.isFalse(yield* backgroundRuns(hal));
       yield* until(queueResumed(hal));
     }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "cancels the operator's steer a failed turn requeued, seen through a replacement, when the room's Stop goes",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const { hal, privately, steer } = yield* Effect.gen(function* () {
+        const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
+        const members = [hal, ana];
+        const room = yield* roomWith(hal, [ana]);
+        yield* operatorWrites(room.id, members, "Watch the build.", nobody);
+        const watching = yield* nextTurn(hal.bot.id);
+        yield* control.startBackgroundWork({ sessionId: hal.session, turnId: watching });
+        yield* finish(hal, watching, members);
+        yield* sendToBot(hal.bot.id, "What is left today?");
+        const privately = yield* nextTurn(hal.bot.id, watching);
+        const steer = yield* sendToBot(hal.bot.id, "And the release notes?");
+        yield* settle([hal]);
+        yield* (yield* Rooms).stop({ commandId: command(), roomId: room.id });
+        assert.strictEqual(yield* issuedRounds, 0);
+        return { hal, privately, steer };
+      }).pipe(Effect.provide(Domain.layer));
+
+      // While the server is down the turn fails before it takes the steer,
+      // which the engine requeues behind the hold, and the engine forgets the
+      // history the server's cursor names: the replacement lists the
+      // follow-up waiting by the steer's key, with no `steer-requeued`.
+      yield* control.finishTurn({
+        sessionId: hal.session,
+        turnId: privately,
+        outcome: { _tag: "failed", failure: "provider-error", retryAt: null },
+      });
+      yield* control.pruneHistory(hal.session);
+
+      yield* Effect.gen(function* () {
+        yield* failedAs(steer, "stopped");
+        yield* stopSettled;
+        assert.isFalse(yield* backgroundRuns(hal));
+        yield* until(queueResumed(hal));
+      }).pipe(Effect.provide(Domain.layer));
+    }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
 );
 
 it.effect(

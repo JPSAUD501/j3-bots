@@ -38,7 +38,9 @@ export type Ending =
  * (`new-turn`) when that turn already ended in the engine, or a follow-up
  * (`steer-requeued`) when it ends without taking the steer. The Stop waits
  * for that turn in turn, unless the engine holds the queue, as after a failed
- * turn, where it cannot start: the Stop then cancels it.
+ * turn, where it cannot start: the Stop then cancels it. (A `new-turn` is
+ * **Assumed** not to start while the engine holds the queue.) A wait on a
+ * turn no event shows is bounded (`ROOM_ROUND_HOLD_BOUND`).
  * `steerRoom` is the steer's room column, NULL for the conversation, and
  * `null` for a send that is no steer. The planner, a send and its claim read
  * it with the same rule. `sessionId` is often a caller's column, so the tables

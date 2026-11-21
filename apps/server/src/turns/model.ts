@@ -210,6 +210,16 @@ export const recoveryBackoff = (n: number): Duration.Duration =>
 export const stopGrace = (n: number): Duration.Duration =>
   Duration.min(Duration.seconds(30 * 2 ** Math.max(0, n - 1)), Duration.minutes(10));
 
+/**
+ * The longest a room's Stop round waits on work of another audience that the
+ * server cannot see run: a dispatch the engine took whose turn no event shows,
+ * or a run the engine's report lists that no event told of. Such a run starts
+ * in seconds, and then holds the round for as long as it visibly runs; one
+ * stuck in startup would otherwise hold the room's Stop for good. Counted from
+ * when the round was first held by such work alone, durably (`Stops`).
+ */
+export const ROOM_ROUND_HOLD_BOUND = Duration.minutes(2);
+
 /** A recovery that got this many undecided answers fails as `unresolved`. */
 export const MAX_INDETERMINATE_ANSWERS = 10;
 

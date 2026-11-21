@@ -25,7 +25,13 @@ import { Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { RoomWork } from "../rooms/RoomWork.ts";
 import { Ledger } from "./Ledger.ts";
-import { AudienceColumn, DispatchRowId, DispatchSeq, SessionRowId } from "./model.ts";
+import {
+  AudienceColumn,
+  DispatchRowId,
+  DispatchSeq,
+  ROOM_ROUND_HOLD_BOUND,
+  SessionRowId,
+} from "./model.ts";
 import { Observer, type Synchronized } from "./Observer.ts";
 import { Readiness } from "./Readiness.ts";
 import { DEFECT_RETRY, type Pass, onePassAtATime, passOutcome, reconcile } from "./reconciler.ts";
@@ -368,26 +374,37 @@ export const layer = Layer.effect(
     `;
 
     /**
-     * Whether the session has work for an audience other than the room: a
-     * turn running, or a dispatch the engine took whose turn has not ended
-     * as far as the events show: it may be starting, or running unseen. So
-     * does the operator's steer until its settlement arrives, which the
-     * engine sends after the end of the turn it steered: taken, dropped, or
-     * requeued as a follow-up turn. A room's Stop sends no round then, since
-     * the engine's stop would end that work too. Except a dispatch whose turn
-     * the engine did not answer as started and the events have not shown
-     * start, while that turn cannot start: the
-     * room's own turn runs ahead of it, or the engine holds the queue, as it
-     * does with a steer requeued behind a turn that failed. The room's Stop
-     * then cancels it with the room's work. The turn's end, and the
-     * dispatch's settling, nudge the runner.
+     * Whether the session runs a turn for an audience other than the room, as
+     * far as the events show. A room's Stop sends no round then, since the
+     * engine's stop would end that work too: it waits for that turn, which
+     * ends on its own, and whose end nudges the runner.
      */
     const runsOtherAudience = (sessionId: SessionRowId, roomId: RoomId) =>
       sql<{ readonly n: number }>`
         SELECT 1 AS n FROM turns oa_turn
         WHERE oa_turn.session_id = ${sessionId} AND oa_turn.finished_at IS NULL
           AND NOT (oa_turn.audience = 'room' AND oa_turn.audience_room_id = ${roomId})
-        UNION ALL
+        LIMIT 1
+      `.pipe(
+        Effect.orDie,
+        Effect.map((rows) => rows.length > 0),
+      );
+
+    /**
+     * Whether the session has a dispatch for an audience other than the room
+     * that the engine took and whose turn has not ended as far as the events
+     * show: it may be starting, or running unseen. So does the operator's
+     * steer until its settlement arrives, which the engine sends after the end
+     * of the turn it steered: taken, dropped, or requeued as a follow-up turn.
+     * Except a dispatch whose turn the engine did not answer as started and
+     * the events have not shown start, while that turn cannot start, as far as
+     * the server sees: the room's own turn runs ahead of it, or the engine
+     * holds the queue, as it does with a steer requeued behind a turn that
+     * failed. The room's Stop then cancels it with the room's work. The
+     * turn's start or end, and the dispatch's settling, nudge the runner.
+     */
+    const awaitsOtherAudience = (sessionId: SessionRowId, roomId: RoomId) =>
+      sql<{ readonly n: number }>`
         SELECT 1 AS n FROM dispatches oa_dispatch
         WHERE oa_dispatch.session_id = ${sessionId} AND oa_dispatch.status = 'accepted'
           AND NOT (oa_dispatch.audience = 'room' AND oa_dispatch.audience_room_id = ${roomId})
@@ -429,12 +446,62 @@ export const layer = Layer.effect(
         Effect.map((rows) => rows.length > 0),
       );
 
-    /** Whether a room's round waits: a dispatch's answer is not known yet, or other work runs. */
-    const roomRoundHeld = (sessionId: SessionRowId, roomId: RoomId) =>
-      Effect.map(
-        Effect.all([inFlight(sessionId), runsOtherAudience(sessionId, roomId)]),
-        ([flying, other]) => flying || other,
-      );
+    /**
+     * A room's round held back only by work the server cannot see run, which
+     * holds it at most `ROOM_ROUND_HOLD_BOUND` from when it first did, as
+     * stored on the round: `held` until then, with the runner due back at
+     * the bound, and `overdue` after. An overdue round goes as a bot Stop's
+     * would, and what it ends fails `stopped`, which the operator can retry.
+     */
+    const unseenHold = Effect.fn("Stops.unseenHold")(function* (round: Round, outcome: Outcome) {
+      const now = yield* DateTime.now;
+      const [row] = yield* SqlSchema.findAll({
+        Request: Schema.Void,
+        Result: Schema.Struct({ held_since: Time }),
+        execute: () => sql`
+          UPDATE stop_targets SET held_since = COALESCE(held_since, ${timeText(now)})
+          WHERE stop_id = ${round.stop_id} AND session_id = ${round.session_id}
+            AND round = ${round.round}
+          RETURNING held_since
+        `,
+      })(undefined);
+      const bound = DateTime.addDuration(row?.held_since ?? now, ROOM_ROUND_HOLD_BOUND);
+      if (DateTime.isLessThan(now, bound)) {
+        outcome.until(bound);
+        return "held" as const;
+      }
+      yield* Effect.logWarning(
+        "A room's Stop round waited its bound on work it cannot see run; it goes now",
+      ).pipe(Effect.annotateLogs({ stopId: round.stop_id, sessionId: round.session_id }));
+      return "overdue" as const;
+    }, Effect.orDie);
+
+    /**
+     * What holds a room's round back: `held` while a dispatch's answer is not
+     * known yet or a turn of another audience runs, which end on their own,
+     * and for a bounded time while only work the server cannot see run does
+     * (`unseenHold`); `free` when nothing does. The bound counts again from
+     * the next time unseen work alone holds the round once a visible turn did.
+     */
+    const roomRoundHold = Effect.fn("Stops.roomRoundHold")(function* (
+      round: Round,
+      roomId: RoomId,
+      outcome: Outcome,
+    ) {
+      if (yield* inFlight(round.session_id)) return "held" as const;
+      if (yield* runsOtherAudience(round.session_id, roomId)) {
+        yield* sql`
+          UPDATE stop_targets SET held_since = NULL
+          WHERE stop_id = ${round.stop_id} AND session_id = ${round.session_id}
+            AND round = ${round.round} AND held_since IS NOT NULL
+        `.pipe(Effect.orDie);
+        return "held" as const;
+      }
+      if (yield* awaitsOtherAudience(round.session_id, roomId)) {
+        return yield* unseenHold(round, outcome);
+      }
+      return "free" as const;
+    });
 
     /**
      * What of the room's work the session's applied events still show:
@@ -553,6 +620,16 @@ export const layer = Layer.effect(
     };
 
     /**
+     * What a `synchronize`'s failure means for one session's Stop work: a
+     * catch-up that could not reach the engine is this session's alone, and
+     * the pass goes on with the others, as for an observation.
+     */
+    const syncDownProgress = {
+      ...downProgress,
+      EngineUnavailable: () => Effect.succeed<Progress>("deferred"),
+    };
+
+    /**
      * A Stop of a session was confirmed: what it held back may go, a rotation
      * waiting on it and a spent side session's retirement included.
      */
@@ -590,27 +667,31 @@ export const layer = Layer.effect(
      * Sends one round's commands through the gate, which only acknowledges
      * them. The round is issued, durably, before the call. A room's round is
      * judged again in the gate, where a send into the session is claimed: it
-     * waits while other work runs or a dispatch's answer is not known, and
-     * settles unsent once nothing of the room is left there. When all the
-     * room has left is background work its turns started, the round is
-     * decided by a report of the engine's taken this pass (`report`), with
-     * the room's turns already ended: without one, it waits for the next
-     * pass, which asks for it first. It goes only while the report still
-     * lists that work, and waits while the report lists a turn that may start
-     * or run unseen; a report that lists the work no more, with no turn
-     * running, settles it unsent.
+     * waits while other work holds it (`roomRoundHold`), and settles unsent
+     * once nothing of the room is left there. When all the room has left is
+     * background work its turns started, the round is decided by a report of
+     * the engine's taken this pass (`report`), with the room's turns already
+     * ended: without one, it waits for the next pass, which asks for it
+     * first. It waits, for a bounded time, while the report lists a turn that
+     * may start or run unseen; it goes while the report still lists that
+     * work, or lists runnable turns at all, since the engine lists no
+     * background work while a run is active. Only a report that lists neither,
+     * with no turn running, settles it unsent.
      */
     const sendRound = Effect.fn("Stops.sendRound")(function* (
       round: Round,
       engineSessionId: SessionId,
       report: Synchronized | null,
+      outcome: Outcome,
     ) {
       const roomId = round.room_id;
       const judged =
         roomId === null
           ? Effect.succeed("send" as const)
           : Effect.gen(function* () {
-              if (yield* roomRoundHeld(round.session_id, roomId)) return "held" as const;
+              const hold = yield* roomRoundHold(round, roomId, outcome);
+              if (hold === "held") return "held" as const;
+              if (hold === "overdue") return "send" as const;
               const left = yield* roomWork({ sessionId: round.session_id, roomId }).pipe(
                 Effect.orDie,
               );
@@ -618,9 +699,13 @@ export const layer = Layer.effect(
               if (left.flagged) {
                 if (report === null) return "refresh" as const;
                 if (yield* runnableUnseen(round.session_id, roomId, report.runnableTurns)) {
-                  return "refresh" as const;
+                  const unseen = yield* unseenHold(round, outcome);
+                  return unseen === "held" ? ("refresh" as const) : ("send" as const);
                 }
-                if (yield* listsRoomWork(round.session_id, roomId, report.backgroundWork.turns)) {
+                if (
+                  report.runnableTurns.length > 0 ||
+                  (yield* listsRoomWork(round.session_id, roomId, report.backgroundWork.turns))
+                ) {
                   return "send" as const;
                 }
               }
@@ -765,19 +850,20 @@ export const layer = Layer.effect(
         // the flags alone may be stale.
         let report: Synchronized | null = null;
         if (round.room_id !== null) {
-          if (yield* roomRoundHeld(round.session_id, round.room_id)) continue;
+          const hold = yield* roomRoundHold(round, round.room_id, outcome);
+          if (hold === "held") continue;
           const left = yield* roomWork({ sessionId: round.session_id, roomId: round.room_id }).pipe(
             Effect.orDie,
           );
-          if (!left.running && left.flagged) {
-            // A session the engine no longer has is lost, and an engine that
-            // cannot take commands ends the pass, as for a round's send.
+          if (hold === "free" && !left.running && left.flagged) {
+            // A session the engine no longer has is lost, and one the engine
+            // cannot be reached for now waits for a later pass.
             const refreshed = yield* observer.synchronize(round.session_id, engineSessionId).pipe(
               Effect.catchTags({
                 SessionNotFound: () =>
                   transaction(sessionLost(round.session_id)).pipe(Effect.as<Progress>("done")),
                 NotObserved: () => Effect.succeed<Progress>("deferred"),
-                ...downProgress,
+                ...syncDownProgress,
               }),
             );
             if (refreshed === "deferred") {
@@ -788,7 +874,7 @@ export const layer = Layer.effect(
             report = refreshed;
           }
         }
-        const progress = yield* sendRound(round, engineSessionId, report);
+        const progress = yield* sendRound(round, engineSessionId, report, outcome);
         if (progress === "unavailable") return progress;
         if (progress === "deferred") sending = progress;
       }
@@ -855,7 +941,11 @@ export const layer = Layer.effect(
     /**
      * Sessions where a turn ended while turns of theirs had background work
      * flagged (`Observer`), with no report of the engine's since, and no turn
-     * the events show running.
+     * the events show running. Not one a Stop's target still holds, whose
+     * runner asks for reports of its own, nor one whose queue the engine
+     * holds, whose waiting turns keep any report from being the check: each
+     * would be asked again every pass. The heartbeat finds it once neither
+     * holds.
      */
     const backgroundDue = SqlSchema.findAll({
       Request: Schema.Void,
@@ -867,6 +957,13 @@ export const layer = Layer.effect(
           AND NOT EXISTS (
             SELECT 1 FROM turns bd_turn
             WHERE bd_turn.session_id = s.id AND bd_turn.finished_at IS NULL
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM stop_targets bd_target
+            WHERE bd_target.session_id = s.id AND bd_target.stopped_at IS NULL
+          )
+          AND NOT (
+            s.queue_held_cursor IS NOT NULL AND s.queue_held_cursor IS NOT s.queue_resumed_cursor
           )
         ORDER BY s.rowid
       `,
@@ -891,7 +988,7 @@ export const layer = Layer.effect(
             SessionNotFound: () =>
               transaction(sessionLost(session.id)).pipe(Effect.as<Progress>("done")),
             NotObserved: () => Effect.succeed<Progress>("deferred"),
-            ...downProgress,
+            ...syncDownProgress,
           }),
         );
       },

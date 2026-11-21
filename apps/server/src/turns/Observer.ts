@@ -621,6 +621,11 @@ export const layer = Layer.effect(
      * held in the queue that Stop left: like a turn that starts after a round,
      * it opens the next round, which cancels it. Only the first sight does:
      * a replacement that lists it again finds it accepted.
+     *
+     * A steer still owning the turn it steered, listed waiting under another
+     * turn, is the follow-up the engine requeued it as, whose `steer-requeued`
+     * a replacement does not carry: it moves to that turn, as
+     * `steerRequeued` moves it. (`startTurn` moves it by delivering it.)
      */
     const queuedTurn = Effect.fn("Observer.queuedTurn")(function* (
       session: Watched,
@@ -632,7 +637,11 @@ export const layer = Layer.effect(
       if (Option.isNone(dispatch) || !undecided(dispatch.value)) return;
       yield* ledger.accept(dispatch.value.id, null);
       yield* sql`
-        UPDATE dispatches SET engine_turn_id = COALESCE(engine_turn_id, ${turnId})
+        UPDATE dispatches SET engine_turn_id = CASE
+          WHEN engine_turn_id IS NULL THEN ${turnId}
+          WHEN delivery = 'steer' AND engine_turn_id = disposition_turn_id THEN ${turnId}
+          ELSE engine_turn_id
+        END
         WHERE id = ${dispatch.value.id}
       `;
       if (
@@ -763,14 +772,15 @@ export const layer = Layer.effect(
       const dispatch = owner.value;
       if (dispatch.status === "finished" || dispatch.status === "dropped") return;
       if (dispatch.status !== "delivered") {
-        // It ended without starting: a Stop cancelled it while it waited, or it
-        // failed before the provider took it, which the engine refused it with.
-        // The dispatch keeps that outcome: a routine's attempt that failed so
-        // is tried again (`routines/RoutineRuns.ts`).
+        // It ended without starting: a Stop cancelled it while it waited, or
+        // interrupted it while it started, or it failed before the provider
+        // took it, which the engine refused it with. The dispatch keeps that
+        // outcome: a routine's attempt that failed so is tried again
+        // (`routines/RoutineRuns.ts`).
         yield* ledger.accept(dispatch.id, null);
         const after = yield* stops.wakesAfter(
           dispatch,
-          end.outcome._tag === "cancelled"
+          end.outcome._tag === "cancelled" || end.outcome._tag === "interrupted"
             ? { _tag: "dropped" }
             : { _tag: "failed", reason: "rejected" },
         );

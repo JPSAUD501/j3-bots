@@ -39,4 +39,9 @@ export default Effect.gen(function* () {
     ALTER TABLE sessions ADD COLUMN background_check_due INTEGER NOT NULL DEFAULT 0
       CHECK (background_check_due IN (0, 1))
   `;
+
+  // When a room's Stop round was first held back by work of another audience
+  // that the server cannot see run, while nothing it sees run held it: past a
+  // bound from then, the round goes regardless (`ROOM_ROUND_HOLD_BOUND`).
+  yield* sql`ALTER TABLE stop_targets ADD COLUMN held_since TEXT`;
 });
