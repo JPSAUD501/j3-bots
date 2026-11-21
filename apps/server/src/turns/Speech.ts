@@ -160,7 +160,7 @@ export const layer = Layer.effect(
      * bounded number of times.
      */
     const match = Effect.fn("Speech.match")(function* (call: TurnToolCall, caller: BotSession) {
-      const sessionId = SessionRowId.make(caller.id);
+      const sessionId = caller.id;
       const session = yield* engineSessionOf(sessionId).pipe(Effect.orDie);
       if (Option.isNone(session)) return yield* new TurnEnded();
       const digest = yield* toolInputDigest(call.arguments);

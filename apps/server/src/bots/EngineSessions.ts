@@ -24,7 +24,7 @@ import { Ids } from "../Ids.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
-import { conversation } from "../turns/model.ts";
+import { conversation, SessionRowId } from "../turns/model.ts";
 import { notices } from "../turns/notices.ts";
 import { SessionGate } from "../turns/SessionGate.ts";
 import { sessionWork } from "../turns/sessionWork.ts";
@@ -33,7 +33,7 @@ import { BotStore } from "./BotStore.ts";
 import { Workspaces } from "./Workspaces.ts";
 
 const SessionRow = Schema.Struct({
-  id: Schema.String,
+  id: SessionRowId,
   bot_id: BotId,
   engine_session_id: Schema.NullOr(SessionId),
   provider_id: ProviderId,
@@ -88,7 +88,7 @@ export class MainSessionMoved extends Schema.TaggedError<MainSessionMoved>()(
 
 /** A bot session as the server knows it. */
 export interface BotSession {
-  readonly id: string;
+  readonly id: SessionRowId;
   readonly botId: BotId;
 }
 
