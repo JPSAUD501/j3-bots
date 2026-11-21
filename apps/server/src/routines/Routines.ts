@@ -7,6 +7,7 @@ import {
   EntryId,
   NonNegativeInt,
   NotFound,
+  PositiveInt,
   Routine,
   RoutineId,
   type RoutineRun,
@@ -61,6 +62,7 @@ const RunRow = Schema.Struct({
   routine_id: RoutineId,
   wake_id: Schema.NullOr(Schema.String),
   status: Schema.Literals(["running", "delivered", "silent", "failed", "skipped"]),
+  attempts: PositiveInt,
   note: Schema.NullOr(Schema.String),
   started_at: Time,
   finished_at: Schema.NullOr(Time),
@@ -207,7 +209,8 @@ export const layer = Layer.effect(
       FROM routines
     `);
     const RUNS = sql.literal(`
-      SELECT id, routine_id, wake_id, status, note, started_at, finished_at FROM routine_runs
+      SELECT id, routine_id, wake_id, status, attempts, note, started_at, finished_at
+      FROM routine_runs
     `);
 
     const routineRows = SqlSchema.findAll({
@@ -265,6 +268,7 @@ export const layer = Layer.effect(
         startedAt: row.started_at,
         finishedAt: row.finished_at,
         status: row.status,
+        attempts: row.attempts,
         delivered: delivered.map((entry) => EntryId.make(entry.id)),
         note: row.note,
       } satisfies RoutineRun;

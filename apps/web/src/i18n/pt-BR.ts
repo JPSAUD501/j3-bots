@@ -157,6 +157,8 @@ export const ptBR: Catalog = {
   "notice.observationFailed":
     "Não deu para acompanhar o trabalho deste bot. O que aparece aqui pode estar atrasado.",
   "notice.tooLong": "Algo destinado a este bot era longo demais para repassar e ficou de fora.",
+  "notice.routinePaused":
+    "{name} foi pausada: não deu para ler a programação dela. Edite a rotina para ligá-la de novo.",
   "notice.retry": "Tentar de novo",
   "notice.openConversation": "Abrir",
 

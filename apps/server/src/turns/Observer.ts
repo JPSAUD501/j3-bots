@@ -56,6 +56,7 @@ import {
   SYNC_DEADLINE,
 } from "./model.ts";
 import { type NoticeRetry, notices } from "./notices.ts";
+import { routineSpeech } from "./routineSpeech.ts";
 import { endingOf, sessionLoss, sessionRecords } from "./sessionRecords.ts";
 import { rotationRequests } from "./rotationRequests.ts";
 import { Signals } from "./Signals.ts";
@@ -66,6 +67,8 @@ import { WorkSteps } from "./WorkSteps.ts";
 const Watched = Schema.Struct({
   id: SessionRowId,
   bot_id: BotId,
+  /** A side session runs one attempt of a routine run, out of the operator's sight. */
+  purpose: Schema.Literals(["main", "side"]),
   engine_session_id: SessionId,
   events_cursor: Schema.NullOr(EventCursor),
 });
@@ -272,6 +275,7 @@ export const layer = Layer.effect(
     const scope = yield* Effect.scope;
     const stops = stopTargets(sql);
     const { notify } = notices(sql, entries);
+    const spoken = routineSpeech(sql, ids);
     const { sessionLost } = sessionLoss(sql, entries, ledger, workSteps, signals);
     const { requestRotation } = rotationRequests(sql, signals);
     const { finishFold, closeCard } = sessionRecords(sql, entries, workSteps);
@@ -297,7 +301,7 @@ export const layer = Layer.effect(
       Request: Schema.String,
       Result: Watched,
       execute: (id) => sql`
-        SELECT id, bot_id, engine_session_id, events_cursor FROM sessions
+        SELECT id, bot_id, purpose, engine_session_id, events_cursor FROM sessions
         WHERE id = ${id} AND engine_session_id IS NOT NULL AND lost_at IS NULL
           AND engine_retired_at IS NULL
       `,
@@ -588,6 +592,10 @@ export const layer = Layer.effect(
       yield* ledger.finish(dispatch.id, outcome);
       const audience = audienceOf(dispatch);
       const carried = yield* ledger.wakesOf(dispatch.id);
+      // A routine's attempt ends with its run (`routines/RoutineRuns.ts`): one
+      // that failed is tried again, and the run's history shows it. Nobody
+      // waits on it in the conversation.
+      if (carried.some((wake) => wake.kind === "routine")) return;
       // What the operator stopped needs no notice and no follow-up, also when
       // the turn ended on its own before the Stop's interrupt reached it.
       if (yield* stops.covers(session.bot_id, audience, dispatch.seq)) return;
@@ -628,6 +636,8 @@ export const layer = Layer.effect(
     const finishTurn = Effect.fn("Observer.finishTurn")(function* (session: Watched, end: TurnEnd) {
       const turn = yield* turnOf(session.id, end.turnId);
       if (Option.isSome(turn) && turn.value.finished_at !== null) return;
+      // A routine run's attempt may have ended: its run settles, or its session retires.
+      if (session.purpose === "side") yield* sql.afterCommit(signals.routines.fire);
       if (Option.isSome(turn)) {
         yield* sql`
           UPDATE turns SET finished_at = ${timeText(end.at)},
@@ -771,6 +781,8 @@ export const layer = Layer.effect(
     ) {
       const turn = yield* turnOf(session.id, turnId);
       if (Option.isNone(turn)) return;
+      // A routine run works out of the operator's sight: its turn has no fold.
+      if (session.purpose === "side") return yield* touchActivity(session.id, turnId, at);
       const foldId = yield* foldOf(session, turn.value);
       yield* sql`
         INSERT INTO work_steps (entry_id, step_id, position, step_json)
@@ -833,6 +845,13 @@ export const layer = Layer.effect(
         UPDATE host_speech SET entry_id = ${entry.id}
         WHERE session_id = ${session.id} AND speech_id = ${speech.speechId}
       `;
+      yield* spoken.said({
+        sessionId: session.id,
+        turnId: speech.turnId,
+        botId: session.bot_id,
+        entryId: entry.id,
+        text: entry._tag === "message" ? entry.text : speech.text,
+      });
     }, Effect.orDie);
 
     /**
@@ -1178,8 +1197,9 @@ export const layer = Layer.effect(
      * deadline ends with it. Only then are the workers nudged, and only when
      * something they wait on may have changed: the dispatcher when the event
      * can change whether the session is idle, when it ended a busy deadline or
-     * made the session ready again, and the Stop runner when it can change
-     * whether a Stop is done.
+     * made the session ready again, the Stop runner when it can change
+     * whether a Stop is done, and the routine runner on the same terms for a
+     * side session.
      */
     const apply = Effect.fn("Observer.apply")(function* (
       session: Watched,
@@ -1215,6 +1235,9 @@ export const layer = Layer.effect(
       if (work) yield* signals.stops.fire;
       // A session due for rotation is replaced only once its events are known.
       if (!wasReady) yield* signals.rotations.fire;
+      // A side session's attempt waits for it to be ready, and its retirement
+      // for its work to end.
+      if (session.purpose === "side" && (work || !wasReady)) yield* signals.routines.fire;
       return true;
     });
 

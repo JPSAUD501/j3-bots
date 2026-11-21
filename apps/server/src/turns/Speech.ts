@@ -21,6 +21,7 @@ import { workspaceReader } from "../attachments/workspaceFile.ts";
 import { BotStore } from "../bots/BotStore.ts";
 import type { BotSession } from "../bots/EngineSessions.ts";
 import { Entries } from "../entries/Entries.ts";
+import { Ids } from "../Ids.ts";
 import { json, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { RoomRouting } from "../rooms/RoomRouting.ts";
@@ -35,6 +36,7 @@ import {
 import { Ledger } from "./Ledger.ts";
 import { liveTarget } from "./liveTarget.ts";
 import { mediaTypeOf } from "./mediaTypes.ts";
+import { routineSpeech } from "./routineSpeech.ts";
 import {
   ADMISSION_DEADLINE,
   type Audience,
@@ -119,6 +121,7 @@ export const layer = Layer.effect(
     const routing = yield* RoomRouting;
     const readWorkspaceFile = yield* workspaceReader;
     const targetOf = liveTarget(sql);
+    const spoken = routineSpeech(sql, yield* Ids);
 
     const engineSessionOf = SqlSchema.findOneOption({
       Request: Schema.String,
@@ -389,6 +392,13 @@ export const layer = Layer.effect(
               )}
             `.pipe(Effect.orDie);
             }
+            yield* spoken.said({
+              sessionId: found.sessionId,
+              turnId: found.turnId,
+              botId: found.botId,
+              entryId: entry.id,
+              text: input.text,
+            });
             if (target._tag === "room" && entry._tag === "message") {
               yield* routing.botMessage({
                 roomId: target.roomId,

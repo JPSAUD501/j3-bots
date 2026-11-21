@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BotId, RoutineId, RoutineTrigger } from "@j3-bots/contracts";
+import { BotId, Label, RoutineId, RoutineTrigger } from "@j3-bots/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -13,9 +13,12 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
+import { Entries } from "../entries/Entries.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { json, Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
+import { conversation } from "../turns/model.ts";
+import { notices } from "../turns/notices.ts";
 import { DEFECT_RETRY, RETRY_TICK } from "../turns/reconciler.ts";
 import { RoutineRuns } from "./RoutineRuns.ts";
 import { nextRun } from "./schedule.ts";
@@ -38,6 +41,7 @@ type DueRef = typeof DueRef.Type;
 const Due = Schema.Struct({
   id: RoutineId,
   bot_id: BotId,
+  name: Label,
   trigger_json: Schema.String,
 });
 
@@ -72,6 +76,7 @@ export const layer = Layer.effect(
     const transaction = transactional(sql);
     const runs = yield* RoutineRuns;
     const changes = yield* ChangeLog;
+    const { notify } = notices(sql, yield* Entries);
     const nudges = yield* Queue.sliding<void>(1);
     const permit = yield* Semaphore.make(1);
 
@@ -89,7 +94,7 @@ export const layer = Layer.effect(
       Request: Schema.Struct({ id: Schema.String, now: Schema.String }),
       Result: Due,
       execute: ({ id, now }) => sql`
-        SELECT id, bot_id, trigger_json FROM routines
+        SELECT id, bot_id, name, trigger_json FROM routines
         WHERE id = ${id} AND enabled = 1 AND next_run_at <= ${now}
       `,
     });
@@ -125,6 +130,18 @@ export const layer = Layer.effect(
     `;
 
     /**
+     * The operator is told, in the bot's conversation, of a routine the
+     * scheduler paused because it cannot read when the routine runs next.
+     */
+    const pausedNotice = (routine: typeof Due.Type) =>
+      notify(
+        routine.bot_id,
+        conversation,
+        { _tag: "routine-paused", routineId: routine.id, name: routine.name },
+        null,
+      );
+
+    /**
      * Records the run of one routine that came due and moves it on, in one
      * transaction, if it is still due. The routine is read again there, so a
      * change committed since the pass read it wins: an edited trigger plans
@@ -147,6 +164,7 @@ export const layer = Layer.effect(
             });
             yield* moveOn(routine.id, null, now);
             yield* changes.record({ _tag: "routines", botId: routine.bot_id }, routine.id);
+            yield* pausedNotice(routine);
             return;
           }
           const next = nextRun(trigger.success, now);
@@ -158,6 +176,7 @@ export const layer = Layer.effect(
               routineId: routine.id,
               reason: next.failure.reason,
             });
+            yield* pausedNotice(routine);
           }
           const after = Result.isSuccess(next) ? Option.getOrNull(next.success) : null;
           // A routine with no run left (a one-time trigger, an unreadable schedule) is paused.

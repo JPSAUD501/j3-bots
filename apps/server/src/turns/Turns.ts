@@ -4,6 +4,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import { RoutineRunner } from "../routines/RoutineRunner.ts";
 import { BotStates } from "./BotStates.ts";
 import { Cards } from "./Cards.ts";
 import { HeldQueues } from "./HeldQueues.ts";
@@ -37,6 +38,7 @@ export const layer = Layer.effectDiscard(
     const cards = yield* Cards;
     const held = yield* HeldQueues;
     const states = yield* BotStates;
+    const routines = yield* RoutineRunner;
     const readiness = yield* Readiness;
     const rotations = yield* Rotations;
     const scope = yield* Effect.scope;
@@ -59,6 +61,7 @@ export const layer = Layer.effectDiscard(
       yield* signals.responses.fire;
       yield* signals.dispatch.fire;
       yield* signals.rotations.fire;
+      yield* signals.routines.fire;
       // A submission whose answer was lost, in the background: its card's
       // own lock keeps the next submission to it behind this check.
       yield* step("Secret submissions could not be checked", cards.checkSubmissions).pipe(
@@ -96,6 +99,7 @@ export const layer = Layer.effectDiscard(
         supervised("The responder", cards.run),
         supervised("The held-queue resumer", held.run),
         supervised("The rotator", rotations.run),
+        supervised("The routine runner", routines.run),
         supervised("Watching for stalled turns", states.watchStalls),
       ],
       { concurrency: "unbounded", discard: true },

@@ -337,10 +337,16 @@ export const layer = Layer.effect(
 
     /**
      * A Stop of a session was confirmed: what it held back may go, a rotation
-     * waiting on it included.
+     * waiting on it and a spent side session's retirement included.
      */
     const settledSession = Effect.all(
-      [signals.dispatch.fire, signals.recovery.fire, signals.resumes.fire, signals.rotations.fire],
+      [
+        signals.dispatch.fire,
+        signals.recovery.fire,
+        signals.resumes.fire,
+        signals.rotations.fire,
+        signals.routines.fire,
+      ],
       { discard: true },
     );
 

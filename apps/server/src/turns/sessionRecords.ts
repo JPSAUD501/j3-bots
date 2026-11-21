@@ -221,10 +221,17 @@ export const sessionLoss = (
       WHERE session_id = ${sessionId} AND status = 'intended'
     `;
     // What waited on the session may settle, its bot may take work
-    // elsewhere, and a main session is replaced.
+    // elsewhere, a main session is replaced, and a side session's routine run
+    // is tried again in a fresh one.
     yield* sql.afterCommit(
       Effect.all(
-        [signals.dispatch.fire, signals.recovery.fire, signals.stops.fire, signals.rotations.fire],
+        [
+          signals.dispatch.fire,
+          signals.recovery.fire,
+          signals.stops.fire,
+          signals.rotations.fire,
+          signals.routines.fire,
+        ],
         { discard: true },
       ),
     );

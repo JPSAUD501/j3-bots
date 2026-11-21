@@ -544,6 +544,7 @@ export function sampleTeam(now: DateTime.Utc) {
     startedAt: ago(minutesAgo),
     finishedAt: status === "running" ? null : ago(minutesAgo - 1),
     status,
+    attempts: 1,
     delivered: [],
     note: null,
   });
