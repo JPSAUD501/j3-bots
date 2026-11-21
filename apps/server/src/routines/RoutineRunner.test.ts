@@ -396,7 +396,7 @@ it.effect("refuses a question card in a routine's turn, which nobody could answe
 );
 
 it.effect(
-  "lets a routine's turn pause its own routine, and refuses every other routine change",
+  "lets a routine's turn pause its own routine, and refuses every other routine change, also to it",
   () =>
     Effect.gen(function* () {
       const control = yield* TestEngineControl;
@@ -422,12 +422,14 @@ it.effect(
 
       const other = yield* setRoutine({ action: "pause", id: sibling.id }, "call-1");
       assert.strictEqual(other._tag, "refused");
-      const renamed = yield* setRoutine(
-        { action: "update", id: routine.id, name: "Reviews" },
-        "call-2",
-      );
-      assert.strictEqual(renamed._tag, "refused");
-      const paused = yield* setRoutine({ action: "pause", id: routine.id }, "call-3");
+      for (const [args, requestId] of [
+        [{ action: "update", id: routine.id, name: "Reviews" }, "call-2"],
+        [{ action: "resume", id: routine.id }, "call-3"],
+        [{ action: "delete", id: routine.id }, "call-4"],
+      ] as const) {
+        assert.strictEqual((yield* setRoutine(args, requestId))._tag, "refused");
+      }
+      const paused = yield* setRoutine({ action: "pause", id: routine.id }, "call-5");
       assert.strictEqual(paused._tag, "result");
 
       const byId = new Map(

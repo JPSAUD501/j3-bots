@@ -101,7 +101,8 @@ export type HeldMethod =
   | "stageAttachment"
   | "respondSecret"
   | "resumeQueue"
-  | "stop";
+  | "stop"
+  | "synchronize";
 
 /** A call held at the engine's door. */
 export interface Held {
@@ -1435,46 +1436,52 @@ const make = Effect.gen(function* () {
       ),
 
     synchronize: ({ sessionId, token }) =>
-      command(
-        Effect.gen(function* () {
-          const session = yield* liveSession(sessionId);
-          const at = yield* DateTime.now;
-          const dropped = droppedMarker;
-          droppedMarker = null;
-          if (dropped !== null) return yield* Deferred.succeed(dropped, undefined);
-          // Every event is handed to the streams as it happens, so each stream
-          // is already caught up: the marker follows what it was last given.
-          // The TestEngine knows every tool's persistence: its work is never in doubt.
-          const backgroundWork: BackgroundWork =
-            session.running === null && backgroundRuns(session) ? "pending" : "none";
-          // The running turn, also one whose provider turn has not started, and those waiting.
-          const runnableTurns =
-            session.running === null ? [...session.waiting] : [session.running, ...session.waiting];
-          for (const [subscriber, state] of session.subscribers) {
-            Queue.offerUnsafe(subscriber, {
-              _tag: "synchronized",
-              cursor: state.lastCursor,
-              at,
-              token,
-              backgroundWork,
-              runnableTurns,
-            });
-          }
-          // Tool calls the engine records late appear only after this marker.
-          const running = session.running === null ? undefined : session.turns.get(session.running);
-          if (running === undefined) return;
-          for (const record of running.toolCalls.values()) {
-            if (record.state !== "unrecorded") continue;
-            record.state = "open";
-            emit(session, at, (stamp) => ({
-              _tag: "tool-call",
-              ...stamp,
-              turnId: running.turnId,
-              call: record.call,
-              state: "open",
-            }));
-          }
-        }),
+      door(
+        "synchronize",
+        command(
+          Effect.gen(function* () {
+            const session = yield* liveSession(sessionId);
+            const at = yield* DateTime.now;
+            const dropped = droppedMarker;
+            droppedMarker = null;
+            if (dropped !== null) return yield* Deferred.succeed(dropped, undefined);
+            // Every event is handed to the streams as it happens, so each stream
+            // is already caught up: the marker follows what it was last given.
+            // The TestEngine knows every tool's persistence: its work is never in doubt.
+            const backgroundWork: BackgroundWork =
+              session.running === null && backgroundRuns(session) ? "pending" : "none";
+            // The running turn, also one whose provider turn has not started, and those waiting.
+            const runnableTurns =
+              session.running === null
+                ? [...session.waiting]
+                : [session.running, ...session.waiting];
+            for (const [subscriber, state] of session.subscribers) {
+              Queue.offerUnsafe(subscriber, {
+                _tag: "synchronized",
+                cursor: state.lastCursor,
+                at,
+                token,
+                backgroundWork,
+                runnableTurns,
+              });
+            }
+            // Tool calls the engine records late appear only after this marker.
+            const running =
+              session.running === null ? undefined : session.turns.get(session.running);
+            if (running === undefined) return;
+            for (const record of running.toolCalls.values()) {
+              if (record.state !== "unrecorded") continue;
+              record.state = "open";
+              emit(session, at, (stamp) => ({
+                _tag: "tool-call",
+                ...stamp,
+                turnId: running.turnId,
+                call: record.call,
+                state: "open",
+              }));
+            }
+          }),
+        ),
       ),
   });
 

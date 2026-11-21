@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   BotId,
-  CommandId,
   type Conflict,
   type Invalid,
   type NotFound,
   Routine,
   RoutineId,
-  type RoutineTrigger,
+  RoutineTrigger,
 } from "@j3-bots/contracts";
 import type { ToolInput } from "@j3-bots/prompts";
 import * as DateTime from "effect/DateTime";
@@ -16,6 +15,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
+import { json } from "../persistence/columns.ts";
 import { Routines } from "../routines/Routines.ts";
 import { localInstant } from "../routines/schedule.ts";
 import { SettingsStore } from "../settings/SettingsStore.ts";
@@ -49,13 +49,18 @@ const encodeRoutine = Schema.encodeEffect(Schema.toCodecJson(Routine));
 
 const refuse = (reason: string) => new TurnToolRefused({ reason });
 
+const notYours = (id: string | undefined) =>
+  refuse(`You have no routine ${id}. list_routines shows your routines' ids.`);
+
 /**
  * `set_routine` (`docs/architecture/server.md`, Bot tools): a bot creates,
  * changes, pauses, resumes or deletes one of its own routines through
  * `Routines`, the operator's path, with the bot as the change's author. A
- * schedule and a time without an offset are read in the operator's zone. In
- * a routine's side session the only call taken is `pause` of the routine
- * that session runs, so a routine can stop itself once its job is done.
+ * schedule and a time without an offset are read in the operator's zone as
+ * set now, also for a routine whose schedule kept another: the operator
+ * speaks in their own. In a routine's side session the only call taken is
+ * `pause` of the routine that session runs, so a routine can stop itself
+ * once its job is done.
  *
  * The result is the routine as saved, its webhook's address included: that
  * address is a credential, and the tool result is the only place it goes.
@@ -77,8 +82,8 @@ export const routineTool = Effect.gen(function* () {
 
   const ownerOf = SqlSchema.findOneOption({
     Request: RoutineId,
-    Result: Schema.Struct({ bot_id: BotId }),
-    execute: (id) => sql`SELECT bot_id FROM routines WHERE id = ${id}`,
+    Result: Schema.Struct({ bot_id: BotId, trigger_json: json(RoutineTrigger) }),
+    execute: (id) => sql`SELECT bot_id, trigger_json FROM routines WHERE id = ${id}`,
   });
 
   /** Refuses every call a routine run may not make. */
@@ -118,40 +123,54 @@ export const routineTool = Effect.gen(function* () {
     return { _tag: "once", at: instant.value } satisfies RoutineTrigger;
   });
 
-  /** The routine, if it is one of the caller's. */
+  /** The routine's saved trigger, if the routine is one of the caller's. */
   const requireOwn = Effect.fn("RoutineTool.requireOwn")(function* (
     request: Request,
     id: RoutineId,
   ) {
     const owner = yield* ownerOf(id).pipe(Effect.orDie);
     if (Option.isNone(owner) || owner.value.bot_id !== request.botId) {
-      return yield* refuse(`You have no routine ${id}. list_routines shows your routines' ids.`);
+      return yield* notYours(id);
     }
+    return owner.value.trigger_json;
   });
 
-  /** Why a command of `Routines` refused the call, in words for the bot. */
+  /**
+   * Why a command of `Routines` refused the call, in words for the bot.
+   * `checked` is the trigger the command checked: the one the call gives, or
+   * else the routine's saved one, which a resume plans again.
+   */
   const explained =
-    (id: string | undefined, trigger: RoutineTrigger | undefined) =>
-    (error: NotFound | Invalid): TurnEnded | TurnToolRefused => {
+    (
+      id: string | undefined,
+      checked: { readonly trigger: RoutineTrigger; readonly given: boolean },
+    ) =>
+    (error: NotFound | Invalid): Effect.Effect<never, TurnEnded | TurnToolRefused> => {
       if (error._tag === "NotFound") {
-        return error.resource === "bot"
-          ? new TurnEnded()
-          : refuse(`You have no routine ${id}. list_routines shows your routines' ids.`);
+        return Effect.fail(error.resource === "bot" ? new TurnEnded() : notYours(id));
       }
-      if (error.reason === "time-zone") {
-        return refuse("Your user's time zone is not one the server knows.");
-      }
-      switch (trigger?._tag) {
+      const { trigger, given } = checked;
+      switch (trigger._tag) {
         case "schedule":
-          return refuse(
-            `The schedule "${trigger.cron}" cannot be used: it needs five cron fields that name a date that exists, and at most one run every five minutes.`,
+          return Effect.fail(
+            refuse(
+              error.reason === "time-zone"
+                ? `The time zone ${trigger.timeZone} is not one the server knows. Give the routine a new schedule with update, which uses your user's zone.`
+                : given
+                  ? `The schedule "${trigger.cron}" cannot be used: it needs five cron fields that name a date that exists, and at most one run every five minutes.`
+                  : `This routine's schedule "${trigger.cron}" cannot run any more. Give it a new one with update.`,
+            ),
           );
         case "once":
-          return refuse("That time has already passed. Give a time ahead.");
-        default:
-          return refuse(
-            "This routine's one-time run has passed. Give it a new time, schedule or webhook with update to run it again.",
+          return Effect.fail(
+            refuse(
+              given
+                ? "That time has already passed. Give a time ahead."
+                : "This routine's one-time run has passed. Give it a new time, schedule or webhook with update; that starts it again.",
+            ),
           );
+        case "webhook":
+          return Effect.die("A webhook trigger is never refused: it has no time to check");
       }
     };
 
@@ -170,14 +189,15 @@ export const routineTool = Effect.gen(function* () {
     yield* requireAllowed(request, input);
     const trigger = yield* triggerOf(input);
     const author = { _tag: "bot", botId: request.botId } as const;
-    // The tool's call id: a retried forward finds the command's receipt.
-    const commandId = CommandId.make(`tool:${request.requestId}`);
-    const explain = explained(input.id, trigger);
+    // The pin in `once` makes the call act once, so no command receipt keeps
+    // another copy of the routine, and of a webhook's address.
+    const commandId = null;
     if (input.action === "create") {
       const { name, instruction } = input;
       if (name === undefined || instruction === undefined || trigger === undefined) {
         return yield* Effect.die("The tool's schema lets no create through without these");
       }
+      const explain = explained(input.id, { trigger, given: true });
       return yield* once(
         routines
           .create({
@@ -196,7 +216,8 @@ export const routineTool = Effect.gen(function* () {
     if (input.action === "delete") {
       return yield* once(
         Effect.gen(function* () {
-          yield* requireOwn(request, routineId);
+          const current = yield* requireOwn(request, routineId);
+          const explain = explained(input.id, { trigger: current, given: false });
           yield* routines
             .remove({ commandId, routineId, author })
             .pipe(Effect.catchTags({ NotFound: explain, Invalid: explain }));
@@ -214,7 +235,11 @@ export const routineTool = Effect.gen(function* () {
         : { enabled: input.action === "resume" };
     return yield* once(
       Effect.gen(function* () {
-        yield* requireOwn(request, routineId);
+        const current = yield* requireOwn(request, routineId);
+        const explain = explained(
+          input.id,
+          trigger === undefined ? { trigger: current, given: false } : { trigger, given: true },
+        );
         const routine = yield* routines
           .update({ commandId, routineId, changes, author })
           .pipe(Effect.catchTags({ NotFound: explain, Invalid: explain }));

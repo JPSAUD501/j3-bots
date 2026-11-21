@@ -137,6 +137,12 @@ describe("localInstant", () => {
     assert.strictEqual(instant("2026-03-29T01:30"), "2026-03-29T01:30:00.000Z");
   });
 
+  it("reads a time the clocks repeat as its first occurrence, unless an offset names the second", () => {
+    // Lisbon goes back from 02:00 to 01:00 on 2026-10-25: 01:30 comes at +01:00, then at +00:00.
+    assert.strictEqual(instant("2026-10-25T01:30"), "2026-10-25T00:30:00.000Z");
+    assert.strictEqual(instant("2026-10-25T01:30+00:00"), "2026-10-25T01:30:00.000Z");
+  });
+
   it("refuses a date or a time that does not exist", () => {
     assert.isNull(instant("2026-02-31T09:00"));
     assert.isNull(instant("2026-07-01T24:00"));
