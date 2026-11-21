@@ -921,12 +921,13 @@ const replayMergeWatch = Effect.fn("evals.replayMergeWatch")(function* (
 /**
  * Problems with a setup turn's own calls, around the one routine it created:
  * it opens with a `say`, looks for an existing routine before creating one,
- * and ends on a `say` with `done: true` sent once the routine was saved.
- * Returns the problems and the closing message's text.
+ * and ends on a `say` with `done: true` sent once every `set_routine` that
+ * saved or changed the routine, as the turn leaves it, had returned. Returns
+ * the problems and the closing message's text.
  */
 const setupProblems = (
   calls: ReadonlyArray<Call>,
-  creation: Call,
+  { call: creation, routine }: { readonly call: Call; readonly routine: Routine },
 ): { readonly problems: ReadonlyArray<string>; readonly closing?: string } => {
   const problems = [
     ...(says(calls)[0]?.call === calls[0] ? [] : ["the first call is not a `say`"]),
@@ -942,7 +943,21 @@ const setupProblems = (
   return {
     problems: [
       ...problems,
-      ...after(creation, closing.call, { source: "saved the routine", dependent: "confirmed it" }),
+      ...named(calls, "set_routine")
+        .filter(
+          (call) =>
+            call === creation ||
+            (call.refused === false &&
+              call.routine !== undefined &&
+              call.routine.action !== "create" &&
+              call.routine.id === routine.id),
+        )
+        .flatMap((saved) =>
+          after(saved, closing.call, {
+            source: saved === creation ? "saved the routine" : "changed the routine",
+            dependent: "confirmed it",
+          }),
+        ),
       ...(closing.say.done === true ? [] : ["the closing `say` does not carry `done: true`"]),
     ],
     closing: closing.say.text,
@@ -986,9 +1001,10 @@ const namesNumber = (text: string, number: number) =>
  * Problems specific to the pull-request watch's run: before its message, in
  * an earlier model message, it read the state file and a list holding the new
  * pull requests; the message has both numbers in it (a structural check: the
- * judge reads whether it reports them as new, with their titles); every write
- * of the state file comes in a later model message than the message; and the
- * file, as the turn leaves it, lists every open pull request.
+ * judge reads whether it reports them as new, with their titles); every change
+ * to the state file, a write or a removal, comes in a later model message than
+ * the message; and the file, as the turn leaves it, lists every open pull
+ * request.
  */
 const stateRunProblems = (
   calls: ReadonlyArray<Call>,
@@ -997,9 +1013,10 @@ const stateRunProblems = (
   const [message] = named(calls, "say");
   if (message === undefined) return [];
   const text = says(calls).find(({ call }) => call === message)?.say.text ?? "";
-  const writes = calls.filter((call) =>
-    did(call, (event) => event.type === "file-written" && event.path === STATE_PATH),
-  );
+  const changedState = (type: "file-written" | "file-removed") =>
+    calls.filter((call) => did(call, (event) => event.type === type && event.path === STATE_PATH));
+  const writes = changedState("file-written");
+  const changes = [...writes, ...changedState("file-removed")];
   const state = stateAtEnd === undefined ? undefined : decodeState(stateAtEnd);
   const reportedNumbers =
     state?._tag === "Some" ? state.value.reported.toSorted((a, b) => a - b) : undefined;
@@ -1027,8 +1044,8 @@ const stateRunProblems = (
       ? []
       : ["the message does not name both new pull requests, #124 and #125"]),
     ...(writes.length === 0 ? ["never wrote the state file"] : []),
-    ...(writes.some((call) => call.step <= message.step)
-      ? ["wrote the state file before its message was recorded"]
+    ...(changes.some((call) => call.step <= message.step)
+      ? ["changed the state file before its message was recorded"]
       : []),
     ...(JSON.stringify(reportedNumbers) === JSON.stringify(REPORTED_AFTER)
       ? []
@@ -1110,7 +1127,7 @@ const cases: ReadonlyArray<Case> = [
     problems: Effect.fn("evals.setupCase")(function* ({ calls, routines }, { model, skills }) {
       const creation = theCreated(calls, routines.current);
       if (typeof creation === "string") return [creation];
-      const { problems, closing } = setupProblems(calls, creation.call);
+      const { problems, closing } = setupProblems(calls, creation);
       const { trigger } = creation.routine;
       const schedule = trigger._tag === "schedule" ? trigger.cron : "";
       const [minute, hour, day, month, weekday] = schedule.split(/\s+/);
@@ -1183,7 +1200,7 @@ const cases: ReadonlyArray<Case> = [
     problems: Effect.fn("evals.mergeWatchCase")(function* ({ calls, routines }, { model, skills }) {
       const creation = theCreated(calls, routines.current);
       if (typeof creation === "string") return [creation];
-      const { problems } = setupProblems(calls, creation.call);
+      const { problems } = setupProblems(calls, creation);
       if (creation.routine.trigger._tag !== "schedule") {
         return [...problems, "the watch was not saved with a schedule"];
       }
@@ -1224,7 +1241,13 @@ describe("the stand-in workspace", () => {
   it("refuses a change to GitHub, and says so for what it does not support", () => {
     expect(types("gh run rerun 1043 -R acme/docs")).toEqual(["gh", "gh-change"]);
     expect(run("gh run list -R acme/docs --jq '.[0]'").output).toMatch(/not available/);
+    expect(types("gh run list -R acme/docs --jq '.[0]'")).toEqual(["gh", "unavailable"]);
     expect(run("jq . files/x.json").output).toMatch(/command not found/);
+  });
+
+  it("counts neither `gh --version` nor help as reaching GitHub", () => {
+    expect(types("gh --version")).toEqual([]);
+    expect(types("gh run list --help")).toEqual(["unavailable"]);
   });
 
   /** A workspace with two notes besides the state file, as a run might find it. */
@@ -1384,6 +1407,16 @@ describe("the run graders", () => {
       final([118, 121, 124]),
     ],
     ["a write the turn then deleted", [...look, say(2, report), write(3)], undefined],
+    [
+      "a removal of the state file before the message",
+      [
+        ...look,
+        call(2, "run_command", {}, [{ type: "file-removed", path: STATE_PATH }]),
+        say(3, report),
+        write(4),
+      ],
+      final(),
+    ],
     ["a message sent with the reads", [...look, say(1, report), write(2)], final()],
     [
       "a message missing #125",
@@ -1537,6 +1570,28 @@ describe("the run graders", () => {
     it("rejects a state-file write after the pause", () => {
       expect(mergedRun([read, merged(2), pause(3), stateWrite(4)], wake).problems).not.toEqual([]);
     });
+
+    it("rejects a `gh` the workspace does not offer after the pause", () => {
+      const command = "gh run list -R acme/docs --jq .";
+      const events = githubWorkspace(github(runAt, FAILING_RUNS)).run(command).events;
+      expect(
+        mergedRun([read, merged(2), pause(3), call(4, "run_command", { command }, events)], wake)
+          .problems,
+      ).not.toEqual([]);
+    });
+  });
+
+  it("does not count `gh --version` as trying GitHub in a run that lost its access", () => {
+    const ran = (command: string) =>
+      call(
+        1,
+        "run_command",
+        { command },
+        signedOutWorkspace(blockerReportedWake)().run(command).events,
+      );
+    const silent = silentRun(blockerReportedWake, GH_TRIED);
+    expect(silent([ran("gh --version")])).toContain("never ran `gh`");
+    expect(silent([ran("gh auth status")])).toEqual([]);
   });
 
   it("rejects a pause of its own routine in a silent run", () => {
@@ -1604,6 +1659,23 @@ describe("the setup grader", () => {
       expect(theCreated(calls, held)).toBeTypeOf("string");
     },
   );
+
+  it("rejects a closing `say` sent with an update of the routine, not after it returned", () => {
+    const { calls, held } = setup([
+      routine,
+      { action: "update", id: "routine-1", name: "Docs build check" },
+    ]);
+    const created = theCreated(calls, held);
+    if (typeof created === "string") throw new Error(created);
+    const turn = (closingStep: number): ReadonlyArray<Call> => [
+      { ...CALL, step: 1, name: "say", input: { text: "Setting it up." } },
+      { ...CALL, step: 1, name: "list_routines" },
+      ...calls,
+      { ...CALL, step: closingStep, name: "say", input: { text: "Saved.", done: true } },
+    ];
+    expect(setupProblems(turn(4), created).problems).toEqual([]);
+    expect(setupProblems(turn(3), created).problems).not.toEqual([]);
+  });
 
   it("rejects a create refused before it decoded, though a later one was saved", () => {
     const { calls, held } = setup([routine]);

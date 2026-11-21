@@ -41,12 +41,17 @@ export type ShellEvent =
   | { readonly type: "directory-created"; readonly path: string }
   /** The command left this folder gone. */
   | { readonly type: "directory-removed"; readonly path: string }
-  /**
-   * Part of the command did not run: a program the workspace lacks, or syntax
-   * this shell does not take. What it meant to do is unknown, so no grader can
-   * count it as harmless.
-   */
-  | { readonly type: "unavailable"; readonly what: string };
+  | Unavailable;
+
+/**
+ * Part of the command did not run: a program the workspace lacks, syntax this
+ * shell does not take, or something a program does not offer here. What it
+ * meant to do is unknown, so no grader can count it as harmless.
+ */
+export interface Unavailable {
+  readonly type: "unavailable";
+  readonly what: string;
+}
 
 /** What a program prints and how it exits. */
 export interface Outcome {
@@ -59,8 +64,8 @@ interface ProgramContext<E> {
   readonly stdin: string;
   /** Variables assigned in front of the command, such as `GH_REPO=acme/docs`, over the shell's own. */
   readonly env: ReadonlyMap<string, string>;
-  /** Reports what the program did, for the graders. */
-  readonly record: (event: E) => void;
+  /** Reports what the program did, or what it could not do here, for the graders. */
+  readonly record: (event: E | Unavailable) => void;
 }
 
 /** A program a fixture supplies, such as a stand-in `gh`. */
