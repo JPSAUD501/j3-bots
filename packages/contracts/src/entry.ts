@@ -22,13 +22,15 @@ export const EntryTarget = Schema.Union([
 ]);
 export type EntryTarget = typeof EntryTarget.Type;
 
+/**
+ * The bot's id outlives the bot: entries keep it after the bot is deleted. A
+ * client that finds no bot with this id in the roster renders a deleted bot.
+ */
+export const BotAuthor = Schema.TaggedStruct("bot", { botId: BotId });
+
 export const Author = Schema.Union([
   Schema.TaggedStruct("operator", {}),
-  /**
-   * The bot's id outlives the bot: entries keep it after the bot is deleted. A
-   * client that finds no bot with this id in the roster renders a deleted bot.
-   */
-  Schema.TaggedStruct("bot", { botId: BotId }),
+  BotAuthor,
   /** J3 Bots itself. */
   Schema.TaggedStruct("system", {}),
 ]);
@@ -305,6 +307,11 @@ export const Notice = Schema.Union([
   Schema.TaggedStruct("chain-stopped", { limit: Schema.Literals(["hops", "fan-out"]) }),
   /** A turn failed. Retryable with `notice.retry`. */
   Schema.TaggedStruct("turn-failed", { failure: FailureClass }),
+  /**
+   * Urgent teammate messages from `senders` never reached this bot: J3 Bots
+   * gave up waking it with them. Retryable with `notice.retry`.
+   */
+  Schema.TaggedStruct("handoff-failed", { senders: Schema.NonEmptyArray(BotId) }),
   /** A turn the operator started ended twice without delivering anything. Retryable. */
   Schema.TaggedStruct("undelivered", {}),
   /** In a room: this bot is waiting on the operator in its own conversation. */
@@ -353,10 +360,18 @@ export type NoticeEntry = typeof NoticeEntry.Type;
  */
 export const HandoffEntry = Schema.TaggedStruct("handoff", {
   ...entry,
+  author: BotAuthor,
   recipientId: BotId,
   direction: Schema.Literals(["sent", "received"]),
   text: MessageText,
   urgent: Schema.Boolean,
+  /**
+   * An urgent message J3 Bots gave up waking the recipient with. Both cards
+   * show it; the recipient's conversation has a `handoff-failed` notice that
+   * sends it again. It clears once it is sent again, or when the engine turns
+   * out to have taken it after all.
+   */
+  failed: Schema.Boolean,
 });
 export type HandoffEntry = typeof HandoffEntry.Type;
 
@@ -405,6 +420,8 @@ export const EntryPreview = Schema.Struct({
   ]),
   author: Author,
   text: Schema.String.check(Schema.isMaxLength(PREVIEW_LENGTH)),
+  /** A teammate message's recipient; `null` for every other entry. */
+  recipientId: Schema.NullOr(BotId),
   createdAt: Schema.DateTimeUtc,
 });
 export type EntryPreview = typeof EntryPreview.Type;

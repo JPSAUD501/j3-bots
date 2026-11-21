@@ -103,19 +103,25 @@ describe("rosterLine", () => {
     });
   });
 
-  it("says who sent a teammate message, and who it was passed to", () => {
-    const fromWren = preview("2026-11-20T14:50:00Z", "handoff", "Which bike?", {
-      _tag: "bot",
-      botId: bot("Wren").id,
-    });
-    expect(rosterLine(row(bot("Scout"), fromWren), ctx).text).toBe("Wren: Which bike?");
-    const toWren = preview("2026-11-20T14:50:00Z", "handoff", "Which bike?", {
-      _tag: "bot",
-      botId: bot("Scout").id,
-    });
-    expect(rosterLine(row(bot("Scout"), toWren), ctx).text).toBe(
-      "Passed to a teammate: Which bike?",
+  it("names the other bot of a teammate message, received or sent", () => {
+    const scout = bot("Scout").id;
+    const wren = bot("Wren").id;
+    const fromWren = preview(
+      "2026-11-20T14:50:00Z",
+      "handoff",
+      "Which bike?",
+      { _tag: "bot", botId: wren },
+      scout,
     );
+    expect(rosterLine(row(bot("Scout"), fromWren), ctx).text).toBe("From Wren: Which bike?");
+    const toWren = preview(
+      "2026-11-20T14:50:00Z",
+      "handoff",
+      "Which bike?",
+      { _tag: "bot", botId: scout },
+      wren,
+    );
+    expect(rosterLine(row(bot("Scout"), toWren), ctx).text).toBe("To Wren: Which bike?");
   });
 
   it("says a waiting bot needs the operator when its last entry is not what it waits on", () => {

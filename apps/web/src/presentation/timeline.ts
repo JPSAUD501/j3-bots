@@ -80,7 +80,5 @@ export function buildTimeline(entries: ReadonlyArray<ConversationItem>): Timelin
 
 /** The other bot of a teammate message: the recipient of one sent, the sender of one received. */
 export function handoffPeer(entry: HandoffEntry): BotId {
-  return entry.direction === "sent" || entry.author._tag !== "bot"
-    ? entry.recipientId
-    : entry.author.botId;
+  return entry.direction === "sent" ? entry.recipientId : entry.author.botId;
 }

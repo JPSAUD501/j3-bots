@@ -118,12 +118,13 @@ function previewSummary(
       return t("summary.workFold");
     case "notice":
       return t("summary.notice");
-    case "handoff":
-      if (preview.author._tag === "bot" && preview.author.botId !== owner) {
-        const name = ctx.botName(preview.author.botId) ?? t("bot.unknown");
-        return t("summary.fromBot", { name, text });
-      }
-      return t("summary.handoff", { text });
+    case "handoff": {
+      const nameOf = (id: BotId | null) =>
+        (id === null ? null : ctx.botName(id)) ?? t("bot.unknown");
+      return preview.author._tag === "bot" && preview.author.botId !== owner
+        ? t("summary.handoffFrom", { name: nameOf(preview.author.botId), text })
+        : t("summary.handoffTo", { name: nameOf(preview.recipientId), text });
+    }
     case "routine-change":
       return text === "" ? t("summary.routineChanged") : t("summary.routine", { name: text });
   }
@@ -156,6 +157,17 @@ export function noticeText(
       return notice.limit === "hops" ? t("notice.chainHops") : t("notice.chainFanOut");
     case "turn-failed":
       return failureText(notice.failure, null, ctx);
+    case "handoff-failed": {
+      const nameOf = (id: BotId) => ctx.botName(id) ?? t("bot.unknown");
+      const [first, ...rest] = notice.senders;
+      return rest.length === 0
+        ? t("notice.handoffFailed", { name: nameOf(first) })
+        : t("notice.handoffsFailed", {
+            names: new Intl.ListFormat(ctx.i18n.locale, { type: "conjunction" }).format(
+              notice.senders.map(nameOf),
+            ),
+          });
+    }
     case "undelivered":
       return t("notice.undelivered");
     case "waiting-in-conversation":

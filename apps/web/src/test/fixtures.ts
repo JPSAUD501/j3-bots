@@ -59,8 +59,16 @@ export function preview(
   kind: EntryPreview["kind"] = "message",
   text = "Hello",
   author: EntryPreview["author"] = { _tag: "operator" },
+  recipientId: EntryPreview["recipientId"] = null,
 ): EntryPreview {
-  return { entryId: EntryId.make(`p${++next}`), kind, author, text, createdAt: at(createdAt) };
+  return {
+    entryId: EntryId.make(`p${++next}`),
+    kind,
+    author,
+    text,
+    recipientId,
+    createdAt: at(createdAt),
+  };
 }
 
 export function bot(

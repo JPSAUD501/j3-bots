@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
 import { type BotId, MAX_ATTACHMENT_NAME_LENGTH, MAX_ATTACHMENT_SIZE } from "@j3-bots/contracts";
+import type { SessionId, TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import { NO_TURN_REFUSAL } from "@j3-bots/prompts";
 import * as Effect from "effect/Effect";
@@ -21,6 +22,7 @@ import {
   awaitEntry,
   chainLimits,
   command,
+  concurrentTurns,
   conversation,
   createBot,
   deliveryIs,
@@ -42,6 +44,7 @@ import { BotTools } from "../tools/BotTools.ts";
 import type { ToolCallResponse } from "../tools/protocol.ts";
 import { BotStates } from "./BotStates.ts";
 import { Cards } from "./Cards.ts";
+import { Pipeline } from "./Pipeline.ts";
 import { Stops } from "./Stops.ts";
 
 /** What the bot said in its conversation, oldest first. */
@@ -527,16 +530,52 @@ const handoffs = (botId: BotId) =>
     ),
   );
 
-/** How many teammate wakes and held teammate messages were written for the bot. */
+/** How many teammate wakes and held teammate messages the bot has, cancelled ones left out. */
 const teammateMessagesFor = (botId: BotId) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const [row] = yield* sql<{ readonly wakes: number; readonly held: number }>`
       SELECT
-        (SELECT COUNT(*) FROM wakes WHERE bot_id = ${botId} AND kind = 'bot') AS wakes,
+        (
+          SELECT COUNT(*) FROM wakes
+          WHERE bot_id = ${botId} AND kind = 'bot' AND status <> 'cancelled'
+        ) AS wakes,
         (SELECT COUNT(*) FROM held_messages WHERE recipient_bot_id = ${botId}) AS held
     `.pipe(Effect.orDie);
     return { wakes: row?.wakes ?? 0, held: row?.held ?? 0 };
+  });
+
+/** Whether each teammate message the bot's conversation shows failed, oldest first. */
+const handoffsFailed = (botId: BotId) =>
+  conversation(botId).pipe(
+    Effect.map((entries) =>
+      entries.flatMap((entry) => (entry._tag === "handoff" ? [entry.failed] : [])),
+    ),
+  );
+
+/**
+ * The teammate `sender`, in a turn the operator started, sends the bot an
+ * urgent message. That turn goes on running unless `finish`.
+ */
+const wokenBy = (sender: BotId, botId: BotId, text: string, finish = false) =>
+  Effect.gen(function* () {
+    const session = yield* engineSession(sender);
+    yield* sendToBot(sender, "Pass it on.");
+    const turnId = yield* nextTurn(sender);
+    yield* messageTeammate(session, turnId, { to: botId, text, urgent: true });
+    if (finish) yield* finished(sender, session, turnId);
+    return { session, turnId };
+  });
+
+/** The bot's running turn ends, and the server saw it end. */
+const finished = (botId: BotId, sessionId: SessionId, turnId: TurnId) =>
+  Effect.gen(function* () {
+    yield* (yield* TestEngineControl).finishTurn({
+      sessionId,
+      turnId,
+      outcome: { _tag: "completed" },
+    });
+    yield* turnEnded(botId);
   });
 
 /** What a refused call tells the bot; empty for a call that was not refused. */
@@ -619,39 +658,198 @@ it.effect("sends nothing for work the operator stopped", () =>
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
-it.effect("refuses a second teammate in one turn past the fan-out limit, writing nothing", () =>
+it.effect("counts only the teammates a turn brings in without the operator toward fan-out", () =>
   Effect.gen(function* () {
-    const { bot: ana, session, turnId } = yield* working("Tell Bo and Cy.");
+    const ana = yield* createBot("Ana");
+    const anaSession = yield* engineSession(ana.id);
     const bo = yield* createBot("Bo");
     const cy = yield* createBot("Cy");
+    const dee = yield* createBot("Dee");
+    // A turn the operator started may tell anyone.
+    const { session, turnId } = yield* wokenBy(bo.id, ana.id, "Can you check staging?");
+    const told = yield* messageTeammate(session, turnId, {
+      to: cy.id,
+      text: "Ana is checking staging.",
+      urgent: false,
+    });
+    assert.strictEqual(told._tag, "result");
 
+    // Ana's turn answers Bo, which counts for nothing, and brings in one more.
+    const anaTurn = yield* nextTurn(ana.id);
+    for (const [to, text] of [
+      [bo.id, "Staging is fine."],
+      [cy.id, "Staging is fine, Cy."],
+    ] as const) {
+      const reply = yield* messageTeammate(anaSession, anaTurn, { to, text, urgent: false });
+      assert.strictEqual(reply._tag, "result");
+    }
+    const refused = yield* messageTeammate(anaSession, anaTurn, {
+      to: dee.id,
+      text: "Staging is fine, Dee.",
+      urgent: false,
+    });
+    assert.include(refusal(refused), "at most 1 teammate besides those whose messages it answers");
+
+    assert.deepStrictEqual(yield* handoffs(dee.id), []);
+    assert.deepStrictEqual(yield* teammateMessagesFor(dee.id), { wakes: 0, held: 0 });
+    assert.deepStrictEqual(yield* teammateMessagesFor(cy.id), { wakes: 0, held: 2 });
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("counts the hops of a held message the turn delivers", () =>
+  Effect.gen(function* () {
+    yield* chainLimits({ hops: 2, fanOut: 1 });
+    yield* concurrentTurns(4);
+    const ana = yield* createBot("Ana");
+    const anaSession = yield* engineSession(ana.id);
+    const bo = yield* createBot("Bo");
+    const cy = yield* createBot("Cy");
+    const cySession = yield* engineSession(cy.id);
+    const dee = yield* createBot("Dee");
+    // Bo, in the operator's turn, wakes Cy (hop 1), whose turn leaves Ana a held message (hop 2).
+    yield* wokenBy(bo.id, cy.id, "Tell Ana the venue moved.", true);
+    const cyTurn = yield* nextTurn(cy.id);
+    yield* messageTeammate(cySession, cyTurn, {
+      to: ana.id,
+      text: "The venue moved.",
+      urgent: false,
+    });
+    yield* finished(cy.id, cySession, cyTurn);
+    // Dee, in the operator's turn, wakes Ana (hop 1); that turn also carries the held message.
+    yield* wokenBy(dee.id, ana.id, "Which venue?");
+    const anaTurn = yield* nextTurn(ana.id);
+    assert.strictEqual(yield* timesSent(anaSession, "The venue moved."), 1);
+
+    const reply = yield* messageTeammate(anaSession, anaTurn, {
+      to: dee.id,
+      text: "The new one.",
+      urgent: false,
+    });
+    assert.include(refusal(reply), "reached your user's limit of 2");
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("starts the chain again once the engine took the operator's steer", () =>
+  Effect.gen(function* () {
+    yield* chainLimits({ hops: 1, fanOut: 1 });
+    const ana = yield* createBot("Ana");
+    const bo = yield* createBot("Bo");
+    const boSession = yield* engineSession(bo.id);
+    yield* wokenBy(ana.id, bo.id, "The date?");
+    const boTurn = yield* nextTurn(bo.id);
+    const refused = yield* messageTeammate(boSession, boTurn, {
+      to: ana.id,
+      text: "Friday.",
+      urgent: false,
+    });
+    assert.include(refusal(refused), "reached your user's limit of 1");
+
+    // The operator steers Bo's running turn.
+    yield* sendToBot(bo.id, "Tell Ana it is Friday.");
+    yield* flushed(bo.id);
+    const reply = yield* messageTeammate(boSession, boTurn, {
+      to: ana.id,
+      text: "It is Friday.",
+      urgent: false,
+    });
+    assert.strictEqual(reply._tag, "result");
+    assert.deepStrictEqual(yield* teammateMessagesFor(ana.id), { wakes: 0, held: 1 });
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("cancels what a stopped bot's work sent a teammate that has not reached them", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const { bot: ana, session, turnId } = yield* working("Ask Bo to deploy.");
+    const bo = yield* createBot("Bo");
+    const boSession = yield* engineSession(bo.id);
+    // Bo is busy, so the urgent message waits for its turn to end.
+    yield* sendToBot(bo.id, "Check the logs.");
+    const boTurn = yield* nextTurn(bo.id);
+    yield* messageTeammate(session, turnId, { to: bo.id, text: "Deploy now.", urgent: true });
     yield* messageTeammate(session, turnId, {
       to: bo.id,
-      text: "The launch moved.",
+      text: "Staging is down.",
       urgent: false,
     });
-    const refused = yield* messageTeammate(session, turnId, {
-      to: cy.id,
-      text: "The launch moved.",
-      urgent: false,
-    });
-    assert.include(refusal(refused), "at most 1 teammate");
-    // The same teammate again is no wider.
-    const again = yield* messageTeammate(session, turnId, {
-      to: bo.id,
-      text: "To Friday.",
-      urgent: false,
-    });
-    assert.strictEqual(again._tag, "result");
 
-    assert.deepStrictEqual(yield* handoffs(ana.id), [
-      "sent: The launch moved.",
-      "sent: To Friday.",
-    ]);
-    assert.deepStrictEqual(yield* handoffs(cy.id), []);
-    assert.deepStrictEqual(yield* teammateMessagesFor(cy.id), { wakes: 0, held: 0 });
-    assert.deepStrictEqual(yield* teammateMessagesFor(bo.id), { wakes: 0, held: 2 });
+    yield* (yield* Stops).stopBot({ commandId: command(), botId: ana.id });
+    assert.deepStrictEqual(yield* teammateMessagesFor(bo.id), { wakes: 0, held: 0 });
+
+    // Bo's next turn carries neither.
+    yield* control.finishTurn({
+      sessionId: boSession,
+      turnId: boTurn,
+      outcome: { _tag: "completed" },
+    });
+    yield* turnEnded(bo.id);
+    yield* sendToBot(bo.id, "Anything else?");
+    yield* nextTurn(bo.id, boTurn);
+    for (const text of ["Deploy now.", "Staging is down."]) {
+      assert.strictEqual(yield* timesSent(boSession, text), 0);
+    }
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("sends nothing from a turn the engine started once a Stop is recorded during it", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const ana = yield* createBot("Ana");
+    const session = yield* engineSession(ana.id);
+    const bo = yield* createBot("Bo");
+    const turnId = yield* control.startEngineTurn(session);
+    yield* nextTurn(ana.id);
+    const sent = yield* messageTeammate(session, turnId, {
+      to: bo.id,
+      text: "The build passed.",
+      urgent: false,
+    });
+    assert.strictEqual(sent._tag, "result");
+
+    // The Stop is recorded; its round has not reached the engine yet.
+    const gate = yield* holdGate(ana.id);
+    yield* (yield* Stops).stopBot({ commandId: command(), botId: ana.id });
+    const reply = yield* messageTeammate(session, turnId, {
+      to: bo.id,
+      text: "Deploy it.",
+      urgent: true,
+    });
+    assert.include(refusal(reply), "Your user stopped this work");
+    yield* gate.release;
+    assert.deepStrictEqual(yield* handoffs(bo.id), ["received: The build passed."]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "shows an urgent message that never reached the teammate, and sends it again on retry",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const { bot: ana, session, turnId } = yield* working("Ask Bo for the date.");
+      const bo = yield* createBot("Bo");
+      const boSession = yield* engineSession(bo.id);
+      // The engine refuses the envelope that carries it.
+      yield* control.rejectNextDispatch;
+      const reply = yield* messageTeammate(session, turnId, {
+        to: bo.id,
+        text: "The date?",
+        urgent: true,
+      });
+      const notice = yield* awaitEntry(bo.id, "notice");
+      assert.deepStrictEqual(notice.notice, { _tag: "handoff-failed", senders: [ana.id] });
+      assert.isTrue(notice.retryable);
+      assert.deepStrictEqual(yield* handoffsFailed(ana.id), [true]);
+      assert.deepStrictEqual(yield* handoffsFailed(bo.id), [true]);
+      // The bot's own call keeps the answer it had.
+      assert.strictEqual(reply._tag, "result");
+
+      yield* (yield* Pipeline).retryNotice({ commandId: command(), entryId: notice.id });
+      yield* nextTurn(bo.id);
+      assert.strictEqual(yield* timesSent(boSession, "The date?"), 1);
+      assert.deepStrictEqual(yield* handoffsFailed(ana.id), [false]);
+      assert.deepStrictEqual(yield* handoffsFailed(bo.id), [false]);
+      assert.isFalse((yield* awaitEntry(bo.id, "notice")).retryable);
+    }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect(

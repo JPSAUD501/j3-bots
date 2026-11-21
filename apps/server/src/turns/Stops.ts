@@ -204,6 +204,36 @@ export const layer = Layer.effect(
             VALUES (${stopId}, ${sessionId}, 0, ${stopKey(stopId, sessionId, 0)})
           `;
         }
+        // The turns it reaches: their work is covered, also a turn no
+        // dispatch began, which the dispatch mark cannot tell.
+        if (sessionIds.length > 0) {
+          yield* sql`
+            UPDATE turns SET stop_id = ${stopId}
+            WHERE finished_at IS NULL AND ${sql.in("session_id", sessionIds)} AND ${inScope(scope)}
+          `;
+        }
+        // What the bot's work in scope sent its teammates is covered with it:
+        // a message not delivered yet is cancelled below, and wherever it
+        // would wait again (`Ledger`).
+        yield* sql`
+          UPDATE handoffs SET stop_id = ${stopId}
+          WHERE tool_call_id IN (
+            SELECT id FROM tool_calls
+            WHERE session_id IN (SELECT id FROM sessions WHERE bot_id = ${botId})
+              AND ${inScope(scope)}
+          )
+        `;
+        const unsent = yield* sql<{ readonly id: string }>`
+          SELECT w.id FROM wakes w JOIN handoffs h ON h.received_entry_id = w.source_entry_id
+          WHERE w.status = 'pending' AND w.kind = 'bot' AND h.stop_id = ${stopId}
+        `;
+        yield* ledger.cancelWakes(unsent.map((wake) => wake.id));
+        yield* sql`
+          DELETE FROM held_messages
+          WHERE consumed_dispatch_id IS NULL AND handoff_entry_id IN (
+            SELECT received_entry_id FROM handoffs WHERE stop_id = ${stopId}
+          )
+        `;
         const fenced = yield* SqlSchema.findAll({
           Request: Schema.Void,
           Result: Fenced,

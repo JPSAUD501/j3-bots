@@ -13,6 +13,7 @@ import {
   WorkStepId,
   type ApprovalEntry,
   type Author,
+  type BotId,
   type BotState,
   type HandoffEntry,
   type MessageEntry,
@@ -460,6 +461,12 @@ export function galleryVariants(now: DateTime.Utc) {
     notice("notice-provider", { _tag: "turn-failed", failure: "provider-error" }, true),
     notice("notice-session", { _tag: "turn-failed", failure: "session-lost" }),
     notice("notice-undelivered", { _tag: "undelivered" }, true),
+    notice("notice-handoff-failed", { _tag: "handoff-failed", senders: [ids.wren] }, true),
+    notice(
+      "notice-handoffs-failed",
+      { _tag: "handoff-failed", senders: [ids.wren, ids.atlas] },
+      true,
+    ),
     notice("notice-hops", { _tag: "chain-stopped", limit: "hops" }),
     notice("notice-fanout", { _tag: "chain-stopped", limit: "fan-out" }),
     notice("notice-waiting", { _tag: "waiting-in-conversation", botId: ids.juniper }),
@@ -474,31 +481,43 @@ export function galleryVariants(now: DateTime.Utc) {
     }),
   ];
 
+  const handoff = (
+    name: string,
+    from: BotId,
+    to: BotId,
+    fields: Pick<HandoffEntry, "direction" | "text" | "urgent" | "failed">,
+  ): HandoffEntry => ({
+    _tag: "handoff",
+    ...base(name),
+    author: { _tag: "bot", botId: from },
+    recipientId: to,
+    ...fields,
+  });
   const handoffs: ReadonlyArray<HandoffEntry> = [
-    {
-      _tag: "handoff",
-      ...base("handoff"),
-      recipientId: ids.wren,
+    handoff("handoff", ids.scout, ids.wren, {
       direction: "sent",
       text: "Can you shorten the newsletter’s opening to three sentences?",
       urgent: false,
-    },
-    {
-      _tag: "handoff",
-      ...base("handoff-urgent"),
-      recipientId: ids.atlas,
+      failed: false,
+    }),
+    handoff("handoff-urgent", ids.scout, ids.atlas, {
       direction: "sent",
       text: "The billing API on staging is still read-only ten minutes after the migration. Please look now.",
       urgent: true,
-    },
-    {
-      _tag: "handoff",
-      ...base("handoff-received", { _tag: "bot", botId: ids.wren }),
-      recipientId: ids.scout,
+      failed: false,
+    }),
+    handoff("handoff-received", ids.wren, ids.scout, {
       direction: "received",
-      text: "Which of the three bikes should the test ride be on?",
+      text: "Which of the three bikes should the test ride be on? The shop has the gravel bike in a medium, the city bike in a large, and the folding one only on Saturday afternoon, so if the ride has to be in the morning the folding one is out.",
       urgent: false,
-    },
+      failed: false,
+    }),
+    handoff("handoff-failed", ids.scout, ids.atlas, {
+      direction: "sent",
+      text: "Please roll back the staging migration before the demo.",
+      urgent: true,
+      failed: true,
+    }),
   ];
 
   const change = (

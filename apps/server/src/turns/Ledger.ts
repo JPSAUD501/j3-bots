@@ -211,7 +211,11 @@ export class Ledger extends Context.Service<
     readonly undeliveredRetryable: (dispatchId: DispatchRowId) => Effect.Effect<boolean>;
     /** Pending wakes stop waiting: a Stop or an archival ended what they asked for. */
     readonly cancelWakes: (wakeIds: ReadonlyArray<string>) => Effect.Effect<void>;
-    /** Shows the delivery of each message the wakes came from, as their wakes now stand. */
+    /**
+     * Shows the delivery of each message the wakes came from, as their wakes
+     * now stand: an operator's message, or whether a teammate's urgent one
+     * failed, on both its cards.
+     */
     readonly refreshMessages: (entryIds: ReadonlyArray<EntryId>) => Effect.Effect<void>;
   }
 >()("@j3-bots/server/turns/Ledger") {}
@@ -297,16 +301,44 @@ export const layer = Layer.effect(
       return { _tag: "pending" };
     };
 
+    const sentCardRow = SqlSchema.findOneOption({
+      Request: EntryId,
+      Result: Schema.Struct({ sent_entry_id: Schema.NullOr(EntryId) }),
+      execute: (received) => sql`
+        SELECT sent_entry_id FROM handoffs WHERE received_entry_id = ${received}
+      `,
+    });
+
+    /** The sender's card of the teammate message whose received card this is. */
+    const sentCardOf = Effect.fn("Ledger.sentCardOf")(function* (received: EntryId) {
+      const row = yield* sentCardRow(received);
+      if (Option.isNone(row) || row.value.sent_entry_id === null) return null;
+      const found = yield* entries.find(row.value.sent_entry_id);
+      return Option.isSome(found) && found.value.entry._tag === "handoff"
+        ? found.value.entry
+        : null;
+    }, Effect.orDie);
+
     const refreshMessages = Effect.fn("Ledger.refreshMessages")(function* (
       entryIds: ReadonlyArray<EntryId>,
     ) {
       for (const entryId of new Set(entryIds)) {
         const found = yield* entries.find(entryId);
-        if (Option.isNone(found) || found.value.entry._tag !== "message") continue;
-        const message = found.value.entry;
+        if (Option.isNone(found)) continue;
+        const shown = found.value.entry;
+        if (shown._tag !== "message" && shown._tag !== "handoff") continue;
         const delivery = deliveryOf(yield* deliveryRows(entryId).pipe(Effect.orDie));
-        if (delivery === undefined || sameDelivery(delivery, message.delivery)) continue;
-        yield* entries.update({ ...message, delivery });
+        if (delivery === undefined) continue;
+        if (shown._tag === "message") {
+          if (!sameDelivery(delivery, shown.delivery))
+            yield* entries.update({ ...shown, delivery });
+          continue;
+        }
+        // A teammate's urgent message: its wakes name the received card.
+        const failed = delivery._tag === "failed";
+        for (const card of [shown, yield* sentCardOf(shown.id)]) {
+          if (card !== null && card.failed !== failed) yield* entries.update({ ...card, failed });
+        }
       }
     });
 
@@ -320,7 +352,7 @@ export const layer = Layer.effect(
             SELECT 1 FROM wakes w
             WHERE w.dispatch_id = d.id AND w.status = 'failed'
               AND (
-                json_extract(w.payload_json, '$._tag') = 'answer'
+                json_extract(w.payload_json, '$._tag') IN ('answer', 'teammate')
                 OR (
                   json_extract(w.payload_json, '$._tag') = 'first-run'
                   AND NOT ${operatorWroteSql(sql, sql.literal("w.bot_id"))}
@@ -378,12 +410,48 @@ export const layer = Layer.effect(
       `,
     });
 
+    /**
+     * The failure notice of a teammate's urgent messages, in the recipient's
+     * conversation, naming each sender: `null` when the wakes carry none.
+     */
+    const handoffNotice = Effect.fn("Ledger.handoffNotice")(function* (
+      wakes: ReadonlyArray<typeof FailedWake.Type>,
+    ) {
+      const senders: Array<BotId> = [];
+      for (const wake of wakes) {
+        if (wake.payload_json._tag !== "teammate") continue;
+        const card = yield* entries.find(wake.payload_json.entryId);
+        if (Option.isNone(card) || card.value.entry._tag !== "handoff") continue;
+        const sender = card.value.entry.author.botId;
+        if (!senders.includes(sender)) senders.push(sender);
+      }
+      const [first, ...rest] = senders;
+      return first === undefined
+        ? null
+        : ({ _tag: "handoff-failed", senders: [first, ...rest] } satisfies Notice);
+    });
+
+    /**
+     * Wakes of the dispatch that a teammate's Stopped work caused are
+     * cancelled instead of waiting again or failing: the Stop that covered
+     * the sender's work covers what it sent (`Stops.record`).
+     */
+    const cancelStoppedHandoffs = (dispatchId: DispatchRowId, at: string) =>
+      sql`
+        UPDATE wakes SET status = 'cancelled', failure_reason = NULL, updated_at = ${at}
+        WHERE dispatch_id = ${dispatchId} AND status IN ('dispatched', 'failed')
+          AND source_entry_id IN (
+            SELECT received_entry_id FROM handoffs WHERE stop_id IS NOT NULL
+          )
+      `;
+
     const setWakes = Effect.fn("Ledger.setWakes")(function* (
       dispatchId: DispatchRowId,
       after: WakesAfter,
     ) {
       const at = yield* now;
       const sources = yield* sourcesOf(dispatchId);
+      if (after._tag !== "cancelled") yield* cancelStoppedHandoffs(dispatchId, at);
       switch (after._tag) {
         case "pending":
           yield* sql`
@@ -402,15 +470,21 @@ export const layer = Layer.effect(
           // Wakes the dispatch failed with before, when the engine took it
           // late, fail again with this reason.
           const failed = yield* failedWakes({ dispatchId, reason: after.reason, at });
-          // An answer, or a new bot's opening, has no message of its own to
-          // show its failure on: a retryable notice does, where it was for.
-          // One that failed before keeps the notice it has, which now shows
-          // this failure.
+          // An answer, a new bot's opening, or a teammate's urgent message
+          // has no message of the operator's to show its failure on: a
+          // retryable notice does, where it was for. One that failed before
+          // keeps the notice it has, which now shows this failure.
           const unshown = failed.find(
-            (wake) => wake.payload_json._tag === "answer" || wake.payload_json._tag === "first-run",
+            (wake) =>
+              wake.payload_json._tag === "answer" ||
+              wake.payload_json._tag === "first-run" ||
+              wake.payload_json._tag === "teammate",
           );
           if (unshown !== undefined) {
-            const notice: Notice = { _tag: "turn-failed", failure: unshownFailure[after.reason] };
+            const notice: Notice = (yield* handoffNotice(failed)) ?? {
+              _tag: "turn-failed",
+              failure: unshownFailure[after.reason],
+            };
             const shown = yield* undeliveredNotices(dispatchId);
             if (shown.length === 0) {
               yield* notify(unshown.bot_id, audienceOf(unshown), notice, {
@@ -453,6 +527,13 @@ export const layer = Layer.effect(
         WHERE consumed_dispatch_id = ${dispatchId} AND ${fromBeforeFreshStartSql(sql)}
       `;
       yield* sql`UPDATE catch_up_notes SET consumed_dispatch_id = NULL WHERE consumed_dispatch_id = ${dispatchId}`;
+      // A message whose sender's work a Stop covered since waits no more.
+      yield* sql`
+        DELETE FROM held_messages
+        WHERE consumed_dispatch_id = ${dispatchId} AND handoff_entry_id IN (
+          SELECT received_entry_id FROM handoffs WHERE stop_id IS NOT NULL
+        )
+      `;
       yield* sql`UPDATE held_messages SET consumed_dispatch_id = NULL WHERE consumed_dispatch_id = ${dispatchId}`;
     }, Effect.orDie);
 

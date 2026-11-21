@@ -103,17 +103,17 @@ const StoredResult = Schema.Struct({ result_json: json(Schema.Json) });
  * commits its notice: stored as the request's result like any other, so a
  * replayed forward refuses the same way.
  */
-const StoredRefusal = Schema.Struct({ refused: Schema.String });
+const StoredRefusal = Schema.TaggedStruct("refused", { reason: Schema.String });
 const storedRefusal = Schema.decodeUnknownOption(StoredRefusal);
 
 /** The answer a stored result gives the bot: a refusal fails, anything else is the result. */
 const answer = (result: Schema.Json) =>
   Option.match(storedRefusal(result), {
     onNone: () => Effect.succeed(result),
-    onSome: ({ refused }) => Effect.fail(new TurnToolRefused({ reason: refused })),
+    onSome: ({ reason }) => Effect.fail(new TurnToolRefused({ reason })),
   });
 
-const Hops = Schema.Struct({ operator: Schema.BooleanFromBit, furthest: Schema.Int });
+const Carried = Schema.Struct({ operator: Schema.BooleanFromBit, furthest: Schema.Int });
 
 /** A request as its stored result is looked up: under its id, for its caller and its tool. */
 const RequestKey = Schema.Struct({
@@ -369,28 +369,26 @@ export const layer = Layer.effect(
     const deliveredBy = (found: Pin) =>
       turnDispatches({ sessionId: found.sessionId, turnId: found.turnId }).pipe(Effect.orDie);
 
+    /** The dispatches the pinned turn delivers, as a subquery. */
+    const deliveredSql = (found: Pin) => sql`
+      SELECT id FROM dispatches
+      WHERE session_id = ${found.sessionId} AND engine_turn_id = ${found.turnId}
+        AND status IN ('accepted', 'delivered')
+    `;
+
     /**
-     * The hop count of a wake the pinned turn causes (`docs/architecture/server.md`,
-     * Budgets): 1 when the turn carries the operator's word, as a wake or a
-     * steer, so the chain starts again whenever they speak; otherwise one more
-     * than the furthest wake or held message the turn delivers. A turn the
-     * engine started on its own, for background work that finished, carries
-     * none of either and counts as 1, until such a turn is tied to the turn
-     * whose work woke it.
+     * What the pinned turn carries that budgets count: whether the operator's
+     * word, as a wake or a steer the engine accepted, and the furthest hop
+     * count of the wakes and held messages it delivers.
      */
-    const nextHops = (found: Pin) =>
+    const carriedBy = (found: Pin) =>
       SqlSchema.findAll({
-        Request: Schema.Struct({ sessionId: SessionRowId, turnId: TurnId }),
-        Result: Hops,
-        execute: ({ sessionId, turnId }) => sql`
-          WITH delivered AS (
-            SELECT id FROM dispatches
-            WHERE session_id = ${sessionId} AND engine_turn_id = ${turnId}
-              AND status IN ('accepted', 'delivered')
-          ),
-          carried AS (
+        Request: Schema.Void,
+        Result: Carried,
+        execute: () => sql`
+          WITH carried AS (
             SELECT w.kind, w.hops, w.source_entry_id FROM wakes w
-            WHERE w.dispatch_id IN (SELECT id FROM delivered)
+            WHERE w.dispatch_id IN (${deliveredSql(found)})
           )
           SELECT
             EXISTS (
@@ -404,44 +402,80 @@ export const layer = Layer.effect(
               COALESCE((SELECT MAX(hops) FROM carried), 0),
               COALESCE((
                 SELECT MAX(hops) FROM held_messages
-                WHERE consumed_dispatch_id IN (SELECT id FROM delivered)
+                WHERE consumed_dispatch_id IN (${deliveredSql(found)})
               ), 0)
             ) AS furthest
         `,
-      })({ sessionId: found.sessionId, turnId: found.turnId }).pipe(
+      })(undefined).pipe(
         Effect.orDie,
-        Effect.map(([row]) => (row === undefined || row.operator ? 1 : row.furthest + 1)),
+        Effect.map(([row]) => row ?? { operator: false, furthest: 0 }),
       );
 
     /**
-     * The dispatch that began the pinned turn's work, which decides whether a
-     * Stop covers it: the first one written of those the turn delivers.
-     * `null` for a turn the engine started on its own.
+     * The hop count of a wake the pinned turn causes (`docs/architecture/server.md`,
+     * Budgets): 1 when the turn carries the operator's word, as a wake or a
+     * steer, so the chain starts again whenever they speak; otherwise one more
+     * than the furthest wake or held message the turn delivers. A turn the
+     * engine started on its own, for background work that finished, carries
+     * none of either and counts as 1, until such a turn is tied to the turn
+     * whose work woke it.
      */
-    const workOf = (found: Pin) =>
+    const hopsOf = (carried: typeof Carried.Type) => (carried.operator ? 1 : carried.furthest + 1);
+
+    /** The teammates whose messages the pinned turn delivers: its `bot` wakes and held messages. */
+    const sendersCarried = (found: Pin) =>
       SqlSchema.findAll({
-        Request: Schema.Struct({ sessionId: SessionRowId, turnId: TurnId }),
-        Result: Schema.Struct({ seq: Schema.NullOr(DispatchSeq) }),
-        execute: ({ sessionId, turnId }) => sql`
-          SELECT MIN(seq) AS seq FROM dispatches
-          WHERE session_id = ${sessionId} AND engine_turn_id = ${turnId}
+        Request: Schema.Void,
+        Result: Schema.Struct({ sender: BotId }),
+        execute: () => sql`
+          SELECT e.author_bot_id AS sender FROM wakes w JOIN entries e ON e.id = w.source_entry_id
+          WHERE w.kind = 'bot' AND w.dispatch_id IN (${deliveredSql(found)})
+          UNION
+          SELECT sender_bot_id AS sender FROM held_messages
+          WHERE consumed_dispatch_id IN (${deliveredSql(found)})
         `,
-      })({ sessionId: found.sessionId, turnId: found.turnId }).pipe(
+      })(undefined).pipe(
         Effect.orDie,
-        Effect.map(([row]) => row?.seq ?? null),
+        Effect.map((rows) => rows.map((row) => row.sender)),
       );
+
+    /**
+     * Whether a Stop covers the pinned turn's work: one recorded while the
+     * turn ran, or after the dispatch that began its work was written. A turn
+     * the engine started on its own has no such dispatch, so only the first
+     * counts for it.
+     */
+    const workStopped = Effect.fn("Speech.workStopped")(function* (found: Pin) {
+      const [turn] = yield* SqlSchema.findAll({
+        Request: Schema.Void,
+        Result: Schema.Struct({ stopped: Schema.BooleanFromBit, seq: Schema.NullOr(DispatchSeq) }),
+        execute: () => sql`
+          SELECT t.stop_id IS NOT NULL AS stopped, (
+            SELECT MIN(seq) FROM dispatches
+            WHERE session_id = t.session_id AND engine_turn_id = t.engine_turn_id
+          ) AS seq
+          FROM turns t
+          WHERE t.session_id = ${found.sessionId} AND t.engine_turn_id = ${found.turnId}
+        `,
+      })(undefined).pipe(Effect.orDie);
+      if (turn === undefined) return { stopped: false, seq: null };
+      const stopped =
+        turn.stopped ||
+        (turn.seq !== null && (yield* stops.covers(found.botId, found.audience, turn.seq)));
+      return { stopped, seq: turn.seq };
+    });
 
     /** The teammates the pinned turn has messaged, each once. */
     const messagedBy = (found: Pin) =>
       SqlSchema.findAll({
-        Request: Schema.Struct({ sessionId: SessionRowId, turnId: TurnId }),
+        Request: Schema.Void,
         Result: Schema.Struct({ recipient_bot_id: BotId }),
-        execute: ({ sessionId, turnId }) => sql`
-          SELECT DISTINCT recipient_bot_id FROM tool_calls
-          WHERE session_id = ${sessionId} AND engine_turn_id = ${turnId}
-            AND tool = 'message_bot' AND recipient_bot_id IS NOT NULL
+        execute: () => sql`
+          SELECT DISTINCT h.recipient_bot_id FROM handoffs h
+          JOIN tool_calls c ON c.id = h.tool_call_id
+          WHERE c.session_id = ${found.sessionId} AND c.engine_turn_id = ${found.turnId}
         `,
-      })({ sessionId: found.sessionId, turnId: found.turnId }).pipe(
+      })(undefined).pipe(
         Effect.orDie,
         Effect.map((rows) => rows.map((row) => row.recipient_bot_id)),
       );
@@ -451,7 +485,7 @@ export const layer = Layer.effect(
       sql`
         SELECT 1 FROM tool_calls
         WHERE session_id = ${found.sessionId} AND engine_turn_id = ${found.turnId}
-          AND tool = 'message_bot' AND json_extract(result_json, '$.refused') IS NOT NULL
+          AND tool = 'message_bot' AND json_extract(result_json, '$._tag') = 'refused'
       `.pipe(
         Effect.orDie,
         Effect.map((rows) => rows.length > 0),
@@ -591,7 +625,7 @@ export const layer = Layer.effect(
                 roomId: target.roomId,
                 botId: found.botId,
                 message: entry,
-                hops: yield* nextHops(found),
+                hops: hopsOf(yield* carriedBy(found)),
               });
             }
             if (input.done === true) {
@@ -703,18 +737,29 @@ export const layer = Layer.effect(
               `No teammate has the id ${input.to}; they may have been deleted. Nothing was sent. \`list_teammates\` shows your teammates now.`,
             );
           }
-          const seq = yield* workOf(found);
-          if (seq !== null && (yield* stops.covers(found.botId, found.audience, seq))) {
+          const work = yield* workStopped(found);
+          if (work.stopped) {
             return yield* refuse("Your user stopped this work, so nothing was sent.");
           }
           const { budgets } = yield* settings.get;
-          const messaged = yield* messagedBy(found);
-          if (!messaged.includes(recipientId) && messaged.length >= budgets.fanOut) {
-            return yield* refuse(
-              `Nothing was sent: your user allows one turn to message at most ${budgets.fanOut} ${budgets.fanOut === 1 ? "teammate" : "teammates"}, and this turn already has. If someone else needs to know, tell your user.`,
-            );
+          const carried = yield* carriedBy(found);
+          // Fan-out counts the teammates the turn brings in: not when the
+          // operator spoke in it, and not a teammate whose message it answers.
+          if (!carried.operator) {
+            const answered = yield* sendersCarried(found);
+            const messaged = yield* messagedBy(found);
+            const added = messaged.filter((id) => !answered.includes(id));
+            if (
+              !messaged.includes(recipientId) &&
+              !answered.includes(recipientId) &&
+              added.length >= budgets.fanOut
+            ) {
+              return yield* refuse(
+                `Nothing was sent: unless your user spoke in this turn, it may bring in at most ${budgets.fanOut} ${budgets.fanOut === 1 ? "teammate" : "teammates"} besides those whose messages it answers, and it already has. If someone else needs to know, tell your user.`,
+              );
+            }
           }
-          const hops = yield* nextHops(found);
+          const hops = hopsOf(carried);
           if (hops > budgets.hops) {
             if (!(yield* chainStopped(found))) {
               yield* notify(
@@ -725,8 +770,9 @@ export const layer = Layer.effect(
               );
             }
             return {
-              refused: `Nothing was sent: this chain of messages between bots reached your user's limit of ${budgets.hops} since they last spoke. Do not try again. If your user is waiting on it, tell them with \`say\`.`,
-            } satisfies Schema.Json;
+              _tag: "refused",
+              reason: `Nothing was sent: this chain of messages between bots reached your user's limit of ${budgets.hops} since they last spoke. Do not try again. If your user is waiting on it, tell them with \`say\`.`,
+            } satisfies typeof StoredRefusal.Type;
           }
           const card = (target: EntryTarget, direction: "sent" | "received") =>
             entries.append({
@@ -738,10 +784,15 @@ export const layer = Layer.effect(
                 direction,
                 text: input.text,
                 urgent: input.urgent,
+                failed: false,
               },
             });
-          yield* card({ _tag: "conversation", botId: found.botId }, "sent");
+          const sent = yield* card({ _tag: "conversation", botId: found.botId }, "sent");
           const received = yield* card({ _tag: "conversation", botId: recipientId }, "received");
+          yield* sql`
+            INSERT INTO handoffs (tool_call_id, recipient_bot_id, sent_entry_id, received_entry_id)
+            VALUES (${found.requestId}, ${recipientId}, ${sent.id}, ${received.id})
+          `.pipe(Effect.orDie);
           if (input.urgent) {
             yield* wakes.record([
               {
@@ -749,10 +800,15 @@ export const layer = Layer.effect(
                 kind: "bot",
                 audience: conversation,
                 payload: { _tag: "teammate", entryId: received.id },
-                sourceEntryId: null,
+                sourceEntryId: received.id,
                 hops,
                 retryOf: null,
-                cause: { _tag: "teammate", senderId: found.botId, audience: found.audience, seq },
+                cause: {
+                  _tag: "teammate",
+                  senderId: found.botId,
+                  audience: found.audience,
+                  seq: work.seq,
+                },
               },
             ]);
           } else {
@@ -765,9 +821,6 @@ export const layer = Layer.effect(
               )
             `.pipe(Effect.orDie);
           }
-          yield* sql`
-            UPDATE tool_calls SET recipient_bot_id = ${recipientId} WHERE id = ${found.requestId}
-          `.pipe(Effect.orDie);
           return (
             input.urgent
               ? { status: "sent", note: "It wakes them now." }

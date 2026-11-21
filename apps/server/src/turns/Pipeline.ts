@@ -562,12 +562,15 @@ export const layer = Layer.effect(
           }
           // A failed wake is retried as such, so its message shows the retry;
           // one a message retry already sent again is not sent a third time.
-          // A failed opening is the operator's to retry too: it has no message.
+          // A failed opening, or a teammate's urgent message, is the
+          // operator's to retry too: neither has a message of theirs.
           yield* wakes.record(
             sent
               .filter(
                 (wake) =>
-                  (wake.kind === "user" || wake.payload_json._tag === "first-run") &&
+                  (wake.kind === "user" ||
+                    wake.payload_json._tag === "first-run" ||
+                    wake.payload_json._tag === "teammate") &&
                   !retried.has(wake.id),
               )
               .map((wake) => ({
@@ -875,7 +878,6 @@ export const layer = Layer.effect(
       const found = yield* entries.find(entryId);
       if (Option.isNone(found) || found.value.entry._tag !== "handoff") return null;
       const card = found.value.entry;
-      if (card.author._tag !== "bot") return null;
       return {
         from: yield* teammateRef(card.author.botId),
         at: card.createdAt,

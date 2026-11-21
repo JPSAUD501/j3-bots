@@ -45,7 +45,9 @@ export const en = {
   "summary.askedSecret": "Asked for a credential: {label}",
   "summary.workFold": "Did some work",
   "summary.notice": "Left a notice",
-  "summary.handoff": "Passed to a teammate: {text}",
+  "summary.handoffTo": "To {name}: {text}",
+  "summary.handoffSent": "To a teammate: {text}",
+  "summary.handoffFrom": "From {name}: {text}",
   "summary.routine": "Routine: {name}",
   "summary.routineChanged": "Changed a routine",
 
@@ -157,15 +159,18 @@ export const en = {
     "Its new settings apply once its background work ends, and messages wait until then. Stop it to apply them now.",
   "notice.observationFailed":
     "Couldn’t keep up with this bot’s work. What shows here may be behind.",
+  "notice.handoffFailed": "{name}’s message didn’t arrive",
+  "notice.handoffsFailed": "Messages from {names} didn’t arrive",
   "notice.tooLong": "Something meant for this bot was too long to pass on, so it was left out.",
   "notice.routinePaused":
     "{name} was paused: its schedule couldn’t be read. Edit it to turn it back on.",
   "notice.retry": "Try again",
   "notice.openConversation": "Open",
 
-  "handoff.asked": "Asked {name}",
-  "handoff.from": "{name} asked",
+  "handoff.to": "To {name}",
+  "handoff.from": "From {name}",
   "handoff.urgent": "Urgent",
+  "handoff.failed": "Not delivered",
 
   "routine.change.created": "Routine created",
   "routine.change.updated": "Routine changed",
