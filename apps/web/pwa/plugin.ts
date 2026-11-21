@@ -60,7 +60,15 @@ export function pwa(): Plugin {
     // After Vite has written index.html into the bundle, so the worker can keep it.
     enforce: "post",
     transformIndexHtml: () => [
-      { tag: "link", attrs: { rel: "manifest", href: "/manifest.webmanifest" }, injectTo: "head" },
+      // With credentials, so an authenticating proxy in front of the server (a
+      // single sign-on gate) lets the browser read the manifest: without them a
+      // browser fetches it with no cookies, gets the sign-in page instead, and
+      // never offers to install the app.
+      {
+        tag: "link",
+        attrs: { rel: "manifest", href: "/manifest.webmanifest", crossorigin: "use-credentials" },
+        injectTo: "head",
+      },
       {
         tag: "link",
         attrs: { rel: "icon", href: "/icon.svg", type: "image/svg+xml" },
