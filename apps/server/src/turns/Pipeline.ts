@@ -27,7 +27,7 @@ import type {
   TeammateRef,
   Wake,
 } from "@j3-bots/prompts";
-import { renderWake } from "@j3-bots/prompts";
+import { renderWake, ROOM_CLOSING_LINES } from "@j3-bots/prompts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -69,7 +69,7 @@ import {
   conversation,
   DispatchRowId,
   PRIORITY,
-  type RoomReason,
+  RoomReason,
   sameAudience,
   SessionRowId,
   TurnsInvariant,
@@ -77,7 +77,7 @@ import {
 } from "./model.ts";
 import { Sender, type SendOwner, type SendResult } from "./Sender.ts";
 import { notices } from "./notices.ts";
-import { isIdle, type SessionWork, sessionWork } from "./sessionWork.ts";
+import { isIdle, sessionWork } from "./sessionWork.ts";
 import { Observer } from "./Observer.ts";
 import { providerLimit } from "./providerLimit.ts";
 import { Readiness } from "./Readiness.ts";
@@ -143,12 +143,19 @@ const longestFitting = (max: number, fits: (count: number) => boolean): number =
  */
 const ROOM_ENTRIES_READ = 200;
 
+/** The reason whose closing line is the longest, for a check of what a room envelope can take. */
+const LONGEST_ROOM_REASON: RoomReason = RoomReason.literals.reduce((longest, reason) =>
+  ROOM_CLOSING_LINES[reason].length > ROOM_CLOSING_LINES[longest].length ? reason : longest,
+);
+
 /** Why a bot is woken for a room, of several coalesced wakes: hosting asks the most of it. */
 const strongestReason = (reasons: ReadonlyArray<RoomReason>): RoomReason =>
   reasons.includes("host") ? "host" : reasons.includes("mentioned") ? "mentioned" : "everyone";
 
 /** The room's queue as planning reads it. */
 const RoomQueue = Schema.Struct({
+  /** The bot is a member of the room. */
+  member: Schema.BooleanFromBit,
   /** A dispatch or turn of the room is live: it runs one turn at a time. */
   busy: Schema.BooleanFromBit,
   /** The bot whose wake for the room goes first, by priority, then as written. */
@@ -430,8 +437,10 @@ export const layer = Layer.effect(
                   sinceLastTurn: [],
                   kind: "room",
                   room: yield* roomHeader(room),
-                  reason: "mentioned",
-                  omitted: 0,
+                  // As long as it can render: the longest closing line,
+                  // and a line counting entries left out.
+                  reason: LONGEST_ROOM_REASON,
+                  omitted: Number.MAX_SAFE_INTEGER,
                   entries: [
                     {
                       author: "user",
@@ -840,57 +849,76 @@ export const layer = Layer.effect(
 
     /**
      * The room's queue: whether a dispatch or turn of it is live, and whose
-     * wake for it goes first. Read from durable rows, never a flag kept aside.
+     * wake for it goes first among its members. Read from durable rows, never
+     * a flag kept aside. A dispatch whose turn waits on a usage limit's reset
+     * holds the room no more: its continuation is its own bot's, which takes
+     * no automated wake until then, and the operator's word drops it.
      */
     const roomQueue = SqlSchema.findOne({
-      Request: RoomId,
+      Request: Schema.Struct({ roomId: RoomId, botId: BotId }),
       Result: RoomQueue,
-      execute: (roomId) => sql`
+      execute: ({ roomId, botId }) => sql`
         SELECT
+          EXISTS (
+            SELECT 1 FROM room_members rq_self
+            WHERE rq_self.room_id = ${roomId} AND rq_self.bot_id = ${botId}
+          ) AS member,
           (
             EXISTS (
-              SELECT 1 FROM dispatches
-              WHERE audience_room_id = ${roomId} AND status IN ('intended', 'accepted', 'delivered')
+              SELECT 1 FROM dispatches rq_dispatch
+              WHERE rq_dispatch.audience_room_id = ${roomId}
+                AND (
+                  rq_dispatch.status IN ('intended', 'accepted')
+                  OR (
+                    rq_dispatch.status = 'delivered'
+                    AND rq_dispatch.continuation_resumes_at IS NULL
+                  )
+                )
             )
             OR EXISTS (
-              SELECT 1 FROM turns WHERE audience_room_id = ${roomId} AND finished_at IS NULL
+              SELECT 1 FROM turns rq_turn
+              WHERE rq_turn.audience_room_id = ${roomId} AND rq_turn.finished_at IS NULL
             )
           ) AS busy,
           (
-            SELECT bot_id FROM wakes
-            WHERE audience_room_id = ${roomId} AND status = 'pending' AND kind <> 'routine'
-            ORDER BY priority, rowid LIMIT 1
+            SELECT rq_wake.bot_id FROM wakes rq_wake
+            WHERE rq_wake.audience_room_id = ${roomId} AND rq_wake.status = 'pending'
+              AND rq_wake.kind <> 'routine'
+              AND rq_wake.bot_id IN (
+                SELECT rq_member.bot_id FROM room_members rq_member
+                WHERE rq_member.room_id = ${roomId}
+              )
+            ORDER BY rq_wake.priority, rq_wake.rowid LIMIT 1
           ) AS next_bot_id
       `,
     });
 
     /**
-     * Whether the wake may lead the bot's next dispatch. A room runs one turn
+     * Whether the wake may start the bot's next turn. A room runs one turn
      * at a time (`docs/architecture/server.md`, Rooms): a wake for a room may
      * start a turn only while nothing of the room is live and it is the
      * room's first wake, by priority and then as written, so members answer
      * one after another in the order they were addressed, each seeing the
-     * replies before it. The operator's own word for a room the bot's running
-     * turn speaks to steers that turn instead. Any other wake leads as before.
+     * replies before it. A wake of a bot that left the room goes on to the
+     * transaction that cancels it (`roomPlan`). Any other wake may start one
+     * as before.
      */
-    const mayLead = Effect.fn("Pipeline.mayLead")(function* (
-      botId: BotId,
-      wake: WakeRow,
-      work: SessionWork,
-    ) {
+    const mayStart = Effect.fn("Pipeline.mayStart")(function* (botId: BotId, wake: WakeRow) {
       const audience = audienceOf(wake);
       if (audience._tag !== "room" || audience.roomId === null) return true;
-      if (
-        wake.priority === PRIORITY.user &&
-        wake.payload_json._tag !== "answer" &&
-        work.admitted !== null &&
-        sameAudience(work.admitted.audience, audience)
-      ) {
-        return true;
-      }
-      const queue = yield* roomQueue(audience.roomId).pipe(Effect.orDie);
-      return !queue.busy && queue.next_bot_id === botId;
+      const queue = yield* roomQueue({ roomId: audience.roomId, botId }).pipe(Effect.orDie);
+      return !queue.member || (!queue.busy && queue.next_bot_id === botId);
     });
+
+    /**
+     * Whether the wake is the operator's word for a running turn with this
+     * audience, which steers it so they can redirect it: an `ask` answer
+     * waits for the turn that asked to finish, and starts the next.
+     */
+    const redirects = (wake: WakeRow, audience: Audience): boolean =>
+      wake.priority === PRIORITY.user &&
+      wake.payload_json._tag !== "answer" &&
+      sameAudience(audienceOf(wake), audience);
 
     /**
      * How the bot's main session can take its head wake now: a plan, nothing
@@ -908,9 +936,26 @@ export const layer = Layer.effect(
       if (!(yield* observer.ready(session.value.id))) return "not-ready" as const;
       const work = yield* workOf(session.value.id);
       if (work.stopUnsettled) return null;
+      if (!isIdle(work)) {
+        // A running turn takes only the operator's word for its own
+        // audience. A wake for another audience waits for it to end, first in
+        // line, and holds none of that word back.
+        const { admitted } = work;
+        if (admitted === null || work.unsent > 0) return null;
+        const head = pending.find((wake) => redirects(wake, admitted.audience));
+        if (head === undefined) return null;
+        const delivery = { _tag: "steer", turnId: admitted.turnId } as const;
+        return {
+          sessionId: session.value.id,
+          botId,
+          wakes: yield* coalesce(head, pending, delivery),
+          audience: audienceOf(head),
+          delivery,
+        } satisfies Plan;
+      }
       let head: WakeRow | undefined;
       for (const wake of pending) {
-        if (yield* mayLead(botId, wake, work)) {
+        if (yield* mayStart(botId, wake)) {
           head = wake;
           break;
         }
@@ -921,31 +966,16 @@ export const layer = Layer.effect(
       } else if (head.kind === "routine" || head.kind === "bot") {
         if (yield* providerLimited(botId)) return null;
       }
-      const audience = audienceOf(head);
-      let delivery: Plan["delivery"];
-      if (isIdle(work)) {
-        // A pending continuation holds back every wake but the operator's.
-        if (work.continuations > 0 && head.kind !== "user") return null;
-        if (!(yield* admitsStart(session.value.id))) return null;
-        delivery = { _tag: "start" };
-      } else if (
-        // An answer waits for the turn that asked to finish: it starts the next.
-        head.priority === PRIORITY.user &&
-        head.payload_json._tag !== "answer" &&
-        work.admitted !== null &&
-        work.unsent === 0 &&
-        sameAudience(work.admitted.audience, audience)
-      ) {
-        delivery = { _tag: "steer", turnId: work.admitted.turnId };
-      } else {
-        return null;
-      }
-      const group = yield* coalesce(head, pending, delivery);
+      // A pending continuation holds back every wake but the operator's,
+      // also in a room: the engine then drops the continuation.
+      if (work.continuations > 0 && head.priority !== PRIORITY.user) return null;
+      if (!(yield* admitsStart(session.value.id))) return null;
+      const delivery = { _tag: "start" } as const;
       return {
         sessionId: session.value.id,
         botId,
-        wakes: group,
-        audience,
+        wakes: yield* coalesce(head, pending, delivery),
+        audience: audienceOf(head),
         delivery,
       } satisfies Plan;
     });
@@ -1217,11 +1247,15 @@ export const layer = Layer.effect(
       );
       const newestFirst = yield* Effect.forEach(unseen.newestFirst, shown);
       const header = yield* roomHeader(room);
-      const reason = strongestReason(
-        plan.wakes.flatMap((wake) =>
-          wake.payload_json._tag === "room" ? [wake.payload_json.reason] : [],
-        ),
-      );
+      /** Why the first `wakes` wakes woke the bot: those left for later choose nothing here. */
+      const reasonOf = (wakes: number) =>
+        strongestReason(
+          plan.wakes
+            .slice(0, wakes)
+            .flatMap((wake) =>
+              wake.payload_json._tag === "room" ? [wake.payload_json.reason] : [],
+            ),
+        );
       /** The entries of the first `wakes` wakes, then the `newest` newest others, in room order. */
       const picked = (wakes: number, newest: number) => {
         const ids = new Set(sourceIds.slice(0, wakes));
@@ -1247,7 +1281,7 @@ export const layer = Layer.effect(
             .flatMap(({ item }) => (item === null ? [] : [item])),
           kind: "room",
           room: header,
-          reason,
+          reason: reasonOf(wakes),
           omitted: unseen.total - entries.length - waiting,
           entries: [first, ...rest],
         };
@@ -1418,11 +1452,13 @@ export const layer = Layer.effect(
     /**
      * A plan for a room, read again in the transaction that writes its
      * dispatch: the room must still be active, or its wakes have nowhere to
-     * go and are cancelled; a start must still find nothing of the room live,
-     * as it runs one turn at a time; and every room wake of the bot pending
-     * now goes together, so an entry written since the plan was made, which
-     * the envelope carries, leaves no wake behind for an envelope with
-     * nothing new.
+     * go and are cancelled; the bot must still be a member, or its wakes for
+     * the room are cancelled, so it reads nothing said there since it left;
+     * a start must still find nothing of the room live, and its wake first
+     * in the room's queue, as the room runs one turn at a time; and every
+     * room wake of the bot pending now goes together, so an entry written
+     * since the plan was made, which the envelope carries, leaves no wake
+     * behind for an envelope with nothing new.
      */
     const roomPlan = Effect.fn("Pipeline.roomPlan")(function* (plan: Plan) {
       const audience = plan.audience;
@@ -1432,14 +1468,23 @@ export const layer = Layer.effect(
         yield* ledger.cancelWakes(plan.wakes.map((wake) => wake.id));
         return { _tag: "done", result: null } as const;
       }
-      if (plan.delivery._tag === "start" && (yield* roomQueue(room.value.id)).busy) {
+      const forRoom = (yield* pendingOf(plan.botId)).filter((wake) =>
+        sameAudience(audienceOf(wake), audience),
+      );
+      if (!room.value.members.includes(plan.botId)) {
+        yield* ledger.cancelWakes(forRoom.map((wake) => wake.id));
+        // Its other wakes are planned again without these.
         return { _tag: "done", result: "stale" } as const;
+      }
+      if (plan.delivery._tag === "start") {
+        const queue = yield* roomQueue({ roomId: room.value.id, botId: plan.botId });
+        if (queue.busy || queue.next_bot_id !== plan.botId) {
+          return { _tag: "done", result: "stale" } as const;
+        }
       }
       const [head] = plan.wakes;
       if (head?.kind !== "room") return { _tag: "plan", plan, room: room.value } as const;
-      const wakes = (yield* pendingOf(plan.botId)).filter(
-        (wake) => wake.kind === "room" && sameAudience(audienceOf(wake), audience),
-      );
+      const wakes = forRoom.filter((wake) => wake.kind === "room");
       return { _tag: "plan", plan: { ...plan, wakes }, room: room.value } as const;
     });
 

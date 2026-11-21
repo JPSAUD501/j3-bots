@@ -991,8 +991,8 @@ export const layer = Layer.effect(
 
     /**
      * The request becomes a card in the bot's conversation, once, where the
-     * operator answers for their bot. When it opens in a room turn, the room
-     * shows that the bot waits there. A request already known, as a
+     * operator answers for their bot. When the first opens in a room turn,
+     * the room shows that the bot waits there. A request already known, as a
      * replacement lists it again, shows what it shows now.
      */
     const openRequest = Effect.fn("Observer.openRequest")(function* (
@@ -1001,6 +1001,12 @@ export const layer = Layer.effect(
     ) {
       const known = yield* requestRow({ sessionId: session.id, requestId: open.requestId });
       if (Option.isSome(known)) return yield* updateRequest(session, open.requestId, open.request);
+      // The room is told once per turn, however many requests the turn opens.
+      const earlier = yield* sql`
+        SELECT 1 FROM engine_requests
+        WHERE session_id = ${session.id} AND engine_turn_id = ${open.turnId}
+        LIMIT 1
+      `;
       const entry = yield* entries.append({
         target: { _tag: "conversation", botId: session.bot_id },
         entry: cardOf(session.bot_id, open.request),
@@ -1010,7 +1016,7 @@ export const layer = Layer.effect(
         VALUES (${entry.id}, ${session.id}, ${open.requestId}, ${open.turnId})
       `;
       const turn = yield* turnAudience({ sessionId: session.id, turnId: open.turnId });
-      if (Option.isSome(turn) && turn.value.audience === "room") {
+      if (earlier.length === 0 && Option.isSome(turn) && turn.value.audience === "room") {
         yield* notify(
           session.bot_id,
           audienceOf(turn.value),

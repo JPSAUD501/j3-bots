@@ -5,6 +5,7 @@ import {
   type HandoffState,
   MAX_ATTACHMENT_NAME_LENGTH,
   MAX_ATTACHMENT_SIZE,
+  MAX_INLINE_IMAGE_SIZE,
 } from "@j3-bots/contracts";
 import type { SessionId, TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
@@ -526,6 +527,20 @@ it.effect("refuses a say whose files together pass the limit", () =>
     ]);
 
     assert.include(reply._tag === "refused" ? reply.message : "", "the files together");
+    assert.deepStrictEqual(yield* botSaid(bot.id), []);
+    assert.deepStrictEqual(yield* storedBlobs, []);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("refuses a say with an image larger than the engine takes inline", () =>
+  Effect.gen(function* () {
+    // Within one upload's limit, past what the model is given as an image.
+    const { bot, reply } = yield* sayWithFiles([
+      { name: "chart.png", bytes: new Uint8Array(MAX_INLINE_IMAGE_SIZE + 1).fill(1) },
+    ]);
+
+    assert.include(reply._tag === "refused" ? reply.message : "", "files/chart.png");
+    assert.include(reply._tag === "refused" ? reply.message : "", "at most 10 MiB");
     assert.deepStrictEqual(yield* botSaid(bot.id), []);
     assert.deepStrictEqual(yield* storedBlobs, []);
   }).pipe(Effect.provide(TestDomain.layer)),

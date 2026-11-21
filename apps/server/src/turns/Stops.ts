@@ -682,6 +682,19 @@ export const roomWorkLayer = Layer.effect(
       }
     }, Effect.orDie);
 
-    return RoomWork.of({ end });
+    const leave = Effect.fn("RoomWork.leave")(function* (
+      roomId: RoomId,
+      botIds: ReadonlyArray<BotId>,
+    ) {
+      if (botIds.length === 0) return;
+      const pending = yield* sql<{ readonly id: string }>`
+        SELECT id FROM wakes
+        WHERE status = 'pending' AND audience = 'room' AND audience_room_id = ${roomId}
+          AND ${sql.in("bot_id", botIds)}
+      `;
+      yield* ledger.cancelWakes(pending.map((wake) => wake.id));
+    }, Effect.orDie);
+
+    return RoomWork.of({ end, leave });
   }),
 );

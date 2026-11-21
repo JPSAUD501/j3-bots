@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { RoomId } from "@j3-bots/contracts";
+import type { BotId, RoomId } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 
@@ -13,5 +13,13 @@ import type * as Effect from "effect/Effect";
  */
 export class RoomWork extends Context.Service<
   RoomWork,
-  { readonly end: (roomId: RoomId) => Effect.Effect<void> }
+  {
+    readonly end: (roomId: RoomId) => Effect.Effect<void>;
+    /**
+     * The bots left the room: their wakes still held for it are cancelled,
+     * in the caller's transaction, so none of them reads what is said there
+     * after it left.
+     */
+    readonly leave: (roomId: RoomId, botIds: ReadonlyArray<BotId>) => Effect.Effect<void>;
+  }
 >()("@j3-bots/server/rooms/RoomWork") {}

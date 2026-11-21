@@ -8,7 +8,13 @@ import {
   type MessageEntry,
   RoomId,
 } from "@j3-bots/contracts";
-import { SessionId, TurnId, toolInputDigest, ToolInputDigest } from "@j3-bots/engine-t3";
+import {
+  attachmentLimitViolation,
+  SessionId,
+  TurnId,
+  toolInputDigest,
+  ToolInputDigest,
+} from "@j3-bots/engine-t3";
 import type { ToolInput } from "@j3-bots/prompts";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -558,9 +564,10 @@ export const layer = Layer.effect(
      * is not a regular file, empty files and files above
      * `MAX_ATTACHMENT_SIZE`, of which no more than that is read, are refused
      * (`readWorkspaceFile`), and so are files together above
-     * `MAX_SAY_ATTACHMENTS_SIZE`, of which no more than that is read, and a
-     * name the store would not take. Every file is checked before any is
-     * stored.
+     * `MAX_SAY_ATTACHMENTS_SIZE`, of which no more than that is read, a
+     * name the store would not take, and files the engine would refuse in
+     * one message (`attachmentLimitViolation`), such as an image above its
+     * inline limit. Every file is checked before any is stored.
      */
     const workspaceFiles = Effect.fn("Speech.workspaceFiles")(function* (
       botId: BotId,
@@ -614,6 +621,20 @@ export const layer = Layer.effect(
             total += file.bytes.length;
             files.push(file);
         }
+      }
+      // A room message's files go in the envelope of each member it wakes:
+      // what the engine would refuse there is refused here, as the
+      // operator's own files are, and a `say` is held to one rule wherever
+      // it speaks.
+      const violation = attachmentLimitViolation(
+        files.map((file) => ({ mediaType: file.mediaType, size: file.bytes.length })),
+      );
+      if (violation !== undefined) {
+        return yield* refuse(
+          violation._tag === "image-too-large"
+            ? `${paths[violation.index] ?? "An image"} cannot be attached: an image the model sees (GIF, JPEG, PNG or WebP) may be at most ${violation.limit / 1024 / 1024} MiB. Attach a smaller copy.`
+            : "These files cannot be attached together. Attach fewer, and send the rest in another message.",
+        );
       }
       return files;
     });

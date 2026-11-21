@@ -276,7 +276,14 @@ export const layer = Layer.effect(
             })}
             WHERE id = ${room.id}
           `.pipe(Effect.orDie);
-          if (change.members !== undefined) yield* writeMembers(room.id, change.members);
+          if (change.members !== undefined) {
+            yield* writeMembers(room.id, change.members);
+            const stay = new Set(change.members);
+            yield* work.leave(
+              room.id,
+              room.members.filter((botId) => !stay.has(botId)),
+            );
+          }
           if (!active && room.status === "active") yield* archive(room.id, now);
           yield* changes.touch({ _tag: "room", roomId: room.id });
           return yield* require(room.id).pipe(Effect.orDie);

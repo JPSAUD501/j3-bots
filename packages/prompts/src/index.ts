@@ -25,6 +25,7 @@ export {
   type ProfileChange,
   renderWake,
   renderWakeForSize,
+  ROOM_CLOSING_LINES,
   type RoomEntry,
   type RoomMentions,
   type RoomReason,
