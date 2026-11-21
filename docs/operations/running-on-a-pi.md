@@ -6,6 +6,7 @@ This guide sets up the J3 Bots server as a systemd user service on a Raspberry P
 
 - A Raspberry Pi 4 with 4 GB of memory or more, on 64-bit Raspberry Pi OS (`uname -m` prints `aarch64`).
 - About 3 GB of free disk. The engine is about 200 MB once downloaded. The database and the bots' files grow with use.
+- About 1.5 GB of free memory while a bot works. Measured on a Raspberry Pi 4 with 4 GB (release 0.0.0, engine 0.1.11-nightly.20261120.4969): the server takes about 120 MB and the engine about 400 MB with no turn running, and a harness adds its own while it runs, about 225 MB for Claude Code. The service's memory peaked at about 1.3 GB over its first start and one turn.
 - Node 26 (J3 Bots is built and tested on 26.13.1), pnpm 12 and Git. One way to get Node is [fnm](https://github.com/Schniz/fnm): `fnm install 26.13.1`. pnpm then installs with `npm install --global pnpm@12.16.1`.
 - The harnesses your bots will run on, such as Claude Code (`claude`) or Codex (`codex`), installed and signed in as the user that runs J3 Bots.
 
