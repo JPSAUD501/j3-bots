@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { RoutineId } from "@j3-bots/contracts";
+import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
-import type { RoutineRunSummary, Wake } from "../src/index.ts";
-import { type Call, runTurn, type Scenario } from "./harness.ts";
+import { DECODE_OPTIONS, type RoutineRunSummary, tools, type Wake } from "../src/index.ts";
+import { type Call, runTurn, type Scenario, transcript } from "./harness.ts";
 
 // The routine skill's evals: given the base prompt and the skill, a model
 // creates a routine for recurring work, with a valid schedule and an
@@ -14,7 +15,9 @@ import { type Call, runTurn, type Scenario } from "./harness.ts";
 // is. Each case is one turn per model, scored on its tool calls.
 
 /** The models to evaluate, cheapest adequate first. Override with a comma-separated `J3_EVAL_MODELS`. */
-const MODELS = (process.env["J3_EVAL_MODELS"] ?? "claude-haiku-5-5,gpt-6-luna")
+const MODELS = Effect.runSync(
+  Config.String("J3_EVAL_MODELS").pipe(Config.withDefault("claude-haiku-5-5,gpt-6-luna")),
+)
   .split(",")
   .map((model) => model.trim())
   .filter((model) => model !== "");
@@ -75,26 +78,49 @@ const FAILING = [
 const named = (calls: ReadonlyArray<Call>, name: string) =>
   calls.filter((call) => call.name === name);
 
-const field = (input: unknown, key: string): unknown =>
-  typeof input === "object" && input !== null
-    ? Object.getOwnPropertyDescriptor(input, key)?.value
-    : undefined;
+const decodeSay = Schema.decodeUnknownOption(tools.say.input, DECODE_OPTIONS);
 
-const text = (input: unknown, key: string): string => {
-  const value = field(input, key);
-  return typeof value === "string" ? value : "";
-};
+/** The `say` calls the server would accept, decoded, in order. */
+const says = (calls: ReadonlyArray<Call>) =>
+  named(calls, "say").flatMap((call) => {
+    const decoded = decodeSay(call.input);
+    return decoded._tag === "Some" ? [{ call, say: decoded.value }] : [];
+  });
 
+/** The routines the turn created and the stub accepted, as the server would save them. */
 const created = (calls: ReadonlyArray<Call>) =>
-  named(calls, "set_routine").filter((call) => field(call.input, "action") === "create");
+  calls.flatMap((call) =>
+    call.routine !== undefined && call.routine.action === "create"
+      ? [{ call, routine: call.routine }]
+      : [],
+  );
 
 /** Words that point back at a conversation the run will not have. */
 const BACK_REFERENCE =
   /\b(as (we|you|I) (discussed|said|agreed)|as discussed|mentioned (above|earlier|before)|(the|that) (repo|repository|build|one) (above|we discussed)|this conversation|earlier today)\b/i;
 
-/** A delivery line that says what to do when there is nothing to report. */
-const QUIET_WHEN_NOTHING =
-  /(nothing|no (message|need|news)|stay (quiet|silent)|silent|without (saying|a word|sending|messaging|speaking)|(don't|do not) (send|say|message|reply|notify)|end (the|your) (turn|run))/i;
+/** Wording that tells a run to end without speaking. */
+const SILENCE =
+  /\b(end(s)?( \w+){0,3} without|(don't|do not) (send|say|message|tell|notify)|stay (quiet|silent)|say nothing|send nothing)\b/i;
+
+/** Problems with how an instruction's last lines handle the case with nothing to report. */
+const quietDeliveryProblems = (instruction: string): ReadonlyArray<string> => {
+  const tail = instruction.slice(-300);
+  const problems: Array<string> = [];
+  if (!SILENCE.test(tail)) {
+    problems.push("the instruction does not end by saying to stay silent when nothing is wrong");
+  }
+  const speaksAnyway = tail
+    .split(/[.;]/)
+    .some(
+      (clause) =>
+        /\b(otherwise|passing)\b/i.test(clause) &&
+        /\b(send|tell|message)/i.test(clause) &&
+        !SILENCE.test(clause),
+    );
+  if (speaksAnyway) problems.push("the instruction sends a message when the build is passing");
+  return problems;
+};
 
 interface Case {
   readonly name: string;
@@ -114,12 +140,13 @@ const cases: ReadonlyArray<Case> = [
     },
     problems: (calls) => {
       const routines = created(calls);
-      const [routine] = routines;
-      if (routines.length !== 1 || routine === undefined) {
-        return [`created ${routines.length} routines, not one`];
+      const [first] = routines;
+      if (routines.length !== 1 || first === undefined) {
+        return [`${routines.length} accepted \`set_routine\` creates, not one`];
       }
+      const { call, routine } = first;
       const problems: Array<string> = [];
-      const schedule = text(routine.input, "schedule");
+      const schedule = routine.schedule ?? "";
       const [minute, hour, day, month, weekday] = schedule.split(/\s+/);
       if (
         minute !== "0" ||
@@ -130,7 +157,7 @@ const cases: ReadonlyArray<Case> = [
       ) {
         problems.push(`schedule ${JSON.stringify(schedule)} is not weekdays at 8:00`);
       }
-      const instruction = text(routine.input, "instruction");
+      const instruction = routine.instruction ?? "";
       if (!instruction.includes("acme/docs")) {
         problems.push("the instruction does not name the repository acme/docs");
       }
@@ -140,15 +167,22 @@ const cases: ReadonlyArray<Case> = [
       if (BACK_REFERENCE.test(instruction)) {
         problems.push("the instruction points back at the conversation");
       }
-      if (!QUIET_WHEN_NOTHING.test(instruction.slice(-300))) {
-        problems.push("the instruction does not end by saying what to do when nothing is wrong");
+      problems.push(...quietDeliveryProblems(instruction));
+      // The turn ends on a `say` with `done: true`, after the routine was saved, confirming what was saved.
+      const last = calls.at(-1);
+      const closing = says(calls).find((said) => said.call === last);
+      if (closing === undefined || calls.indexOf(closing.call) < calls.indexOf(call)) {
+        problems.push("the turn does not end with a `say` after the routine was saved");
+      } else {
+        if (closing.say.done !== true)
+          problems.push("the closing `say` does not carry `done: true`");
+        if (!/\b0?8(:00)?\b(?!:)/.test(closing.say.text)) {
+          problems.push("the closing `say` does not confirm 8:00");
+        }
+        if (!/weekday|monday|mon-fri|work ?day/i.test(closing.say.text)) {
+          problems.push("the closing `say` does not confirm the weekdays");
+        }
       }
-      const confirmed = named(calls, "say").some(
-        (call) =>
-          calls.indexOf(call) > calls.indexOf(routine) &&
-          /\b8\b|8:00|08:00/.test(text(call.input, "text")),
-      );
-      if (!confirmed) problems.push("no `say` after creating it confirms the time");
       return problems;
     },
   },
@@ -160,7 +194,7 @@ const cases: ReadonlyArray<Case> = [
     },
     problems: (calls) => [
       ...(named(calls, "set_routine").length > 0 ? ["called `set_routine`"] : []),
-      ...(named(calls, "say").some((call) => field(call.input, "done") === true)
+      ...(says(calls).some(({ say }) => say.done === true)
         ? []
         : ["no `say` with `done: true` delivered the answer"]),
     ],
@@ -182,7 +216,7 @@ const cases: ReadonlyArray<Case> = [
       const said = named(calls, "say");
       return [
         ...(said.length === 1 ? [] : [`called \`say\` ${said.length} times, not once`]),
-        ...(said.some((call) => /pricing|link|404/i.test(text(call.input, "text")))
+        ...(says(calls).some(({ say }) => /pricing|link|404/i.test(say.text))
           ? []
           : ["the message does not say what failed"]),
         ...(named(calls, "ask").length > 0 ? ["called `ask`"] : []),
@@ -190,10 +224,6 @@ const cases: ReadonlyArray<Case> = [
     },
   },
 ];
-
-/** The calls of a turn, one line each, for a failure's report. */
-const transcript = (calls: ReadonlyArray<Call>) =>
-  calls.map((call) => `${call.name} ${JSON.stringify(call.input)}`).join("\n");
 
 describe.each(MODELS)("%s", (model) => {
   it.concurrent.each(cases)("$name", async ({ scenario, problems }) => {

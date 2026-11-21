@@ -10,6 +10,7 @@ import {
   renderSystemFile,
   renderWake,
   sharedSkills,
+  type ToolInput,
   toolList,
   tools,
   type Wake,
@@ -74,7 +75,21 @@ const functionTools: ReadonlyArray<FunctionTool> = [
 export interface Call {
   readonly name: string;
   readonly input: unknown;
+  /** For a `set_routine` call the schema accepted, its arguments as decoded: what the server would save. */
+  readonly routine?: ToolInput<"set_routine">;
 }
+
+/** The calls of a turn, one line each, for a failure's report. */
+export const transcript = (calls: ReadonlyArray<Call>): string =>
+  calls.map((call) => `${call.name} ${JSON.stringify(call.input)}`).join("\n");
+
+/** A turn that did not end on its own: the model was cut off, or ran out of steps. */
+class TurnUnfinished extends Schema.TaggedError<TurnUnfinished>()("TurnUnfinished", {
+  message: Schema.String,
+}) {}
+
+const unfinished = (reason: string, calls: ReadonlyArray<Call>) =>
+  new TurnUnfinished({ message: `The turn did not finish: ${reason}.\n${transcript(calls)}` });
 
 export interface Scenario {
   readonly wake: Wake;
@@ -86,7 +101,7 @@ export interface Scenario {
 const MAX_STEPS = 12;
 
 const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
-const decodeSetRoutine = Schema.decodeUnknownExit(tools.set_routine.input, DECODE_OPTIONS);
+const decodeSetRoutine = Schema.decodeUnknownOption(tools.set_routine.input, DECODE_OPTIONS);
 
 const json = (value: unknown): string => JSON.stringify(value);
 
@@ -99,11 +114,10 @@ const answer = (scenario: Scenario, call: Call): string => {
       return json({ asked: true });
     case "list_routines":
       return json({ routines: [] });
-    case "set_routine": {
-      const decoded = decodeSetRoutine(call.input);
-      if (decoded._tag === "Failure") return json({ error: "The call was refused as invalid." });
-      return json({ routine: { ...decoded.value, id: "routine-1", enabled: true } });
-    }
+    case "set_routine":
+      return call.routine === undefined
+        ? json({ error: "The call was refused as invalid." })
+        : json({ routine: { ...call.routine, id: "routine-1", enabled: true } });
     case "recall":
       return json({ facts: [] });
     case "remember":
@@ -118,7 +132,17 @@ const answer = (scenario: Scenario, call: Call): string => {
   }
 };
 
-/** Runs one turn of `model` on `scenario` and returns every tool call it made, in order. */
+const toCall = (name: string, input: unknown): Call => {
+  if (name !== "set_routine") return { name, input };
+  const decoded = decodeSetRoutine(input);
+  return decoded._tag === "Some" ? { name, input, routine: decoded.value } : { name, input };
+};
+
+/**
+ * Runs one turn of `model` on `scenario` and returns every tool call it made,
+ * in order. Fails with {@link TurnUnfinished} when the turn did not end on its
+ * own, so a cut-off turn never passes for one that chose to say nothing.
+ */
 export const runTurn = Effect.fn("evals.runTurn")(
   function* (model: string, scenario: Scenario) {
     const envelope = yield* renderWake(scenario.wake);
@@ -129,21 +153,29 @@ export const runTurn = Effect.fn("evals.runTurn")(
     const calls: Array<Call> = [];
     for (let step = 0; step < MAX_STEPS; step++) {
       const reply = yield* complete(model, messages, functionTools);
-      if (reply.toolCalls.length === 0) return calls;
+      if (reply.toolCalls.length === 0) {
+        if (reply.finishReason === "stop") return calls;
+        return yield* unfinished(
+          reply.finishReason === null
+            ? "the endpoint did not say why the model's message ended"
+            : `the model's message ended with finish_reason "${reply.finishReason}"`,
+          calls,
+        );
+      }
       messages.push({ role: "assistant", content: reply.content, tool_calls: reply.toolCalls });
       for (const toolCall of reply.toolCalls) {
         const parsed = decodeJson(toolCall.function.arguments);
-        const call: Call = {
-          name: toolCall.function.name,
-          input: parsed._tag === "Some" ? parsed.value : toolCall.function.arguments,
-        };
+        const call = toCall(
+          toolCall.function.name,
+          parsed._tag === "Some" ? parsed.value : toolCall.function.arguments,
+        );
         calls.push(call);
         messages.push({ role: "tool", tool_call_id: toolCall.id, content: answer(scenario, call) });
       }
       // `ask` ends the turn.
       if (calls.some((call) => call.name === "ask")) return calls;
     }
-    return calls;
+    return yield* unfinished(`it used all ${MAX_STEPS} steps`, calls);
   },
   Effect.provide(Layer.mergeAll(FetchHttpClient.layer, SecureRandom.layerWebCrypto)),
 );

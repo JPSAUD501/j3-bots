@@ -38,3 +38,21 @@ it.effect(
       assert.strictEqual(yield* fs.readFileString(ownFile), "an older text");
     }).pipe(Effect.provide(home)),
 );
+
+it.effect("does not write through a shipped skill's folder that links to another skill", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const { sharedSkills: folder } = yield* Layout.Layout;
+    const [shipped] = sharedSkills;
+    assert.isDefined(shipped);
+    const ownFile = path.join(folder, "expenses", "SKILL.md");
+    yield* fs.makeDirectory(path.dirname(ownFile), { recursive: true });
+    yield* fs.writeFileString(ownFile, "the operator's text");
+    yield* fs.symlink(path.join(folder, "expenses"), path.join(folder, shipped.name));
+
+    yield* SharedSkills.install();
+
+    assert.strictEqual(yield* fs.readFileString(ownFile), "the operator's text");
+  }).pipe(Effect.provide(home)),
+);

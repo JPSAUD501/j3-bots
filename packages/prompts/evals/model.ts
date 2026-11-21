@@ -72,14 +72,21 @@ const ChatResponse = Schema.Struct({
         content: Schema.optionalKey(Schema.NullOr(Schema.String)),
         tool_calls: Schema.optionalKey(Schema.NullOr(Schema.Array(ToolCall))),
       }),
+      finish_reason: Schema.optionalKey(Schema.NullOr(Schema.String)),
     }),
   ),
 });
 
-/** One assistant message: its text and the tools it called. */
+/** One assistant message: its text, the tools it called, and why it ended. */
 interface Reply {
   readonly content: string | null;
   readonly toolCalls: ReadonlyArray<ToolCall>;
+  /**
+   * The endpoint's `finish_reason`: `stop` when the model ended the message
+   * itself, `tool_calls` when it stopped to call tools, `length` when it was
+   * cut off. `null` when the endpoint did not say.
+   */
+  readonly finishReason: string | null;
 }
 
 /** Sends a conversation to `model` and returns its next message. */
@@ -103,9 +110,10 @@ export const complete = Effect.fn("evals.complete")(function* (
   );
   const response = yield* client.execute(request);
   const body = yield* HttpClientResponse.schemaBodyJson(ChatResponse)(response);
-  const message = body.choices[0].message;
+  const [choice] = body.choices;
   return {
-    content: message.content ?? null,
-    toolCalls: message.tool_calls ?? [],
+    content: choice.message.content ?? null,
+    toolCalls: choice.message.tool_calls ?? [],
+    finishReason: choice.finish_reason ?? null,
   } satisfies Reply;
 });

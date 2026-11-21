@@ -337,7 +337,7 @@ export const tools = {
     "set_routine",
     [
       "Create, change, pause, resume or delete one of your routines: a saved instruction that runs on a schedule, once at a set time, or when a webhook is called.",
-      "Check `list_routines` first and change an existing routine rather than adding a second.",
+      "Check `list_routines` first: reuse a routine that already does exactly this, `update` one your user asked to change (only the fields they asked to change), and `create` a separate routine for an additional trigger.",
       "`create` takes a name, an instruction and exactly one of `schedule`, `at` or `webhook`; the other actions take the routine's id, and `update` also takes the fields that change.",
       "Times are in your user's zone, and a schedule runs at most every five minutes.",
       "A one-time routine is paused after it runs; giving it a new time with `update` starts it again.",
@@ -352,7 +352,7 @@ export const tools = {
     "list_routines",
     [
       "List your routines with their ids, instructions, triggers, whether each is paused, and their last runs.",
-      "Check it before creating a routine, so you change one instead of duplicating it.",
+      "Check it before creating a routine, so you do not duplicate one that already does the same thing.",
     ],
     NoInput,
   ),

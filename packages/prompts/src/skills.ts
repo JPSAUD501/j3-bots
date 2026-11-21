@@ -13,7 +13,7 @@ import { readFileSync } from "node:fs";
  */
 export interface SharedSkill {
   /** The skill's folder name, and the `name` in its frontmatter. */
-  readonly name: string;
+  readonly name: (typeof SKILL_NAMES)[number];
   /** The whole `SKILL.md`. */
   readonly text: string;
 }

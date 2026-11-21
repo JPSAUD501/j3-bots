@@ -156,7 +156,7 @@ Bots act on J3 Bots through MCP tools. A tool's description is prompt text: it i
 | `forget` | `fact` (the exact recorded text); `scope` | Pair with `remember` to correct a fact. |
 | `recall` | `query`; `scope?` (both when absent); `limit?` (default 10, at most 50) | Searches the log and the shared facts. |
 | `set_routine` | `action` (`create`, `update`, `pause`, `resume`, `delete`); `id?`; `name?`; `instruction?`; at most one of `schedule?` (cron, in the operator's zone), `at?` (one local time, or a time with an offset) or `webhook?` | The instruction is a complete brief for a session that has none of the conversation, ending with who receives the result and what to do when there is nothing new. `create` needs a name, an instruction and a trigger; the other actions need the id, and only `update` takes more. In a routine's side session the only call taken is `pause` of the routine that session runs. The MCP schema is one flat object, the shape MCP's tool schema takes, so these combinations are checked when the call is decoded. |
-| `list_routines` | none | The bot's routines with ids, definitions and last runs, so it updates instead of duplicating. |
+| `list_routines` | none | The bot's routines with ids, definitions and last runs, so it does not duplicate one that already does the same thing. |
 | `list_teammates` | none | Bots and rooms, with ids. |
 | `create_bot` | `name`, `title?`, `job?` | Offered to the primary bot. |
 | `update_bot` | `id`, `name?`, `title?`, `job?` | Offered to the primary bot. |
@@ -176,11 +176,11 @@ A skill is a folder with a `SKILL.md`: when it applies, what it needs, the steps
 - **Bot skills** live in `skills/` in the bot's own workspace.
 - The server is meant to link both folders to wherever each harness looks for skills. That linking is not built yet, so no harness lists a skill today; skill discovery through linked folders has not been exercised either.
 
-J3 Bots ships its own skills for procedures too long for the base prompt. Their text lives in `packages/prompts/src/skills/<name>.md`, and the server writes each one to the shared skills as `<name>/SKILL.md` every time it starts, replacing the previous release's text. Their names start with `j3-`, so the operator's own skills, under any other name, are never touched. The text enters the [prompt version](#versioning).
+J3 Bots ships its own skills for procedures too long for the base prompt. Their text lives in `packages/prompts/src/skills/<name>.md`, and the server writes each one to the shared skills as `<name>/SKILL.md` every time it starts, replacing the previous release's text. Their names start with `j3-`, so the operator's own skills, under any other name, are never touched. A shipped skill's folder that is not a real folder directly in the shared skills (for example a link to another skill's folder) is skipped with a warning rather than written through. The text enters the [prompt version](#versioning).
 
 | Skill | What it teaches |
 | --- | --- |
-| `j3-routines` | When a request calls for a routine and when it does not; choosing a schedule (five-field cron in the operator's zone, the five-minute rule), a one-time run or a webhook; writing an instruction a fresh side session can carry out alone; silent and speaking runs; what needs the operator's approval; checking the run history after the first run |
+| `j3-routines` | When a request calls for a routine and when it does not; choosing a schedule (five-field cron in the operator's zone, the five-minute rule), a one-time run or a webhook; reusing, updating or adding a routine without erasing an existing trigger; writing an instruction a fresh side session can carry out alone and safely run twice, with its own state file when it must remember what it saw; silent and speaking runs; what needs the operator's approval beyond their request; reading the run history |
 
 Skills for working in a room and for setting up a new teammate are planned with rooms and teammates (M3).
 
@@ -227,13 +227,13 @@ Prompts are code and are tested like code, in `packages/prompts`.
 
 Each harness and model J3 Bots supports has to pass the set before it is listed as supported.
 
-**The harness.** The evals that exist live in `packages/prompts/evals`, one file per area, and run with `pnpm --filter @j3-bots/prompts eval`. They are never part of `test` or CI. Each case is one turn: the model gets the rendered base prompt, profile and pinned memory of a fictional bot, the shipped skills as if it had already read them, one wake envelope, and the `j3` tools as MCP lists them, plus a stand-in shell whose output the case fixes. The bot's tools answer with stubs, and a case passes on the tool calls the turn made. The model is reached through any OpenAI-compatible chat completions endpoint: `J3_EVAL_BASE_URL` (the endpoint's root) and `J3_EVAL_API_KEY` come from the environment, and `J3_EVAL_MODELS` lists the models, by default one small Claude model and one small GPT model. What this leaves out: the harness's own system prompt and tools, T3 Code's instructions, and the harness listing and reading a skill. A pass here is necessary, not sufficient, for a pass in a real session.
+**The harness.** The evals that exist live in `packages/prompts/evals`, one file per area, and run with `pnpm --filter @j3-bots/prompts eval`. They are never part of `test` or CI. Each case is one turn: the model gets the rendered base prompt, profile and pinned memory of a fictional bot, the shipped skills as if it had already read them, one wake envelope, and the `j3` tools as MCP lists them, plus a stand-in shell whose output the case fixes. The bot's tools answer with stubs; `set_routine` is accepted only when its arguments decode with the real schema, and a case reads the routine as decoded. A case passes on the tool calls the turn made, and a turn that was cut off or ran out of steps fails, whatever it called. The model is reached through any OpenAI-compatible chat completions endpoint: `J3_EVAL_BASE_URL` (the endpoint's root) and `J3_EVAL_API_KEY` come from the environment, and `J3_EVAL_MODELS` lists the models, by default one small Claude model and one small GPT model. What this leaves out: the harness's own system prompt and tools, T3 Code's instructions, and the harness listing and reading a skill. A pass here is necessary, not sufficient, for a pass in a real session.
 
 Implemented so far, in `routines.eval.ts`, for the `j3-routines` skill:
 
 | Case | Passes when |
 | --- | --- |
-| The operator asks for a weekday-morning check | One routine is created with the schedule they gave (`0 8 * * 1-5`), an instruction that names the repository, says what is worth reporting, points at nothing in the conversation and ends by saying what to do when nothing is wrong, and a `say` after it confirms the time |
+| The operator asks for a weekday-morning check | One accepted `set_routine` creates a routine with the schedule they gave (`0 8 * * 1-5`) and an instruction that names the repository, says what is worth reporting, points at nothing in the conversation, and ends by telling the run to stay silent when nothing is wrong, without a clause that sends a message anyway; the turn ends with a `say` carrying `done: true` that confirms 8:00 on weekdays |
 | A one-off question about the same build | No `set_routine` call; the answer is delivered with `done: true` |
 | A routine run with nothing new | The run checks the build and ends without `say`, `ask`, `message_bot` or `set_routine` |
 | A routine run with a failure | Exactly one `say`, naming what failed, and no `ask` |
