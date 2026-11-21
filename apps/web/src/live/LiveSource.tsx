@@ -280,6 +280,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   const [newBot, setNewBot] = useState(false);
   const [memoryView, setMemoryView] = useState<MemoryView | null>(null);
   const [editingBot, setEditingBot] = useState<BotId | null>(null);
+  const [conversationCovered, setConversationCovered] = useState(false);
   const botSaves = useReadable(j3.botSaves);
   const memorySaves = useReadable(j3.memorySaves);
   const openMemoryKey =
@@ -302,11 +303,14 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
         };
 
   // The server keeps notifications quiet for what is on screen here. A window
-  // that is hidden or in the background shows the operator nothing.
+  // that is hidden or in the background shows the operator nothing, and
+  // neither does a conversation with the details or a dialog over it.
   const viewKey = target === null ? null : targetKey(target);
+  const uncovered = !conversationCovered && !newBot && editingBot === null && memoryView === null;
+  const looking = inView && uncovered;
   useEffect(() => {
-    j3.setView(inView ? targetOf(botId, roomId) : null);
-  }, [j3, botId, roomId, inView]);
+    j3.setView(looking ? targetOf(botId, roomId) : null);
+  }, [j3, botId, roomId, looking]);
 
   // What the server says no device has in view, shown by the browser once the
   // operator allowed it. A click focuses a window and opens the conversation
@@ -322,8 +326,15 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   });
   const notify = useEffectEvent((notification: Notification) => {
     if (pairing === null || !stillPaired() || notificationAccess() !== "granted") return;
+    // What is on screen here never notifies, even when the server sent it
+    // before it heard this window's view, as right after a reconnection.
+    if (uncovered && isInView() && viewKey !== null && targetKey(notification.target) === viewKey) {
+      return;
+    }
     // Names come from the whole roster, hidden bots included: the shell lists
-    // bots for what it draws, below this source.
+    // bots for what it draws, below this source. Before the roster first
+    // loads there is no name to show, so the notification is dropped on
+    // purpose; the entry still shows as unread once the roster loads.
     const listed = j3.roster.get();
     const rows = listed._tag === "ready" ? listed.value : [];
     const botName = (id: BotId) =>
@@ -336,12 +347,10 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
       )[0] ?? null;
     const content = notificationContent(notification, { ...presentation, botName }, roomName);
     if (content === null) return;
-    showNotification({
-      ...content,
-      tag: notification.entryId,
-      target: notification.target,
-      pairing,
-    }).catch(() => {
+    showNotification(
+      { ...content, tag: notification.entryId, target: notification.target, pairing },
+      () => j3.pairing.get(),
+    ).catch(() => {
       // The browser refused it, as when the permission was withdrawn meanwhile.
       // The entry still shows as unread in the roster.
     });
@@ -551,6 +560,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
     markRead: (asked, through) => {
       if (viewKey !== null && targetKey(asked) === viewKey) conversation.markRead(through);
     },
+    setConversationCovered,
     stopBot: (botId) => void j3.stopBot(botId),
     createBot: (name, primary) =>
       j3.createBot({ name, primary }).then((result) => {
@@ -585,6 +595,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
             : { _tag: "failed" },
         ),
     revokeDevice: (deviceId) => j3.revokeDevice(deviceId).then((result) => result._tag === "done"),
+    refreshSettings: j3.refreshSettings,
     refreshDevices: j3.refreshDevices,
     signOut: () =>
       j3.signOut().then((result) => {

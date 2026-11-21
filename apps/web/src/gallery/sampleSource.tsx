@@ -388,10 +388,12 @@ function sampleIntents({ get, update }: Store): ShellIntents {
     openMemoryFile: nothing,
     loadOlder: nothing,
     markRead: nothing,
+    setConversationCovered: nothing,
     newBot: nothing,
     newRoom: nothing,
     editProfile: nothing,
     freshStart: nothing,
+    refreshSettings: nothing,
     refreshDevices: nothing,
     signOut: () => Promise.resolve(true),
   };

@@ -35,17 +35,25 @@ function refresh() {
   for (const listener of listeners) listener();
 }
 
-// The operator can change the permission in the browser's site settings at any time.
+// The operator can change the permission in the browser's site settings at any
+// time. Where the browser does not report the change, it is read again when the
+// operator comes back to the page, which they leave to change it.
 if ("permissions" in navigator) {
   navigator.permissions.query({ name: "notifications" }).then(
     (status) => status.addEventListener("change", refresh),
-    // A browser that cannot tell: the permission is read again after each request.
     () => undefined,
   );
 }
+window.addEventListener("focus", refresh);
+document.addEventListener("visibilitychange", refresh);
 
-/** This browser's notification access now. */
-export const notificationAccess = (): NotificationAccess => snapshot;
+/** This browser's notification access now, read from the browser as it is asked. */
+export function notificationAccess(): NotificationAccess {
+  refresh();
+  return snapshot;
+}
+
+const shownAccess = (): NotificationAccess => snapshot;
 
 export function useNotificationAccess(): NotificationAccess {
   return useSyncExternalStore(
@@ -53,8 +61,8 @@ export function useNotificationAccess(): NotificationAccess {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    notificationAccess,
-    notificationAccess,
+    shownAccess,
+    shownAccess,
   );
 }
 

@@ -265,6 +265,8 @@ export interface J3Client {
   readonly updateSettings: (
     changes: Settings.SettingsChanges,
   ) => Promise<Actions.IntentResult<SettingsValue>>;
+  /** Reads the settings again, as when Settings opens. */
+  readonly refreshSettings: () => void;
   readonly refreshDevices: () => void;
   /** Waits ten seconds at most; see `Devices.revoke`. */
   readonly revokeDevice: (deviceId: DeviceId) => Promise<Devices.RevokeResult>;
@@ -471,6 +473,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     stopBot: (botId) => run.promise(services.roster.stop(botId)),
 
     updateSettings: (changes) => run.promise(services.settings.update(changes)),
+    refreshSettings: () => fire(services.settings.refresh),
     refreshDevices: () => fire(services.devices.refresh),
     revokeDevice: (deviceId) => run.promise(services.devices.revoke(deviceId)),
     startPairing: () =>

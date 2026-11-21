@@ -3281,6 +3281,27 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
     }).pipe(Effect.scoped, Effect.provide(client())),
   );
 
+  it.effect("shows a change another device made once the settings are read again", () =>
+    Effect.gen(function* () {
+      yield* pairAndConnect;
+      const settings = yield* Settings;
+      const loaded = yield* waitFor(settings.state, (state) => state._tag === "ready");
+      if (loaded._tag !== "ready") return assert.fail("No settings");
+      const before = loaded.value.notifications.previews;
+
+      yield* Effect.gen(function* () {
+        yield* pairAndConnect;
+        const other = yield* Settings;
+        const changed = yield* other.update({ notifications: { previews: !before } });
+        assert.strictEqual(changed._tag, "done");
+      }).pipe(Effect.scoped, Effect.provide(client()));
+
+      yield* settings.refresh;
+      const shown = settings.state.get();
+      assert.strictEqual(shown._tag === "ready" && shown.value.notifications.previews, !before);
+    }).pipe(Effect.scoped, Effect.provide(client())),
+  );
+
   it.effect("changes a bot, and keeps the changes of an update the server refused", () =>
     Effect.gen(function* () {
       yield* pairAndConnect;

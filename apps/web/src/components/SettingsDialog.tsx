@@ -42,7 +42,12 @@ import { Switch } from "./ui/switch";
 
 type SettingsIntents = Pick<
   ShellIntents,
-  "updateSettings" | "startPairing" | "revokeDevice" | "refreshDevices" | "signOut"
+  | "updateSettings"
+  | "startPairing"
+  | "revokeDevice"
+  | "refreshSettings"
+  | "refreshDevices"
+  | "signOut"
 >;
 
 interface SettingsButtonProps {
@@ -51,17 +56,25 @@ interface SettingsButtonProps {
     "engine" | "engineStale" | "settings" | "settingsSave" | "devices" | "connected"
   >;
   readonly intents: SettingsIntents;
+  readonly onOpenChange: (open: boolean) => void;
 }
 
-/** The roster's footer: opens everything that is not about one bot. */
-export function SettingsButton({ data, intents }: SettingsButtonProps) {
+/**
+ * The roster's footer: opens everything that is not about one bot. Opening
+ * reads the settings and devices again, for what another device changed.
+ */
+export function SettingsButton({ data, intents, onOpenChange }: SettingsButtonProps) {
   const { t } = useI18n();
   const titleId = useId();
   return (
     <div className="border-t border-border p-2">
       <Dialog.Root
         onOpenChange={(open) => {
-          if (open) intents.refreshDevices();
+          if (open) {
+            intents.refreshSettings();
+            intents.refreshDevices();
+          }
+          onOpenChange(open);
         }}
       >
         <Dialog.Trigger
@@ -213,9 +226,9 @@ function YouSection({
 
 /**
  * Saving needs the server: offline, Save says why it is unavailable. A save
- * sends only the fields the operator changed. While one is under way, even
- * one started before Settings last closed, the form shows what it sends and
- * takes no edit. A field the operator left alone shows the saved value as it
+ * sends only the fields the operator changed. While one of the form's is
+ * under way, even one started before Settings last closed, the form shows
+ * what it sends and takes no edit. A field the operator left alone shows the saved value as it
  * arrives; one they changed keeps their edit until the form saves it, so
  * a notification switch saved meanwhile leaves the edits alone. A save of the
  * form that failed leaves what it sent as the form's edits, so reopening
@@ -251,10 +264,13 @@ function YouForm({
       setEdits((current) => editsAfterFailedSave(current, save.changes));
     }
   }
-  const saving = save._tag === "saving";
-  const shown = saving ? { ...settings, ...save.changes } : settings;
-  const name = edits.name ?? shown.operatorName ?? "";
-  const zone = edits.zone ?? shown.timeZone;
+  const saving = save._tag === "saving" && mine;
+  const sending = saving ? save.changes : null;
+  const name =
+    edits.name ??
+    (sending?.operatorName === undefined ? settings.operatorName : sending.operatorName) ??
+    "";
+  const zone = edits.zone ?? sending?.timeZone ?? settings.timeZone;
   const patch = settingsPatch(settings, edits);
   const status = watching && mine && !saving ? save._tag : null;
   return (
@@ -346,8 +362,10 @@ const accessLine: Record<Exclude<NotificationAccess, "default">, KeyWith> = {
  * Whether J3 Bots notifies the operator and how much a notification says,
  * which hold for every device, and whether this browser may show them. The
  * browser asks its permission only when the operator presses the button:
- * never on its own. A switch saves at once; offline, or while a save is under
- * way, it shows the value it holds and takes no change.
+ * never on its own. A switch saves at once; offline, or while a switch's save
+ * is under way, it shows the value it holds and takes no change. How a save
+ * ended shows only for one this section saw under way, so reopening Settings
+ * clears it.
  */
 function NotificationsSection({
   settings,
@@ -362,6 +380,9 @@ function NotificationsSection({
 }) {
   const { t } = useI18n();
   const access = useNotificationAccess();
+  const sent = save._tag === "idle" ? undefined : save.changes.notifications;
+  const saving = save._tag === "saving" && sent !== undefined;
+  const [watching, setWatching] = useState(saving);
   if (settings === null) {
     return (
       <Section title={t("settings.notifications")}>
@@ -369,13 +390,12 @@ function NotificationsSection({
       </Section>
     );
   }
-  const saving = save._tag === "saving";
-  const sent = save._tag === "idle" ? undefined : save.changes.notifications;
   const shown = { ...settings.notifications, ...(saving ? sent : undefined) };
-  const failed = save._tag === "failed" && sent !== undefined;
+  const failed = watching && save._tag === "failed" && sent !== undefined;
   // Only the switch that changed: another device may have changed the other one.
   const change = (changes: NotificationSettingsChange) => {
     if (saving || !connected) return;
+    setWatching(true);
     onSave({ notifications: changes });
   };
   return (

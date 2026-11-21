@@ -44,13 +44,29 @@ function clicked(click: NotificationClick) {
   for (const handle of handlers) handle(click);
 }
 
+const decodePairing = Schema.decodeUnknownOption(Schema.Struct({ pairing: DeviceId }));
+
+/** Whether the service worker's `notification` was received under `pairing`. */
+const receivedUnder = (notification: Notification, pairing: DeviceId | null) => {
+  const from = decodePairing(notification.data);
+  return Option.isSome(from) && from.value.pairing === pairing;
+};
+
 /**
  * Shows a notification through the service worker where there is one, since
  * some browsers (Android's) show none otherwise, and from the page where
  * there is not. A click focuses a window of the app and hands it the click:
  * the service worker's window through its message, this one directly.
+ *
+ * `currentPairing` is the pairing the page follows now. Showing takes a while,
+ * and a pairing that ends meanwhile closes what it received before this one
+ * shows, so the pairing is checked again before showing and once shown.
  */
-export async function showNotification(shown: ShownNotification): Promise<void> {
+export async function showNotification(
+  shown: ShownNotification,
+  currentPairing: () => DeviceId | null,
+): Promise<void> {
+  const ended = () => currentPairing() !== shown.pairing;
   const options: NotificationOptions = {
     body: shown.body,
     tag: shown.tag,
@@ -58,10 +74,16 @@ export async function showNotification(shown: ShownNotification): Promise<void> 
     data: { target: shown.target, pairing: shown.pairing },
   };
   const registration = await activeServiceWorker();
+  if (ended()) return;
   if (registration !== null) {
     await registration.showNotification(shown.title, options);
+    if (!ended()) return;
+    for (const notification of await registration.getNotifications({ tag: shown.tag })) {
+      if (receivedUnder(notification, shown.pairing)) notification.close();
+    }
     return;
   }
+  // Shown from the page at once, and listed before a pairing that ends could look.
   const notification = new Notification(shown.title, options);
   const entry = { notification, pairing: shown.pairing };
   shownByPage.add(entry);
@@ -72,8 +94,6 @@ export async function showNotification(shown: ShownNotification): Promise<void> 
     notification.close();
   });
 }
-
-const decodePairing = Schema.decodeUnknownOption(Schema.Struct({ pairing: DeviceId }));
 
 /**
  * Closes every notification a pairing other than `pairing` received, so none
@@ -87,8 +107,7 @@ export async function closeNotificationsOutside(pairing: DeviceId | null): Promi
   const registration = await activeServiceWorker();
   if (registration === null) return;
   for (const notification of await registration.getNotifications()) {
-    const from = decodePairing(notification.data);
-    if (Option.isNone(from) || from.value.pairing !== pairing) notification.close();
+    if (!receivedUnder(notification, pairing)) notification.close();
   }
 }
 

@@ -108,6 +108,11 @@ export interface ShellIntents extends TimelineIntents {
   readonly loadOlder: (target: EntryTarget) => void;
   /** The operator has seen the conversation through this entry. */
   readonly markRead: (target: EntryTarget, through: EntryOrder) => void;
+  /**
+   * Whether the details or a dialog lie over the conversation, so the operator
+   * cannot see it even in a window they are looking at.
+   */
+  readonly setConversationCovered: (covered: boolean) => void;
   readonly stopBot: (botId: BotId) => void;
   /** Absent where there is no dictation. */
   readonly dictate?: (target: EntryTarget) => void;
@@ -133,6 +138,8 @@ export interface ShellIntents extends TimelineIntents {
    * list of devices is then read again, and shows whether it was revoked.
    */
   readonly revokeDevice: (deviceId: DeviceId) => Promise<boolean>;
+  /** Reads the settings again, as when Settings opens. */
+  readonly refreshSettings: () => void;
   /** Reads the list of devices again, as when Settings opens. */
   readonly refreshDevices: () => void;
   /**

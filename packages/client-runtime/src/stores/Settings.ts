@@ -3,7 +3,7 @@ import type { NotificationSettingsChange, Settings as SettingsValue } from "@j3-
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { Connection, type J3RpcClient } from "../connection/Connection.ts";
+import { Connection, type J3RpcClient, type NotPaired } from "../connection/Connection.ts";
 import { Actions, intentResult, type IntentResult } from "../intents/Actions.ts";
 import { Cell, type Readable } from "../Store.ts";
 import { loading, markStale, ready, type Synced } from "./synced.ts";
@@ -33,7 +33,8 @@ export type SettingsSave =
  * save the server accepts, and only the read started last is shown. What
  * a save returns is not shown: answered again from its receipt after a
  * reconnection, it can be older than what the reconnection read. A change
- * made on another device shows here after the next reconnect or save.
+ * made on another device shows here after the next reconnect, save or
+ * `refresh`.
  */
 export class Settings extends Context.Service<
   Settings,
@@ -45,6 +46,8 @@ export class Settings extends Context.Service<
      */
     readonly save: Readable<SettingsSave>;
     readonly update: (changes: SettingsChanges) => Effect.Effect<IntentResult<SettingsValue>>;
+    /** Reads them again, as when Settings opens, for a change another device made meanwhile. */
+    readonly refresh: Effect.Effect<void, NotPaired>;
   }
 >()("@j3-bots/client-runtime/stores/Settings") {}
 
@@ -89,6 +92,8 @@ export const layer = Layer.effect(
       )
       .pipe(Effect.forkScoped);
 
+    const refresh = connection.call(read);
+
     const update = Effect.fn("Settings.update")(function* (changes: SettingsChanges) {
       const commandId = yield* actions.commandId;
       const saving: SettingsSave = { _tag: "saving", changes };
@@ -97,7 +102,7 @@ export const layer = Layer.effect(
         .call((client) => client["settings.update"]({ commandId, ...changes }))
         .pipe(Effect.exit);
       const result = intentResult(exit);
-      if (result._tag === "done") yield* connection.call(read).pipe(Effect.ignore);
+      if (result._tag === "done") yield* refresh.pipe(Effect.ignore);
       // A later save speaks for itself.
       if (save.get() === saving) {
         save.set({ _tag: result._tag === "done" ? "saved" : "failed", changes });
@@ -105,6 +110,6 @@ export const layer = Layer.effect(
       return result;
     });
 
-    return Settings.of({ state, save, update });
+    return Settings.of({ state, save, update, refresh });
   }),
 );

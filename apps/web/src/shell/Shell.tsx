@@ -98,6 +98,16 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
   // included, and the shell's shortcuts wait until it closes.
   const detailsModal = layout === "phone" || layout === "tablet";
   const detailsCover = item !== null && detailsOpen && detailsModal;
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  // Without a roster, Settings has no button and closes without saying so.
+  const listed = data.roster !== null && data.roster.length > 0;
+  if (!listed && settingsOpen) setSettingsOpen(false);
+
+  // The details as a sheet, or Settings, hide the conversation: the source
+  // then reports nothing in view, and what arrives there notifies.
+  const covered = detailsCover || settingsOpen;
+  const reportCovered = useEffectEvent(intents.setConversationCovered);
+  useEffect(() => reportCovered(covered), [covered]);
 
   const selectionKey = item === null ? null : rosterKeyText(rosterKeyOf(item));
   // Moving to another conversation with a mouse or keyboard puts the cursor in its
@@ -213,7 +223,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
       rowLink={navigation.rowLink}
       onNewBot={intents.newBot}
       onNewRoom={intents.newRoom}
-      footer={<SettingsButton data={data} intents={intents} />}
+      footer={<SettingsButton data={data} intents={intents} onOpenChange={setSettingsOpen} />}
       ref={rosterRef}
     />
   );
