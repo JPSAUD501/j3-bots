@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { type RecentTurnsState, USAGE_PERIOD } from "@j3-bots/client-runtime";
-import type { Bot, BotId, EngineStatus, RosterItem, UsageWindow } from "@j3-bots/contracts";
+import type { RecentTurnsState } from "@j3-bots/client-runtime";
+import {
+  type Bot,
+  type BotId,
+  type EngineStatus,
+  type RosterItem,
+  USAGE_PERIOD,
+  type UsageWindow,
+} from "@j3-bots/contracts";
 import * as Duration from "effect/Duration";
 import { useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
@@ -166,7 +173,7 @@ function ProviderCard({
   windowsStale: boolean;
   turns: RecentTurnsRead | "loading" | "failed";
 }) {
-  const { t } = useI18n();
+  const { t, plural } = useI18n();
   const turnsStale = typeof turns !== "string" && turns.stale;
   return (
     <li className="flex flex-col gap-3 rounded-md border border-border px-3 py-2.5">
@@ -186,7 +193,12 @@ function ProviderCard({
           {turns === "loading" ? (
             <Loading />
           ) : provider.bots.length === 0 ? (
-            <p className="text-xs text-muted-foreground">{t("usage.noTurns")}</p>
+            <p className="text-xs text-muted-foreground">
+              {/* Turns not read yet may have used it. */}
+              {turns.value.hasMore
+                ? t("usage.noTurnsShown")
+                : plural("usage.noTurns", Duration.toHours(USAGE_PERIOD))}
+            </p>
           ) : (
             <ul className="flex flex-col gap-1.5">
               {provider.bots.map((spend) => (

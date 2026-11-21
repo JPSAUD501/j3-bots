@@ -33,8 +33,23 @@ export function ClockProvider({ now, children }: { now?: DateTime.Utc; children:
 const OperatorTimeZoneContext = createContext<string | null>(null);
 
 /**
+ * The zone, if this browser knows it. The server checks a saved zone against
+ * its own time zone data, which can be newer than an older browser's.
+ */
+function knownTimeZone(timeZone: string): string | null {
+  try {
+    // A zone it does not know throws a RangeError.
+    new Intl.DateTimeFormat(undefined, { timeZone }).format(0);
+    return timeZone;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Every time under it in the operator's time zone, as saved in Settings;
- * `null`, before the settings are read, keeps the device's.
+ * `null`, before the settings are read, keeps the device's, as does a zone
+ * this browser does not know.
  */
 export function OperatorTimeZone({
   timeZone,
@@ -43,7 +58,8 @@ export function OperatorTimeZone({
   timeZone: string | null;
   children: ReactNode;
 }) {
-  return <OperatorTimeZoneContext value={timeZone}>{children}</OperatorTimeZoneContext>;
+  const known = useMemo(() => (timeZone === null ? null : knownTimeZone(timeZone)), [timeZone]);
+  return <OperatorTimeZoneContext value={known}>{children}</OperatorTimeZoneContext>;
 }
 
 /** The time now, and the time zone to show every time in. */

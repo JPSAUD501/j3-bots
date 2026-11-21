@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import { BotId, Label, ModelId, ProviderId, RoutineId } from "./base.ts";
 
 export const UsageWindow = Schema.Struct({
-  /** As the engine words it, such as "Session" (a five-hour window) or "Weekly". */
+  /**
+   * As the engine words it, such as "Session" (a five-hour window), "Weekly"
+   * or "Weekly · <model>".
+   */
   label: Label,
   usedPercent: Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
   resetsAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -74,6 +78,9 @@ export type UsageRoutine = typeof UsageRoutine.Type;
 
 /** The most turns one read of `usage.turns` returns. */
 export const MAX_USAGE_TURNS = 1_000;
+
+/** How far back `usage.turns` reads, from the moment the server reads. */
+export const USAGE_PERIOD = Duration.days(1);
 
 /** A turn that ran recently, for the usage view. */
 export const UsageTurn = Schema.Struct({

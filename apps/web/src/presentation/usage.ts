@@ -11,6 +11,7 @@ import type {
   UsageWindow,
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
+import type { I18n, KeyWith } from "../i18n/i18n";
 import { timeInSentence, type TimeContext } from "../lib/time";
 
 /** The turns of one routine, or of every routine deleted since. */
@@ -171,13 +172,35 @@ export interface WindowText {
 }
 
 /**
- * One window as the usage view words it. The engine calls its five-hour
- * window "Session", which is not a J3 Bots session, so that one reads as the
- * five-hour window; every other label is the engine's own, such as "Weekly"
- * or "Weekly · Claude Opus 5.5". A window at its limit says only that the
- * window is: a model's window blocks that model, not the provider. A window
- * keeps its last figures until the engine checks again, also past its reset,
- * so then it says when it reset and that new figures come with the next check.
+ * The labels the engine gives its windows, as the usage view words them. The
+ * engine calls its five-hour window "Session", which is not a J3 Bots
+ * session, so that one reads as the five-hour window.
+ */
+const WINDOW_NAMES: ReadonlyMap<string, KeyWith> = new Map([
+  ["Session", "usage.window.session"],
+  ["Weekly", "usage.window.weekly"],
+  ["Monthly", "usage.window.monthly"],
+  ["Monthly spend", "usage.window.monthlySpend"],
+  ["Monthly credit limit", "usage.window.monthlyCreditLimit"],
+]);
+
+/**
+ * A window's label in the interface's language: a known one translated, also
+ * before a model's name, as in "Weekly · Claude Opus 5.5"; any other as the
+ * engine sends it.
+ */
+function windowName(label: string, { t }: I18n): string {
+  const [kind = label, ...model] = label.split(" · ");
+  const key = WINDOW_NAMES.get(kind);
+  return key === undefined ? label : [t(key), ...model].join(" · ");
+}
+
+/**
+ * One window as the usage view words it. A window at its limit says only that
+ * the window is: a model's window blocks that model, not the provider. A
+ * window keeps its last figures until the engine checks again, also past its
+ * reset, so then it says when it reset and that new figures come with the
+ * next check.
  */
 export function windowText(usageWindow: UsageWindow, ctx: TimeContext): WindowText {
   const { t } = ctx.i18n;
@@ -190,7 +213,7 @@ export function windowText(usageWindow: UsageWindow, ctx: TimeContext): WindowTe
     percent / 100,
   );
   return {
-    name: usageWindow.label === "Session" ? t("usage.fiveHours") : usageWindow.label,
+    name: windowName(usageWindow.label, ctx.i18n),
     used: tone === "full" ? t("usage.full") : t("usage.used", { percent: formatted }),
     percent,
     tone,

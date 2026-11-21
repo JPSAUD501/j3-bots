@@ -35,4 +35,8 @@ describe("the time zone times are shown in", () => {
     expect(noonUnder("America/New_York")).toBe("7:00\u00A0AM");
     expect(noonUnder(null)).toBe("9:00\u00A0PM");
   });
+
+  it("is the device's when the browser does not know the saved zone", () => {
+    expect(noonUnder("America/Nowhere")).toBe("9:00\u00A0PM");
+  });
 });

@@ -109,6 +109,5 @@ export {
   type RecentTurnsView,
   turnsNotRead,
   Usage,
-  USAGE_PERIOD,
 } from "./stores/Usage.ts";
 export { WorkSteps, type WorkStepsState } from "./stores/WorkSteps.ts";

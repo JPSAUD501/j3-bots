@@ -443,13 +443,19 @@ export const MemoryRpcs = RpcGroup.make(
 export const EngineRpcs = RpcGroup.make(
   /** The current status, then every change. */
   Rpc.make("engine.subscribe", { success: EngineStatus, stream: true }),
-  /** Turns that started after `since`, newest first, at most `limit`. */
+  /**
+   * Turns that started in the `USAGE_PERIOD` before `readAt`, the moment the
+   * server read them, newest first, at most `limit`.
+   */
   Rpc.make("usage.turns", {
     payload: {
-      since: Schema.DateTimeUtc,
       limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: MAX_USAGE_TURNS })),
     },
-    success: Schema.Struct({ turns: Schema.Array(UsageTurn), hasMore: Schema.Boolean }),
+    success: Schema.Struct({
+      turns: Schema.Array(UsageTurn),
+      readAt: Schema.DateTimeUtc,
+      hasMore: Schema.Boolean,
+    }),
   }),
 );
 

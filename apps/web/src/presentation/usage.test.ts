@@ -160,12 +160,17 @@ describe("windowText", () => {
     });
   });
 
-  it("names the engine's Session the five-hour window, and keeps every other label", () => {
+  it("names the engine's Session the five-hour window, translates its other known labels, and keeps the rest", () => {
     const named = (label: string, locale: "en" | "pt-BR" = "en") =>
       windowText({ label, usedPercent: 0, resetsAt: null }, context("2026-11-20T14:00:00Z", locale))
         .name;
     expect(named("Session")).toBe("5-hour window");
-    expect(named("Session", "pt-BR")).toBe("Janela de 5 horas");
     expect(named("Weekly · Claude Opus 5.5")).toBe("Weekly · Claude Opus 5.5");
+    expect(named("Monthly credit limit")).toBe("Monthly credit limit");
+    expect(named("Session", "pt-BR")).toBe("Janela de 5 horas");
+    expect(named("Weekly", "pt-BR")).toBe("Semanal");
+    expect(named("Weekly · Claude Opus 5.5", "pt-BR")).toBe("Semanal · Claude Opus 5.5");
+    expect(named("Monthly spend", "pt-BR")).toBe("Gasto mensal");
+    expect(named("Daily", "pt-BR")).toBe("Daily");
   });
 });

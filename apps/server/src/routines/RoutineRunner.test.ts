@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import type { Bot, BotId, Routine, RoutineId } from "@j3-bots/contracts";
+import {
+  type Bot,
+  type BotId,
+  type Routine,
+  type RoutineId,
+  USAGE_PERIOD,
+} from "@j3-bots/contracts";
 import { ENGINE_INPUT_LIMIT, Engine, SessionId, TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as DateTime from "effect/DateTime";
@@ -515,7 +521,7 @@ it.effect("names a routine run's turn by its routine in usage, and as deleted on
     yield* settled(routine);
 
     const routineTurns = (yield* Usage)
-      .turns({ since: DateTime.makeUnsafe(0), limit: 100 })
+      .turns({ period: USAGE_PERIOD, limit: 100 })
       .pipe(
         Effect.map(({ turns }) =>
           turns.flatMap((turn) => (turn.routine === null ? [] : [[turn.botId, turn.routine]])),
@@ -701,10 +707,7 @@ it.effect(
       assert.strictEqual((yield* settled(routine)).status, "silent");
 
       // Both runs' turns count in the bot's usage, each naming the routine.
-      const { turns } = yield* (yield* Usage).turns({
-        since: DateTime.makeUnsafe(0),
-        limit: 100,
-      });
+      const { turns } = yield* (yield* Usage).turns({ period: USAGE_PERIOD, limit: 100 });
       const runs = turns.filter(
         (turn) => turn.routine?._tag === "routine" && turn.routine.id === routine.id,
       );

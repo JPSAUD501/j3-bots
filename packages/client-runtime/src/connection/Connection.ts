@@ -117,8 +117,10 @@ export interface ReconnectSettings {
   /** How long a socket may take to open. */
   readonly openTimeout: Duration.Duration;
   /**
-   * How long an HTTP request may take to answer before the server counts as
-   * unreachable. A file transfer is also given time for its bytes: see `transferDeadline`.
+   * How long a request may take to answer: an HTTP request, before the server
+   * counts as unreachable, and a read on the socket that has no other end,
+   * such as the usage view's, before it counts as failed. A file transfer is
+   * also given time for its bytes: see `transferDeadline`.
    */
   readonly requestTimeout: Duration.Duration;
   /** How long an open socket may stay silent before it counts as dropped. */

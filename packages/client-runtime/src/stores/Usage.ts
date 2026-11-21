@@ -1,26 +1,36 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { MAX_USAGE_TURNS, type UsageTurn } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
-import * as DateTime from "effect/DateTime";
-import * as Duration from "effect/Duration";
+import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import type { RpcClientError } from "effect/rpc/RpcClientError";
 import type * as Scope from "effect/Scope";
-import { Connection, type J3RpcClient, type NotPaired } from "../connection/Connection.ts";
+import {
+  Connection,
+  type J3RpcClient,
+  type NotPaired,
+  ReconnectPolicy,
+} from "../connection/Connection.ts";
 import { Cell, type Readable } from "../Store.ts";
 import { loading, markStale, ready, type Synced } from "./synced.ts";
 
-/** How far back the usage view counts turns. */
-export const USAGE_PERIOD = Duration.days(1);
-
 /** How many turns the first read takes, and how many more each `loadMore` adds. */
 export const USAGE_PAGE = 200;
+
+/**
+ * An error of the client's own on a socket that stays open, such as an answer
+ * it cannot decode. The socket's errors end the socket, and the read runs
+ * again on the next one.
+ */
+const onOpenSocket = (error: RpcClientError) => error.reason._tag === "RpcClientDefect";
 
 /** The turns of the `USAGE_PERIOD` before one read, as far as it took them. */
 export interface RecentTurns {
   /** Turns that started in the period, newest first. */
   readonly turns: ReadonlyArray<UsageTurn>;
-  /** When they were read: the period ends there, and later turns are not counted. */
+  /** When the server read them: the period ends there, and later turns are not counted. */
   readonly readAt: DateTime.Utc;
   /** The period holds turns older than the oldest read. */
   readonly hasMore: boolean;
@@ -72,6 +82,7 @@ export const layer = Layer.effect(
   Usage,
   Effect.gen(function* () {
     const connection = yield* Connection;
+    const policy = yield* ReconnectPolicy;
 
     const open = Effect.gen(function* () {
       const scope = yield* Effect.scope;
@@ -85,7 +96,8 @@ export const layer = Layer.effect(
       /**
        * Reads the turns and shows how the read ends, unless a read started
        * later is under way or done. A read the socket drops fails with the
-       * socket's error, for the caller to read again on the next one.
+       * socket's error, for the caller to read again on the next one; one
+       * that fails otherwise, or gets no answer in time, shows as failed.
        */
       const read = (client: J3RpcClient) =>
         Effect.suspend(() => {
@@ -93,36 +105,42 @@ export const layer = Layer.effect(
           const limit = wanted;
           const latest = () => ticket === started;
           state.update((current) => (current.failed ? { ...current, failed: false } : current));
-          return Effect.gen(function* () {
-            const readAt = yield* DateTime.now;
-            const since = DateTime.subtractDuration(readAt, USAGE_PERIOD);
-            const page = yield* client["usage.turns"]({ since, limit });
-            if (!latest()) return;
-            shown = limit;
-            state.set({
-              read: ready({
-                turns: page.turns,
-                readAt,
-                hasMore: page.hasMore,
-                canLoadMore: page.hasMore && limit < MAX_USAGE_TURNS,
-              }),
-              loadingMore: limit < wanted,
-              failed: false,
-            });
-          }).pipe(
-            // The server fails a request alone with a generic defect. The
-            // turns read before stay, and `retry` reads again.
-            Effect.catchDefect((defect) =>
-              Effect.logWarning("The recent turns could not be read", defect).pipe(
-                Effect.andThen(
-                  Effect.sync(() => {
-                    if (latest()) {
-                      state.update((current) => ({ ...current, loadingMore: false, failed: true }));
-                    }
-                  }),
-                ),
+          // The turns read before stay, and `retry` reads again.
+          const fail = (reason: unknown) =>
+            Effect.logWarning("The recent turns could not be read", reason).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  if (latest()) {
+                    state.update((current) => ({ ...current, loadingMore: false, failed: true }));
+                  }
+                }),
               ),
+            );
+          return client["usage.turns"]({ limit }).pipe(
+            Effect.timeoutOption(policy.requestTimeout),
+            Effect.flatMap(
+              Option.match({
+                onNone: () => fail("No answer in time"),
+                onSome: (page) =>
+                  Effect.sync(() => {
+                    if (!latest()) return;
+                    shown = limit;
+                    state.set({
+                      read: ready({
+                        turns: page.turns,
+                        readAt: page.readAt,
+                        hasMore: page.hasMore,
+                        canLoadMore: page.hasMore && limit < MAX_USAGE_TURNS,
+                      }),
+                      loadingMore: limit < wanted,
+                      failed: false,
+                    });
+                  }),
+              }),
             ),
+            Effect.catchIf(onOpenSocket, fail),
+            // The server fails a request alone with a generic defect.
+            Effect.catchDefect(fail),
           );
         });
 
