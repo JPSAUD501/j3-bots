@@ -246,5 +246,4 @@ Every interface sentence goes through the translation layer as a whole sentence 
 1. The command palette.
 2. Image avatars, with state moved to the badge.
 3. Notification visuals that use the still avatar.
-4. The mobile theme, generated from the same tokens.
-5. A virtualized conversation list once conversations grow long.
+4. A virtualized conversation list once conversations grow long.

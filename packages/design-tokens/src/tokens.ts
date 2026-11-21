@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /**
  * J3 Bots' design tokens: the single source for every client's colors, type,
- * space, shape, motion and layout. The web stylesheet is generated from this
- * file (see `web.ts`); the mobile theme will be generated from it too.
+ * space, shape, motion and layout. The web stylesheet (`web.ts`) and the
+ * mobile app's Uniwind theme (`uniwind.ts`) are generated from this file.
  *
  * Colors are `#rrggbb` or `oklch(L C H)`, optionally with `/ alpha`. The
  * reasoning behind the values is in docs/design/design-language.md.
