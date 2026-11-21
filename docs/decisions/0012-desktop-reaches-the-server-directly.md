@@ -14,16 +14,16 @@ A page served from a privileged custom scheme (`j3bots://app`) is a secure conte
 
 The window loads the bundled web build from `j3bots://app` (`j3bots-dev://app` in development), and the page calls the server at the server's own origin with the platform's `fetch` and `WebSocket`, exactly as a browser does. The custom scheme serves only the build's files; it forwards nothing.
 
-The server answers CORS for the desktop origins (`DESKTOP_APP_ORIGINS` in `packages/contracts`) and no other: preflights from them are allowed for the headers clients send, without credentials, since the credential is a bearer header and never a cookie. The page's Content Security Policy allows connections only to its own origin and to the server the operator named.
+The server answers CORS for the desktop origins (`DESKTOP_APP_ORIGINS` in `packages/contracts`) and no other; a request from any other origin, a preflight included, is answered as if there were no CORS at all: preflights from them are allowed for the headers clients send, without credentials, since the credential is a bearer header and never a cookie. The page's Content Security Policy allows connections only to its own origin and to the server the operator named.
 
-The main process keeps the named server and checks it before keeping it: an answer from `/api/server` that decodes as a J3 Bots server. Plain HTTP is accepted only to loopback and private IP literals and `localhost`, the ranges the server itself serves over HTTP ([Security](../architecture/security.md#j3-bots-own-surface)). The page asks for a server through a preload bridge whose messages both sides decode with the schemas in `packages/desktop-bridge`; it never learns another server without the main process checking it.
+The main process keeps the named server and checks it before keeping it: an answer from `/api/server` that decodes as a J3 Bots server, with no redirect followed. Plain HTTP is accepted only to loopback and private IP literals and `localhost`, the ranges the server itself serves over HTTP ([Security](../architecture/security.md#j3-bots-own-surface)). The page asks for a server through a preload bridge whose messages both sides decode with the schemas in `packages/desktop-bridge`; it never learns another server without the main process checking it.
 
 ## Consequences
 
 - The desktop reaches the server by the same code path as the web client: one HTTP client, one socket, one reconnect. Nothing in `client-runtime` knows it runs in Electron.
 - Each Electron upgrade must measure again that a secure custom-scheme page may still call private addresses over plain HTTP. If Chromium starts asking for local network access, the app grants it to its own origin, or falls back to the proxy below.
 - The server's surface grows by one CORS rule. Pages on any other origin still cannot read its answers.
-- Changing the server clears the page's IndexedDB (credential, drafts, unsent messages), so a token never reaches a server other than the one that issued it.
+- The page keeps its credential, drafts and unsent messages in IndexedDB, which is emptied right before a server is kept, and a server counts as kept only once it is written to the app's settings. A device token so never reaches a server other than the one that issued it, even after a lost or damaged settings file.
 
 ## Rejected
 

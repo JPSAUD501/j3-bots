@@ -466,13 +466,23 @@ export const ptBR: Catalog = {
   "server.unreachable":
     "Nada respondeu nesse endereço. Verifique se o J3 Bots está rodando e se este computador alcança a máquina.",
   "server.notJ3Bots": "Algo respondeu nesse endereço, mas não é o J3 Bots.",
+  "server.notSaved": "O app não conseguiu salvar esse endereço. Tente de novo.",
   "server.failed": "O app não conseguiu verificar esse endereço. Tente de novo.",
+  "server.change": "Trocar de servidor",
+  "server.change.pending": "Trocando…",
+  "server.change.failed": "O app não conseguiu esquecer o servidor. Tente de novo.",
+  "server.change.title": "Trocar de servidor?",
+  "server.change.body":
+    "O app esquece {address} e o acesso deste dispositivo lá, com os rascunhos e as mensagens não enviadas. O dispositivo continua na lista desse servidor até você removê-lo de outro dispositivo.",
+  "server.change.cancel": "Manter este servidor",
   "pairing.server": "Servidor: {address}",
-  "pairing.changeServer": "Trocar de servidor",
 
   "gate.incompatible.title": "Esta página está desatualizada",
   "gate.incompatible.body":
     "O servidor do J3 Bots foi atualizado e fala uma versão mais nova. Recarregue para pegar a página certa.",
+  "gate.incompatible.desktopTitle": "Este app não combina com o servidor",
+  "gate.incompatible.desktopBody":
+    "O servidor do J3 Bots em {address} fala uma versão diferente da deste app. Atualize o app para a versão do servidor ou troque para outro servidor.",
   "gate.storage.title": "Este navegador não guarda o acesso",
   "gate.storage.body":
     "O J3 Bots guarda o acesso deste dispositivo nos dados de site do navegador, e o navegador recusou. Permita dados de site para esta página e tente de novo.",
@@ -632,6 +642,7 @@ export const ptBR: Catalog = {
   "settings.pair.expires": "Vale uma vez, até {time}",
   "settings.pair.failed": "Nenhum código foi gerado. Tente de novo.",
   "settings.pair.offline": "Disponível quando este dispositivo voltar a se conectar ao J3 Bots.",
+  "settings.server": "Servidor",
   "settings.browser": "Este navegador",
   "settings.signOut": "Sair neste dispositivo",
   "settings.signOut.hint": "Sair encerra o acesso deste dispositivo e apaga o que ele guarda aqui.",

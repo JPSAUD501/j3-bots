@@ -4,7 +4,9 @@ import * as DateTime from "effect/DateTime";
 import { useEffect, useId, useRef, useState, type ReactElement } from "react";
 import { useI18n, usePresentation } from "../app/context";
 import { clockTime } from "../lib/time";
+import type { DesktopServer } from "../shell/data";
 import { Centered, Ensemble, Heading } from "./EmptyStates";
+import { ChangeServer } from "./ServerAddress";
 import { Button } from "./ui/button";
 
 /** A name for this device that the operator recognises in their list: browser and system. */
@@ -52,7 +54,7 @@ interface PairingProps {
    * In the desktop app, the server the operator named, and a way back to the
    * screen that names it. A browser's server is the page's own, so it has none.
    */
-  readonly server?: { readonly address: string; readonly onChange: () => void } | undefined;
+  readonly server?: DesktopServer | undefined;
 }
 
 /**
@@ -175,22 +177,45 @@ export function Pairing({ reason, onPair, defaultName, server }: PairingProps) {
         )}
       </form>
       {server !== undefined && (
-        <p className="flex max-w-xs flex-wrap items-center justify-center gap-x-2 text-xs text-muted-foreground">
+        <div className="flex max-w-xs flex-col items-center gap-1 text-xs text-muted-foreground">
           <span className="font-mono break-all">
             {t("pairing.server", { address: server.address })}
           </span>
-          <Button variant="ghost" size="sm" disabled={busy} onClick={server.onChange}>
-            {t("pairing.changeServer")}
-          </Button>
-        </p>
+          <ChangeServer
+            address={server.address}
+            onChange={server.forget}
+            paired={false}
+            className="items-center"
+          />
+        </div>
       )}
     </Centered>
   );
 }
 
-/** The server speaks another version of the protocol: this page is older or newer than it. */
-export function Incompatible() {
+/**
+ * The server speaks another version of the protocol: this page is older or
+ * newer than it. A browser reloads to get the server's own page; the desktop
+ * app carries its page, so it needs updating, or another server.
+ */
+export function Incompatible({ server }: { server?: DesktopServer | undefined }) {
   const { t } = useI18n();
+  if (server !== undefined) {
+    return (
+      <Centered>
+        <Heading
+          title={t("gate.incompatible.desktopTitle")}
+          body={t("gate.incompatible.desktopBody", { address: server.address })}
+        />
+        <ChangeServer
+          address={server.address}
+          onChange={server.forget}
+          paired
+          className="items-center"
+        />
+      </Centered>
+    );
+  }
   return (
     <Centered>
       <Heading title={t("gate.incompatible.title")} body={t("gate.incompatible.body")} />

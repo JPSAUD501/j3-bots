@@ -459,13 +459,23 @@ export const en = {
   "server.unreachable":
     "Nothing answered at that address. Check that J3 Bots is running and that this computer can reach it.",
   "server.notJ3Bots": "Something answered at that address, but it isn’t J3 Bots.",
+  "server.notSaved": "This app couldn’t save that address. Try again.",
   "server.failed": "This app couldn’t check that address. Try again.",
+  "server.change": "Change server",
+  "server.change.pending": "Changing…",
+  "server.change.failed": "This app couldn’t forget the server. Try again.",
+  "server.change.title": "Change server?",
+  "server.change.body":
+    "This app forgets {address} and this device’s sign-in there, with its drafts and unsent messages. The device stays listed on that server until you remove it from another device.",
+  "server.change.cancel": "Keep this server",
   "pairing.server": "Server: {address}",
-  "pairing.changeServer": "Change server",
 
   "gate.incompatible.title": "This page is out of date",
   "gate.incompatible.body":
     "The J3 Bots server was updated and speaks a newer version. Reload to get the matching page.",
+  "gate.incompatible.desktopTitle": "This app doesn’t match the server",
+  "gate.incompatible.desktopBody":
+    "The J3 Bots server at {address} speaks a different version than this app. Update the app to match the server, or change to another server.",
   "gate.storage.title": "This browser won’t keep the sign-in",
   "gate.storage.body":
     "J3 Bots keeps this device’s sign-in in the browser’s site data, and the browser refused. Allow site data for this page, then try again.",
@@ -619,6 +629,7 @@ export const en = {
   "settings.pair.expires": "Works once, until {time}",
   "settings.pair.failed": "No code was made. Try again.",
   "settings.pair.offline": "Available once this device is connected to J3 Bots again.",
+  "settings.server": "Server",
   "settings.browser": "This browser",
   "settings.signOut": "Sign out this device",
   "settings.signOut.hint": "Signing out ends this device’s access and deletes what it keeps here.",

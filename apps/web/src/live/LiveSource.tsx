@@ -70,7 +70,7 @@ import { notificationAccess } from "../preferences/notifications";
 import { notificationContent } from "../presentation/notification";
 import type { RoomFormMode } from "../presentation/roomForm";
 import { handoffPeer } from "../presentation/timeline";
-import type { ConversationView, ShellData, ShellIntents } from "../shell/data";
+import type { ConversationView, DesktopServer, ShellData, ShellIntents } from "../shell/data";
 import { ShellSourceProvider } from "../shell/source";
 import {
   closeNotificationsOf,
@@ -99,6 +99,12 @@ type RoomFormTarget =
  * have named one.
  */
 const server = desktop === null ? new URL(window.location.origin) : desktop.server;
+
+/** In the desktop app, the server it talks to and a way to leave it. */
+const desktopServer: DesktopServer | undefined =
+  desktop === null || server === null
+    ? undefined
+    : { address: server.origin, forget: desktop.forgetServer };
 
 /** One client for the page, made on first use. */
 const client = (origin: URL) => (started ??= createJ3Client(makePlatform(origin)));
@@ -203,18 +209,14 @@ function Gate({ children }: { children: ReactNode }) {
             reason={connection.reason}
             defaultName={guessDeviceName(navigator.userAgent)}
             onPair={j3.pair}
-            server={
-              desktop === null || server === null
-                ? undefined
-                : { address: server.origin, onChange: desktop.forgetServer }
-            }
+            server={desktopServer}
           />
         </Screen>
       );
     case "incompatible":
       return (
         <Screen>
-          <Incompatible />
+          <Incompatible server={desktopServer} />
         </Screen>
       );
     case "storage-failed":
@@ -825,6 +827,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
         }
         return result._tag !== "failed";
       }),
+    ...(desktopServer === undefined ? {} : { server: desktopServer }),
   };
 
   return (

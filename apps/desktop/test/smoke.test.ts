@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- Electron's package answers its executable's path only to require().
+// @effect-diagnostics nodeBuiltinImport:off -- Electron's package answers its executable's path only to require(), and the redirecting address is a plain node:http server.
+import * as NodeHttp from "node:http";
 import * as NodeModule from "node:module";
 import { CommandId } from "@j3-bots/contracts";
 import * as Server from "@j3-bots/server/testing";
@@ -15,8 +16,9 @@ import { _electron, type ElectronApplication } from "playwright-core";
 
 // The development build, launched as the operator launches it, against the
 // server's testing layer (its real routes and socket over the in-memory
-// engine) on loopback: name the server, pair, open a bot from the roster and
-// send it a message. Needs the web client built and a display (`xvfb-run`).
+// engine) on loopback: refuse an address that redirects, name the server,
+// pair, open a bot from the roster, send it a message, and change server from
+// Settings. Needs the web client built and a display (`xvfb-run`).
 
 /** How long one step may take before the smoke fails, a cold Electron start included. */
 const STEP = 30_000;
@@ -44,11 +46,33 @@ const launch = (profile: string) =>
     (app: ElectronApplication) => Effect.promise(() => app.close()),
   );
 
+/** A loopback server that redirects every request to `target`; answers its host. Closed with the scope. */
+const redirectingTo = (target: string) =>
+  Effect.acquireRelease(
+    Effect.callback<NodeHttp.Server>((resume) => {
+      const server = NodeHttp.createServer((request, response) =>
+        response.writeHead(302, { location: `${target}${request.url ?? "/"}` }).end(),
+      );
+      server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
+    }),
+    (server) =>
+      Effect.callback<void>((resume) => {
+        server.close(() => resume(Effect.void));
+      }),
+  ).pipe(
+    Effect.flatMap((server) => {
+      const address = server.address();
+      return address === null || typeof address === "string"
+        ? Effect.die("not an IP listener")
+        : Effect.succeed(`127.0.0.1:${address.port}`);
+    }),
+  );
+
 it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
   excludeTestServices: true,
 })("desktop app", (it) => {
   it.effect(
-    "names a server, pairs with it, and sends a bot a message",
+    "names a server, pairs with it, sends a bot a message, and changes server",
     () =>
       Effect.gen(function* () {
         const origin = yield* Server.origin;
@@ -60,11 +84,16 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const profile = yield* fs.makeTempDirectoryScoped({ prefix: "j3-desktop-smoke-" });
+        const redirecting = yield* redirectingTo(origin.origin);
 
         const app = yield* launch(profile);
         const page = yield* Effect.promise(() => app.firstWindow({ timeout: STEP }));
         yield* Effect.promise(async () => {
-          await page.getByLabel("Server address").fill(origin.host, { timeout: STEP });
+          // An address that redirects to the server is not taken for it.
+          await page.getByLabel("Server address").fill(redirecting, { timeout: STEP });
+          await page.getByRole("button", { name: "Continue" }).click();
+          await page.getByText("isn’t J3 Bots").waitFor({ state: "visible", timeout: STEP });
+          await page.getByLabel("Server address").fill(origin.host);
           await page.getByRole("button", { name: "Continue" }).click();
           await page.getByLabel("Pairing code").fill(code, { timeout: STEP });
           await page.getByRole("button", { name: "Pair", exact: true }).click();
@@ -101,12 +130,24 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
           );
         assert.isTrue(Option.isSome(arrived));
         assert.strictEqual(new URL(page.url()).protocol, "j3bots-dev:");
+        // Changing server from Settings forgets this device's pairing here.
+        const stored = yield* Effect.promise(async () => {
+          await page.getByRole("button", { name: "Settings" }).click();
+          await page.getByRole("button", { name: "Change server" }).click();
+          await page
+            .getByRole("alertdialog")
+            .getByRole("button", { name: "Change server" })
+            .click();
+          await page.getByLabel("Server address").waitFor({ state: "visible", timeout: STEP });
+          return page.evaluate(() => indexedDB.databases());
+        });
+        assert.deepStrictEqual(stored, []);
         // The window's place is saved as it closes.
         yield* Effect.promise(() => app.close());
         const saved = yield* fs.readFileString(
           path.join(profile, "J3 Bots Development", "desktop.json"),
         );
-        assert.include(saved, `"server":"${origin.origin}"`);
+        assert.include(saved, `"server":null`);
         assert.include(saved, `"window":{`);
       }),
     120_000,

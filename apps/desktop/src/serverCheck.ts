@@ -3,6 +3,7 @@ import { HTTP_PATHS, ServerInfo } from "@j3-bots/contracts";
 import type { ConnectRefusal, ServerOrigin } from "@j3-bots/desktop-bridge";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
@@ -13,6 +14,8 @@ const CHECK_TIMEOUT = Duration.seconds(10);
  * Why no J3 Bots server answers at `origin`, or `null` when one does:
  * `GET /api/server` answers a `ServerInfo`. A server of another protocol
  * version counts: the client says so once it connects, and offers what to do.
+ * A redirect is not followed: the page would talk to `origin`, not to where
+ * it points, so a redirect is `not-j3-bots`.
  */
 export const checkServer = Effect.fn("checkServer")(
   function* (
@@ -21,7 +24,10 @@ export const checkServer = Effect.fn("checkServer")(
     const client = yield* HttpClient.HttpClient;
     const response = yield* client
       .get(new URL(HTTP_PATHS.server, origin).toString())
-      .pipe(Effect.option);
+      .pipe(
+        Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
+        Effect.option,
+      );
     if (response._tag === "None") return "unreachable";
     if (response.value.status !== 200) return "not-j3-bots";
     const info = yield* HttpClientResponse.schemaBodyJson(ServerInfo)(response.value).pipe(

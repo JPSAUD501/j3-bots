@@ -2,8 +2,10 @@
 import type { ConnectRefusal, ConnectResult } from "@j3-bots/desktop-bridge";
 import { useId, useState, type ReactElement } from "react";
 import { useI18n } from "../app/context";
+import { cn } from "../lib/cn";
 import { Centered, Ensemble, Heading } from "./EmptyStates";
 import { Button } from "./ui/button";
+import { Confirm } from "./ui/confirm";
 
 const fieldClass =
   "h-10 w-full rounded-md border border-input bg-surface px-3 text-sm placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:h-11";
@@ -46,6 +48,10 @@ export function ServerAddress({ onConnect }: ServerAddressProps) {
         return t("server.unreachable");
       case "not-j3-bots":
         return t("server.notJ3Bots");
+      case "not-saved":
+        return t("server.notSaved");
+      // Never shown: the page answers `server-kept` by loading again.
+      case "server-kept":
       case "no-answer":
         return t("server.failed");
     }
@@ -66,9 +72,10 @@ export function ServerAddress({ onConnect }: ServerAddressProps) {
           setState({ _tag: "checking" });
           onConnect(address).then((result) => {
             if (result === null) return setState({ _tag: "failed", reason: "no-answer" });
-            if (result._tag === "refused")
+            if (result._tag === "refused" && result.reason !== "server-kept")
               return setState({ _tag: "failed", reason: result.reason });
-            // The server is kept: the page starts again on it, at pairing.
+            // A server is kept, this one or one named since this page loaded:
+            // the page starts again on it.
             window.location.reload();
           });
         }}
@@ -100,5 +107,58 @@ export function ServerAddress({ onConnect }: ServerAddressProps) {
         </p>
       </form>
     </Centered>
+  );
+}
+
+interface ChangeServerProps {
+  /** The server this app talks to. */
+  readonly address: string;
+  /** Resolves `false` when the server is still kept; otherwise the page loads again on the server address screen. */
+  readonly onChange: () => Promise<boolean>;
+  /** This device is signed in on the server: ask first, since that sign-in goes. */
+  readonly paired: boolean;
+  readonly className?: string;
+}
+
+/**
+ * Leaves the server for another, in the desktop app: the app forgets it,
+ * with this device's sign-in there and everything kept for it, and returns
+ * to the server address screen.
+ */
+export function ChangeServer({ address, onChange, paired, className }: ChangeServerProps) {
+  const { t } = useI18n();
+  // Success loads the page again, so only a failure is ever shown here.
+  const [state, setState] = useState<"idle" | "pending" | "failed">("idle");
+  const pending = state === "pending";
+  const change = () => {
+    if (pending) return;
+    setState("pending");
+    onChange().then((forgotten) => setState(forgotten ? "pending" : "failed"));
+  };
+  const label = pending ? t("server.change.pending") : t("server.change");
+  const trigger = <Button size="sm" variant="ghost-muted" aria-disabled={pending} />;
+  return (
+    <div className={cn("flex flex-col gap-1.5", className)}>
+      {paired ? (
+        <Confirm
+          trigger={trigger}
+          busy={pending}
+          title={t("server.change.title")}
+          body={t("server.change.body", { address })}
+          cancel={t("server.change.cancel")}
+          confirm={t("server.change")}
+          onConfirm={change}
+        >
+          {label}
+        </Confirm>
+      ) : (
+        <Button size="sm" variant="ghost-muted" aria-disabled={pending} onClick={change}>
+          {label}
+        </Button>
+      )}
+      <p role="alert" className="text-xs text-blocked empty:hidden">
+        {state === "failed" && t("server.change.failed")}
+      </p>
+    </div>
   );
 }

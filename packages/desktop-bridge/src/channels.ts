@@ -12,7 +12,7 @@ export const IPC_CHANNELS = {
   state: "j3bots:state",
   /** `ConnectRequest`, answered with `ConnectResult`. */
   connect: "j3bots:connect",
-  /** Forgets the server and loads the page again, on the server address screen. */
+  /** Forgets the server and loads the page again, on the server address screen. Answers `ForgetResult`. */
   forgetServer: "j3bots:forget-server",
 } as const;
 

@@ -7,8 +7,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import { parseServerAddress } from "./serverAddress.ts";
 
 /** The window's place on screen when it last closed. */
 export const WindowState = Schema.Struct({
@@ -33,23 +35,66 @@ export type Settings = typeof Settings.Type;
 
 const EMPTY: Settings = { server: null, window: null };
 
-const SettingsFile = Schema.fromJsonString(Settings);
-const decodeFile = Schema.decodeUnknownOption(SettingsFile);
-const encodeFile = Schema.encodeEffect(SettingsFile);
+const decodeStored = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
+const decodeServer = Schema.decodeUnknownOption(ServerOrigin);
+const decodeWindow = Schema.decodeUnknownOption(WindowState);
+const encodeFile = Schema.encodeEffect(Schema.fromJsonString(Settings));
+
+/**
+ * The settings `text` holds, each entry read on its own: an entry that cannot
+ * be read is dropped and the others kept. A server is kept only if the server
+ * address screen would accept it now, so plain HTTP to a public host never
+ * comes back from a file. `dropped` names the entries that were there and
+ * were not kept.
+ */
+export const decodeSettings = (
+  text: string,
+): { readonly settings: Settings; readonly dropped: ReadonlyArray<keyof Settings> } => {
+  const stored = decodeStored(text);
+  if (Option.isNone(stored)) return { settings: EMPTY, dropped: [] };
+  const { server, window } = stored.value;
+  const keptServer = Option.flatMap(decodeServer(server), (origin) => {
+    const checked = parseServerAddress(origin);
+    return Result.isSuccess(checked) && checked.success === origin
+      ? Option.some(origin)
+      : Option.none();
+  });
+  const keptWindow = decodeWindow(window);
+  const dropped: Array<keyof Settings> = [];
+  if (server !== undefined && server !== null && Option.isNone(keptServer)) dropped.push("server");
+  if (window !== undefined && window !== null && Option.isNone(keptWindow)) dropped.push("window");
+  return {
+    settings: { server: Option.getOrNull(keptServer), window: Option.getOrNull(keptWindow) },
+    dropped,
+  };
+};
+
+/** The settings file could not be written; the settings are as they were. */
+export class SettingsNotSaved extends Schema.TaggedError<SettingsNotSaved>()("SettingsNotSaved", {
+  cause: Schema.Defect(),
+}) {}
 
 export class DesktopSettings extends Context.Service<
   DesktopSettings,
   {
     readonly get: Effect.Effect<Settings>;
-    /** Applies `change` and writes the result; a write that fails is logged and the change kept in memory. */
-    readonly update: (change: (settings: Settings) => Settings) => Effect.Effect<Settings>;
+    /**
+     * Applies `change` and writes the result. The change takes effect only
+     * once written: a write that fails leaves the settings as they were.
+     */
+    readonly update: (
+      change: (settings: Settings) => Settings,
+    ) => Effect.Effect<Settings, SettingsNotSaved>;
   }
 >()("@j3-bots/desktop/settings/DesktopSettings") {}
 
 /**
- * The settings in `file`. A file that is missing or cannot be read as
- * settings starts the app as on its first launch. Each write replaces the
- * file whole, through a temporary file renamed over it.
+ * The settings in `file`. A file that is missing starts the app as on its
+ * first launch; an entry in it that cannot be read is dropped, with a
+ * warning. Each write replaces the file whole, through a temporary file
+ * renamed over it.
  */
 export const layer = (file: string) =>
   Layer.effect(
@@ -57,24 +102,36 @@ export const layer = (file: string) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const stored = yield* fs
-        .readFileString(file)
-        .pipe(Effect.map(decodeFile), Effect.orElseSucceed(Option.none));
-      const current = yield* Ref.make(Option.getOrElse(stored, () => EMPTY));
+      const text = yield* fs.readFileString(file).pipe(Effect.option);
+      const loaded = Option.match(text, {
+        onNone: () => ({ settings: EMPTY, dropped: [] }),
+        onSome: decodeSettings,
+      });
+      if (loaded.dropped.length > 0) {
+        yield* Effect.logWarning("Dropped desktop settings that could not be read", loaded.dropped);
+      }
+      const current = yield* Ref.make(loaded.settings);
       const writing = yield* Semaphore.make(1);
       const write = Effect.fn("DesktopSettings.write")(
         function* (settings: Settings) {
-          const text = yield* encodeFile(settings);
+          const encoded = yield* encodeFile(settings);
           yield* fs.makeDirectory(path.dirname(file), { recursive: true });
           const temporary = `${file}.tmp`;
-          yield* fs.writeFileString(temporary, text);
+          yield* fs.writeFileString(temporary, encoded);
           yield* fs.rename(temporary, file);
         },
-        Effect.catch((error) => Effect.logWarning("Saving the desktop settings failed", error)),
+        Effect.mapError((cause) => new SettingsNotSaved({ cause })),
       );
       const update = Effect.fn("DesktopSettings.update")(
         (change: (settings: Settings) => Settings) =>
-          writing.withPermits(1)(Ref.updateAndGet(current, change).pipe(Effect.tap(write))),
+          writing.withPermits(1)(
+            Effect.gen(function* () {
+              const next = change(yield* Ref.get(current));
+              yield* write(next);
+              yield* Ref.set(current, next);
+              return next;
+            }),
+          ),
       );
       return DesktopSettings.of({ get: Ref.get(current), update });
     }),

@@ -20,6 +20,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as HttpMiddleware from "effect/http/HttpMiddleware";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -167,19 +168,33 @@ const download = HttpRouter.add(
   }),
 );
 
-/**
- * CORS for the desktop app, whose pages call the server from their own origin
- * (`DESKTOP_APP_ORIGINS`). Every other origin gets no CORS header, so a web
- * page elsewhere still cannot read an answer. The credential is a bearer
- * header, never a cookie, so credentialed CORS is never allowed.
- */
-const desktopCors = HttpRouter.cors({
-  allowedOrigins: Object.values(DESKTOP_APP_ORIGINS),
+const desktopOrigins: ReadonlySet<string> = new Set(Object.values(DESKTOP_APP_ORIGINS));
+const isDesktopOrigin = (origin: string | undefined) =>
+  origin !== undefined && desktopOrigins.has(origin);
+
+const cors = HttpMiddleware.cors({
+  allowedOrigins: isDesktopOrigin,
   allowedMethods: ["GET", "POST"],
   // Effect's HTTP client, which clients use, adds the trace context headers.
   allowedHeaders: ["authorization", "content-type", "traceparent", "b3"],
   maxAge: 600,
 });
+
+/**
+ * CORS for the desktop app, whose pages call the server from their own origin
+ * (`DESKTOP_APP_ORIGINS`), and only for requests from those origins: any
+ * other request, a preflight included, is answered as if there were no CORS,
+ * so a web page elsewhere still cannot read an answer. The credential is a
+ * bearer header, never a cookie, so credentialed CORS is never allowed.
+ */
+const desktopCors = HttpRouter.middleware(
+  (httpApp) =>
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      return yield* isDesktopOrigin(request.headers["origin"]) ? cors(httpApp) : httpApp;
+    }),
+  { global: true },
+);
 
 /** The routes outside the RPC socket. */
 export const routes = Layer.mergeAll(

@@ -177,4 +177,18 @@ export interface ShellIntents extends TimelineIntents {
    * deleted and the device is still signed in.
    */
   readonly signOut: () => Promise<boolean>;
+  /** In the desktop app, the server it talks to. Absent in a browser, whose server is the page's own. */
+  readonly server?: DesktopServer;
+}
+
+/** The server the desktop app talks to, and a way to leave it for another. */
+export interface DesktopServer {
+  /** Its origin, as shown to the operator. */
+  readonly address: string;
+  /**
+   * Forgets it, with this device's sign-in there and everything kept for it,
+   * and loads the page again on the server address screen. Resolves `false`
+   * when it is still kept.
+   */
+  readonly forget: () => Promise<boolean>;
 }

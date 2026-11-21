@@ -40,14 +40,18 @@ export type ConnectRequest = typeof ConnectRequest.Type;
 /**
  * Why an address was not kept: it is not an address (`invalid`), it asks for
  * plain HTTP to a host that is not loopback or a private IP address
- * (`needs-https`), nothing answered there (`unreachable`), or what answered is
- * not a J3 Bots server (`not-j3-bots`).
+ * (`needs-https`), nothing answered there (`unreachable`), what answered is
+ * not a J3 Bots server (`not-j3-bots`), the app already keeps a server, which
+ * must be forgotten first (`server-kept`), or the app could not save it
+ * (`not-saved`).
  */
 export const ConnectRefusal = Schema.Literals([
   "invalid",
   "needs-https",
   "unreachable",
   "not-j3-bots",
+  "server-kept",
+  "not-saved",
 ]);
 export type ConnectRefusal = typeof ConnectRefusal.Type;
 
@@ -57,6 +61,13 @@ export const ConnectResult = Schema.Union([
   Schema.TaggedStruct("refused", { reason: ConnectRefusal }),
 ]);
 export type ConnectResult = typeof ConnectResult.Type;
+
+/**
+ * How forgetting the server ended: `forgotten`, and the page loads again on
+ * the server address screen, or `failed`, and the server is still kept.
+ */
+export const ForgetResult = Schema.Literals(["forgotten", "failed"]);
+export type ForgetResult = typeof ForgetResult.Type;
 
 /** A function, called only to have its answer decoded. */
 const Callable = Schema.declare(

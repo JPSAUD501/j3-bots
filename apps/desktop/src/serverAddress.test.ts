@@ -13,7 +13,7 @@ describe("the server address the operator types", () => {
     assert.strictEqual(parsed("192.0.2.10:3737"), "https://192.0.2.10:3737");
     assert.strictEqual(parsed(" 192.168.1.20:3737 "), "http://192.168.1.20:3737");
     assert.strictEqual(parsed("10.0.0.5:3737/"), "http://10.0.0.5:3737");
-    assert.strictEqual(parsed("100.101.102.103:3737"), "http://100.101.102.103:3737");
+    assert.strictEqual(parsed("100.72.9.41:3737"), "http://100.72.9.41:3737");
     assert.strictEqual(parsed("127.0.0.1:3737"), "http://127.0.0.1:3737");
     assert.strictEqual(parsed("localhost:3737"), "http://localhost:3737");
     assert.strictEqual(parsed("[::1]:3737"), "http://[::1]:3737");

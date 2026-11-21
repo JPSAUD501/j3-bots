@@ -122,14 +122,23 @@ it.layer(
         assert.strictEqual(info.status, 200);
         assert.strictEqual(info.headers["access-control-allow-origin"], origin);
       }
+      // Any other origin is answered as a request with none: a preflight too.
+      const corsHeaders = (headers: NodeHttp.IncomingHttpHeaders) =>
+        Object.keys(headers).filter(
+          (name) => name.startsWith("access-control-") || name === "vary",
+        );
+      const plain = yield* ask("OPTIONS", HTTP_PATHS.socketTicket, {
+        "access-control-request-method": "POST",
+      });
       for (const origin of ["https://example.com", "j3bots://elsewhere", "null"]) {
         const preflight = yield* ask("OPTIONS", HTTP_PATHS.socketTicket, {
           origin,
           "access-control-request-method": "POST",
         });
-        assert.isUndefined(preflight.headers["access-control-allow-origin"]);
+        assert.strictEqual(preflight.status, plain.status);
+        assert.deepStrictEqual(corsHeaders(preflight.headers), corsHeaders(plain.headers));
         const info = yield* ask("GET", HTTP_PATHS.server, { origin });
-        assert.isUndefined(info.headers["access-control-allow-origin"]);
+        assert.deepStrictEqual(corsHeaders(info.headers), []);
       }
     }),
   );

@@ -5,6 +5,7 @@ import {
   ConnectRequest,
   type ConnectResult,
   DesktopState,
+  type ForgetResult,
   IPC_CHANNELS,
 } from "@j3-bots/desktop-bridge";
 import * as Effect from "effect/Effect";
@@ -12,7 +13,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Mime from "effect/http/Mime";
@@ -22,7 +22,6 @@ import {
   ipcMain,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
-  net,
   protocol,
   screen,
   session,
@@ -30,9 +29,10 @@ import {
   type WebContents,
 } from "electron";
 import { contentSecurityPolicy, inlineScriptSources, resolveAsset } from "./assets.ts";
+import { electronFetch } from "./electronFetch.ts";
 import { APP_ID, appOrigin, schemeOf } from "./identity.ts";
 import { externalUrl, isAppUrl } from "./navigation.ts";
-import { parseServerAddress } from "./serverAddress.ts";
+import * as ServerChoice from "./serverChoice.ts";
 import { checkServer } from "./serverCheck.ts";
 import * as Settings from "./settings.ts";
 import { MIN_SIZE, openingBounds } from "./window.ts";
@@ -79,6 +79,24 @@ const fromApp = (event: IpcMainEvent | IpcMainInvokeEvent) =>
   event.senderFrame === event.sender.mainFrame &&
   isAppUrl(event.senderFrame.url, APP_ORIGIN);
 
+/** The page that sent `event`, as the server choice acts on it. */
+const pageOf = (event: IpcMainInvokeEvent): ServerChoice.Page => ({
+  // The credential, drafts and unsent messages, all in IndexedDB. Preferences
+  // in local storage (appearance, language) belong to the device and stay.
+  clearStorage: Effect.tryPromise({
+    try: () => event.sender.session.clearStorageData({ storages: ["indexdb"] }),
+    catch: (cause) => new ServerChoice.StorageNotCleared({ cause }),
+  }),
+  reload: Effect.sync(() => event.sender.reload()),
+});
+
+/**
+ * Brings the app's window forward, once there is one. Until then, a second
+ * launch is remembered and the window is focused as it first shows.
+ */
+let bringForward: (() => void) | null = null;
+let launchedWhileStarting = false;
+
 /** Keeps every web contents on the app's pages, and sends links out to the system. */
 const lockNavigation = (contents: WebContents) => {
   const stay = (event: { preventDefault: () => void }, url: string) => {
@@ -105,7 +123,20 @@ const program = Effect.gen(function* () {
 
   // The web client's build, from the same checkout in development.
   const webRoot = yield* fs.realPath(path.join(app.getAppPath(), "..", "web", "dist"));
-  const indexHtml = yield* fs.readFileString(path.join(webRoot, "index.html"));
+  /** The real path of `segments` in the build: a regular file inside it, or `null`. */
+  const fileInBuild = (segments: ReadonlyArray<string>) =>
+    fs.realPath(path.join(webRoot, ...segments)).pipe(
+      Effect.flatMap((real) =>
+        real.startsWith(`${webRoot}${path.sep}`)
+          ? fs.stat(real).pipe(Effect.map((info) => (info.type === "File" ? real : null)))
+          : Effect.succeed(null),
+      ),
+      Effect.orElseSucceed(() => null),
+    );
+  // The app shell, resolved once: what the CSP's hashes are taken from is what is served.
+  const appShell = yield* fileInBuild(["index.html"]);
+  if (appShell === null) return yield* Effect.die("The web client's build has no index.html.");
+  const indexHtml = yield* fs.readFileString(appShell);
   const scriptSources = yield* Effect.promise(() => inlineScriptSources(indexHtml));
 
   const serveFile = Effect.fn("desktop.serveFile")(
@@ -121,15 +152,8 @@ const program = Effect.gen(function* () {
         "x-content-type-options": "nosniff",
       };
       // The file's real path, links resolved, must lie inside the build.
-      const found = yield* fs.realPath(path.join(webRoot, ...answer.segments)).pipe(
-        Effect.flatMap((real) =>
-          real.startsWith(`${webRoot}${path.sep}`)
-            ? fs.stat(real).pipe(Effect.map((info) => (info.type === "File" ? real : null)))
-            : Effect.succeed(null),
-        ),
-        Effect.orElseSucceed(() => null),
-      );
-      const file = found ?? (answer.appShell ? path.join(webRoot, "index.html") : null);
+      const found = yield* fileInBuild(answer.segments);
+      const file = found ?? (answer.appShell ? appShell : null);
       if (file === null) return new Response(null, { status: 404, headers });
       const body = yield* fs.readFile(file);
       return new Response(request.method === "HEAD" ? null : new Uint8Array(body), {
@@ -147,39 +171,28 @@ const program = Effect.gen(function* () {
     () => Effect.sync(() => protocol.unhandle(SCHEME)),
   );
 
+  const choice = yield* ServerChoice.make((origin) =>
+    checkServer(origin).pipe(
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provideService(FetchHttpClient.Fetch, electronFetch),
+    ),
+  );
+
   const connect = Effect.fn("desktop.connect")(function* (
     event: IpcMainInvokeEvent,
     request: unknown,
-  ): Effect.fn.Return<ConnectResult, never, never> {
+  ): Effect.fn.Return<ConnectResult> {
     const decoded = decodeConnectRequest(request);
-    // Only the server address screen connects, and only while no server is
-    // kept: a page that knows a server must forget it first, which erases
-    // its storage, so a device token never reaches another server.
-    if (!fromApp(event) || Option.isNone(decoded) || (yield* settings.get).server !== null) {
-      return { _tag: "refused", reason: "invalid" };
-    }
-    const parsed = parseServerAddress(decoded.value.address);
-    if (Result.isFailure(parsed)) return { _tag: "refused", reason: parsed.failure };
-    const refusal = yield* checkServer(parsed.success).pipe(
-      Effect.provide(FetchHttpClient.layer),
-      Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
-        net.fetch(input instanceof URL ? input.href : input, init),
-      ),
-    );
-    if (refusal !== null) return { _tag: "refused", reason: refusal };
-    yield* settings.update((current) => ({ ...current, server: parsed.success }));
-    return { _tag: "connected", server: parsed.success };
+    // Only the server address screen connects.
+    if (!fromApp(event) || Option.isNone(decoded)) return { _tag: "refused", reason: "invalid" };
+    return yield* choice.connect(decoded.value.address, pageOf(event));
   });
 
-  const forgetServer = Effect.fn("desktop.forgetServer")(function* (event: IpcMainInvokeEvent) {
-    if (!fromApp(event)) return null;
-    // What the page kept for the server it leaves goes with it: the
-    // credential, drafts and unsent messages, all in IndexedDB. Preferences
-    // in local storage (appearance, language) belong to the device and stay.
-    yield* Effect.promise(() => event.sender.session.clearStorageData({ storages: ["indexdb"] }));
-    yield* settings.update((current) => ({ ...current, server: null }));
-    event.sender.reload();
-    return null;
+  const forgetServer = Effect.fn("desktop.forgetServer")(function* (
+    event: IpcMainInvokeEvent,
+  ): Effect.fn.Return<ForgetResult> {
+    if (!fromApp(event)) return "failed";
+    return yield* choice.forget(pageOf(event));
   });
 
   yield* Effect.acquireRelease(
@@ -231,7 +244,6 @@ const program = Effect.gen(function* () {
     },
   });
   if (placed.maximized) window.maximize();
-  window.once("ready-to-show", () => window.show());
 
   // The window's place is saved as it closes, before it goes.
   let saved = false;
@@ -240,26 +252,49 @@ const program = Effect.gen(function* () {
     event.preventDefault();
     const bounds = window.getNormalBounds();
     const state = { ...bounds, maximized: window.isMaximized() };
-    void runPromise(settings.update((current) => ({ ...current, window: state }))).finally(() => {
+    void runPromise(
+      settings
+        .update((current) => ({ ...current, window: state }))
+        .pipe(
+          Effect.catch((error) => Effect.logWarning("Saving the window's place failed", error)),
+        ),
+    ).finally(() => {
       saved = true;
       window.close();
     });
   });
 
-  app.on("second-instance", () => {
+  bringForward = () => {
     if (window.isDestroyed()) return;
     if (window.isMinimized()) window.restore();
     window.show();
     window.focus();
+  };
+  window.once("ready-to-show", () => {
+    window.show();
+    if (launchedWhileStarting) window.focus();
   });
   app.on("window-all-closed", () => app.quit());
 
-  yield* Effect.promise(() => window.loadURL(`${APP_ORIGIN}/`));
+  // A load that fails (the page navigating away first, or a build that will
+  // not load) leaves the window open on what it shows: the app keeps running.
+  const notLoaded = yield* Effect.promise(() =>
+    window.loadURL(`${APP_ORIGIN}/`).then(
+      () => null,
+      (error: unknown) => ({ error }),
+    ),
+  );
+  if (notLoaded !== null) yield* Effect.logError("Loading the app's page failed", notLoaded.error);
   return yield* Effect.never;
 });
 
-// One app per profile: a second launch brings the first one's window forward.
+// One app per profile: a second launch brings the first one's window forward,
+// or, while the app is still starting, as soon as it has one.
 if (app.requestSingleInstanceLock()) {
+  app.on("second-instance", () => {
+    if (bringForward === null) launchedWhileStarting = true;
+    else bringForward();
+  });
   NodeRuntime.runMain(
     program.pipe(
       Effect.scoped,
