@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
-import { noticeText } from "../presentation/roster";
+import { noticeText } from "@j3-bots/client-runtime/wording";
 import { Button } from "./ui/button";
 
 /**

@@ -66,6 +66,12 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       // backup could not decrypt it. The credential is read without Face ID,
       // so the app asks for no permission to use it.
       ["expo-secure-store", { faceIDPermission: false }],
+      // Photos are picked through the system's photo picker, which needs no
+      // permission; nothing is taken with the camera or recorded.
+      [
+        "expo-image-picker",
+        { photosPermission: false, cameraPermission: false, microphonePermission: false },
+      ],
       "./plugins/cleartextToPrivateHosts.js",
     ],
   };

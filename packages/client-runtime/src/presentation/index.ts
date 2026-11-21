@@ -18,6 +18,8 @@ export {
 } from "./botEdit.ts";
 export { firstSeen, see } from "./changes.ts";
 export { type CodeLineTone, diffTones } from "./diff.ts";
+export { draftFileName, draftReadiness, type DraftReadiness } from "./draft.ts";
+export { type FileIcon, fileIcon, fileKind } from "./files.ts";
 export { webAddress } from "./links.ts";
 export {
   addressed,
@@ -73,6 +75,7 @@ export {
   roomStopFailed,
   rosterKeyOf,
   rosterKeyText,
+  rosterTarget,
 } from "./roster.ts";
 export { shownSaveProblem } from "./saves.ts";
 export { type Shared, sharedDraft, type SharedDraft, type SharedFile } from "./share.ts";
@@ -83,6 +86,7 @@ export {
   clockTime,
   formatAt,
   fullTime,
+  knownTimeZone,
   type LocalTime,
   millisBetween,
   shortDuration,
@@ -91,6 +95,7 @@ export {
   buildTimeline,
   type GroupPosition,
   handoffPeer,
+  type TimelineItem,
   type TimelineMessage,
 } from "./timeline.ts";
 export {

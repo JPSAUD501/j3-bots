@@ -9,7 +9,7 @@ import {
   zoneName,
 } from "@j3-bots/client-runtime/presentation";
 import type { I18n } from "@j3-bots/i18n";
-import type { TimeContext } from "./time";
+import type { TimeContext } from "@j3-bots/client-runtime/wording";
 
 /**
  * A routine's trigger written out, as the operator would say it: "Weekdays at

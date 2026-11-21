@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Bot, Room, RosterItem, RosterItemKey } from "@j3-bots/contracts";
+import type { Bot, EntryTarget, Room, RosterItem, RosterItemKey } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import { type IntentResult, refusedWith } from "../intents/Actions.ts";
 import { needsOperator } from "../stores/Roster.ts";
@@ -54,6 +54,12 @@ export const rosterKeyOf = (item: RosterItem): RosterItemKey =>
  */
 export const rosterKeyText = (key: RosterItemKey): string =>
   key._tag === "bot" ? `bot:${key.botId}` : `room:${key.roomId}`;
+
+/** The conversation or room a roster row opens. */
+export const rosterTarget = (key: RosterItemKey): EntryTarget =>
+  key._tag === "bot"
+    ? { _tag: "conversation", botId: key.botId }
+    : { _tag: "room", roomId: key.roomId };
 
 const isPinned = (item: RosterItem) => (item._tag === "bot" ? item.bot.pinned : item.room.pinned);
 

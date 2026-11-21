@@ -1,12 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import {
-  type Avatar,
-  MAX_ATTACHMENT_SIZE,
-  MAX_ATTACHMENTS_PER_MESSAGE,
-  MAX_INLINE_IMAGE_SIZE,
-  MAX_INLINE_IMAGES_SIZE,
-  MAX_MESSAGE_LENGTH,
-} from "@j3-bots/contracts";
+import type { Avatar } from "@j3-bots/contracts";
 import { ArrowUpIcon, FileIcon, MicIcon, PlusIcon, UsersIcon, XIcon } from "lucide-react";
 import {
   type KeyboardEvent,
@@ -18,14 +11,10 @@ import {
   useRef,
   useState,
 } from "react";
+import type { DraftFile, DraftMention } from "@j3-bots/client-runtime";
 import {
-  messageProblem,
-  type DraftFile,
-  type DraftMention,
-  type FileProblem,
-  type MessageProblem,
-} from "@j3-bots/client-runtime";
-import {
+  draftFileName,
+  draftReadiness,
   draggedText,
   EVERYONE,
   insertMention,
@@ -37,11 +26,14 @@ import {
   type MentionOption,
 } from "@j3-bots/client-runtime/presentation";
 import { useI18n } from "../app/context";
-import type { I18n } from "@j3-bots/i18n";
+import {
+  draftFileDetail,
+  fileProblemText,
+  messageProblemText,
+} from "@j3-bots/client-runtime/wording";
 import { cn } from "../lib/cn";
 import { type FieldInput, followFieldInput } from "../lib/fieldEdit";
 import { AvatarShape } from "./BotAvatar";
-import { fileSize } from "./FileCard";
 import { Button } from "./ui/button";
 
 /** A room member the composer offers after `@`, drawn by its shape. */
@@ -101,50 +93,6 @@ interface ComposerProps {
   readonly addressee?: string;
 }
 
-/** Why a file cannot go, in one sentence. */
-function fileProblemText(problem: FileProblem, i18n: I18n): string {
-  const { t, locale } = i18n;
-  switch (problem) {
-    case "empty":
-      return t("composer.file.empty");
-    case "too-large":
-      return t("composer.file.tooLarge", { size: fileSize(MAX_ATTACHMENT_SIZE, locale) });
-    case "image-too-large":
-      return t("composer.file.imageTooLarge", { size: fileSize(MAX_INLINE_IMAGE_SIZE, locale) });
-    case "images-too-large":
-      return t("composer.file.imagesTooLarge", { size: fileSize(MAX_INLINE_IMAGES_SIZE, locale) });
-    case "too-many":
-      return t("composer.file.tooMany", { count: String(MAX_ATTACHMENTS_PER_MESSAGE) });
-    case "name-too-long":
-      return t("composer.file.nameTooLong");
-    case "refused":
-      return t("composer.file.refused");
-    case "server-setup":
-      return t("composer.file.serverSetup");
-    case "not-paired":
-      return t("composer.file.notPaired");
-  }
-}
-
-/** Why the message cannot go as it is, in one sentence. */
-function messageProblemText(problem: MessageProblem, i18n: I18n): string {
-  const { t, locale } = i18n;
-  const count = new Intl.NumberFormat(locale);
-  switch (problem) {
-    case "too-long":
-      return t("composer.tooLong", { count: count.format(MAX_MESSAGE_LENGTH) });
-    case "too-many-files":
-      return t("composer.tooManyFiles", { count: count.format(MAX_ATTACHMENTS_PER_MESSAGE) });
-    case "empty-file":
-      return t("composer.filesProblem", { reason: fileProblemText("empty", i18n) });
-    case "image-too-large":
-    case "images-too-large":
-      return t("composer.filesProblem", { reason: fileProblemText(problem, i18n) });
-  }
-}
-
-const nameOf = (file: DraftFile) => (file._tag === "ready" ? file.attachment.name : file.name);
-
 /**
  * The pill at the bottom of a conversation. Enter sends, Shift+Enter starts a
  * new line. Files picked, pasted or dropped upload at once and show above the
@@ -196,16 +144,10 @@ export function Composer({
   const waitingId = useId();
   const addresseeId = useId();
   const label = t("composer.label", { name: recipient });
-  const empty = value.trim() === "" && !files.some((file) => file._tag === "ready");
-  const uploading = files.some((file) => file._tag === "uploading");
-  const blocked = files.some((file) => file._tag === "failed");
-  const problem = messageProblem(
-    value.trim(),
-    files.flatMap((file) => (file._tag === "ready" ? [file.attachment] : [])),
-  );
+  const { empty, uploading, sendable, problem } = draftReadiness(value, files);
   // The draft takes no change while it is handed over, loads, or could not be read.
   const frozen = sending || loading || unread !== undefined;
-  const ready = !frozen && !empty && !uploading && !blocked && problem === null;
+  const ready = !frozen && sendable;
   // Files dropped or pasted while the draft took no change, which it did not take.
   const [notTaken, setNotTaken] = useState(false);
   // They were not taken for this draft: another conversation's composer does not ask for them.
@@ -517,22 +459,9 @@ function DraftFileChip({
   unavailable: boolean;
 }) {
   const i18n = useI18n();
-  const { t, locale } = i18n;
-  const name = nameOf(file);
-  const detail = (() => {
-    switch (file._tag) {
-      case "uploading":
-        return t("composer.file.uploading", {
-          percent: new Intl.NumberFormat(locale, { style: "percent" }).format(
-            file.size === 0 ? 0 : file.sent / file.size,
-          ),
-        });
-      case "ready":
-        return fileSize(file.attachment.size, locale);
-      case "failed":
-        return fileProblemText(file.problem, i18n);
-    }
-  })();
+  const { t } = i18n;
+  const name = draftFileName(file);
+  const detail = draftFileDetail(file, i18n, { progress: true });
   return (
     <li
       className={cn(

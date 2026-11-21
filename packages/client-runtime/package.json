@@ -13,9 +13,17 @@
       "types": "./src/presentation/index.ts",
       "import": "./src/presentation/index.ts"
     },
+    "./wording": {
+      "types": "./src/wording/index.ts",
+      "import": "./src/wording/index.ts"
+    },
     "./react": {
       "types": "./src/react/index.ts",
       "import": "./src/react/index.ts"
+    },
+    "./testing": {
+      "types": "./test/fixtures.ts",
+      "import": "./test/fixtures.ts"
     }
   },
   "scripts": {
@@ -25,6 +33,7 @@
   "dependencies": {
     "@j3-bots/contracts": "workspace:*",
     "@j3-bots/design-tokens": "workspace:*",
+    "@j3-bots/i18n": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

@@ -1,42 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Attachment } from "@j3-bots/contracts";
 import { FileArchiveIcon, FileCodeIcon, FileIcon, FileImageIcon, FileTextIcon } from "lucide-react";
+import { fileIcon } from "@j3-bots/client-runtime/presentation";
+import { fileDetail } from "@j3-bots/client-runtime/wording";
 import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
 
+const kindIcons = {
+  image: FileImageIcon,
+  text: FileTextIcon,
+  archive: FileArchiveIcon,
+  code: FileCodeIcon,
+  other: FileIcon,
+} as const;
+
 function FileKindIcon({ mediaType }: { mediaType: string }) {
-  const props = { className: "size-4", "aria-hidden": true } as const;
-  if (mediaType.startsWith("image/")) return <FileImageIcon {...props} />;
-  if (mediaType === "application/pdf" || mediaType.startsWith("text/"))
-    return <FileTextIcon {...props} />;
-  if (/zip|tar|gzip|compressed/.test(mediaType)) return <FileArchiveIcon {...props} />;
-  if (/json|javascript|typescript|xml|yaml/.test(mediaType)) return <FileCodeIcon {...props} />;
-  return <FileIcon {...props} />;
-}
-
-/** The kind of file in a word, from its media type: "PDF", "PNG", "Text". */
-function kindOf(mediaType: string): string {
-  const subtype = mediaType.split("/")[1]?.split(/[+;]/)[0] ?? "";
-  if (mediaType.startsWith("text/plain")) return "TXT";
-  if (subtype === "vnd.openxmlformats-officedocument.wordprocessingml.document") return "DOCX";
-  if (subtype === "vnd.openxmlformats-officedocument.spreadsheetml.sheet") return "XLSX";
-  return subtype.length > 0 && subtype.length <= 5 ? subtype.toUpperCase() : "";
-}
-
-export function fileSize(bytes: number, locale: string): string {
-  const units = ["byte", "kilobyte", "megabyte", "gigabyte"] as const;
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1000 && unit < units.length - 1) {
-    value /= 1000;
-    unit++;
-  }
-  return new Intl.NumberFormat(locale, {
-    style: "unit",
-    unit: units[unit],
-    unitDisplay: "short",
-    maximumFractionDigits: unit === 0 ? 0 : 1,
-  }).format(value);
+  const Icon = kindIcons[fileIcon(mediaType)];
+  return <Icon className="size-4" aria-hidden />;
 }
 
 /** A file in a conversation: name, kind and size. Opening it shows a preview. */
@@ -49,9 +29,8 @@ export function FileCard({
   onOpen: () => void;
   className?: string;
 }) {
-  const { locale, t } = useI18n();
-  const kind = kindOf(attachment.mediaType);
-  const size = fileSize(attachment.size, locale);
+  const i18n = useI18n();
+  const { t } = i18n;
   return (
     <button
       type="button"
@@ -67,9 +46,7 @@ export function FileCard({
       </span>
       <span className="flex min-w-0 flex-col">
         <span className="truncate text-sm font-medium">{attachment.name}</span>
-        <span className="text-2xs text-muted-foreground">
-          {kind === "" ? size : t("file.kindAndSize", { kind, size })}
-        </span>
+        <span className="text-2xs text-muted-foreground">{fileDetail(attachment, i18n)}</span>
       </span>
     </button>
   );

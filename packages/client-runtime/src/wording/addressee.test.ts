@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { BotId } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { addresseeOf, type Mentionable } from "@j3-bots/client-runtime/presentation";
+import { addresseeOf, type Mentionable } from "../presentation/mentions.ts";
 import { createI18n } from "@j3-bots/i18n";
-import { addresseeLine, resendLabel } from "./mentions";
+import { addresseeLine, resendLabel } from "./addressee.ts";
 
 const member = (id: string, name: string): Mentionable => ({ id: BotId.make(id), name });
 const ana = member("ana", "Ana");

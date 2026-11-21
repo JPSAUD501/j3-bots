@@ -8,9 +8,6 @@ import {
   type NetworkStatus,
   type Platform,
   ServerAddress,
-  TransferFailed,
-  type UploadRequest,
-  type UploadResponse,
   WindowLocks,
 } from "@j3-bots/client-runtime";
 import * as Context from "effect/Context";
@@ -27,6 +24,7 @@ import * as ExpoNetwork from "expo-network";
 import * as SecureStore from "expo-secure-store";
 import * as SQLite from "expo-sqlite";
 import { makeSession } from "../session.ts";
+import { makeUploader } from "./upload.ts";
 import {
   forgetPairing,
   makeDeviceStorage,
@@ -114,28 +112,17 @@ const network = Layer.succeed(
   }),
 );
 
-/** Uploads with React Native's `XMLHttpRequest`, which reports upload progress as `fetch` does not. */
+/**
+ * Expo's `fetch`, which honors `redirect: "error"` on Android and iOS, for
+ * every request the client makes: React Native's own `fetch` ignores it and
+ * follows every redirect.
+ */
+const nativeFetch: typeof globalThis.fetch = (input, init) => expoFetch(input, init);
+
+/** Uploads with Expo's `fetch`, which refuses a redirect: see `makeUploader`. */
 const transfer = Layer.succeed(
   FileTransfer,
-  FileTransfer.of({
-    upload: Effect.fn("FileTransfer.upload")((request: UploadRequest) =>
-      Effect.callback<UploadResponse, TransferFailed>((resume) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open("POST", request.url);
-        for (const [name, value] of Object.entries(request.headers)) {
-          xhr.setRequestHeader(name, value);
-        }
-        xhr.upload.onprogress = (event) => request.onProgress(event.loaded);
-        xhr.onload = () =>
-          resume(
-            Effect.succeed({ url: xhr.responseURL, status: xhr.status, body: xhr.responseText }),
-          );
-        xhr.onerror = () => resume(Effect.fail(new TransferFailed()));
-        xhr.send(request.body);
-        return Effect.sync(() => xhr.abort());
-      }),
-    ),
-  }),
+  FileTransfer.of({ upload: makeUploader(nativeFetch) }),
 );
 
 /** Random bytes from the platform's secure generator: Hermes has no `crypto.getRandomValues`. */
@@ -143,13 +130,6 @@ const secureRandom = Layer.succeed(
   SecureRandom.SecureRandom,
   SecureRandom.make((size) => ExpoCrypto.getRandomBytes(size)),
 );
-
-/**
- * Expo's `fetch`, which honors `redirect: "error"` on Android and iOS, for
- * every request the client makes: React Native's own `fetch` ignores it and
- * follows every redirect.
- */
-const nativeFetch: typeof globalThis.fetch = (input, init) => expoFetch(input, init);
 
 /**
  * The phone's platform for the server at `origin`. The credential is kept

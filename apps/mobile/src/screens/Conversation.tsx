@@ -1,51 +1,55 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { RosterItemKey } from "@j3-bots/contracts";
-import type {
-  NativeStackNavigationOptions,
-  NativeStackScreenProps,
-} from "@react-navigation/native-stack";
-import { useLayoutEffect } from "react";
+import { rosterKeyOf, rosterKeyText } from "@j3-bots/client-runtime/presentation";
+import type { NativeStackScreenProps } from "@react-navigation/native-stack";
+import { useEffect } from "react";
 import { View } from "react-native";
-import { useI18n } from "../i18n.ts";
-import type { Screens } from "../navigation.tsx";
-import { Button } from "../ui.tsx";
-import { itemName, useRosterItem } from "./rosterItem.ts";
+import { Connecting } from "../components/ConnectionLine.tsx";
+import { ConversationView, Gone } from "../conversation/ConversationView.tsx";
+import { useSideBySide } from "../layout.ts";
+import { asItWas, type Screens, useOpenConversation } from "../navigation.tsx";
+import { useRosterItem } from "./rosterItem.ts";
 
 type Props = NativeStackScreenProps<Screens, "conversation">;
 
-function DetailsButton(props: { readonly item: RosterItemKey; readonly onPress: () => void }) {
-  const { t } = useI18n();
-  const item = useRosterItem(props.item);
+/**
+ * A bot's or room's conversation on its own screen, on a phone. Unfolded to
+ * the tablet width, it moves beside the roster, and what was open over it
+ * stays open.
+ */
+export function ConversationScreen({ navigation, route }: Props) {
+  const key = route.params.item;
+  const found = useRosterItem(key);
+  const sideBySide = useSideBySide();
+  const openConversation = useOpenConversation();
+  useEffect(() => {
+    if (!sideBySide) return;
+    const { routes } = navigation.getState();
+    // Only the uppermost conversation moves; the ones under it close.
+    const at = routes.findLastIndex((each) => each.name === "conversation");
+    const roster = routes[0];
+    if (roster === undefined || routes[at]?.key !== route.key) return;
+    const above = routes.slice(at + 1).map(asItWas);
+    navigation.reset({
+      index: above.length,
+      routes: [{ key: roster.key, name: "roster", params: { item: key } }, ...above],
+    });
+  }, [sideBySide, navigation, route.key, key]);
+  if (found._tag === "loading") return <Connecting />;
+  if (found._tag === "gone") {
+    return (
+      <View className="flex-1 bg-background">
+        <Gone onBack={() => navigation.popTo("roster")} />
+      </View>
+    );
+  }
   return (
-    <Button
-      label={t("conversation.details")}
-      accessibilityLabel={t("conversation.openDetails", {
-        name: item === null ? "" : itemName(item),
-      })}
-      onPress={props.onPress}
+    <ConversationView
+      key={rosterKeyText(rosterKeyOf(found.item))}
+      item={found.item}
+      onBack={navigation.goBack}
+      onOpenDetails={() => navigation.navigate("details", { item: key })}
+      onOpenBot={(botId) => openConversation({ _tag: "bot", botId })}
+      onGone={() => navigation.popTo("roster")}
     />
   );
-}
-
-/** The conversation's header: Details, at its end, opens the bot's or room's details. */
-export const conversationOptions = ({
-  navigation,
-  route,
-}: Props): NativeStackNavigationOptions => ({
-  headerRight: () => (
-    <DetailsButton
-      item={route.params.item}
-      onPress={() => navigation.navigate("details", { item: route.params.item })}
-    />
-  ),
-});
-
-/** A bot's or room's conversation, under its name. */
-export function ConversationScreen({ navigation, route }: Props) {
-  const item = useRosterItem(route.params.item);
-  const name = item === null ? "" : itemName(item);
-  useLayoutEffect(() => {
-    navigation.setOptions({ title: name });
-  }, [navigation, name]);
-  return <View className="flex-1 bg-background" />;
 }

@@ -2,7 +2,7 @@
 import { type Bot, DeviceId, EntryId, RoomId, type RosterItem } from "@j3-bots/contracts";
 import { TRAY_LISTED } from "@j3-bots/desktop-bridge";
 import { describe, expect, it } from "vite-plus/test";
-import { at, bot } from "../test/fixtures";
+import { at, bot } from "@j3-bots/client-runtime/testing";
 import { trayReport } from "./tray";
 
 const pairing = DeviceId.make("device-1");

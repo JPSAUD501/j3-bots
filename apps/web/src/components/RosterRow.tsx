@@ -8,8 +8,7 @@ import { useI18n, usePresentation } from "../app/context";
 import type { ComponentProps } from "react";
 import { cn } from "../lib/cn";
 import type { DataAttributes } from "../lib/dataAttributes";
-import { activityTime } from "../lib/time";
-import { rosterLine, type LineTone } from "../presentation/roster";
+import { activityTime, type LineTone, rosterLine } from "@j3-bots/client-runtime/wording";
 import { BotAvatar, RoomAvatar } from "./BotAvatar";
 
 export const toneClass: Record<LineTone, string> = {

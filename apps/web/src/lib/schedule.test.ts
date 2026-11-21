@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vite-plus/test";
-import { at, context, plain } from "../test/fixtures";
+import { at, context, plain } from "@j3-bots/client-runtime/testing";
 import { scheduleInWords } from "./schedule";
 
 const en = context("2026-11-20T17:40:00Z");
@@ -12,6 +12,13 @@ const words = (cron: string, ctx = en, timeZone = "America/Sao_Paulo") => {
 describe("scheduleInWords", () => {
   it("says common schedules as a person would", () => {
     expect(words("47 8 * * 1-5")).toBe("Weekdays at 8:47 AM");
+    // The time stays whole: a full no-break space, as in every time the interface shows.
+    expect(
+      scheduleInWords(
+        { _tag: "schedule", cron: "47 8 * * 1-5", timeZone: "America/Sao_Paulo" },
+        en,
+      ),
+    ).toMatch(/8:47\u00A0AM$/);
     expect(words("*/30 * * * *")).toBe("Every 30 minutes");
     expect(words("5 * * * *")).toBe("Every hour at minute 05");
     expect(words("0 9 * * *")).toBe("Every day at 9:00 AM");

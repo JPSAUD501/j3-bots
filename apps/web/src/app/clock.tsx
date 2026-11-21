@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { knownTimeZone } from "@j3-bots/client-runtime/presentation";
 import * as DateTime from "effect/DateTime";
 import { createContext, use, useEffect, useMemo, useState, type ReactNode } from "react";
 
@@ -31,20 +32,6 @@ export function ClockProvider({ now, children }: { now?: DateTime.Utc; children:
 }
 
 const OperatorTimeZoneContext = createContext<string | null>(null);
-
-/**
- * The zone, if this browser knows it. The server checks a saved zone against
- * its own time zone data, which can be newer than an older browser's.
- */
-function knownTimeZone(timeZone: string): string | null {
-  try {
-    // A zone it does not know throws a RangeError.
-    new Intl.DateTimeFormat(undefined, { timeZone }).format(0);
-    return timeZone;
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Every time under it in the operator's time zone, as saved in Settings;

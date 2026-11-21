@@ -1,16 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type {
-  Bot,
-  BotId,
-  Entry,
-  EntryPreview,
-  FailureClass,
-  Room,
-  RosterItem,
+import {
+  type Bot,
+  type BotId,
+  type Entry,
+  type EntryPreview,
+  entryText,
+  type FailureClass,
+  type MessageEntry,
+  type Room,
+  type RosterItem,
 } from "@j3-bots/contracts";
 import type * as DateTime from "effect/DateTime";
-import { firstLine, millisBetween, shortDuration } from "@j3-bots/client-runtime/presentation";
-import { timeInSentence, type TimeContext } from "../lib/time";
+import { firstLine } from "../presentation/roster.ts";
+import { millisBetween, shortDuration } from "../presentation/time.ts";
+import { timeInSentence, type TimeContext } from "./time.ts";
 
 export interface PresentationContext extends TimeContext {
   /** A bot's display name, or null if it no longer exists. */
@@ -85,7 +88,7 @@ function failureText(
  * received.
  */
 function previewSummary(
-  preview: EntryPreview,
+  preview: Pick<EntryPreview, "kind" | "author" | "text" | "recipientId">,
   ctx: PresentationContext,
   { owner, current }: { readonly owner: BotId | null; readonly current: boolean },
 ): string {
@@ -185,6 +188,28 @@ export function noticeText(
 function stalledLine(since: DateTime.Utc, ctx: PresentationContext): StatusLine {
   const duration = shortDuration(millisBetween(since, ctx.now), ctx.i18n);
   return { text: ctx.i18n.t("presence.stalled", { duration }), tone: "waiting" };
+}
+
+/**
+ * A card in one line, as the roster says it: "Asks: …" while the bot waits on
+ * it, "Asked: …" once it does not. `owner` is the bot whose conversation it
+ * is, `null` in a room.
+ */
+export function entrySummary(
+  entry: Exclude<Entry, MessageEntry>,
+  ctx: PresentationContext,
+  { owner, current }: { readonly owner: BotId | null; readonly current: boolean },
+): string {
+  return previewSummary(
+    {
+      kind: entry._tag,
+      author: entry.author,
+      text: entryText(entry),
+      recipientId: entry._tag === "handoff" ? entry.recipientId : null,
+    },
+    ctx,
+    { owner, current },
+  );
 }
 
 /**

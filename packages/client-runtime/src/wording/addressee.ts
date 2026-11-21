@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Addressee } from "@j3-bots/client-runtime/presentation";
+import type { Addressee } from "../presentation/mentions.ts";
 import type { I18n } from "@j3-bots/i18n";
 
 /**

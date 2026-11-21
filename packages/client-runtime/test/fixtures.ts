@@ -9,9 +9,12 @@ import {
   type Bot,
   type BotState,
   type EntryPreview,
+  type Language,
   type MessageEntry,
 } from "@j3-bots/contracts";
+import { createI18n } from "@j3-bots/i18n";
 import * as DateTime from "effect/DateTime";
+import type { PresentationContext } from "../src/wording/status.ts";
 
 export const at = (iso: string) => DateTime.makeUnsafe(iso);
 
@@ -75,3 +78,20 @@ export function bot(
     ...extra,
   };
 }
+
+/** What wording a moment needs, in São Paulo, with the bots' names by id. */
+export function context(
+  now: string,
+  locale: Language = "en",
+  names: Record<string, string> = {},
+): PresentationContext {
+  return {
+    i18n: createI18n(locale),
+    timeZone: "America/Sao_Paulo",
+    now: at(now),
+    botName: (id) => names[id] ?? null,
+  };
+}
+
+/** Intl separates times with narrow no-break spaces; tests compare plain spaces. */
+export const plain = (s: string) => s.replace(/\s/g, " ");

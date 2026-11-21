@@ -2,7 +2,7 @@
 import type { UsageWindow } from "@j3-bots/contracts";
 import { windowState, type WindowState } from "@j3-bots/client-runtime/presentation";
 import type { I18n, KeyWith } from "@j3-bots/i18n";
-import { timeInSentence, type TimeContext } from "../lib/time";
+import { timeInSentence, type TimeContext } from "@j3-bots/client-runtime/wording";
 
 /** A limit window in words, as of `ctx.now`, with where it stands. */
 export interface WindowText extends Pick<WindowState, "percent" | "tone"> {

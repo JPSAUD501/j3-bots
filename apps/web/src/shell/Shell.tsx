@@ -4,7 +4,6 @@ import type {
   EngineStatus,
   Entry,
   EntryId,
-  EntryTarget,
   RosterItem,
   RosterItemKey,
 } from "@j3-bots/contracts";
@@ -17,6 +16,7 @@ import {
   orderRoster,
   rosterKeyOf,
   rosterKeyText,
+  rosterTarget,
 } from "@j3-bots/client-runtime/presentation";
 import { BotsProvider, useI18n } from "../app/context";
 import { AppShell, type Region } from "../components/AppShell";
@@ -38,7 +38,7 @@ import { Timeline } from "../components/Timeline";
 import type { ShellData, ShellIntents } from "./data";
 import { isCovered, useCovered } from "../lib/covered";
 import { useNewestSeen } from "../lib/useNewestSeen";
-import { addresseeLine } from "../presentation/mentions";
+import { addresseeLine } from "@j3-bots/client-runtime/wording";
 import { useShellLayout } from "./layout";
 import { onShellAction, type ShellAction } from "./commands";
 import { isEditable, shellShortcuts } from "./shortcuts";
@@ -51,11 +51,6 @@ interface ShellNavigation {
   /** The element a roster row renders as: a router link in the app, a button in a preview. */
   readonly rowLink: (item: RosterItem) => ReactElement;
 }
-
-const targetOf = (key: RosterItemKey): EntryTarget =>
-  key._tag === "bot"
-    ? { _tag: "conversation", botId: key.botId }
-    : { _tag: "room", roomId: key.roomId };
 
 function modelName(engine: EngineStatus | null, bot: Bot): string | null {
   const provider = engine?.providers.find((p) => p.id === bot.model.providerId);
@@ -259,7 +254,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
   }, [keyboard]);
 
   // What the operator can see of the open conversation, they have read.
-  const shownTarget = item === null ? null : targetOf(rosterKeyOf(item));
+  const shownTarget = item === null ? null : rosterTarget(rosterKeyOf(item));
   const shownItems = shownTarget === null ? null : data.conversation(shownTarget).items;
   useNewestSeen(timeline, (id) => {
     const seen = shownItems?.find((i): i is Entry => i._tag !== "outgoing" && i.id === id);
@@ -316,7 +311,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
   let details: ReactElement | null = null;
   if (item !== null) {
     const key = rosterKeyOf(item);
-    const target = targetOf(key);
+    const target = rosterTarget(key);
     const view = data.conversation(target);
     const draft = data.draft(target);
     const offer = data.offer(target);

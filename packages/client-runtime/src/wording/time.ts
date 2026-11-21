@@ -6,7 +6,7 @@ import {
   formatAt,
   fullTime,
   type LocalTime,
-} from "@j3-bots/client-runtime/presentation";
+} from "../presentation/time.ts";
 import type { I18n } from "@j3-bots/i18n";
 
 /** What formatting a moment needs: the language, the operator's time zone and the current time. */
