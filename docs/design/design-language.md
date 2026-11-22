@@ -95,6 +95,7 @@ Neutrals carry the interface. One accent marks focus and links. Semantic colors 
 | `blocked-surface` | `oklch(0.975 0.015 20)` | `oklch(0.2 0.05 25)` | |
 | `success` | `oklch(0.52 0.12 160)` | `oklch(0.78 0.14 160)` | A routine that is on |
 | `control-off` | `#82828a` | `#6b6b73` | A switch that is off; the boundary of an empty checkbox or radio |
+| `control-thumb` | `#ffffff` | `#f4f4f5` | The thumb of a switch the system draws, as on Android, where it reaches past the track over the page |
 | `avatar-ink` | `#ffffff` | `#0b0b0c` | The mark inside an avatar |
 | `scrim` | black at 32% | black at 60% | Behind a pane or sheet that lies over content |
 

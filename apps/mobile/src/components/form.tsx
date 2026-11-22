@@ -164,7 +164,7 @@ export function SwitchRow(props: {
 }) {
   const on = useColor("accent-accent");
   const off = useColor("accent-control-off");
-  const thumb = useColor("accent-background");
+  const thumb = useColor("accent-control-thumb");
   return (
     <View className="min-h-11 flex-row items-center gap-3">
       <View className="min-w-0 flex-1 gap-0.5">

@@ -188,7 +188,7 @@ function RoutineRow({ routine }: { readonly routine: Routine }) {
   const say = useSay();
   const on = useColor("accent-accent");
   const off = useColor("accent-control-off");
-  const thumb = useColor("accent-background");
+  const thumb = useColor("accent-control-thumb");
   const lines = routineLines(routine, ctx);
   const icon = !routine.enabled
     ? CirclePause

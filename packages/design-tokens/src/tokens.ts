@@ -47,6 +47,11 @@ export const colors = {
   success: themed("oklch(0.52 0.12 160)", "oklch(0.78 0.14 160)"),
   /** The track of a switch that is off: a boundary of 3:1 against every canvas. */
   "control-off": themed("#82828a", "#6b6b73"),
+  /**
+   * The thumb of a switch the system draws, light in both themes. Android draws
+   * it past the ends of the track, over the page, where `background` would hide it.
+   */
+  "control-thumb": themed("#ffffff", "#f4f4f5"),
   /** Marks drawn inside an avatar, over the bot's color. */
   "avatar-ink": themed("#ffffff", "#0b0b0c"),
   /** Behind sheets and dialogs. */
