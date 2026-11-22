@@ -8,7 +8,7 @@ J3 Bots does not run models itself. It drives an unmodified [T3 Code](https://gi
 
 ## Status
 
-Early and unreleased. No release is published yet, so the install command below works only once the first one is out; until then, install [from a checkout](docs/operations/install.md#from-a-checkout).
+Early. The install command below installs the latest published release; what each release contains and what does not work yet is in its [release notes](docs/releases/). To run unreleased code, install [from a checkout](docs/operations/install.md#from-a-checkout).
 
 | Area        | State                                                                                                                                                                                                                                                    |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
