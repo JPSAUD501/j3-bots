@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { LANGUAGES } from "@j3-bots/contracts";
+import { type Language, LANGUAGES } from "@j3-bots/contracts";
 import { createI18n, type I18n, resolveLocale } from "@j3-bots/i18n";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -82,19 +82,20 @@ export function setLanguage(language: LanguageChoice): void {
   update({ ...current, language });
 }
 
+/** Calls `listener` after each change of a preference. Returns the function that stops it. */
+export const subscribePreferences = (listener: () => void): (() => void) => {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+};
+
 export const usePreferences = (): Preferences =>
-  useSyncExternalStore(
-    (listener) => {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    () => current,
-  );
+  useSyncExternalStore(subscribePreferences, () => current);
+
+/** The language chosen, or the first of the device's languages J3 Bots has: the one the app shows. */
+export const shownLanguage = (choice: LanguageChoice = current.language): Language =>
+  choice === "system" ? resolveLocale(getLocales().map((locale) => locale.languageTag)) : choice;
 
 /** The catalog in the language chosen, or in the first of the device's languages J3 Bots has. */
-export const i18nFor = (language: LanguageChoice): I18n =>
-  createI18n(
-    language === "system"
-      ? resolveLocale(getLocales().map((locale) => locale.languageTag))
-      : language,
-  );
+export const i18nFor = (language: LanguageChoice): I18n => createI18n(shownLanguage(language));

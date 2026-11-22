@@ -17,6 +17,7 @@ import { ConnectCommand, ProviderRow } from "../components/Engine.tsx";
 import { Quiet, Section } from "../components/form.tsx";
 import { useI18n } from "../i18n.ts";
 import { DevicesSection } from "./Devices.tsx";
+import { usePhoneNotifications } from "./phoneNotifications.ts";
 import { NotificationsSection, YouSection } from "./Profile.tsx";
 import { ServerSection, ThisPhoneSection } from "./ThisPhone.tsx";
 import { UsageSection } from "./Usage.tsx";
@@ -35,6 +36,7 @@ export function SettingsScreen() {
   const engineStale = status._tag === "ready" && status.stale;
   const connected = useConnection()._tag === "connected";
   const recent = useRecentTurns(useIsFocused());
+  const thisPhone = usePhoneNotifications();
   useFocusEffect(
     useCallback(() => {
       client.refreshSettings();
@@ -61,9 +63,7 @@ export function SettingsScreen() {
         onRetry={recent.retry}
       />
       <YouSection connected={connected} />
-      {/* Without pushes in this build, the section offers nothing for this phone itself:
-          once the app receives them, it passes `thisPhone`, its access and `allow`. */}
-      <NotificationsSection connected={connected} />
+      <NotificationsSection connected={connected} thisPhone={thisPhone} />
       <DevicesSection connected={connected} />
       <ServerSection />
       <ThisPhoneSection />

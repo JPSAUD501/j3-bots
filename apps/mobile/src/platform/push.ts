@@ -14,22 +14,18 @@ import * as Schema from "effect/Schema";
 import Constants from "expo-constants";
 import * as Crypto from "expo-crypto";
 import * as Notifications from "expo-notifications";
-import { AppState, Platform } from "react-native";
-import { deviceLanguage } from "../i18n.ts";
+import { AppState, Linking, Platform } from "react-native";
+import { shownLanguage, subscribePreferences } from "../preferences.ts";
 import type { Session } from "../session.ts";
 
 // Push notifications through Expo's push service (decision 0014): an Expo
 // push token of this phone's own for each pairing, registered with the server
-// it is paired with, in the language the phone shows. The server pushes to a
+// it is paired with, in the language the app shows. The server pushes to a
 // device with no socket open: this app in the background (`Lifecycle`), or in
 // the foreground while it cannot reach the server. What a tap opens is
 // `useNotificationTaps`.
 
-/**
- * What the operator decided about notifications on this phone.
- *
- * @public Settings shows it.
- */
+/** What the operator decided about notifications on this phone, for Settings to show. */
 export type NotificationAccess =
   /** This build cannot receive pushes: it was built without a push project, or not for a phone. */
   | "unavailable"
@@ -42,7 +38,7 @@ export type NotificationAccess =
   | "granted";
 
 /** Logs a failure no screen shows: notifications are a convenience, and the roster shows what arrived. */
-const warn = (message: string, error: unknown) => {
+export const logUnshown = (message: string, error: unknown) => {
   // @effect-diagnostics-next-line globalConsole:off
   console.warn(message, error);
 };
@@ -67,7 +63,7 @@ const accessOf = (permission: Notifications.NotificationPermissionsStatus): Noti
 };
 
 /** What the operator decided about notifications on this phone, read afresh. */
-const readAccess = async (): Promise<NotificationAccess> =>
+export const readAccess = async (): Promise<NotificationAccess> =>
   pushPlatform === null || pushProject() === null
     ? "unavailable"
     : accessOf(await Notifications.getPermissionsAsync());
@@ -85,10 +81,9 @@ const CHANNEL_NAMES = {
  * Creates the Android channel each kind of push shows in, its id the kind the
  * server names (`NotificationKind`), so the operator can silence one kind
  * alone. One created before keeps what the operator chose for it and takes
- * the name in the phone's language now.
+ * its name in `language`.
  */
 const createChannels = async (language: Language) => {
-  if (Platform.OS !== "android") return;
   const { t } = createI18n(language);
   for (const kind of NotificationKind.literals) {
     await Notifications.setNotificationChannelAsync(kind, {
@@ -96,6 +91,20 @@ const createChannels = async (language: Language) => {
       importance: Notifications.AndroidImportance.HIGH,
     });
   }
+};
+
+/** The language the channels were last named in. */
+let channelsNamedIn: Language | null = null;
+
+/** Names the channels in the language the app shows, unless they already are. */
+const nameChannels = (): void => {
+  const language = shownLanguage();
+  if (Platform.OS !== "android" || language === channelsNamedIn) return;
+  channelsNamedIn = language;
+  createChannels(language).catch((error: unknown) => {
+    channelsNamedIn = null;
+    logUnshown("The notification channels could not be created.", error);
+  });
 };
 
 /** Whether the app has a socket open now, which tells it what a push would. */
@@ -124,9 +133,7 @@ export const setUpNotifications = (session: Session): void => {
       });
     },
   });
-  createChannels(deviceLanguage()).catch((error: unknown) =>
-    warn("The notification channels could not be created.", error),
-  );
+  nameChannels();
 };
 
 /**
@@ -189,7 +196,7 @@ let told: Told | null = null;
  */
 let queue: Promise<void> = Promise.resolve();
 const serially = (work: () => Promise<void>, failed: string): Promise<void> => {
-  queue = queue.then(work).catch((error: unknown) => warn(failed, error));
+  queue = queue.then(work).catch((error: unknown) => logUnshown(failed, error));
   return queue;
 };
 
@@ -208,7 +215,7 @@ const reconcile = (client: J3Client, again = false): Promise<void> =>
     if (pairing === null || project === null || pushPlatform === null) return;
     const access = accessOf(await Notifications.getPermissionsAsync());
     if (access === "granted") {
-      const registered = { token: await pushToken(project, pairing), language: deviceLanguage() };
+      const registered = { token: await pushToken(project, pairing), language: shownLanguage() };
       const known = told?.pairing === pairing ? told.registered : undefined;
       if (known?.token === registered.token && known.language === registered.language) return;
       const commandId = await client.commandId();
@@ -233,7 +240,7 @@ const reconcile = (client: J3Client, again = false): Promise<void> =>
 /** Clears the notifications this phone shows. Never fails: what fails is logged. */
 const dismissShown = (): void => {
   Notifications.dismissAllNotificationsAsync().catch((error: unknown) =>
-    warn("The notifications shown could not be cleared.", error),
+    logUnshown("The notifications shown could not be cleared.", error),
   );
 };
 
@@ -242,9 +249,11 @@ const dismissShown = (): void => {
  * app runs: for each pairing as it starts; when the app returns to the
  * foreground, all of it sent again, since the operator may have allowed or
  * refused notifications in the system's settings meanwhile, or changed the
- * phone's language, and the server may have dropped the registration; and
- * when the push service gives the app a new token. A pairing that ends, as
- * when another device revokes this one, takes the notifications it showed.
+ * phone's language, and the server may have dropped the registration; when
+ * the operator chooses another language in Settings; and when the push
+ * service gives the app a new token. A pairing that ends, as when another
+ * device revokes this one, takes the notifications it showed. The channels
+ * follow the language the app shows.
  */
 export const keepPushRegistered = (session: Session): void => {
   const current = (): J3Client | null => {
@@ -274,8 +283,15 @@ export const keepPushRegistered = (session: Session): void => {
   };
   session.state.subscribe(follow);
   follow();
+  // A language chosen in Settings: the server words pushes in it from now on.
+  subscribePreferences(() => {
+    nameChannels();
+    refresh();
+  });
   AppState.addEventListener("change", (status) => {
-    if (status === "active") refresh(true);
+    if (status !== "active") return;
+    nameChannels();
+    refresh(true);
   });
   Notifications.addPushTokenListener(() => {
     token = null;
@@ -286,13 +302,17 @@ export const keepPushRegistered = (session: Session): void => {
 /**
  * Asks to allow notifications on this phone, then registers it with the
  * server. The only thing that asks for the permission: Settings' "Allow
- * notifications on this phone".
- *
- * @public Settings calls it.
+ * notifications on this phone". Once the operator refused them for good, the
+ * system shows no dialog, so it opens the app's page in the system's settings
+ * instead; an answer given in the dialog it showed is left as it was.
  */
 export const allowNotifications = async (client: J3Client): Promise<NotificationAccess> => {
   const access = await readAccess();
-  if (access === "unavailable" || access === "blocked") return access;
+  if (access === "unavailable") return access;
+  if (access === "blocked") {
+    await Linking.openSettings();
+    return access;
+  }
   const asked =
     access === "granted" ? access : accessOf(await Notifications.requestPermissionsAsync());
   await reconcile(client);

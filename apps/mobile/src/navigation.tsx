@@ -90,7 +90,9 @@ export function useOpenConversation(): (item: RosterItemKey) => void {
     }
     const { routes, index } = navigation.getState();
     const shown = routes[index];
-    const shownItem = shown?.name === "conversation" ? shown.params?.item : undefined;
+    // A route's params are not told apart by its name: the conversation's are those with an item.
+    const params = shown?.name === "conversation" ? shown.params : undefined;
+    const shownItem = params !== undefined && "item" in params ? params.item : undefined;
     if (shownItem === undefined || rosterKeyText(shownItem) !== rosterKeyText(item)) {
       navigation.push("conversation", { item });
     }
