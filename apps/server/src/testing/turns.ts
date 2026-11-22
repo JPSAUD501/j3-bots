@@ -2,6 +2,7 @@
 import {
   type BotId,
   CommandId,
+  type EntryTarget,
   type RoomId,
   type Entry,
   type EntryId,
@@ -252,17 +253,23 @@ export const sendToBot = (botId: BotId, text: string) =>
     });
   });
 
-/** The bot's conversation, oldest first. */
-export const conversation = (botId: BotId) =>
+/** The target's entries, oldest first. */
+const history = (target: EntryTarget) =>
   Effect.gen(function* () {
     const entries = yield* Entries;
     const page = yield* entries.history({
-      target: { _tag: "conversation", botId },
+      target,
       before: EntryOrder.make(Number.MAX_SAFE_INTEGER),
       limit: 500,
     });
     return page.entries;
   });
+
+/** The bot's conversation, oldest first. */
+export const conversation = (botId: BotId) => history({ _tag: "conversation", botId });
+
+/** The room's entries, oldest first. */
+export const roomEntries = (roomId: RoomId) => history({ _tag: "room", roomId });
 
 const entry = (entryId: EntryId) =>
   Effect.gen(function* () {

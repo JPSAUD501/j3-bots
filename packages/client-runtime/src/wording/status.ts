@@ -187,6 +187,10 @@ export function noticeText(
             allowed: permissionModeText(notice.allowed, ctx.i18n).name,
           });
     }
+    case "member-mode-refused":
+      return t("notice.memberModeRefused", {
+        name: ctx.botName(notice.botId) ?? t("bot.unknown"),
+      });
     case "settings-held":
       return t("notice.settingsHeld");
     case "observation-failed":

@@ -234,6 +234,16 @@ const onceReachable = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     }),
   );
 
+/** The error `effect` fails with; its success fails the case, naming the call. */
+const refusedWith = <A, E, R>(effect: Effect.Effect<A, E, R>, call: string) =>
+  effect.pipe(
+    Effect.matchEffect({
+      onSuccess: () =>
+        Effect.sync(() => assert.fail(`The engine accepted ${call}, which it was to refuse`)),
+      onFailure: (error) => Effect.succeed(error),
+    }),
+  );
+
 const take = (queue: Queue.Dequeue<SessionEvent, Cause.Done>) =>
   Queue.take(queue).pipe(Effect.orDie);
 
@@ -493,8 +503,8 @@ describe("Engine conformance, real engine only", () => {
           delivery: { _tag: "start", freshContext: false },
         } as const;
 
-        const first = yield* onceReachable(engine.dispatch(input)).pipe(Effect.flip);
-        const again = yield* engine.redispatch(input).pipe(Effect.flip);
+        const first = yield* refusedWith(onceReachable(engine.dispatch(input)), "a first send");
+        const again = yield* refusedWith(engine.redispatch(input), "a recovery");
         // Lowered to the ceiling, which the policy lets a thread above it do,
         // the session takes the same key: the refusals left no receipt.
         yield* engine.configureSession({ sessionId, permissionMode: "supervised" });

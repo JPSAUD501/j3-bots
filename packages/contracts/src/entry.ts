@@ -355,14 +355,22 @@ const notices = <Failure extends Schema.Top>(failure: Failure) =>
     /**
      * The engine refuses the bot's permission mode, as an administrator's
      * policy on its machine can, so the bot cannot start, cannot take its new
-     * settings, or cannot run a turn in the mode it has. `allowed` is the highest mode the policy allows, when the
-     * engine names one. Messages wait until the operator chooses a lower
-     * permission mode, or raises the policy's limit and restarts J3 Bots.
+     * settings, or cannot run a turn in the mode it has. `allowed` is the
+     * highest mode the policy allows, when the engine names one. Messages wait
+     * until the operator chooses a lower permission mode, or raises the
+     * policy's limit and restarts J3 Bots.
      */
     Schema.TaggedStruct("permission-mode-refused", {
       permissionMode: PermissionMode,
       allowed: Schema.NullOr(PermissionMode),
     }),
+    /**
+     * In a room: the engine refuses this member's permission mode, so it
+     * takes no part here until the operator chooses a lower one or raises the
+     * policy's limit. Its own conversation says which modes. The rest of the
+     * room goes on, and what was said to it waits.
+     */
+    Schema.TaggedStruct("member-mode-refused", { botId: BotId }),
     /**
      * The bot's new model or permission mode waits for background work its
      * session runs, which applying it would end; its messages wait too. A Stop

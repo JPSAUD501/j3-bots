@@ -898,7 +898,11 @@ export const layer = Layer.effect(
     /**
      * The room's queue: whether a dispatch or turn of it is live
      * (`roomLiveSql`), and whose wake for it goes first among its members.
-     * Read from durable rows, never a flag kept aside.
+     * A member whose permission mode the engine refuses (`modeRefusedSql`)
+     * has no place in it: nothing can be planned into its main session until
+     * the operator acts, so its wakes wait out of the way, and take their
+     * place again, as written, once the refusal is gone. Read from durable
+     * rows, never a flag kept aside.
      */
     const roomQueue = SqlSchema.findOne({
       Request: Schema.Struct({ roomId: RoomId, botId: BotId }),
@@ -918,6 +922,7 @@ export const layer = Layer.effect(
                 SELECT rq_member.bot_id FROM room_members rq_member
                 WHERE rq_member.room_id = ${roomId}
               )
+              AND NOT ${modeRefusedSql(sql, sql`rq_wake.bot_id`)}
             ORDER BY rq_wake.priority, rq_wake.rowid LIMIT 1
           ) AS next_bot_id
       `,
@@ -930,7 +935,8 @@ export const layer = Layer.effect(
      * turn only while nothing of the room is live and it is the room's first
      * wake, by priority and then as written, so members answer one after
      * another in the order they were addressed, each seeing the replies
-     * before it. While that first wake's bot cannot get a turn slot, the
+     * before it, a member whose permission mode the engine refuses left out
+     * (`roomQueue`). While that first wake's bot cannot get a turn slot, the
      * operator's room wake to a member whose session already holds one (its
      * continuation is pending, say) goes first instead, rather than wait
      * behind it for a slot it holds itself. A wake of a bot that left the

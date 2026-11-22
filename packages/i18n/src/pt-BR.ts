@@ -177,6 +177,8 @@ const sentences = {
     "Não pode trabalhar em {mode}: uma política no computador que roda o J3 Bots permite menos. Novas mensagens esperam até você editar o bot e escolher um modo de permissão mais baixo, ou aumentar o limite da política e reiniciar o J3 Bots.",
   "notice.permissionModeAllowed":
     "Não pode trabalhar em {mode}: uma política no computador que roda o J3 Bots permite até {allowed}. Novas mensagens esperam até você editar o bot e escolher {allowed} ou um modo mais baixo, ou aumentar o limite da política e reiniciar o J3 Bots.",
+  "notice.memberModeRefused":
+    "{name} não pode participar aqui: uma política no computador que roda o J3 Bots recusa o modo de permissão escolhido. O que for dito para {name} espera até você editar o bot e escolher um modo mais baixo, ou aumentar o limite da política e reiniciar o J3 Bots.",
   "notice.settingsHeld":
     "As novas configurações valem quando o trabalho em segundo plano terminar, e as mensagens esperam até lá. Pare o bot para aplicá-las agora.",
   "notice.observationFailed":

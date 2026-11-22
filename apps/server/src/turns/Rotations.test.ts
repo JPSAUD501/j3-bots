@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import type { BotId, PermissionMode } from "@j3-bots/contracts";
+import type { BotId, PermissionMode, RoomId } from "@j3-bots/contracts";
 import type { SessionId, TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as DateTime from "effect/DateTime";
@@ -13,6 +13,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { BotStore } from "../bots/BotStore.ts";
 import { Bots } from "../bots/Bots.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
+import { Rooms } from "../rooms/Rooms.ts";
 import { BotTools } from "../tools/BotTools.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
@@ -28,7 +29,11 @@ import {
   mainSessionId,
   nextTurn,
   noticesOf,
+  received,
   recoverTimes,
+  roomEntries,
+  roomOf,
+  sendInRoom,
   sendToBot,
   sendWithFile,
   sessionAfter,
@@ -40,7 +45,6 @@ import {
 import { MAX_INDETERMINATE_ANSWERS, type SessionRowId } from "./model.ts";
 import { Observer } from "./Observer.ts";
 import { Pipeline } from "./Pipeline.ts";
-import { Readiness } from "./Readiness.ts";
 import { RETRY_TICK } from "./reconciler.ts";
 import { Rotations, ROTATE_AFTER_RUNS } from "./Rotations.ts";
 import { Stops } from "./Stops.ts";
@@ -170,6 +174,28 @@ const modeRefused = (count: number) =>
     const control = yield* TestEngineControl;
     yield* until(Effect.map(control.modeRefusals, (refusals) => refusals === count));
   });
+
+/** Whether the bot holds a refusal of its permission mode at its settings as they stand. */
+const refusalRecorded = (botId: BotId) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql<{ readonly id: string }>`
+      SELECT id FROM bots WHERE id = ${botId} AND mode_refused_revision IS settings_revision
+    `.pipe(Effect.orDie);
+    return rows.length > 0;
+  });
+
+/** The members the room's notices say take no part there, oldest first. */
+const membersRefused = (roomId: RoomId) =>
+  roomEntries(roomId).pipe(
+    Effect.map((entries) =>
+      entries.flatMap((found): ReadonlyArray<BotId> =>
+        found._tag === "notice" && found.notice._tag === "member-mode-refused"
+          ? [found.notice.botId]
+          : [],
+      ),
+    ),
+  );
 
 /** An hour of the rotator's passes, five minutes apart: the longest backoff. */
 const anHourOfPasses = Effect.gen(function* () {
@@ -686,9 +712,15 @@ it.effect(
         botId: bot.id,
         changes: { permissionMode: "auto-accept-edits" },
       });
-      yield* nextTurn(bot.id);
+      const turn = yield* nextTurn(bot.id);
       yield* deliveryIs(first, "delivered");
       yield* deliveryIs(second, "delivered");
+      // A third message, sent while that turn runs, steers it, and is taken
+      // as the turn ends.
+      const third = yield* sendToBot(bot.id, "And the hires.");
+      yield* until(Effect.map(timesSent(session, "And the hires."), (times) => times === 1));
+      yield* finish(bot.id, session, turn);
+      yield* deliveryIs(third, "delivered");
       assert.deepStrictEqual(
         [
           yield* timesSent(session, "Plan the launch."),
@@ -696,6 +728,18 @@ it.effect(
           (yield* modeNotices(bot.id)).length,
         ],
         [1, 1, 1],
+      );
+      // The refused message keeps its place: first in the dispatch that
+      // carries both, which goes before the one sent after them.
+      assert.deepStrictEqual(
+        (yield* received(session)).map((sent) =>
+          ["Plan the launch.", "Then the budget.", "And the hires."]
+            .map((text) => [text, sent.text.indexOf(text)] as const)
+            .filter(([, at]) => at >= 0)
+            .sort(([, a], [, b]) => a - b)
+            .map(([text]) => text),
+        ),
+        [["Plan the launch.", "Then the budget."], ["And the hires."]],
       );
     }).pipe(Effect.provide(TestDomain.layer)),
 );
@@ -731,19 +775,23 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const control = yield* TestEngineControl;
-      const readiness = yield* Readiness;
       const bot = yield* createBot("Ana");
+      const other = yield* createBot("Bia");
       const session = yield* engineSession(bot.id);
       yield* engineRestarts("auto-accept-edits");
+      // Another bot's refusal is recorded, so the clearing shows when it ran.
+      yield* sendToBot(other.id, "Draft the notes.");
+      yield* modeRefused(1);
+      yield* until(Effect.map(refusalRecorded(other.id), (recorded) => recorded));
 
       // The engine refuses the turn, and its answer is still on its way when
-      // the engine starts again under a policy that allows the bot's mode.
+      // the engine starts again under a policy that allows the bot's mode,
+      // and J3 Bots has cleared every refusal for it.
       const answer = yield* control.holdNextAnswer("dispatch");
       const waiting = yield* sendToBot(bot.id, "Plan the launch.");
       yield* answer.entered;
-      const before = yield* readiness.generation;
       yield* engineRestarts("full-access");
-      yield* until(Effect.map(readiness.generation, (generation) => generation > before));
+      yield* until(Effect.map(refusalRecorded(other.id), (recorded) => !recorded));
       yield* answer.release;
 
       yield* nextTurn(bot.id);
@@ -752,6 +800,153 @@ it.effect(
         [yield* timesSent(session, "Plan the launch."), yield* modeNotices(bot.id)],
         [1, []],
       );
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "keeps a message waiting whose turn the engine refused on recovery, after the refusal's first answer was lost, and delivers it once",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      yield* engineRestarts("auto-accept-edits");
+
+      // The engine refuses the first send, and that answer is lost: only the
+      // recovery hears the refusal.
+      const held = yield* control.holdNext("dispatch");
+      const waiting = yield* sendToBot(bot.id, "Plan the launch.");
+      yield* held.entered;
+      yield* control.loseNextReply;
+      yield* held.release;
+      yield* modeRefused(1);
+      yield* recoverTimes(1);
+      yield* modeRefused(2);
+      yield* until(Effect.map(refusalRecorded(bot.id), (recorded) => recorded));
+      yield* anHourOfPasses;
+      assert.deepStrictEqual(
+        [yield* delivery(waiting), yield* control.modeRefusals, yield* modeNotices(bot.id)],
+        [{ _tag: "pending" }, 2, [["auto", "auto-accept-edits"]]],
+      );
+
+      yield* (yield* Bots).update({
+        commandId: command(),
+        botId: bot.id,
+        changes: { permissionMode: "auto-accept-edits" },
+      });
+      yield* nextTurn(bot.id);
+      yield* deliveryIs(waiting, "delivered");
+      assert.strictEqual(yield* timesSent(session, "Plan the launch."), 1);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "starts the host's room turn while the engine refuses another member's permission mode, and tells the room once",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const bots = yield* Bots;
+      const host = yield* createBot("Ana");
+      const room = yield* roomOf(host.id);
+      const member = room.members.find((id) => id !== host.id);
+      assert.isDefined(member);
+      // The member works in Full access, and a policy that allows less is
+      // installed while it is in the room.
+      yield* bots.update({
+        commandId: command(),
+        botId: member,
+        changes: { permissionMode: "full-access" },
+      });
+      const session = yield* engineSession(member);
+      yield* (yield* Rotations).rotateDue;
+      yield* until(
+        Effect.map(control.sessionPermissionMode(session), (mode) => mode === "full-access"),
+      );
+      yield* engineRestarts("auto");
+
+      yield* sendInRoom(member, room.id, "Bia, check the numbers.");
+      yield* modeRefused(1);
+      yield* until(Effect.map(refusalRecorded(member), (recorded) => recorded));
+      yield* sendInRoom(host.id, room.id, "Ana, draft the plan.");
+      yield* nextTurn(host.id);
+      yield* anHourOfPasses;
+      assert.deepStrictEqual(
+        [yield* membersRefused(room.id), yield* control.modeRefusals],
+        [[member], 1],
+      );
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "delivers a room message to a member once, after the engine refused its permission mode and the operator lowered it",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const bots = yield* Bots;
+      const host = yield* createBot("Ana");
+      const room = yield* roomOf(host.id);
+      const member = room.members.find((id) => id !== host.id);
+      assert.isDefined(member);
+      const session = yield* engineSession(member);
+      yield* bots.update({
+        commandId: command(),
+        botId: member,
+        changes: { permissionMode: "full-access" },
+      });
+      yield* (yield* Rotations).rotateDue;
+      yield* until(
+        Effect.map(control.sessionPermissionMode(session), (mode) => mode === "full-access"),
+      );
+      yield* engineRestarts("auto");
+      yield* sendInRoom(member, room.id, "Bia, check the numbers.");
+      yield* modeRefused(1);
+      yield* until(Effect.map(refusalRecorded(member), (recorded) => recorded));
+      yield* anHourOfPasses;
+      assert.strictEqual(yield* timesSent(session, "Bia, check the numbers."), 0);
+
+      yield* bots.update({
+        commandId: command(),
+        botId: member,
+        changes: { permissionMode: "auto" },
+      });
+      yield* nextTurn(member);
+      assert.deepStrictEqual(
+        [yield* timesSent(session, "Bia, check the numbers."), yield* membersRefused(room.id)],
+        [1, [member]],
+      );
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "tells a room once that a member it takes in can take no part while the engine refuses its permission mode",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const bots = yield* Bots;
+      const host = yield* createBot("Ana");
+      const room = yield* roomOf(host.id);
+      const late = yield* createBot("Caio");
+      yield* bots.update({
+        commandId: command(),
+        botId: late.id,
+        changes: { permissionMode: "full-access" },
+      });
+      const session = yield* engineSession(late.id);
+      yield* (yield* Rotations).rotateDue;
+      yield* until(
+        Effect.map(control.sessionPermissionMode(session), (mode) => mode === "full-access"),
+      );
+      yield* engineRestarts("auto");
+      yield* sendToBot(late.id, "Hello.");
+      yield* modeRefused(1);
+      yield* until(Effect.map(refusalRecorded(late.id), (recorded) => recorded));
+
+      yield* (yield* Rooms).update({
+        commandId: command(),
+        roomId: room.id,
+        changes: { members: [...room.members, late.id] },
+      });
+      assert.deepStrictEqual(yield* membersRefused(room.id), [late.id]);
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 

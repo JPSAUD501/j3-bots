@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BotId } from "@j3-bots/contracts";
+import { BotId, RoomId } from "@j3-bots/contracts";
 import type { PermissionModeRefused } from "@j3-bots/engine-t3";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
+import * as SqlSchema from "effect/sql/SqlSchema";
 import type * as Statement from "effect/sql/Statement";
 import type { Entries } from "../entries/Entries.ts";
 import { transactional } from "../persistence/transaction.ts";
@@ -26,6 +28,53 @@ export const modeRefusedSql = (sql: SqlClient.SqlClient, botId: BotId | Statemen
 `;
 
 /**
+ * The rooms told that a member's permission mode is refused: it takes no part
+ * there until the operator acts, and the rest of the room goes on without it
+ * (`roomQueue` in the dispatcher). In the caller's transaction.
+ */
+export const roomRefusals = (sql: SqlClient.SqlClient, entries: Entries["Service"]) => {
+  const { notify } = notices(sql, entries);
+
+  const roomsOf = SqlSchema.findAll({
+    Request: BotId,
+    Result: Schema.Struct({ room_id: RoomId }),
+    execute: (botId) => sql`SELECT room_id FROM room_members WHERE bot_id = ${botId}`,
+  });
+
+  const refusedOf = SqlSchema.findAll({
+    Request: Schema.Array(BotId),
+    Result: Schema.Struct({ id: BotId }),
+    execute: (botIds) => sql`
+      SELECT id FROM bots WHERE ${sql.in("id", botIds)} AND ${modeRefusedSql(sql, sql`bots.id`)}
+    `,
+  });
+
+  /** Tells the room, if it is active and the bot its member, that the bot takes no part. */
+  const tell = (botId: BotId, roomId: RoomId) =>
+    notify(botId, { _tag: "room", roomId }, { _tag: "member-mode-refused", botId }, null);
+
+  /** Tells every room of the bot, as its own conversation is told of a refusal. */
+  const refused = Effect.fn("roomRefusals.refused")(function* (botId: BotId) {
+    for (const room of yield* roomsOf(botId)) yield* tell(botId, room.room_id);
+  }, Effect.orDie);
+
+  /**
+   * Tells the room of each of `botIds`, members it has just taken in, whose
+   * permission mode the engine refuses now: it was not in the room when its
+   * refusal was told.
+   */
+  const joined = Effect.fn("roomRefusals.joined")(function* (
+    roomId: RoomId,
+    botIds: ReadonlyArray<BotId>,
+  ) {
+    if (botIds.length === 0) return;
+    for (const bot of yield* refusedOf(botIds)) yield* tell(bot.id, roomId);
+  }, Effect.orDie);
+
+  return { refused, joined };
+};
+
+/**
  * The engine's refusals of a bot's permission mode: to open its main session
  * in, to change it to, or to run a turn there in. Each is recorded with the
  * bot's settings revision it was refused at, and stamped with the engine's
@@ -39,6 +88,7 @@ export const modeRefusals = (
 ) => {
   const transaction = transactional(sql);
   const { notify } = notices(sql, entries);
+  const rooms = roomRefusals(sql, entries);
 
   /**
    * Records that the engine refuses the bot's permission mode at the
@@ -53,7 +103,8 @@ export const modeRefusals = (
    * transaction, which the clearing never crosses, so a refusal is either
    * cleared or not written. The bot's conversation is told of a refusal at a
    * revision, or naming an allowed mode, it was not told of yet, so a refusal
-   * the engine repeats after a restart is not told twice.
+   * the engine repeats after a restart is not told twice; each room it is a
+   * member of is told with it, in one line naming the bot.
    */
   const refused = Effect.fn("modeRefusals.refused")(
     function* (botId: BotId, revision: number, refusal: PermissionModeRefused, generation: number) {
@@ -87,6 +138,7 @@ export const modeRefusals = (
         },
         null,
       );
+      yield* rooms.refused(botId);
     },
     transaction,
     Effect.orDie,

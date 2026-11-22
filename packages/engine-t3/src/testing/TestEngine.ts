@@ -231,10 +231,12 @@ export class TestEngineControl extends Context.Service<
      * permission mode above `ceiling`, applying nothing and keeping nothing
      * for the key, with `PermissionModeRefused` naming `ceiling`, as under an
      * administrator's policy. A model sent with a refused mode change stays
-     * applied. A session already in such a mode keeps it, and every turn a
-     * dispatch would start or steer there is refused the same way, on a first
-     * send and on a resend alike, as long as the engine holds no receipt for
-     * the key. The real engine reads its policy when it starts, so a test that
+     * applied. A session already in such a mode keeps it, and every dispatch
+     * that would make a turn there, a start or a steer too late for its turn,
+     * is refused the same way, on a first send and on a resend alike, as long
+     * as the engine holds no receipt for the key; a steer into a running turn
+     * passes, as the engine's ceiling checks only the commands that make a
+     * run. The real engine reads its policy when it starts, so a test that
      * changes the ceiling later makes the engine unreachable around the
      * change, as a restart does (`setReachable`).
      */
@@ -1164,18 +1166,22 @@ const make = Effect.gen(function* () {
     }).pipe(Effect.andThen(Effect.fail(new DispatchRejected({ key }))));
 
   /**
-   * The engine applies a dispatch it holds no receipt for, unless the turn it
-   * would start or steer runs in a mode above the ceiling, which it refuses
-   * keeping nothing for the key.
+   * The engine applies a dispatch it holds no receipt for, unless it would
+   * make a turn of its own in a session whose mode is above the ceiling: a
+   * start, or a steer too late for its turn. That it refuses keeping nothing
+   * for the key. A steer taken into a running turn makes none, and the
+   * ceiling lets it through (**Read** at `59651c1`, `DispatchModeLimit.ts`
+   * `runtimeModeCeilingRefusal`, which looks only at `run.created` and
+   * `run-attempt.created`).
    */
   const applyDispatch = (session: SessionRecord, input: DispatchInput) =>
     Effect.gen(function* () {
       const { key, text, attachments, delivery } = input;
-      const refusal = modeRefusal(session.permissionMode);
-      if (Option.isSome(refusal)) return yield* refusal.value;
       const at = yield* DateTime.now;
       let disposition: DispatchDisposition;
       if (delivery._tag === "start") {
+        const refusal = modeRefusal(session.permissionMode);
+        if (Option.isSome(refusal)) return yield* refusal.value;
         disposition = applyStart(session, key, at);
       } else {
         const target = session.turns.get(delivery.turnId);
@@ -1184,6 +1190,8 @@ const make = Effect.gen(function* () {
           disposition = { _tag: "steered", turnId: delivery.turnId };
         } else if (target?.ended?.outcome._tag === "completed") {
           // Too late to steer: the engine keeps the message as a turn of its own.
+          const refusal = modeRefusal(session.permissionMode);
+          if (Option.isSome(refusal)) return yield* refusal.value;
           disposition = {
             _tag: "new-turn",
             turnId: addTurn(session, { _tag: "dispatch", key }, at).turnId,
