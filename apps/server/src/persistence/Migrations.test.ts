@@ -52,6 +52,16 @@ it.effect("upgrades a database the last release wrote, keeping its rows and thei
           ${now}, ${now}
         )
       `;
+      // A bot given a color the clients' palette does not have.
+      yield* sql`
+        INSERT INTO bots (
+          id, name, title, avatar_shape, avatar_color, job, provider_id, model_id,
+          permission_mode, workspace_path, created_at, updated_at
+        ) VALUES (
+          'scribe', 'scribe', '', 'circle', 'amber', '', 'claude', 'haiku', 'auto', '/bots/scribe',
+          ${now}, ${now}
+        )
+      `;
       yield* sql`INSERT INTO conversations (bot_id, created_at) VALUES ('scout', ${now})`;
       yield* sql`
         INSERT INTO sessions (id, bot_id, purpose, engine_session_id, prompt_version, created_at)
@@ -94,6 +104,17 @@ it.effect("upgrades a database the last release wrote, keeping its rows and thei
     // This release opens it.
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
+      // A color the clients draw stays; one they do not becomes the first free
+      // one for the bot's shape.
+      const avatars = yield* sql<{
+        readonly id: string;
+        readonly avatar_shape: string;
+        readonly avatar_color: string;
+      }>`SELECT id, avatar_shape, avatar_color FROM bots ORDER BY id`;
+      assert.deepStrictEqual(avatars, [
+        { id: "scout", avatar_shape: "circle", avatar_color: "blue" },
+        { id: "scribe", avatar_shape: "circle", avatar_color: "red" },
+      ]);
       const sessions = yield* sql<{ readonly bot_id: string; readonly provider_id: string }>`
         SELECT bot_id, provider_id FROM sessions WHERE id = 'session-1'
       `;
