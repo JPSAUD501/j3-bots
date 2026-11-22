@@ -14,7 +14,7 @@ export interface PickedFile {
  * reported for it. Its bytes are read natively when the upload asks for
  * them, never through a base64 string.
  */
-class DeviceBlob implements Blob {
+export class DeviceBlob implements Blob {
   readonly #file: DeviceFile;
   readonly type: string;
   readonly size: number;

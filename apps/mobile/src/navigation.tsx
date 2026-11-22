@@ -10,11 +10,13 @@ import {
   type NavigationState,
   type Theme,
   useNavigation,
+  useNavigationContainerRef,
 } from "@react-navigation/native";
 import {
   createNativeStackNavigator,
   type NativeStackNavigationProp,
 } from "@react-navigation/native-stack";
+import { useState } from "react";
 import { useColorScheme } from "react-native";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { useI18n } from "./i18n.ts";
@@ -23,6 +25,7 @@ import { PresentationProvider } from "./presentation.tsx";
 import { ConversationScreen } from "./screens/Conversation.tsx";
 import { DetailsScreen } from "./screens/Details.tsx";
 import { RosterScreen } from "./screens/Roster.tsx";
+import { ShareOpener, ShareScreen } from "./share/SharePicker.tsx";
 import { useColor } from "./theme.ts";
 import { Toasts } from "./toast.tsx";
 
@@ -32,11 +35,13 @@ import { Toasts } from "./toast.tsx";
  * shows the conversation `item` names beside the roster, and the
  * conversation's route is not used. Each route after the roster names the
  * bot or room by its roster key, so it shows the roster's current name.
+ * `share` picks where something another app shared goes, over the rest.
  */
 export type Screens = {
   roster: { readonly item?: RosterItemKey | undefined } | undefined;
   conversation: { readonly item: RosterItemKey };
   details: { readonly item: RosterItemKey };
+  share: undefined;
 };
 
 type Navigation = NativeStackNavigationProp<Screens>;
@@ -100,11 +105,15 @@ export function Main() {
   const client = useJ3Client();
   const theme = useNavigationTheme();
   const resumed = kept.get(client);
+  const navigation = useNavigationContainerRef<Screens>();
+  const [ready, setReady] = useState(false);
   return (
     <KeyboardProvider>
       <PresentationProvider>
         <Toasts>
           <NavigationContainer
+            ref={navigation}
+            onReady={() => setReady(true)}
             theme={theme}
             {...(resumed === undefined ? {} : { initialState: resumed })}
             onStateChange={(state) => {
@@ -125,8 +134,14 @@ export function Main() {
                 options={{ headerShown: false }}
               />
               <Stack.Screen name="details" component={DetailsScreen} />
+              <Stack.Screen
+                name="share"
+                component={ShareScreen}
+                options={{ title: t("share.title"), presentation: "modal" }}
+              />
             </Stack.Navigator>
           </NavigationContainer>
+          <ShareOpener navigation={navigation} ready={ready} />
         </Toasts>
       </PresentationProvider>
     </KeyboardProvider>
