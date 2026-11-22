@@ -92,7 +92,12 @@ import { loadRasterizer, notificationIcon, systemTheme } from "./notificationIco
 import { onAppLink } from "./appLinks";
 import { deliverFile, reserveWindow } from "./openFile";
 import { updatable, useDesktopUpdate, useReportSaving } from "./appUpdate";
-import { useDesktopShortcut, useReportLanguage, useReportTray } from "./desktopMenus";
+import {
+  useDesktopShortcut,
+  useReportAppearance,
+  useReportLanguage,
+  useReportTray,
+} from "./desktopMenus";
 import { desktop } from "./desktop";
 import { LinkedPairingCode } from "./pairingLink";
 import { makePlatform, signInUnencrypted } from "./platform";
@@ -133,6 +138,7 @@ const client = (origin: URL) => (started ??= createJ3Client(makePlatform(origin)
  */
 export function LiveSourceProvider({ children }: { children: ReactNode }) {
   useReportLanguage();
+  useReportAppearance();
   if (server === null) return <AddressScreen />;
   return <Connected origin={server}>{children}</Connected>;
 }
@@ -569,7 +575,11 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
     const content = notificationText(notification, { botName, roomName }, i18n);
     if (content === null) return;
     // In the theme the system is in as it shows, since the system draws it.
-    notificationIcon(notification, rows, systemTheme())
+    // The desktop app overrides the theme Electron reports, which may reach
+    // `prefers-color-scheme`, so there the app says which one the system is in.
+    const theme = desktop === null ? Promise.resolve(null) : desktop.systemTheme();
+    theme
+      .then((system) => notificationIcon(notification, rows, system ?? systemTheme()))
       .then((icon) =>
         showNotification(
           {

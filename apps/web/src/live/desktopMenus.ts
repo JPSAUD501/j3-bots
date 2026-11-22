@@ -3,11 +3,12 @@ import type { DeviceId, RosterItem } from "@j3-bots/contracts";
 import type { ShortcutStatus } from "@j3-bots/desktop-bridge";
 import { useEffect, useMemo, useState } from "react";
 import { useI18n } from "../app/context";
+import { usePreferences } from "../preferences/preferences";
 import type { DesktopShortcut } from "../shell/data";
 import { desktop } from "./desktop";
 import { trayReport } from "./tray";
 
-// What the desktop app's menus, tray and global shortcut need from the page.
+// What the desktop app's window, menus, tray and global shortcut need from the page.
 
 /** Tells the desktop app the language the page shows, which its menus follow. */
 export function useReportLanguage(): void {
@@ -15,6 +16,17 @@ export function useReportLanguage(): void {
   useEffect(() => {
     desktop?.reportLanguage(locale);
   }, [locale]);
+}
+
+/**
+ * Tells the desktop app the appearance the operator chose, as the page starts
+ * and as it changes, so its next launch opens the window in it.
+ */
+export function useReportAppearance(): void {
+  const { appearance } = usePreferences();
+  useEffect(() => {
+    desktop?.reportAppearance(appearance);
+  }, [appearance]);
 }
 
 /**

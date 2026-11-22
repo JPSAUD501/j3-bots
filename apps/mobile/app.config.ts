@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// @effect-diagnostics nodeBuiltinImport:off -- Expo reads this config in its Node process, outside any Effect program.
+import * as NodePath from "node:path";
+import nativeColors from "@j3-bots/design-tokens/icons/colors.json";
 import type { ConfigContext, ExpoConfig } from "expo/config";
 
 // Expo installs TypeScript on start otherwise; the workspace typechecks with tsrs.
@@ -21,6 +24,21 @@ const MICROPHONE_USE = "J3 Bots listens while you dictate a message, and only th
 /** Why the app asks for the camera, as the system shows it. */
 const CAMERA_USE = "J3 Bots uses the camera to read the QR code that pairs this device.";
 
+/**
+ * An icon generated from the design tokens (`pnpm --filter
+ * @j3-bots/design-tokens generate`), as a path from the project's root, which
+ * prebuild reads. Expo embeds the config in the app, so an absolute path would
+ * carry the machine that built it.
+ */
+const iconIn = (projectRoot: string) => (name: string) =>
+  NodePath.relative(projectRoot, require.resolve(`@j3-bots/design-tokens/icons/${name}`));
+
+/**
+ * The canvas the app opens on, in each theme: its first screen, and what
+ * shows before it. The accent colors what the system draws for the app.
+ */
+const { canvas, accent } = nativeColors;
+
 const variantOf = (value: string | undefined): keyof typeof VARIANTS => {
   switch (value) {
     case "development":
@@ -34,8 +52,9 @@ const variantOf = (value: string | undefined): keyof typeof VARIANTS => {
   }
 };
 
-export default ({ config }: ConfigContext): ExpoConfig => {
+export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
   const variant = VARIANTS[variantOf(process.env.APP_VARIANT)];
+  const icon = iconIn(projectRoot);
   return {
     ...config,
     name: variant.name,
@@ -44,8 +63,17 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     version: "0.0.0",
     orientation: "default",
     userInterfaceStyle: "automatic",
+    // The light theme's; plugins/accentColor.js adds the dark one.
+    primaryColor: accent.light,
+    // Android's launcher before adaptive icons, and iOS where it takes no variants.
+    icon: icon("square.png"),
     ios: {
       bundleIdentifier: variant.id,
+      icon: {
+        light: icon("square.png"),
+        dark: icon("square-dark.png"),
+        tinted: icon("square-tinted.png"),
+      },
       supportsTablet: true,
       infoPlist: {
         // J3 Bots runs on the operator's own machine, often reached by a LAN
@@ -57,6 +85,11 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     },
     android: {
       package: variant.id,
+      adaptiveIcon: {
+        foregroundImage: icon("adaptive-foreground.png"),
+        monochromeImage: icon("adaptive-monochrome.png"),
+        backgroundColor: canvas.light,
+      },
       // Added by dependencies, used by nothing the app does.
       blockedPermissions: [
         "android.permission.SYSTEM_ALERT_WINDOW",
@@ -68,6 +101,18 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     // No over-the-air updates: a build runs the JavaScript it was built with.
     updates: { enabled: false },
     plugins: [
+      // The splash screen on the canvas of the theme the system is in, with
+      // the ensemble in that theme's colors. It stays until the first screen
+      // has drawn in the operator's theme (index.ts).
+      [
+        "expo-splash-screen",
+        {
+          backgroundColor: canvas.light,
+          image: icon("splash-light.png"),
+          imageWidth: 288,
+          dark: { backgroundColor: canvas.dark, image: icon("splash-dark.png") },
+        },
+      ],
       // Its defaults keep the credential out of Android's backups: a restored
       // backup could not decrypt it. The credential is read without Face ID,
       // so the app asks for no permission to use it.
@@ -119,6 +164,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
           },
         },
       ],
+      "./plugins/accentColor.js",
       "./plugins/cleartextToPrivateHosts.js",
       "./plugins/foldInPlace.js",
     ],

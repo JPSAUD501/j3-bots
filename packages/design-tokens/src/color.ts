@@ -86,6 +86,15 @@ export function toSrgb8(color: LinearRgb): readonly [number, number, number] {
   return [channel(color.r), channel(color.g), channel(color.b)];
 }
 
+/**
+ * An opaque color as `#rrggbb` in 8-bit sRGB, for what takes no other form:
+ * a native window's background, an app's splash screen. Alpha is dropped.
+ */
+export function hexColor(value: string): string {
+  const hex = toSrgb8(parseColor(value)).map((c) => c.toString(16).padStart(2, "0"));
+  return `#${hex.join("")}`;
+}
+
 /** Composites `top` over an opaque `bottom`. */
 export function over(top: LinearRgb, bottom: LinearRgb): LinearRgb {
   const mix = (t: number, u: number) => t * top.alpha + u * (1 - top.alpha);

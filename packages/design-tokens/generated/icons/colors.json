@@ -1,0 +1,10 @@
+{
+  "canvas": {
+    "light": "#fcfcfc",
+    "dark": "#000000"
+  },
+  "accent": {
+    "light": "#1a4eda",
+    "dark": "#74a1ff"
+  }
+}

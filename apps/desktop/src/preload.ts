@@ -52,6 +52,8 @@ const bridge: DesktopBridge = {
     };
   },
   reportLanguage: (report) => ipcRenderer.send(IPC_CHANNELS.language, report),
+  reportAppearance: (report) => ipcRenderer.send(IPC_CHANNELS.appearance, report),
+  systemTheme: () => ipcRenderer.invoke(IPC_CHANNELS.systemTheme),
   reportTray: (report) => ipcRenderer.send(IPC_CHANNELS.tray, report),
   onCommand: (listener) => {
     const forward = (_event: unknown, command: unknown) => listener(command);

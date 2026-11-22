@@ -7,6 +7,7 @@ import { getLocales } from "expo-localization";
 import { Storage } from "expo-sqlite/kv-store";
 import { useSyncExternalStore } from "react";
 import { Uniwind } from "uniwind";
+import { keepNightMode } from "./platform/nightMode.ts";
 
 // The operator's appearance and language for this phone. Both default to
 // following the system. They are the phone's, not a pairing's: signing out
@@ -57,15 +58,22 @@ const update = (next: Preferences) => {
 };
 
 /**
- * Applies the saved appearance; the app calls it once before its first
- * screen. Uniwind's theme also sets the color scheme React Native reports,
- * which the navigation's theme follows.
+ * Applies `appearance` to everything that draws in a theme: Uniwind's theme,
+ * which also sets the color scheme React Native reports, which the navigation
+ * and the system bars follow; and the system's own record of it, for the
+ * splash screen of the next launch.
  */
-export const applyAppearance = (): void => Uniwind.setTheme(current.appearance);
+const apply = (appearance: Appearance) => {
+  Uniwind.setTheme(appearance);
+  keepNightMode(appearance);
+};
+
+/** Applies the saved appearance; the app calls it once before its first screen. */
+export const applyAppearance = (): void => apply(current.appearance);
 
 export function setAppearance(appearance: Appearance): void {
   writeStored(KEYS.appearance, appearance);
-  Uniwind.setTheme(appearance);
+  apply(appearance);
   update({ ...current, appearance });
 }
 

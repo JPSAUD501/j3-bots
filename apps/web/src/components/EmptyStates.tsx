@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Bot, EngineStatus, ProviderStatus } from "@j3-bots/contracts";
 import { canRunBots, connectCommand } from "@j3-bots/client-runtime/presentation";
+import { ensemble } from "@j3-bots/design-tokens";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 import { useI18n, usePresentation } from "../app/context";
@@ -17,10 +18,14 @@ const idle = { _tag: "idle" } as const;
 /** Three idle bots: the picture for screens where the team is still to come. */
 export function Ensemble() {
   return (
-    <span className="flex items-end gap-1.5 [--avatar-cutout:var(--background)]" aria-hidden>
-      <BotAvatar avatar={{ shape: "hexagon", color: "teal" }} state={idle} size={36} />
-      <BotAvatar avatar={{ shape: "circle", color: "violet" }} state={idle} size={48} />
-      <BotAvatar avatar={{ shape: "triangle", color: "orange" }} state={idle} size={36} />
+    <span
+      className="flex items-end [--avatar-cutout:var(--background)]"
+      style={{ gap: ensemble.gap }}
+      aria-hidden
+    >
+      {ensemble.members.map(({ shape, color, size }) => (
+        <BotAvatar key={shape} avatar={{ shape, color }} state={idle} size={size} />
+      ))}
     </span>
   );
 }

@@ -126,24 +126,42 @@ describe("forgetting the server", () => {
 });
 
 describe("the settings file", () => {
-  it("reads the server, the window and the shortcut each on its own", () => {
+  it("reads the server, the window, the shortcut and the appearance each on its own", () => {
     const window = { x: 10, y: 20, width: 800, height: 600, maximized: false };
     const shortcut = "Control+Alt+K";
     assert.deepStrictEqual(
-      Settings.decodeSettings(JSON.stringify({ server: SERVER, window: { x: "left" }, shortcut })),
-      { settings: { server: SERVER, window: null, shortcut }, dropped: ["window"] },
+      Settings.decodeSettings(
+        JSON.stringify({ server: SERVER, window: { x: "left" }, shortcut, appearance: "dark" }),
+      ),
+      {
+        settings: { server: SERVER, window: null, shortcut, appearance: "dark" },
+        dropped: ["window"],
+      },
     );
     assert.deepStrictEqual(
       Settings.decodeSettings(JSON.stringify({ server: "somewhere", window })),
-      { settings: { server: null, window, shortcut: null }, dropped: ["server"] },
+      {
+        settings: { server: null, window, shortcut: null, appearance: "system" },
+        dropped: ["server"],
+      },
     );
     // Shift alone does not make a shortcut: it would take a capital letter from every app.
     assert.deepStrictEqual(
       Settings.decodeSettings(JSON.stringify({ server: SERVER, window, shortcut: "Shift+K" })),
-      { settings: { server: SERVER, window, shortcut: null }, dropped: ["shortcut"] },
+      {
+        settings: { server: SERVER, window, shortcut: null, appearance: "system" },
+        dropped: ["shortcut"],
+      },
+    );
+    assert.deepStrictEqual(
+      Settings.decodeSettings(JSON.stringify({ server: SERVER, appearance: "sepia" })),
+      {
+        settings: { server: SERVER, window: null, shortcut: null, appearance: "system" },
+        dropped: ["appearance"],
+      },
     );
     assert.deepStrictEqual(Settings.decodeSettings("{ not json"), {
-      settings: { server: null, window: null, shortcut: null },
+      settings: { server: null, window: null, shortcut: null, appearance: "system" },
       dropped: [],
     });
   });
@@ -151,11 +169,19 @@ describe("the settings file", () => {
   it("drops a server the server address screen would refuse now", () => {
     assert.deepStrictEqual(
       Settings.decodeSettings(JSON.stringify({ server: "http://192.0.2.10:3737", window: null })),
-      { settings: { server: null, window: null, shortcut: null }, dropped: ["server"] },
+      {
+        settings: { server: null, window: null, shortcut: null, appearance: "system" },
+        dropped: ["server"],
+      },
     );
     assert.deepStrictEqual(
       Settings.decodeSettings(JSON.stringify({ server: "https://192.0.2.10:3737" })).settings,
-      { server: origin("https://192.0.2.10:3737"), window: null, shortcut: null },
+      {
+        server: origin("https://192.0.2.10:3737"),
+        window: null,
+        shortcut: null,
+        appearance: "system",
+      },
     );
   });
 });

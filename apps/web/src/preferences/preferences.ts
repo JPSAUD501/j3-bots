@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { LANGUAGES } from "@j3-bots/contracts";
+import { colors } from "@j3-bots/design-tokens";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { useSyncExternalStore } from "react";
@@ -54,13 +55,27 @@ function compute(): Preferences {
   return { appearance, language, theme };
 }
 
+/**
+ * The browser's own chrome, such as an installed app's title bar or a phone's
+ * address bar, in the theme in effect. The page carries one `theme-color` for
+ * each system theme; with a theme chosen, both give its canvas.
+ */
+function applyThemeColor({ appearance, theme }: Preferences) {
+  for (const meta of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) {
+    const own = meta.media.includes("dark") ? "dark" : "light";
+    meta.content = colors.background[appearance === "system" ? own : theme];
+  }
+}
+
 let snapshot = compute();
+applyThemeColor(snapshot);
 
 function refresh() {
   snapshot = compute();
   const root = document.documentElement;
   root.classList.toggle("dark", snapshot.theme === "dark");
   root.classList.toggle("light", snapshot.theme === "light");
+  applyThemeColor(snapshot);
   for (const listener of listeners) listener();
 }
 
