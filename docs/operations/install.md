@@ -8,7 +8,7 @@ This guide takes a Linux machine from nothing to a browser paired with your own 
 
 | System | Status |
 | --- | --- |
-| Linux on x64 or arm64, with a systemd user manager | Supported. CI runs each release archive on Ubuntu 24.04, x64 and arm64: `doctor`, the server, its web client and one bot turn, then an install and removal with `install.sh` (**Verified**, on every pull request). A Raspberry Pi 4 on 64-bit Raspberry Pi OS runs the server from a checkout as a user service (**Verified**); a release archive has not been run on one yet (**Assumed** to work the same). |
+| Linux on x64 or arm64, with a systemd user manager | Supported. CI runs each release archive on Ubuntu 24.04, x64 and arm64: `doctor`, the server, its web client and one bot turn, then an install and removal with `install.sh` (**Verified**, on every pull request). A Raspberry Pi 4 on 64-bit Raspberry Pi OS runs the server as a user service, from a checkout and from a release archive, installed, updated, rolled back and removed (**Verified**: [Raspberry Pi](#raspberry-pi)). |
 | Linux without a systemd user manager: most containers, WSL without systemd | The command only (`--no-service`); you start the server yourself with `j3-bots serve`. Whether bots run that way has not been checked: the engine starts each harness with `systemd-run --user --scope`. On WSL, `doctor` gives the steps that turn systemd on. |
 | macOS | Not supported for the server. The service is a systemd unit, and the engine starts each harness in a systemd scope. |
 | Windows | Not supported for the server. |
@@ -239,6 +239,8 @@ Once a provider is ready, the web client asks for your first bot's name. The bot
 ## Raspberry Pi
 
 J3 Bots runs on a Raspberry Pi 4 with 4 GB of memory or more, on 64-bit Raspberry Pi OS (`uname -m` prints `aarch64`). Raspberry Pi OS has everything `install.sh` needs.
+
+**Verified** on a Pi 4 with 4 GB, as a dedicated user with lingering on: `install.sh --version 0.1.0-rc.1` installed the release, and `doctor` reported no problem once a provider's endpoint was connected. A device paired over the LAN through `/api/pair`. `j3-bots update` to 0.1.0, `j3-bots update --rollback` and `j3-bots update` again each worked, and the device stayed paired: its token still got a socket ticket. `j3-bots uninstall --delete-data` left no unit, process, command, release or data behind. 0.1.0 then installed from `releases/latest/download/install.sh`, and `doctor` warned only that no device was paired yet.
 
 - **Memory.** Measured on a Pi 4 with 4 GB (release 0.0.0 from a checkout, engine 0.1.11-nightly.20261120.4969): the server about 120 MB and the engine about 400 MB with no turn running, and Claude Code about 225 MB while it runs. The service peaked at about 1.3 GB over its first start and one turn. The service's `MemoryHigh` is 60% of the machine's memory, about 2.4 GB on a 4 GB Pi.
 - **Memory controller.** Raspberry Pi OS kernels may disable the kernel's memory controller, which `MemoryHigh` needs. `doctor` reports that case; the fix is `cgroup_enable=memory` at the end of the single line in `/boot/firmware/cmdline.txt`, then a reboot.
