@@ -10,3 +10,10 @@ apps/desktop/smoke-failure.png
 apps/desktop/every-surface-captures/
 apps/desktop/release/
 apps/desktop/dev-app-update.yml
+
+# Signing material never belongs in the repository.
+*.jks
+*.keystore
+*.p8
+*.p12
+*.mobileprovision

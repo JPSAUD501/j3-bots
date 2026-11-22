@@ -4,16 +4,21 @@ name: Release
 # Builds a release when a version tag is pushed: a draft GitHub release for
 # the tag; the desktop app's packages with electron-updater's feed files; the
 # server's archives for linux-x64 and linux-arm64, with SHA256SUMS and
-# scripts/install.sh; and then their upload to the draft. A maintainer reads
-# the draft and publishes it: installed apps are offered, and install.sh
-# finds, only a published release. See docs/operations/releasing.md.
+# scripts/install.sh; the Android app's signed APK; and then their upload to
+# the draft. A maintainer reads the draft and publishes it: installed apps are
+# offered, and install.sh finds, only a published release. See
+# docs/operations/releasing.md.
 #
 # Only a pushed `v*` tag runs it, never a pull request, so no code from a fork
-# runs here. It uses the run's own GITHUB_TOKEN and no other secret: the
-# builds are unsigned. Only the two jobs that run no code from the repository
-# may write: `draft` creates the release and `publish` uploads to it. The jobs
-# that build read, and hand what they built to `publish` as `release-*`
-# artifacts; each such job is in `publish`'s `needs`, which a job added later
+# runs here. Every job but `android-sign` uses the run's own GITHUB_TOKEN and
+# no other secret: the desktop builds are unsigned, and `android` builds the
+# APK unsigned. `android-sign` alone reads secrets: the four that hold the
+# key that signs the APK, in the `android-signing` environment, which admits
+# only `v*` tags. It runs no code from the repository or the build. Only the
+# two jobs that run no code from the repository may write: `draft` creates
+# the release and `publish` uploads to it. The jobs that build read, and the
+# last job of each build hands what it made to `publish` as a `release-*`
+# artifact; each such job is in `publish`'s `needs`, which a job added later
 # joins too, or its files are left out.
 on:
   push:
@@ -36,21 +41,43 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      # The tag names the version the packages carry: v1.2.3 or v1.2.3-beta.1.
+      # The tag names the version the packages carry: v1.2.3, or a release
+      # candidate, v1.2.3-rc.1. Only the versions the Android app can number
+      # are taken: this is the grammar and the limits of androidVersionCode
+      # (apps/mobile/src/androidVersionCode.ts), which the Android build runs.
+      # This job may write, so it runs no code from the repository and checks
+      # the tag itself; a change to either check is made to both.
       - name: Version from the tag
         id: version
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
           number='(0|[1-9][0-9]*)'
-          identifier='(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
-          if ! [[ "$version" =~ ^$number\.$number\.$number(-$identifier(\.$identifier)*)?$ ]]; then
-            echo "::error::$GITHUB_REF_NAME is not v followed by a semver version"
+          if ! [[ "$version" =~ ^$number\.$number\.$number(-rc\.([1-9][0-9]*))?$ ]]; then
+            echo "::error::$GITHUB_REF_NAME is not v followed by x.y.z or x.y.z-rc.n, the versions the Android app can number."
+            exit 1
+          fi
+          major="${BASH_REMATCH[1]}" minor="${BASH_REMATCH[2]}" patch="${BASH_REMATCH[3]}" rc="${BASH_REMATCH[5]}"
+          # Lengths first, so no number is too long for the shell's arithmetic.
+          if ((${#major} > 4 || major > 2099 || ${#minor} > 2 || ${#patch} > 2 || ${#rc} > 2)) || [[ "$rc" == 99 ]]; then
+            echo "::error::$GITHUB_REF_NAME is outside what the Android app can number: a major version up to 2099, a minor and a patch up to 99, a release candidate up to rc.98."
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      # A version with a pre-release part (1.2.3-beta.1) is drafted as a
+      # The draft's notes give the certificate's digest, and a re-run keeps a
+      # draft that exists, so the digest must be right before it is written.
+      - name: Check the certificate's digest
+        shell: bash
+        env:
+          ANDROID_CERT_SHA256: ${{ vars.ANDROID_CERT_SHA256 }}
+        run: |
+          if ! [[ "$ANDROID_CERT_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::The repository variable ANDROID_CERT_SHA256 is not a SHA-256 in lowercase hex without colons. docs/operations/releasing.md says how to set it."
+            exit 1
+          fi
+
+      # A version with a pre-release part (1.2.3-rc.1) is drafted as a
       # pre-release, so publishing it never makes it the latest release,
       # which apps on a release version read.
       - name: Create the draft
@@ -59,6 +86,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           VERSION: ${{ steps.version.outputs.version }}
+          ANDROID_CERT_SHA256: ${{ vars.ANDROID_CERT_SHA256 }}
         run: |
           wanted=false
           prerelease=()
@@ -74,7 +102,7 @@ jobs:
           fi
           gh release create "$GITHUB_REF_NAME" --draft "${prerelease[@]}" --verify-tag \
             --title "J3 Bots $VERSION" \
-            --notes "Unsigned builds. macOS and Windows warn before opening an unsigned app. A Mac build and the deb say when a newer version is out; the AppImage and the Windows install update themselves. Linux packages need no signature. The server installs on x64 and arm64 Linux with systemd: \`curl -fsSL https://github.com/$GH_REPO/releases/download/$GITHUB_REF_NAME/install.sh | sh -s -- --version $VERSION\`. SHA256SUMS holds the digest of each server archive and of install.sh."
+            --notes "The desktop builds are unsigned. macOS and Windows warn before opening an unsigned app. A Mac build and the deb say when a newer version is out; the AppImage and the Windows install update themselves. Linux packages need no signature. The server installs on x64 and arm64 Linux with systemd: \`curl -fsSL https://github.com/$GH_REPO/releases/download/$GITHUB_REF_NAME/install.sh | sh -s -- --version $VERSION\`. SHA256SUMS holds the digest of each server archive and of install.sh. The Android app is j3-bots-$VERSION-android-arm64.apk: install it on the phone and allow installs from the app that opens it. Its signing certificate's SHA-256 is $ANDROID_CERT_SHA256."
 
   desktop:
     name: Desktop (${{ matrix.name }})
@@ -207,6 +235,171 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # The Android app's release build, for arm64 phones: the production variant,
+  # with its JavaScript bundled and no development client. It is built without
+  # an Expo or a Firebase project, so it cannot turn push notifications on. The
+  # build is unsigned (plugins/unsignedRelease.js) and this job holds no
+  # secret: Gradle runs build scripts and plugins from node_modules and
+  # downloads from Maven repositories, so the key never comes near it.
+  # `android-sign` signs what it builds.
+  android:
+    name: Android (build)
+    needs: draft
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      APP_VARIANT: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
+        with:
+          node-version-file: package.json
+          run-install: true
+
+      # The app takes its version, and its version code, from its package.json
+      # (app.config.ts), which only this run's copy changes, as the server job
+      # does. `draft` has refused any version the version code cannot be made
+      # from; androidVersionCode refuses it again when the config is read.
+      - name: Version from the tag
+        working-directory: apps/mobile
+        env:
+          VERSION: ${{ needs.draft.outputs.version }}
+        run: npm pkg set version="$VERSION"
+
+      - name: Generate the native project
+        working-directory: apps/mobile
+        run: vp exec -- expo prebuild --platform android --no-install
+
+      - name: Build
+        working-directory: apps/mobile/android
+        run: ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=arm64-v8a
+
+      # An intermediate: its name is not `release-*`, so `publish` never takes it.
+      - name: Hand the unsigned APK to the sign job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: android-unsigned
+          path: apps/mobile/android/app/build/outputs/apk/release/app-release-unsigned.apk
+          if-no-files-found: error
+          retention-days: 7
+
+  # Signs the APK `android` built, with the key in the `android-signing`
+  # environment, whose four secrets this job alone reads. The environment
+  # admits only `v*` tags, so whoever may push one may use the key; the
+  # repository's "release tags" ruleset leaves that to admins. The job checks
+  # nothing out, installs nothing and runs nothing from the repository or the
+  # build: only the runner image's own `apksigner` and `zipalign`, on the APK's
+  # bytes. That keeps the key from the build, not the build from the key: the
+  # job signs whatever `android` built, and the draft's review before it is
+  # published is what checks it, as it does every other file. The keystore is
+  # on disk from the step that writes it to the step that deletes it, which
+  # runs even when signing fails; the passwords reach `apksigner` through its
+  # environment, never its command line.
+  android-sign:
+    name: Android (sign)
+    needs: [draft, android]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: android-signing
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check the signing secrets
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_CERT_SHA256: ${{ vars.ANDROID_CERT_SHA256 }}
+        run: |
+          missing=()
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD ANDROID_CERT_SHA256; do
+            [[ -n "${!name}" ]] || missing+=("$name")
+          done
+          if ((${#missing[@]} > 0)); then
+            echo "::error::${missing[*]} not set: the secrets in the android-signing environment, the certificate's digest as a repository variable. docs/operations/releasing.md says how to create them."
+            exit 1
+          fi
+          if ! [[ "$ANDROID_CERT_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::ANDROID_CERT_SHA256 is not a SHA-256 in lowercase hex without colons."
+            exit 1
+          fi
+
+      - name: Download the unsigned APK
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: android-unsigned
+          path: unsigned
+
+      - name: Find the build tools
+        run: echo "BUILD_TOOLS=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 | sort -V | tail -1)" >> "$GITHUB_ENV"
+
+      - name: Write the signing key
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          umask 077
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
+
+      - name: Sign
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          VERSION: ${{ needs.draft.outputs.version }}
+        run: |
+          mkdir -p signed
+          "$BUILD_TOOLS/apksigner" sign \
+            --ks "$RUNNER_TEMP/release.jks" --ks-key-alias "$ANDROID_KEY_ALIAS" \
+            --ks-pass env:ANDROID_KEYSTORE_PASSWORD --key-pass env:ANDROID_KEY_PASSWORD \
+            --out "signed/j3-bots-$VERSION-android-arm64.apk" unsigned/app-release-unsigned.apk
+
+      - name: Delete the signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.jks"
+
+      # Every signature the APK carries must be made with one certificate, the
+      # release's, which a phone compares each update against: the digests
+      # `apksigner` prints for its schemes (v2, v3) must come to exactly one,
+      # equal to ANDROID_CERT_SHA256. Its native libraries must stay aligned to
+      # 16 KB pages, which Android 15 devices with 16 KB pages need. The
+      # certificate's name and digest are public.
+      - name: Check the signature and the alignment
+        env:
+          ANDROID_CERT_SHA256: ${{ vars.ANDROID_CERT_SHA256 }}
+          VERSION: ${{ needs.draft.outputs.version }}
+        run: |
+          apk="signed/j3-bots-$VERSION-android-arm64.apk"
+          certificates="$("$BUILD_TOOLS/apksigner" verify --print-certs "$apk")"
+          grep -E 'certificate (DN|SHA-256 digest)' <<< "$certificates"
+          digests="$(sed -n 's/.*certificate SHA-256 digest: //p' <<< "$certificates" | sort -u)"
+          if [[ "$digests" != "$ANDROID_CERT_SHA256" ]]; then
+            echo "::error::The APK's signatures are not all made with the release certificate (ANDROID_CERT_SHA256)."
+            exit 1
+          fi
+          "$BUILD_TOOLS/zipalign" -c -P 16 4 "$apk"
+
+      - name: Hand the APK to the publish job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-android
+          path: signed/j3-bots-${{ needs.draft.outputs.version }}-android-arm64.apk
+          if-no-files-found: error
+          retention-days: 7
+
   # SHA256SUMS of both archives and install.sh, which install.sh checks a
   # download against. It reads files and runs none of them.
   checksums:
@@ -254,7 +447,7 @@ jobs:
 
   publish:
     name: Upload to the draft
-    needs: [draft, desktop, server, checksums]
+    needs: [draft, desktop, server, android-sign, checksums]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

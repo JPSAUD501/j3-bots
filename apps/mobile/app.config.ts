@@ -3,14 +3,17 @@
 import * as NodePath from "node:path";
 import nativeColors from "@j3-bots/design-tokens/icons/colors.json";
 import type { ConfigContext, ExpoConfig } from "expo/config";
+import packageJson from "./package.json";
+import { androidVersionCode } from "./src/androidVersionCode.ts";
 
 // Expo installs TypeScript on start otherwise; the workspace typechecks with tsrs.
 process.env.EXPO_NO_TYPESCRIPT_SETUP = "1";
 
 /**
  * Each variant installs beside the others, with its own name, link scheme and
- * identifiers. The identifiers are development placeholders, until the ids of
- * a published build are chosen.
+ * identifiers. Production is the one a release publishes: an Android phone
+ * takes a new release as an update only while its application id and its
+ * signing key stay the same (docs/operations/releasing.md).
  */
 const VARIANTS = {
   development: { name: "J3 Bots Dev", scheme: "j3bots-dev", id: "dev.j3bots.mobile.dev" },
@@ -72,7 +75,8 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
     name: variant.name,
     slug: "j3-bots",
     scheme: variant.scheme,
-    version: "0.0.0",
+    // The release workflow sets package.json's version to the tag's.
+    version: packageJson.version,
     orientation: "default",
     userInterfaceStyle: "automatic",
     // The light theme's; plugins/accentColor.js adds the dark one.
@@ -97,6 +101,7 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
     },
     android: {
       package: variant.id,
+      versionCode: androidVersionCode(packageJson.version),
       adaptiveIcon: {
         foregroundImage: icon("adaptive-foreground.png"),
         monochromeImage: icon("adaptive-monochrome.png"),
@@ -202,6 +207,7 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
       "./plugins/accentColor.js",
       "./plugins/cleartextToPrivateHosts.js",
       "./plugins/foldInPlace.js",
+      "./plugins/unsignedRelease.js",
     ],
   };
 };

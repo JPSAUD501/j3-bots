@@ -1,0 +1,36 @@
+# 0017: The Android app is an APK on the release, signed with the project's key
+
+**Status:** Accepted
+
+## Context
+
+The mobile app ran only as a development build, which needs Metro on the machine that built it. An operator who wants it on their phone needs a build that runs on its own, from somewhere they can get it. J3 Bots has no Google Play listing, no Expo account and no Firebase project.
+
+Android installs an APK over an installed app only when both carry the same application id and are signed with the same key, and the new one's version code is not lower. The first APK anyone installs fixes the id and the key for every later one: changing the id makes a different app, which a phone takes only after the old one is uninstalled, with its pairing, drafts and unsent messages, and a new key is accepted only through a rotation the old key signs.
+
+## Decision
+
+**Each release carries one APK**, `j3-bots-<version>-android-arm64.apk`, built by the release workflow from the tag ([Releasing](../operations/releasing.md)): the production variant (`APP_VARIANT=production`, "J3 Bots", `dev.j3bots.mobile`), with its JavaScript bundled, for arm64 only, since that is what phones run.
+
+**It is signed with one key the project keeps, away from the build.** One job builds the APK unsigned and holds no secret, since Gradle runs code from `node_modules` and from Maven repositories. A second job, the only one in the workflow that reads a secret, signs it: the key is four secrets of the `android-signing` environment, which admits only `v*` tags, so anyone who may push a `v*` tag may use the key; the repository's "release tags" ruleset leaves that to admins. That job checks nothing out and runs nothing from the repository or the build, only the runner image's `apksigner` and `zipalign`. It refuses an APK unless every signature on it is made with one certificate, the one whose SHA-256 is the repository variable `ANDROID_CERT_SHA256`: the digests `apksigner` prints come to exactly one distinct value, that one. The variable is public, so anyone can check a download against it.
+
+**Its version code comes from the version**: `major * 1,000,000 + minor * 10,000 + patch * 100 + stage`, where the stage is `n` for `-rc.n` and 99 for the release (`apps/mobile/src/androidVersionCode.ts`). It orders as the versions do whenever they are tagged: a release candidate below its release, a hotfix `1.4.1` below `1.5.0`.
+
+## Consequences
+
+- `dev.j3bots.mobile` and the key are fixed once a release with the APK is published. A leaked key lets anyone sign an update the phone accepts. A lost key cannot be replaced: APK Signature Scheme v3 lets a new key take over on Android 9 and later, but only through a lineage the old key signs, and Android 7 and 8 keep checking the old key. The key is backed up outside the repository.
+- Four secrets for one key, in an environment that admits only `v*` tags, read by a job that runs no project code. No pull request, no branch and no fork's code reaches them; an admin, the only one who may push a `v*` tag, does.
+- The separate jobs protect the key, not what it signs. A compromised build dependency still gets its APK signed with the release key, and the signed APK can be downloaded as an Actions artifact before the release is published. The maintainer's review of the draft is the gate for it, as for every other file of the release; the sign job asks for no approval.
+- A version must be `x.y.z` or `x.y.z-rc.n`, with a minor and a patch up to 99, a release candidate up to `rc.98` and a major up to 2099. The release workflow's first job refuses any other tag before anything is built.
+- No push notifications in this APK: they need an Expo project and a Firebase project.
+- The operator installs from the browser and allows installs from it once; the phone does not update the app on its own.
+
+## Rejected
+
+**Google Play.** It needs a developer account, a listing and review for each release, and Play App Signing holds the key. It stays possible later with the same id, if the key is uploaded to Play.
+
+**An EAS build.** It needs an Expo account, and the key would be held by Expo or uploaded to it.
+
+**Signing in the Gradle build**, with the Android Gradle Plugin's injected signing properties. It needs no second job, but the key and its passwords would be in the process that runs every build script of every dependency.
+
+**The workflow's run number as the version code.** It grows with every run, not with the version: a hotfix tagged after a newer release would get the higher code, and renaming the workflow starts the count again.

@@ -15,7 +15,7 @@ Early and unreleased. No release is published yet, so the install command below 
 | Server      | Runs bots on Claude Code and Codex: conversations, memory, approvals, routines on a schedule or a webhook, bot-to-bot messages and rooms. Installs as a systemd user service on x64 and arm64 Linux, and updates itself with a snapshot to roll back to. |
 | Web client  | Served by the server; installable as an app over HTTPS.                                                                                                                                                                                                  |
 | Desktop app | Builds for Linux, macOS and Windows, unsigned.                                                                                                                                                                                                           |
-| Mobile app  | An Expo app: pairing, the roster, conversations, and sending to a bot from the share sheet. Not published yet.                                                                                                                                           |
+| Mobile app  | An Expo app: pairing, the roster, conversations, and sending to a bot from the share sheet. Each release has a signed Android APK to [install on the phone](docs/architecture/clients.md#installing-the-android-app).                                    |
 | Engine      | Pinned to one T3 Code release, in [`engine.json`](engine.json).                                                                                                                                                                                          |
 
 ## Quick start
