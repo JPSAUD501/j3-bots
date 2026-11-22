@@ -19,7 +19,10 @@ const RELEASE = 99;
  * puts each release candidate below its release. A version this cannot order
  * (another pre-release label, a minor or patch above 99, `-rc.99` and up, a
  * major above 2099) is refused, so the build fails rather than ship a code that
- * would block an update.
+ * would block an update. The release workflow's `draft` job refuses a tag
+ * outside this grammar and these limits before anything is built
+ * (.github/workflows/release.yml, "Version from the tag"): a change here is
+ * made there too.
  */
 export const androidVersionCode = (version: string): number => {
   const groups = VERSION.exec(version)?.groups;

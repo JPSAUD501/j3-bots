@@ -41,19 +41,41 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      # The tag names the version the packages carry: v1.2.3 or v1.2.3-beta.1.
+      # The tag names the version the packages carry: v1.2.3, or a release
+      # candidate, v1.2.3-rc.1. Only the versions the Android app can number
+      # are taken: this is the grammar and the limits of androidVersionCode
+      # (apps/mobile/src/androidVersionCode.ts), which the Android build runs.
+      # This job may write, so it runs no code from the repository and checks
+      # the tag itself; a change to either check is made to both.
       - name: Version from the tag
         id: version
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
           number='(0|[1-9][0-9]*)'
-          identifier='(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
-          if ! [[ "$version" =~ ^$number\.$number\.$number(-$identifier(\.$identifier)*)?$ ]]; then
-            echo "::error::$GITHUB_REF_NAME is not v followed by a semver version"
+          if ! [[ "$version" =~ ^$number\.$number\.$number(-rc\.([1-9][0-9]*))?$ ]]; then
+            echo "::error::$GITHUB_REF_NAME is not v followed by x.y.z or x.y.z-rc.n, the versions the Android app can number."
+            exit 1
+          fi
+          major="${BASH_REMATCH[1]}" minor="${BASH_REMATCH[2]}" patch="${BASH_REMATCH[3]}" rc="${BASH_REMATCH[5]}"
+          # Lengths first, so no number is too long for the shell's arithmetic.
+          if ((${#major} > 4 || major > 2099 || ${#minor} > 2 || ${#patch} > 2 || ${#rc} > 2)) || [[ "$rc" == 99 ]]; then
+            echo "::error::$GITHUB_REF_NAME is outside what the Android app can number: a major version up to 2099, a minor and a patch up to 99, a release candidate up to rc.98."
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # The draft's notes give the certificate's digest, and a re-run keeps a
+      # draft that exists, so the digest must be right before it is written.
+      - name: Check the certificate's digest
+        shell: bash
+        env:
+          ANDROID_CERT_SHA256: ${{ vars.ANDROID_CERT_SHA256 }}
+        run: |
+          if ! [[ "$ANDROID_CERT_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::The repository variable ANDROID_CERT_SHA256 is not a SHA-256 in lowercase hex without colons. docs/operations/releasing.md says how to set it."
+            exit 1
+          fi
 
       # A version with a pre-release part (1.2.3-rc.1) is drafted as a
       # pre-release, so publishing it never makes it the latest release,
@@ -246,8 +268,8 @@ jobs:
 
       # The app takes its version, and its version code, from its package.json
       # (app.config.ts), which only this run's copy changes, as the server job
-      # does. A version the version code cannot be made from, such as a
-      # `-beta.1`, fails the next step.
+      # does. `draft` has refused any version the version code cannot be made
+      # from; androidVersionCode refuses it again when the config is read.
       - name: Version from the tag
         working-directory: apps/mobile
         env:
@@ -269,16 +291,20 @@ jobs:
           name: android-unsigned
           path: apps/mobile/android/app/build/outputs/apk/release/app-release-unsigned.apk
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
 
   # Signs the APK `android` built, with the key in the `android-signing`
   # environment, whose four secrets this job alone reads. The environment
-  # admits only `v*` tags. The job checks nothing out, installs nothing and
-  # runs nothing from the repository or the build: only the runner image's own
-  # `apksigner` and `zipalign`, on the APK's bytes. The keystore is on disk from
-  # the step that writes it to the step that deletes it, which runs even when
-  # signing fails; the passwords reach `apksigner` through its environment,
-  # never its command line.
+  # admits only `v*` tags, so whoever may push one may use the key; the
+  # repository's "release tags" ruleset leaves that to admins. The job checks
+  # nothing out, installs nothing and runs nothing from the repository or the
+  # build: only the runner image's own `apksigner` and `zipalign`, on the APK's
+  # bytes. That keeps the key from the build, not the build from the key: the
+  # job signs whatever `android` built, and the draft's review before it is
+  # published is what checks it, as it does every other file. The keystore is
+  # on disk from the step that writes it to the step that deletes it, which
+  # runs even when signing fails; the passwords reach `apksigner` through its
+  # environment, never its command line.
   android-sign:
     name: Android (sign)
     needs: [draft, android]
@@ -345,10 +371,12 @@ jobs:
         if: always()
         run: rm -f "$RUNNER_TEMP/release.jks"
 
-      # The APK must carry one signer, the release certificate a phone compares
-      # each update against, and keep its native libraries aligned to 16 KB
-      # pages, which Android 15 devices with 16 KB pages need. The certificate's
-      # name and digest are public.
+      # Every signature the APK carries must be made with one certificate, the
+      # release's, which a phone compares each update against: the digests
+      # `apksigner` prints for its schemes (v2, v3) must come to exactly one,
+      # equal to ANDROID_CERT_SHA256. Its native libraries must stay aligned to
+      # 16 KB pages, which Android 15 devices with 16 KB pages need. The
+      # certificate's name and digest are public.
       - name: Check the signature and the alignment
         env:
           ANDROID_CERT_SHA256: ${{ vars.ANDROID_CERT_SHA256 }}
@@ -359,7 +387,7 @@ jobs:
           grep -E 'certificate (DN|SHA-256 digest)' <<< "$certificates"
           digests="$(sed -n 's/.*certificate SHA-256 digest: //p' <<< "$certificates" | sort -u)"
           if [[ "$digests" != "$ANDROID_CERT_SHA256" ]]; then
-            echo "::error::The APK is not signed by the release certificate alone (ANDROID_CERT_SHA256)."
+            echo "::error::The APK's signatures are not all made with the release certificate (ANDROID_CERT_SHA256)."
             exit 1
           fi
           "$BUILD_TOOLS/zipalign" -c -P 16 4 "$apk"
@@ -368,7 +396,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-android
-          path: signed/*.apk
+          path: signed/j3-bots-${{ needs.draft.outputs.version }}-android-arm64.apk
           if-no-files-found: error
           retention-days: 7
 
