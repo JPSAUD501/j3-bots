@@ -41,6 +41,8 @@ export type ShellEvent =
   | { readonly type: "directory-created"; readonly path: string }
   /** The command left this folder gone. */
   | { readonly type: "directory-removed"; readonly path: string }
+  /** The host's permission check refused to run this program; nothing ran. */
+  | { readonly type: "refused"; readonly program: string }
   | Unavailable;
 
 /**
@@ -638,13 +640,21 @@ export class Workspace<E> {
   readonly #files: Map<string, string>;
   readonly #directories: Set<string>;
   readonly #programs: ReadonlyMap<string, Program<E>>;
+  readonly #refused: ReadonlyMap<string, string>;
 
   constructor(options: {
     readonly programs: ReadonlyMap<string, Program<E>>;
     /** Files by path, relative to {@link HOME} or absolute. */
     readonly files?: ReadonlyMap<string, string>;
+    /**
+     * Programs, builtins included, that the host's permission check refuses
+     * to run, each with the refusal it prints, as a harness reports an
+     * approval the user declined.
+     */
+    readonly refused?: ReadonlyMap<string, string>;
   }) {
     this.#programs = options.programs;
+    this.#refused = options.refused ?? new Map();
     this.#files = new Map();
     this.#directories = new Set(["/", HOME, `${HOME}/files`, "/tmp", "/dev"]);
     for (const [path, content] of options.files ?? []) {
@@ -668,6 +678,21 @@ export class Workspace<E> {
   }
 
   /**
+   * Writes a file outside any command, as the host does when it saves a
+   * secret: nothing a command ran records it.
+   */
+  store(path: string, content: string): void {
+    const absolute = normalize(path);
+    this.#files.set(absolute, content);
+    for (let dir = parent(absolute); dir !== "/"; dir = parent(dir)) this.#directories.add(dir);
+  }
+
+  /** Every file as it stands now, by absolute path. */
+  get files(): ReadonlyMap<string, string> {
+    return new Map(this.#files);
+  }
+
+  /**
    * Runs one command in a fresh shell in {@link HOME}. Its events end with
    * what it changed: the workspace after it, compared with the workspace
    * before it.
@@ -684,7 +709,14 @@ export class Workspace<E> {
     }
     const files = new Map(this.#files);
     const directories = new Set(this.#directories);
-    const shell = new Run(this.#files, this.#directories, this.#programs, this.commands, events);
+    const shell = new Run(
+      this.#files,
+      this.#directories,
+      this.#programs,
+      this.#refused,
+      this.commands,
+      events,
+    );
     const outcome = shell.script(script, "");
     events.push(...this.#changesSince(files, directories));
     return { output: outcome.stdout + outcome.stderr, events };
@@ -721,6 +753,7 @@ class Run<E> {
   readonly #files: Map<string, string>;
   readonly #directories: Set<string>;
   readonly #programs: ReadonlyMap<string, Program<E>>;
+  readonly #refused: ReadonlyMap<string, string>;
   readonly #commands: ReadonlyArray<string>;
   readonly #events: Array<E | ShellEvent>;
 
@@ -728,12 +761,14 @@ class Run<E> {
     files: Map<string, string>,
     directories: Set<string>,
     programs: ReadonlyMap<string, Program<E>>,
+    refused: ReadonlyMap<string, string>,
     commands: ReadonlyArray<string>,
     events: Array<E | ShellEvent>,
   ) {
     this.#files = files;
     this.#directories = directories;
     this.#programs = programs;
+    this.#refused = refused;
     this.#commands = commands;
     this.#events = events;
   }
@@ -955,6 +990,11 @@ class Run<E> {
 
     const name = words[start];
     const args = words.slice(start + 1);
+    const refusal = name === undefined ? undefined : this.#refused.get(name);
+    if (name !== undefined && refusal !== undefined) {
+      this.#events.push({ type: "refused", program: name });
+      return fail(refusal);
+    }
     const outcome =
       name === undefined
         ? ok("")

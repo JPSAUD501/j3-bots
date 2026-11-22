@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { type Routine, RoutineId } from "@j3-bots/contracts";
-import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -13,24 +12,36 @@ import {
   tools,
   type Wake,
 } from "../src/index.ts";
+import { FAILING_RUNS, github, PASSING_RUNS, TWELVE_OPEN, twelveMerged } from "./acme.ts";
 import {
   type FixtureEvent,
   type GhEvent,
-  type GitHub,
   githubWorkspace,
   type PullRequest,
   type Run,
 } from "./fixtures.ts";
 import {
-  type Call,
-  HeldRoutines,
-  runTurn,
-  type Scenario,
-  type Skills,
-  transcript,
-  type Turn,
-} from "./harness.ts";
-import { judge } from "./judge.ts";
+  after,
+  at,
+  base,
+  type Case,
+  type Check,
+  fromCalls,
+  type Grade,
+  gradeFromCalls,
+  judged,
+  judgeOnFixedMessages,
+  named,
+  replayGrade,
+  replayRun,
+  runCases,
+  says,
+  timeZone,
+  todayAt,
+  userWake,
+} from "./grading.ts";
+import { type Call, HeldRoutines, type Skills, type Turn } from "./harness.ts";
+import { type LocalRun, weekOfRuns } from "./schedule.ts";
 import { HOME, type Workspace } from "./shell.ts";
 
 // The routine skill's evals: given the base prompt, with the skill and without
@@ -39,11 +50,15 @@ import { HOME, type Workspace } from "./shell.ts";
 // one; creates none for a one-off request; and in a routine run stays silent
 // when a condition is not met, but speaks when it is, when a reminder is due,
 // and when it could not do the work, unless a recent run already said what
-// blocks it. A "let me know when" request becomes a watch whose saved
-// instruction, replayed, stays silent while the event has not happened,
-// reports it once and then pauses itself, and pauses without a word when a
-// recent run already reported it. A run that keeps a state file leaves it
-// updated, written only after its message was recorded.
+// blocks it. A "let me know when" request becomes a watch with a cutoff, 14
+// days on when the user named none, whose saved instruction, replayed, stays
+// silent while the event has not happened, reports it once and then pauses
+// itself, and pauses without a word when a recent run already reported it; a
+// fixed watch instruction, replayed around its cutoff, keeps watching the day
+// before, ends on the day with one message even when its source cannot be
+// read, and does not repeat that message. Days the user's words name are kept,
+// and work they left the days of runs on weekdays. A run that keeps a state
+// file leaves it updated, written only after its message was recorded.
 //
 // Each case is one turn per model and skill column, scored on what its tool
 // calls did. What a message means is read by the judge (`judge.ts`), on fixed
@@ -53,158 +68,6 @@ import { HOME, type Workspace } from "./shell.ts";
 // check that #124 and #125 appear as numbers; whether the message reports
 // them as new is the judge's. After a run's message, only read-only calls and
 // what its case permits may follow.
-
-/** The models to evaluate, cheapest adequate first. Override with a comma-separated `J3_EVAL_MODELS`. */
-const MODELS = Effect.runSync(
-  Config.String("J3_EVAL_MODELS").pipe(Config.withDefault("claude-haiku-5-5,gpt-6-luna")),
-)
-  .split(",")
-  .map((model) => model.trim())
-  .filter((model) => model !== "");
-
-const timeZone = DateTime.zoneMakeNamedUnsafe("Europe/Lisbon");
-
-/**
- * Today at `hour:minute` in the operator's zone. The fixtures take their date
- * from the real current date, as the server takes a wake's time from its
- * clock, so no date in a wake disagrees with one the model was given
- * elsewhere and invites a correction.
- */
-const todayAt = (hour: number, minute: number): DateTime.Utc =>
-  DateTime.toUtc(
-    DateTime.setParts(DateTime.makeZonedUnsafe(DateTime.nowUnsafe(), { timeZone }), {
-      hour,
-      minute,
-      second: 0,
-      millisecond: 0,
-    }),
-  );
-
-/** When the operator writes. */
-const at = todayAt(9, 41);
-const base = { at, timeZone, sinceLastTurn: [] } as const;
-
-const userWake = (text: string): Wake => ({
-  ...base,
-  kind: "user",
-  answer: null,
-  messages: [{ at, text, attachments: [] }],
-});
-
-// acme/docs, as the stand-in `gh` serves it.
-
-const PASSING_RUNS: ReadonlyArray<Run> = [
-  {
-    id: 1042,
-    title: "Fix typo in setup guide",
-    conclusion: "success",
-    elapsed: "3m12s",
-    minutesAgo: 62,
-    jobs: [
-      { id: 5420, name: "build", conclusion: "success", duration: "2m05s" },
-      { id: 5421, name: "link-check", conclusion: "success", duration: "58s" },
-    ],
-  },
-  {
-    id: 1041,
-    title: "Bump theme to 4.2",
-    conclusion: "success",
-    elapsed: "3m40s",
-    minutesAgo: 1_510,
-    jobs: [
-      { id: 5410, name: "build", conclusion: "success", duration: "2m21s" },
-      { id: 5411, name: "link-check", conclusion: "success", duration: "1m04s" },
-    ],
-  },
-];
-
-const FAILING_RUNS: ReadonlyArray<Run> = [
-  {
-    id: 1043,
-    title: "Add pricing page",
-    conclusion: "failure",
-    elapsed: "2m40s",
-    minutesAgo: 31,
-    jobs: [
-      { id: 5430, name: "build", conclusion: "success", duration: "1m31s" },
-      {
-        id: 5431,
-        name: "link-check",
-        conclusion: "failure",
-        duration: "1m02s",
-        failure: {
-          step: "Check links",
-          path: "guides/pricing.md",
-          error: "link to /plans returns 404",
-        },
-      },
-    ],
-  },
-  ...PASSING_RUNS,
-];
-
-const OPEN_PULL_REQUESTS: ReadonlyArray<PullRequest> = [
-  {
-    number: 125,
-    title: "Fix broken anchors in FAQ",
-    author: "lena",
-    branch: "faq-anchors",
-    state: "open",
-    minutesAgo: 20,
-  },
-  {
-    number: 124,
-    title: "Document the new search API",
-    author: "omar",
-    branch: "search-api",
-    state: "open",
-    minutesAgo: 40,
-  },
-  {
-    number: 121,
-    title: "Add French translation of quickstart",
-    author: "claire",
-    branch: "quickstart-fr",
-    state: "open",
-    minutesAgo: 75,
-  },
-  {
-    number: 118,
-    title: "Update install guide for Node 22",
-    author: "dana",
-    branch: "node-22",
-    state: "open",
-    minutesAgo: 1_500,
-  },
-];
-
-/** Pull request #12, still open. */
-const TWELVE_OPEN: PullRequest = {
-  number: 12,
-  title: "Move the API reference to the new layout",
-  author: "mira",
-  branch: "api-layout",
-  state: "open",
-  minutesAgo: 9_000,
-};
-
-/** #12, merged `minutesAgo` minutes ago. */
-const twelveMerged = (minutesAgo: number): PullRequest => ({
-  ...TWELVE_OPEN,
-  state: "merged",
-  mergedMinutesAgo: minutesAgo,
-});
-
-const github = (
-  now: DateTime.Utc,
-  runs: ReadonlyArray<Run>,
-  { signedIn = true, twelve = twelveMerged(25) }: { signedIn?: boolean; twelve?: PullRequest } = {},
-): GitHub => ({
-  now,
-  runs,
-  pullRequests: [...OPEN_PULL_REQUESTS, twelve],
-  signedIn,
-});
 
 const buildWorkspace = (wake: Wake, runs: ReadonlyArray<Run>) => () =>
   githubWorkspace(github(wake.at, runs));
@@ -323,21 +186,6 @@ const pullRequestWorkspace = () =>
   githubWorkspace(github(pullRequestWake.at, PASSING_RUNS), new Map([[STATE_FILE, STATE]]));
 
 // What a message means, as the judge reads it.
-
-/**
- * A yes-or-no question the judge answers about a bot's message, with fixed
- * messages it must answer yes and no to on every eval run (`asked` is what
- * those fixed messages answer). They are worded the ways a bot might put it,
- * so a judge that only matches words, or reads past a negation, fails them.
- */
-interface Check {
-  readonly question: string;
-  /** How a failure names what the message did not say. */
-  readonly what: string;
-  readonly asked: string;
-  readonly accept: ReadonlyArray<string>;
-  readonly reject: ReadonlyArray<string>;
-}
 
 /** The one-off question. */
 const ONE_OFF = "is the docs build green right now? the release goes out at noon";
@@ -470,7 +318,214 @@ const WEEKDAYS_AT_EIGHT: Check = {
   ],
 };
 
+/** A loose request about work, with the days and the time left open. */
+const LOOSE = "can you keep an eye on the docs build and let me know if it breaks?";
+
+/** A request about work whose words name the days: every morning. */
+const EVERY_MORNING = "every morning, check the docs build and tell me if it's broken";
+
+/**
+ * For the loose request, which wants a standing check, not a watch for one
+ * event: asked of the saved instruction, whose answer must be no.
+ */
+const ENDS_ITSELF: Check = {
+  question:
+    "Does this routine instruction give the check an end date or cutoff, or tell a run to pause or stop the routine?",
+  what: "an end date, or a step that pauses or stops the routine",
+  asked: LOOSE,
+  accept: [
+    "Check the latest CI run on main in acme/docs. Once it has failed, tell your user once, then pause this routine.",
+    "Check the latest CI run on main in acme/docs and tell your user if it failed. After Friday, 4 December 2026 at 08:07, tell your user the check has ended and pause this routine.",
+  ],
+  reject: [
+    DOCS_CHECK,
+    "Check the latest CI run on main in acme/docs. If it failed, tell your user which job broke; if it passed, end without a message.",
+  ],
+};
+
+const EVERY_DAY: Check = {
+  question: "Does this message tell its reader the check runs every day, weekends included?",
+  what: "that the check runs every day",
+  asked: EVERY_MORNING,
+  accept: [
+    "Every morning at 8:07 I'll check the docs build and tell you if it's broken.",
+    "Done: daily at 8:07, weekends too, I'll look at the docs build and only message you if it broke.",
+  ],
+  reject: [
+    "Every weekday at 8:07 I'll check the docs build and tell you if it's broken.",
+    "Monday to Friday at 8:07 I'll look at the docs build.",
+  ],
+};
+
+const WEEKDAYS_ONLY: Check = {
+  question:
+    "Does this message tell its reader the check runs on weekdays, Monday to Friday, and not at weekends?",
+  what: "that the check runs on weekdays only",
+  asked: LOOSE,
+  accept: [
+    "Every weekday at 8:07 I'll check the docs build and tell you if it's broken.",
+    "Monday to Friday, at 8:07 in the morning, I'll look at the docs build and only message you if it broke.",
+  ],
+  reject: [
+    "Every morning at 8:07 I'll check the docs build and tell you if it's broken.",
+    "Every day at 8:07, weekends included, I'll check the docs build.",
+  ],
+};
+
+/** A watch with no date that ends it, so it gets the default cutoff, 14 days on. */
+const MERGE_ASKED_PLAIN = "can you let me know when PR #12 on acme/docs gets merged?";
+
+/**
+ * The same, with a forecast: Mira's "should land today" is when the user
+ * expects the merge, not a deadline, so the cutoff is still 14 days on.
+ */
+const MERGE_ASKED =
+  "can you let me know when PR #12 on acme/docs gets merged? mira said it should land today";
+
+const longDate = (when: DateTime.Utc) =>
+  local(when, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+
+const clock = (when: DateTime.Utc) =>
+  local(when, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+
+/** `days` calendar days after `when`, at the same local time in the operator's zone. */
+const calendarDaysOn = (when: DateTime.Utc, days: number) =>
+  DateTime.toUtc(DateTime.add(DateTime.makeZonedUnsafe(when, { timeZone }), { days }));
+
+/** A cutoff as a watch holds it: weekday, date and local time. */
+const cutoffAt = (when: DateTime.Utc) => `${longDate(when)} at ${clock(when)}`;
+
+/**
+ * The default cutoff of a watch set up at `at`, the setup turn's time, and
+ * what it is not: the right day without its time, without its weekday or at
+ * another time, and another day.
+ */
+const CUTOFF_DAY = calendarDaysOn(at, 14);
+const CUTOFF = cutoffAt(CUTOFF_DAY);
+const CUTOFF_DATE_ONLY = longDate(CUTOFF_DAY);
+const CUTOFF_NO_WEEKDAY = `${local(CUTOFF_DAY, { day: "numeric", month: "long", year: "numeric" })} at ${clock(CUTOFF_DAY)}`;
+const CUTOFF_AT_NOON = `${longDate(CUTOFF_DAY)} at 12:00`;
+const NOT_THE_CUTOFF = cutoffAt(calendarDaysOn(at, 7));
+
+const CUTOFF_CONFIRMED: Check = {
+  question: `Does this message tell its reader that the watch ends at ${CUTOFF}, giving that weekday, that date and that time, if #12 has not merged by then?`,
+  what: `that the watch ends at ${CUTOFF}, with weekday, date and time`,
+  asked: MERGE_ASKED,
+  accept: [
+    `I'll check #12 every 30 minutes and tell you once it merges. If it hasn't by ${CUTOFF}, I'll stop watching and let you know.`,
+    `Watching #12 until it merges, or until ${CUTOFF} at the latest.`,
+  ],
+  reject: [
+    "I'll check #12 every 30 minutes and tell you once it merges.",
+    `Watching #12 until it merges, or until ${NOT_THE_CUTOFF} at the latest.`,
+    `Watching #12 until it merges, or until ${CUTOFF_DATE_ONLY} at the latest.`,
+    `Watching #12 until it merges, or until ${CUTOFF_AT_NOON} at the latest.`,
+    `Watching #12 until it merges, or until ${CUTOFF_NO_WEEKDAY} at the latest.`,
+    "I'll keep watching #12 until it merges, however long that takes.",
+  ],
+};
+
+/** The watch's delivery line as `set_routine` gives it, with #12 and a cutoff filled in. */
+const watchInstruction = (cutoff: string) =>
+  `Check whether pull request #12 (Move the API reference to the new layout) on the GitHub repository acme/docs has merged into main. If a recent run already told your user that #12 merged or that the watch ended, pause this routine now, without a message. At or after ${cutoff}, the watch is over: if #12 merged before ${cutoff}, tell your user it did; otherwise tell them once that the watch has ended, saying in that message if the pull request could not be read; a merge at or after ${cutoff} does not count. Before ${cutoff}, once #12 has merged, tell your user in one short message; until then, end without a message. Once the message that #12 merged, or that the watch has ended, has returned, pause this routine. Send that \`say\` alone and wait for its result; the pause is then your last call, never alongside it. A message before ${cutoff} about a source you could not reach does not end the watch.`;
+
+const CUTOFF_SAVED: Check = {
+  question: `Does this routine instruction make ${CUTOFF}, with that weekday, that date and that time, the moment at which the watch of #12 ends, telling the user it stopped and pausing itself if #12 has not merged by then?`,
+  what: `${CUTOFF}, with weekday, date and time, as the watch's cutoff`,
+  asked: MERGE_ASKED,
+  accept: [
+    watchInstruction(CUTOFF),
+    `Check pull request #12 on acme/docs. When it has merged, tell your user once, then pause this routine. If it is still open at ${CUTOFF}, tell your user you stopped watching it and pause this routine.`,
+  ],
+  reject: [
+    watchInstruction(NOT_THE_CUTOFF),
+    watchInstruction(CUTOFF_DATE_ONLY),
+    watchInstruction(CUTOFF_AT_NOON),
+    watchInstruction(CUTOFF_NO_WEEKDAY),
+    "Check pull request #12 on acme/docs. When it has merged, tell your user once, then pause this routine; while it is open, end without saying anything.",
+  ],
+};
+
+/**
+ * The cutoff the execution replays run against: noon today, so every replay
+ * falls on the real current date and only its time moves around the cutoff.
+ */
+const NOON_TODAY = cutoffAt(todayAt(12, 0));
+const FIXED_WATCH = watchInstruction(NOON_TODAY);
+
+const WATCH_ENDED: Check = {
+  question:
+    "Does this message tell its reader that the bot has stopped watching pull request #12, or that the watch of it has ended?",
+  what: "that the watch of #12 has ended",
+  asked: FIXED_WATCH,
+  accept: [
+    "#12 still hasn't merged, so I've stopped watching it as planned. Ask me if you want me to keep going.",
+    "The watch on #12 has ended; I couldn't reach GitHub to check it one last time.",
+  ],
+  reject: [
+    "PR #12 merged about 25 minutes ago.",
+    "#12 is still open; I'll check again in half an hour.",
+    "I couldn't check #12: GitHub sign-in expired (HTTP 401).",
+  ],
+};
+
+const SOURCE_UNREACHED: Check = {
+  question:
+    "Does this message tell its reader that GitHub, or pull request #12, could not be reached or read?",
+  what: "that #12 could not be read",
+  asked: FIXED_WATCH,
+  accept: [
+    "The watch on #12 has ended; I couldn't reach GitHub to check it one last time.",
+    "I've stopped watching #12. GitHub's sign-in had expired, so I couldn't see its final state.",
+    "I couldn't check #12: the GitHub sign-in has expired. Renew it and the next run picks the watch up again.",
+  ],
+  reject: [
+    "#12 still hasn't merged, so I've stopped watching it as planned.",
+    "PR #12 merged about 25 minutes ago.",
+  ],
+};
+
+/** For the closing answer and a run's report: what the app shows should read as sentences, not a status panel. */
+const PLAIN_SENTENCES: Check = {
+  question:
+    "Is this message written in full sentences, with no 'Label: value' status lines and no arrows standing in for words?",
+  what: "full sentences, with no status lines or arrows",
+  asked: ONE_OFF,
+  accept: [
+    "Yes, it's green: the latest run on main passed about an hour ago.",
+    "The docs build failed on main. The link check found that guides/pricing.md links to /plans, which returns 404.",
+  ],
+  reject: [
+    "Status: green\nLatest run: 1042 (success, 3m12s)",
+    "Build → green (run 1042 → success)",
+  ],
+};
+
+const FIX_NAMED: Check = {
+  question:
+    "Does this message tell its reader what would let the check run again, such as signing gh in to GitHub again?",
+  what: "what would let the check run again",
+  asked: DOCS_CHECK,
+  accept: [
+    "I couldn't check the docs build: GitHub sign-in expired (HTTP 401). Signing gh in again with gh auth login will fix it.",
+    "GitHub turned me away, so no build check today; the gh login needs renewing.",
+  ],
+  reject: [
+    "I couldn't check the docs build: GitHub sign-in expired (HTTP 401).",
+    "Docs build failed on main: link-check hit a 404.",
+  ],
+};
+
 const CHECKS: ReadonlyArray<Check> = [
+  WEEKDAYS_ONLY,
+  ENDS_ITSELF,
+  EVERY_DAY,
+  CUTOFF_CONFIRMED,
+  CUTOFF_SAVED,
+  WATCH_ENDED,
+  SOURCE_UNREACHED,
+  PLAIN_SENTENCES,
+  FIX_NAMED,
   BUILD_PASSING,
   BUILD_FAILED,
   FAILURE_NAMED,
@@ -481,24 +536,7 @@ const CHECKS: ReadonlyArray<Check> = [
   WEEKDAYS_AT_EIGHT,
 ];
 
-/** Problems with `text`, the bot's answer to `asked`, when the judge does not read it as `check` asks. */
-const judged = Effect.fn("evals.judged")(function* (
-  check: Check,
-  asked: string,
-  text: string,
-  expected = true,
-) {
-  return (yield* judge(asked, text, check.question)) === expected
-    ? []
-    : [
-        `the judge did not read the message as ${expected ? "" : "not "}saying ${check.what}: "${text}"`,
-      ];
-});
-
 // What a turn did.
-
-const named = (calls: ReadonlyArray<Call>, name: string) =>
-  calls.filter((call) => call.name === name);
 
 const did = (call: Call, test: (event: FixtureEvent) => boolean): boolean => call.events.some(test);
 
@@ -538,13 +576,6 @@ const TWELVE_LOOK: Look = {
 
 const decodeSay = Schema.decodeUnknownOption(tools.say.input, DECODE_OPTIONS);
 
-/** The `say` calls the server would accept, decoded, in order. */
-const says = (calls: ReadonlyArray<Call>) =>
-  named(calls, "say").flatMap((call) => {
-    const decoded = decodeSay(call.input);
-    return decoded._tag === "Some" ? [{ call, say: decoded.value }] : [];
-  });
-
 /** The routine creates the turn sent that the schema accepted, as the server would read them. */
 const creates = (calls: ReadonlyArray<Call>) =>
   calls.flatMap((call) =>
@@ -556,22 +587,6 @@ const creates = (calls: ReadonlyArray<Call>) =>
 /** A `pause` of the routine that is running: the one `set_routine` a run may make. */
 const pausesItself = (call: Call, wake: RoutineWake): boolean =>
   call.routine?.action === "pause" && call.routine.id === wake.routine.id;
-
-/**
- * Problems with a call that depends on what `source` returned: it must exist,
- * and come in a later model message, since calls sent together are written
- * before any of them returns.
- */
-const after = (
-  source: Call | undefined,
-  dependent: Call | undefined,
-  what: { readonly source: string; readonly dependent: string },
-): ReadonlyArray<string> =>
-  source === undefined
-    ? [`never ${what.source}`]
-    : dependent !== undefined && dependent.step <= source.step
-      ? [`${what.dependent} in the same message as it ${what.source}, or before`]
-      : [];
 
 /**
  * What no routine run may do, wherever in the turn: `ask`, `message_bot`,
@@ -733,20 +748,16 @@ const speaksOnce = (
       : [...problems, ...(yield* judged(check, wake.routine.instruction, text))];
   });
 
-/** A turn's problems under a heading, with its transcript, as one line of a case's report. */
-const reported = (heading: string, turn: Turn, problems: ReadonlyArray<string>) =>
-  problems.length === 0 ? [] : [`${heading}: ${problems.join("; ")}\n${transcript(turn)}`];
-
 /**
  * A run of the routine a setup turn left saved, as the server would start it:
- * at its next run, with `recentRuns`; `undefined` when it has none, such as a
- * routine waiting for a webhook.
+ * at `next`, by default its next run, with `recentRuns`; `undefined` when it
+ * has none, such as a routine waiting for a webhook.
  */
 const savedRunWake = (
   routine: Routine,
   recentRuns: (at: DateTime.Utc) => ReadonlyArray<RoutineRunSummary> = () => [],
+  next: DateTime.Utc | null = routine.nextRunAt,
 ): RoutineWake | undefined => {
-  const next = routine.nextRunAt;
   if (next === null) return undefined;
   const { trigger } = routine;
   return {
@@ -767,23 +778,6 @@ const savedRunWake = (
     triggerData: null,
   };
 };
-
-/** One run of a saved routine, scored, its problems under `heading`; a turn that did not finish is one. */
-const replayRun = (
-  model: string,
-  skills: Skills,
-  heading: string,
-  scenario: Scenario,
-  problems: (
-    turn: Turn,
-  ) => Effect.Effect<ReadonlyArray<string>, Effect.Error<ReturnType<typeof judge>>>,
-) =>
-  runTurn(model, skills, scenario).pipe(
-    Effect.flatMap((turn) =>
-      problems(turn).pipe(Effect.map((found) => reported(heading, turn, found))),
-    ),
-    Effect.catchTag("TurnUnfinished", (error) => Effect.succeed([`${heading}: ${error.message}`])),
-  );
 
 const NO_RUN = ["the saved routine has no next run to replay"];
 
@@ -827,42 +821,63 @@ const replayDocsCheck = Effect.fn("evals.replayDocsCheck")(function* (
   return results.flat();
 });
 
+/** Problems with the calls after `pause`, which must be the run's last call. */
+const lastCall = (calls: ReadonlyArray<Call>, pause: Call): ReadonlyArray<string> =>
+  calls
+    .slice(calls.indexOf(pause) + 1)
+    .map((call) => `called \`${call.name}\` after its pause, which must be its last call`);
+
 /**
- * The merge watch's run once #12 has merged, but for what its message means:
- * it reads #12, then, in a later model message, speaks once, then pauses its
- * own routine once, and after the pause makes only read-only calls. Returns
- * the problems and the message's text.
+ * A watch's run that must report and end, but for what its message means:
+ * it looks with a call `look` accepts, then, in a later model message, speaks
+ * once, then pauses its own routine once, as its last call, as the routine
+ * envelope's closing line says. Returns the problems and the message's text.
  */
-const mergedRun = (
+const endingRun = (
   calls: ReadonlyArray<Call>,
   wake: RoutineWake,
+  look: Look = TWELVE_LOOK,
 ): { readonly problems: ReadonlyArray<string>; readonly text?: string } => {
   const pause = pauseItself(wake);
   const pauses = calls.filter(pause.test);
   const [first] = pauses;
   const { problems, text } = spoke(calls, wake, {
-    look: TWELVE_LOOK,
+    look,
     permits: [pause, stateUpdate(wake.routine.instruction)],
   });
   const all = [
     ...problems,
     ...(pauses.length === 1 ? [] : [`paused its routine ${pauses.length} times, not once`]),
-    ...(first === undefined ? [] : onlyPermitted(calls, first, "its pause", [])),
+    ...(first === undefined ? [] : lastCall(calls, first)),
   ];
   return text === undefined ? { problems: all } : { problems: all, text };
 };
 
+/** Problems with a watch's run that must pause without a word: it pauses once, as its last call. */
+const quietPause = (calls: ReadonlyArray<Call>, wake: RoutineWake): ReadonlyArray<string> => {
+  const pause = pauseItself(wake);
+  const pauses = calls.filter(pause.test);
+  const [first] = pauses;
+  return [
+    ...(named(calls, "say").length > 0 ? ["called `say`"] : []),
+    ...(pauses.length === 1 ? [] : [`paused its routine ${pauses.length} times, not once`]),
+    ...(first === undefined ? [] : lastCall(calls, first)),
+    ...runRules(calls, wake),
+  ];
+};
+
 /**
- * Runs the merge watch the setup turn saved as the server would: while #12
+ * The merge watch the setup turn saved, run as the server would: while #12
  * is open, where it must look and end without a word or a pause; once #12
  * has merged, where it must say so once and then pause itself; and once a
- * recent run already said so, where it must pause without a word.
+ * recent run already said so, where it must pause without a word. What it
+ * does at its cutoff is the execution cases' to show, on a fixed instruction.
  */
-const replayMergeWatch = Effect.fn("evals.replayMergeWatch")(function* (
+const savedWatchGrades = (
   model: string,
   skills: Skills,
   routine: Routine,
-) {
+): ReadonlyArray<Grade> => {
   const wake = savedRunWake(routine);
   const reportedWake = savedRunWake(routine, (next) => [
     {
@@ -873,50 +888,83 @@ const replayMergeWatch = Effect.fn("evals.replayMergeWatch")(function* (
       },
     },
   ]);
-  if (wake === undefined || reportedWake === undefined) return NO_RUN;
-  const pause = pauseItself(reportedWake);
-  const results = yield* Effect.all(
-    [
-      replayRun(
-        model,
-        skills,
-        "the saved watch, run while #12 is open",
-        { wake, workspace: twelveWorkspace(wake, TWELVE_OPEN) },
-        (turn) => Effect.succeed(silentRun(wake, TWELVE_LOOK)(turn.calls)),
-      ),
-      replayRun(
-        model,
-        skills,
-        "the saved watch, run once #12 has merged",
-        { wake, workspace: twelveWorkspace(wake, twelveMerged(25)) },
-        Effect.fn(function* ({ calls }) {
-          const { problems, text } = mergedRun(calls, wake);
-          return text === undefined
-            ? problems
-            : [...problems, ...(yield* judged(MERGED, wake.routine.instruction, text))];
-        }),
-      ),
-      replayRun(
-        model,
-        skills,
-        "the saved watch, run after a recent run reported the merge",
-        { wake: reportedWake, workspace: twelveWorkspace(reportedWake, twelveMerged(55)) },
-        ({ calls }) => {
-          const pauses = calls.filter(pause.test);
-          const [first] = pauses;
-          return Effect.succeed([
-            ...(named(calls, "say").length > 0 ? ["called `say`"] : []),
-            ...(pauses.length === 1 ? [] : [`paused its routine ${pauses.length} times, not once`]),
-            ...(first === undefined ? [] : onlyPermitted(calls, first, "its pause", [])),
-            ...runRules(calls, reportedWake),
-          ]);
-        },
-      ),
-    ],
-    { concurrency: 3 },
-  );
-  return results.flat();
+  if (wake === undefined || reportedWake === undefined) {
+    return [gradeFromCalls("the saved watch runs", NO_RUN)];
+  }
+  return [
+    replayGrade(
+      "the saved watch, run while #12 is open",
+      model,
+      skills,
+      { wake, workspace: twelveWorkspace(wake, TWELVE_OPEN) },
+      (turn) => Effect.succeed(silentRun(wake, TWELVE_LOOK)(turn.calls)),
+    ),
+    replayGrade(
+      "the saved watch, run once #12 has merged",
+      model,
+      skills,
+      { wake, workspace: twelveWorkspace(wake, twelveMerged(25)) },
+      Effect.fn(function* ({ calls }) {
+        const { problems, text } = endingRun(calls, wake);
+        return text === undefined
+          ? problems
+          : [...problems, ...(yield* judged(MERGED, wake.routine.instruction, text))];
+      }),
+    ),
+    replayGrade(
+      "the saved watch, run after a recent run reported the merge",
+      model,
+      skills,
+      { wake: reportedWake, workspace: twelveWorkspace(reportedWake, twelveMerged(55)) },
+      ({ calls }) => Effect.succeed(quietPause(calls, reportedWake)),
+    ),
+  ];
+};
+
+/** A run of {@link FIXED_WATCH} at `when`, after `recentRuns`. */
+const fixedWatchWake = (
+  when: DateTime.Utc,
+  recentRuns: ReadonlyArray<RoutineRunSummary>,
+): RoutineWake => ({
+  ...base,
+  at: when,
+  kind: "routine",
+  routine: {
+    id: Schema.decodeSync(RoutineId)("routine-4"),
+    name: "PR #12 merge watch",
+    trigger: { type: "schedule", cron: "7,37 9-18 * * *" },
+    instruction: FIXED_WATCH,
+  },
+  recentRuns,
+  triggerData: null,
 });
+
+const halfHourlyQuiet = (when: DateTime.Utc): ReadonlyArray<RoutineRunSummary> =>
+  [1, 2, 3].map((runs) => ({
+    at: DateTime.subtract(when, { minutes: 30 * runs }),
+    outcome: { type: "silent", note: null },
+  }));
+
+/** Just before the cutoff, while #12 is open. */
+const beforeCutoffWake = fixedWatchWake(todayAt(11, 37), halfHourlyQuiet(todayAt(11, 37)));
+
+/** Just after the cutoff, while #12 is open. */
+const atCutoffWake = fixedWatchWake(todayAt(12, 7), halfHourlyQuiet(todayAt(12, 7)));
+
+/** Just before the cutoff, 17 minutes after #12 merged. */
+const mergedBeforeCutoffWake = fixedWatchWake(todayAt(11, 37), halfHourlyQuiet(todayAt(11, 37)));
+
+/** Half an hour after a run already said the watch had ended. */
+const endReportedWake = fixedWatchWake(todayAt(12, 37), [
+  {
+    at: todayAt(12, 7),
+    outcome: {
+      type: "delivered",
+      text: "#12 still hasn't merged, so I've stopped watching it, as planned.",
+    },
+  },
+  ...halfHourlyQuiet(todayAt(12, 7)),
+]);
 
 /**
  * Problems with a setup turn's own calls, around the one routine it created:
@@ -1055,25 +1103,6 @@ const stateRunProblems = (
   ];
 };
 
-interface Case {
-  readonly name: string;
-  readonly scenario: Scenario;
-  /** What is wrong with the turn; empty when it passes. */
-  readonly problems: (
-    turn: Turn,
-    run: { readonly model: string; readonly skills: Skills },
-  ) => Effect.Effect<
-    ReadonlyArray<string>,
-    Effect.Error<ReturnType<typeof runTurn | typeof judge>>
-  >;
-}
-
-/** A case whose problems the turn's own calls show, with no judge. */
-const fromCalls =
-  (problems: (calls: ReadonlyArray<Call>) => ReadonlyArray<string>): Case["problems"] =>
-  (turn) =>
-    Effect.succeed(problems(turn.calls));
-
 /**
  * A one-off question about the build, asked of a workspace whose build is as
  * `runs` says. The answer graded is the closing one, the last `say` with
@@ -1106,6 +1135,7 @@ const oneOff = (runs: ReadonlyArray<Run>, passing: boolean) => {
               dependent: "delivered the answer",
             })),
         ...(yield* judged(claim, ONE_OFF, closing.say.text)),
+        ...(yield* judged(PLAIN_SENTENCES, ONE_OFF, closing.say.text)),
         ...(yield* Effect.forEach(later, ({ say }) =>
           judged(opposite, ONE_OFF, say.text, false),
         )).flat(),
@@ -1116,9 +1146,80 @@ const oneOff = (runs: ReadonlyArray<Run>, passing: boolean) => {
 
 const setupWake = userWake(SETUP);
 
-const mergeSetupWake = userWake(
-  "can you let me know when PR #12 on acme/docs gets merged? mira said it should land today",
-);
+const looseWake = userWake(LOOSE);
+
+const everyMorningWake = userWake(EVERY_MORNING);
+
+/**
+ * The routine a setup turn created, with its runs over the next week as your
+ * user's clock shows them, so any cron expression that runs at the same times
+ * grades the same; a string says why there is none.
+ */
+const createdSchedule = (
+  calls: ReadonlyArray<Call>,
+  held: ReadonlyArray<Routine>,
+  from: DateTime.Utc,
+) => {
+  const creation = theCreated(calls, held);
+  if (typeof creation === "string") return creation;
+  const { trigger } = creation.routine;
+  const schedule = trigger._tag === "schedule" ? trigger.cron : "";
+  return { creation, schedule, runs: weekOfRuns(schedule, timeZone, from) };
+};
+
+const WEEKDAYS = [1, 2, 3, 4, 5];
+const EVERY_WEEKDAY = [0, 1, 2, 3, 4, 5, 6];
+
+/** Problems with the days a week of `runs` falls on, against the days expected. */
+const daysProblems = (
+  schedule: string,
+  runs: ReadonlyArray<LocalRun>,
+  expected: ReadonlyArray<number>,
+  what: string,
+): ReadonlyArray<string> => {
+  const days = [...new Set(runs.map((run) => run.weekday))].sort();
+  return days.join(",") === expected.join(",")
+    ? []
+    : [`schedule "${schedule}" runs on days ${days.join(",") || "(none)"}, not ${what}`];
+};
+
+/**
+ * A watch's setup turn, graded in parts: one routine saved on a schedule, the
+ * default cutoff in its instruction, the same date in the closing `say`, and,
+ * when `replay` is set, its saved instruction run as the server would.
+ */
+const watchSetup = (name: string, asked: string, replay: boolean): Case => {
+  const wake = userWake(asked);
+  return {
+    name,
+    scenario: { wake, workspace: twelveWorkspace(wake, TWELVE_OPEN) },
+    grades: ({ calls, routines }, { model, skills }) => {
+      const creation = theCreated(calls, routines.current);
+      if (typeof creation === "string") return [gradeFromCalls("saved one watch", [creation])];
+      const { problems, closing } = setupProblems(calls, creation);
+      return [
+        gradeFromCalls("saved one watch", [
+          ...problems,
+          ...(creation.routine.trigger._tag === "schedule"
+            ? []
+            : ["the watch was not saved with a schedule"]),
+        ]),
+        {
+          name: "saved the cutoff",
+          problems: judged(CUTOFF_SAVED, asked, creation.routine.instruction),
+        },
+        {
+          name: "confirmed the cutoff",
+          problems:
+            closing === undefined
+              ? Effect.succeed(["no closing `say` confirmed the watch"])
+              : judged(CUTOFF_CONFIRMED, asked, closing),
+        },
+        ...(replay ? savedWatchGrades(model, skills, creation.routine) : []),
+      ];
+    },
+  };
+};
 
 const cases: ReadonlyArray<Case> = [
   {
@@ -1130,13 +1231,11 @@ const cases: ReadonlyArray<Case> = [
       const { problems, closing } = setupProblems(calls, creation);
       const { trigger } = creation.routine;
       const schedule = trigger._tag === "schedule" ? trigger.cron : "";
-      const [minute, hour, day, month, weekday] = schedule.split(/\s+/);
+      const runs = weekOfRuns(schedule, timeZone, setupWake.at);
       const weekdaysAtEight =
-        minute === "0" &&
-        hour === "8" &&
-        day === "*" &&
-        month === "*" &&
-        ["1-5", "mon-fri"].includes((weekday ?? "").toLowerCase());
+        runs.length === WEEKDAYS.length &&
+        runs.every((run) => run.hour === 8 && run.minute === 0) &&
+        daysProblems(schedule, runs, WEEKDAYS, "").length === 0;
       return [
         ...problems,
         ...(weekdaysAtEight ? [] : [`schedule "${schedule}" is not weekdays at 8:00`]),
@@ -1161,7 +1260,13 @@ const cases: ReadonlyArray<Case> = [
   {
     name: "speaks once in a routine run when something is worth saying",
     scenario: { wake: routineWake, workspace: buildWorkspace(routineWake, FAILING_RUNS) },
-    problems: ({ calls }) => speaksOnce(routineWake, FAILURE_NAMED, { look: BUILD_LOOK })(calls),
+    problems: Effect.fn("evals.failureCase")(function* ({ calls }) {
+      const { text } = spoke(calls, routineWake, { look: BUILD_LOOK });
+      return [
+        ...(yield* speaksOnce(routineWake, FAILURE_NAMED, { look: BUILD_LOOK })(calls)),
+        ...(text === undefined ? [] : yield* judged(PLAIN_SENTENCES, DOCS_CHECK, text)),
+      ];
+    }),
   },
   {
     name: "sends a due reminder exactly once",
@@ -1171,7 +1276,13 @@ const cases: ReadonlyArray<Case> = [
   {
     name: "says once what blocked a routine run that lost its access",
     scenario: { wake: routineWake, workspace: signedOutWorkspace(routineWake) },
-    problems: ({ calls }) => speaksOnce(routineWake, ACCESS_LOST, { look: GH_TRIED })(calls),
+    problems: Effect.fn("evals.accessLostCase")(function* ({ calls }) {
+      const { text } = spoke(calls, routineWake, { look: GH_TRIED });
+      return [
+        ...(yield* speaksOnce(routineWake, ACCESS_LOST, { look: GH_TRIED })(calls)),
+        ...(text === undefined ? [] : yield* judged(FIX_NAMED, DOCS_CHECK, text)),
+      ];
+    }),
   },
   {
     name: "stays silent when a recent run already said what blocks it",
@@ -1194,34 +1305,182 @@ const cases: ReadonlyArray<Case> = [
       ];
     }),
   },
+  watchSetup(
+    "watch setup: an undated request saves a watch with a cutoff 14 days on, confirms that date, and its saved instruction runs right",
+    MERGE_ASKED_PLAIN,
+    true,
+  ),
+  watchSetup(
+    "watch setup: a forecast of when it lands leaves the cutoff 14 days on, saved and confirmed",
+    MERGE_ASKED,
+    false,
+  ),
   {
-    name: "turns a request to hear when something happens into a watch that reports it once, then pauses itself",
-    scenario: { wake: mergeSetupWake, workspace: twelveWorkspace(mergeSetupWake, TWELVE_OPEN) },
-    problems: Effect.fn("evals.mergeWatchCase")(function* ({ calls, routines }, { model, skills }) {
-      const creation = theCreated(calls, routines.current);
-      if (typeof creation === "string") return [creation];
-      const { problems } = setupProblems(calls, creation);
-      if (creation.routine.trigger._tag !== "schedule") {
-        return [...problems, "the watch was not saved with a schedule"];
-      }
-      return [...problems, ...(yield* replayMergeWatch(model, skills, creation.routine))];
+    name: "watch execution: just before its cutoff, a run while #12 is open stays silent and keeps watching",
+    scenario: { wake: beforeCutoffWake, workspace: twelveWorkspace(beforeCutoffWake, TWELVE_OPEN) },
+    problems: fromCalls(silentRun(beforeCutoffWake, TWELVE_LOOK)),
+  },
+  {
+    name: "watch execution: just before its cutoff, a run that cannot reach GitHub says once what blocks it and does not pause",
+    scenario: { wake: beforeCutoffWake, workspace: signedOutWorkspace(beforeCutoffWake) },
+    problems: Effect.fn("evals.blockedBeforeCutoffCase")(function* ({ calls }) {
+      const routineCalls = named(calls, "set_routine").map(
+        () => "called `set_routine`, though a blocked run before the cutoff keeps the watch going",
+      );
+      return [
+        ...routineCalls,
+        ...(yield* speaksOnce(beforeCutoffWake, SOURCE_UNREACHED, { look: GH_TRIED })(calls)),
+      ];
     }),
+  },
+  {
+    name: "watch execution: just before its cutoff, a run once #12 has merged says so once, then pauses",
+    scenario: {
+      wake: mergedBeforeCutoffWake,
+      workspace: twelveWorkspace(mergedBeforeCutoffWake, twelveMerged(17)),
+    },
+    problems: Effect.fn("evals.mergedBeforeCutoffCase")(function* ({ calls }) {
+      const { problems, text } = endingRun(calls, mergedBeforeCutoffWake);
+      return text === undefined
+        ? problems
+        : [...problems, ...(yield* judged(MERGED, FIXED_WATCH, text))];
+    }),
+  },
+  {
+    name: "watch execution: just after its cutoff, a run while #12 is open says once that the watch ended, then pauses",
+    scenario: { wake: atCutoffWake, workspace: twelveWorkspace(atCutoffWake, TWELVE_OPEN) },
+    problems: Effect.fn("evals.atCutoffCase")(function* ({ calls }) {
+      const { problems, text } = endingRun(calls, atCutoffWake);
+      return text === undefined
+        ? problems
+        : [...problems, ...(yield* judged(WATCH_ENDED, FIXED_WATCH, text))];
+    }),
+  },
+  {
+    name: "watch execution: just after its cutoff, a merge from before the cutoff, first seen now, is reported, then it pauses",
+    scenario: { wake: atCutoffWake, workspace: twelveWorkspace(atCutoffWake, twelveMerged(17)) },
+    problems: Effect.fn("evals.seenLateCase")(function* ({ calls }) {
+      const { problems, text } = endingRun(calls, atCutoffWake);
+      return text === undefined
+        ? problems
+        : [...problems, ...(yield* judged(MERGED, FIXED_WATCH, text))];
+    }),
+  },
+  {
+    name: "watch execution: just after its cutoff, a merge after the cutoff does not count: the watch ended, then it pauses",
+    scenario: { wake: atCutoffWake, workspace: twelveWorkspace(atCutoffWake, twelveMerged(5)) },
+    problems: Effect.fn("evals.lateMergeCase")(function* ({ calls }) {
+      const { problems, text } = endingRun(calls, atCutoffWake);
+      return text === undefined
+        ? problems
+        : [...problems, ...(yield* judged(WATCH_ENDED, FIXED_WATCH, text))];
+    }),
+  },
+  {
+    name: "watch execution: just after its cutoff, a run that cannot reach GitHub ends the watch and says GitHub was out of reach",
+    scenario: { wake: atCutoffWake, workspace: signedOutWorkspace(atCutoffWake) },
+    grades: ({ calls }) => {
+      const { problems, text } = endingRun(calls, atCutoffWake, GH_TRIED);
+      return [
+        gradeFromCalls("spoke once, then paused", problems),
+        {
+          name: "said the watch ended",
+          problems:
+            text === undefined
+              ? Effect.succeed(["no message"])
+              : judged(WATCH_ENDED, FIXED_WATCH, text),
+        },
+        {
+          name: "said GitHub was out of reach",
+          problems:
+            text === undefined
+              ? Effect.succeed(["no message"])
+              : judged(SOURCE_UNREACHED, FIXED_WATCH, text),
+        },
+      ];
+    },
+  },
+  {
+    name: "watch execution: after a run already said the watch ended, a run pauses without repeating it",
+    scenario: { wake: endReportedWake, workspace: twelveWorkspace(endReportedWake, TWELVE_OPEN) },
+    problems: fromCalls((calls) => quietPause(calls, endReportedWake)),
+  },
+  {
+    name: "runs a loose request about work on weekdays, and says so",
+    scenario: { wake: looseWake, workspace: buildWorkspace(looseWake, PASSING_RUNS) },
+    grades: ({ calls, routines }) => {
+      const created = createdSchedule(calls, routines.current, looseWake.at);
+      if (typeof created === "string") return [gradeFromCalls("saved one routine", [created])];
+      const { problems, closing } = setupProblems(calls, created.creation);
+      const perDay = Math.max(
+        0,
+        ...WEEKDAYS.map((day) => created.runs.filter((run) => run.weekday === day).length),
+      );
+      return [
+        gradeFromCalls("saved one routine", problems),
+        gradeFromCalls(
+          "runs Monday to Friday",
+          daysProblems(created.schedule, created.runs, WEEKDAYS, "Monday to Friday"),
+        ),
+        gradeFromCalls(
+          "at most every 15 minutes",
+          perDay <= 4 * 24
+            ? []
+            : [
+                `schedule "${created.schedule}" runs ${perDay} times a day, more than every 15 minutes`,
+              ],
+        ),
+        {
+          name: "confirmed weekdays",
+          problems:
+            closing === undefined
+              ? Effect.succeed(["no closing `say` confirmed the routine"])
+              : judged(WEEKDAYS_ONLY, LOOSE, closing),
+        },
+        {
+          name: "no end date, never pauses itself",
+          problems: judged(ENDS_ITSELF, LOOSE, created.creation.routine.instruction, false),
+        },
+      ];
+    },
+  },
+  {
+    name: "keeps every day for a request about work whose words name the days",
+    scenario: { wake: everyMorningWake, workspace: buildWorkspace(everyMorningWake, PASSING_RUNS) },
+    grades: ({ calls, routines }) => {
+      const created = createdSchedule(calls, routines.current, everyMorningWake.at);
+      if (typeof created === "string") return [gradeFromCalls("saved one routine", [created])];
+      const { problems, closing } = setupProblems(calls, created.creation);
+      const morningOnce = EVERY_WEEKDAY.every((day) => {
+        const onDay = created.runs.filter((run) => run.weekday === day);
+        return onDay.length <= 1 && onDay.every((run) => run.hour >= 5 && run.hour <= 11);
+      });
+      return [
+        gradeFromCalls("saved one routine", problems),
+        gradeFromCalls(
+          "runs every day",
+          daysProblems(created.schedule, created.runs, EVERY_WEEKDAY, "every day"),
+        ),
+        gradeFromCalls(
+          "once, in the morning",
+          morningOnce
+            ? []
+            : [`schedule "${created.schedule}" does not run once a day in the morning`],
+        ),
+        {
+          name: "confirmed every day",
+          problems:
+            closing === undefined
+              ? Effect.succeed(["no closing `say` confirmed the routine"])
+              : judged(EVERY_DAY, EVERY_MORNING, closing),
+        },
+      ];
+    },
   },
 ];
 
 /** A call with no arguments or output, for the checks of the graders and the stand-in workspace below. */
 const CALL: Call = { step: 1, name: "run_command", input: {}, output: "", events: [] };
-
-describe("the judge, on fixed messages", () => {
-  describe.each(CHECKS)("$question", (check) => {
-    it.concurrent.each(check.accept)("answers yes for %j", async (text) => {
-      expect(await Effect.runPromise(judge(check.asked, text, check.question))).toBe(true);
-    });
-    it.concurrent.each(check.reject)("answers no for %j", async (text) => {
-      expect(await Effect.runPromise(judge(check.asked, text, check.question))).toBe(false);
-    });
-  });
-});
 
 describe("the stand-in workspace", () => {
   const run = (command: string) => githubWorkspace(github(runAt, FAILING_RUNS)).run(command);
@@ -1561,23 +1820,18 @@ describe("the run graders", () => {
       },
     };
 
-    it("accepts a message, then a pause, then read-only calls", () => {
-      expect(
-        mergedRun([read, merged(2), pause(3), call(4, "list_routines", {})], wake).problems,
-      ).toEqual([]);
+    it("accepts a message, then a pause as the last call", () => {
+      expect(endingRun([read, merged(2), pause(3)], wake).problems).toEqual([]);
     });
 
-    it("rejects a state-file write after the pause", () => {
-      expect(mergedRun([read, merged(2), pause(3), stateWrite(4)], wake).problems).not.toEqual([]);
-    });
-
-    it("rejects a `gh` the workspace does not offer after the pause", () => {
-      const command = "gh run list -R acme/docs --jq .";
-      const events = githubWorkspace(github(runAt, FAILING_RUNS)).run(command).events;
+    it("rejects a read-only call after the pause", () => {
       expect(
-        mergedRun([read, merged(2), pause(3), call(4, "run_command", { command }, events)], wake)
-          .problems,
+        endingRun([read, merged(2), pause(3), call(4, "list_routines", {})], wake).problems,
       ).not.toEqual([]);
+    });
+
+    it("accepts a state-file write between the message and the pause", () => {
+      expect(endingRun([read, merged(2), stateWrite(3), pause(4)], wake).problems).toEqual([]);
     });
   });
 
@@ -1691,15 +1945,6 @@ describe("the setup grader", () => {
   });
 });
 
-const SKILL_COLUMNS: ReadonlyArray<Skills> = ["with the skill", "without the skill"];
+judgeOnFixedMessages(CHECKS);
 
-describe.each(MODELS)("%s", (model) => {
-  describe.each(SKILL_COLUMNS)("%s", (skills) => {
-    it.concurrent.each(cases)("$name", async ({ scenario, problems }) => {
-      const turn = await Effect.runPromise(runTurn(model, skills, scenario));
-      expect(await Effect.runPromise(problems(turn, { model, skills })), transcript(turn)).toEqual(
-        [],
-      );
-    });
-  });
-});
+runCases(cases);

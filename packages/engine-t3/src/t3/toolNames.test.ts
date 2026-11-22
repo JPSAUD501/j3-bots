@@ -24,6 +24,19 @@ describe("toolStep", () => {
     expect(toolStep(call("t3-code.pull_request_read")).tool).toBe("pull-request");
   });
 
+  it("keeps a pasted secret out of the step a `request_secret` call becomes", () => {
+    const pasted = "ghp_FictionalPastedSecret";
+    for (const name of ["t3-code.request_secret", "mcp__t3-code__request_secret"]) {
+      const step = toolStep(
+        call(name, {
+          title: `Request secret ${pasted}`,
+          input: { label: "GitHub token", reason: "Check the build", value: pasted },
+        }),
+      );
+      expect(step).toEqual({ kind: "tool", tool: "secret", label: "Asked for a credential" });
+    }
+  });
+
   it("never lets the engine's name reach a label, even for a tool it does not list", () => {
     const step = toolStep(call("t3-code.t3_thread_read", { title: "t3-code.t3_thread_read" }));
     expect(step.tool).toBe("built-in");

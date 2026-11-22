@@ -82,7 +82,7 @@ const SayInput = toolInput({
   to: Schema.optionalKey(
     described(
       Schema.Literal("dm"),
-      "Only during a room turn: send privately to your user instead of to the room.",
+      "In a room turn only: deliver it to your user privately, not to the room.",
     ),
   ),
   mention: Schema.optionalKey(
@@ -116,10 +116,10 @@ const AskOption = Schema.Struct({
 });
 
 const AskInput = toolInput({
-  prompt: described(text(1, 2_000), "The question, in one or two sentences."),
+  prompt: described(text(1, 2_000), "The question alone, kept short."),
   options: described(
     Schema.Array(AskOption).check(Schema.isMinLength(1), Schema.isMaxLength(6)),
-    "One to six real choices.",
+    "One to six steps you will take the moment one is picked.",
   ),
   allow_custom: Schema.optionalKey(
     described(Schema.Boolean, "Also accept a typed answer. Defaults to false."),
@@ -279,11 +279,11 @@ export const tools = {
   say: define(
     "say",
     [
-      "Send a message to your user. This is the only way they hear you: reply text outside this tool reaches nobody.",
+      "Send a message to your user. Nothing else you write reaches them: reply text outside this tool goes nowhere.",
       'During a room turn it goes to the room; `to: "dm"` sends it to your user privately instead.',
-      "In a room, the members you list in `mention` are woken to answer; nobody else is. Mention a member only to hand them work they must do next, usually one: your user limits how many one message may mention, and how long a chain of turns between bots may run since they last spoke. Mentioning nobody lets the room settle.",
+      "In a room, the members you list in `mention` are woken to answer; nobody else is. Mention a member only to hand them work they must do next, usually one: your user limits how many one message may mention, and how long a chain of turns between bots may run since they last spoke. Mentioning nobody lets the room settle. A name typed with @ in the text is only shown; `mention` is what wakes a member.",
       "Attach files you produced, rather than linking workspace paths they cannot open.",
-      "Set `done: true` on the message that delivers the result and make it your last call, after every other call has returned; in a routine run, only the state-file update its instruction names (a record of what the message reported is written only then), or a `pause` of that routine the instruction asks for, may follow it, never a second `say`. Then end your turn.",
+      "Set `done: true` on the message that delivers the result and make it your last call, after every other call has returned; in a routine run, once it returns, never alongside it, only reads, an update of a file the instruction names and, last, a `pause` the instruction asks for may follow it. Then end your turn.",
       "Returns once the message is recorded.",
       BOT_ONLY,
     ],
@@ -292,8 +292,10 @@ export const tools = {
   ask: define(
     "ask",
     [
-      "Put one question to your user as a card with options to tap.",
+      "Put one question to your user as a card with options to tap, for a decision that needs a structured answer.",
       "Use it when a wrong guess would cost something real or only they know the answer; otherwise decide, and say what you assumed.",
+      "List only steps you will take the moment one is picked, each worded as what happens next; none of them is 'you decide' or a task for your user. Context longer than the question goes in a `say` before it.",
+      "A conversational question, such as a setup question after your hello, ends a `say` instead.",
       "Calling it ends your turn: their answer arrives as your next turn, and a dismissed card means no. Do not ask the same thing again.",
       "Not in a routine run: put the question in a `say` there.",
       BOT_ONLY,
@@ -304,9 +306,9 @@ export const tools = {
     "message_bot",
     [
       "Send a message to one teammate, by a bot id from `list_teammates`. Your user sees it in both conversations.",
-      "Only an `urgent` message wakes the teammate now. Any other waits: they read it at the start of their next turn, whenever that comes.",
+      "Only an `urgent` message wakes the teammate now. Any other is queued until the teammate's next turn begins, however long that takes.",
       "It is also how you answer a teammate: in a `bot` turn, `say` reaches your user, not the sender. Answer a question once; an FYI or a thanks needs no answer.",
-      "Returns an acknowledgement only. A reply, if any, arrives later as its own turn.",
+      "Returns an acknowledgement only. Any reply comes in a later turn of yours.",
       "Every message spends your user's allowance: send it only when it serves what your user wants. Your user limits how long a chain of messages between bots may run since they last spoke, and how many teammates a turn may bring in besides those it answers; past either, nothing is sent.",
       BOT_ONLY,
     ],
@@ -350,13 +352,14 @@ export const tools = {
       "Before creating one, check `list_routines`. Reuse an enabled routine that already does exactly this; if that routine is paused and your user wants it running again, `resume` it and confirm it is enabled. `update` a routine your user asked to change (only the fields they asked to change), and `create` a separate routine for an additional trigger.",
       "`create` takes a name, an instruction and exactly one of `schedule`, `at` or `webhook`; the other actions take the routine's id, and `update` also takes the fields that change.",
       "Times are in your user's zone, and a schedule runs at most every five minutes; ask your user before checking more often than every 15 minutes.",
+      'Keep the days and times your user gives; "daily" and "every morning" mean every day. When they leave the days open, a work subject runs Monday to Friday and a personal one every day, however often it runs on those days.',
       "The server pauses a one-time routine once it has run, so its run never pauses it. Once its time has passed, `update` it with a new future `at`: that turns it back on, and `resume` alone is refused. `update` leaves any other paused routine paused: `resume` it when your user wants it running, after the `update` if its time changes too.",
-      "During a routine run the only call allowed is `pause` of that routine, by the id in the wake with no lookup, so it can stop itself once its job is done; when the instruction asks for a message first, pause only after that `say` has returned, and when a recent run already sent that message, pause without another.",
+      "During a routine run the only `set_routine` action allowed is `pause` of that routine, by the id in the wake with no lookup, so it can stop itself once its job is done; when the instruction asks for a message first, pause only after that `say` has returned, and when a recent run already sent that message, pause without another. A message saying what blocked a run pauses nothing. The pause is always the run's last call.",
       "Use `webhook` when the calling system can reach this server. In your confirmation, say the routine is waiting for its first delivery; confirm a delivery later from the sender's own delivery result, since a run started on demand is recorded too. Use a schedule instead only when the sender cannot reach this server and checking on a schedule does the job.",
       'A webhook routine\'s address is a secret: anyone who has it can start the routine. Configure the calling system with it yourself when your user asked and you have access; otherwise give it to your user privately in your closing `say` (`to: "dm"` in a room). Never put it in a room, a teammate message, memory or another file.',
-      'Each run starts in a fresh session without this conversation, so the instruction must stand alone: what to look at, what counts as worth reporting, the names, places and thresholds involved, and a last line saying what to send your user. A reminder, or a report your user wants every time, is sent when due; a report that depends on a condition is sent only when it holds, and otherwise the run ends without a message. A watch for one event ("let me know when X") checks on a schedule until X happens, not once at a guessed time, and ends with it. Its delivery line reads: "Once X has happened, tell your user in one short message, then pause this routine; if a recent run already told them, just pause." It needs no state file. A recurring check or report never pauses itself.',
-      "A run that fails before it says anything is retried in a fresh session that does not know what the failed attempt did, and a run cannot tell whether it is a retry, so make every send or change safe to repeat: an idempotency key the destination honors, from a stable source id that identifies this intended action (retries reuse it, and each separately requested send gets its own; never the routine's id alone, nor a date or time); or a look at the destination for that exact action first. If you cannot identify the action or check the destination, get your user's consent before saving: tell them a retried run could repeat that step. The run's own `say` to your user needs none of this, since a run that has said anything is not retried.",
-      "A file under `files/` that a run reads keeps what the next run needs. An observation, such as the last price seen, may be saved on a run that sends nothing. A record that marks something as reported is written only after the `say` that reported it has returned, never alongside it (even one with `done: true`), and left as it was if the message was not delivered.",
+      'Each run starts in a fresh session without this conversation, so the instruction must stand alone: what to look at, what counts as worth reporting, the names, places and thresholds involved, and a last line saying what to send your user. A reminder, or a report your user wants every time, is sent when due; a report that depends on a condition is sent only when it holds, and otherwise the run ends without a message. A watch for one event ("let me know when X") checks on a schedule until X happens, not once at a guessed time, and has a cutoff: the end date or deadline your user gave, otherwise the same local time 14 calendar days from now, so an X a minute before that time on the last day still counts. A date when X is only expected never changes it, since the watch stops once X happens. Write the cutoff as its weekday, date and local time. Its delivery line reads: "If a recent run already told your user that X happened or that the watch ended, pause this routine now, without a message. At or after <cutoff>, the watch is over: if X happened before <cutoff>, tell your user it did; otherwise tell them once that the watch has ended, saying in that message if <source> could not be reached; an X at or after <cutoff> does not count. Before <cutoff>, once X has happened, tell your user in one short message; until then, end without a message. Once the message that X happened, or that the watch has ended, has returned, pause this routine. Send that `say` alone and wait for its result; the pause is then your last call, never alongside it. A message before <cutoff> about a source you could not reach does not end the watch." Give the same weekday, date and local time in your confirmation. A recurring check or report never pauses itself.',
+      "A run that fails before it says anything is retried without knowing what the failed attempt did, so every other send or change in the instruction must be safe to repeat, as `j3-routines` describes, or your user must accept the risk before you save it.",
+      "A file under `files/` keeps what the next run needs; a record of what was reported is written only after the `say` that reported it has returned.",
       "Returns the routine as saved, with its id and next run; tell your user the exact schedule.",
     ],
     SetRoutineInput,
@@ -383,6 +386,7 @@ export const tools = {
     [
       "Create a new teammate for your user. Only the primary bot can, and only when your user asked for one or agreed to it.",
       "The job says what the bot is for and where its limits end, in a few sentences; how every bot behaves comes from J3 Bots, not the job.",
+      "No tool deletes a bot; your user can delete one in the app.",
       "Returns the new bot's id.",
     ],
     CreateBotInput,

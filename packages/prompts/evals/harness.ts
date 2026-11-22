@@ -20,7 +20,7 @@ import {
   tools,
   type Wake,
 } from "../src/index.ts";
-import type { FixtureEvent, GhEvent } from "./fixtures.ts";
+import type { FixtureEvent, ProgramEvent } from "./fixtures.ts";
 import { complete, type FunctionTool, type Message } from "./model.ts";
 import { localInstant, nextScheduled, plannedRun, type Trigger } from "./schedule.ts";
 import type { Workspace } from "./shell.ts";
@@ -30,11 +30,11 @@ import type { Workspace } from "./shell.ts";
  *
  * The model gets what a bot's session gives it: the rendered base prompt,
  * profile and pinned memory, one wake envelope, and the `j3` tools as MCP
- * lists them. Two things stand in for the harness: the shipped skills, given
+ * lists them. Three things stand in for the harness: the shipped skills, given
  * as already read when a run includes them (the harness's own listing and
- * reading of them is not what is measured), and `run_command`, a stand-in
- * shell whose workspace and programs the scenario fixes (`shell.ts`,
- * `fixtures.ts`).
+ * reading of them is not what is measured); `run_command`, a stand-in shell
+ * whose workspace and programs the scenario fixes (`shell.ts`, `fixtures.ts`);
+ * and `request_secret`, which the engine offers every bot ({@link SECRET_TOOL}).
  *
  * Every case runs with the skills and without them. Nothing links them into a
  * harness yet, and a session that never reads one still has to behave, so a
@@ -42,25 +42,34 @@ import type { Workspace } from "./shell.ts";
  * the tool descriptions or the envelope.
  */
 
+/** What a scenario changes in the fictional bot: its title and job, and its own pinned memory. */
+export interface BotSetup {
+  readonly title: string;
+  readonly job: string;
+  readonly pinned: string;
+}
+
+/** Juniper, who looks after the docs, as most scenarios have it. */
+const JUNIPER: BotSetup = {
+  title: "Docs",
+  job: "Look after the Acme documentation site and its GitHub repository, acme/docs: watch its builds and pull requests, and tell Rui what needs his attention.",
+  pinned: "",
+};
+
 /** A fictional operator and bot. */
-const bot = (model: string): BotInstructionsInput => ({
+const bot = (model: string, setup: BotSetup): BotInstructionsInput => ({
   operator: { name: "Rui", timeZone: "Europe/Lisbon" },
-  profile: {
-    name: "Juniper",
-    title: "Docs",
-    job: "Look after the Acme documentation site and its GitHub repository, acme/docs: watch its builds and pull requests, and tell Rui what needs his attention.",
-    primary: false,
-  },
+  profile: { name: "Juniper", title: setup.title, job: setup.job, primary: false },
   runtime: { model, harness: model.startsWith("gpt") ? "Codex" : "Claude Code" },
-  pinned: { shared: "- Rui reads messages on his phone; keep them short.", bot: "" },
+  pinned: { shared: "- Rui reads messages on his phone; keep them short.", bot: setup.pinned },
 });
 
 /** Whether a turn has the shipped skills as already read. */
 export type Skills = "with the skill" | "without the skill";
 
-const systemPrompt = (model: string, skills: Skills): string =>
+const systemPrompt = (model: string, skills: Skills, setup: BotSetup): string =>
   [
-    renderSystemFile(bot(model)),
+    renderSystemFile(bot(model, setup)),
     ...(skills === "with the skill" ? sharedSkills : []).map(
       (skill) => `# You read the skill skills/${skill.name}/SKILL.md\n\n${skill.text}`,
     ),
@@ -68,8 +77,51 @@ const systemPrompt = (model: string, skills: Skills): string =>
 
 const HOST_TOOL = "run_command";
 
+/**
+ * The engine's tool for a secret, as far as these scenarios need it. At the
+ * engine's pinned commit (Read, T3 Code 59651c1,
+ * `apps/server/src/mcp/OrchestratorMcpService.ts`, `request_secret`), a
+ * `value` the user pasted is saved to a file only its owner can read, and the
+ * result names that file; a `value` with `delivery: "secretRef"` is refused.
+ * Without one, the user gets a card, and `delivery: "file"` returns a file
+ * holding what they typed. `label` and `reason` must not be blank
+ * (`packages/contracts/src/orchestratorMcp.ts`). The stand-in saves the file under
+ * {@link SECRET_FOLDER} and answers a card with the scenario's
+ * `secretAnswer`, or as a card left unanswered when it has none; with
+ * `pastedSecretFails`, saving a pasted `value` fails. The
+ * description is this repository's own wording, not the engine's.
+ */
+const SECRET_TOOL = "request_secret";
+
+/** Where the stand-in `request_secret` keeps the secrets it saves. */
+export const SECRET_FOLDER = "/run/secrets";
+
+const NonEmpty = Schema.String.check(
+  Schema.makeFilter((text: string) => text.trim().length > 0, { expected: "a non-empty string" }),
+);
+
+/** The arguments the engine accepts, as far as these scenarios use them. */
+const decodeSecretInput = Schema.decodeUnknownOption(
+  Schema.Struct({
+    label: NonEmpty,
+    reason: NonEmpty,
+    value: Schema.optionalKey(
+      Schema.String.check(
+        Schema.makeFilter((text: string) => text.length > 0, { expected: "a non-empty string" }),
+      ),
+    ),
+    delivery: Schema.optionalKey(Schema.Literals(["secretRef", "file"])),
+  }),
+);
+
+/** What `run_command` says about the programs signed in, unless a scenario says otherwise. */
+const GH_SIGNED_IN = "The GitHub CLI, gh, is signed in.";
+
 /** The `j3` tools, and a `run_command` that names what the workspace has. */
-const functionTools = (commands: ReadonlyArray<string>): ReadonlyArray<FunctionTool> => [
+const functionTools = (
+  commands: ReadonlyArray<string>,
+  shell: string,
+): ReadonlyArray<FunctionTool> => [
   ...toolList.map((tool): FunctionTool => ({
     type: "function",
     function: { name: tool.name, description: tool.description, parameters: tool.inputSchema },
@@ -77,8 +129,27 @@ const functionTools = (commands: ReadonlyArray<string>): ReadonlyArray<FunctionT
   {
     type: "function",
     function: {
+      name: SECRET_TOOL,
+      description:
+        'Get one secret, such as a token or password, without it entering the conversation. With `label` and `reason` alone, your user sees a card to type it into, and the result is a one-use reference for this host\'s own tools; with `delivery: "file"`, it is a private file for a command to read. If your user already pasted the secret here, pass it as `value`: it is saved to a private file, and the result names the file.',
+      parameters: {
+        type: "object",
+        properties: {
+          label: { type: "string" },
+          reason: { type: "string" },
+          value: { type: "string" },
+          delivery: { type: "string", enum: ["secretRef", "file"] },
+        },
+        required: ["label", "reason"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: HOST_TOOL,
-      description: `Run a shell command in your workspace and return its output. The GitHub CLI, gh, is signed in. The workspace has only these commands: ${commands.join(", ")}.`,
+      description: `Run a shell command in your workspace and return its output. ${shell} The workspace has only these commands: ${commands.join(", ")}.`,
       parameters: {
         type: "object",
         properties: { command: { type: "string" } },
@@ -118,7 +189,7 @@ interface ReplyText {
 export interface Turn {
   readonly calls: ReadonlyArray<Call>;
   readonly text: ReadonlyArray<ReplyText>;
-  readonly workspace: Workspace<GhEvent>;
+  readonly workspace: Workspace<ProgramEvent>;
   readonly routines: HeldRoutines;
 }
 
@@ -152,10 +223,37 @@ class TurnUnfinished extends Schema.TaggedError<TurnUnfinished>()("TurnUnfinishe
 const unfinished = (reason: string, turn: Turn) =>
   new TurnUnfinished({ message: `The turn did not finish: ${reason}.\n${transcript(turn)}` });
 
+/** A call the bot made in an earlier turn, with what it answered. */
+export interface EarlierCall {
+  readonly name: string;
+  readonly input: Schema.Json;
+  readonly output: string;
+}
+
+/** An earlier turn of the session: the wake that opened it and the calls the bot made, in order. */
+export interface EarlierTurn {
+  readonly wake: Wake;
+  readonly calls: ReadonlyArray<EarlierCall>;
+}
+
 export interface Scenario {
   readonly wake: Wake;
   /** A fresh workspace for each turn, so what one turn writes another never reads. */
-  readonly workspace: () => Workspace<GhEvent>;
+  readonly workspace: () => Workspace<ProgramEvent>;
+  /** Earlier turns of the same session, oldest first. None by default. */
+  readonly history?: ReadonlyArray<EarlierTurn>;
+  /** The bot, when it is not Juniper as most scenarios have it. */
+  readonly bot?: BotSetup;
+  /** What `run_command` says about the programs signed in, when not only `gh`. */
+  readonly shell?: string;
+  /** What the user types into a `request_secret` card; none leaves the card unanswered. */
+  readonly secretAnswer?: string;
+  /**
+   * When set, saving a pasted `value` fails, as a full disk or a locked
+   * folder would make it, so only a card can carry the secret. How the engine
+   * words such a failure is Assumed; the stand-in returns an error.
+   */
+  readonly pastedSecretFails?: boolean;
 }
 
 /** Model calls in one turn at most; a turn that needs more is a failure in itself. */
@@ -435,7 +533,8 @@ type Answer = Pick<Call, "output" | "events" | "refused">;
 /** What the server would answer, as far as these scenarios need, and what a command did. */
 const answer = (
   routines: HeldRoutines,
-  workspace: Workspace<GhEvent>,
+  workspace: Workspace<ProgramEvent>,
+  scenario: Scenario,
   request: Request,
 ): Answer => {
   const reply = (output: string): Answer => ({ output, events: [] });
@@ -460,6 +559,41 @@ const answer = (
       return reply(json({ recorded: true }));
     case "list_teammates":
       return reply(json({ bots: [], rooms: [] }));
+    case SECRET_TOOL: {
+      const input = decodeSecretInput(request.input);
+      if (input._tag === "None")
+        return reply(
+          json({ error: "`label` and `reason` must be non-empty, and so must `value` if given." }),
+        );
+      const saved = (secret: string) => {
+        const file = `${SECRET_FOLDER}/secret-${request.step}`;
+        workspace.store(file, secret);
+        return file;
+      };
+      const { value, delivery } = input.value;
+      if (value !== undefined) {
+        // The engine refuses a pasted `value` with `delivery: "secretRef"`.
+        return delivery === "secretRef"
+          ? reply(
+              json({
+                error: 'A pasted `value` is saved as a file. Leave out `delivery: "secretRef"`.',
+              }),
+            )
+          : scenario.pastedSecretFails === true
+            ? reply(json({ error: "The pasted value could not be saved." }))
+            : reply(json({ status: "saved", file: saved(value) }));
+      }
+      if (scenario.secretAnswer === undefined) {
+        return reply(json({ status: "timed_out", note: "Your user did not answer the card." }));
+      }
+      return reply(
+        json(
+          delivery === "file"
+            ? { status: "saved", file: saved(scenario.secretAnswer) }
+            : { status: "saved", secretRef: `secret-ref-${request.step}` },
+        ),
+      );
+    }
     case HOST_TOOL: {
       const input = decodeShellInput(request.input);
       return input._tag === "Some"
@@ -470,6 +604,30 @@ const answer = (
       return reply(json({ error: `${request.name} is not available here.` }));
   }
 };
+
+/**
+ * Earlier turns as the session holds them: each wake's envelope, then each
+ * call in a message of its own with what it answered.
+ */
+const earlierMessages = (
+  history: ReadonlyArray<{ readonly envelope: string; readonly calls: ReadonlyArray<EarlierCall> }>,
+): ReadonlyArray<Message> =>
+  history.flatMap(({ envelope, calls }, turn): ReadonlyArray<Message> => [
+    { role: "user", content: envelope },
+    ...calls.flatMap((call, index): ReadonlyArray<Message> => {
+      const id = `earlier-${turn + 1}-${index + 1}`;
+      return [
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            { id, type: "function", function: { name: call.name, arguments: json(call.input) } },
+          ],
+        },
+        { role: "tool", tool_call_id: id, content: call.output },
+      ];
+    }),
+  ]);
 
 const toRequest = (step: number, name: string, input: unknown): Request => {
   if (name !== "set_routine") return { step, name, input };
@@ -490,9 +648,14 @@ export const runTurn = Effect.fn("evals.runTurn")(
     const envelope = yield* renderWake(scenario.wake);
     const workspace = scenario.workspace();
     const routines = new HeldRoutines(scenario.wake);
-    const tools = functionTools(workspace.commands);
+    const tools = functionTools(workspace.commands, scenario.shell ?? GH_SIGNED_IN);
     const messages: Array<Message> = [
-      { role: "system", content: systemPrompt(model, skills) },
+      { role: "system", content: systemPrompt(model, skills, scenario.bot ?? JUNIPER) },
+      ...earlierMessages(
+        yield* Effect.forEach(scenario.history ?? [], ({ wake, calls }) =>
+          Effect.map(renderWake(wake), (envelope) => ({ envelope, calls })),
+        ),
+      ),
       { role: "user", content: envelope },
     ];
     const calls: Array<Call> = [];
@@ -522,7 +685,7 @@ export const runTurn = Effect.fn("evals.runTurn")(
           toolCall.function.name,
           parsed._tag === "Some" ? parsed.value : toolCall.function.arguments,
         );
-        const call: Call = { ...request, ...answer(routines, workspace, request) };
+        const call: Call = { ...request, ...answer(routines, workspace, scenario, request) };
         calls.push(call);
         messages.push({ role: "tool", tool_call_id: toolCall.id, content: call.output });
       }
