@@ -4,5 +4,5 @@
     "types": ["node"],
     "lib": ["ESNext", "esnext.disposable"]
   },
-  "include": ["src", "smoke", "upgrade-check"]
+  "include": ["src", "smoke", "upgrade-check", "every-surface"]
 }
