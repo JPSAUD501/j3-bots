@@ -43,7 +43,7 @@ export function engineProblem(
   }
 }
 
-/** How a provider's line is drawn: ready to run bots, waiting on the operator, blocked, or out of use. */
+/** How a provider's line is drawn: ready to run bots, waiting on the operator or the engine, blocked, or out of use. */
 export type ProviderTone = "ready" | "waiting" | "blocked" | "muted";
 
 /** A provider's state in words, as the engine's list of providers shows it. */
@@ -63,6 +63,8 @@ export function providerLine(
     case "limited":
       return { text: usageLimitText(status.resetsAt, ctx), tone: "blocked" };
     case "unavailable":
-      return { text: t("provider.unavailable"), tone: "muted" };
+      return status.checking
+        ? { text: t("provider.checking"), tone: "waiting" }
+        : { text: t("provider.unavailable"), tone: "muted" };
   }
 }

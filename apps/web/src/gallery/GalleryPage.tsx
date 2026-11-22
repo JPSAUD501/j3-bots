@@ -1223,6 +1223,16 @@ const engines = {
     state: { _tag: "unavailable", reason: "credential-refused" },
   },
   incompatible: { ...team.engine, state: { _tag: "incompatible", runningVersion: "0.1.8" } },
+  checking: {
+    ...team.engine,
+    providers: team.engine.providers.map((p, index) => ({
+      ...p,
+      status:
+        index === 0
+          ? ({ _tag: "unavailable", checking: true } as const)
+          : ({ _tag: "sign-in-required", command: "j3-bots provider connect" } as const),
+    })),
+  },
   connect: {
     ...team.engine,
     providers: team.engine.providers.map((p) => ({
@@ -1234,7 +1244,10 @@ const engines = {
     ...team.engine,
     providers: team.engine.providers.map((p, index) => ({
       ...p,
-      status: index === 0 ? ({ _tag: "ready" } as const) : ({ _tag: "unavailable" } as const),
+      status:
+        index === 0
+          ? ({ _tag: "ready" } as const)
+          : ({ _tag: "unavailable", checking: false } as const),
       models: [],
     })),
   },
@@ -1248,7 +1261,7 @@ const engines = {
               _tag: "limited",
               resetsAt: team.engine.providers[0]?.usage[0]?.resetsAt ?? null,
             } as const)
-          : ({ _tag: "unavailable" } as const),
+          : ({ _tag: "unavailable", checking: false } as const),
     })),
   },
 } as const;
@@ -1448,6 +1461,9 @@ function EmptyStatesSection() {
         </Frame>
         <Frame label="First run: wrong engine version" width={340} height={360}>
           <FirstRun engine={engines.incompatible} onCreateBot={created} />
+        </Frame>
+        <Frame label="First run: the engine still checking a provider" width={400} height={420}>
+          <FirstRun engine={engines.checking} onCreateBot={created} />
         </Frame>
         <Frame label="First run: connect the providers, with one command" width={400} height={460}>
           <FirstRun engine={engines.connect} onCreateBot={created} />

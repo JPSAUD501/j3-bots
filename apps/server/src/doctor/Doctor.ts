@@ -427,6 +427,19 @@ const providerCheck = Effect.fn("doctor.provider")(function* (
       "Update the server: a release that runs bots sets up a Claude Code and a Codex provider.",
     );
   }
+  // Until the engine's first check since it started ends, what it reports
+  // says nothing of the harness, so no other line is drawn from it.
+  const unchecked = providers.find(
+    (provider) => provider.status._tag === "unavailable" && provider.status.checking,
+  );
+  if (unchecked !== undefined) {
+    return check(
+      harness.name,
+      "warning",
+      `Found at ${found.value}; the engine is still checking ${unchecked.name}, as it does for a few seconds after it starts.`,
+      "Run this again in a few seconds.",
+    );
+  }
   for (const provider of providers) {
     if (provider.status._tag === "sign-in-required") {
       return noWayToModels(id, provider.status.command);

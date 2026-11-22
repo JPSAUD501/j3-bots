@@ -88,6 +88,7 @@ describe("providerStatuses", () => {
     // An ACP agent cannot be connected that way.
     assert.deepStrictEqual(statusOf(scripted, { auth: { status: "unauthenticated" } })?.status, {
       _tag: "unavailable",
+      checking: false,
     });
   });
 
@@ -95,12 +96,36 @@ describe("providerStatuses", () => {
     for (const fields of [
       undefined,
       { installed: false },
+      // A check that did not find it.
+      { installed: false, status: "error" },
       { enabled: false },
       { availability: "unavailable" },
       { status: "error" },
     ]) {
-      assert.deepStrictEqual(statusOf(claude, fields)?.status, { _tag: "unavailable" });
+      assert.deepStrictEqual(statusOf(claude, fields)?.status, {
+        _tag: "unavailable",
+        checking: false,
+      });
     }
+  });
+
+  it("is still being checked until the engine's first check since it started ends", () => {
+    // What the engine publishes for Claude Code and Codex before that check.
+    const notChecked = {
+      installed: false,
+      status: "warning",
+      auth: { status: "unknown" },
+      message: "Claude provider status has not been checked in this session yet.",
+    };
+    assert.deepStrictEqual(statusOf(claude, notChecked)?.status, {
+      _tag: "unavailable",
+      checking: true,
+    });
+    // The engine reports an ACP agent it checked and found not set up the same way.
+    assert.deepStrictEqual(statusOf(scripted, notChecked)?.status, {
+      _tag: "unavailable",
+      checking: false,
+    });
   });
 
   it("reports the usage windows the engine reports, as percent used with their resets", () => {

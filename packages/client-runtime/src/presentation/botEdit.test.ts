@@ -78,7 +78,7 @@ describe("modelChoices", () => {
     id: ProviderId.make(id),
     name: id,
     harness: "other" as const,
-    status: ready ? { _tag: "ready" as const } : { _tag: "unavailable" as const },
+    status: ready ? { _tag: "ready" as const } : { _tag: "unavailable" as const, checking: false },
     models: models.map((model) => ({ id: ModelId.make(model), name: model })),
     usage: [],
   });

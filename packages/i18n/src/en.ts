@@ -380,6 +380,9 @@ export const en = {
   "firstRun.connect.copy": "Copy the command that connects your providers",
   "firstRun.connect.copied": "Copied",
   "firstRun.connect.selected": "Command selected. Copy it manually.",
+  "firstRun.checking.title": "Checking your providers",
+  "firstRun.checking.body":
+    "The engine checks each provider when it starts, which takes a few seconds. This page updates when it’s done.",
   "firstRun.unavailable.title": "No provider can run a bot right now",
   "firstRun.unavailable.body":
     "Each provider’s state is below. This page updates as soon as one is ready.",
@@ -387,6 +390,7 @@ export const en = {
   "provider.notConnected": "Not connected",
   "provider.noModels": "Connected, but the engine lists no model for it yet",
   "provider.unavailable": "Not available right now",
+  "provider.checking": "Checking…",
   "firstRun.create.title": "Meet your first bot",
   "firstRun.create.body":
     "Give it a name. It will ask what you want it for, one question at a time.",

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { BotId, Label, ModelId, ProviderId, RoutineId } from "./base.ts";
 
@@ -35,7 +36,16 @@ export const ProviderStatus = Schema.Struct({
      */
     Schema.TaggedStruct("sign-in-required", { command: HostCommand }),
     Schema.TaggedStruct("limited", { resetsAt: Schema.NullOr(Schema.DateTimeUtc) }),
-    Schema.TaggedStruct("unavailable", {}),
+    /**
+     * It cannot run a bot now. `checking` when that is only because the engine
+     * has not finished its first check of it since it started, which takes
+     * seconds; the state that check finds replaces this one. A server older
+     * than `checking` answers without it, at the same protocol version, and
+     * reads as not checking; an older client ignores it.
+     */
+    Schema.TaggedStruct("unavailable", {
+      checking: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
+    }),
   ]),
   models: Schema.Array(Schema.Struct({ id: ModelId, name: Label })),
   usage: Schema.Array(UsageWindow),

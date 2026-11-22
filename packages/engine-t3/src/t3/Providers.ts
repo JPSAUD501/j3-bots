@@ -89,7 +89,27 @@ export const providersOfEvent = (
   }
 };
 
-const unavailable = { _tag: "unavailable" } as const;
+const unavailable = { _tag: "unavailable", checking: false } as const;
+const checking = { _tag: "unavailable", checking: true } as const;
+
+/**
+ * Whether the report is the one the engine publishes for a Claude Code or
+ * Codex instance before its first check since the engine started: enabled,
+ * not installed, a `warning` and its sign-in `unknown`. A check that does not
+ * find the harness reports an `error` instead, and one that finds it signed
+ * out reports `unauthenticated`. **Read** at `59651c1`,
+ * `makePendingClaudeProvider` in `ClaudeProvider.ts` and
+ * `makePendingCodexProvider` in `CodexProvider.ts`, published first by
+ * `makeManagedServerProvider` in `provider-core/src/server/managedProvider.ts`.
+ * An ACP agent is left out: the engine reports the same for one it checked
+ * and found not set up or not prepared (`acpRegistrySnapshotReadiness`).
+ */
+const notCheckedYet = (provider: ProviderInstance, engine: ReportedProvider) =>
+  provider.harness !== "acp-command" &&
+  engine.enabled &&
+  !engine.installed &&
+  engine.status === "warning" &&
+  engine.auth.status === "unknown";
 
 const decodeModelId = Schema.decodeUnknownOption(ModelId);
 
@@ -108,6 +128,8 @@ const modelsOf = (engine: ReportedProvider | undefined): ProviderStatus["models"
 
 /**
  * Whether the engine's instance can run a bot, in J3 Bots' terms:
+ * - not checked yet since the engine started (`notCheckedYet`):
+ *   `unavailable`, `checking`;
  * - missing from the engine's list (not provisioned yet), disabled, not
  *   installed or unavailable: `unavailable`;
  * - signed out: `sign-in-required`, with the command that connects Claude
@@ -122,6 +144,7 @@ const statusOf = (
   provider: ProviderInstance,
   engine: ReportedProvider | undefined,
 ): ProviderStatus["status"] => {
+  if (engine !== undefined && notCheckedYet(provider, engine)) return checking;
   if (
     engine === undefined ||
     !engine.enabled ||

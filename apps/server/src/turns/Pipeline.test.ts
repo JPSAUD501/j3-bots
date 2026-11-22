@@ -174,7 +174,7 @@ it.effect("keeps a new bot's hello waiting while its provider is not ready", () 
 it.effect("keeps a new bot's hello through a change of provider, for the new one", () =>
   Effect.gen(function* () {
     const { providerId } = TestDomain.OTHER_PROVIDER_MODEL;
-    yield* providerIs(providerId, { _tag: "unavailable" });
+    yield* providerIs(providerId, { _tag: "unavailable", checking: false });
     const bot = yield* createNewBot("Ana", TestDomain.OTHER_PROVIDER_MODEL);
     const first = yield* engineSession(bot.id);
     yield* flushed(bot.id);
