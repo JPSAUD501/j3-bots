@@ -382,7 +382,7 @@ export const en = {
   "firstRun.connect.selected": "Command selected. Copy it manually.",
   "firstRun.checking.title": "Checking your providers",
   "firstRun.checking.body":
-    "The engine checks each provider when it starts, which takes a few seconds. This page updates when it’s done.",
+    "The engine checks each provider when it starts, which can take up to a minute. This page updates when it’s done.",
   "firstRun.unavailable.title": "No provider can run a bot right now",
   "firstRun.unavailable.body":
     "Each provider’s state is below. This page updates as soon as one is ready.",

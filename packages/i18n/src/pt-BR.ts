@@ -384,7 +384,7 @@ const sentences = {
   "firstRun.connect.selected": "Comando selecionado. Copie manualmente.",
   "firstRun.checking.title": "Verificando seus provedores",
   "firstRun.checking.body":
-    "O motor verifica cada provedor quando começa, o que leva alguns segundos. Esta página atualiza quando ele terminar.",
+    "O motor verifica cada provedor ao iniciar, o que pode levar até um minuto. Esta página atualiza quando ele terminar.",
   "firstRun.unavailable.title": "Nenhum provedor pode rodar um bot agora",
   "firstRun.unavailable.body":
     "O estado de cada provedor está abaixo. Esta página atualiza assim que um deles estiver pronto.",

@@ -97,7 +97,12 @@ import type { FileChangeItem } from "./approvalDetail.ts";
 import { cursorFor, makeBatches, type BatchPlace } from "./Batches.ts";
 import { PERMISSION_MODES, RUNTIME_MODES } from "./Policy.ts";
 import { makePrivateFiles } from "./PrivateFiles.ts";
-import { type ReportedProvider, providerStatuses, providersOfEvent } from "./Providers.ts";
+import {
+  providerStatuses,
+  providersOfEvent,
+  type ReportedProvider,
+  withFirstCheckBudget,
+} from "./Providers.ts";
 import {
   activeConnection,
   instanceIdFor,
@@ -1725,15 +1730,15 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   );
 
   const status = Stream.zipLatestWith(
-    stateChanges(state),
+    withFirstCheckBudget(stateChanges(state)),
     SubscriptionRef.changes(reported),
-    (current, engineProviders): EngineStatus => {
+    ({ state: current, firstCheck }, engineProviders): EngineStatus => {
       switch (current._tag) {
         case "ready":
           return {
             state: { _tag: "ready" },
             pinnedVersion: pin.version,
-            providers: providerStatuses(options.providers, engineProviders),
+            providers: providerStatuses(options.providers, engineProviders, firstCheck),
           };
         case "starting":
           return { state: { _tag: "starting" }, pinnedVersion: pin.version, providers: [] };

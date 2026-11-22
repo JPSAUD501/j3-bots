@@ -523,7 +523,7 @@ it.layer(NodeServices.layer)("doctor", (it) => {
       for (const name of ["Claude Code", "Codex"]) {
         const harness = named(checks, name);
         assertFlagged(harness, "warning", "still checking");
-        assert.strictEqual(Option.getOrNull(harness.fix), "Run this again in a few seconds.");
+        assert.strictEqual(Option.getOrNull(harness.fix), "Run this again in half a minute.");
       }
       // Nothing is broken, so the report finds no problem to fix.
       assert.isFalse(checks.some((check) => check.status === "problem"));

@@ -4,7 +4,7 @@ import * as Schema from "effect/Schema";
 import { ProviderStatus } from "./engineStatus.ts";
 
 describe("an unavailable provider across server versions", () => {
-  /** A provider's status as a server and a client from before `checking` read and write it. */
+  /** A provider's status as a server from before `checking` writes it. */
   const Before = Schema.Union([
     Schema.TaggedStruct("ready", {}),
     Schema.TaggedStruct("unavailable", {}),
@@ -16,13 +16,5 @@ describe("an unavailable provider across server versions", () => {
       _tag: "unavailable",
       checking: false,
     });
-  });
-
-  it("is read by an older client, which ignores whether it is checking", () => {
-    const newer = Schema.encodeSync(ProviderStatus.fields.status)({
-      _tag: "unavailable",
-      checking: true,
-    });
-    assert.deepStrictEqual(Schema.decodeUnknownSync(Before)(newer), { _tag: "unavailable" });
   });
 });

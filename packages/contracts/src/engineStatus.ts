@@ -38,10 +38,12 @@ export const ProviderStatus = Schema.Struct({
     Schema.TaggedStruct("limited", { resetsAt: Schema.NullOr(Schema.DateTimeUtc) }),
     /**
      * It cannot run a bot now. `checking` when that is only because the engine
-     * has not finished its first check of it since it started, which takes
-     * seconds; the state that check finds replaces this one. A server older
-     * than `checking` answers without it, at the same protocol version, and
-     * reads as not checking; an older client ignores it.
+     * has not finished its first check of it since it started, which can take
+     * up to a minute: the state that check finds replaces this one. A check
+     * still not ended a minute and a half after the engine became ready has
+     * failed, and the provider is then `unavailable` without `checking`. A
+     * server older than `checking` answers without it, at the same protocol
+     * version, and reads as not checking; an older client ignores it.
      */
     Schema.TaggedStruct("unavailable", {
       checking: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
