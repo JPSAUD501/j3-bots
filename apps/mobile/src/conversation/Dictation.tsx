@@ -88,6 +88,12 @@ interface Session {
   owned: boolean;
   /** What the recognizer hears goes into the draft. */
   taking: boolean;
+  /**
+   * The operator pressed Stop. Android's on-device recognizer answers a stop
+   * of a continuous session with a client error instead of its end, so an
+   * error from then on is the end they asked for.
+   */
+  stopping: boolean;
   heard: Heard;
 }
 
@@ -135,6 +141,7 @@ export function useDictation({
     preparing: false,
     owned: false,
     taking: false,
+    stopping: false,
     heard: nothingHeard,
   });
 
@@ -152,7 +159,12 @@ export function useDictation({
   }, [inView]);
 
   const finish = (next: DictationProblem | null) => {
-    Object.assign(session.current, { preparing: false, owned: false, taking: false });
+    Object.assign(session.current, {
+      preparing: false,
+      owned: false,
+      taking: false,
+      stopping: false,
+    });
     setState({ _tag: "idle" });
     if (next !== null) setProblem(next);
   };
@@ -167,7 +179,11 @@ export function useDictation({
   useSpeechRecognitionEvent("error", (event) => {
     const current = session.current;
     if (!current.owned) return;
-    finish(current.taking ? problemOf(event.error, heardText(current.heard) !== "") : null);
+    finish(
+      current.taking && !current.stopping
+        ? problemOf(event.error, heardText(current.heard) !== "")
+        : null,
+    );
   });
   useSpeechRecognitionEvent("end", () => {
     if (session.current.owned) finish(null);
@@ -188,7 +204,13 @@ export function useDictation({
       const language = dictationLanguage();
       const place = await whereRecognitionRuns(language);
       if (!current.preparing) return finish(null);
-      Object.assign(current, { preparing: false, owned: true, taking: true, heard: nothingHeard });
+      Object.assign(current, {
+        preparing: false,
+        owned: true,
+        taking: true,
+        stopping: false,
+        heard: nothingHeard,
+      });
       setState({ _tag: "listening", place });
       ExpoSpeechRecognitionModule.start({
         ...(language === undefined ? {} : { lang: language }),
@@ -208,7 +230,9 @@ export function useDictation({
     start,
     stop: () => {
       const current = session.current;
-      if (current.owned && current.taking) ExpoSpeechRecognitionModule.stop();
+      if (!current.owned || !current.taking) return;
+      current.stopping = true;
+      ExpoSpeechRecognitionModule.stop();
     },
     abort: () => interrupt(session.current),
     dismiss: () => setProblem(null),
