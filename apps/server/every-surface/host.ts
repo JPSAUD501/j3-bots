@@ -21,14 +21,17 @@ import { HOME_ENTRIES } from "../src/home/entries.ts";
 // The server side of the every-surface check
 // (docs/operations/every-surface-check.md): a development server of this
 // checkout on loopback, in a scratch home, with the scripted agent, so its
-// bots run turns with no model. It listens on `J3_PORT` when that is set (the
-// port a tunnel forwards), on a free port otherwise, and on free ports for the
-// engine and the tool endpoint. Once the scripted agent is ready it prints the
-// address and a pairing code for the check, and runs until it is stopped,
-// which removes the scratch home.
+// bots run turns with no model. It listens on `J3_EVERY_SURFACE_PORT` when that
+// is set (the port a tunnel forwards), on a free port otherwise, and on free
+// ports for the engine and the tool endpoint. Once the scripted agent is ready
+// it prints the address and a pairing code for the check, and runs until it is
+// stopped or the server exits, which removes the scratch home.
 
 const SERVER = `${import.meta.dirname}/../src/bin.ts`;
 const SCRIPTED_AGENT = `${import.meta.dirname}/../../../packages/engine-t3/scripted-agent/agent.ts`;
+
+/** The port of the operator's own server, which the check never takes. */
+const OPERATOR_PORT = 3773;
 
 /** The first start downloads the engine, about 200 MB. */
 const READY_WITHIN = Duration.minutes(10);
@@ -47,7 +50,10 @@ const host = Effect.gen(function* () {
   const home = path.join(scratch, "home");
   const log = path.join(scratch, "server.log");
   const socket = path.join(home, HOME_ENTRIES.adminSocket);
-  const port = yield* Config.option(Config.Port("J3_PORT"));
+  const port = yield* Config.option(Config.Port("J3_EVERY_SURFACE_PORT"));
+  if (Option.contains(port, OPERATOR_PORT)) {
+    return yield* Effect.die(`Port ${OPERATOR_PORT} is the operator's own server's; pick another.`);
+  }
 
   const server = yield* (yield* ChildProcessSpawner.ChildProcessSpawner).spawn(
     ChildProcess.make(process.execPath, [SERVER, "serve"], {
@@ -67,8 +73,12 @@ const host = Effect.gen(function* () {
   );
   yield* server.all.pipe(Stream.run(fs.sink(log)), Effect.forkScoped);
   yield* Console.log(`Starting the server in ${home}; its log is ${log}.`);
+  // The server never exits on its own: when it does, so does this command.
+  const exited = server.exitCode.pipe(
+    Effect.flatMap((code) => Effect.die(`The server exited with code ${code}; see ${log}.`)),
+  );
 
-  const status = yield* admin.status(socket).pipe(
+  const ready = admin.status(socket).pipe(
     Effect.flatMap((found) =>
       Option.isSome(found) && isReady(found.value)
         ? Effect.succeed(found.value)
@@ -80,6 +90,7 @@ const host = Effect.gen(function* () {
       orElse: () => Effect.die(`The server did not become ready; see ${log}.`),
     }),
   );
+  const status = yield* Effect.raceFirst(ready, exited);
   const offer = yield* admin
     .startPairing(socket, { unlock: false })
     .pipe(Effect.flatMap((found) => Effect.fromOption(found)));
@@ -93,7 +104,7 @@ const host = Effect.gen(function* () {
       "Stop this command to remove the server and its home.",
     ].join("\n"),
   );
-  return yield* Effect.never;
+  return yield* exited;
 }).pipe(Effect.scoped);
 
 host.pipe(

@@ -18,6 +18,7 @@ import {
   PairResult,
   type QuestionEntry,
 } from "@j3-bots/contracts";
+import { DEFAULT_SHORTCUT } from "@j3-bots/desktop-bridge";
 import { assert, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
@@ -40,7 +41,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as RpcClient from "effect/rpc/RpcClient";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
-import type { ElectronApplication, Page } from "playwright-core";
+import type { ElectronApplication, Locator, Page } from "playwright-core";
 import {
   environment,
   launch,
@@ -114,6 +115,20 @@ const entriesOf = (client: Client, target: EntryTarget) =>
     Effect.map((frame) =>
       Option.isSome(frame) && frame.value._tag === "snapshot" ? frame.value.entries : [],
     ),
+  );
+
+/** Marks everything in `target` read, as reading it on a device does. */
+const markAllRead = (client: Client, target: EntryTarget) =>
+  entriesOf(client, target).pipe(
+    Effect.flatMap((entries) => {
+      const last = entries.reduce<Entry | undefined>(
+        (latest, entry) => (latest === undefined || entry.order > latest.order ? entry : latest),
+        undefined,
+      );
+      return last === undefined
+        ? Effect.void
+        : client["entries.markRead"]({ target, through: last.order });
+    }),
   );
 
 /** The first entry of `target` that `matches`, as soon as there is one. */
@@ -230,6 +245,12 @@ const shownOnDesktop = (page: Page, texts: ReadonlyArray<string>) =>
   );
 
 /** Writes `text` in the desktop's composer for `name` and sends it. */
+/** The buttons in `scope` that still take a press. */
+const enabledButtons = (scope: Locator) =>
+  scope.locator(
+    'button:not([disabled]):not([aria-disabled="true"]), [role="button"]:not([aria-disabled="true"])',
+  );
+
 const sendOnDesktop = async (page: Page, name: string, text: string) => {
   await page.getByRole("textbox", { name: `Message ${name}` }).fill(text, { timeout: STEP });
   await page.getByRole("button", { name: "Send message" }).click({ timeout: STEP });
@@ -296,6 +317,23 @@ const trayMenu = (app: ElectronApplication) =>
   Effect.promise(() => app.evaluate(() => Reflect.get(globalThis, "j3EverySurfaceTrayMenus"))).pipe(
     Effect.flatMap(Schema.decodeUnknownEffect(TrayMenus)),
     Effect.map((menus) => menus.at(-1) ?? []),
+  );
+
+/** The tray's labels once `holds` holds for them, within a step. */
+const trayShows = (
+  app: ElectronApplication,
+  holds: (labels: ReadonlyArray<string>) => boolean,
+  failure: string,
+) =>
+  trayMenu(app).pipe(
+    Effect.repeat({ until: holds, schedule: Schedule.spaced("200 millis") }),
+    Effect.timeoutOrElse({
+      duration: STEP,
+      orElse: () =>
+        trayMenu(app).pipe(
+          Effect.flatMap((labels) => Effect.die(`${failure}: ${labels.join(", ")}`)),
+        ),
+    }),
   );
 
 interface Desktop {
@@ -574,7 +612,13 @@ it.layer(
                 .first()
                 .waitFor({ timeout: STEP });
               await sendOnDesktop(page, name, unsent);
-              await page.getByText(unsent, { exact: true }).waitFor({ timeout: STEP });
+              // The bubble's own delivery line: its root is the message's focus target.
+              await page
+                .locator('[tabindex="-1"]', { has: page.getByText(unsent, { exact: true }) })
+                .last()
+                .getByRole("status")
+                .getByText("Sending…", { exact: true })
+                .waitFor({ timeout: STEP });
               await page.getByRole("textbox", { name: composer }).fill(draft);
               await page.getByText("Not saved yet").waitFor({ state: "hidden", timeout: STEP });
             });
@@ -651,9 +695,11 @@ it.layer(
           yield* phone.waitText("Needs your answer", STEP);
           yield* phone.press(labelled("Red, Red", "button"));
           yield* onDesktop(async (page) => {
-            await card(page, asked.id).getByText("Answered").waitFor({ timeout: LIVE });
+            await card(page, asked.id)
+              .getByText("Answered", { exact: true })
+              .waitFor({ timeout: LIVE });
             assert.strictEqual(
-              await card(page, asked.id).getByRole("button", { name: "Dismiss as a no" }).count(),
+              await enabledButtons(card(page, asked.id)).count(),
               0,
               "the desktop still offers to answer",
             );
@@ -679,11 +725,13 @@ it.layer(
           yield* phone.waitText("Allow once", STEP);
           yield* phone.press(labelled("Allow once", "button"));
           yield* onDesktop(async (page) => {
-            await card(page, approval.id).getByText("Allowed once").waitFor({ timeout: LIVE });
+            await card(page, approval.id)
+              .getByText("Allowed once", { exact: true })
+              .waitFor({ timeout: LIVE });
             assert.strictEqual(
-              await card(page, approval.id).getByRole("button", { name: "Allow once" }).count(),
+              await enabledButtons(card(page, approval.id)).count(),
               0,
-              "the desktop still offers to allow",
+              "the desktop still offers to decide",
             );
           });
           yield* capture("2-approval");
@@ -725,7 +773,8 @@ it.layer(
             Effect.map((all) =>
               all
                 .slice(before)
-                .findIndex((n) => n.body.includes(said) || n.title.includes(bot.profile.name)),
+                // Previews are off on a new server: the body names the kind, not the text.
+                .findIndex((n) => n.body === "Sent you a message"),
             ),
             Effect.repeat({
               until: (index) => index >= 0,
@@ -757,6 +806,13 @@ it.layer(
         Effect.gen(function* () {
           const { client, bot, desktop, capture } = yield* Rig;
           const target = { _tag: "conversation", botId: bot.id } as const;
+          // Read, with nothing waiting, the bot is not in the tray.
+          yield* markAllRead(client, target);
+          yield* trayShows(
+            desktop().app,
+            (labels) => !labels.includes(bot.profile.name),
+            "The tray lists the bot before it waits",
+          );
           yield* client["message.send"]({
             commandId: CommandId.make(`every-surface-tray-${bot.id}`),
             target,
@@ -767,19 +823,18 @@ it.layer(
           const [question] = asked.questions;
           const red = question.options.find((option) => option.label === "Red");
           if (red === undefined) return yield* Effect.die("The question offers no Red");
-          const menu = yield* trayMenu(desktop().app).pipe(
-            Effect.repeat({
-              until: (labels) => labels.includes(bot.profile.name),
-              schedule: Schedule.spaced("200 millis"),
-            }),
-            Effect.timeoutOrElse({ duration: STEP, orElse: () => trayMenu(desktop().app) }),
+          // Read through the question, so only the wait keeps the bot in the tray.
+          yield* markAllRead(client, target);
+          const menu = yield* trayShows(
+            desktop().app,
+            (labels) => labels.includes(bot.profile.name),
+            "The tray never listed the waiting bot",
           );
           // How many wait depends on what earlier runs against the same server left.
           assert.isTrue(
             menu.some((label) => /^\d+ needs? you$/.test(label)),
             `the tray says nothing waits: ${menu.join(", ")}`,
           );
-          assert.include(menu, bot.profile.name);
           yield* capture("3-tray");
           yield* client["card.answer"]({
             commandId: CommandId.make(`every-surface-tray-answer-${bot.id}`),
@@ -790,6 +845,13 @@ it.layer(
             },
           });
           yield* quiet(client, bot.id);
+          // Answered and read, it leaves the tray.
+          yield* markAllRead(client, target);
+          yield* trayShows(
+            desktop().app,
+            (labels) => !labels.includes(bot.profile.name),
+            "The tray still lists the bot once its question is answered",
+          );
         }),
       ),
     2 * 60_000,
@@ -802,8 +864,9 @@ it.layer(
         // Pressing it needs an input tool the display may not have; the
         // desktop smoke runs the Show it triggers, composer focus included.
         const registered = yield* Effect.promise(() =>
-          desktop().app.evaluate(({ globalShortcut }) =>
-            globalShortcut.isRegistered("CommandOrControl+Shift+J"),
+          desktop().app.evaluate(
+            ({ globalShortcut }, accelerator) => globalShortcut.isRegistered(accelerator),
+            DEFAULT_SHORTCUT,
           ),
         );
         assert.isTrue(registered, "the default shortcut is not registered with the system");

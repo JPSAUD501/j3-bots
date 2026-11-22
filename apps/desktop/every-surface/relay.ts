@@ -17,10 +17,22 @@ export interface Relay {
   readonly restore: Effect.Effect<void>;
 }
 
+interface Running {
+  readonly server: NodeNet.Server;
+  readonly sockets: Set<NodeNet.Socket>;
+  readonly relay: Relay;
+}
+
 /** A relay to `target`'s host and port, for the scope. */
 export const relayTo = (target: URL) =>
   Effect.acquireRelease(
-    Effect.callback<{ readonly server: NodeNet.Server; readonly relay: Relay }>((resume) => {
+    Effect.callback<Running>((resume) => {
+      // The check always names the port; an address without one is a mistake in its settings.
+      if (target.port === "") {
+        resume(Effect.die(`The server's address names no port: ${target.href}`));
+        return;
+      }
+      const port = Number(target.port);
       const sockets = new Set<NodeNet.Socket>();
       let open = true;
       const server = NodeNet.createServer((client) => {
@@ -28,7 +40,7 @@ export const relayTo = (target: URL) =>
           client.destroy();
           return;
         }
-        const upstream = NodeNet.connect(Number(target.port), target.hostname);
+        const upstream = NodeNet.connect(port, target.hostname);
         const end = () => {
           client.destroy();
           upstream.destroy();
@@ -49,6 +61,7 @@ export const relayTo = (target: URL) =>
         resume(
           Effect.succeed({
             server,
+            sockets,
             relay: {
               host: `127.0.0.1:${port}`,
               cut: Effect.sync(() => {
@@ -64,8 +77,11 @@ export const relayTo = (target: URL) =>
         );
       });
     }),
-    ({ server }) =>
+    // close() waits for open connections to end: the app's socket would hold it open.
+    ({ server, sockets }) =>
       Effect.callback<void>((resume) => {
         server.close(() => resume(Effect.void));
+        for (const socket of sockets) socket.destroy();
+        sockets.clear();
       }),
   ).pipe(Effect.map(({ relay }) => relay));

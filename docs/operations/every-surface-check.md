@@ -26,10 +26,10 @@ It has two sides, which may be one machine or two: the **server and phone side**
 On the server and phone side, with the debug build installed on a booted emulator (`emulator-5554`) and Metro on port 8081 (`npx expo start` in `apps/mobile`, with `adb reverse tcp:8081 tcp:8081`):
 
 ```sh
-J3_PORT=4517 pnpm --filter @j3-bots/server every-surface:host
+J3_EVERY_SURFACE_PORT=4517 pnpm --filter @j3-bots/server every-surface:host
 ```
 
-It starts a development server on loopback with the scripted agent, in a scratch home that it removes when stopped, waits for the engine (the first start downloads it), and prints a pairing code for the check. The emulator reaches the server at `10.0.2.2`, its alias for its host's loopback, so the phone's airplane mode cuts it off; Metro stays reachable through `adb reverse`, which airplane mode leaves alone.
+It starts a development server on loopback with the scripted agent, on `J3_EVERY_SURFACE_PORT` (a free port when unset; it refuses 3773, your own server's), in a scratch home that it removes when stopped. It waits for the engine (the first start downloads it), stops at once if the server exits, and prints a pairing code for the check. The emulator reaches the server at `10.0.2.2`, its alias for its host's loopback, so the phone's airplane mode cuts it off; Metro stays reachable through `adb reverse`, which airplane mode leaves alone.
 
 On the desktop side, with the server's port forwarded to the same port on loopback (`ssh -L 4517:127.0.0.1:4517 <server side>`, or nothing when both sides are one machine):
 
@@ -37,28 +37,28 @@ On the desktop side, with the server's port forwarded to the same port on loopba
 J3_EVERY_SURFACE_SERVER=http://127.0.0.1:4517 \
 J3_EVERY_SURFACE_CODE=<the code> \
 J3_EVERY_SURFACE_PHONE_SHELL="ssh <server side>" \
-  xvfb-run -a pnpm --filter @j3-bots/desktop every-surface
+  dbus-run-session -- xvfb-run -a pnpm --filter @j3-bots/desktop every-surface
 ```
 
-It builds the web client and the desktop app, then runs the check. The settings it reads:
+It builds the web client and the desktop app, then runs the check, in a D-Bus session of its own (`dbus-run-session`), so the app's notifications and tray never reach your desktop's. The settings it reads:
 
 | Variable | Default | What it is |
 | --- | --- | --- |
 | `J3_EVERY_SURFACE_SERVER` | none | The server as the desktop side reaches it |
 | `J3_EVERY_SURFACE_CODE` | none | The code the server side printed. It works once, within five minutes; the server side also prints the command that makes another |
 | `J3_EVERY_SURFACE_PHONE_SERVER` | `http://10.0.2.2:<port>` | The server as the phone reaches it |
-| `J3_EVERY_SURFACE_PHONE_SHELL` | `sh -c` | What runs one shell line where `adb` and `agent-device` reach the emulator, in a copy of this checkout |
+| `J3_EVERY_SURFACE_PHONE_SHELL` | `sh -c` | What runs one shell line where `adb` and `agent-device` reach the emulator |
 | `J3_EVERY_SURFACE_METRO` | `http://127.0.0.1:8081` | Metro, as the phone reaches it |
 | `J3_EVERY_SURFACE_CAPTURES` | `apps/desktop/every-surface-captures` | Where the captures go |
 
-A development build of the Android app shows React Native's warnings over the bottom of the screen, where the composer is; the check dismisses them before each tap or text it gives the phone.
+A development build of the Android app shows React Native's warnings over the bottom of the screen, where the composer is; the check closes them before each tap or text it gives the phone. agent-device's `react-native dismiss-overlay` does not recognise that collapsed bar, so the check finds it in the snapshot and taps its close button.
 
-The check clears the Android app's data before it pairs it, and the desktop app runs on a scratch profile, with Chromium kept off the system's keyring (`--password-store=basic`), so neither touches a pairing of yours. Run the desktop side in a private D-Bus session (`dbus-run-session --`) to keep its notifications and tray off your desktop's.
+The check clears the Android app's data before it pairs it, and the desktop app runs on a scratch profile, with Chromium kept off the system's keyring (`--password-store=basic`), so neither touches a pairing of yours.
 
 ## What it needs
 
 - On the server and phone side: Linux with this checkout installed, the network for the engine's first download, an Android emulator (x86_64, Android 11 or later for airplane mode through `cmd connectivity`), the app's debug build (`expo prebuild`, then `./gradlew assembleDebug` in `apps/mobile/android`), `adb` and `agent-device` on `PATH`. The emulator takes about 5 GB; stop Gradle's daemons after a build (`./gradlew --stop`) before it boots.
-- On the desktop side: Linux with this checkout installed, a display (`xvfb-run`), and `xdg-open`.
+- On the desktop side: Linux with this checkout installed, a display (`xvfb-run`), `dbus-run-session` and `xdg-open`.
 
 ## What it does not prove
 

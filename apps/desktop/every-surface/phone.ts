@@ -157,7 +157,6 @@ export const makePhone = (shell: readonly [string, ...Array<string>], metro: str
     );
 
   return {
-    run,
     /**
      * The app as new: its data cleared, then opened on Metro's bundle, past the
      * development menu, on the pairing screen. Metro is reached on the phone's
@@ -204,8 +203,6 @@ export const makePhone = (shell: readonly [string, ...Array<string>], metro: str
       ),
     waitText: (text: string, timeoutMs = 30_000) =>
       run([device("wait", "text", text, String(timeoutMs))]),
-    waitAbsent: (selector: string, timeoutMs = 30_000) =>
-      run([device("wait", "absent", selector, String(timeoutMs))]),
     /** Each of `texts` as the phone shows it, by text nodes that show exactly it. */
     shown: (texts: ReadonlyArray<string>) =>
       snapshot.pipe(
@@ -224,19 +221,19 @@ export const makePhone = (shell: readonly [string, ...Array<string>], metro: str
       run([adb("shell", "cmd", "connectivity", "airplane-mode", on ? "enable" : "disable")]),
     /** A screenshot of the phone, written to `file` here. */
     screenshot: Effect.fn("Phone.screenshot")(function* (file: string) {
-      const shot = "/tmp/j3-every-surface-phone.png";
+      // A file of its own on the phone's side, removed whether or not the screenshot worked.
       const encoded = yield* run([
-        `${device("screenshot", shot)} > /dev/null`,
-        words(["base64", "-w0", shot]),
+        [
+          "shot=$(mktemp --suffix=.png) || exit 1",
+          `${device("screenshot")} "$shot" > /dev/null && base64 -w0 "$shot"`,
+          'status=$?; rm -f "$shot"; exit $status',
+        ].join("; "),
       ]);
       const bytes = Base64.decode(encoded.trim());
       if (Result.isFailure(bytes))
         return yield* Effect.die("The phone's screenshot did not decode");
       yield* (yield* FileSystem.FileSystem).writeFile(file, bytes.success);
     }),
-    /** Whether the phone shows `label` now. */
-    shows: (label: string) =>
-      showsAny([label]).pipe(Effect.map((found) => Option.isSome(Option.fromNullishOr(found[0])))),
   };
 };
 
