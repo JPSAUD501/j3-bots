@@ -3,8 +3,9 @@
  * The icons that native builds read as files, which `scripts/generate.ts`
  * writes under `generated/icons`: electron-builder's for the desktop
  * packages (a set of PNGs for Linux, an icon file for Windows, a plate for
- * macOS), and Expo's for the phone's launcher icon and splash screen. The
- * web app draws its own as it builds, with the same `renderAppIcon`.
+ * macOS), and Expo's for the phone's launcher icon, splash screen and
+ * notification icon. The web app draws its own as it builds, with the same
+ * `renderAppIcon`.
  */
 import { hexColor } from "../color.ts";
 import { colors } from "../tokens.ts";
@@ -23,6 +24,14 @@ const SQUARE_WIDTH = 0.7;
  * 192 dp circle when the image has no background of its own.
  */
 const SPLASH_WIDTH = 0.6;
+
+/**
+ * Android's status bar draws a notification's icon in a 24 dp square, from
+ * its alpha alone, with the art in the 20 dp inside it.
+ */
+const NOTIFICATION_WIDTH = 20 / 24;
+/** The notification icon's side: 24 dp at Android's densest screens, which Expo scales down from. */
+const NOTIFICATION_SIZE = 96;
 
 /** The side of an image a build scales down from. */
 const SOURCE = 1024;
@@ -94,6 +103,19 @@ export const nativeIconFiles: ReadonlyArray<
       plate: { kind: "none" },
       art: "ensemble",
       width: ADAPTIVE_WIDTH,
+      silhouette: true,
+    }),
+  ],
+  // The lead alone, as the desktop's smallest icons show it: three shapes at
+  // a status bar's size read as noise.
+  [
+    "notification.png",
+    png({
+      size: NOTIFICATION_SIZE,
+      theme: "light",
+      plate: { kind: "none" },
+      art: "lead",
+      width: NOTIFICATION_WIDTH,
       silhouette: true,
     }),
   ],

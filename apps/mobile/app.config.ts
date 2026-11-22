@@ -191,6 +191,12 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
           defaultChannel: "message",
           // Apple's development push environment for development builds.
           mode: variantName === "development" ? "development" : "production",
+          // Android draws a notification's icon from its alpha alone: the
+          // launcher icon, which is opaque, would show as a white square.
+          icon: icon("notification.png"),
+          // What Android tints the icon with in the notification itself. It
+          // takes one color, so the light theme's, as `primaryColor`.
+          color: accent.light,
         },
       ],
       "./plugins/accentColor.js",
