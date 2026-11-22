@@ -229,6 +229,8 @@ export class TestEngineControl extends Context.Service<
      * its Stop has not ended yet still run there.
      */
     readonly rejectNextRetirements: (count: number) => Effect.Effect<void>;
+    /** Every session the engine opened, retired ones included, oldest first. */
+    readonly openedSessions: Effect.Effect<ReadonlyArray<SessionId>>;
     /** The model a session runs, as it was opened or last configured. */
     readonly sessionModel: (sessionId: SessionId) => Effect.Effect<ModelChoice>;
     /** The permission mode a session runs, as it was opened or last configured. */
@@ -1699,6 +1701,8 @@ const make = Effect.gen(function* () {
       Effect.sync(() => {
         rejectingRetirements = count;
       }),
+
+    openedSessions: Effect.sync(() => [...sessions.keys()]),
 
     sessionModel: (sessionId) =>
       Effect.suspend(() => {

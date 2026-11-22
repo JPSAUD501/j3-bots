@@ -487,16 +487,20 @@ it.effect(
         commandId: command(),
         draft: { name: "Ana", job: "", permissionMode: "full-access" },
       });
+      const opened = yield* control.openedSessions;
       yield* bots.update({
         commandId: command(),
         botId: bot.id,
         changes: { permissionMode: "supervised" },
       });
 
-      // Opened again under its key, the engine answers with that session.
+      // Opened again under its key, the engine answers with that session,
+      // and opens no second one.
       yield* TestClock.adjust("1 minute");
       yield* (yield* Rotations).rotateDue;
       const session = yield* engineSession(bot.id);
+      assert.deepStrictEqual(opened, [session]);
+      assert.deepStrictEqual(yield* control.openedSessions, [session]);
       assert.strictEqual(yield* control.sessionPermissionMode(session), "supervised");
     }).pipe(Effect.provide(TestDomain.layer)),
 );
