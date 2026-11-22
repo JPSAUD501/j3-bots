@@ -8,6 +8,7 @@ import {
 import { connectCommand } from "@j3-bots/client-runtime/presentation";
 import { engineProblem } from "@j3-bots/client-runtime/wording";
 import type { EngineStatus } from "@j3-bots/contracts";
+import { layout } from "@j3-bots/design-tokens";
 import { useFocusEffect, useIsFocused } from "@react-navigation/native";
 import { useCallback } from "react";
 import { ScrollView, Text, View } from "react-native";
@@ -23,7 +24,8 @@ import { UsageSection } from "./Usage.tsx";
 /**
  * Everything that is not about one bot. Coming to it reads the settings and
  * the devices again, for what another device changed, and the turns bots
- * spent are read while it is in front.
+ * spent are read while it is in front. On a wide screen it keeps to the
+ * conversation's text column.
  */
 export function SettingsScreen() {
   const client = useJ3Client();
@@ -43,7 +45,12 @@ export function SettingsScreen() {
     <ScrollView
       className="flex-1 bg-background"
       keyboardShouldPersistTaps="handled"
-      contentContainerStyle={{ paddingBottom: insets.bottom + 16 }}
+      contentContainerStyle={{
+        width: "100%",
+        maxWidth: layout.textColumn,
+        alignSelf: "center",
+        paddingBottom: insets.bottom + 16,
+      }}
     >
       <EngineSection engine={engine} stale={engineStale} />
       <UsageSection
