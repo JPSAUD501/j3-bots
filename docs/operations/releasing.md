@@ -1,8 +1,8 @@
 # Releasing J3 Bots
 
-A release is a version tag, with one version for the server, the web client it serves and the desktop app. Pushing the tag builds the desktop packages on Linux, macOS and Windows and the server's archives on x64 and arm64 Linux, and uploads them to a draft GitHub release. A maintainer checks the draft and publishes it. Installed apps are offered a release, and `install.sh` finds it, only once it is published. An AppImage and a Windows install then download it in the background and offer "Restart to update" in Settings → This device; a deb and a Mac build say it is out and link to it ([Clients: desktop](../architecture/clients.md#desktop)).
+A release is a version tag, with one version for the server, the web client it serves, the desktop app and the Android app. Pushing the tag builds the desktop packages on Linux, macOS and Windows, the server's archives on x64 and arm64 Linux and a signed Android APK, and uploads them to a draft GitHub release. A maintainer checks the draft and publishes it. Installed apps are offered a release, and `install.sh` finds it, only once it is published. An AppImage and a Windows install then download it in the background and offer "Restart to update" in Settings → This device; a deb and a Mac build say it is out and link to it ([Clients: desktop](../architecture/clients.md#desktop)).
 
-The builds are unsigned for now. Signing is future work: see [Signing](#signing) below.
+The desktop builds are unsigned for now; the Android APK is signed with the project's own key. See [Signing](#signing) below.
 
 ## What a release contains
 
@@ -26,6 +26,14 @@ The desktop app:
 
 The feed files are electron-updater's: the version, each file's name, size and SHA-512. Installed apps read them from the latest published release. A pre-release has the same three names (**Verified** on Linux: a build for GitHub of `0.1.0-beta.1` wrote `latest-linux.yml`), so what keeps it from apps on a release version is only its pre-release mark. The block maps let an app download only what changed; the AppImage carries its own. The macOS and Windows files are named as the build configuration asks (**Assumed**: not yet built). The AppImage's name carries no version so that electron-updater replaces it in place: when the file's name has a version, it deletes that file and installs the new version under the release's name (**Read** in electron-updater 6.8.9, `AppImageUpdater.js:72-115`).
 
+The Android app:
+
+| File | What it is |
+| --- | --- |
+| `j3-bots-<version>-android-arm64.apk` | The app's production variant (`APP_VARIANT=production`: "J3 Bots", `dev.j3bots.mobile`), with its JavaScript bundled, for arm64 phones, signed with the key in the repository's secrets ([Android signing](#android-signing)) |
+
+The APK carries the release's version as its version name, and the workflow's run number as its version code: Android installs an APK over the app only when its version code is not lower than the installed one's, and the run number grows with every run of the workflow. It is built without an Expo or a Firebase project, so it cannot turn push notifications on. It holds no development client: the generated project compiles `expo-dev-launcher` and `expo-dev-menu` for a release build from their stubs, which start no launcher, open no menu and never reach Metro (**Read** in `expo-dev-launcher` 58.0.21 and `expo-dev-menu` 58.0.13, `android/build.gradle`: their `release` source sets are `src/disableInRelease`, and the launcher's and the menu's own dependencies are `debugImplementation` only). The release build also runs R8, which the generated project turns on (`android.enableMinifyInReleaseBuilds`). `SHA256SUMS` does not list it: it covers what `install.sh` checks, and Android checks the APK's signature itself. [Clients: installing the Android app](../architecture/clients.md#installing-the-android-app) describes the install.
+
 ## Cutting a release
 
 1. Pick the version. It is [semver](https://semver.org): `1.4.0` for a release, `1.4.0-beta.1` for a pre-release. The tag is the version with a `v`: `v1.4.0`.
@@ -37,7 +45,7 @@ The feed files are electron-updater's: the version, each file's name, size and S
    git push origin v1.4.0
    ```
 
-4. Watch the **Release** workflow in the repository's Actions tab. Its first job creates a draft release for the tag, saying the builds are unsigned, and marks it a pre-release when the version has a suffix. Then one job per desktop platform builds the web client and the app and packages it with the tag's version, and one job per Linux architecture builds the server's archive with the tag's version and runs the same smoke as CI on it: the archive with no Node on `PATH`, and `install.sh` from a local mirror. Another job writes `SHA256SUMS`. A last job checks that the release is still a draft and uploads every package, feed file, archive, `SHA256SUMS` and `install.sh` to it. The platform jobs take about 10 to 20 minutes (**Assumed**: not yet run on GitHub's runners).
+4. Watch the **Release** workflow in the repository's Actions tab. Its first job creates a draft release for the tag, saying the builds are unsigned, and marks it a pre-release when the version has a suffix. Then one job per desktop platform builds the web client and the app and packages it with the tag's version, one job per Linux architecture builds the server's archive with the tag's version and runs the same smoke as CI on it: the archive with no Node on `PATH`, and `install.sh` from a local mirror, and one job builds and signs the APK. It fails at once, before it checks anything out, when any of the [four signing secrets](#android-signing) is missing. Another job writes `SHA256SUMS`. A last job checks that the release is still a draft and uploads every package, feed file, archive, the APK, `SHA256SUMS` and `install.sh` to it. The platform jobs take about 10 to 20 minutes (**Assumed**: not yet run on GitHub's runners).
 5. Open the draft under Releases. Check that it has every file in the tables above, then add what changed to its description.
 6. Publish it. Leave a pre-release marked as one. Apps on a release version read GitHub's latest release, which skips pre-releases, and look in it for `latest-linux.yml`, `latest-mac.yml` or `latest.yml`; a pre-release published as a release has them too, so every installed app would take it as an update (**Read** in electron-updater 6.8.9, `providers/GitHubProvider.js`, `getLatestTagName`, and `AppUpdater.js`, which turns pre-releases on only for an app that runs one). The workflow refuses to upload to a draft whose pre-release mark disagrees with its tag, as one drafted by hand before the tag was pushed can.
 
@@ -51,17 +59,44 @@ Installed apps check at start and every six hours, so most see a release within 
 
 ## What the workflow may do
 
-`.github/workflows/release.yml` runs only when a tag matching `v*` is pushed: never on a pull request, so code from a fork never runs in it. It is the only workflow with `contents: write`, and only two of its jobs have it, neither of which checks out or runs code from the repository: the one that creates the draft, and the one that uploads to it, which takes the files the other jobs built as artifacts and refuses to upload to a release that is no longer a draft. The jobs that install dependencies and build have `contents: read`, as every other workflow does. Each job that builds hands its files over as an artifact named `release-<something>` and is in the upload job's `needs`, which otherwise starts without waiting for it and leaves its files out: the desktop jobs, the server jobs, and the one that writes `SHA256SUMS`, which reads the archives and runs none of them. A job added later is added there too. The upload job refuses two files with the same name. The workflow uses the run's own `GITHUB_TOKEN` and no other secret. Its actions are pinned by commit, as in every workflow.
+`.github/workflows/release.yml` runs only when a tag matching `v*` is pushed: never on a pull request, so code from a fork never runs in it. It is the only workflow with `contents: write`, and only two of its jobs have it, neither of which checks out or runs code from the repository: the one that creates the draft, and the one that uploads to it, which takes the files the other jobs built as artifacts and refuses to upload to a release that is no longer a draft. The jobs that install dependencies and build have `contents: read`, as every other workflow does. Each job that builds hands its files over as an artifact named `release-<something>` and is in the upload job's `needs`, which otherwise starts without waiting for it and leaves its files out: the desktop jobs, the server jobs, and the one that writes `SHA256SUMS`, which reads the archives and runs none of them. A job added later is added there too. The upload job refuses two files with the same name. Every job but one uses the run's own `GITHUB_TOKEN` and no other secret. The Android job alone reads the four `ANDROID_*` secrets, the key that signs the APK. A pushed `v*` tag is the only thing that runs it, so only code a maintainer tagged reaches the key. The job writes the keystore to the runner's temporary folder, readable by its user only, right before the Gradle build that signs with it, and deletes it right after, whether the build passed or not. No step prints a secret: the job prints only the certificate's DN and SHA-256 digest, which are public. Its actions are pinned by commit, as in every workflow.
+
+The Android job keeps two caches: Gradle's, and the SDK packages Gradle downloads because the runner image lacks them, such as the NDK, kept as one archive. GitHub lets a run read only the caches of its own ref and of the default branch, and the release workflow runs only on tags, so a tag's caches serve a retry of the same release, not the next one: each new release downloads them again.
 
 ## Signing
 
-Nothing is signed yet, and the workflow holds no signing secret.
+The desktop builds are unsigned; only the Android APK is signed.
 
 - **macOS** needs an Apple Developer ID certificate and notarization. Without them, Gatekeeper blocks the first open (right-click → Open, or System Settings → Privacy & Security, lets the operator through), and Squirrel.Mac, which installs updates on macOS, needs a signed app (**Assumed**, from Electron's documentation), so the app does not install updates there: it says when one is out. The build is signed ad hoc only (`identity: "-"`), which Apple Silicon needs to run it at all (**Assumed**: not yet tried on a Mac).
 - **Windows** needs a code signing certificate (an OV certificate, or Azure Trusted Signing, which T3 Code uses). Without one, SmartScreen warns before the first install, and electron-updater cannot check that an update comes from the same publisher (see [Security: desktop updates](../architecture/security.md#desktop-updates)).
 - **Linux** packages are not signed by convention; the feed's checksums are what electron-updater checks.
 
 Adding signing means secrets in the release workflow, used only by the jobs that build, and `publisherName` in the Windows build so that electron-updater verifies an update's signature before installing it.
+
+### Android signing
+
+Android installs an update only when it is signed with the same key as the installed app. The release workflow signs with one key, kept in four repository secrets:
+
+| Secret | What it holds |
+| --- | --- |
+| `ANDROID_KEYSTORE_BASE64` | The keystore file, in base64 |
+| `ANDROID_KEYSTORE_PASSWORD` | The keystore's password |
+| `ANDROID_KEY_ALIAS` | The key's alias in the keystore |
+| `ANDROID_KEY_PASSWORD` | The key's password. A PKCS12 keystore, which `keytool` makes by default, has one password for both, so this is the keystore's password again |
+
+The Android Gradle Plugin signs with the key the build is given as `android.injected.signing.*` properties, in place of the generated project's own release signing config, which is the debug key (**Verified**: an APK built that way carried the given certificate), so the repository holds no signing config and no key.
+
+A maintainer creates the key once, on their own machine, outside any checkout:
+
+```sh
+keytool -genkeypair -v -storetype PKCS12 -keystore j3-bots-release.jks \
+  -alias j3-bots -keyalg RSA -keysize 4096 -validity 36500 -dname "CN=J3 Bots"
+base64 -w 0 j3-bots-release.jks > j3-bots-release.jks.base64   # macOS: base64 -i j3-bots-release.jks -o j3-bots-release.jks.base64
+```
+
+`keytool` asks for the password. The key is valid for 100 years, since an app's key cannot be replaced by a newer one. Then, in the repository's settings (Secrets and variables → Actions), or with `gh secret set <name>`, which reads the value without echoing it, set the four secrets: the `.base64` file's content, the password twice and the alias, `j3-bots`. Delete the `.base64` file afterwards.
+
+**Keep the keystore and its password backed up outside the repository**, in a password manager or an encrypted backup. Losing either means no release can be installed over an installed app: every phone has to uninstall the app, which deletes its pairing, drafts and unsent messages, before it installs the next one. A leaked key lets anyone sign an APK a phone takes as an update. `.gitignore` keeps `*.jks` and `*.keystore` files out of commits.
 
 ## Trying an install locally
 
@@ -121,3 +156,20 @@ pnpm --filter @j3-bots/desktop package
 builds the web client and the app, then the packages for the platform it runs on, into `apps/desktop/release/`, without publishing anything. A Linux AppImage needs no FUSE 2: the build uses the static AppImage runtime, as T3 Code does. Each package is 100 to 130 MB.
 
 To try an update without publishing, build two versions against a feed on loopback. Copy `apps/desktop/electron-builder.yml`, change its `publish` to `{ provider: generic, url: http://127.0.0.1:<port>/ }`, and build with `--config <that copy> -c.extraMetadata.version=<version>`. Serve the newer build's `.AppImage` and `.yml` from that port with any static HTTP server, and start the older AppImage. A version with a suffix reads a feed named after it: `0.0.2-test` writes `test-linux.yml`.
+
+## Building the APK locally
+
+The same build as the release job, with a key of your own (any keystore will do for a phone that has no release installed) and the ABI of the device: `arm64-v8a` for a phone, `x86_64` for an emulator.
+
+```sh
+cd apps/mobile
+APP_VARIANT=production pnpm exec expo prebuild --platform android --clean --no-install
+cd android
+APP_VARIANT=production ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a \
+  -Pandroid.injected.signing.store.file=<keystore> \
+  -Pandroid.injected.signing.store.password=<password> \
+  -Pandroid.injected.signing.key.alias=<alias> \
+  -Pandroid.injected.signing.key.password=<password>
+```
+
+The APK is `app/build/outputs/apk/release/app-release.apk`. `APP_VARIANT` is needed for the Gradle build too: it bundles the app's config with the JavaScript. Run `pnpm android` afterwards to go back to the development variant, whose prebuild replaces the native project.

@@ -4,17 +4,20 @@ name: Release
 # Builds a release when a version tag is pushed: a draft GitHub release for
 # the tag; the desktop app's packages with electron-updater's feed files; the
 # server's archives for linux-x64 and linux-arm64, with SHA256SUMS and
-# scripts/install.sh; and then their upload to the draft. A maintainer reads
-# the draft and publishes it: installed apps are offered, and install.sh
-# finds, only a published release. See docs/operations/releasing.md.
+# scripts/install.sh; the Android app's signed APK; and then their upload to
+# the draft. A maintainer reads the draft and publishes it: installed apps are
+# offered, and install.sh finds, only a published release. See
+# docs/operations/releasing.md.
 #
 # Only a pushed `v*` tag runs it, never a pull request, so no code from a fork
-# runs here. It uses the run's own GITHUB_TOKEN and no other secret: the
-# builds are unsigned. Only the two jobs that run no code from the repository
-# may write: `draft` creates the release and `publish` uploads to it. The jobs
-# that build read, and hand what they built to `publish` as `release-*`
-# artifacts; each such job is in `publish`'s `needs`, which a job added later
-# joins too, or its files are left out.
+# runs here. Every job but `android` uses the run's own GITHUB_TOKEN and no
+# other secret: the desktop builds are unsigned. `android` alone reads the
+# four ANDROID_* secrets, the key that signs the APK, which only a tag a
+# maintainer pushed can reach. Only the two jobs that run no code from the
+# repository may write: `draft` creates the release and `publish` uploads to
+# it. The jobs that build read, and hand what they built to `publish` as
+# `release-*` artifacts; each such job is in `publish`'s `needs`, which a job
+# added later joins too, or its files are left out.
 on:
   push:
     tags: ["v*"]
@@ -74,7 +77,7 @@ jobs:
           fi
           gh release create "$GITHUB_REF_NAME" --draft "${prerelease[@]}" --verify-tag \
             --title "J3 Bots $VERSION" \
-            --notes "Unsigned builds. macOS and Windows warn before opening an unsigned app. A Mac build and the deb say when a newer version is out; the AppImage and the Windows install update themselves. Linux packages need no signature. The server installs on x64 and arm64 Linux with systemd: \`curl -fsSL https://github.com/$GH_REPO/releases/download/$GITHUB_REF_NAME/install.sh | sh -s -- --version $VERSION\`. SHA256SUMS holds the digest of each server archive and of install.sh."
+            --notes "The desktop builds are unsigned. macOS and Windows warn before opening an unsigned app. A Mac build and the deb say when a newer version is out; the AppImage and the Windows install update themselves. Linux packages need no signature. The server installs on x64 and arm64 Linux with systemd: \`curl -fsSL https://github.com/$GH_REPO/releases/download/$GITHUB_REF_NAME/install.sh | sh -s -- --version $VERSION\`. SHA256SUMS holds the digest of each server archive and of install.sh. The Android app is j3-bots-$VERSION-android-arm64.apk, signed: install it on the phone and allow installs from the app that opens it."
 
   desktop:
     name: Desktop (${{ matrix.name }})
@@ -207,6 +210,161 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # The Android app's release build, signed with the key in the repository's
+  # secrets: the production variant, with its JavaScript bundled and no
+  # development client, for arm64 phones. It is built without an Expo or a
+  # Firebase project, so it cannot turn push notifications on.
+  android:
+    name: Android
+    needs: draft
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      APP_VARIANT: production
+      # Android updates an installed app only to a version code that is not
+      # lower; the run number grows with each run of this workflow.
+      ANDROID_VERSION_CODE: ${{ github.run_number }}
+    steps:
+      - name: Check the signing secrets
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          missing=()
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            [[ -n "${!name}" ]] || missing+=("$name")
+          done
+          if ((${#missing[@]} > 0)); then
+            echo "::error::The repository secrets ${missing[*]} are not set, so the APK cannot be signed. docs/operations/releasing.md says how to create them."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
+        with:
+          node-version-file: package.json
+          run-install: true
+
+      # Expo takes the app's version from its package.json, which only this
+      # run's copy changes, as the server job does.
+      - name: Version from the tag
+        working-directory: apps/mobile
+        env:
+          VERSION: ${{ needs.draft.outputs.version }}
+        run: npm pkg set version="$VERSION"
+
+      - name: Generate the native project
+        working-directory: apps/mobile
+        run: vp exec -- expo prebuild --platform android --no-install
+
+      # Gradle downloads the SDK packages the build needs and the runner image
+      # lacks (the NDK, the platform, CMake: React Native and the Android Gradle
+      # Plugin name their versions) into ANDROID_HOME. What it added is kept as
+      # one archive. A cache saved by a tag's run is read only by runs of the
+      # same tag, so these save a retried release, not the next one.
+      - name: Restore the Android SDK packages
+        id: sdk-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/android-sdk-packages.tar
+          key: android-sdk-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Unpack the Android SDK packages
+        if: steps.sdk-cache.outputs.cache-hit == 'true'
+        run: tar -xf "$RUNNER_TEMP/android-sdk-packages.tar" -C "$ANDROID_HOME"
+
+      - name: List the SDK packages before the build
+        run: (cd "$ANDROID_HOME" && shopt -s nullglob && printf '%s\n' build-tools/* cmake/* ndk/* platforms/* | sort) > "$RUNNER_TEMP/sdk-before"
+
+      - name: Restore Gradle's caches
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      # The Android Gradle Plugin signs with the injected key in place of the
+      # generated project's release signing config, so nothing about signing
+      # is committed. The key is on disk only for this step and the next.
+      - name: Write the signing key
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          umask 077
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
+
+      - name: Build and sign
+        working-directory: apps/mobile/android
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          ./gradlew assembleRelease --no-daemon \
+            -PreactNativeArchitectures=arm64-v8a \
+            -Pandroid.injected.signing.store.file="$RUNNER_TEMP/release.jks" \
+            -Pandroid.injected.signing.store.password="$ANDROID_KEYSTORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$ANDROID_KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$ANDROID_KEY_PASSWORD"
+
+      - name: Delete the signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.jks"
+
+      # The certificate's digest is public: it is what a phone compares an
+      # update against, and what a maintainer compares with the kept key.
+      - name: Check the signature
+        env:
+          VERSION: ${{ needs.draft.outputs.version }}
+        run: |
+          mkdir -p dist/android
+          apk="dist/android/j3-bots-$VERSION-android-arm64.apk"
+          cp apps/mobile/android/app/build/outputs/apk/release/app-release.apk "$apk"
+          apksigner="$(find "$ANDROID_HOME/build-tools" -mindepth 2 -maxdepth 2 -name apksigner | sort -V | tail -1)"
+          "$apksigner" verify --print-certs "$apk" | grep -E 'certificate (DN|SHA-256 digest)'
+
+      - name: Hand the APK to the publish job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-android
+          path: dist/android/*.apk
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Pack the SDK packages Gradle added
+        id: sdk-added
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: |
+          (cd "$ANDROID_HOME" && shopt -s nullglob && printf '%s\n' build-tools/* cmake/* ndk/* platforms/* | sort) > "$RUNNER_TEMP/sdk-after"
+          comm -13 "$RUNNER_TEMP/sdk-before" "$RUNNER_TEMP/sdk-after" > "$RUNNER_TEMP/sdk-added"
+          if [[ -s "$RUNNER_TEMP/sdk-added" ]]; then
+            echo "Gradle added:"
+            cat "$RUNNER_TEMP/sdk-added"
+            tar -cf "$RUNNER_TEMP/android-sdk-packages.tar" -C "$ANDROID_HOME" -T "$RUNNER_TEMP/sdk-added"
+            echo "save=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Save the SDK packages
+        if: steps.sdk-added.outputs.save == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/android-sdk-packages.tar
+          key: ${{ steps.sdk-cache.outputs.cache-primary-key }}
+
   # SHA256SUMS of both archives and install.sh, which install.sh checks a
   # download against. It reads files and runs none of them.
   checksums:
@@ -254,7 +412,7 @@ jobs:
 
   publish:
     name: Upload to the draft
-    needs: [draft, desktop, server, checksums]
+    needs: [draft, desktop, server, android, checksums]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

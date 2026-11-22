@@ -10,10 +10,3 @@ expo-env.d.ts
 
 # Written by Uniwind's Metro plugin; src/uniwind.d.ts references its types.
 uniwind-types.d.ts
-
-# Signing material never belongs in the repository.
-*.jks
-*.keystore
-*.p8
-*.p12
-*.mobileprovision

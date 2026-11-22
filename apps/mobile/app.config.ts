@@ -9,8 +9,9 @@ process.env.EXPO_NO_TYPESCRIPT_SETUP = "1";
 
 /**
  * Each variant installs beside the others, with its own name, link scheme and
- * identifiers. The identifiers are development placeholders, until the ids of
- * a published build are chosen.
+ * identifiers. Production is the one a release publishes: an Android phone
+ * takes a new release as an update only while its application id and its
+ * signing key stay the same (docs/operations/releasing.md).
  */
 const VARIANTS = {
   development: { name: "J3 Bots Dev", scheme: "j3bots-dev", id: "dev.j3bots.mobile.dev" },
@@ -63,6 +64,19 @@ const fromEnvironment = (value: string | undefined) => (value === "" ? undefined
 const pushProjectId = fromEnvironment(process.env.EAS_PROJECT_ID);
 const googleServicesFile = fromEnvironment(process.env.GOOGLE_SERVICES_JSON);
 
+/**
+ * Android installs an APK over the app only when its version code is not
+ * lower than the installed one's. The release workflow gives each release a
+ * higher one; any other build is 1.
+ */
+const versionCodeOf = (value: string | undefined): number => {
+  if (value === undefined) return 1;
+  const code = Number(value);
+  if (!/^[1-9][0-9]*$/.test(value) || code > 2_100_000_000)
+    throw new Error("ANDROID_VERSION_CODE must be a whole number from 1 to 2100000000.");
+  return code;
+};
+
 export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
   const variantName = variantOf(process.env.APP_VARIANT);
   const variant = VARIANTS[variantName];
@@ -72,7 +86,8 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
     name: variant.name,
     slug: "j3-bots",
     scheme: variant.scheme,
-    version: "0.0.0",
+    // No version here: Expo takes package.json's, which the release workflow
+    // sets to the tag's.
     orientation: "default",
     userInterfaceStyle: "automatic",
     // The light theme's; plugins/accentColor.js adds the dark one.
@@ -97,6 +112,7 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
     },
     android: {
       package: variant.id,
+      versionCode: versionCodeOf(process.env.ANDROID_VERSION_CODE),
       adaptiveIcon: {
         foregroundImage: icon("adaptive-foreground.png"),
         monochromeImage: icon("adaptive-monochrome.png"),
