@@ -530,6 +530,44 @@ it.layer(NodeServices.layer)("doctor", (it) => {
     }),
   );
 
+  it.effect("checks no harness until the engine is ready, and gives the Engine line's fix", () =>
+    Effect.gen(function* () {
+      const withEngine = (state: object, providers: ReadonlyArray<object> = []) =>
+        diagnoseIn({
+          server: Option.some(running({ engine: { state, pinnedVersion: "0.1.11", providers } })),
+        });
+
+      // Right after an update: the engine has not answered yet, and the server reports no provider.
+      const starting = yield* withEngine({ _tag: "starting" });
+      for (const name of ["Claude Code", "Codex"]) {
+        const harness = named(starting.checks, name);
+        assertFlagged(harness, "warning", "cannot be checked until the engine is ready");
+        assert.strictEqual(Option.getOrNull(harness.fix), "Run this again in a minute.");
+      }
+      assert.isFalse(starting.checks.some((check) => check.status === "problem"));
+
+      // Not answering: the Engine line is the problem, and its fix is the one to follow.
+      const down = yield* withEngine({ _tag: "unavailable", reason: "down" });
+      const engineFix = named(down.checks, "Engine").fix;
+      assertFlagged(named(down.checks, "Engine"), "problem");
+      for (const name of ["Claude Code", "Codex"]) {
+        const harness = named(down.checks, name);
+        assertFlagged(harness, "warning", "cannot be checked until the engine is ready");
+        assert.deepStrictEqual(harness.fix, engineFix);
+      }
+
+      // Ready, with no provider for a harness: the server itself lacks one.
+      const ready = yield* withEngine({ _tag: "ready" }, [provider("claude-code", "ready")]);
+      assert.strictEqual(named(ready.checks, "Claude Code").status, "ok");
+      const codex = named(ready.checks, "Codex");
+      assertFlagged(codex, "warning", "the server has no Codex provider set up");
+      assert.include(
+        Option.getOrElse(codex.fix, () => ""),
+        "Update the server",
+      );
+    }),
+  );
+
   it.effect("warns while a scripted agent answers instead of a model", () =>
     Effect.gen(function* () {
       const { checks } = yield* diagnoseIn({
