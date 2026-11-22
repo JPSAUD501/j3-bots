@@ -61,6 +61,7 @@ import {
   EngineUnavailable,
   ModelUnavailable,
   OpenRejected,
+  PermissionModeRefused,
   RequestClosed,
   RetireRejected,
   SessionBusy,
@@ -206,15 +207,24 @@ const decodeProjects = HttpClientResponse.schemaBodyJson(ProjectSnapshot);
 const isEngineDown = Schema.is(Schema.Union([EngineUnavailable, EngineIncompatible]));
 
 /**
- * The engine errors whose reply proves a dispatch was refused, applying
- * nothing: a rejected receipt found by a resend, and the two mode limits,
- * which the engine checks after the receipt lookup and records no receipt for.
- * The dispatch mode limit binds only the engine's agent and MCP callers, never
- * `/ws`; it is listed for the day it does. **Read** at `db51b67`,
- * `Orchestrator.ts`, `dispatchWithReceiptEffect`.
+ * The engine error whose reply proves a command was refused, applying
+ * nothing, and that the engine keeps the refusal for its key: a rejected
+ * receipt found by a resend. **Read** at `59651c1`, `Orchestrator.ts`,
+ * `dispatchWithReceiptEffect`, `replayCommandReceipt`.
  */
-const REJECTIONS: ReadonlySet<string> = new Set([
-  "OrchestratorCommandPreviouslyRejectedError",
+const PREVIOUSLY_REJECTED = "OrchestratorCommandPreviouslyRejectedError";
+/**
+ * The engine errors whose reply proves a command was refused for the mode it
+ * would run in, applying nothing, and that the engine kept no receipt for:
+ * "Refusals depend on modes the user can change; a recorded rejection would
+ * block the retry". The runtime-mode ceiling of an administrator's policy
+ * refuses a thread created in, or switched to, a mode above it, and a turn
+ * that would run in one. The dispatch mode limit binds only the engine's
+ * agent and MCP callers, never `/ws`; it is listed for the day it does.
+ * **Read** at `59651c1`, `Orchestrator.ts`, `dispatchWithReceiptEffect`,
+ * `refuseAboveRuntimeModeCeiling`, and `DispatchModeLimit.ts`.
+ */
+const MODE_LIMITS: ReadonlySet<string> = new Set([
   "OrchestratorThreadAboveModeLimitError",
   "OrchestratorRuntimeModeAboveCeilingError",
 ]);
@@ -668,8 +678,10 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
    * error as any other. A resend answers `{sequence}` if the key was applied,
    * and `OrchestratorCommandPreviouslyRejectedError` if it was refused.
    * **Read** at `db51b67`, `dispatchWithReceiptEffect`, `replayCommandReceipt`.
-   * A reply lost on the way is `EngineIndeterminate`, resolved by sending the
-   * same key again.
+   * A refusal for the mode the command would run in (`MODE_LIMITS`) leaves no
+   * receipt and is answered as it is, so it is `mode-refused` at once. A reply
+   * lost on the way is `EngineIndeterminate`, resolved by sending the same key
+   * again.
    */
   const sendByReceipt = Effect.fnUntraced(function* (input: OrchestrationV2Command) {
     const send = command(input).pipe(
@@ -686,7 +698,8 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       // that nothing was applied: the engine may have taken the first one.
       const refusal = yield* attempt === 0 ? send : afterSending(send);
       if (Option.isNone(refusal)) return "applied" as const;
-      if (REJECTIONS.has(refusal.value)) return "rejected" as const;
+      if (refusal.value === PREVIOUSLY_REJECTED) return "rejected" as const;
+      if (MODE_LIMITS.has(refusal.value)) return "mode-refused" as const;
       if (refusal.value === CLAIM_ERROR) {
         return yield* Effect.die(
           new Error(`A staged file the engine cannot claim: ${input.commandId}`),
@@ -823,28 +836,49 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       creationSource: "server",
     });
     if (sent === "rejected") return yield* new OpenRejected({ key: input.key });
+    if (sent === "mode-refused") {
+      return yield* new PermissionModeRefused({ permissionMode: input.permissionMode });
+    }
     return sessionId;
+  });
+
+  /**
+   * What an error reply to a settings command of the session names, once a
+   * read of the session says whether it is still there. `permissionMode` is
+   * the mode the command asked for, if it asked for one.
+   */
+  const settingsRefusal = Effect.fnUntraced(function* (
+    sessionId: SessionId,
+    error: OrchestrationV2DispatchCommandError,
+    permissionMode: PermissionMode | undefined,
+  ) {
+    yield* afterSending(projection(sessionId));
+    const name = causeName(error);
+    if (permissionMode !== undefined && Option.isSome(name) && MODE_LIMITS.has(name.value)) {
+      return yield* new PermissionModeRefused({ permissionMode });
+    }
+    if (isBackgroundWorkRefusal(error)) return yield* new BackgroundWorkRunning({ sessionId });
+    return yield* refused(error);
   });
 
   /**
    * Sends a change of a session's settings, under a key of its own: a refusal
    * is never sent again, and the next alignment sends what still differs. The
-   * engine's refusal to end background work the change would end is
+   * engine's refusal of the permission mode is `PermissionModeRefused`, its
+   * refusal to end background work the change would end
    * `BackgroundWorkRunning`, a refusal for a missing thread `SessionNotFound`,
    * and any other a bug.
    */
-  const sendSettingsCommand = (sessionId: SessionId, input: OrchestrationV2Command) =>
+  const sendSettingsCommand = (
+    sessionId: SessionId,
+    input: OrchestrationV2Command,
+    permissionMode: PermissionMode | undefined,
+  ) =>
     command(input).pipe(
       Effect.catchTags({
         EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
         OrchestrationV2DispatchCommandError: (error) =>
-          afterSending(projection(sessionId)).pipe(
-            Effect.andThen(
-              isBackgroundWorkRefusal(error)
-                ? Effect.fail(new BackgroundWorkRunning({ sessionId }))
-                : refused(error),
-            ),
-          ),
+          settingsRefusal(sessionId, error, permissionMode),
       }),
       Effect.asVoid,
     );
@@ -881,20 +915,28 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       return yield* new SessionBusy({ sessionId: input.sessionId, turnId: running.value });
     }
     if (selection !== undefined) {
-      yield* sendSettingsCommand(input.sessionId, {
-        type: "thread.model-selection.set",
-        commandId: commandId("model", `${input.sessionId}:${yield* uniqueKey}`),
-        threadId,
-        modelSelection: selection,
-      });
+      yield* sendSettingsCommand(
+        input.sessionId,
+        {
+          type: "thread.model-selection.set",
+          commandId: commandId("model", `${input.sessionId}:${yield* uniqueKey}`),
+          threadId,
+          modelSelection: selection,
+        },
+        undefined,
+      );
     }
     if (mode !== undefined) {
-      const send = sendSettingsCommand(input.sessionId, {
-        type: "thread.runtime-mode.set",
-        commandId: commandId("mode", `${input.sessionId}:${yield* uniqueKey}`),
-        threadId,
-        runtimeMode: RUNTIME_MODES[mode],
-      });
+      const send = sendSettingsCommand(
+        input.sessionId,
+        {
+          type: "thread.runtime-mode.set",
+          commandId: commandId("mode", `${input.sessionId}:${yield* uniqueKey}`),
+          threadId,
+          runtimeMode: RUNTIME_MODES[mode],
+        },
+        mode,
+      );
       yield* selection === undefined ? send : afterSending(send);
     }
   });
@@ -1066,7 +1108,9 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
             },
           }),
     });
-    if (sent === "rejected") return yield* new DispatchRejected({ key: input.key });
+    // A refusal for the turn's mode keeps no receipt; the server never sends
+    // the key again all the same.
+    if (sent !== "applied") return yield* new DispatchRejected({ key: input.key });
   });
 
   const dispatch = Effect.fn("Engine.dispatch")(function* (input: DispatchInput) {

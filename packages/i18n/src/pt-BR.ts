@@ -173,6 +173,8 @@ const sentences = {
     "Perdeu o contexto de trabalho. Novas mensagens esperam até ele ter um novo.",
   "notice.sessionNotReady":
     "Não deu para preparar o contexto de trabalho, e continua tentando; novas mensagens esperam. Se não resolver, edite o bot e confira o modelo.",
+  "notice.permissionModeRefused":
+    "Não pode trabalhar no modo de permissão atual: uma política no computador que roda o J3 Bots permite menos. Edite o bot e escolha um modo de permissão mais baixo; novas mensagens esperam até lá.",
   "notice.settingsHeld":
     "As novas configurações valem quando o trabalho em segundo plano terminar, e as mensagens esperam até lá. Pare o bot para aplicá-las agora.",
   "notice.observationFailed":

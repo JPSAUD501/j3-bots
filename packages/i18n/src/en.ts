@@ -174,6 +174,8 @@ export const en = {
   "notice.sessionLost": "Lost its working context. New messages wait until it has a new one.",
   "notice.sessionNotReady":
     "Couldn’t get its working context ready, and keeps trying; new messages wait. If this doesn’t clear, edit it and check its model.",
+  "notice.permissionModeRefused":
+    "Can’t work in its permission mode: a policy on the computer running J3 Bots allows less. Edit it and choose a lower permission mode; new messages wait until then.",
   "notice.settingsHeld":
     "Its new settings apply once its background work ends, and messages wait until then. Stop it to apply them now.",
   "notice.observationFailed":

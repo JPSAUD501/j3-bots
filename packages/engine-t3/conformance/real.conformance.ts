@@ -40,6 +40,14 @@ import { scenarios, turnOf } from "./scenarios.ts";
 const PORT = 3791;
 const PROVIDER = ProviderId.make("scripted");
 
+/**
+ * Set when the engine's machine has an administrator's policy that limits
+ * threads to Supervised (`"limits": { "maxRuntimeMode": "approval-required" }`).
+ * The engine reads it only from a file root owns, so only a run set up for it
+ * has one, and every other run skips what needs it.
+ */
+const SUPERVISED_ONLY = NodeProcess.env["J3_CONFORMANCE_SUPERVISED_ONLY"] === "1";
+
 const directive = (act: Act) => {
   switch (act._tag) {
     case "reply":
@@ -356,6 +364,42 @@ describe("Engine conformance, real engine only", () => {
 
         assert.strictEqual(first._tag, "OpenRejected");
         assert.strictEqual(again._tag, "OpenRejected");
+      }).pipe(
+        Effect.provide(bench.pipe(Layer.provideMerge(realEngine), Layer.provideMerge(platform))),
+      ),
+    { timeout: 120_000 },
+  );
+
+  it.live.runIf(SUPERVISED_ONLY)(
+    "refuses a permission mode above the policy's ceiling, keeping nothing for the key",
+    () =>
+      Effect.gen(function* () {
+        const engine = yield* Engine;
+        const bench = yield* Bench;
+        const projectId = yield* engine.ensureProject({
+          workspacePath: bench.workspacePath,
+          title: "mode-ceiling",
+        });
+        const key = bench.key("session-mode-ceiling");
+        const open = (permissionMode: "supervised" | "full-access") =>
+          engine.openSession({
+            key,
+            projectId,
+            title: "mode-ceiling",
+            model: bench.model,
+            permissionMode,
+          });
+
+        const above = yield* open("full-access").pipe(Effect.flip);
+        // Opened under the same key in a mode the policy allows: the refusal
+        // left no receipt to replay.
+        const sessionId = yield* open("supervised");
+        const raised = yield* engine
+          .configureSession({ sessionId, permissionMode: "full-access" })
+          .pipe(Effect.flip);
+
+        assert.strictEqual(above._tag, "PermissionModeRefused");
+        assert.strictEqual(raised._tag, "PermissionModeRefused");
       }).pipe(
         Effect.provide(bench.pipe(Layer.provideMerge(realEngine), Layer.provideMerge(platform))),
       ),

@@ -353,6 +353,13 @@ const notices = <Failure extends Schema.Top>(failure: Failure) =>
      */
     Schema.TaggedStruct("session-not-ready", {}),
     /**
+     * The engine refuses the bot's permission mode, as an administrator's
+     * policy on its machine can, so the bot cannot start, or cannot take its
+     * new settings. Messages wait until the operator chooses a lower
+     * permission mode; any change of the bot's settings is tried again.
+     */
+    Schema.TaggedStruct("permission-mode-refused", {}),
+    /**
      * The bot's new model or permission mode waits for background work its
      * session runs, which applying it would end; its messages wait too. A Stop
      * ends that work, and the change applies then.

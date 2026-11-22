@@ -416,9 +416,11 @@ export const layer = Layer.effect(
             return "unavailable";
           case "ModelUnavailable":
           case "OpenRejected":
-            // The engine does not offer the bot's model, or refused the
-            // opening and keeps that refusal for the key: the attempt fails,
-            // and the run tries again after its delay, as for a failed turn.
+          case "PermissionModeRefused":
+            // The engine does not offer the bot's model, refused the opening
+            // and keeps that refusal for the key, or refuses the bot's
+            // permission mode: the attempt fails, and the run tries again
+            // after its delay, as for a failed turn.
             // Its dispatch is certainly never sent, yet fails `unresolved`:
             // `rejected` would fail the run at once, and a routine's
             // envelope consumes nothing a failure would have to give back.

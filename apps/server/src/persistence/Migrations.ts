@@ -20,6 +20,7 @@ import Migration0012 from "./migrations/0012_room_integrity.ts";
 import Migration0013 from "./migrations/0013_bot_avatar_colors.ts";
 import Migration0014 from "./migrations/0014_no_engine_dismissals.ts";
 import Migration0015 from "./migrations/0015_refused_openings.ts";
+import Migration0016 from "./migrations/0016_refused_permission_modes.ts";
 
 /**
  * Migrations go forward only. Add one by appending an entry with the next id;
@@ -41,6 +42,7 @@ const migrations = SqliteMigrator.fromRecord({
   "13_bot_avatar_colors": Migration0013,
   "14_no_engine_dismissals": Migration0014,
   "15_refused_openings": Migration0015,
+  "16_refused_permission_modes": Migration0016,
 });
 
 const Recorded = Schema.Struct({ migration_id: Schema.Int, name: Schema.String });

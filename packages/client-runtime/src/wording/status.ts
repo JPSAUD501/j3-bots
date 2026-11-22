@@ -177,6 +177,8 @@ export function noticeText(
       return t("notice.sessionLost");
     case "session-not-ready":
       return t("notice.sessionNotReady");
+    case "permission-mode-refused":
+      return t("notice.permissionModeRefused");
     case "settings-held":
       return t("notice.settingsHeld");
     case "observation-failed":

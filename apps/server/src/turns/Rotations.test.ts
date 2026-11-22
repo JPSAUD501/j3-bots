@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import type { BotId } from "@j3-bots/contracts";
+import type { BotId, Notice } from "@j3-bots/contracts";
 import type { SessionId, TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as DateTime from "effect/DateTime";
@@ -136,6 +136,19 @@ const replacementUnopened = (botId: BotId) =>
     );
     yield* (yield* Rotations).rotateDue;
   });
+
+/** How many notices of the kind the bot's conversation shows. */
+const noticeCount = (botId: BotId, tag: Notice["_tag"]) =>
+  noticesOf(botId).pipe(Effect.map((tags) => tags.filter((found) => found === tag).length));
+
+/** An hour of the rotator's passes, five minutes apart: the longest backoff. */
+const anHourOfPasses = Effect.gen(function* () {
+  const rotations = yield* Rotations;
+  for (let pass = 0; pass < 12; pass++) {
+    yield* TestClock.adjust("5 minutes");
+    yield* rotations.rotateDue;
+  }
+});
 
 /** The text of the first envelope a session received. */
 const firstEnvelope = (session: SessionId) =>
@@ -471,6 +484,89 @@ it.effect(
       yield* sessionAfter(bot.id, replacement);
       assert.strictEqual(yield* notReady, 2);
       assert.strictEqual(yield* timesSent(session, "Plan the launch."), 0);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "opens a bot's main session no more while the engine refuses its permission mode, and tells its conversation once",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      yield* control.limitPermissionModes("auto");
+      yield* TestClock.adjust("1 second");
+      const bot = yield* (yield* Bots).create({
+        commandId: command(),
+        draft: { name: "Ana", job: "", permissionMode: "full-access" },
+      });
+
+      // The engine refuses the same mode until the bot's settings change.
+      yield* anHourOfPasses;
+      assert.strictEqual(yield* control.modeRefusals, 1);
+      assert.deepStrictEqual(yield* noticesOf(bot.id), ["permission-mode-refused"]);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "opens a bot's main session once its settings change after the engine refused its permission mode",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const bots = yield* Bots;
+      yield* control.limitPermissionModes("auto");
+      yield* TestClock.adjust("1 second");
+      const bot = yield* bots.create({
+        commandId: command(),
+        draft: { name: "Ana", job: "", permissionMode: "full-access" },
+      });
+      const waiting = yield* sendToBot(bot.id, "Plan the launch.");
+      yield* anHourOfPasses;
+
+      yield* bots.update({
+        commandId: command(),
+        botId: bot.id,
+        changes: { permissionMode: "auto-accept-edits" },
+      });
+      const session = yield* engineSession(bot.id);
+      assert.strictEqual(yield* control.sessionPermissionMode(session), "auto-accept-edits");
+      yield* finish(bot.id, session, yield* nextTurn(bot.id));
+      yield* deliveryIs(waiting, "delivered");
+      assert.strictEqual(yield* timesSent(session, "Plan the launch."), 1);
+      assert.strictEqual(yield* control.modeRefusals, 1);
+      assert.strictEqual(yield* noticeCount(bot.id, "permission-mode-refused"), 1);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "keeps a bot's session from work while the engine refuses its new permission mode, until its settings change again",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const bots = yield* Bots;
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      yield* control.limitPermissionModes("auto");
+      yield* bots.update({
+        commandId: command(),
+        botId: bot.id,
+        changes: { permissionMode: "full-access" },
+      });
+      const waiting = yield* sendToBot(bot.id, "Plan the launch.");
+      yield* (yield* Rotations).rotateDue;
+      yield* anHourOfPasses;
+      assert.strictEqual(yield* control.modeRefusals, 1);
+      assert.strictEqual(yield* noticeCount(bot.id, "permission-mode-refused"), 1);
+      assert.strictEqual(yield* timesSent(session, "Plan the launch."), 0);
+
+      yield* bots.update({
+        commandId: command(),
+        botId: bot.id,
+        changes: { permissionMode: "auto-accept-edits" },
+      });
+      yield* nextTurn(bot.id);
+      yield* deliveryIs(waiting, "delivered");
+      assert.strictEqual(yield* control.sessionPermissionMode(session), "auto-accept-edits");
+      assert.strictEqual(yield* timesSent(session, "Plan the launch."), 1);
+      assert.strictEqual(yield* noticeCount(bot.id, "permission-mode-refused"), 1);
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 

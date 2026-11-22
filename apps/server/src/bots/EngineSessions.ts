@@ -57,12 +57,31 @@ const Alignment = Schema.Struct({
   settings_pending: Schema.Int,
 });
 
-/** What the engine is asked to bring a session to, and the changes that covers. */
+/**
+ * How many times the bot's model or permission mode changed, and the count at
+ * which the engine refused its permission mode, if it did.
+ */
+const Revision = Schema.Struct({
+  settings_revision: Schema.Int,
+  mode_refused_revision: Schema.NullOr(Schema.Int),
+});
+
+/** The bot's settings revision, and whether the engine refused its permission mode at it. */
+const revisionState = (row: typeof Revision.Type) => ({
+  revision: row.settings_revision,
+  modeRefused: row.mode_refused_revision === row.settings_revision,
+});
+
+/**
+ * What the engine is asked to bring a session to, the changes that covers,
+ * and the bot's settings revision they were read at.
+ */
 interface Pending {
   readonly sessionId: SessionId;
   readonly model: ModelChoice;
   readonly permissionMode: PermissionMode;
   readonly changes: number;
+  readonly revision: number;
 }
 
 /**
@@ -75,8 +94,12 @@ interface Pending {
  * - `background-work`: the engine will not apply it while background work
  *   runs in the session, which it would end; the bot's conversation is told
  *   once per change.
+ * - `mode-refused`: the engine refuses the bot's permission mode, to open the
+ *   session in or to change it to, until the bot's settings change. The
+ *   session is neither opened nor aligned again until then, and the bot's
+ *   conversation is told once.
  */
-export type Alignment = "aligned" | "turn-running" | "background-work";
+export type Alignment = "aligned" | "turn-running" | "background-work" | "mode-refused";
 
 /**
  * The bot's main session whose gate a settings change holds
@@ -132,6 +155,10 @@ export interface BotSession {
  * created or changed, and by the rotator, with backoff, for every live bot
  * whose main session is missing, unopened or not aligned, so a bot whose
  * session could not be opened or aligned gets it once the engine takes it.
+ * A permission mode the engine refuses is refused until the bot's settings
+ * change, as under an administrator's policy on the engine's machine: the bot
+ * records the settings revision it was refused at (`mode_refused_revision`),
+ * and its session is neither opened nor aligned at that revision again.
  */
 export class EngineSessions extends Context.Service<
   EngineSessions,
@@ -218,6 +245,14 @@ export const layer = Layer.effect(
       `,
     });
 
+    const revisionOf = SqlSchema.findOne({
+      Request: BotId,
+      Result: Revision,
+      execute: (botId) => sql`
+        SELECT settings_revision, mode_refused_revision FROM bots WHERE id = ${botId}
+      `,
+    });
+
     const byEngineSession = SqlSchema.findOneOption({
       Request: SessionId,
       Result: SessionRow,
@@ -228,16 +263,21 @@ export const layer = Layer.effect(
     });
 
     /**
-     * The bot's settings and its main session row, read together: the row is
-     * written now if the bot has none, on the provider those settings chose.
+     * The bot's settings, their revision, whether the engine refused its
+     * permission mode at that revision, and its main session row, read
+     * together: the row is written now if the bot has none, on the provider
+     * those settings chose.
      */
     const selection = Effect.fn("EngineSessions.selection")(
       function* (botId: BotId) {
         const found = yield* bots.find(botId);
         if (Option.isNone(found)) return null;
         const { bot } = found.value;
+        const { revision, modeRefused } = revisionState(yield* revisionOf(botId));
         const existing = yield* mainSession(botId);
-        if (Option.isSome(existing)) return { bot, session: existing.value };
+        if (Option.isSome(existing)) {
+          return { bot, revision, modeRefused, session: existing.value };
+        }
         const id = SessionRowId.make(yield* ids.make("session"));
         yield* sql`
         INSERT INTO sessions (
@@ -249,6 +289,8 @@ export const layer = Layer.effect(
       `;
         return {
           bot,
+          revision,
+          modeRefused,
           session: {
             id,
             bot_id: botId,
@@ -323,7 +365,8 @@ export const layer = Layer.effect(
     /**
      * The session's pending changes and the bot's settings as they stand, read
      * together; `null` when there is nothing to align: no changes pending, not
-     * opened yet, gone, or on a provider the bot left.
+     * opened yet, gone, or on a provider the bot left; `mode-refused` when the
+     * engine refused the bot's permission mode at its settings as they stand.
      */
     const pending = Effect.fn("EngineSessions.pending")(
       function* (botId: BotId, rowId: string) {
@@ -332,6 +375,7 @@ export const layer = Layer.effect(
         if (Option.isNone(found) || Option.isNone(row)) return null;
         const { bot } = found.value;
         const session = row.value;
+        const { revision, modeRefused } = revisionState(yield* revisionOf(botId));
         if (
           session.settings_pending === 0 ||
           session.engine_session_id === null ||
@@ -339,11 +383,13 @@ export const layer = Layer.effect(
         ) {
           return null;
         }
+        if (modeRefused) return "mode-refused" as const;
         return {
           sessionId: session.engine_session_id,
           model: bot.model,
           permissionMode: bot.permissionMode,
           changes: session.settings_pending,
+          revision,
         } satisfies Pending;
       },
       transaction,
@@ -365,6 +411,27 @@ export const layer = Layer.effect(
         if (held.length === 0) return;
         yield* notify(botId, conversation, { _tag: "settings-held" }, null);
         yield* changes.touch({ _tag: "bot", botId });
+      },
+      transaction,
+      Effect.orDie,
+    );
+
+    /**
+     * Records that the engine refuses the bot's permission mode at the
+     * settings revision `revision`, and tells the bot's conversation, once
+     * per revision. A change committed since that revision was read is
+     * recorded nothing for: the rotator, which the change nudged, tries it.
+     */
+    const modeRefused = Effect.fn("EngineSessions.modeRefused")(
+      function* (botId: BotId, revision: number) {
+        const refused = yield* sql`
+          UPDATE bots SET mode_refused_revision = ${revision}
+          WHERE id = ${botId} AND settings_revision = ${revision}
+            AND mode_refused_revision IS NOT ${revision}
+          RETURNING id
+        `;
+        if (refused.length === 0) return;
+        yield* notify(botId, conversation, { _tag: "permission-mode-refused" }, null);
       },
       transaction,
       Effect.orDie,
@@ -412,6 +479,8 @@ export const layer = Layer.effect(
           for (;;) {
             const due = yield* pending(botId, rowId);
             if (due === null) return "aligned" as const;
+            // Asked again only once the bot's settings change.
+            if (due === "mode-refused") return due;
             const work = yield* workOf(rowId);
             if (work.admitted !== null || work.runningTurns > 0) {
               return "turn-running" as const;
@@ -428,9 +497,11 @@ export const layer = Layer.effect(
                   // One the engine started on its own, not seen here yet.
                   SessionBusy: () => Effect.succeed("turn-running" as const),
                   BackgroundWorkRunning: () => Effect.succeed("background-work" as const),
+                  PermissionModeRefused: () => Effect.succeed("mode-refused" as const),
                 }),
               );
             if (refused === "background-work") yield* heldByBackgroundWork(botId, rowId);
+            if (refused === "mode-refused") yield* modeRefused(botId, due.revision);
             if (refused !== null) return refused;
             if (yield* aligned(botId, rowId, due.changes)) {
               // A wake waiting for the session is dispatched now, and a
@@ -469,8 +540,10 @@ export const layer = Layer.effect(
       // The bot moved to another provider since the row was written: the
       // rotator replaces the row, which never opens.
       if (session.provider_id !== settings.model.providerId) return "aligned" as const;
+      // Opened, or aligned, again only once the bot's settings change.
+      if (selected.modeRefused) return "mode-refused" as const;
       if (session.engine_session_id === null) {
-        const sessionId = yield* engine
+        const opened = yield* engine
           .openSession({
             key: openingKey(session),
             projectId,
@@ -481,9 +554,17 @@ export const layer = Layer.effect(
           .pipe(
             // The key is spent: the next opening takes a fresh one.
             Effect.tapErrorTag("OpenRejected", () => openingRefused(session)),
+            Effect.asSome,
+            // The engine keeps nothing for the key: it opens under it once
+            // the bot's settings changed.
+            Effect.catchTag("PermissionModeRefused", () => Effect.succeedNone),
           );
+        if (Option.isNone(opened)) {
+          yield* modeRefused(botId, selected.revision);
+          return "mode-refused" as const;
+        }
         // Recorded before it is aligned, which it takes no work until.
-        yield* sql`UPDATE sessions SET engine_session_id = ${sessionId} WHERE id = ${session.id}`.pipe(
+        yield* sql`UPDATE sessions SET engine_session_id = ${opened.value} WHERE id = ${session.id}`.pipe(
           Effect.orDie,
         );
       }
