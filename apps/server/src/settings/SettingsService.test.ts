@@ -81,3 +81,14 @@ it.effect("passes over a device's zone the server does not know, and takes the n
     assert.strictEqual((yield* settings.get).timeZone, "Asia/Tokyo");
   }).pipe(Effect.provide(TestDomain.layer)),
 );
+
+it.effect("passes over a device on UTC's clock, so the operator's real device sets the zone", () =>
+  Effect.gen(function* () {
+    const settings = yield* SettingsService;
+
+    yield* settings.deviceTimeZone(TimeZone.make("Etc/UTC"));
+    yield* settings.deviceTimeZone(TimeZone.make("America/Sao_Paulo"));
+
+    assert.strictEqual((yield* settings.get).timeZone, "America/Sao_Paulo");
+  }).pipe(Effect.provide(TestDomain.layer)),
+);

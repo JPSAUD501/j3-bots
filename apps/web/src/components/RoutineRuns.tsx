@@ -88,9 +88,12 @@ export function RoutineRunList({ routine, runs }: RoutineRunListProps) {
         </section>
       )}
       <section className="px-4 py-4">
-        <h3 className="mb-1 text-xs font-medium text-muted-foreground">
-          {t("routine.runs.title")}
-        </h3>
+        {/* Until the routine is known, the dialog's title already says what this is. */}
+        {routine !== null && (
+          <h3 className="mb-1 text-xs font-medium text-muted-foreground">
+            {t("routine.runs.title")}
+          </h3>
+        )}
         {runs === null || runs._tag === "loading" ? (
           <p className="text-xs text-muted-foreground">{t("details.loading")}</p>
         ) : runs.value.runs.length === 0 ? (

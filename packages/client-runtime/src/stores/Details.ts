@@ -236,11 +236,13 @@ export const layer = Layer.effect(
     // How many times each routine changed in this window's subscriptions, so its runs are read again.
     const routineChanges = new Cell<ReadonlyMap<RoutineId, number>>(new Map());
     const changesOf = (routineId: RoutineId) => routineChanges.get().get(routineId) ?? 0;
-    const changed = (list: ReadonlyArray<Routine>) =>
+    const changed = (routineIds: ReadonlySet<RoutineId>) =>
       Effect.sync(() =>
         routineChanges.update((current) => {
           const next = new Map(current);
-          for (const routine of list) next.set(routine.id, (current.get(routine.id) ?? 0) + 1);
+          for (const routineId of routineIds) {
+            next.set(routineId, (current.get(routineId) ?? 0) + 1);
+          }
           return next;
         }),
       );
@@ -252,9 +254,21 @@ export const layer = Layer.effect(
       keyOf: (botId) => botId,
       follow: (botId, client, set) =>
         client["routines.subscribe"]({ botId, after: null }).pipe(
-          Stream.runForEach((frame) =>
-            set((current) => {
-              if (frame._tag === "snapshot") return frame.routines;
+          Stream.runForEach((frame) => {
+            // Every routine the frame changed, deleted ones too, so their
+            // runs are read again and a deleted one's read finds it gone. A
+            // snapshot also changes those the one before held: one missing
+            // from it was deleted.
+            const touched = new Set<RoutineId>(
+              frame._tag === "snapshot"
+                ? frame.routines.map((routine) => routine.id)
+                : [...frame.remove, ...frame.upsert.map((routine) => routine.id)],
+            );
+            return set((current) => {
+              if (frame._tag === "snapshot") {
+                for (const routine of current ?? []) touched.add(routine.id);
+                return frame.routines;
+              }
               const removed = new Set(frame.remove);
               const byId = new Map(
                 (current ?? [])
@@ -263,10 +277,8 @@ export const layer = Layer.effect(
               );
               for (const routine of frame.upsert) byId.set(routine.id, routine);
               return [...byId.values()];
-            }).pipe(
-              Effect.andThen(changed(frame._tag === "snapshot" ? frame.routines : frame.upsert)),
-            ),
-          ),
+            }).pipe(Effect.andThen(changed(touched)));
+          }),
         ),
     });
 

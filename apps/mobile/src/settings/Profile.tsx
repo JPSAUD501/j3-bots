@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { SettingsSaves } from "@j3-bots/client-runtime";
-import { knownTimeZone } from "@j3-bots/client-runtime/presentation";
 import {
   useJ3Client,
   useProfileEdits,
@@ -8,13 +7,13 @@ import {
   useReadable,
   useSettings,
 } from "@j3-bots/client-runtime/react";
-import { timeZoneHint, timeZoneName } from "@j3-bots/client-runtime/wording";
+import { deviceZoneOffer, timeZoneHint } from "@j3-bots/client-runtime/wording";
 import type { NotificationSettingsChange, Settings } from "@j3-bots/contracts";
-import { getCalendars } from "expo-localization";
 import { useState } from "react";
 import { Text, View } from "react-native";
 import { Problem, Quiet, Section, SwitchRow, TextField } from "../components/form.tsx";
 import { useI18n } from "../i18n.ts";
+import { phoneTimeZone } from "../platform/timeZone.ts";
 import { usePresentation } from "../presentation.tsx";
 import { Button } from "../ui.tsx";
 
@@ -50,9 +49,7 @@ function YouForm(props: { readonly settings: Settings; readonly connected: boole
   const { settings, connected } = props;
   const profile = useProfileEdits(save);
   const form = useProfileForm({ settings, save, profile, connected });
-  const deviceZone = getCalendars()[0]?.timeZone ?? null;
-  const phoneZone = deviceZone === null ? null : knownTimeZone(deviceZone);
-  const phoneZoneName = phoneZone === null ? null : timeZoneName(phoneZone, ctx);
+  const phoneZone = deviceZoneOffer(phoneTimeZone(), ctx);
   return (
     <View className="gap-4">
       <TextField
@@ -75,12 +72,12 @@ function YouForm(props: { readonly settings: Settings; readonly connected: boole
           onChange={form.editZone}
           onBlur={form.checkZone}
         />
-        {phoneZone !== null && phoneZoneName !== null && phoneZone !== form.zone && (
+        {phoneZone !== null && phoneZone.zone !== form.zone && (
           <View className="items-start">
             <Button
-              label={t("settings.timeZone.usePhone", { zone: phoneZoneName })}
+              label={t("settings.timeZone.usePhone", { zone: phoneZone.name })}
               disabled={form.saving}
-              onPress={() => form.editZone(phoneZone)}
+              onPress={() => form.editZone(phoneZone.zone)}
             />
           </View>
         )}

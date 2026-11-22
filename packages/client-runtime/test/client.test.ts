@@ -4130,6 +4130,46 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
     }),
   );
 
+  it.effect("reads a routine's runs again as one starts, and finds it gone once deleted", () =>
+    Effect.gen(function* () {
+      yield* pairAndConnect;
+      const botId = yield* createBot("Scout");
+      const connection = yield* Connection;
+      const actions = yield* Actions;
+      const details = yield* Details;
+      // Its bot's routines are open beside its runs, as on every client.
+      yield* details.routines(botId);
+      const create = yield* actions.commandId;
+      const routine = yield* connection.call((rpc) =>
+        rpc["routine.create"]({
+          commandId: create,
+          botId,
+          name: "Prices",
+          instruction: "Check the prices.",
+          trigger: { _tag: "schedule", cron: "47 8 * * *", timeZone: "UTC" },
+        }),
+      );
+      const runs = yield* details.routineRuns(routine.id);
+      yield* waitFor(runs, (state) => state._tag === "ready" && state.value.runs.length === 0);
+
+      // The server records the run as it starts; this server has no runner to carry it on.
+      const run = yield* actions.commandId;
+      yield* connection.call((rpc) =>
+        rpc["routine.run"]({ commandId: run, routineId: routine.id }),
+      );
+      yield* waitFor(
+        runs,
+        (state) => state._tag === "ready" && state.value.runs[0]?.status === "running",
+      );
+
+      const remove = yield* actions.commandId;
+      yield* connection.call((rpc) =>
+        rpc["routine.delete"]({ commandId: remove, routineId: routine.id }),
+      );
+      yield* waitFor(runs, (state) => state._tag === "not-found");
+    }).pipe(Effect.scoped, Effect.provide(client())),
+  );
+
   it.effect("changes a bot, and keeps the changes of an update the server refused", () =>
     Effect.gen(function* () {
       yield* pairAndConnect;

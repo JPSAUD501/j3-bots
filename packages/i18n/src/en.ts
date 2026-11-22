@@ -757,6 +757,7 @@ export const en = {
   "settings.timeZone": "Time zone",
   "settings.timeZone.hint": "Routines run on this clock, and bots tell time by it.",
   "settings.timeZone.named": "{zone}. Routines run on this clock, and bots tell time by it.",
+  "settings.timeZone.useComputer": "Use this computer’s time zone ({zone})",
   "settings.timeZone.usePhone": "Use this phone’s time zone ({zone})",
   "settings.timeZone.invalid":
     "J3 Bots doesn’t know that time zone. Write it as Region/City, such as Europe/Lisbon.",

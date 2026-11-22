@@ -6,6 +6,44 @@ import { Label, PositiveInt } from "./base.ts";
 export const TimeZone = Label.pipe(Schema.brand("TimeZone"));
 export type TimeZone = typeof TimeZone.Type;
 
+/** A clock reading's fields, at the minute, in the zone it was read in. */
+const CLOCK_FIELDS = {
+  hourCycle: "h23",
+  year: "numeric",
+  month: "numeric",
+  day: "numeric",
+  hour: "numeric",
+  minute: "numeric",
+} as const satisfies Intl.DateTimeFormatOptions;
+
+/**
+ * Whether `timeZone` keeps UTC's clock through `year`: the same reading as
+ * UTC in every month, so no offset and no daylight saving. Such a zone says
+ * nothing about where its device is: it is what a browser that hides its
+ * zone, a machine whose zone was never set or an emulator reports. False
+ * for a zone this runtime does not know.
+ */
+export const keepsUtcClock = (timeZone: string, year: number): boolean => {
+  let clock: Intl.DateTimeFormat;
+  try {
+    clock = new Intl.DateTimeFormat("en-US", { ...CLOCK_FIELDS, timeZone });
+  } catch {
+    return false;
+  }
+  return Array.from({ length: 12 }, (_, month) => Date.UTC(year, month, 15)).every((at) => {
+    const reading = new Map(clock.formatToParts(at).map((part) => [part.type, Number(part.value)]));
+    const field = (type: Intl.DateTimeFormatPartTypes) => reading.get(type) ?? Number.NaN;
+    const read = Date.UTC(
+      field("year"),
+      field("month") - 1,
+      field("day"),
+      field("hour"),
+      field("minute"),
+    );
+    return read === at;
+  });
+};
+
 /**
  * The limits that keep bots from spending the operator's allowance on each
  * other. A room's own hop limit overrides `hops` for that room.

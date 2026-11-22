@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vite-plus/test";
 import { at, context, plain } from "../../test/fixtures.ts";
-import { scheduleInWords, timeZoneHint } from "./schedule.ts";
+import { deviceZoneOffer, scheduleInWords, timeZoneHint } from "./schedule.ts";
 
 const en = context("2026-11-20T17:40:00Z");
 const words = (cron: string, ctx = en, timeZone = "America/Sao_Paulo") => {
@@ -100,5 +100,20 @@ describe("timeZoneHint", () => {
     expect(timeZoneHint("Mars/Olympus_Mons", en)).toBe(
       "Routines run on this clock, and bots tell time by it.",
     );
+  });
+});
+
+describe("deviceZoneOffer", () => {
+  it("offers a device's zone by its name", () => {
+    expect(deviceZoneOffer("europe/lisbon", en)).toEqual({
+      zone: "Europe/Lisbon",
+      name: "Western European Time",
+    });
+  });
+
+  it("offers nothing for a zone on UTC's clock, one this runtime does not know, or none", () => {
+    expect(deviceZoneOffer("Etc/UTC", en)).toBeNull();
+    expect(deviceZoneOffer("Mars/Olympus_Mons", en)).toBeNull();
+    expect(deviceZoneOffer(null, en)).toBeNull();
   });
 });

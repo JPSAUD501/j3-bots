@@ -260,7 +260,7 @@ const sentences = {
   "routine.lastRunWithCount.other": "{lastRun}\u00a0·\u00a0{count}\u00a0execuções",
   "routine.runs.hint": "Mostra as execuções recentes",
   "routine.runs.title": "Execuções recentes",
-  "routine.runs.close": "Fechar as execuções",
+  "routine.runs.close": "Fechar",
   "routine.runs.empty": "Ainda não rodou.",
   "routine.runs.gone": "Esta rotina foi excluída.",
   "routine.runs.limit": "Só as {count} execuções mais recentes aparecem.",
@@ -770,6 +770,7 @@ const sentences = {
   "settings.timeZone.hint": "As rotinas seguem este relógio, e os bots dizem as horas por ele.",
   "settings.timeZone.named":
     "{zone}. As rotinas seguem este relógio, e os bots dizem as horas por ele.",
+  "settings.timeZone.useComputer": "Usar o fuso horário deste computador ({zone})",
   "settings.timeZone.usePhone": "Usar o fuso horário deste celular ({zone})",
   "settings.timeZone.invalid":
     "O J3 Bots não conhece esse fuso horário. Escreva como Região/Cidade, por exemplo America/Sao_Paulo.",

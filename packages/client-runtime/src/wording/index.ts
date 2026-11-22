@@ -36,7 +36,7 @@ export {
   type StatusLine,
   usageLimitText,
 } from "./status.ts";
-export { scheduleInWords, timeZoneHint, timeZoneName } from "./schedule.ts";
+export { deviceZoneOffer, scheduleInWords, timeZoneHint } from "./schedule.ts";
 export {
   activityTime,
   dividerTime,

@@ -116,7 +116,8 @@ export function RoutineRunsScreen({
           </View>
         </Section>
       )}
-      <Section title={t("routine.runs.title")}>
+      {/* Until the routine is known, the screen's title already says what this is. */}
+      <Section title={routine === null ? undefined : t("routine.runs.title")}>
         {runs === null || runs._tag === "loading" ? (
           <Quiet>{t("details.loading")}</Quiet>
         ) : runs.value.runs.length === 0 ? (

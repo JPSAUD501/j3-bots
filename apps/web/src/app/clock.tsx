@@ -2,6 +2,7 @@
 import { knownTimeZone } from "@j3-bots/client-runtime/presentation";
 import * as DateTime from "effect/DateTime";
 import { createContext, use, useEffect, useMemo, useState, type ReactNode } from "react";
+import { systemTimeZone } from "../lib/timeZone";
 
 interface Clock {
   readonly now: DateTime.Utc;
@@ -13,8 +14,6 @@ const ClockContext = createContext<Clock>({
   now: DateTime.makeUnsafe(0),
   timeZone: "UTC",
 });
-
-const systemTimeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 /** The current time for relative labels, updated every half minute. `now` pins it. */
 export function ClockProvider({ now, children }: { now?: DateTime.Utc; children: ReactNode }) {

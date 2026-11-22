@@ -4,6 +4,7 @@ import {
   type CommandError,
   type CommandId,
   Invalid,
+  keepsUtcClock,
   NotificationSettings,
   type NotificationSettingsChange,
   Settings,
@@ -64,7 +65,10 @@ export class SettingsService extends Context.Service<
     /**
      * A device's time zone, which becomes the operator's unless they chose
      * one or a device gave one before. A zone the server does not know
-     * changes nothing.
+     * changes nothing, and neither does one that keeps UTC's clock all year:
+     * a device that hides its zone, or never had one set, reports that, and
+     * it is no better than the UTC the server starts at. An operator who
+     * wants UTC chooses it.
      */
     readonly deviceTimeZone: (timeZone: TimeZone) => Effect.Effect<void>;
   }
@@ -121,7 +125,9 @@ export const layer = Layer.effect(
       timeZone: TimeZone,
     ) {
       if (Option.isNone(DateTime.zoneMakeNamed(timeZone))) return;
-      if (yield* store.adoptTimeZone(timeZone, yield* DateTime.now)) yield* workspaces.renderAll;
+      const now = yield* DateTime.now;
+      if (keepsUtcClock(timeZone, DateTime.toPartsUtc(now).year)) return;
+      if (yield* store.adoptTimeZone(timeZone, now)) yield* workspaces.renderAll;
     });
 
     return SettingsService.of({ get: store.get, update, deviceTimeZone });

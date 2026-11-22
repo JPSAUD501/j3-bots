@@ -4,11 +4,11 @@ import { useJ3Client, useReadable, useSettings } from "@j3-bots/client-runtime/r
 import type { PresentationContext } from "@j3-bots/client-runtime/wording";
 import type { Bot, BotId } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
-import { getCalendars } from "expo-localization";
 import { createContext, type ReactNode, use, useEffect, useMemo, useState } from "react";
 import { useI18n } from "./i18n.ts";
+import { phoneTimeZone } from "./platform/timeZone.ts";
 
-const deviceTimeZone = () => getCalendars()[0].timeZone ?? "UTC";
+const deviceTimeZone = () => phoneTimeZone() ?? "UTC";
 
 /** The current time for relative labels, updated every half minute. */
 function useNow(): DateTime.Utc {
