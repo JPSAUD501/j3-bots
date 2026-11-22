@@ -4,6 +4,7 @@ import * as DateTime from "effect/DateTime";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 import { EntryId, EntryOrder } from "./base.ts";
+import { BotState } from "./bot.ts";
 import { EntryPreview, ReceivedEntry } from "./entry.ts";
 
 // As the socket carries them: JSON, which a client decodes with the contract.
@@ -57,6 +58,29 @@ describe("an entry a client receives", () => {
       _tag: "unknown",
       kind: "a-notice-from-a-newer-server",
     });
+  });
+
+  it("of a failed turn, or a blocked bot, with a failure class added after this build fails for no named reason", () => {
+    const [failed] = Schema.decodeSync(EntriesJson)([
+      {
+        _tag: "notice",
+        ...placed(1),
+        notice: { _tag: "turn-failed", failure: "a-failure-from-a-newer-server" },
+        retryable: true,
+      },
+    ]);
+    assert.deepStrictEqual(failed?._tag === "notice" && failed.notice, {
+      _tag: "turn-failed",
+      failure: "unknown",
+    });
+    assert.deepStrictEqual(
+      Schema.decodeSync(Schema.toCodecJson(BotState))({
+        _tag: "blocked",
+        failure: "a-failure-from-a-newer-server",
+        retryAt: null,
+      }),
+      { _tag: "blocked", failure: "unknown", retryAt: null },
+    );
   });
 
   it("of a kind this build knows is refused when it does not decode, not taken as unknown", () => {

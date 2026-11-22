@@ -45,7 +45,7 @@ const sentences = {
   "summary.askedSecret": "Pediu uma credencial: {label}",
   "summary.workFold": "Trabalhou um pouco",
   "summary.notice": "Deixou um aviso",
-  "summary.needsUpdate": "Precisa de uma versão mais nova do app",
+  "summary.cannotShow": "Algo que esta versão do app não consegue mostrar",
   "summary.handoffTo": "Para {name}: {text}",
   "summary.handoffSent": "Para um colega: {text}",
   "summary.handoffFrom": "De {name}: {text}",

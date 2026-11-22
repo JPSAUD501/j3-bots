@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Schema from "effect/Schema";
+import * as SchemaGetter from "effect/SchemaGetter";
 
 export const NonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 export const PositiveInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
@@ -75,3 +76,31 @@ export type EntryOrder = typeof EntryOrder.Type;
  */
 export const Sequence = NonNegativeInt.pipe(Schema.brand("Sequence"));
 export type Sequence = typeof Sequence.Type;
+
+/**
+ * A string none of `known` is: a value a newer server sends that this build
+ * cannot read. A known value never passes, so a value of a kind this build
+ * knows that fails to decode still fails, instead of passing as unknown.
+ */
+export const UnknownLiteral = (known: ReadonlyArray<string>) =>
+  Schema.String.check(
+    Schema.makeFilter(
+      (value: string) => !known.includes(value) || "a value this build does not know",
+    ),
+  );
+
+/**
+ * `known`, open to values added after this build: any other string decodes
+ * as `unknown`. Only for what a client receives and can show without
+ * understanding (docs/architecture/clients.md, "Protocol compatibility").
+ */
+export const OpenLiterals = <const L extends ReadonlyArray<string>>(known: L) =>
+  Schema.Union([
+    Schema.Literals(known),
+    UnknownLiteral(known).pipe(
+      Schema.decodeTo(Schema.Literal("unknown"), {
+        decode: SchemaGetter.transform(() => "unknown" as const),
+        encode: SchemaGetter.transform((value: string) => value),
+      }),
+    ),
+  ]);

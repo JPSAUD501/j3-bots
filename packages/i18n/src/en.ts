@@ -47,7 +47,7 @@ export const en = {
   "summary.askedSecret": "Asked for a credential: {label}",
   "summary.workFold": "Did some work",
   "summary.notice": "Left a notice",
-  "summary.needsUpdate": "Needs a newer version of the app",
+  "summary.cannotShow": "Something this version of the app can’t show",
   "summary.handoffTo": "To {name}: {text}",
   "summary.handoffSent": "To a teammate: {text}",
   "summary.handoffFrom": "From {name}: {text}",

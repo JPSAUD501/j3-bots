@@ -192,24 +192,25 @@ No HTTP request waits forever, since a server or a proxy can take one and never 
 
 `PROTOCOL_VERSION` (`packages/contracts/src/http.ts`) is the first thing a client checks, and a server that speaks another version is shown as incompatible ([Connecting](#connecting)). Raising it locks out every client built before, the installed Android app included, which does not update itself. So it is raised only for a change an older client cannot survive, and a server may add, without raising it, what a client is built to pass over.
 
-**What a client passes over.** Three sets stay open, because each is in data a client cannot avoid reading and each grows whenever J3 Bots learns something new to say:
+**What a client passes over.** Four sets stay open, because each is in data a client cannot avoid reading and each grows whenever J3 Bots learns something new to say:
 
 - **Kinds of entry.** `entries.subscribe` and `entries.history` carry `ReceivedEntry`. An entry whose `_tag` the client does not know decodes as `UnknownEntry`: its kind, id, order and time, and nothing else. Entries stay in history, so one a client refused would keep the whole conversation from opening, for good.
 - **Kinds of notice.** A notice whose `_tag` the client does not know decodes as `UnknownNotice`. Notices are the kind added most often: each new way for something to stop gets one.
 - **Kinds in a roster preview.** `EntryPreview.kind` decodes a kind the client does not know as `unknown`. The roster carries every conversation's latest entry, so one new kind there would stop the whole roster.
+- **Failure classes.** In a `turn-failed` notice and in a blocked bot's state, a failure class the client does not know decodes as `unknown` (`ReceivedFailureClass`), worded as a failure it cannot name. A new class is added as a provider fails in a new way, and the roster carries every bot's state. Whether the notice offers Try again is still the server's `retryable`.
 
-An unknown entry or notice shows in its place as one quiet line, "This needs a newer version of the app.", and a roster row as "Needs a newer version of the app". The read mark passes it like any other entry. An unknown notice offers no Try again: the operator could not tell what it would run again. Only a tag the client does not know is unknown: an entry or notice of a known kind that does not decode is refused as before, so a broken server is never mistaken for a newer one. The server itself writes and stores only the closed `Entry` and `Notice`, and never sends `unknown`.
+An unknown entry or notice shows in its place as one quiet line, "This needs a newer version of the app.", and a roster row as "Something this version of the app can't show". The read mark passes it like any other entry. An unknown notice offers no Try again: the operator could not tell what it would run again. Only a value the client does not know is unknown: an entry or notice of a known kind that does not decode is refused as before, so a broken server is never mistaken for a newer one. The server itself writes and stores only the closed `Entry`, `Notice` and `FailureClass`, and its handlers for `entries.subscribe` and `entries.history` are typed to answer only `Entry`, so it never sends `unknown`.
 
 A field a client does not know is dropped as the client decodes, so a server may add a field that older clients can do without (**Read** in Effect 4.1.3: `effect/rpc/RpcClient` decodes with the RPC's parse options, which J3 Bots leaves at the default, and `onExcessProperty` defaults to `ignore`).
 
-**What needs a bump.** Everything else is closed, because a client acts on it: whether a card can still be answered, what Try again runs, how a bot's state reads, which Android channel a push goes to. A value it misread would make it do the wrong thing, which is worse than saying the app needs updating. These need `PROTOCOL_VERSION` raised:
+**What needs a bump.** Everything else is closed, because a client acts on it: whether a card can still be answered, what Try again runs, which Android channel a push goes to. A value it misread would make it do the wrong thing, which is worse than saying the app needs updating. These need `PROTOCOL_VERSION` raised:
 
-- a new value in any other set the contract lists: authors, a message's delivery and mentions, a card's status, an approval's kind, a work step's kind or status, a turn's ending, failure classes, bot states, routine triggers and runs, roster items, subscription frames, errors, and `NotificationKind`, so a new kind of entry that notifies needs a bump where one that does not, does not;
+- a new value in any other set the contract lists: authors, a message's delivery and mentions, a card's status, an approval's kind, a work step's kind or status, a turn's ending, bot states, routine triggers and runs, roster items, subscription frames, errors, and `NotificationKind`, so a new kind of entry that notifies needs a bump where one that does not, does not;
 - a field removed, renamed, made required, or given a new type or a narrower range, in anything a client decodes;
 - a field a client must understand to act correctly, even when it is new;
 - a new RPC or route a client relies on, and a change to what an existing one takes or answers: a client compares versions for equality, so it also refuses an older server, and a newer client of the same version would call what that server lacks.
 
-Clients released up to 0.1.0 predate the open sets: they refuse a conversation, or a roster, that holds a kind they do not know.
+Protocol 6 is the first whose clients pass over the open sets: from protocol 6 on, adding a kind of entry or notice, or a failure class, needs no bump. Clients of protocol 5 and before, J3 Bots 0.1.0 among them, refuse a conversation or a roster that holds one, so 6 shows them the incompatible screen instead.
 
 ## Behavior every client must get right
 
