@@ -6,11 +6,12 @@ import {
   ProviderId,
   type Routine,
   RoutineId,
+  type RoutineRun,
   RoutineRunId,
 } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { at, context, plain } from "../../test/fixtures.ts";
-import { routineLines } from "./details.ts";
+import { routineLines, routineRunLines } from "./details.ts";
 import { providerLine } from "./engine.ts";
 
 const en = context("2026-11-20T17:40:00Z");
@@ -67,6 +68,50 @@ describe("routineLines", () => {
     expect(failed?.failed).toBe(true);
     expect(failed?.text).toMatch(/^Last run failed /);
     expect(routineLines(routine({ lastRun: run("delivered") }), en).lastRun?.failed).toBe(false);
+  });
+});
+
+describe("routineRunLines", () => {
+  const ran = (change: Partial<RoutineRun>): RoutineRun => ({
+    id: RoutineRunId.make("run"),
+    startedAt: at("2026-11-20T12:00:00Z"),
+    finishedAt: at("2026-11-20T12:01:00Z"),
+    status: "delivered",
+    attempts: 1,
+    delivered: [],
+    note: null,
+    ...change,
+  });
+
+  it("says why a run failed in plain words, and marks it", () => {
+    expect(routineRunLines(ran({ status: "failed" }), en)).toMatchObject({
+      status: "Failed",
+      reason: "It ended before it said anything.",
+      failed: true,
+    });
+    const refused = ran({
+      status: "failed",
+      failure: { _tag: "permission-mode-refused", permissionMode: "full-access", allowed: "auto" },
+    });
+    expect(routineRunLines(refused, en).reason).toBe(
+      "A policy on the computer running J3 Bots allows up to Auto, not Full access.",
+    );
+  });
+
+  it("says why a run was skipped, and gives no reason for one that reported back", () => {
+    expect(routineRunLines(ran({ status: "skipped", attempts: 0 }), en)).toMatchObject({
+      status: "Skipped",
+      reason: "The run before was still going.",
+      failed: false,
+    });
+    expect(routineRunLines(ran({}), en).reason).toBeNull();
+  });
+
+  it("counts the attempts only once a run took more than one", () => {
+    expect(routineRunLines(ran({}), en).attempts).toBeNull();
+    expect(routineRunLines(ran({ status: "failed", attempts: 3 }), en).attempts).toBe(
+      "Tried 3 times",
+    );
   });
 });
 

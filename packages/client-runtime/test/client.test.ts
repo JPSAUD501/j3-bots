@@ -4112,6 +4112,24 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
     }).pipe(Effect.scoped, Effect.provide(client())),
   );
 
+  it.effect("gives the operator the first device's time zone, which a later device keeps", () =>
+    Effect.gen(function* () {
+      /** The zone a device in `timeZone` shows once it connected. */
+      const shownOn = (timeZone: string) =>
+        Effect.gen(function* () {
+          yield* pairAndConnect;
+          const shown = yield* waitFor((yield* Settings).state, (state) => state._tag === "ready");
+          return shown._tag === "ready" ? shown.value.timeZone : null;
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(client(Option.none(), TestPlatform.makeDevice({ timeZone }))),
+        );
+
+      assert.strictEqual(yield* shownOn("America/Sao_Paulo"), "America/Sao_Paulo");
+      assert.strictEqual(yield* shownOn("Europe/Lisbon"), "America/Sao_Paulo");
+    }),
+  );
+
   it.effect("changes a bot, and keeps the changes of an update the server refused", () =>
     Effect.gen(function* () {
       yield* pairAndConnect;

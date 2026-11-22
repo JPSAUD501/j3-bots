@@ -51,6 +51,7 @@ export {
   CredentialStorageError,
   CredentialStore,
   type DeviceCredential,
+  DeviceTimeZone,
   FileTransfer,
   type LocalRecord,
   LocalTable,
@@ -89,6 +90,7 @@ export {
   memorySaveKey,
   type RoomChanges,
   type RoomDraft,
+  type RoutineRuns,
   type Save,
   type SaveResult,
 } from "./stores/Details.ts";

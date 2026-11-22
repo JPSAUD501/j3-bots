@@ -2,6 +2,7 @@
 import {
   ClientStorage,
   CredentialStore,
+  DeviceTimeZone,
   FileTransfer,
   Lifecycle,
   type LifecycleState,
@@ -22,6 +23,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Socket from "effect/socket/Socket";
 import { fetch as expoFetch } from "expo/fetch";
 import * as ExpoCrypto from "expo-crypto";
+import { getCalendars } from "expo-localization";
 import * as ExpoNetwork from "expo-network";
 import * as SecureStore from "expo-secure-store";
 import * as SQLite from "expo-sqlite";
@@ -161,6 +163,11 @@ const secureRandom = Layer.succeed(
   SecureRandom.make((size) => ExpoCrypto.getRandomBytes(size)),
 );
 
+/** The phone's time zone, from its first calendar: React Native has no other place to read it. */
+const timeZone = Layer.succeed(DeviceTimeZone, {
+  current: Effect.sync(() => getCalendars()[0]?.timeZone ?? null),
+});
+
 /**
  * The phone's platform for the server at `origin`. The credential is kept
  * with the origin of the server that issued it, and is absent for any other.
@@ -178,6 +185,7 @@ const makePlatform = (origin: URL): Layer.Layer<Platform> =>
     transfer,
     network,
     lifecycle,
+    timeZone,
     FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, nativeFetch))),
     Socket.layerWebSocketConstructorGlobal,
     secureRandom,

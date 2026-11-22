@@ -1,9 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { NotificationSettingsChange, Settings as SettingsValue } from "@j3-bots/contracts";
+import {
+  type NotificationSettingsChange,
+  type Settings as SettingsValue,
+  TimeZone,
+} from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { Connection, type J3RpcClient, type NotPaired } from "../connection/Connection.ts";
+import { DeviceTimeZone } from "../ports.ts";
 import { Actions, intentResult, type IntentResult } from "../intents/Actions.ts";
 import { Cell, type Readable } from "../Store.ts";
 import { loading, markStale, ready, type Synced } from "./synced.ts";
@@ -45,6 +52,9 @@ export interface SettingsSaves {
  * reconnection, it can be older than what the reconnection read. A change
  * made on another device shows here after the next reconnect, save or
  * `refresh`.
+ *
+ * Each socket first gives the server the device's time zone, which becomes
+ * the operator's while they have chosen none, so the first read shows it.
  */
 export class Settings extends Context.Service<
   Settings,
@@ -87,6 +97,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const connection = yield* Connection;
     const actions = yield* Actions;
+    const deviceZone = yield* DeviceTimeZone;
     const state = new Cell<Synced<SettingsValue>>(loading);
     const saves = {
       profile: new Cell<SettingsSaves["profile"]>({ _tag: "idle" }),
@@ -97,9 +108,27 @@ export const layer = Layer.effect(
     /** Reads the settings, and shows them unless a read started later is under way or done. */
     const read = (client: J3RpcClient) => latest(client["settings.get"]());
 
+    /**
+     * Gives the server this device's time zone. Nothing depends on it, so a
+     * zone the contract refuses, a failure or a server older than the RPC
+     * changes nothing here.
+     */
+    const giveZone = (client: J3RpcClient) =>
+      deviceZone.current.pipe(
+        Effect.map(Option.liftPredicate(Schema.is(TimeZone))),
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.void,
+            onSome: (timeZone) =>
+              client["settings.deviceTimeZone"]({ timeZone }).pipe(Effect.ignoreCause),
+          }),
+        ),
+      );
+
     yield* connection
       .eachSession((client) =>
-        read(client).pipe(
+        giveZone(client).pipe(
+          Effect.andThen(read(client)),
           Effect.andThen(Effect.never),
           Effect.ensuring(Effect.sync(() => state.update(markStale))),
         ),

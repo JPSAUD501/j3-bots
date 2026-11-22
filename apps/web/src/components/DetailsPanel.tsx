@@ -103,8 +103,8 @@ function DetailsSection({
 
 export interface BotDetailsIntents {
   readonly setRoutineEnabled: (routineId: RoutineId, enabled: boolean) => void;
-  /** Absent until a routine has a view of its own: its row then only shows it. */
-  readonly openRoutine?: (routineId: RoutineId) => void;
+  /** Shows the routine's recent runs. */
+  readonly openRoutine: (routineId: RoutineId) => void;
   readonly openAttachment: (attachment: Attachment) => void;
   readonly openMemoryFile: (path: MemoryPath) => void;
   /** Absent where the bot cannot be edited. */
@@ -144,7 +144,6 @@ export function BotDetails({
   const { t } = i18n;
   const { name, title, job, avatar } = bot.profile;
   const mode = permissionModeText(bot.permissionMode, i18n);
-  const { openRoutine } = intents;
   return (
     <PanelFrame
       title={t("conversation.details")}
@@ -189,7 +188,7 @@ export function BotDetails({
                 key={routine.id}
                 routine={routine}
                 onToggle={(enabled) => intents.setRoutineEnabled(routine.id, enabled)}
-                onOpen={openRoutine && (() => openRoutine(routine.id))}
+                onOpen={() => intents.openRoutine(routine.id)}
               />
             ))}
           </ul>
@@ -292,7 +291,10 @@ function DeleteBot({ name, onDelete }: { name: string; onDelete: () => void }) {
   );
 }
 
-/** A routine: name, schedule in words, next run, last result, and a switch to pause it. */
+/**
+ * A routine: name, schedule in words, next run, last result, and a switch to
+ * pause it. The rest of the row opens its recent runs.
+ */
 function RoutineRow({
   routine,
   onToggle,
@@ -300,42 +302,16 @@ function RoutineRow({
 }: {
   routine: Routine;
   onToggle: (enabled: boolean) => void;
-  onOpen: (() => void) | undefined;
+  onOpen: () => void;
 }) {
   const ctx = usePresentation();
-  const { pluralParts } = ctx.i18n;
+  const { pluralParts, t } = ctx.i18n;
   const lines = routineLines(routine, ctx);
   const Icon = !routine.enabled
     ? CirclePauseIcon
     : routine.trigger._tag === "webhook"
       ? WebhookIcon
       : CalendarClockIcon;
-  const summaryClass = "flex min-w-0 flex-1 flex-col text-start";
-  const summary = (
-    <>
-      <span className="truncate text-sm">{routine.name}</span>
-      <span className={cn("text-xs text-muted-foreground", lines.expression && "font-mono")}>
-        {lines.schedule}
-      </span>
-      {lines.status && <span className="text-2xs text-muted-foreground">{lines.status}</span>}
-      {lines.lastRun && (
-        // Only what went wrong is drawn in the blocked color; the run count stays quiet.
-        <span className="text-2xs text-muted-foreground">
-          {pluralParts<"routine.lastRunWithCount", ReactElement>(
-            "routine.lastRunWithCount",
-            routine.runCount,
-            {
-              lastRun: (
-                <span key="lastRun" className={cn(lines.lastRun.failed && "text-blocked")}>
-                  {lines.lastRun.text}
-                </span>
-              ),
-            },
-          )}
-        </span>
-      )}
-    </>
-  );
   return (
     <li className="flex items-start gap-3 rounded-md px-2 py-2 hover:bg-muted/60">
       <Icon
@@ -345,13 +321,34 @@ function RoutineRow({
           routine.enabled ? "text-success" : "text-muted-foreground",
         )}
       />
-      {onOpen ? (
-        <button type="button" onClick={onOpen} className={summaryClass}>
-          {summary}
-        </button>
-      ) : (
-        <div className={summaryClass}>{summary}</div>
-      )}
+      <button
+        type="button"
+        onClick={onOpen}
+        title={t("routine.runs.hint")}
+        className="flex min-w-0 flex-1 cursor-pointer flex-col text-start"
+      >
+        <span className="truncate text-sm">{routine.name}</span>
+        <span className={cn("text-xs text-muted-foreground", lines.expression && "font-mono")}>
+          {lines.schedule}
+        </span>
+        {lines.status && <span className="text-2xs text-muted-foreground">{lines.status}</span>}
+        {lines.lastRun && (
+          // Only what went wrong is drawn in the blocked color; the run count stays quiet.
+          <span className="text-2xs text-muted-foreground">
+            {pluralParts<"routine.lastRunWithCount", ReactElement>(
+              "routine.lastRunWithCount",
+              routine.runCount,
+              {
+                lastRun: (
+                  <span key="lastRun" className={cn(lines.lastRun.failed && "text-blocked")}>
+                    {lines.lastRun.text}
+                  </span>
+                ),
+              },
+            )}
+          </span>
+        )}
+      </button>
       <Switch checked={routine.enabled} onCheckedChange={onToggle} aria-label={routine.name} />
     </li>
   );

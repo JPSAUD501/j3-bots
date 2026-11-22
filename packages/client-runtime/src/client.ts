@@ -44,6 +44,7 @@ import * as SignOut from "./intents/SignOut.ts";
 import type {
   ClientStorage,
   CredentialStore,
+  DeviceTimeZone,
   FileTransfer,
   Lifecycle,
   Network,
@@ -69,6 +70,7 @@ export type Platform =
   | ServerAddress
   | CredentialStore
   | ClientStorage
+  | DeviceTimeZone
   | FileTransfer
   | Network
   | Lifecycle
@@ -271,6 +273,8 @@ export interface J3Client {
   readonly memorySaves: Readable<ReadonlyMap<string, Details.Save<Details.MemoryEdit>>>;
   readonly dismissMemorySave: (scope: MemoryScope, path: MemoryPath) => void;
   readonly openRoutines: (botId: BotId) => LoadedHandle<ReadonlyArray<Routine>>;
+  /** See `Details.routineRuns`. */
+  readonly openRoutineRuns: (routineId: RoutineId) => LoadedHandle<Details.RoutineRuns>;
   readonly setRoutineEnabled: (
     routineId: RoutineId,
     enabled: boolean,
@@ -509,6 +513,10 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     dismissMemorySave: services.details.dismissMemorySave,
     openRoutines: (botId) => {
       const { value, release } = hold(services.details.routines(botId));
+      return { state: value, release };
+    },
+    openRoutineRuns: (routineId) => {
+      const { value, release } = hold(services.details.routineRuns(routineId));
       return { state: value, release };
     },
     setRoutineEnabled: (routineId, enabled) =>

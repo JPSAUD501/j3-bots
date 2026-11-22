@@ -472,6 +472,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
             headingId={detailsHeadingId}
             intents={{
               setRoutineEnabled: intents.setRoutineEnabled,
+              openRoutine: intents.openRoutine,
               openAttachment: intents.openAttachment,
               openMemoryFile: (path) => intents.openMemoryFile(bot.id, path),
               freshStart: () => intents.freshStart(bot.id, bot.profile.name),

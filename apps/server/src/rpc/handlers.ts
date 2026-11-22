@@ -135,6 +135,7 @@ export const handlers = ServedRpcs.toLayer(
       "usage.turns": ({ limit }) => usage.turns({ period: USAGE_PERIOD, limit }),
       "settings.get": () => settings.get,
       "settings.update": ({ commandId, ...changes }) => settings.update({ commandId, changes }),
+      "settings.deviceTimeZone": ({ timeZone }) => settings.deviceTimeZone(timeZone),
       "client.view": ({ target }) => viewer.view(target),
       "notifications.subscribe": () => viewer.notifications,
       "devices.list": () => devices.list(device.id),

@@ -408,6 +408,7 @@ export const concurrentTurns = (n: number) =>
     yield* store.save(
       { ...settings, budgets: { ...settings.budgets, concurrentTurns: PositiveInt.make(n) } },
       yield* DateTime.now,
+      { zoneChosen: false },
     );
   });
 
@@ -426,6 +427,7 @@ export const chainLimits = (limits: { readonly hops: number; readonly fanOut: nu
         },
       },
       yield* DateTime.now,
+      { zoneChosen: false },
     );
   });
 

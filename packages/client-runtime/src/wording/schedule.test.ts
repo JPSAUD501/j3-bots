@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vite-plus/test";
 import { at, context, plain } from "../../test/fixtures.ts";
-import { scheduleInWords } from "./schedule.ts";
+import { scheduleInWords, timeZoneHint } from "./schedule.ts";
 
 const en = context("2026-11-20T17:40:00Z");
 const words = (cron: string, ctx = en, timeZone = "America/Sao_Paulo") => {
@@ -89,5 +89,16 @@ describe("scheduleInWords", () => {
     ]) {
       expect(words(cron), cron).toBeNull();
     }
+  });
+});
+
+describe("timeZoneHint", () => {
+  it("names the zone in plain words, and only says what it sets for one it cannot name", () => {
+    expect(timeZoneHint("America/Sao_Paulo", context("2026-11-20T17:40:00Z", "pt-BR"))).toMatch(
+      /^Horário .*Brasília\. As rotinas seguem este relógio/,
+    );
+    expect(timeZoneHint("Mars/Olympus_Mons", en)).toBe(
+      "Routines run on this clock, and bots tell time by it.",
+    );
   });
 });

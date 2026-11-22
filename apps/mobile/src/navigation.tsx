@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BotId, MemoryPath, RoomId, RosterItemKey } from "@j3-bots/contracts";
+import type { BotId, MemoryPath, RoomId, RosterItemKey, RoutineId } from "@j3-bots/contracts";
 import { rosterKeyText } from "@j3-bots/client-runtime/presentation";
 import {
   DarkTheme,
@@ -26,6 +26,7 @@ import { EditBotScreen } from "./screens/EditBot.tsx";
 import { MemoryFileScreen } from "./screens/MemoryFile.tsx";
 import { NewBotScreen } from "./screens/NewBot.tsx";
 import { RoomFormScreen } from "./screens/RoomForm.tsx";
+import { RoutineRunsScreen } from "./screens/RoutineRuns.tsx";
 import { SettingsScreen } from "./settings/Settings.tsx";
 import { RosterScreen } from "./screens/Roster.tsx";
 import { ShareOpener, ShareScreen } from "./share/SharePicker.tsx";
@@ -34,7 +35,8 @@ import { Toasts } from "./toast.tsx";
 
 /**
  * One route per screen. On a phone they stack: the roster, a bot's or room's
- * conversation, its details, and over those the forms and a memory file;
+ * conversation, its details, and over those the forms, a memory file and a
+ * routine's runs;
  * Settings opens from the roster. From the tablet width up the roster's route
  * shows the conversation `item` names beside the roster, and the
  * conversation's route is not used. Each route after the roster names the
@@ -48,6 +50,7 @@ export type Screens = {
   share: undefined;
   editBot: { readonly botId: BotId };
   memoryFile: { readonly botId: BotId; readonly path: MemoryPath };
+  routineRuns: { readonly botId: BotId; readonly routineId: RoutineId };
   roomForm: { readonly form: RoomFormFor };
   newBot: undefined;
   settings: undefined;
@@ -162,9 +165,10 @@ export function Main() {
                 component={ShareScreen}
                 options={{ title: t("share.title"), presentation: "modal" }}
               />
-              {/* The forms and the memory file set their own titles, which name what they change. */}
+              {/* The forms, the memory file and a routine's runs set their own titles. */}
               <Stack.Screen name="editBot" component={EditBotScreen} />
               <Stack.Screen name="memoryFile" component={MemoryFileScreen} />
+              <Stack.Screen name="routineRuns" component={RoutineRunsScreen} />
               <Stack.Screen name="roomForm" component={RoomFormScreen} />
               <Stack.Screen
                 name="newBot"

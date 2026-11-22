@@ -39,7 +39,7 @@ import type {
   ShellIntents,
 } from "../shell/data";
 import { cn } from "../lib/cn";
-import { activityTime, engineProblem } from "@j3-bots/client-runtime/wording";
+import { activityTime, engineProblem, timeZoneHint } from "@j3-bots/client-runtime/wording";
 import { AppUpdate } from "./AppUpdate";
 import { ShortcutSetting } from "./ShortcutSetting";
 import { ConnectProviders, ProviderRow } from "./EmptyStates";
@@ -267,7 +267,8 @@ interface YouFormProps {
  * it.
  */
 function YouForm({ settings, save, profile, connected, onSave }: YouFormProps) {
-  const { t } = useI18n();
+  const ctx = usePresentation();
+  const { t } = ctx.i18n;
   const nameId = useId();
   const zoneId = useId();
   const offlineId = useId();
@@ -312,7 +313,7 @@ function YouForm({ settings, save, profile, connected, onSave }: YouFormProps) {
             </option>
           ))}
         </select>
-        <p className="text-2xs text-muted-foreground">{t("settings.timeZone.hint")}</p>
+        <p className="text-2xs text-muted-foreground">{timeZoneHint(form.zone, ctx)}</p>
       </div>
       <div className="flex items-center gap-3">
         <Button

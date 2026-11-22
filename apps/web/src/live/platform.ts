@@ -4,6 +4,7 @@ import {
   Cell,
   ClientStorage,
   CredentialStore,
+  DeviceTimeZone,
   FileTransfer,
   type LocalRecord,
   LocalStorageError,
@@ -306,6 +307,11 @@ const desktopNetwork = (app: Desktop) => {
  * the same database as the drafts and the outbox, so a write's pairing check
  * is still one transaction. Files go up with `XMLHttpRequest` there too.
  */
+/** The time zone the browser, or the system under the desktop app, says it is in. */
+const timeZone = Layer.succeed(DeviceTimeZone, {
+  current: Effect.sync(() => Intl.DateTimeFormat().resolvedOptions().timeZone),
+});
+
 export const makePlatform = (server: URL): Layer.Layer<Platform> => {
   const codec =
     desktop === null
@@ -326,6 +332,7 @@ export const makePlatform = (server: URL): Layer.Layer<Platform> => {
     // No push reaches a browser or the desktop app: their socket stays open,
     // hidden or not, and the server tells them there.
     alwaysForeground,
+    timeZone,
     FetchHttpClient.layer,
     Socket.layerWebSocketConstructorGlobal,
     SecureRandom.layerWebCrypto,

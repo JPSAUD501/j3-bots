@@ -6,11 +6,13 @@ import {
   type MemoryPath,
   type PermissionMode,
   type Routine,
+  type RoutineRun,
+  type RoutineRunFailure,
 } from "@j3-bots/contracts";
 import type { I18n, KeyWith } from "@j3-bots/i18n";
 import type { MemoryEditProblem } from "../presentation/saves.ts";
 import { scheduleInWords } from "./schedule.ts";
-import { timeInSentence, type TimeContext } from "./time.ts";
+import { dividerTime, timeInSentence, type TimeContext } from "./time.ts";
 
 const PERMISSION_TEXT: Record<PermissionMode, readonly [KeyWith, KeyWith]> = {
   supervised: ["permission.supervised", "permission.supervised.description"],
@@ -121,5 +123,56 @@ export function routineLines(routine: Routine, ctx: TimeContext): RoutineLines {
             text: lastRunText(last, ctx),
             failed: last.status === "failed",
           },
+  };
+}
+
+const RUN_STATUS_TEXT: Record<RoutineRun["status"], KeyWith> = {
+  running: "routine.run.running",
+  delivered: "routine.run.delivered",
+  silent: "routine.run.silent",
+  failed: "routine.run.failed",
+  skipped: "routine.run.skipped",
+};
+
+/** Why an attempt failed, as a sentence of its own. */
+function runFailureText(failure: RoutineRunFailure, i18n: I18n): string {
+  const mode = permissionModeText(failure.permissionMode, i18n).name;
+  return failure.allowed === null
+    ? i18n.t("routine.run.modeRefused", { mode })
+    : i18n.t("routine.run.modeAllowed", {
+        mode,
+        allowed: permissionModeText(failure.allowed, i18n).name,
+      });
+}
+
+/** One run as a routine's history lists it. */
+export interface RoutineRunLines {
+  /** What it did: "Reported back", "Failed". */
+  readonly status: string;
+  /** When it started. */
+  readonly when: string;
+  /** Why it failed or was skipped; null when it needs no reason. */
+  readonly reason: string | null;
+  /** How many attempts it took, once it took more than one. */
+  readonly attempts: string | null;
+  /** `status` and `reason` are drawn in the blocked color. */
+  readonly failed: boolean;
+}
+
+export function routineRunLines(run: RoutineRun, ctx: TimeContext): RoutineRunLines {
+  const { t, plural } = ctx.i18n;
+  const failed = run.status === "failed";
+  return {
+    status: t(RUN_STATUS_TEXT[run.status]),
+    when: dividerTime(run.startedAt, ctx),
+    reason: failed
+      ? run.failure === undefined
+        ? t("routine.run.ended")
+        : runFailureText(run.failure, ctx.i18n)
+      : run.status === "skipped"
+        ? t("routine.run.skippedWhy")
+        : null,
+    attempts: run.attempts > 1 ? plural("routine.run.attempts", run.attempts) : null,
+    failed,
   };
 }

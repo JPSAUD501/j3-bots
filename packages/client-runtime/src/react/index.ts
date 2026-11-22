@@ -8,6 +8,7 @@ import type {
   MemoryFile,
   MemoryScope,
   Routine,
+  RoutineId,
 } from "@j3-bots/contracts";
 import {
   createContext,
@@ -23,6 +24,7 @@ import { type ActionState, cardAction } from "../intents/Actions.ts";
 import type { Readable } from "../Store.ts";
 import { type ConversationState, targetKey } from "../stores/Conversations.ts";
 import type { Draft } from "../stores/Drafts.ts";
+import type { RoutineRuns } from "../stores/Details.ts";
 import type { Loaded } from "../stores/reads.ts";
 import { type RecentTurnsState, turnsNotRead } from "../stores/Usage.ts";
 import type { WorkStepsState } from "../stores/WorkSteps.ts";
@@ -127,6 +129,12 @@ export const useMemory = (scope: MemoryScope | null): Loaded<ReadonlyArray<Memor
 export const useRoutines = (botId: BotId | null): Loaded<ReadonlyArray<Routine>> | null =>
   useHeldState<Loaded<ReadonlyArray<Routine>>>(
     useHeld(botId, same, (client, id) => client.openRoutines(id)),
+  );
+
+/** A routine's newest runs, while mounted. A null `routineId` reads nothing. */
+export const useRoutineRuns = (routineId: RoutineId | null): Loaded<RoutineRuns> | null =>
+  useHeldState<Loaded<RoutineRuns>>(
+    useHeld(routineId, same, (client, id) => client.openRoutineRuns(id)),
   );
 
 /**

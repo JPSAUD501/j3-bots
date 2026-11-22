@@ -24,7 +24,17 @@ export class SettingsStore extends Context.Service<
   SettingsStore,
   {
     readonly get: Effect.Effect<Settings>;
-    readonly save: (settings: Settings, at: DateTime.Utc) => Effect.Effect<void>;
+    /** Writes every field; `zoneChosen` records that the operator chose the time zone. */
+    readonly save: (
+      settings: Settings,
+      at: DateTime.Utc,
+      options: { readonly zoneChosen: boolean },
+    ) => Effect.Effect<void>;
+    /**
+     * Sets the time zone to `timeZone` unless the operator chose one or a
+     * device already gave one, and records that it is set. True when it set it.
+     */
+    readonly adoptTimeZone: (timeZone: TimeZone, at: DateTime.Utc) => Effect.Effect<boolean>;
   }
 >()("@j3-bots/server/settings/SettingsStore") {}
 
@@ -58,11 +68,16 @@ export const layer = Layer.effect(
           },
         })),
       ),
-      save: Effect.fn("SettingsStore.save")(function* (settings: Settings, at: DateTime.Utc) {
+      save: Effect.fn("SettingsStore.save")(function* (
+        settings: Settings,
+        at: DateTime.Utc,
+        { zoneChosen }: { readonly zoneChosen: boolean },
+      ) {
         yield* sql`
           UPDATE settings SET
             operator_name = ${settings.operatorName},
             time_zone = ${settings.timeZone},
+            time_zone_set = MAX(time_zone_set, ${zoneChosen ? 1 : 0}),
             hop_limit = ${settings.budgets.hops},
             fan_out_limit = ${settings.budgets.fanOut},
             concurrent_turns = ${settings.budgets.concurrentTurns},
@@ -71,6 +86,17 @@ export const layer = Layer.effect(
             updated_at = ${timeText(at)}
           WHERE id = 1
         `;
+      }, Effect.orDie),
+      adoptTimeZone: Effect.fn("SettingsStore.adoptTimeZone")(function* (
+        timeZone: TimeZone,
+        at: DateTime.Utc,
+      ) {
+        const set = yield* sql`
+          UPDATE settings SET time_zone = ${timeZone}, time_zone_set = 1, updated_at = ${timeText(at)}
+          WHERE id = 1 AND time_zone_set = 0
+          RETURNING id
+        `;
+        return set.length > 0;
       }, Effect.orDie),
     });
   }),

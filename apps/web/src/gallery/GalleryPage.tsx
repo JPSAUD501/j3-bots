@@ -26,6 +26,8 @@ import {
   RoomId,
   type RosterItem,
   type RosterItemKey,
+  type RoutineRun,
+  RoutineRunId,
   type UsageWindow,
 } from "@j3-bots/contracts";
 import {
@@ -66,6 +68,7 @@ import { QuestionCard } from "../components/QuestionCard";
 import { RoomForm, type RoomFormProps } from "../components/RoomDialog";
 import { RosterRow } from "../components/RosterRow";
 import { RoutineChangeCard } from "../components/RoutineChangeCard";
+import { RoutineRunList } from "../components/RoutineRuns";
 import { SecretRequestCard } from "../components/SecretRequestCard";
 import { Timeline, type TimelineIntents } from "../components/Timeline";
 import { UsageSection } from "../components/UsageSection";
@@ -911,8 +914,42 @@ function Pane({ children }: { children: ReactNode }) {
   );
 }
 
+/** A run that started `minutesAgo` before SAMPLE_NOW and took a minute, unless it is still going. */
+const sampleRun = (
+  minutesAgo: number,
+  status: RoutineRun["status"],
+  change: Partial<RoutineRun> = {},
+): RoutineRun => ({
+  id: RoutineRunId.make(`gallery-run-${minutesAgo}`),
+  startedAt: DateTime.subtract(SAMPLE_NOW, { minutes: minutesAgo }),
+  finishedAt:
+    status === "running" ? null : DateTime.subtract(SAMPLE_NOW, { minutes: minutesAgo - 1 }),
+  status,
+  attempts: status === "skipped" ? 0 : 1,
+  delivered: status === "delivered" ? [EntryId.make(`gallery-said-${minutesAgo}`)] : [],
+  note: null,
+  ...change,
+});
+
+/** Every way a run can end, newest first, as the price watch's history could show them. */
+const sampleRuns: ReadonlyArray<RoutineRun> = [
+  sampleRun(2, "running"),
+  sampleRun(353, "delivered"),
+  sampleRun(24 * 60 + 353, "silent", {
+    note: "No price dropped: the three bikes cost what they did yesterday.",
+  }),
+  sampleRun(2 * 24 * 60 + 353, "failed", {
+    attempts: 3,
+    failure: { _tag: "permission-mode-refused", permissionMode: "full-access", allowed: "auto" },
+  }),
+  sampleRun(3 * 24 * 60 + 353, "failed", { attempts: 2 }),
+  sampleRun(3 * 24 * 60 + 354, "skipped"),
+  sampleRun(8 * 24 * 60 + 353, "delivered"),
+];
+
 function DetailsSection() {
   const { scout, moss } = team.bots;
+  const priceWatch = team.routines[scout.id]?.[0] ?? null;
   return (
     <Section title="Details panel">
       <div className="flex flex-wrap gap-4">
@@ -936,6 +973,16 @@ function DetailsSection() {
             modelName={null}
             intents={detailsIntents}
             onClose={nothing}
+          />
+        </Pane>
+        <Pane>
+          <RoutineRunList
+            routine={priceWatch}
+            runs={{
+              _tag: "ready",
+              value: { runs: sampleRuns, hasOlder: true },
+              stale: false,
+            }}
           />
         </Pane>
         <Pane>
