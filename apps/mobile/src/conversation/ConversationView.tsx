@@ -7,6 +7,7 @@ import {
   buildTimeline,
   mentionedNames,
   mentionedWhoLeft,
+  openingHeld,
   readThrough,
   roomStopFailed,
   rosterKeyOf,
@@ -20,6 +21,7 @@ import {
   useConversation,
   useConversationEnd,
   useDraft,
+  useEngineStatus,
   useJ3Client,
   useSelected,
 } from "@j3-bots/client-runtime/react";
@@ -59,14 +61,17 @@ import {
   useState,
 } from "react";
 import { AppState, View } from "react-native";
+import Animated, { ZoomIn } from "react-native-reanimated";
 import { Text } from "../text.tsx";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BotAvatar } from "../components/Avatar.tsx";
+import { CommandLine } from "../components/CommandLine.tsx";
 import { PendingButton } from "../components/form.tsx";
 import type { Navigation } from "../navigation.tsx";
 import { useRoomActions } from "../details/actions.ts";
 import { enteringWhen, openIn, settleIn, useReducedMotion } from "../motion.ts";
+import { pop } from "../onboarding/springs.ts";
 import { useBots, usePresentation } from "../presentation.tsx";
 import { useSay } from "../toast.tsx";
 import { Body, Button, Centered, Title } from "../ui.tsx";
@@ -440,17 +445,40 @@ export function Gone({ onBack }: { readonly onBack: () => void }) {
   );
 }
 
-/** A bot's conversation before anything is said in it. */
+/**
+ * A bot's conversation before anything is said in it. A first hello waiting
+ * for a provider says so, with the command that connects one when there is.
+ */
 function Quiet({ bot, bottom }: { readonly bot: Bot; readonly bottom: number }) {
   const ctx = usePresentation();
+  const { t } = ctx.i18n;
+  const status = useEngineStatus();
+  const name = bot.profile.name;
+  const held = openingHeld(bot, status._tag === "ready" ? status.value : null);
   return (
     <View
       className="flex-1 items-center justify-center gap-4 px-6"
       style={{ paddingBottom: bottom }}
     >
-      <BotAvatar avatar={bot.profile.avatar} state={bot.state} size={72} />
-      <Title>{bot.profile.name}</Title>
-      <Body>{quietConversationText(bot, ctx)}</Body>
+      <Animated.View
+        entering={ZoomIn.springify().mass(pop.mass).stiffness(pop.stiffness).damping(pop.damping)}
+      >
+        <BotAvatar avatar={bot.profile.avatar} state={bot.state} size={72} />
+      </Animated.View>
+      <Title>{name}</Title>
+      <Body>
+        {held === null
+          ? quietConversationText(bot, ctx)
+          : t("empty.quiet.waitingForModel", { name })}
+      </Body>
+      {held?._tag === "connect" && (
+        <View className="w-full max-w-sm gap-2">
+          <Text className="text-center text-sm text-muted-foreground">
+            {t("empty.quiet.connectHint")}
+          </Text>
+          <CommandLine command={held.command} />
+        </View>
+      )}
     </View>
   );
 }

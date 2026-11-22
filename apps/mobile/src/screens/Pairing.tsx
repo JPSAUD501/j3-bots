@@ -11,7 +11,8 @@ import { PairingScanner } from "../components/PairingScanner.tsx";
 import { useI18n } from "../i18n.ts";
 import { session } from "../platform/platform.ts";
 import { phoneTimeZone } from "../platform/timeZone.ts";
-import { Body, Button, Title } from "../ui.tsx";
+import { bigFieldClass, BigButton, Cast, StepTitle } from "../onboarding/parts.tsx";
+import { Button } from "../ui.tsx";
 
 type Problem =
   | { readonly _tag: "address"; readonly problem: ServerAddressProblem }
@@ -25,8 +26,6 @@ type FormState =
 /** The name the operator sees for this phone in their list of devices, until they change it. */
 const defaultDeviceName = () => Device.deviceName ?? Device.modelName ?? "";
 
-const fieldClass = "min-h-11 rounded-md border bg-muted px-3 text-base text-foreground";
-
 function Field(props: {
   readonly label: string;
   readonly value: string;
@@ -35,8 +34,8 @@ function Field(props: {
   readonly kind: "address" | "code" | "name";
 }) {
   return (
-    <View className="gap-1">
-      <Text className="text-sm text-foreground">{props.label}</Text>
+    <View className="gap-1.5">
+      <Text className="text-sm font-medium text-foreground">{props.label}</Text>
       <TextInput
         accessibilityLabel={props.label}
         aria-invalid={props.invalid}
@@ -50,8 +49,8 @@ function Field(props: {
         keyboardType={props.kind === "address" ? "url" : "default"}
         textContentType={props.kind === "code" ? "oneTimeCode" : "none"}
         maxLength={props.kind === "address" ? 2048 : props.kind === "code" ? 24 : 200}
-        face={props.kind === "code" ? "mono" : "text"}
-        className={`${fieldClass} ${props.invalid ? "border-blocked" : "border-transparent"} ${props.kind === "code" ? "tracking-widest" : ""}`}
+        face={props.kind === "name" ? "text" : "mono"}
+        className={`${bigFieldClass} ${props.invalid ? "border-blocked" : "border-input focus:border-foreground"} ${props.kind === "code" ? "text-center tracking-widest" : ""}`}
       />
     </View>
   );
@@ -125,12 +124,13 @@ export function PairingScreen(props: {
     >
       <ScrollView
         keyboardShouldPersistTaps="handled"
-        contentContainerClassName="grow justify-center gap-6 px-6"
+        contentContainerClassName="grow items-center justify-center gap-5 px-6"
         contentContainerStyle={{ paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24 }}
       >
+        <Cast compact />
         <View className="gap-2">
-          <Title>{t("pairing.title")}</Title>
-          <Body>
+          <StepTitle>{t("pairing.title")}</StepTitle>
+          <Text className="text-center text-lg text-muted-foreground">
             {parts("pairing.body", {
               command: (
                 <Text key="command" face="mono" className="text-foreground">
@@ -138,16 +138,21 @@ export function PairingScreen(props: {
                 </Text>
               ),
             })}
-          </Body>
+          </Text>
         </View>
         {props.reason !== "new" && (
-          <Text className="rounded-md bg-muted px-3 py-2 text-sm text-foreground">
+          <Text className="w-full rounded-lg bg-muted px-4 py-3 text-sm text-foreground">
             {props.reason === "signed-out" ? t("pairing.signedOut") : t("pairing.stillListed")}
           </Text>
         )}
-        <View className="gap-4">
+        <View className="w-full max-w-sm gap-4">
           {/* The QR code another device shows carries the address and the code, so neither is typed. */}
-          <Button label={t("pairing.scan")} disabled={busy} onPress={() => setScanning(true)} />
+          <Button
+            variant="outline"
+            label={t("pairing.scan")}
+            disabled={busy}
+            onPress={() => setScanning(true)}
+          />
           <Field
             kind="address"
             label={t("server.address")}
@@ -174,17 +179,19 @@ export function PairingScreen(props: {
             onChange={setName}
             invalid={false}
           />
-          <Button
-            variant="primary"
+          <BigButton
             label={state._tag === "pairing" ? t("pairing.pairing") : t("pairing.submit")}
             onPress={submit}
             disabled={!ready}
           />
-          {problem !== null && (
-            <Text accessibilityLiveRegion="polite" role="alert" className="text-sm text-blocked">
-              {problemText(problem)}
-            </Text>
-          )}
+          {/* Room for two lines is held while there is no answer, so a refusal does not move the form. */}
+          <Text
+            accessibilityLiveRegion="polite"
+            role="alert"
+            className="min-h-10 text-center text-sm text-blocked"
+          >
+            {problem === null ? "" : problemText(problem)}
+          </Text>
         </View>
       </ScrollView>
       {scanning && (

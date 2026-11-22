@@ -294,7 +294,7 @@ function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
             // page put aside holds no code for Back to bring back.
             key={linkedCode ?? ""}
             reason={connection.reason}
-            defaultName={guessDeviceName(navigator.userAgent)}
+            defaultName={guessDeviceName(navigator.userAgent, t)}
             initialCode={linkedCode}
             address={origin.origin}
             onPair={j3.pair}
@@ -946,8 +946,8 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
         if (roomStopFailed(result) && stillPaired()) say(t("room.stopFailed", { name }));
       });
     },
-    createBot: (name, primary) =>
-      j3.createBot({ name, primary }).then((result) => {
+    createBot: (draft) =>
+      j3.createBot(draft).then((result) => {
         if (result._tag === "failed") throw new Error("The bot was not created");
         return result.value.id;
       }),
@@ -1034,7 +1034,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
         onOpenChange={setNewBot}
         onUnsavedChange={setNewBotUnsaved}
         onCreate={(name, primary) =>
-          intents.createBot(name, primary).then((botId) => {
+          intents.createBot({ name, primary }).then((botId) => {
             setNewBot(false);
             void goToBot(botId);
           })

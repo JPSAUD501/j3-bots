@@ -19,6 +19,18 @@ export interface RuntimeLabels {
 const HARNESS_LABELS = { "claude-code": "Claude Code", codex: "Codex" } as const;
 
 /**
+ * Which provider a new bot lands on when none is named, lowest first: one
+ * that runs it now, one that will once its limit resets, one a command
+ * connects, and last one the engine cannot run yet, such as while it checks.
+ */
+const defaultRank = {
+  ready: 0,
+  limited: 1,
+  "sign-in-required": 2,
+  unavailable: 3,
+} as const satisfies Record<EngineStatus["providers"][number]["status"]["_tag"], number>;
+
+/**
  * The engine's latest status, kept current, for the decisions that read it
  * once rather than follow it: the default model of a new bot and the labels in
  * a bot's instructions.
@@ -29,7 +41,12 @@ export class EngineState extends Context.Service<
     readonly current: Effect.Effect<EngineStatus>;
     /** Each status as `current` takes it, starting with the one now. */
     readonly changes: Stream.Stream<EngineStatus>;
-    /** The first model of the first ready provider, for a bot created without one. */
+    /**
+     * The model of a bot created without one: the first model of the first
+     * ready provider; with none ready, of the first that lists a model,
+     * preferring one that only needs connecting. A first bot is never
+     * refused for want of a connected provider: its hello waits for one.
+     */
     readonly defaultModel: Effect.Effect<Option.Option<ModelChoice>>;
     /**
      * Supervised unless the provider is known to take Auto. The engine's
@@ -93,13 +110,16 @@ export const layer = Layer.effect(
       changes: SubscriptionRef.changes(status),
       defaultModel: current.pipe(
         Effect.map((now) => {
+          let best: { readonly rank: number; readonly model: ModelChoice } | null = null;
           for (const provider of now.providers) {
             const model = provider.models[0];
-            if (provider.status._tag === "ready" && model !== undefined) {
-              return Option.some({ providerId: provider.id, modelId: model.id });
+            if (model === undefined) continue;
+            const rank = defaultRank[provider.status._tag];
+            if (best === null || rank < best.rank) {
+              best = { rank, model: { providerId: provider.id, modelId: model.id } };
             }
           }
-          return Option.none();
+          return Option.fromNullishOr(best?.model);
         }),
       ),
       defaultPermissionMode,

@@ -25,7 +25,6 @@ export function NewBotScreen({ navigation }: Props) {
     >
       <Text className="text-sm text-muted-foreground">{t("newBot.body")}</Text>
       <NewBotForm
-        primaryAtFirst={false}
         onNameChange={setTyped}
         cancel={<Button label={t("newBot.cancel")} onPress={navigation.goBack} />}
         onCreated={(botId) => leave(() => openConversation({ _tag: "bot", botId }))}

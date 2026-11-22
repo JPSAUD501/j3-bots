@@ -6,12 +6,17 @@ This document describes what the operator does and sees. It is written from thei
 
 ### First run
 
-The operator installs J3 Bots on a machine that stays on, and opens the web client.
+The operator installs J3 Bots on a machine that stays on, pairs a device with it, and opens the app. Until the first bot exists, the app is a short sequence of screens, one thing per screen, and every one of them can be left with its defaults: Continue always works, and Back always goes to the screen before.
 
-1. J3 Bots checks that the engine is running and that at least one provider is signed in. While the engine is still checking the providers, in the first seconds after it starts, it says so and waits. If none is signed in, it says which command signs one in and waits. It does not ask for API keys.
-2. The operator creates their first bot by giving it a name. J3 Bots suggests making it the primary bot.
-3. The conversation opens and **the bot speaks first**: a short hello, then, if its job already says what to do, the work, with the same approvals as any other work; otherwise one question about what the operator needs, in the same message. It saves what matters in the answers as its first memories. There is no settings form to fill in. If the provider is not signed in yet, the hello waits for it; if the opening fails, the conversation says so and offers a retry, until the operator writes. If the operator writes before the hello has gone to the engine, the hello is dropped and the bot answers the message; if the hello is already on its way, the bot reads the message in the same turn and answers it instead of greeting.
-4. The moment the operator hands it something real, the bot drops the questions and does the work.
+1. **A welcome.** A few bots, alive, and one sentence on what they are: teammates that keep working on the operator's machine and subscriptions. Settings stays in reach from here, for signing out or changing the language.
+2. **The first bot's name.** The field starts with a name, so the operator can just go on; they can rename the bot any time.
+3. **Its look.** A few looks to pick from, one already picked. Where the bot works is not asked: J3 Bots gives every bot its own workspace.
+4. **A model, only when none is connected.** If no provider can run a bot yet, one step says so in plain words, with the one command to run on the machine J3 Bots runs on and a button that copies it. The step updates by itself when a provider connects, and never holds the bot back: the operator can create the bot anyway, and it says hello once a model is connected. While the engine is still checking the providers, in the first seconds after it starts, the step says so without the command, since the check may find one ready. It does not ask for API keys. With a provider ready, this step is skipped.
+5. **The bot arrives**, in a short moment of its own, and becomes the primary bot without being asked.
+6. The conversation opens and **the bot speaks first**: a short hello, then, if its job already says what to do, the work, with the same approvals as any other work; otherwise one question about what the operator needs, in the same message. It saves what matters in the answers as its first memories. There is no settings form to fill in. If the provider is not signed in yet, the hello waits for it; if the opening fails, the conversation says so and offers a retry, until the operator writes. If the operator writes before the hello has gone to the engine, the hello is dropped and the bot answers the message; if the hello is already on its way, the bot reads the message in the same turn and answers it instead of greeting.
+7. The moment the operator hands it something real, the bot drops the questions and does the work.
+
+Until its hello can run, the conversation says the bot speaks once a model is connected, with the same command and copy button.
 
 ### Talking to a bot
 

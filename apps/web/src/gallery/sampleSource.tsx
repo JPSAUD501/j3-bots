@@ -5,6 +5,7 @@
  * in development only; nothing here reaches a server.
  */
 import type { Draft, DraftFile, SettingsSaves } from "@j3-bots/client-runtime";
+import { providerGate } from "@j3-bots/client-runtime/presentation";
 import {
   AttachmentId,
   BotId,
@@ -15,6 +16,7 @@ import {
   ServerOrigin,
   type Bot,
   type BotState,
+  type EngineStatus,
   type Entry,
   type EntryTarget,
   type Mentions,
@@ -41,6 +43,9 @@ interface State extends Omit<SampleTeam, "bots" | "room" | "attachments"> {
 }
 
 const blankDraft: Draft = { text: "", mentions: [], files: [], sending: false };
+
+/** How long a new bot takes to say hello, from its creation. */
+const OPENING_DELAY = 3200;
 
 /** How long an answer to a card takes to arrive, so a second click has something to miss. */
 const ANSWER_DELAY = 500;
@@ -353,8 +358,11 @@ function sampleIntents({ get, update }: Store): ShellIntents {
           ]),
         ),
       })),
-    createBot: (name, primary) => {
+    createBot: ({ name, primary, avatar }) => {
       const botId = BotId.make(`local-bot-${++created}`);
+      const key = `bot:${botId}`;
+      // As on a server: the bot opens its conversation once a provider can run it.
+      const canSpeak = providerGate(get().engine)._tag === "ready";
       update((s) => {
         const count = s.roster.length;
         const bot: Bot = {
@@ -362,7 +370,7 @@ function sampleIntents({ get, update }: Store): ShellIntents {
           profile: {
             name,
             title: "",
-            avatar: {
+            avatar: avatar ?? {
               shape: avatarShapeNames[count % avatarShapeNames.length] ?? "circle",
               color: botColors[count % botColors.length] ?? "gray",
             },
@@ -376,9 +384,9 @@ function sampleIntents({ get, update }: Store): ShellIntents {
           primary,
           pinned: false,
           hidden: false,
-          state: { _tag: "idle" },
+          state: canSpeak ? { _tag: "thinking", since: now(), stalled: false } : { _tag: "idle" },
           settingsHeld: false,
-          opening: false,
+          opening: true,
           createdAt: now(),
         };
         return {
@@ -389,7 +397,33 @@ function sampleIntents({ get, update }: Store): ShellIntents {
           ],
         };
       });
-      replyLater(botId, `bot:${botId}`, `Hi, I’m ${name}. What would you like me to take care of?`);
+      if (canSpeak) {
+        window.setTimeout(() => {
+          update((s) => {
+            const spoken = updateBot(
+              withEntries(s, key, (es) =>
+                appended(
+                  es,
+                  message(
+                    { _tag: "bot", botId },
+                    `Hi, I’m ${name}. What would you like me to take care of first?`,
+                  ),
+                ),
+              ),
+              botId,
+              setState({ _tag: "idle" }),
+            );
+            return {
+              ...spoken,
+              roster: spoken.roster.map((item) =>
+                item._tag === "bot" && item.bot.id === botId
+                  ? { ...item, bot: { ...item.bot, opening: false } }
+                  : item,
+              ),
+            };
+          });
+        }, OPENING_DELAY);
+      }
       return Promise.resolve(botId);
     },
     deleteBot: (botId) =>
@@ -533,9 +567,13 @@ function toData(state: State): ShellData {
 
 /**
  * The sample team, with intents that change it. Each call keeps its own copy.
- * `firstRun` starts it with no bots, at the first-run screen.
+ * `firstRun` starts it with no bots, at the first-run screen; `engine`, when
+ * given, replaces the team's engine.
  */
-export function useSampleSource({ firstRun = false }: { firstRun?: boolean } = {}): ShellSource {
+export function useSampleSource({
+  firstRun = false,
+  engine,
+}: { firstRun?: boolean; engine?: EngineStatus } = {}): ShellSource {
   const [store] = useState(() => {
     const team: State = {
       ...sampleTeam(SAMPLE_NOW),
@@ -544,7 +582,8 @@ export function useSampleSource({ firstRun = false }: { firstRun?: boolean } = {
       settingsSaves: { profile: { _tag: "idle" }, notifications: { _tag: "idle" } },
       settingsOpen: false,
     };
-    return createStore(firstRun ? withoutBots(team) : team);
+    const started = firstRun ? withoutBots(team) : team;
+    return createStore(engine === undefined ? started : { ...started, engine });
   });
   const state = useSyncExternalStore(store.subscribe, store.get);
   const intents = useMemo(() => sampleIntents(store), [store]);

@@ -162,7 +162,7 @@ Settings left out of `config.json` take their defaults ([Configuration](operatin
 
 ## Connect the providers
 
-Bots run on Claude Code and Codex, each with a home of its own in `~/.j3-bots/providers`, so they use none of your own setup or sign-ins. Before your first bot, the web client waits for one of them to reach a model, and until then shows "Connect your providers" with the command below; `doctor` says what is missing too. There are two ways.
+Bots run on Claude Code and Codex, each with a home of its own in `~/.j3-bots/providers`, so they use none of your own setup or sign-ins. Until one of them reaches a model, the app's first run shows the command below with a button that copies it, and a first bot created meanwhile says hello once a model is connected; `doctor` says what is missing too. There are two ways.
 
 **An endpoint in front of your subscriptions.** An endpoint that speaks Anthropic's Messages API and OpenAI's Responses API, such as CLIProxyAPI, serves both harnesses. With the service running:
 
@@ -234,7 +234,7 @@ After five wrong codes within fifteen minutes, from anywhere, the server locks p
 
 ## Meet your first bot
 
-Once a provider is ready, the web client asks for your first bot's name. The bot then speaks first and asks what you want it for, one question at a time. From there, the roster's "New bot or room" adds more.
+The app's first run asks for your first bot's name and look, each with a default, and creates it. The bot then speaks first, once a provider is ready, and asks what you want it for, one question at a time. From there, the roster's "New bot or room" adds more.
 
 ## Raspberry Pi
 

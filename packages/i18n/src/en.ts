@@ -438,37 +438,68 @@ export const en = {
   "firstRun.incompatible.title": "The engine is the wrong version",
   "firstRun.incompatible.body":
     "The engine is version {running}, and this release of J3 Bots needs {pinned}.",
-  "firstRun.connect.title": "Connect your providers",
-  "firstRun.connect.body":
-    "Bots reach their models through an endpoint you run, such as a proxy in front of your subscriptions. Run this on the machine that runs J3 Bots: it asks for the endpoint’s address and key. This page updates when the providers are ready.",
   "firstRun.connect.copy": "Copy the command that connects your providers",
   "firstRun.connect.copied": "Copied",
   "firstRun.connect.selected": "Command selected. Copy it manually.",
-  "firstRun.checking.title": "Checking your providers",
-  "firstRun.checking.body":
-    "The engine checks each provider when it starts, which can take up to a minute. This page updates when it’s done.",
-  "firstRun.unavailable.title": "No provider can run a bot right now",
-  "firstRun.unavailable.body":
-    "Each provider’s state is below. This page updates as soon as one is ready.",
   "provider.ready": "Ready",
   "provider.notConnected": "Not connected",
   "provider.noModels": "Connected, but the engine lists no model for it yet",
   "provider.unavailable": "Not available right now",
   "provider.checking": "Checking…",
-  "firstRun.create.title": "Meet your first bot",
-  "firstRun.create.body":
-    "Give it a name. It will ask what you want it for, one question at a time.",
   "firstRun.create.name": "Bot name",
   "firstRun.create.placeholder": "A name, such as Scout",
   "firstRun.create.primary": "Make it my primary bot: requests that belong to nobody go to it.",
   "firstRun.create.submit": "Create bot",
   "firstRun.create.failed": "The bot wasn’t created. Try again.",
 
+  "commandLine.copy": "Copy",
+  "onboarding.welcome.body":
+    "Teammates that live on your own machine. They remember, keep working while you’re away, and ask when they need you.",
+  "onboarding.welcome.start": "Meet your first bot",
+  "onboarding.back": "Back",
+  "onboarding.progress": "Step {current} of {count}",
+  "onboarding.continue": "Continue",
+  "onboarding.name.title": "What should we call your first bot?",
+  "onboarding.name.label": "Bot name",
+  "onboarding.name.hint": "Leave it as it is, or rename it any time.",
+  "onboarding.look.title": "Pick a look for {name}",
+  "onboarding.look.options": "Looks",
+  "onboarding.look.option": "Look {number} of {count}",
+  "onboarding.look.hint": "You can change it later in the bot’s details.",
+  "onboarding.create": "Create {name}",
+  "onboarding.connect.title": "{name} needs a model to think with",
+  "onboarding.connect.body":
+    "Bots think with AI models you already use, like Claude or ChatGPT, and none is connected yet. Run this command on the machine where J3 Bots is installed. It asks where your models are and the key to use them.",
+  "onboarding.connect.later":
+    "No rush: create {name} now, and it says hello as soon as a model is connected.",
+  "onboarding.connect.ready.title": "A model is connected",
+  "onboarding.connect.ready.body": "Everything is ready for {name} to say hello.",
+  "onboarding.connect.checking.title": "Looking for a model for {name}",
+  "onboarding.connect.checking.body":
+    "J3 Bots checks Claude Code and Codex each time it starts. It takes up to a minute.",
+  "onboarding.connect.unavailable.title": "No model can run {name} right now",
+  "onboarding.connect.unavailable.body":
+    "Neither Claude Code nor Codex can run a bot on your server at the moment. This screen updates as soon as one can.",
+  "onboarding.connect.status.waiting": "Waiting for a model…",
+  "onboarding.connect.status.ready": "Connected",
+  "onboarding.connect.status.checking": "Checking…",
+  "onboarding.connect.status.unavailable": "Nothing can run a bot yet",
+  "onboarding.connect.status.connecting": "Waiting for the server…",
+  "onboarding.connect.status.starting": "Starting…",
+  "onboarding.connect.status.engineOut": "Not running",
+  "onboarding.arrival.title": "{name} is here",
+  "onboarding.arrival.hello": "Saying hello…",
+  "onboarding.arrival.waiting": "{name} says hello as soon as a model is connected.",
+  "onboarding.failed":
+    "Couldn’t create {name}. Check that this device still reaches your server, then try again.",
+
   "empty.noSelection.title": "Pick someone to talk to",
   "empty.noSelection.body": "Choose a bot or a room from the list.",
   "empty.noSelection.shortcut": "moves to the next one",
   "empty.quiet.speaksFirst": "{name} speaks first. It is getting ready.",
   "empty.quiet.body": "No messages yet. Tell {name} what you need.",
+  "empty.quiet.waitingForModel": "{name} says hello as soon as a model is connected.",
+  "empty.quiet.connectHint": "To connect one, run this on the machine where J3 Bots is installed.",
 
   "message.sending": "Sending…",
   "message.notSent.left.one": "Not sent: {names} is no longer in this room",
@@ -584,6 +615,9 @@ export const en = {
     "Paired, but J3 Bots couldn’t store the sign-in encrypted on this device. Unlock your system’s keychain or keyring, restart J3 Bots, then pair again with a new code.",
   "pairing.storageFailed.mobile":
     "Paired, but this device’s secure storage wouldn’t keep the sign-in. Pair again with a new code.",
+  "pairing.deviceGuess": "{browser} on {system}",
+  "pairing.deviceGuess.app": "Desktop app",
+  "pairing.deviceGuess.browser": "Browser",
 
   "server.title": "Where does J3 Bots run?",
   "server.body": "Enter the address of the machine that runs J3 Bots. {command} prints it there.",

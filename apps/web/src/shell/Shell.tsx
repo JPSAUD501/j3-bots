@@ -31,7 +31,6 @@ import { BotDetails, RoomDetails } from "../components/DetailsPanel";
 import {
   Connecting,
   ConversationGone,
-  FirstRun,
   NoSelection,
   QuietConversation,
 } from "../components/EmptyStates";
@@ -42,6 +41,7 @@ import { Button } from "../components/ui/button";
 import { Timeline } from "../components/Timeline";
 import { scrollToEnd, ToLatest, useScrollFollow } from "../components/ToLatest";
 import { tintOf } from "../lib/botTint";
+import { Onboarding } from "../onboarding/Onboarding";
 import type { ShellData, ShellIntents } from "./data";
 import { cn } from "../lib/cn";
 import { isCovered, useCovered } from "../lib/covered";
@@ -98,8 +98,8 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
             : selected._tag === "room" && i.room.id === selected.roomId,
         ) ?? null);
   // The first bot's conversation opens straight from the first run: the first run stays from the
-  // press of Create until the new bot is in the roster and open, so the home never shows in
-  // between.
+  // press of Create, through the bot's arrival, until the new bot is in the roster and open, so
+  // the home never shows in between.
   const [openingFirstBot, setOpeningFirstBot] = useState(false);
   if (openingFirstBot && item !== null) setOpeningFirstBot(false);
   const active: Region = item === null ? "roster" : detailsOpen ? "details" : "conversation";
@@ -286,40 +286,43 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
   useScrollFollow(timeline, end.follow);
 
   if (data.roster === null || data.roster.length === 0 || openingFirstBot) {
+    // Settings live in the roster's footer; before there is a roster, these are the way out: in
+    // the desktop app, to another server too, as when the one it names has moved.
+    const ways = (
+      <div className="flex flex-wrap items-start justify-center gap-2">
+        {intents.server !== undefined && (
+          <ChangeServer
+            address={intents.server.address}
+            onChange={intents.server.forget}
+            paired
+            className="items-center"
+          />
+        )}
+        <SignOutDevice onSignOut={intents.signOut} quiet />
+      </div>
+    );
     return (
       <div className="flex h-full flex-col pt-(--inset-top) pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]">
         {data.roster === null ? (
-          <Connecting />
+          <>
+            <Connecting />
+            <div className="shrink-0 px-4 pb-3">{ways}</div>
+          </>
         ) : (
-          <FirstRun
+          <Onboarding
             engine={data.engine}
-            onCreateBot={(name, primary) => {
+            footer={ways}
+            onCreate={({ name, avatar }) => {
               setOpeningFirstBot(true);
-              return intents.createBot(name, primary).then(
-                (botId) => navigation.select({ _tag: "bot", botId }),
-                (error: unknown) => {
-                  setOpeningFirstBot(false);
-                  throw error;
-                },
-              );
+              // The first bot is the primary one: there is no other to choose.
+              return intents.createBot({ name, primary: true, avatar }).catch((error: unknown) => {
+                setOpeningFirstBot(false);
+                throw error;
+              });
             }}
+            onArrived={(botId) => navigation.select({ _tag: "bot", botId })}
           />
         )}
-        {/*
-          Settings live in the roster's footer; before there is a roster, these are the way out:
-          in the desktop app, to another server too, as when the one it names has moved.
-        */}
-        <div className="flex shrink-0 flex-wrap items-start justify-center gap-2 px-4 pb-3">
-          {intents.server !== undefined && (
-            <ChangeServer
-              address={intents.server.address}
-              onChange={intents.server.forget}
-              paired
-              className="items-center"
-            />
-          )}
-          <SignOutDevice onSignOut={intents.signOut} quiet />
-        </div>
       </div>
     );
   }
@@ -405,7 +408,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
         {view.phase === "not-found" ? (
           <ConversationGone onBack={() => navigation.select(null)} />
         ) : view.phase === "ready" && view.items.length === 0 && item._tag === "bot" ? (
-          <QuietConversation bot={item.bot} />
+          <QuietConversation bot={item.bot} engine={data.engine} />
         ) : (
           // Reversed, so the view stays pinned to the newest entry as entries arrive. One per
           // conversation, so each opens at its own end rather than where the last one was left,

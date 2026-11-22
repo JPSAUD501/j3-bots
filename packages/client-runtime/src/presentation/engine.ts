@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { EngineStatus, ProviderStatus } from "@j3-bots/contracts";
+import type { Bot, EngineStatus, ProviderStatus } from "@j3-bots/contracts";
 
 /** A provider a bot can be created on: ready, with a model to pick. */
 const canRunBots = (provider: ProviderStatus): boolean =>
@@ -33,4 +33,24 @@ export const providerGate = (engine: EngineStatus): ProviderGate => {
   if (checking) return { _tag: "checking" };
   const command = connectCommand(engine);
   return command === null ? { _tag: "unavailable" } : { _tag: "connect", command };
+};
+
+/**
+ * What holds a bot's hello back, as the server holds it: the engine reports
+ * the bot's provider, and not as ready. `connect` when a command connects it.
+ * Null while nothing does: the hello is on its way, or already said.
+ */
+export const openingHeld = (
+  bot: Bot,
+  engine: EngineStatus | null,
+):
+  | { readonly _tag: "connect"; readonly command: string }
+  | { readonly _tag: "provider" }
+  | null => {
+  if (!bot.opening || engine === null) return null;
+  const provider = engine.providers.find((p) => p.id === bot.model.providerId);
+  if (provider === undefined || provider.status._tag === "ready") return null;
+  return provider.status._tag === "sign-in-required"
+    ? { _tag: "connect", command: provider.status.command }
+    : { _tag: "provider" };
 };

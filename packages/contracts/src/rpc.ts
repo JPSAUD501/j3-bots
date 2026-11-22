@@ -256,7 +256,10 @@ const ProfileChanges = Schema.Struct({
 export type ProfileChanges = typeof ProfileChanges.Type;
 
 export const BotRpcs = RpcGroup.make(
-  /** Fields left out take the server's defaults: a free avatar, the first ready model. */
+  /**
+   * Fields left out take the server's defaults: a free avatar, and a model of
+   * the first ready provider, or with none ready, of one still to connect.
+   */
   Rpc.make("bot.create", {
     payload: {
       ...command,

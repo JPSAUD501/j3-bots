@@ -18,7 +18,7 @@ export {
 } from "./botEdit.ts";
 export { firstSeen, see } from "./changes.ts";
 export { type CodeLineTone, diffTones } from "./diff.ts";
-export { connectCommand, providerGate } from "./engine.ts";
+export { connectCommand, openingHeld, providerGate } from "./engine.ts";
 export { draftFileName, draftReadiness, type DraftReadiness } from "./draft.ts";
 export { type FileIcon, fileIcon, fileKind } from "./files.ts";
 export { webAddress } from "./links.ts";
@@ -41,6 +41,15 @@ export {
   movedOption,
 } from "./mentions.ts";
 export { type Inline, parseMessageText } from "./messageText.ts";
+export {
+  defaultBotName,
+  firstLooks,
+  makingProgress,
+  nextStep,
+  type OnboardingStep,
+  previousStep,
+  showsConnect,
+} from "./onboarding.ts";
 export {
   notificationOpening,
   type NotificationOpening,
@@ -79,6 +88,7 @@ export {
   rosterTarget,
 } from "./roster.ts";
 export { shownSaveProblem } from "./saves.ts";
+export { eases, type Spring, springs } from "./springs.ts";
 export { type Shared, sharedDraft, type SharedDraft, type SharedFile } from "./share.ts";
 export { editsAfterFailedSave, noEdits, type SettingsEdits, settingsPatch } from "./settings.ts";
 export {

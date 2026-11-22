@@ -171,6 +171,29 @@ it.effect("keeps a new bot's hello waiting while its provider is not ready", () 
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("creates a bot before any provider is connected, and it speaks once one is", () =>
+  Effect.gen(function* () {
+    yield* providerIs(TestDomain.DEFAULT_MODEL.providerId, {
+      _tag: "unavailable",
+      checking: false,
+    });
+    yield* providerIs(TestDomain.OTHER_PROVIDER_MODEL.providerId, {
+      _tag: "sign-in-required",
+      command: "connect",
+    });
+    // No model named: the one a command connects, not the one the engine cannot run.
+    const bot = yield* createNewBot("Ana");
+    assert.deepStrictEqual(bot.model, TestDomain.OTHER_PROVIDER_MODEL);
+    const session = yield* engineSession(bot.id);
+    yield* flushed(bot.id);
+    assert.strictEqual(yield* timesSent(session, FIRST_RUN), 0);
+
+    yield* providerIs(TestDomain.OTHER_PROVIDER_MODEL.providerId, { _tag: "ready" });
+    yield* nextTurn(bot.id);
+    assert.strictEqual(yield* timesSent(session, FIRST_RUN), 1);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("keeps a new bot's hello through a change of provider, for the new one", () =>
   Effect.gen(function* () {
     const { providerId } = TestDomain.OTHER_PROVIDER_MODEL;
