@@ -15,6 +15,9 @@ const VARIANTS = {
   production: { name: "J3 Bots", scheme: "j3bots", id: "dev.j3bots.mobile" },
 } as const;
 
+/** Why the app asks for the microphone: only dictation uses it. */
+const MICROPHONE_USE = "J3 Bots listens while you dictate a message, and only then.";
+
 const variantOf = (value: string | undefined): keyof typeof VARIANTS => {
   switch (value) {
     case "development":
@@ -67,10 +70,21 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       // so the app asks for no permission to use it.
       ["expo-secure-store", { faceIDPermission: false }],
       // Photos are picked through the system's photo picker, which needs no
-      // permission; nothing is taken with the camera or recorded.
+      // permission; nothing is taken with the camera. Its microphone setting
+      // must name the same use as dictation's: `false` would block the
+      // microphone for the whole app, dictation included.
       [
         "expo-image-picker",
-        { photosPermission: false, cameraPermission: false, microphonePermission: false },
+        { photosPermission: false, cameraPermission: false, microphonePermission: MICROPHONE_USE },
+      ],
+      // Dictation in the composer, with the platform's speech recognizer.
+      [
+        "expo-speech-recognition",
+        {
+          microphonePermission: MICROPHONE_USE,
+          speechRecognitionPermission:
+            "J3 Bots turns what you dictate into text in your message, which you send yourself.",
+        },
       ],
       // Other apps' share sheets list J3 Bots on Android for text, links and
       // files of any type, one or several. iOS would need a share extension,

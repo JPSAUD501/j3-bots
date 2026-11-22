@@ -35,6 +35,7 @@ import { Icon } from "../components/Icon.tsx";
 import { useI18n } from "../i18n.ts";
 import { type PickedFile, pickDocuments, pickPhotos } from "../platform/pick.ts";
 import { useColor } from "../theme.ts";
+import { DictationButton, DictationLine, useDictation } from "./Dictation.tsx";
 
 /** A room member the composer offers after `@`, drawn by its shape. */
 export interface MentionCandidate extends Mentionable {
@@ -50,7 +51,11 @@ export interface MentionCandidate extends Mentionable {
  * or could not be read, the field takes no change, and attaching and removing
  * files are unavailable. In a room, `@` offers its members and `@everyone`
  * above the pill; only a pick mentions one, and a quiet line under the pill
- * says who the message wakes. Mount one per conversation.
+ * says who the message wakes. While there is nothing to send, the trailing
+ * button dictates where the platform has a speech recognizer: what is heard
+ * becomes the draft's text as it is heard, and waits there for Send. Typing
+ * stops it, and so does the conversation leaving the operator's view. Mount
+ * one per conversation.
  */
 export function Composer({
   target,
@@ -58,6 +63,7 @@ export function Composer({
   mentionable,
   addressee,
   onSend,
+  inView,
 }: {
   readonly target: EntryTarget;
   /** Who the message goes to: a bot's or a room's name. */
@@ -67,6 +73,8 @@ export function Composer({
   /** In a room, who the message wakes as it stands. */
   readonly addressee?: string;
   readonly onSend: () => void;
+  /** The operator can see the conversation: its screen has the focus, and the app is in front. */
+  readonly inView: boolean;
 }) {
   const i18n = useI18n();
   const { t } = i18n;
@@ -80,9 +88,16 @@ export function Composer({
 
   const { text, mentions, files } = draft;
   const label = t("composer.label", { name: recipient });
-  const { uploading, sendable, problem } = draftReadiness(text, files);
+  const { empty, uploading, sendable, problem } = draftReadiness(text, files);
   // The draft takes no change while it is handed over, loads, or could not be read.
   const frozen = draft.sending || switching || readFailed;
+  // Dictation starts only on an empty draft, so what is heard is the whole text.
+  const dictation = useDictation({
+    onHeard: (heard) => client.setDraftText(target, heard),
+    frozen,
+    inView,
+  });
+  const listening = dictation?.state._tag === "listening";
   const ready = !frozen && sendable;
   // Files picked while the draft took no change, which it did not take.
   const [notTaken, setNotTaken] = useState(false);
@@ -96,6 +111,8 @@ export function Composer({
 
   const edit = (after: string) => {
     setNotTaken(false);
+    dictation?.abort();
+    dictation?.dismiss();
     const [start, end] = selection.current;
     const followed = followFieldEdit(
       {
@@ -254,21 +271,26 @@ export function Composer({
           style={{ maxHeight: layout.composerMaxHeight }}
           className="min-h-11 flex-1 px-1 py-2.5 text-lg text-foreground"
         />
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={t("composer.send")}
-          accessibilityHint={uploading ? t("composer.stillUploading") : undefined}
-          accessibilityState={{ disabled: !ready }}
-          onPress={ready ? onSend : undefined}
-          className={`size-11 items-center justify-center rounded-full ${ready ? "bg-foreground" : "bg-muted"}`}
-        >
-          <Icon
-            icon={ArrowUp}
-            size={20}
-            color={ready ? "accent-background" : "accent-muted-foreground"}
-          />
-        </Pressable>
+        {dictation !== null && (empty || listening) ? (
+          <DictationButton dictation={dictation} unavailable={frozen} />
+        ) : (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t("composer.send")}
+            accessibilityHint={uploading ? t("composer.stillUploading") : undefined}
+            accessibilityState={{ disabled: !ready }}
+            onPress={ready ? onSend : undefined}
+            className={`size-11 items-center justify-center rounded-full ${ready ? "bg-foreground" : "bg-muted"}`}
+          >
+            <Icon
+              icon={ArrowUp}
+              size={20}
+              color={ready ? "accent-background" : "accent-muted-foreground"}
+            />
+          </Pressable>
+        )}
       </View>
+      {dictation !== null && <DictationLine dictation={dictation} />}
       {addressee !== undefined && (
         <Text numberOfLines={1} className="px-3 text-xs text-muted-foreground">
           {addressee}

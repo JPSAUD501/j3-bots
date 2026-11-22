@@ -135,6 +135,10 @@ The desktop app updates itself from the repository's GitHub releases with electr
 - **What leaves the device.** Each check is a request to GitHub, which sees the device's address. Every update request carries an `x-user-staging-id` header: a random UUID made once and kept in the app's profile (`.updaterId`), so GitHub could tell one installation's checks apart over time (`AppUpdater.js:386-387`, `:502`). The user agent is Electron's default, which names the app and its version (**Assumed**). Nothing about the J3 Bots server, the device's pairing or its conversations goes with them.
 - **The page's part.** The page can read the update's status, ask for a check, ask for the restart and report whether a save is under way, through the bridge, decoded with its schemas on both sides and heard only from the app's top frame. It cannot choose the feed, the file or the version.
 
+## Dictation
+
+- **What leaves the device.** The mobile app's dictation uses the platform's speech recognizer ([Clients: mobile](clients.md#mobile)), and the microphone only from the press of Dictate until Stop, or until the conversation leaves the screen or the app leaves the foreground. Recognition on the device sends nothing; online, the operator's audio goes to the device's speech service (usually Google's on Android, Apple's on iOS) for as long as dictation is on. The app asks Android for the on-device recognizer where it has the device's language installed (**Read** in `expo-speech-recognition` 58.0.1, `ExpoSpeechService.kt`), and takes iOS to recognize online; that the on-device recognizer then sends nothing is **Assumed** from Android's own description of it. While it listens, the line under the composer says whether recognition may run online. Nothing goes to the J3 Bots server but the text, once the operator sends it.
+
 ## Secrets
 
 - J3 Bots never asks the operator to paste a secret into a conversation, and the base prompt tells bots not to either.
