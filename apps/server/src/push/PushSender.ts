@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { PushData, PushPlatform, PushProvider, PushToken } from "@j3-bots/contracts";
+import type {
+  NotificationKind,
+  PushData,
+  PushPlatform,
+  PushProvider,
+  PushToken,
+} from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -26,6 +32,8 @@ export interface PushMessage {
   readonly platform: PushPlatform;
   readonly title: string;
   readonly body: string;
+  /** What the entry is, which names the Android channel it shows in (`NotificationKind`). */
+  readonly kind: NotificationKind;
   /** What the app opens when the notification is tapped. */
   readonly data: PushData;
 }

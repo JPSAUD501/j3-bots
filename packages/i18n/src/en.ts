@@ -58,6 +58,11 @@ export const en = {
   "notification.approval": "Needs your approval",
   "notification.secret": "Needs a credential",
   "notification.handoff": "Sent a teammate an urgent message",
+  "notification.channel.message": "Messages",
+  "notification.channel.question": "Questions",
+  "notification.channel.approval": "Approvals",
+  "notification.channel.secret": "Credential requests",
+  "notification.channel.handoff": "Urgent messages to teammates",
 
   "time.yesterday": "Yesterday",
   "time.yesterdayAt": "Yesterday at {time}",

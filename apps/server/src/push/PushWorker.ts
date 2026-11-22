@@ -4,6 +4,7 @@ import {
   DeviceId,
   EntryId,
   type EntryTarget,
+  NotificationKind,
   PushPlatform,
   PushProvider,
   PushToken,
@@ -68,6 +69,7 @@ const Due = Schema.Struct({
   title: Schema.String,
   body: Schema.String,
   plain_body: Schema.String,
+  kind: NotificationKind,
   attempts: Schema.Int,
   generation: Schema.NullOr(Schema.String),
   conversation_bot_id: Schema.NullOr(BotId),
@@ -348,6 +350,7 @@ export const layer = Layer.effect(
           platform,
           title: delivery.title,
           body: claimed.body,
+          kind: delivery.kind,
           data: { deviceId: delivery.device_id, target, entryId: delivery.entry_id },
         })
         .pipe(Effect.result);
@@ -523,7 +526,7 @@ export const layer = Layer.effect(
       const until = yield* notBefore;
       if (until !== null && DateTime.isGreaterThan(until, started)) return false;
       const rows = yield* sql`
-        SELECT d.id, d.entry_id, d.device_id, d.title, d.body, d.plain_body, d.attempts,
+        SELECT d.id, d.entry_id, d.device_id, d.title, d.body, d.plain_body, e.kind, d.attempts,
           d.generation, e.conversation_bot_id, e.room_id, r.provider, r.token, r.platform,
           r.generation AS registered_generation
         FROM push_deliveries d

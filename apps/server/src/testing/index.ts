@@ -19,6 +19,7 @@ export { CurrentDevice, DeviceAuth } from "../auth/DeviceAuth.ts";
 export { Bots } from "../bots/Bots.ts";
 export { Devices } from "../devices/Devices.ts";
 export { Entries } from "../entries/Entries.ts";
+export { Presence } from "../presence/Presence.ts";
 
 /** The RPCs of the contract this server does not answer yet. */
 export type UnservedRpcs = Exclude<

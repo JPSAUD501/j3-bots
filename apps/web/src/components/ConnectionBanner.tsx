@@ -58,6 +58,7 @@ export function ConnectionBanner({
       case "waiting":
         return state.reason === "dropped" ? t("connection.lost") : t("connection.unreachable");
       case "starting":
+      case "background":
       case "connected":
       case "unpaired":
       case "incompatible":

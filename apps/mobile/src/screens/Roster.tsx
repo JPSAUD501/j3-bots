@@ -27,6 +27,7 @@ import { useSideBySide } from "../layout.ts";
 import { asItWas, type Navigation, type Screens, useOpenConversation } from "../navigation.tsx";
 import { useBots } from "../presentation.tsx";
 import { useColor } from "../theme.ts";
+import { useNotificationTaps } from "../notificationTaps.ts";
 import { Body, Centered, Title } from "../ui.tsx";
 import { useRosterItem } from "./rosterItem.ts";
 
@@ -36,11 +37,13 @@ type Props = NativeStackScreenProps<Screens, "roster">;
  * Every bot and room, in the roster's order; one opens its conversation. From
  * the tablet width up, the conversation `item` names sits beside the roster;
  * folded to a phone's width, it moves to its own screen, and what was open
- * over it stays open.
+ * over it stays open. The roster is under every other screen, so a tapped
+ * push opens its conversation from here.
  */
 export function RosterScreen({ navigation, route }: Props) {
   const roster = useReadable(useJ3Client().roster);
   const sideBySide = useSideBySide();
+  useNotificationTaps(useOpenConversation());
   const selected = route.params?.item ?? null;
   useEffect(() => {
     if (sideBySide || selected === null) return;

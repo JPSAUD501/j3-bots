@@ -489,7 +489,9 @@ export const SettingsRpcs = RpcGroup.make(
 
 /**
  * The entries a bot adds that notify: what it says to the operator, an urgent
- * message to a teammate, and the cards that wait on the operator.
+ * message to a teammate, and the cards that wait on the operator. A push of
+ * each kind shows on Android in a notification channel of its own, whose id
+ * is the kind, so the operator can mute or silence one kind alone.
  */
 export const NotificationKind = Schema.Literals([
   "message",

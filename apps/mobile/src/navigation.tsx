@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { BotId, MemoryPath, RoomId, RosterItemKey } from "@j3-bots/contracts";
+import { rosterKeyText } from "@j3-bots/client-runtime/presentation";
 import {
   DarkTheme,
   DefaultTheme,
@@ -76,13 +77,26 @@ const Stack = createNativeStackNavigator<Screens>();
 
 /**
  * Opens a bot's or room's conversation where this layout shows one: on its
- * own screen on a phone, over the one shown now, or beside the roster.
+ * own screen on a phone, over the one shown now unless that is it already,
+ * or beside the roster.
  */
 export function useOpenConversation(): (item: RosterItemKey) => void {
   const navigation = useNavigation<Navigation>();
   const sideBySide = useSideBySide();
-  return (item) =>
-    sideBySide ? navigation.popTo("roster", { item }) : navigation.push("conversation", { item });
+  return (item) => {
+    if (sideBySide) {
+      navigation.popTo("roster", { item });
+      return;
+    }
+    const { routes, index } = navigation.getState();
+    const shown = routes[index];
+    // A route's params are not told apart by its name: the conversation's are those with an item.
+    const params = shown?.name === "conversation" ? shown.params : undefined;
+    const shownItem = params !== undefined && "item" in params ? params.item : undefined;
+    if (shownItem === undefined || rosterKeyText(shownItem) !== rosterKeyText(item)) {
+      navigation.push("conversation", { item });
+    }
+  };
 }
 
 /**

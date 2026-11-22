@@ -15,7 +15,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Socket from "effect/socket/Socket";
-import { ReconnectPolicy } from "../src/connection/Connection.ts";
+import { ReconnectPolicy, type ReconnectSettings } from "../src/connection/Connection.ts";
 import { OutboxSweep } from "../src/stores/Conversations.ts";
 import {
   ClientStorage,
@@ -24,6 +24,8 @@ import {
   FileTransfer,
   LocalStorageError,
   type LocalTable,
+  Lifecycle,
+  type LifecycleState,
   makeInProcessLocks,
   Network,
   type NetworkStatus,
@@ -135,6 +137,27 @@ const network = Layer.effectContext(
     );
   }),
 ).pipe(Layer.provide(Socket.layerWebSocketConstructorGlobal));
+
+/** Test controls over the app's lifecycle: a phone's app goes to the background and back. */
+export class TestLifecycle extends Context.Service<
+  TestLifecycle,
+  { readonly set: (state: LifecycleState) => Effect.Effect<void> }
+>()("@j3-bots/client-runtime/test/platform/TestLifecycle") {}
+
+const lifecycle = Layer.effectContext(
+  Effect.gen(function* () {
+    const state = yield* SubscriptionRef.make<LifecycleState>("foreground");
+    return Context.make(
+      Lifecycle,
+      Lifecycle.of({ state: SubscriptionRef.get(state), changes: SubscriptionRef.changes(state) }),
+    ).pipe(
+      Context.add(
+        TestLifecycle,
+        TestLifecycle.of({ set: (next) => SubscriptionRef.set(state, next) }),
+      ),
+    );
+  }),
+);
 
 /** One window's watch on the device's credential: what it is told when another window changes it. */
 interface CredentialWatcher {
@@ -398,16 +421,17 @@ const REQUEST_TIMEOUT = Duration.seconds(10);
 
 /**
  * A platform for tests: the device's credential in memory, `stored` when given, a network the test turns
- * off and on, Node's own `fetch` and `WebSocket`, and retries in milliseconds.
+ * off and on, an app the test puts in the background and back, Node's own `fetch` and `WebSocket`, and retries in milliseconds.
  * `http` stands between the client and the server, as a reverse proxy would,
- * for every HTTP request and upload.
+ * for every HTTP request and upload. `reconnect` replaces the test's pacing
+ * where a test needs another.
  */
 export const layer = (
   origin: URL,
   stored: Option.Option<DeviceCredential> = Option.none(),
   device: TestDevice = makeDevice(),
   http: Layer.Layer<HttpClient.HttpClient> = FetchHttpClient.layer,
-  requestTimeout: Duration.Duration = REQUEST_TIMEOUT,
+  reconnect: Partial<ReconnectSettings> = {},
 ) =>
   Layer.mergeAll(
     Layer.succeed(ServerAddress, { origin }),
@@ -419,6 +443,7 @@ export const layer = (
     Layer.succeed(WindowLocks, device.locks),
     transfer.pipe(Layer.provide(http)),
     network,
+    lifecycle,
     http,
     SecureRandom.layerWebCrypto,
     // Short enough that a test sees a sweep, long enough that most deliveries are told.
@@ -427,7 +452,8 @@ export const layer = (
       initialDelay: Duration.millis(5),
       maxDelay: Duration.millis(20),
       openTimeout: Duration.seconds(5),
-      requestTimeout,
+      requestTimeout: REQUEST_TIMEOUT,
       pingTimeout: Duration.seconds(15),
+      ...reconnect,
     }),
   );

@@ -57,6 +57,8 @@ const shownOf = (
     case "storage-failed":
       return { _tag: "storage-failed", retry: client.reconnectNow };
     case "offline":
+    // Nothing is on screen in the background; the app connects again on its return.
+    case "background":
     case "connecting":
     case "waiting":
     case "connected":

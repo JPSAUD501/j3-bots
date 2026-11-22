@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
+  alwaysForeground,
   Cell,
   ClientStorage,
   CredentialStorageError,
@@ -216,6 +217,7 @@ const launch = (
         Network,
         Network.of({ status: Effect.succeed("offline"), changes: Stream.never }),
       ),
+      alwaysForeground,
       FetchHttpClient.layer,
       Socket.layerWebSocketConstructorGlobal,
       SecureRandom.layerWebCrypto,

@@ -105,6 +105,15 @@ function YouForm(props: { readonly settings: Settings; readonly connected: boole
 /** Whether this phone shows notifications: not asked yet, allowed, or refused. */
 type PhoneNotificationAccess = "default" | "granted" | "denied";
 
+/**
+ * Whether this phone shows notifications, and what asks to allow them and
+ * then registers the phone with the server.
+ */
+export interface PhoneNotifications {
+  readonly access: PhoneNotificationAccess;
+  readonly allow: () => void;
+}
+
 /** What this phone does about notifications, in words, once it was asked. */
 const accessLine = {
   granted: "settings.notifications.phone.granted",
@@ -119,15 +128,8 @@ const accessLine = {
  */
 export function NotificationsSection(props: {
   readonly connected: boolean;
-  /**
-   * Whether this phone shows notifications, and what asks to allow them and
-   * then registers the phone with the server. Absent until this build can
-   * receive pushes.
-   */
-  readonly thisPhone?: {
-    readonly access: PhoneNotificationAccess;
-    readonly allow: () => void;
-  };
+  /** This phone's own notifications. Absent in a build that cannot receive pushes. */
+  readonly thisPhone?: PhoneNotifications | undefined;
 }) {
   const { t } = useI18n();
   const client = useJ3Client();

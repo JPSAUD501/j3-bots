@@ -2,11 +2,12 @@
 import type { DeviceId, DeviceToken } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import type * as Option from "effect/Option";
 import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import type * as Stream from "effect/Stream";
+import * as Stream from "effect/Stream";
 
 // What each platform gives the runtime. The runtime imports nothing from a
 // browser, Electron or React Native: every capability below is a service the
@@ -97,6 +98,31 @@ export class Network extends Context.Service<
     readonly changes: Stream.Stream<NetworkStatus>;
   }
 >()("@j3-bots/client-runtime/ports/Network") {}
+
+/** Whether the app is in the foreground, or the system has put it in the background. */
+export type LifecycleState = "foreground" | "background";
+
+/**
+ * Whether the app is in the foreground: React Native's `AppState` on a phone.
+ * In the background the client keeps no socket open, so the server pushes to
+ * the device instead (`push.register`), and the client connects again when
+ * the app returns. A browser tab and the desktop app have no push: they stay
+ * in the foreground for the runtime, seen or not, and hear everything on
+ * their socket (`alwaysForeground`).
+ */
+export class Lifecycle extends Context.Service<
+  Lifecycle,
+  {
+    readonly state: Effect.Effect<LifecycleState>;
+    readonly changes: Stream.Stream<LifecycleState>;
+  }
+>()("@j3-bots/client-runtime/ports/Lifecycle") {}
+
+/** The lifecycle of a client that keeps its socket for as long as it runs. */
+export const alwaysForeground = Layer.succeed(
+  Lifecycle,
+  Lifecycle.of({ state: Effect.succeed("foreground"), changes: Stream.never }),
+);
 
 /**
  * What the client keeps on the device besides the credential: `drafts`, each

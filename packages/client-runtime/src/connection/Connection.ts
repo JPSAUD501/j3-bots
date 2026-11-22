@@ -33,6 +33,8 @@ import {
   type CredentialStorageError,
   CredentialStore,
   type DeviceCredential,
+  Lifecycle,
+  type LifecycleState,
   Network,
   ServerAddress,
 } from "../ports.ts";
@@ -53,6 +55,11 @@ export type ConnectionState =
   | { readonly _tag: "unpaired"; readonly reason: UnpairedReason }
   /** The platform reports no network. The client tries again when it returns. */
   | { readonly _tag: "offline" }
+  /**
+   * The app is in the background, where the server pushes to the device
+   * instead. No socket is open; the client connects again when it returns.
+   */
+  | { readonly _tag: "background" }
   | { readonly _tag: "connecting"; readonly attempt: number }
   | { readonly _tag: "connected" }
   /**
@@ -186,7 +193,9 @@ type AttemptOutcome =
   | { readonly _tag: "incompatible"; readonly serverProtocol: number }
   | { readonly _tag: "credential-changed" }
   /** The platform reported the network gone. */
-  | { readonly _tag: "offline" };
+  | { readonly _tag: "offline" }
+  /** The app went to the background. */
+  | { readonly _tag: "background" };
 
 const isRpcClientError = Schema.is(RpcClientError);
 
@@ -294,6 +303,7 @@ export const layer = Layer.effect(
     const { origin } = yield* ServerAddress;
     const store = yield* CredentialStore;
     const network = yield* Network;
+    const lifecycle = yield* Lifecycle;
     const makeWebSocket = yield* Socket.WebSocketConstructor;
     const policy = yield* ReconnectPolicy;
     const http = yield* ServerHttp.make(origin, policy.requestTimeout);
@@ -315,6 +325,7 @@ export const layer = Layer.effect(
         }),
       );
     const networkStatus = yield* SubscriptionRef.make(yield* network.status);
+    const lifecycleState = yield* SubscriptionRef.make<LifecycleState>(yield* lifecycle.state);
     // Asks the supervisor to try now. One pending wake is enough.
     const wakes = yield* Queue.sliding<void>(1);
     let generation = 0;
@@ -327,6 +338,10 @@ export const layer = Layer.effect(
       ),
       Effect.forkScoped,
     );
+    yield* lifecycle.changes.pipe(
+      Stream.runForEach((next) => SubscriptionRef.set(lifecycleState, next)),
+      Effect.forkScoped,
+    );
 
     const firstChange = <A>(
       ref: SubscriptionRef.SubscriptionRef<A>,
@@ -334,6 +349,7 @@ export const layer = Layer.effect(
     ) => SubscriptionRef.changes(ref).pipe(Stream.filter(predicate), Stream.runHead, Effect.asVoid);
 
     const wake = Queue.take(wakes).pipe(Effect.asVoid);
+    const toBackground = firstChange(lifecycleState, (next) => next === "background");
 
     const sameCredential = (a: DeviceCredential, b: DeviceCredential) =>
       a.deviceId === b.deviceId && Redacted.value(a.token) === Redacted.value(b.token);
@@ -453,6 +469,8 @@ export const layer = Layer.effect(
             Effect.as({ _tag: "offline" } as const),
           ),
         ),
+        // And going to the background, where the server pushes instead.
+        Effect.raceFirst(toBackground.pipe(Effect.as({ _tag: "background" } as const))),
       );
 
     /** Reads the credential and follows it, unless storage fails: succeeds with whether it could. */
@@ -493,12 +511,22 @@ export const layer = Layer.effect(
           failures = 0;
           continue;
         }
+        if ((yield* SubscriptionRef.get(lifecycleState)) === "background") {
+          state.set({ _tag: "background" });
+          // Signing out needs no socket, and is not left waiting for the app's return.
+          yield* firstChange(lifecycleState, (next) => next === "foreground").pipe(
+            Effect.raceFirst(firstChange(credential, (next) => next !== current)),
+          );
+          failures = 0;
+          continue;
+        }
         if ((yield* SubscriptionRef.get(networkStatus)) === "offline") {
           state.set({ _tag: "offline" });
           // Signing out, here or in another window, needs no network.
           yield* firstChange(networkStatus, (status) => status !== "offline").pipe(
             Effect.raceFirst(wake),
             Effect.raceFirst(firstChange(credential, (next) => next !== current)),
+            Effect.raceFirst(toBackground),
           );
           failures = 0;
           continue;
@@ -509,6 +537,7 @@ export const layer = Layer.effect(
         switch (outcome._tag) {
           case "credential-changed":
           case "offline":
+          case "background":
             failures = 0;
             continue;
           case "revoked":
@@ -537,6 +566,7 @@ export const layer = Layer.effect(
             state.set({ _tag: "waiting", reason: outcome._tag, attempt: failures, retryAt });
             const woken = yield* wake.pipe(
               Effect.raceFirst(firstChange(credential, (next) => next !== current)),
+              Effect.raceFirst(toBackground),
               Effect.as(true),
               Effect.timeoutOrElse({ duration: delay, orElse: () => Effect.succeed(false) }),
             );

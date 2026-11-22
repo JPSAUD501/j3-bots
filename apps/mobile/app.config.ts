@@ -52,8 +52,20 @@ const variantOf = (value: string | undefined): keyof typeof VARIANTS => {
   }
 };
 
+/**
+ * What a build needs to receive pushes, from the environment it is built in:
+ * the EAS project whose push credentials Expo's push service holds, and, for
+ * Android, that project's Firebase config file. Neither is in the repository:
+ * both belong to whoever publishes the build. A build without them runs, and
+ * cannot turn notifications on.
+ */
+const fromEnvironment = (value: string | undefined) => (value === "" ? undefined : value);
+const pushProjectId = fromEnvironment(process.env.EAS_PROJECT_ID);
+const googleServicesFile = fromEnvironment(process.env.GOOGLE_SERVICES_JSON);
+
 export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
-  const variant = VARIANTS[variantOf(process.env.APP_VARIANT)];
+  const variantName = variantOf(process.env.APP_VARIANT);
+  const variant = VARIANTS[variantName];
   const icon = iconIn(projectRoot);
   return {
     ...config,
@@ -90,14 +102,21 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
         monochromeImage: icon("adaptive-monochrome.png"),
         backgroundColor: canvas.light,
       },
-      // Added by dependencies, used by nothing the app does.
+      ...(googleServicesFile === undefined ? {} : { googleServicesFile }),
+      // Added by dependencies, used by nothing the app does. Notifications
+      // vibrate through their channel, which needs no permission, and the app
+      // schedules none to set up again after a restart.
       blockedPermissions: [
         "android.permission.SYSTEM_ALERT_WINDOW",
         "android.permission.VIBRATE",
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
       ],
     },
+    ...(pushProjectId === undefined
+      ? {}
+      : { extra: { ...config.extra, eas: { projectId: pushProjectId } } }),
     // No over-the-air updates: a build runs the JavaScript it was built with.
     updates: { enabled: false },
     plugins: [
@@ -162,6 +181,22 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
             singleShareMimeTypes: ["*/*"],
             multipleShareMimeTypes: ["*/*"],
           },
+        },
+      ],
+      [
+        "expo-notifications",
+        {
+          // A push that names no channel, as from a server older than the
+          // channels, shows with a bot's messages.
+          defaultChannel: "message",
+          // Apple's development push environment for development builds.
+          mode: variantName === "development" ? "development" : "production",
+          // Android draws a notification's icon from its alpha alone: the
+          // launcher icon, which is opaque, would show as a white square.
+          icon: icon("notification.png"),
+          // What Android tints the icon with in the notification itself. It
+          // takes one color, so the light theme's, as `primaryColor`.
+          color: accent.light,
         },
       ],
       "./plugins/accentColor.js",
