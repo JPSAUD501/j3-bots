@@ -346,6 +346,12 @@ const notices = <Failure extends Schema.Top>(failure: Failure) =>
      */
     Schema.TaggedStruct("session-lost", {}),
     /**
+     * J3 Bots could not open the bot's working session, or bring it to the
+     * bot's settings, several times in a row, and keeps trying. Messages wait
+     * until it is ready.
+     */
+    Schema.TaggedStruct("session-not-ready", {}),
+    /**
      * The bot's new model or permission mode waits for background work its
      * session runs, which applying it would end; its messages wait too. A Stop
      * ends that work, and the change applies then.

@@ -175,6 +175,8 @@ export function noticeText(
       });
     case "session-lost":
       return t("notice.sessionLost");
+    case "session-not-ready":
+      return t("notice.sessionNotReady");
     case "settings-held":
       return t("notice.settingsHeld");
     case "observation-failed":

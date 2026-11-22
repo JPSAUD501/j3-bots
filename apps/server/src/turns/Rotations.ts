@@ -42,11 +42,17 @@ export const ROTATE_AFTER_RUNS = 200;
 const BACKGROUND_RECHECK = Duration.seconds(30);
 
 /**
- * A failed opening or alignment of a bot's main session is tried again: from
- * 5 s, doubling up to 5 min.
+ * A failed opening or alignment of a bot's main session, and a retirement the
+ * engine refused, are tried again: from 5 s, doubling up to 5 min.
  */
-const openRetry = (failures: number) =>
+const retryAfter = (failures: number) =>
   Duration.min(Duration.seconds(5 * 2 ** Math.min(failures - 1, 6)), Duration.minutes(5));
+
+/**
+ * After this many failed openings or alignments of a bot's main session in a
+ * row, about 15 s in, its conversation is told that the bot waits for it.
+ */
+const NOT_READY_AFTER = 3;
 
 /** How many entries a digest reads at a time, going back until it is full. */
 const DIGEST_PAGE = 100;
@@ -146,6 +152,11 @@ export const layer = Layer.effect(
     );
     /** Bots whose main session failed to open: how often in a row, and when it is tried again. */
     const openFailures = new Map<BotId, { readonly failures: number; readonly at: DateTime.Utc }>();
+    /** Retired sessions whose retirement the engine refused: how often in a row, and when it is tried again. */
+    const retireFailures = new Map<
+      SessionRowId,
+      { readonly failures: number; readonly at: DateTime.Utc }
+    >();
 
     const overRuns = SqlSchema.findAll({
       Request: Schema.Number,
@@ -402,7 +413,9 @@ export const layer = Layer.effect(
      * runs again once it is ready; a session the engine no longer has, also
      * one archived from the engine's console, is recorded lost, which nudges
      * the next pass to replace it; any other failure is tried again with
-     * backoff. An alignment waiting for a turn is tried again when the turn
+     * backoff, under a fresh key after a refused opening, and the bot's
+     * conversation is told once it failed `NOT_READY_AFTER` times in a row.
+     * An alignment waiting for a turn is tried again when the turn
      * ends, which nudges the rotator, and one held by background work as
      * often as a rotation held by it.
      */
@@ -444,13 +457,14 @@ export const layer = Layer.effect(
         }
       }
       const failures = (failed?.failures ?? 0) + 1;
-      const at = DateTime.addDuration(now, openRetry(failures));
+      const at = DateTime.addDuration(now, retryAfter(failures));
       openFailures.set(botId, { failures, at });
       outcome.until(at);
       yield* Effect.logWarning(
         "A bot's main session could not be opened or aligned; it is tried again",
-        { botId, cause: result.cause },
+        { botId, failures, cause: result.cause },
       );
+      if (failures >= NOT_READY_AFTER) yield* sessions.notReady(botId);
       return "done" as const;
     });
 
@@ -475,26 +489,40 @@ export const layer = Layer.effect(
         // Wakes held for a replaced session go to the new one, opened by now
         // if the engine took it.
         if (replaced) yield* signals.dispatch.fire;
+        const now = yield* DateTime.now;
         for (const session of yield* retiredInUse(undefined).pipe(Effect.orDie)) {
+          const failed = retireFailures.get(session.id);
+          if (failed !== undefined && DateTime.isGreaterThan(failed.at, now)) {
+            outcome.until(failed.at);
+            continue;
+          }
           const retired = yield* Effect.exit(engine.retireSession(session.engine_session_id));
           if (retired._tag === "Failure") {
             const error = Cause.findErrorOption(retired.cause);
-            // An engine that takes no commands ends the pass; any other
-            // failure leaves this session for a later pass, and the others go on.
-            if (Option.isSome(error) && error.value._tag !== "EngineIndeterminate") {
+            // An engine that takes no commands ends the pass. A lost answer is
+            // asked again on the next pass. A refusal, which the engine makes
+            // while work the retirement's Stop has not ended yet runs there,
+            // and a defect wait with backoff. Each leaves only this session for
+            // later, and the others go on.
+            if (Option.isSome(error) && error.value._tag === "EngineIndeterminate") {
+              outcome.defer();
+              continue;
+            }
+            if (Option.isSome(error) && error.value._tag !== "RetireRejected") {
               return { _tag: "unavailable" } as const;
             }
-            if (Option.isNone(error)) {
-              yield* Effect.logWarning(
-                "A retired session could not be archived; it is tried again",
-                {
-                  cause: retired.cause,
-                },
-              );
-            }
-            outcome.defer();
+            const failures = (failed?.failures ?? 0) + 1;
+            const at = DateTime.addDuration(now, retryAfter(failures));
+            retireFailures.set(session.id, { failures, at });
+            outcome.until(at);
+            yield* Effect.logWarning("A retired session could not be archived; it is tried again", {
+              botId: session.bot_id,
+              failures,
+              cause: retired.cause,
+            });
             continue;
           }
+          retireFailures.delete(session.id);
           // Its events are followed no more: what is still open there is settled
           // now, and the work its rooms counted there with it (`RoomStates`).
           yield* transaction(

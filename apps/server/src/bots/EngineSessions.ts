@@ -5,7 +5,7 @@ import {
   type EngineDown,
   IdempotencyKey,
   type ModelUnavailable,
-  type ProjectNotFound,
+  type OpenRejected,
   SessionId,
   type SessionNotFound,
 } from "@j3-bots/engine-t3";
@@ -37,7 +37,18 @@ const SessionRow = Schema.Struct({
   bot_id: BotId,
   engine_session_id: Schema.NullOr(SessionId),
   provider_id: ProviderId,
+  open_refusals: Schema.Int,
 });
+
+/**
+ * The key a session is opened under: its id, and once the engine refused to
+ * open it, its id with the count of refusals. The engine keeps a refusal for
+ * its key, so a key it refused is never sent again.
+ */
+const openingKey = (session: typeof SessionRow.Type) =>
+  IdempotencyKey.make(
+    session.open_refusals === 0 ? session.id : `${session.id}:${session.open_refusals}`,
+  );
 
 /** A live session's alignment with its bot's settings. */
 const Alignment = Schema.Struct({
@@ -96,7 +107,9 @@ export interface BotSession {
  * Each bot's place in the engine: its project, and its main session
  * (`docs/architecture/server.md`, Sessions). The session's id is J3 Bots' own,
  * written before the engine is asked for it and used as that request's key, so
- * a retried opening never makes a second engine session. The row is written in
+ * a retried opening never makes a second engine session. An opening the engine
+ * refused spends its key: the row counts the refusal, and the next opening
+ * goes under a fresh key (`openingKey`). The row is written in
  * the transaction that reads the bot's settings, and names the provider they
  * chose: a session never changes provider, and one whose bot moved on is
  * replaced (`turns/Rotations.ts`), never opened on the provider it no longer
@@ -129,10 +142,7 @@ export class EngineSessions extends Context.Service<
      */
     readonly provision: (
       botId: BotId,
-    ) => Effect.Effect<
-      Alignment,
-      EngineDown | ProjectNotFound | ModelUnavailable | SessionNotFound
-    >;
+    ) => Effect.Effect<Alignment, EngineDown | ModelUnavailable | OpenRejected | SessionNotFound>;
     /**
      * Brings the bot's opened main session to the bot's settings, for a bot
      * whose workspace, project and session are in place and only an alignment
@@ -161,6 +171,11 @@ export class EngineSessions extends Context.Service<
      * `inMainSessionGate`, whose session it checks is still the bot's.
      */
     readonly settingsChanged: (held: HeldMainSession) => Effect.Effect<void, MainSessionMoved>;
+    /**
+     * Tells the bot's conversation that its main session could not be opened
+     * or aligned, once until an alignment succeeds again.
+     */
+    readonly notReady: (botId: BotId) => Effect.Effect<void>;
     /** Removes the bot's project, and every session in it, from the engine. */
     readonly removeProject: (botId: BotId) => Effect.Effect<void, EngineDown>;
     /**
@@ -198,7 +213,7 @@ export const layer = Layer.effect(
       Request: BotId,
       Result: SessionRow,
       execute: (botId) => sql`
-        SELECT id, bot_id, engine_session_id, provider_id FROM sessions
+        SELECT id, bot_id, engine_session_id, provider_id, open_refusals FROM sessions
         WHERE bot_id = ${botId} AND purpose = 'main' AND retired_at IS NULL
       `,
     });
@@ -207,7 +222,7 @@ export const layer = Layer.effect(
       Request: SessionId,
       Result: SessionRow,
       execute: (sessionId) => sql`
-        SELECT id, bot_id, engine_session_id, provider_id FROM sessions
+        SELECT id, bot_id, engine_session_id, provider_id, open_refusals FROM sessions
         WHERE engine_session_id = ${sessionId} AND retired_at IS NULL
       `,
     });
@@ -223,7 +238,7 @@ export const layer = Layer.effect(
         const { bot } = found.value;
         const existing = yield* mainSession(botId);
         if (Option.isSome(existing)) return { bot, session: existing.value };
-        const id = yield* ids.make("session");
+        const id = SessionRowId.make(yield* ids.make("session"));
         yield* sql`
         INSERT INTO sessions (
           id, bot_id, purpose, prompt_version, provider_id, settings_pending, created_at
@@ -239,6 +254,7 @@ export const layer = Layer.effect(
             bot_id: botId,
             engine_session_id: null,
             provider_id: bot.model.providerId,
+            open_refusals: 0,
           },
         };
       },
@@ -367,6 +383,8 @@ export const layer = Layer.effect(
         if (row === undefined) return false;
         yield* sql`UPDATE sessions SET settings_pending = 0, settings_held = 0 WHERE id = ${rowId}`;
         if (row.held === 1) yield* changes.touch({ _tag: "bot", botId });
+        // Ready: a later run of failures is told again.
+        yield* sql`UPDATE bots SET unready_told = 0 WHERE id = ${botId} AND unready_told = 1`;
         return true;
       },
       transaction,
@@ -426,6 +444,14 @@ export const layer = Layer.effect(
       );
     });
 
+    /** Counts a refused opening of the session, which its next key carries. */
+    const openingRefused = (session: typeof SessionRow.Type) =>
+      sql`
+        UPDATE sessions SET open_refusals = open_refusals + 1
+        WHERE id = ${session.id} AND engine_session_id IS NULL
+          AND open_refusals = ${session.open_refusals}
+      `.pipe(Effect.orDie, Effect.asVoid);
+
     const provision = Effect.fn("EngineSessions.provision")(function* (botId: BotId) {
       const found = yield* bots.find(botId);
       if (Option.isNone(found)) return "aligned" as const;
@@ -444,13 +470,18 @@ export const layer = Layer.effect(
       // rotator replaces the row, which never opens.
       if (session.provider_id !== settings.model.providerId) return "aligned" as const;
       if (session.engine_session_id === null) {
-        const sessionId = yield* engine.openSession({
-          key: IdempotencyKey.make(session.id),
-          projectId,
-          title: "Main",
-          model: settings.model,
-          permissionMode: settings.permissionMode,
-        });
+        const sessionId = yield* engine
+          .openSession({
+            key: openingKey(session),
+            projectId,
+            title: "Main",
+            model: settings.model,
+            permissionMode: settings.permissionMode,
+          })
+          .pipe(
+            // The key is spent: the next opening takes a fresh one.
+            Effect.tapErrorTag("OpenRejected", () => openingRefused(session)),
+          );
         // Recorded before it is aligned, which it takes no work until.
         yield* sql`UPDATE sessions SET engine_session_id = ${sessionId} WHERE id = ${session.id}`.pipe(
           Effect.orDie,
@@ -463,6 +494,18 @@ export const layer = Layer.effect(
     const alignAlone = Effect.fn("EngineSessions.alignAlone")(function* (botId: BotId) {
       return yield* align(botId);
     }, provisioning.withPermits(1));
+
+    const notReady = Effect.fn("EngineSessions.notReady")(
+      function* (botId: BotId) {
+        const told = yield* sql`
+          UPDATE bots SET unready_told = 1 WHERE id = ${botId} AND unready_told = 0 RETURNING id
+        `;
+        if (told.length > 0)
+          yield* notify(botId, conversation, { _tag: "session-not-ready" }, null);
+      },
+      transaction,
+      Effect.orDie,
+    );
 
     const removeProject = Effect.fn("EngineSessions.removeProject")(function* (botId: BotId) {
       const found = yield* bots.find(botId);
@@ -484,6 +527,7 @@ export const layer = Layer.effect(
       align: alignAlone,
       inMainSessionGate,
       settingsChanged,
+      notReady,
       removeProject,
       withoutProvisioning: provisioning.withPermits(1),
       ofEngineSession,

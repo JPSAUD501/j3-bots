@@ -474,6 +474,7 @@ export function galleryVariants(now: DateTime.Utc) {
     notice("notice-fanout", { _tag: "chain-stopped", limit: "fan-out" }),
     notice("notice-waiting", { _tag: "waiting-in-conversation", botId: ids.juniper }),
     notice("notice-lost", { _tag: "session-lost" }),
+    notice("notice-not-ready", { _tag: "session-not-ready" }),
     notice("notice-settings", { _tag: "settings-held" }),
     notice("notice-behind", { _tag: "observation-failed" }),
     notice("notice-too-long", { _tag: "too-long" }),
