@@ -46,6 +46,10 @@ export const IPC_CHANNELS = {
   appLinkOpened: "j3bots:app-link-opened",
   /** `LanguageReport`: the language the page shows, for the app's menus. Not answered. */
   language: "j3bots:language",
+  /** `AppearanceReport`: the appearance the operator chose, for the window. Not answered. */
+  appearance: "j3bots:appearance",
+  /** Answers `Theme`: the one the system draws its notifications and tray in. */
+  systemTheme: "j3bots:system-theme",
   /** `TrayReport`: what the tray lists, each time it changes. Not answered. */
   tray: "j3bots:tray",
   /** From the main process, from its menus or its global shortcut: `ShellCommand`. */
@@ -88,6 +92,10 @@ export interface DesktopBridge {
   readonly onAppLink: (listener: (link: unknown) => void) => () => void;
   /** Tells the app the language the page shows (a `LanguageReport`). */
   readonly reportLanguage: (report: unknown) => void;
+  /** Tells the app the appearance the operator chose (an `AppearanceReport`). */
+  readonly reportAppearance: (report: unknown) => void;
+  /** The theme the system is in (a `Theme`), whatever the app's window is set to. */
+  readonly systemTheme: () => Promise<unknown>;
   /** Tells the app what the tray lists (a `TrayReport`). */
   readonly reportTray: (report: unknown) => void;
   /** Calls `listener` with each command from the app's menus or its shortcut; answers a function that stops it. */

@@ -27,6 +27,7 @@ import {
   ipcMain,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
+  nativeImage,
   net,
   powerMonitor,
   protocol,
@@ -35,6 +36,8 @@ import {
   shell,
   type WebContents,
 } from "electron";
+import { desktopIcon, renderAppIcon } from "@j3-bots/design-tokens/raster";
+import * as Appearance from "./appearance.ts";
 import * as AppLinks from "./appLinks.ts";
 import { contentSecurityPolicy, inlineScriptSources, resolveAsset } from "./assets.ts";
 import { electronFetch } from "./electronFetch.ts";
@@ -315,12 +318,18 @@ const program = Effect.gen(function* () {
     (yield* settings.get).window,
     screen.getAllDisplays().map((display) => display.workArea),
   );
+  // Before the window: its title bar and background take the appearance kept
+  // from the last launch, so nothing shows in the other theme before the page paints.
+  const appearance = yield* Appearance.start();
   const window = new BrowserWindow({
     ...placed.bounds,
     minWidth: MIN_SIZE.width,
     minHeight: MIN_SIZE.height,
     show: false,
     title: "J3 Bots",
+    backgroundColor: appearance.windowBackground(),
+    // What Linux shows for the window; the packages carry their own icons.
+    icon: nativeImage.createFromBuffer(Buffer.from(renderAppIcon(desktopIcon(256)))),
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(app.getAppPath(), "dist", "preload.cjs"),
@@ -331,6 +340,7 @@ const program = Effect.gen(function* () {
     },
   });
   if (placed.maximized) window.maximize();
+  yield* Appearance.serve({ window, appearance, fromApp });
   yield* Updater.serve(window, fromApp);
 
   // The window's place is saved as it closes, before it goes.
@@ -367,7 +377,7 @@ const program = Effect.gen(function* () {
   });
   yield* links.serve({ window, fromApp, bringForward: forward });
   yield* LinkHandler.register(SCHEME).pipe(Effect.forkScoped);
-  yield* Menus.serve({ window, fromApp, bringForward: forward });
+  yield* Menus.serve({ window, appearance, fromApp, bringForward: forward });
   // After sleep the network may have changed under the page: it is told, so
   // the client tries again at once rather than when its backoff ends.
   yield* Effect.acquireRelease(

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { DeviceId, Language, PairingCode, PairingLinkTarget } from "@j3-bots/contracts";
 import {
+  type Appearance,
   AppLink,
   BRIDGE_KEY,
   ConnectResult,
@@ -15,6 +16,7 @@ import {
   type TrayReport,
   OpenResult,
   SealResult,
+  Theme,
   type TokenProtection,
   UpdateStatus,
 } from "@j3-bots/desktop-bridge";
@@ -88,6 +90,14 @@ export interface Desktop {
   readonly onAppLink: (listener: (link: AppLink) => void) => () => void;
   /** Tells the app the language the page shows, which its menus follow. */
   readonly reportLanguage: (language: Language) => void;
+  /** Tells the app the appearance the operator chose, which its window takes from the next launch's first paint. */
+  readonly reportAppearance: (appearance: Appearance) => void;
+  /**
+   * The theme the system draws its notifications in, apart from the app's own,
+   * which `prefers-color-scheme` answers with here; `null` when the app gave
+   * no answer the page understands.
+   */
+  readonly systemTheme: () => Promise<Theme | null>;
   /** Tells the app what its tray lists. */
   readonly reportTray: (report: TrayReport) => void;
   /** Calls `listener` with each command from the app's menus, tray or shortcut; answers a function that stops it. */
@@ -110,6 +120,7 @@ const decodeLink = Schema.decodeUnknownOption(AppLink);
 const decodeCommand = Schema.decodeUnknownOption(ShellCommand);
 const decodeShortcut = Schema.decodeUnknownOption(ShortcutStatus);
 const decodeShortcutChange = Schema.decodeUnknownOption(ShortcutChange);
+const decodeTheme = Schema.decodeUnknownOption(Theme);
 const hosted: unknown = Reflect.get(window, BRIDGE_KEY);
 
 /** What `call` answers, decoded; `null` when it throws, rejects or answers something else. */
@@ -192,6 +203,10 @@ export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
     reportLanguage: (language) => {
       bridge.reportLanguage({ language });
     },
+    reportAppearance: (appearance) => {
+      bridge.reportAppearance({ appearance });
+    },
+    systemTheme: () => ask(() => bridge.systemTheme(), decodeTheme),
     reportTray: (report) => {
       bridge.reportTray(report);
     },

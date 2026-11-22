@@ -8,8 +8,10 @@ import {
   type ShortcutChange,
   ShortcutRequest,
   type ShortcutStatus,
+  type Theme,
   TrayReport,
 } from "@j3-bots/desktop-bridge";
+import { ensembleLead } from "@j3-bots/design-tokens";
 import { renderStillAvatar } from "@j3-bots/design-tokens/raster";
 import { createI18n, type I18n, resolveLocale } from "@j3-bots/i18n";
 import * as Effect from "effect/Effect";
@@ -26,9 +28,9 @@ import {
   Menu,
   type MenuItemConstructorOptions,
   nativeImage,
-  nativeTheme,
   Tray,
 } from "electron";
+import type { Appearance } from "./appearance.ts";
 import { DesktopSettings } from "./settings.ts";
 import { trayModel } from "./trayModel.ts";
 
@@ -65,17 +67,18 @@ const onWayland = () => {
 /** A label as a menu shows it: on Linux and Windows a lone `&` marks the key that follows. */
 const literal = (label: string) => (MAC ? label : label.replaceAll("&", "&&"));
 
-/** The tray's icon: the app's avatar, with the badge that says something waits. */
-const trayIcon = (attention: boolean) => {
+/**
+ * The tray's icon: the app's avatar (the ensemble's lead), with the badge that
+ * says something waits, in `theme`, the one the system draws its tray in.
+ */
+const trayIcon = (attention: boolean, theme: Theme) => {
   const size = process.platform === "linux" ? 24 : 16;
-  const theme = nativeTheme.shouldUseDarkColors ? "dark" : "light";
   const look = { mark: "dot", badge: attention ? "waiting" : null } as const;
-  const avatar = { shape: "circle", color: "violet" };
   const image = nativeImage.createEmpty();
   for (const scaleFactor of [1, 2]) {
     image.addRepresentation({
       scaleFactor,
-      buffer: Buffer.from(renderStillAvatar(avatar, look, theme, size * scaleFactor)),
+      buffer: Buffer.from(renderStillAvatar(ensembleLead, look, theme, size * scaleFactor)),
     });
   }
   return image;
@@ -83,6 +86,7 @@ const trayIcon = (attention: boolean) => {
 
 interface Options {
   readonly window: BrowserWindow;
+  readonly appearance: Appearance;
   /** Whether an IPC message comes from the top frame of one of the app's own pages. */
   readonly fromApp: (event: IpcMainEvent | IpcMainInvokeEvent) => boolean;
   /** Restores, shows and focuses the window. */
@@ -97,6 +101,7 @@ interface Options {
  */
 export const serve = Effect.fn("desktop.menus")(function* ({
   window,
+  appearance,
   fromApp,
   bringForward,
 }: Options) {
@@ -111,7 +116,7 @@ export const serve = Effect.fn("desktop.menus")(function* ({
     Effect.sync(() => {
       let i18n: I18n = createI18n(resolveLocale(app.getPreferredSystemLanguages()));
       let tray: TrayReport = { pairing: null, count: 0, waiting: [] };
-      const icon = new Tray(trayIcon(false));
+      const icon = new Tray(trayIcon(false, appearance.systemTheme()));
 
       const send = (command: ShellCommand) => {
         if (window.isDestroyed()) return;
@@ -276,7 +281,7 @@ export const serve = Effect.fn("desktop.menus")(function* ({
           ]),
         );
         icon.setToolTip(model.summary);
-        icon.setImage(trayIcon(model.count > 0));
+        icon.setImage(trayIcon(model.count > 0, appearance.systemTheme()));
         if (MAC) icon.setTitle(model.count > 0 ? String(model.count) : "");
       };
 
@@ -292,8 +297,7 @@ export const serve = Effect.fn("desktop.menus")(function* ({
         trayMenu();
       };
       window.webContents.on("did-navigate", pageReplaced);
-      const themeChanged = () => trayMenu();
-      nativeTheme.on("updated", themeChanged);
+      const stopFollowingTheme = appearance.onSystemTheme(() => trayMenu());
 
       ipcMain.on(IPC_CHANNELS.language, (event, report: unknown) => {
         const decoded = decodeLanguage(report);
@@ -350,15 +354,15 @@ export const serve = Effect.fn("desktop.menus")(function* ({
           return runPromise(changing.withPermits(1)(change(decoded.value.accelerator)));
         },
       );
-      return { icon, pageReplaced, themeChanged };
+      return { icon, pageReplaced, stopFollowingTheme };
     }),
-    ({ icon, pageReplaced, themeChanged }) =>
+    ({ icon, pageReplaced, stopFollowingTheme }) =>
       Effect.sync(() => {
         ipcMain.removeAllListeners(IPC_CHANNELS.language);
         ipcMain.removeAllListeners(IPC_CHANNELS.tray);
         ipcMain.removeHandler(IPC_CHANNELS.shortcut);
         ipcMain.removeHandler(IPC_CHANNELS.setShortcut);
-        nativeTheme.off("updated", themeChanged);
+        stopFollowingTheme();
         if (!window.isDestroyed()) window.webContents.off("did-navigate", pageReplaced);
         globalShortcut.unregisterAll();
         icon.destroy();

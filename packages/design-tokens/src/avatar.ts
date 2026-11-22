@@ -95,6 +95,59 @@ export const avatarShapeCutout = 10;
  */
 export const roomAvatarShare = 0.68;
 
+/** One avatar of the ensemble, with its side in px as the screens draw it. */
+export interface EnsembleMember {
+  readonly shape: AvatarShapeName;
+  readonly color: BotColor;
+  readonly size: number;
+}
+
+/**
+ * Three idle bots side by side, their bottoms aligned: what the first-run and
+ * pairing screens show, and what the app's icons are drawn from. The gap
+ * between them is in px, as their sizes are.
+ */
+export const ensemble: { readonly members: ReadonlyArray<EnsembleMember>; readonly gap: number } = {
+  members: [
+    { shape: "hexagon", color: "teal", size: 36 },
+    { shape: "circle", color: "violet", size: 48 },
+    { shape: "triangle", color: "orange", size: 36 },
+  ],
+  gap: 6,
+};
+
+/**
+ * The ensemble's largest member, which stands for the app where the whole
+ * row would be too small to read: the tray, and the smallest icons.
+ */
+export const ensembleLead: EnsembleMember = ensemble.members.reduce((lead, member) =>
+  member.size > lead.size ? member : lead,
+);
+
+/** A row of avatars laid out in their own px: each one's box, and the row's size. */
+export interface EnsembleLayout {
+  readonly width: number;
+  readonly height: number;
+  readonly placed: ReadonlyArray<{
+    readonly member: EnsembleMember;
+    readonly left: number;
+    readonly top: number;
+  }>;
+}
+
+/** `members` side by side, `gap` px apart, their bottoms aligned. */
+export function layOutRow(members: ReadonlyArray<EnsembleMember>, gap: number): EnsembleLayout {
+  const width = members.reduce((total, m) => total + m.size, 0) + gap * (members.length - 1);
+  const height = Math.max(...members.map((m) => m.size));
+  let left = 0;
+  const placed = members.map((member) => {
+    const box = { member, left, top: height - member.size };
+    left += member.size + gap;
+    return box;
+  });
+  return { width, height, placed };
+}
+
 /** An avatar this size in px or smaller is small. */
 const SMALL = 28;
 

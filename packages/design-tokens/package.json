@@ -18,7 +18,8 @@
       "import": "./src/raster/index.ts"
     },
     "./web.css": "./generated/web.css",
-    "./uniwind.css": "./generated/uniwind.css"
+    "./uniwind.css": "./generated/uniwind.css",
+    "./icons/*": "./generated/icons/*"
   },
   "scripts": {
     "generate": "node scripts/generate.ts",

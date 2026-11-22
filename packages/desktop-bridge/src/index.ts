@@ -235,6 +235,22 @@ export type NotificationClick = typeof NotificationClick.Type;
 export const LanguageReport = Schema.Struct({ language: Language });
 export type LanguageReport = typeof LanguageReport.Type;
 
+/** A light or dark theme. */
+export const Theme = Schema.Literals(["light", "dark"]);
+export type Theme = typeof Theme.Type;
+
+/** The operator's choice of theme: the system's, or one of the two. */
+export const Appearance = Schema.Literals(["system", "light", "dark"]);
+export type Appearance = typeof Appearance.Type;
+
+/**
+ * The appearance the operator chose, as the page reports it when it starts
+ * and each time it changes: the app's window, its title bar and its menus
+ * follow it, from the first paint of the next launch.
+ */
+export const AppearanceReport = Schema.Struct({ appearance: Appearance });
+export type AppearanceReport = typeof AppearanceReport.Type;
+
 /** A bot or room that needs the operator, as the tray lists it. */
 export const Waiting = Schema.Struct({ target: EntryTarget, name: Label });
 export type Waiting = typeof Waiting.Type;
@@ -346,6 +362,8 @@ export const HostedBridge = Schema.Struct({
   onNotificationClick: Callable,
   onAppLink: Callable,
   reportLanguage: Callable,
+  reportAppearance: Callable,
+  systemTheme: Callable,
   reportTray: Callable,
   onCommand: Callable,
   shortcutStatus: Callable,

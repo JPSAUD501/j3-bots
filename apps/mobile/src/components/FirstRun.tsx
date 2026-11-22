@@ -3,6 +3,7 @@ import { canRunBots, connectCommand } from "@j3-bots/client-runtime/presentation
 import { useEngineStatus } from "@j3-bots/client-runtime/react";
 import { engineProblem } from "@j3-bots/client-runtime/wording";
 import type { BotState, EngineStatus } from "@j3-bots/contracts";
+import { ensemble } from "@j3-bots/design-tokens";
 import { ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useI18n } from "../i18n.ts";
@@ -20,13 +21,14 @@ const idle: BotState = { _tag: "idle" };
 function Ensemble() {
   return (
     <View
-      className="flex-row items-end gap-1.5"
+      className="flex-row items-end"
+      style={{ gap: ensemble.gap }}
       accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
     >
-      <BotAvatar avatar={{ shape: "hexagon", color: "teal" }} state={idle} size={36} />
-      <BotAvatar avatar={{ shape: "circle", color: "violet" }} state={idle} size={48} />
-      <BotAvatar avatar={{ shape: "triangle", color: "orange" }} state={idle} size={36} />
+      {ensemble.members.map(({ shape, color, size }) => (
+        <BotAvatar key={shape} avatar={{ shape, color }} state={idle} size={size} />
+      ))}
     </View>
   );
 }

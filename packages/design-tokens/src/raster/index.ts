@@ -4,7 +4,8 @@
  * package's root, so a client that only reads the tokens and draws avatars
  * with its own renderer never loads the PNG encoder.
  */
-export { parseColor, toSrgb8, type LinearRgb } from "../color.ts";
+export { hexColor, parseColor, toSrgb8, type LinearRgb } from "../color.ts";
+export { desktopIcon, renderAppIcon, type AppIcon, type AppIconPlate } from "./appIcon.ts";
 export {
   drawAvatar,
   renderStillAvatar,

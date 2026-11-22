@@ -1,6 +1,14 @@
 # Design language
 
-**Status:** the tokens, the avatar system and the core web components exist. The values below are the ones in [`packages/design-tokens`](../../packages/design-tokens/src/tokens.ts), and the contrast and distinguishability figures are checked by its tests. The web client's development build has a gallery at `/gallery` that shows every component in every state, in both themes; it is the place to review the design, and it is not part of a production build.
+**Status:** final in both themes on the web, the Linux desktop app and Android. The values below are the ones in [`packages/design-tokens`](../../packages/design-tokens/src/tokens.ts), and the contrast and distinguishability figures are checked by its tests. The web client's development build has a gallery at `/gallery` that shows every component in every state, in both themes; it is the place to review the design, and it is not part of a production build.
+
+Each surface was checked in light and dark, and with a chosen appearance that differs from the system's:
+
+- **Web**, in Chromium at 1280 and 390 px, against a server with the scripted agent: the gallery, pairing, the first run, a conversation, a bot's details and Settings. A scan of every drawn line of text found none below the contrast in [Accessibility](#accessibility) apart from disabled controls, every focusable control showed the accent ring on itself or on the field around it, and no surface took the other theme's colors.
+- **Desktop**, the Linux development build under Xvfb with GTK's Adwaita and Adwaita dark: with each of the three choices kept, the window's first frame was the canvas of the theme it opened in, the page painted in that theme, and the theme the app draws its tray and notification icons in stayed the system's. The deb installs the app's icons.
+- **Android**, a release build on a Pixel 8 emulator (Android 16): the splash, pairing, the first run, the roster, a conversation, a bot's details and its editor, the New alert and Settings. From a cold start the splash, the system bars and the first frame are in the chosen theme, with no frame of the other.
+
+Not checked: iOS and iPadOS, where nothing has run; macOS and Windows; a desktop title bar, which Xvfb does not draw; the Linux packages' icons in a desktop's launcher; Android before 12, where the splash follows the system's theme rather than the chosen one; and foldables. On Android, a system alert opened after the system's theme changed while the app was open keeps the theme the app opened in until it starts again; choosing an appearance in Settings does not have this.
 
 ## Two references, one product
 
@@ -162,6 +170,15 @@ J3 Bots has **its own** avatar system. Existing products use friendly blob chara
 
 **Image avatars** are not available yet: the contract's avatar is a shape and a color only. When images are added, state moves to the corner badge and a ring around the image.
 
+### App icons
+
+Every platform's icon is the row of three avatars the first run shows (a teal hexagon, a violet circle and an orange triangle, idle), drawn by the avatars' own renderer, so the app has no art of its own. `pnpm --filter @j3-bots/design-tokens generate` writes them to `packages/design-tokens/generated/icons`, and a test fails when they are stale:
+
+- **Desktop:** the row on a rounded plate in the light canvas, from 16 to 1024 px. At 48 px and under the plate holds the violet circle alone, as the tray does, since three shapes at that size read as noise. macOS gets its own plate, inset as its icons are.
+- **Android:** an adaptive icon, the row over the light canvas, and a monochrome silhouette for themed icons. The splash shows the row on each theme's canvas.
+- **iOS:** the row on the light canvas, on no background for the dark icon, and as a silhouette for the tinted one.
+- **Web:** the same icons, drawn as the web client builds. The favicon is the row as SVG, in the palette of the theme the browser is in, since a tab strip is drawn in it.
+
 ## Typography
 
 - **Interface:** the platform's system font, with Inter Variable as the web fallback. No display face.
@@ -243,7 +260,7 @@ Every interface sentence goes through the translation layer as a whole sentence 
 - State is never carried by color alone: the avatar's form or a mark changes too.
 - Every action is reachable by keyboard on desktop and by screen reader on every platform, with the same name it has on screen.
 - Touch targets are at least 44 px. On touch screens a compact control grows to a real 44 px box, so controls that sit side by side or wrap onto a second line never cover one another; pointer devices keep the compact size. Menu rows, such as New, do the same.
-- Light and dark follow the system unless the operator picks one in Settings. The choice is applied before the first paint.
+- Light and dark follow the system unless the operator picks one in Settings. The choice is applied before the first paint: on the desktop the window opens with that theme's canvas as its background, and on Android 12 and later the splash takes it too. What the system draws for the app, its notifications and the desktop's tray, stays in the system's theme.
 
 ## Next steps for design
 

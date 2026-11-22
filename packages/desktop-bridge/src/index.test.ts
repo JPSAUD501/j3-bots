@@ -127,6 +127,8 @@ describe("the desktop bridge", () => {
       onNotificationClick: call,
       onAppLink: call,
       reportLanguage: call,
+      reportAppearance: call,
+      systemTheme: call,
       reportTray: call,
       onCommand: call,
       shortcutStatus: call,

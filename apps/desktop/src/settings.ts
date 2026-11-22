@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { Accelerator, ServerOrigin } from "@j3-bots/desktop-bridge";
+import { Accelerator, Appearance, ServerOrigin } from "@j3-bots/desktop-bridge";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -24,17 +24,20 @@ export type WindowState = typeof WindowState.Type;
 
 /**
  * What the app keeps between launches, besides what the page keeps in its own
- * storage: the server the operator named, the window's place and the global
- * shortcut the operator chose (`null` for the default). None is a secret.
+ * storage: the server the operator named, the window's place, the global
+ * shortcut the operator chose (`null` for the default) and the appearance the
+ * page last reported, which the window takes before the page paints. None is
+ * a secret.
  */
 export const Settings = Schema.Struct({
   server: Schema.NullOr(ServerOrigin),
   window: Schema.NullOr(WindowState),
   shortcut: Schema.NullOr(Accelerator),
+  appearance: Appearance,
 });
 export type Settings = typeof Settings.Type;
 
-const EMPTY: Settings = { server: null, window: null, shortcut: null };
+const EMPTY: Settings = { server: null, window: null, shortcut: null, appearance: "system" };
 
 const decodeStored = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
@@ -42,6 +45,7 @@ const decodeStored = Schema.decodeUnknownOption(
 const decodeServer = Schema.decodeUnknownOption(ServerOrigin);
 const decodeWindow = Schema.decodeUnknownOption(WindowState);
 const decodeShortcut = Schema.decodeUnknownOption(Accelerator);
+const decodeAppearance = Schema.decodeUnknownOption(Appearance);
 const encodeFile = Schema.encodeEffect(Schema.fromJsonString(Settings));
 
 /**
@@ -56,7 +60,7 @@ export const decodeSettings = (
 ): { readonly settings: Settings; readonly dropped: ReadonlyArray<keyof Settings> } => {
   const stored = decodeStored(text);
   if (Option.isNone(stored)) return { settings: EMPTY, dropped: [] };
-  const { server, window, shortcut } = stored.value;
+  const { server, window, shortcut, appearance } = stored.value;
   const keptServer = Option.flatMap(decodeServer(server), (origin) => {
     const checked = parseServerAddress(origin);
     return Result.isSuccess(checked) && checked.success === origin
@@ -65,17 +69,20 @@ export const decodeSettings = (
   });
   const keptWindow = decodeWindow(window);
   const keptShortcut = decodeShortcut(shortcut);
+  const keptAppearance = decodeAppearance(appearance);
   const dropped: Array<keyof Settings> = [];
   if (server !== undefined && server !== null && Option.isNone(keptServer)) dropped.push("server");
   if (window !== undefined && window !== null && Option.isNone(keptWindow)) dropped.push("window");
   if (shortcut !== undefined && shortcut !== null && Option.isNone(keptShortcut)) {
     dropped.push("shortcut");
   }
+  if (appearance !== undefined && Option.isNone(keptAppearance)) dropped.push("appearance");
   return {
     settings: {
       server: Option.getOrNull(keptServer),
       window: Option.getOrNull(keptWindow),
       shortcut: Option.getOrNull(keptShortcut),
+      appearance: Option.getOrElse(keptAppearance, () => EMPTY.appearance),
     },
     dropped,
   };

@@ -34,6 +34,10 @@ extraResources:
   - from: ../web/dist
     to: web/dist
 npmRebuild: false
+# The app's icons, which the design tokens draw (packages/design-tokens,
+# `generate`): a set of sizes for Linux, one plate for macOS, and the 256 px
+# one for Windows, which electron-builder makes its .ico from.
+icon: ../../packages/design-tokens/generated/icons/desktop/256x256.png
 
 # Links to the app (`j3bots://bot/<id>`, `room/<id>`, `pair?…`): declared in
 # the macOS app's Info.plist and the Linux packages' desktop entries. The app
@@ -60,6 +64,7 @@ linux:
   category: Utility
   synopsis: Persistent AI teammates on your own machine
   maintainer: J3 Bots contributors
+  icon: ../../packages/design-tokens/generated/icons/desktop
 # electron-updater replaces an AppImage in place only when its name has no
 # x.y.z version; with one, it leaves a second file beside the first.
 appImage:
@@ -70,6 +75,7 @@ deb:
 mac:
   target: [dmg, zip]
   category: public.app-category.productivity
+  icon: ../../packages/design-tokens/generated/icons/mac.png
   # Ad hoc: no Developer ID, which Apple Silicon still needs to run the app at all.
   identity: "-"
   artifactName: J3-Bots-${version}-${arch}-unsigned.${ext}
