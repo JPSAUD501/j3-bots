@@ -80,10 +80,12 @@ const HOST_TOOL = "run_command";
 /**
  * The engine's tool for a secret, as far as these scenarios need it. At the
  * engine's pinned commit (Read, T3 Code 59651c1,
- * `apps/server/src/mcp/OrchestratorMcpService.ts`), a `value` the
- * user pasted is saved to a file only its owner can read, and the result names
- * that file; without one, the user gets a card, and `delivery: "file"`
- * returns a file holding what they typed. The stand-in saves the file under
+ * `apps/server/src/mcp/OrchestratorMcpService.ts`, `request_secret`), a
+ * `value` the user pasted is saved to a file only its owner can read, and the
+ * result names that file; a `value` with `delivery: "secretRef"` is refused.
+ * Without one, the user gets a card, and `delivery: "file"` returns a file
+ * holding what they typed. `label` and `reason` must not be blank
+ * (`packages/contracts/src/orchestratorMcp.ts`). The stand-in saves the file under
  * {@link SECRET_FOLDER} and answers a card with the scenario's
  * `secretAnswer`, or as a card left unanswered when it has none. The
  * description is this repository's own wording, not the engine's.
@@ -93,11 +95,20 @@ const SECRET_TOOL = "request_secret";
 /** Where the stand-in `request_secret` keeps the secrets it saves. */
 export const SECRET_FOLDER = "/run/secrets";
 
+const NonEmpty = Schema.String.check(
+  Schema.makeFilter((text: string) => text.trim().length > 0, { expected: "a non-empty string" }),
+);
+
+/** The arguments the engine accepts, as far as these scenarios use them. */
 const decodeSecretInput = Schema.decodeUnknownOption(
   Schema.Struct({
-    label: Schema.String,
-    reason: Schema.String,
-    value: Schema.optionalKey(Schema.String),
+    label: NonEmpty,
+    reason: NonEmpty,
+    value: Schema.optionalKey(
+      Schema.String.check(
+        Schema.makeFilter((text: string) => text.length > 0, { expected: "a non-empty string" }),
+      ),
+    ),
     delivery: Schema.optionalKey(Schema.Literals(["secretRef", "file"])),
   }),
 );
@@ -212,7 +223,7 @@ const unfinished = (reason: string, turn: Turn) =>
   new TurnUnfinished({ message: `The turn did not finish: ${reason}.\n${transcript(turn)}` });
 
 /** A call the bot made in an earlier turn, with what it answered. */
-interface EarlierCall {
+export interface EarlierCall {
   readonly name: string;
   readonly input: Schema.Json;
   readonly output: string;
@@ -544,14 +555,25 @@ const answer = (
     case SECRET_TOOL: {
       const input = decodeSecretInput(request.input);
       if (input._tag === "None")
-        return reply(json({ error: "`label` and `reason` are required." }));
+        return reply(
+          json({ error: "`label` and `reason` must be non-empty, and so must `value` if given." }),
+        );
       const saved = (secret: string) => {
         const file = `${SECRET_FOLDER}/secret-${request.step}`;
         workspace.store(file, secret);
         return file;
       };
       const { value, delivery } = input.value;
-      if (value !== undefined) return reply(json({ status: "saved", file: saved(value) }));
+      if (value !== undefined) {
+        // The engine refuses a pasted `value` with `delivery: "secretRef"`.
+        return delivery === "secretRef"
+          ? reply(
+              json({
+                error: 'A pasted `value` is saved as a file. Leave out `delivery: "secretRef"`.',
+              }),
+            )
+          : reply(json({ status: "saved", file: saved(value) }));
+      }
       if (scenario.secretAnswer === undefined) {
         return reply(json({ status: "timed_out", note: "Your user did not answer the card." }));
       }

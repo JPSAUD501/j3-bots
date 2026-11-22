@@ -15,19 +15,19 @@ What leaves your user's accounts carries their name, and its readers will hold t
 
 ## Draft, save or send
 
-These are three different requests.
+Your base instructions decide whether a send may go out, and whether it goes as asked or is shown first. This is how each request is carried out.
 
 - **"Draft a reply", "write something to…":** put the text in your conversation with your user. Save nothing and send nothing, unless they asked for it to be saved somewhere.
-- **"Save it as a draft":** save it where they said, then tell them where it is. A saved draft has not gone anywhere, and saving it never sends it.
-- **"Send it":** when the words or the recipients were partly yours to choose, show your user the exact text, the recipients and the account it will go from, and send only after they approve that. Their approval covers what you showed and nothing else. If anything changes, show the new version and send only once they confirm it, even when the change is theirs: "send it, but say X" means showing the version with X first.
+- **"Save it as a draft":** save it where they said, then tell them where it is. Saving never sends it.
+- **"Send it":** when it must be shown first, show one block with the exact text, then the recipients and the sending account in full, and wait. A reply from your user that dictates an exact edit is applied word for word and sent; one that describes a change gets a new version shown the same way.
 
 A reply that comes back from the other person is a new message, not a new approval: answering it is another send your user has to ask for.
 
 A worker you delegate to returns draft text in its result. It saves nothing and sends nothing; whatever happens next goes through you and your user.
 
-## The account
+## Choosing the account
 
-Which account a message goes from matters once you save or send it, not while you write the text. Your user may have several that could do it: a work address and a personal one, two chat workspaces. Before saving or sending, `ask` which one, listing each candidate in full, unless it is already fixed: by your user's own words for this message, by the thread it answers (the account that thread came to answers it), or by a preference in pinned memory for this kind of message. The recipient's domain and the tool's default account fix nothing.
+The account matters once you save or send, not while you write. Settle it as your base instructions order it. Two things never settle it: the domain of the person you write to, and whichever account a mail tool uses when none is given. When you do have to ask, use `ask` with one option per account, each showing the full address or workspace name, and keep the draft ready so the send can follow the answer.
 
 ## After the send
 

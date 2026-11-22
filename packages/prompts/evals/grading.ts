@@ -132,8 +132,40 @@ export const after = (
       : [];
 
 /** A turn's problems under a heading, with its transcript, as one line of a case's report. */
-export const reported = (heading: string, turn: Turn, problems: ReadonlyArray<string>) =>
+const reported = (heading: string, turn: Turn, problems: ReadonlyArray<string>) =>
   problems.length === 0 ? [] : [`${heading}: ${problems.join("; ")}\n${transcript(turn)}`];
+
+/**
+ * One more turn, run and scored, its problems under `heading`; a turn that
+ * did not finish is one. A case uses it to replay what an earlier turn left
+ * behind, such as a saved routine or a memory write.
+ */
+export const replayRun = (
+  model: string,
+  skills: Skills,
+  heading: string,
+  scenario: Scenario,
+  problems: (
+    turn: Turn,
+  ) => Effect.Effect<ReadonlyArray<string>, Effect.Error<ReturnType<typeof judge>>>,
+) =>
+  runTurn(model, skills, scenario).pipe(
+    Effect.flatMap((turn) =>
+      problems(turn).pipe(Effect.map((found) => reported(heading, turn, found))),
+    ),
+    Effect.catchTag("TurnUnfinished", (error) => Effect.succeed([`${heading}: ${error.message}`])),
+  );
+
+/** A replay graded on its own, under `name`. */
+export const replayGrade = (
+  name: string,
+  model: string,
+  skills: Skills,
+  scenario: Scenario,
+  problems: (
+    turn: Turn,
+  ) => Effect.Effect<ReadonlyArray<string>, Effect.Error<ReturnType<typeof judge>>>,
+): Grade => ({ name, problems: replayRun(model, skills, name, scenario, problems) });
 
 /** What grading a turn may fail with: a replayed turn that did not finish, or a judge reply. */
 type GradeError = Effect.Error<ReturnType<typeof runTurn | typeof judge>>;

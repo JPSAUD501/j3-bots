@@ -161,6 +161,35 @@ export const nextScheduled = (
 ): Option.Option<DateTime.Utc> =>
   Result.getSuccess(Result.flatMap(compile(cron, zone), (compiled) => firstAfter(compiled, after)));
 
+/** A run as your user's clock shows it: the day of the week (0 is Sunday), hour and minute. */
+export interface LocalRun {
+  readonly weekday: number;
+  readonly hour: number;
+  readonly minute: number;
+}
+
+/**
+ * Every run of a saved schedule in the week after `after`, as wall-clock time
+ * in `zone`, so two cron expressions that run at the same times read the
+ * same. Empty when the schedule names no time.
+ */
+export const weekOfRuns = (
+  cron: string,
+  zone: DateTime.TimeZone.Named,
+  after: DateTime.Utc,
+): ReadonlyArray<LocalRun> => {
+  const end = DateTime.add(after, { days: 7 });
+  const runs: Array<LocalRun> = [];
+  let from = after;
+  while (true) {
+    const next = nextScheduled(cron, zone, from);
+    if (Option.isNone(next) || DateTime.isGreaterThan(next.value, end)) return runs;
+    const parts = DateTime.toParts(DateTime.setZone(next.value, zone));
+    runs.push({ weekday: parts.weekDay, hour: parts.hour, minute: parts.minute });
+    from = next.value;
+  }
+};
+
 const WALL_FIELDS = ["year", "month", "day", "hour", "minute", "second"] as const;
 
 const LOCAL_TIME =

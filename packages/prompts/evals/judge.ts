@@ -21,11 +21,13 @@ import { complete } from "./model.ts";
  * including the opposite claim: a judge that drifts fails those, and the run
  * shows it. Its answers are sampled at temperature 0, and a reply that did not
  * finish on its own, called a tool, or whose last line is not yes or no (in
- * any case, with trailing punctuation allowed), is unclear: the report counts
- * it apart from the bot's failures, never either way. Temperature 0 through a proxy
- * is not deterministic (the same message has drawn both answers), so each
- * question is answered three times and the majority decides, for the fixed
- * messages as for a bot's.
+ * any case, after an optional "Verdict:", with emphasis and trailing
+ * punctuation allowed), is unclear. Temperature 0 through a proxy is not
+ * deterministic (the same message has drawn both answers), so each question
+ * is answered three times, for the fixed messages as for a bot's. Two clear
+ * replies that agree decide it, whatever the third says; otherwise the
+ * verdict is unclear, which the report counts apart from the bot's failures,
+ * never either way.
  */
 
 const JUDGE_MODEL = Config.String("J3_EVAL_JUDGE_MODEL").pipe(
@@ -71,7 +73,8 @@ const verdict = Effect.fn("evals.verdict")(function* (
     ?.trim()
     .toLowerCase()
     .replace(/[.!*_`]+$/u, "")
-    .replace(/^[*_`]+/u, "");
+    .replace(/^[*_`]+/u, "")
+    .replace(/^verdict\s*:\s*[*_`]*/u, "");
   if (
     reply.finishReason !== "stop" ||
     reply.toolCalls.length > 0 ||
@@ -87,10 +90,14 @@ const verdict = Effect.fn("evals.verdict")(function* (
 /** How many times the judge answers each question; the verdict is the majority. */
 const VOTES = 3;
 
+/** How many clear replies that agree decide a verdict. */
+const MAJORITY = Math.floor(VOTES / 2) + 1;
+
 /**
  * Whether `message`, the bot's answer to `asked`, plainly says what
- * `question` asks, as the majority of {@link VOTES} judge replies reads it.
- * Every reply must be clear: one unclear reply makes the verdict {@link JudgeUnclear}.
+ * `question` asks, as a majority of {@link VOTES} judge replies reads it. An
+ * unclear reply counts for neither side; without a clear majority the
+ * verdict is {@link JudgeUnclear}.
  */
 export const judge = Effect.fn("evals.judge")(function* (
   asked: string,
@@ -99,8 +106,21 @@ export const judge = Effect.fn("evals.judge")(function* (
 ) {
   const model = yield* JUDGE_MODEL;
   const votes = yield* Effect.all(
-    Array.from({ length: VOTES }, () => verdict(model, asked, message, question)),
+    Array.from({ length: VOTES }, () =>
+      verdict(model, asked, message, question).pipe(
+        Effect.map((yes) => (yes ? ("yes" as const) : ("no" as const))),
+        Effect.catchTag("JudgeUnclear", (unclear) => Effect.succeed(unclear)),
+      ),
+    ),
     { concurrency: VOTES },
   );
-  return votes.filter(Boolean).length * 2 > VOTES;
+  const yes = votes.filter((vote) => vote === "yes").length;
+  const no = votes.filter((vote) => vote === "no").length;
+  if (yes >= MAJORITY) return true;
+  if (no >= MAJORITY) return false;
+  return yield* new JudgeUnclear({
+    message: `The judge gave no clear majority (${yes} yes, ${no} no): ${votes
+      .flatMap((vote) => (typeof vote === "string" ? [] : [vote.message]))
+      .join("; ")}`,
+  });
 }, Effect.provide(FetchHttpClient.layer));
