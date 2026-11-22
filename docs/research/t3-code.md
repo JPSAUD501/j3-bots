@@ -7,7 +7,8 @@ What J3 Bots knows about T3 Code, how it knows it, and where to look. Paths are 
 | Release | Commit | Note |
 | --- | --- | --- |
 | `0.1.11-nightly.20261119.4941` | `ff9efe8` | The first M0 probes. The engine does not give MCP servers that Codex starts `T3CODE_THREAD_ID`. |
-| `0.1.11-nightly.20261120.4969` | `db51b67` | Pinned in `engine.json`. The oldest release the bot tool bridge works on with Codex. `9bb92a4` plus ten commits, including pull request 39414, which adds that variable. |
+| `0.1.11-nightly.20261120.4969` | `db51b67` | The pin before `0.1.11`. The oldest release the bot tool bridge works on with Codex. `9bb92a4` plus ten commits, including pull request 39414, which adds that variable. |
+| `0.1.11` | `59651c1` | Pinned in `engine.json`. A stable release, `db51b67` plus nine commits ([Engine: version pinning](../architecture/engine.md#version-pinning)). |
 
 A nightly's title names its commit. A fact read at one commit applies to a release only if the release's commit contains it.
 
