@@ -23,8 +23,10 @@ const choiceRow = (picked: boolean) =>
  * form of radio buttons, checkboxes and text, sent with "Send answer". An
  * `ask` question takes a note beside a choice; the harness's own question
  * takes one or the other, so typing clears the choice and choosing clears the
- * text. Dismissing reads as "no", and its button says so. An answer too long
- * to reach the bot leaves the card open with what was typed.
+ * text. Only an `ask` question can be dismissed, which reads as "no", and its
+ * button says so: the harness's own question holds its turn until it is
+ * answered or the turn is stopped. An answer too long to reach the bot leaves
+ * the card open with what was typed.
  */
 export function QuestionCard({ entry }: { readonly entry: QuestionEntry }) {
   const { t } = useI18n();
@@ -43,11 +45,14 @@ export function QuestionCard({ entry }: { readonly entry: QuestionEntry }) {
       if (refusedWith(result, "answer-length")) say(t("question.tooLong"));
     });
   };
-  const dismiss = () => {
-    if (submitting) return;
-    answered();
-    void client.answerCard(entry.id, { _tag: "dismiss" });
-  };
+  const dismiss =
+    entry.origin === "ask"
+      ? () => {
+          if (submitting) return;
+          answered();
+          void client.answerCard(entry.id, { _tag: "dismiss" });
+        }
+      : null;
   const answersOnTap =
     pending && entry.questions.length === 1 && !first.multiple && !first.acceptsText;
 
@@ -71,7 +76,9 @@ export function QuestionCard({ entry }: { readonly entry: QuestionEntry }) {
               ? t("question.answered")
               : status._tag === "dismissed"
                 ? t("question.dismissed")
-                : t("question.expired")}
+                : status._tag === "refused"
+                  ? t("question.refused")
+                  : t("question.expired")}
           </Text>
         </>
       ) : answersOnTap ? (
@@ -94,7 +101,7 @@ export function QuestionCard({ entry }: { readonly entry: QuestionEntry }) {
               </Pressable>
             ))}
           </View>
-          <Actions onDismiss={dismiss} submitting={submitting} send={null} />
+          {dismiss !== null && <Actions onDismiss={dismiss} submitting={submitting} send={null} />}
         </>
       ) : (
         // Keyed by the entry, so a draft never outlives the card it was typed into.
@@ -121,7 +128,7 @@ function QuestionForm({
   readonly questions: ReadonlyArray<Question>;
   readonly textReplacesChoice: boolean;
   readonly onAnswer: (answers: QuestionAnswers) => void;
-  readonly onDismiss: () => void;
+  readonly onDismiss: (() => void) | null;
   readonly submitting: boolean;
 }) {
   const [drafts, setDrafts] = useState<ReadonlyMap<string, QuestionDraft>>(() => new Map());
@@ -289,22 +296,30 @@ function OptionText({ option }: { readonly option: QuestionOption }) {
 }
 
 /**
- * Dismiss, and Send answer on a form, which takes no press until every
- * question has an answer. A card answered by a tap has no Send answer.
+ * Dismiss, on an `ask` question, and Send answer on a form, which takes no
+ * press until every question has an answer. A card answered by a tap has no
+ * Send answer.
  */
 function Actions({
   onDismiss,
   submitting,
   send,
 }: {
-  readonly onDismiss: () => void;
+  readonly onDismiss: (() => void) | null;
   readonly submitting: boolean;
   readonly send: { readonly ready: boolean; readonly onPress: () => void } | null;
 }) {
   const { t } = useI18n();
   return (
     <View className="flex-row flex-wrap items-center justify-end gap-2">
-      <Button variant="quiet" label={t("question.dismiss")} onPress={onDismiss} held={submitting} />
+      {onDismiss !== null && (
+        <Button
+          variant="quiet"
+          label={t("question.dismiss")}
+          onPress={onDismiss}
+          held={submitting}
+        />
+      )}
       {send !== null && (
         <Button
           variant="primary"

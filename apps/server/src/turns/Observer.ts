@@ -1012,8 +1012,9 @@ export const layer = Layer.effect(
             status: { _tag: "pending" },
           };
         case "unsupported-question":
-          // Never part of a question: a card that says why it cannot be shown,
-          // whose only answer is a dismiss, which the bot reads as "no".
+          // Never part of a question: a card that says why it cannot be shown.
+          // It takes no answer, and the engine no dismissal, so the turn goes
+          // on only once it is stopped.
           return {
             _tag: "question",
             author,
@@ -1023,8 +1024,8 @@ export const layer = Layer.effect(
                 id: "unsupported",
                 prompt:
                   request.exceeds === "questions"
-                    ? `The bot asked ${request.count} questions at once, and a card holds at most ${request.max}. Dismiss it to answer no; the bot can ask again in a message.`
-                    : `The bot asked a question with ${request.count} options, and a card shows at most ${request.max}. Dismiss it to answer no; the bot can ask again in a message.`,
+                    ? `The bot asked ${request.count} questions at once, and a card holds at most ${request.max}. Stop the bot, then ask it to put the questions in a message.`
+                    : `The bot asked a question with ${request.count} options, and a card shows at most ${request.max}. Stop the bot, then ask it to put the question in a message.`,
                 options: [],
                 acceptsText: false,
                 multiple: false,

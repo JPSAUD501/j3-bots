@@ -141,7 +141,10 @@ export type QuestionAnswers = typeof QuestionAnswers.Type;
  *   wakes the bot again with the answer. In a room, archiving the room expires
  *   it.
  * - `engine`: the harness's own question tool held a running turn. Answering it
- *   lets that turn continue. It expires when its turn ends.
+ *   lets that turn continue. It cannot be dismissed: the engine refuses that
+ *   while the turn waits, so the turn goes on only once it is answered or
+ *   stopped. It expires when its turn ends, and closes as `refused` when the
+ *   engine refuses its answer.
  */
 export const QuestionEntry = Schema.TaggedStruct("question", {
   ...entry,
@@ -150,13 +153,19 @@ export const QuestionEntry = Schema.TaggedStruct("question", {
   status: Schema.Union([
     Schema.TaggedStruct("pending", {}),
     Schema.TaggedStruct("answered", { answers: QuestionAnswers }),
-    /** The operator dismissed it, which the bot reads as "no". */
+    /** The operator dismissed an `ask` question, which the bot reads as "no". */
     Schema.TaggedStruct("dismissed", {}),
     /**
      * Closed before an answer: an `engine` question when its turn ended, an
      * `ask` question when its room was archived. Answering it is refused.
      */
     Schema.TaggedStruct("expired", {}),
+    /**
+     * An `engine` question whose answer the engine refused. The bot cannot
+     * take another, and its turn waits until the operator stops it or it
+     * ends; the bot can be asked again in a message.
+     */
+    Schema.TaggedStruct("refused", {}),
   ]),
 });
 export type QuestionEntry = typeof QuestionEntry.Type;
@@ -247,6 +256,11 @@ export const ApprovalEntry = Schema.TaggedStruct("approval", {
     Schema.TaggedStruct("pending", {}),
     Schema.TaggedStruct("decided", { decision: ApprovalDecision }),
     Schema.TaggedStruct("expired", {}),
+    /**
+     * The engine refused the operator's decision. The bot cannot take
+     * another, and its turn waits until the operator stops it or it ends.
+     */
+    Schema.TaggedStruct("refused", {}),
   ]),
 });
 export type ApprovalEntry = typeof ApprovalEntry.Type;

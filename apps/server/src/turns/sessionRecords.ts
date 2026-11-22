@@ -92,13 +92,10 @@ export const sessionRecords = (
       case "question":
         return yield* entries.update({
           ...card,
-          status: !answered
-            ? { _tag: "expired" }
-            : response?._tag === "question"
+          status:
+            answered && response?._tag === "question"
               ? { _tag: "answered", answers: response.answers }
-              : response?._tag === "dismiss"
-                ? { _tag: "dismissed" }
-                : { _tag: "expired" },
+              : { _tag: "expired" },
         });
       case "secret-request":
         return yield* entries.update({

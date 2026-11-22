@@ -174,6 +174,32 @@ export class StopRejected extends Schema.TaggedError<StopRejected>()("StopReject
   }
 }
 
+/**
+ * The engine refused an answer, and its request is still open. The adapter
+ * reports it only once a resend of the key found its rejected receipt
+ * (`OrchestratorCommandPreviouslyRejectedError`), as for `DispatchRejected`.
+ * The engine keeps that receipt for good, so the key is spent: sending it
+ * again is refused again (**Verified** on `0.1.11` with a refused dismissal:
+ * its resend was "previously rejected"). **Read** at `59651c1`,
+ * `Orchestrator.ts` (`dispatchRuntimeRequestRespond`): the engine refuses an
+ * answer to an open request it cannot deliver, one whose provider session is
+ * gone or that it marked `not_resumable`; a question answered by a later
+ * message is also refused while its provider is disabled, or when the answer
+ * leaves one of its questions unanswered. It checks no other answer to a
+ * question a turn waits on.
+ *
+ * The caller never sends the key again. The request stays open until the
+ * turn ends or is stopped.
+ */
+export class AnswerRejected extends Schema.TaggedError<AnswerRejected>()("AnswerRejected", {
+  key: IdempotencyKey,
+  requestId: RequestId,
+}) {
+  override get message(): string {
+    return `The engine refused the answer ${this.key} to the open request ${this.requestId}.`;
+  }
+}
+
 /** The request was already answered, or expired with its turn. */
 export class RequestClosed extends Schema.TaggedError<RequestClosed>()("RequestClosed", {
   requestId: RequestId,

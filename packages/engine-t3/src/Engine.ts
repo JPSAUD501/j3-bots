@@ -14,6 +14,7 @@ import type * as Option from "effect/Option";
 import type * as Redacted from "effect/Redacted";
 import type * as Stream from "effect/Stream";
 import type {
+  AnswerRejected,
   BackgroundWorkRunning,
   DispatchRejected,
   EngineDown,
@@ -145,14 +146,20 @@ export interface StagedAttachment {
   readonly usableUntil: DateTime.Utc;
 }
 
+/**
+ * An answer to an approval or a question. A question is never dismissed: the
+ * engine takes a dismissal only of a question that does not hold its turn,
+ * and refuses it for every question a harness asks while its turn waits
+ * (**Verified** on `0.1.11` with the scripted agent: "This question needs an
+ * answer. Answer it or stop the turn."; **Read** at `59651c1`,
+ * `Orchestrator.ts`, `dispatchThreadUserInputDismiss`, which takes it only for
+ * a request whose `responseCapability` is `message`, and the Claude Code,
+ * Codex and ACP adapters, which give every question they wait on `live`).
+ * Such a question is answered, or its turn is stopped.
+ */
 export type RequestResponse =
   | { readonly _tag: "approval"; readonly decision: ApprovalDecision }
-  | { readonly _tag: "question"; readonly answers: QuestionAnswers }
-  /**
-   * The operator dismissed the question; the bot reads it as "no". The only
-   * answer to an `unsupported-question`.
-   */
-  | { readonly _tag: "dismiss" };
+  | { readonly _tag: "question"; readonly answers: QuestionAnswers };
 
 export type SecretAnswer =
   | { readonly _tag: "provide"; readonly value: Redacted.Redacted<string> }
@@ -504,14 +511,16 @@ export class Engine extends Context.Service<
     /**
      * Answers an approval or a question, which lets its turn continue. Fails
      * with `RequestClosed` when the request is no longer open, including when
-     * the engine refuses the answer for that reason.
+     * the engine refuses the answer for that reason, and with
+     * `AnswerRejected` when the engine refuses it while the request stays
+     * open. Either is final for the key.
      */
     readonly respond: (input: {
       readonly key: IdempotencyKey;
       readonly sessionId: SessionId;
       readonly requestId: RequestId;
       readonly response: RequestResponse;
-    }) => Effect.Effect<void, EngineDown | SessionNotFound | RequestClosed>;
+    }) => Effect.Effect<void, EngineDown | SessionNotFound | RequestClosed | AnswerRejected>;
 
     /**
      * Answers a secret request. The value goes to the engine's secret store and

@@ -30,6 +30,7 @@ import {
   type SecretAnswer,
 } from "../Engine.ts";
 import {
+  AnswerRejected,
   BackgroundWorkRunning,
   DispatchRejected,
   EngineIndeterminate,
@@ -188,6 +189,13 @@ export class TestEngineControl extends Context.Service<
      * `redispatch` of the key, after a lost reply too.
      */
     readonly rejectNextDispatch: Effect.Effect<void>;
+    /**
+     * The engine refuses the next answer it receives while its request stays
+     * open, keeping a rejected receipt, as when the provider session it would
+     * reach is gone: it fails with `AnswerRejected`, as does every resend of
+     * its key.
+     */
+    readonly rejectNextAnswer: Effect.Effect<void>;
     /**
      * The next `count` calls of `openSession` fail with `EngineIndeterminate`,
      * applying nothing, as when the engine dropped them: a later call under
@@ -421,6 +429,8 @@ export class TestEngineControl extends Context.Service<
     ) => Effect.Effect<
       ReadonlyArray<{ readonly requestId: RequestId; readonly response: RequestResponse }>
     >;
+    /** Each answer the engine refused, first send and resend alike, by its request. */
+    readonly rejectedAnswers: (sessionId: SessionId) => Effect.Effect<ReadonlyArray<RequestId>>;
     readonly secretAnswers: (
       sessionId: SessionId,
     ) => Effect.Effect<
@@ -494,6 +504,7 @@ interface SessionRecord {
   readonly requests: Map<RequestId, OpenRequest>;
   readonly dispatches: Map<IdempotencyKey, ReceivedDispatch>;
   readonly responses: Array<{ readonly requestId: RequestId; readonly response: RequestResponse }>;
+  readonly rejectedAnswers: Array<RequestId>;
   readonly secretAnswers: Array<{ readonly requestId: RequestId; readonly answer: SecretAnswer }>;
   /** Each open stream, with the cursor of the last event it was given. */
   readonly subscribers: Map<Subscriber, { lastCursor: EventCursor }>;
@@ -515,7 +526,7 @@ type AppliedKey =
       readonly outcome: "applied" | "rejected";
     }
   | { readonly command: "stop"; readonly outcome: "applied" | "rejected" }
-  | { readonly command: "respond" };
+  | { readonly command: "respond"; readonly outcome: "applied" | "rejected" };
 
 const initialStatus: EngineStatus = {
   state: { _tag: "ready" },
@@ -533,6 +544,7 @@ const make = Effect.gen(function* () {
   let connection = Option.none<string>();
   let loseReply = false;
   let rejectDispatch = false;
+  let rejectAnswer = false;
   let failingOpenSessions = 0;
   let losingOpenSessionReply = false;
   let refusingOpenSessionModels = 0;
@@ -1202,6 +1214,7 @@ const make = Effect.gen(function* () {
             requests: new Map(),
             dispatches: new Map(),
             responses: [],
+            rejectedAnswers: [],
             secretAnswers: [],
             subscribers: new Map(),
             raceNextStart: null,
@@ -1400,18 +1413,30 @@ const make = Effect.gen(function* () {
     respond: ({ key, sessionId, requestId, response }) =>
       command(
         Effect.gen(function* () {
-          if ((yield* priorUse(key, "respond")) !== undefined) return;
+          const previous = yield* priorUse(key, "respond");
+          if (previous?.command === "respond" && previous.outcome === "applied") return;
           const session = yield* liveSession(sessionId);
           const open = session.requests.get(requestId);
+          // A refusal while planning keeps a rejected receipt, which every resend finds.
+          const rejected = () => {
+            keys.set(key, { command: "respond", outcome: "rejected" });
+            session.rejectedAnswers.push(requestId);
+            return open === undefined
+              ? new RequestClosed({ requestId })
+              : new AnswerRejected({ key, requestId });
+          };
+          if (previous?.command === "respond") return yield* rejected();
           if (open === undefined) return yield* new RequestClosed({ requestId });
           const fits =
             open.request._tag === "approval"
               ? response._tag === "approval"
-              : open.request._tag === "question"
-                ? response._tag !== "approval"
-                : open.request._tag === "unsupported-question" && response._tag === "dismiss";
+              : open.request._tag === "question" && response._tag === "question";
           if (!fits) return yield* misuse(`${response._tag} answer to a ${open.request._tag}`);
-          keys.set(key, { command: "respond" });
+          if (rejectAnswer) {
+            rejectAnswer = false;
+            return yield* rejected();
+          }
+          keys.set(key, { command: "respond", outcome: "applied" });
           session.responses.push({ requestId, response });
           closeRequest(session, open, "answered", yield* DateTime.now);
         }),
@@ -1620,6 +1645,10 @@ const make = Effect.gen(function* () {
 
     rejectNextDispatch: Effect.sync(() => {
       rejectDispatch = true;
+    }),
+
+    rejectNextAnswer: Effect.sync(() => {
+      rejectAnswer = true;
     }),
 
     failNextOpenSessions: (count) =>
@@ -1938,6 +1967,9 @@ const make = Effect.gen(function* () {
 
     responses: (sessionId) =>
       existingSession(sessionId).pipe(Effect.map((session) => [...session.responses])),
+
+    rejectedAnswers: (sessionId) =>
+      existingSession(sessionId).pipe(Effect.map((session) => [...session.rejectedAnswers])),
 
     secretAnswers: (sessionId) =>
       existingSession(sessionId).pipe(Effect.map((session) => [...session.secretAnswers])),

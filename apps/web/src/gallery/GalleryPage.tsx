@@ -580,14 +580,14 @@ function BubblesSection() {
 function CardsSection() {
   return (
     <Section title="Questions, approvals and credentials">
-      <Labeled label="Question: pending (tap an option), recommended and destructive options, a form of radio buttons, checkboxes and text, answered, dismissed, expired">
+      <Labeled label="Question: pending (tap an option), recommended and destructive options, a form of radio buttons, checkboxes and text, answered, dismissed, expired, refused">
         <div className="flex flex-col gap-3">
           {variants.questions.map((entry) => (
             <QuestionCard key={entry.id} entry={entry} onAnswer={nothing} onDismiss={nothing} />
           ))}
         </div>
       </Labeled>
-      <Labeled label="Approval: a whole command, indentation kept; one with the reason it asks; a summary only, with no grant for the session; a file change, its path above the coloured diff; a file read; a decision on its way; allowed; denied; expired">
+      <Labeled label="Approval: a whole command, indentation kept; one with the reason it asks; a summary only, with no grant for the session; a file change, its path above the coloured diff; a file read; a decision on its way; allowed; denied; expired; refused">
         <div className="flex flex-col gap-3">
           {variants.approvals.map(({ entry, submitting }) => (
             <ApprovalCard key={entry.id} entry={entry} onDecide={nothing} submitting={submitting} />

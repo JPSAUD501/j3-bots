@@ -282,7 +282,11 @@ export function ApprovalCard({
                 : "text-xs text-muted-foreground"
             }
           >
-            {status._tag === "decided" ? t(decisionText[status.decision]) : t("approval.expired")}
+            {status._tag === "decided"
+              ? t(decisionText[status.decision])
+              : status._tag === "refused"
+                ? t("approval.refused")
+                : t("approval.expired")}
           </p>
           {status._tag === "decided" &&
             status.decision === "allow-session" &&

@@ -4,6 +4,7 @@ import { type BotId, type Conflict, Invalid, type NotFound } from "@j3-bots/cont
 import { Engine } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -11,6 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 import * as Domain from "../domain.ts";
 import { timeText } from "../persistence/columns.ts";
 import * as TestDomain from "../testing/domain.ts";
@@ -23,9 +25,12 @@ import {
   engineSession,
   nextTurn,
   sendToBot,
+  stopSettled,
+  turnEnded,
   until,
 } from "../testing/turns.ts";
 import { Cards } from "./Cards.ts";
+import { Stops } from "./Stops.ts";
 
 const value = { _tag: "provide", value: Redacted.make("test-token") } as const;
 
@@ -184,7 +189,8 @@ it.effect("sends an answer when the answer before it hits a defect", () =>
       });
     }
     yield* sql`
-      UPDATE engine_requests SET response_json = '{"_tag":"dismiss"}' WHERE entry_id = ${first}
+      UPDATE engine_requests SET response_json = '{"_tag":"question","answers":{}}'
+      WHERE entry_id = ${first}
     `;
     yield* control.setReachable(true);
 
@@ -241,6 +247,111 @@ it.effect("takes a choice or a typed answer to an engine question, never both", 
         response: { _tag: "question", answers: { region: { optionIds: [], text: "Frankfurt" } } },
       },
     ]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("refuses a dismissal of an engine question, sending nothing, and takes its answer", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const cards = yield* Cards;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Deploy it.");
+    const turnId = yield* nextTurn(bot.id);
+    const requestId = yield* control.openRequest({
+      sessionId: session,
+      turnId,
+      request: {
+        _tag: "question",
+        questions: [
+          {
+            id: "question-1",
+            prompt: "Which region?",
+            options: [
+              { id: "option-1", label: "Europe", description: null, style: "default" },
+              { id: "option-2", label: "Asia", description: null, style: "default" },
+            ],
+            acceptsText: false,
+            multiple: false,
+          },
+        ],
+      },
+    });
+    const card = yield* awaitEntry(bot.id, "question");
+
+    // The engine takes no dismissal of a question its turn waits on.
+    const dismissed = yield* Effect.flip(
+      cards.answer({ commandId: command(), entryId: card.id, answer: { _tag: "dismiss" } }),
+    );
+    assert.deepStrictEqual(dismissed, new Invalid({ reason: "not-dismissible" }));
+    yield* cards.respondPending;
+    assert.deepStrictEqual(yield* control.rejectedAnswers(session), []);
+    assert.deepStrictEqual(yield* control.responses(session), []);
+    assert.strictEqual((yield* awaitEntry(bot.id, "question")).status._tag, "pending");
+
+    const answers = { "question-1": { optionIds: ["option-2"], text: null } };
+    yield* cards.answer({
+      commandId: command(),
+      entryId: card.id,
+      answer: { _tag: "question", answers },
+    });
+    yield* cards.respondPending;
+    assert.deepStrictEqual(yield* control.responses(session), [
+      { requestId, response: { _tag: "question", answers } },
+    ]);
+    yield* until(
+      awaitEntry(bot.id, "question").pipe(Effect.map((found) => found.status._tag === "answered")),
+    );
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("closes a card whose answer the engine refused, never sends it again, and stops", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const cards = yield* Cards;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Clean up.");
+    const turnId = yield* nextTurn(bot.id);
+    const requestId = yield* control.openRequest({
+      sessionId: session,
+      turnId,
+      request: {
+        _tag: "approval",
+        kind: "command",
+        action: "rm -rf build",
+        detail: null,
+        reason: null,
+        exact: true,
+        sessionGrant: null,
+      },
+    });
+    const card = yield* awaitEntry(bot.id, "approval");
+
+    const allow = (decision: "allow-once" | "deny") =>
+      cards.answer({
+        commandId: command(),
+        entryId: card.id,
+        answer: { _tag: "approval", decision },
+      });
+    yield* control.rejectNextAnswer;
+    yield* allow("allow-once");
+    yield* cards.respondPending;
+    // The card says the bot could not take it, and takes no other answer.
+    assert.deepStrictEqual((yield* awaitEntry(bot.id, "approval")).status, { _tag: "refused" });
+    const again = yield* Effect.flip(allow("deny"));
+    assert.strictEqual(again._tag === "Conflict" ? again.reason : again._tag, "card-closed");
+    // Past the longest backoff of an answer whose reply was lost.
+    yield* TestClock.adjust(Duration.minutes(11));
+    yield* cards.respondPending;
+    assert.deepStrictEqual(yield* control.rejectedAnswers(session), [requestId]);
+    assert.deepStrictEqual(yield* control.responses(session), []);
+
+    // The turn still waits on the request, until a Stop ends it.
+    yield* (yield* Stops).stopBot({ commandId: command(), botId: bot.id });
+    yield* stopSettled;
+    yield* turnEnded(bot.id);
+    assert.deepStrictEqual((yield* awaitEntry(bot.id, "approval")).status, { _tag: "refused" });
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

@@ -87,6 +87,8 @@ export class Invalid extends Schema.TaggedError<Invalid>()("Invalid", {
     "message-length",
     /** An answer to a bot's question too long to reach the bot. */
     "answer-length",
+    /** A dismissal of a question the harness asked: only a bot's `ask` question takes one. */
+    "not-dismissible",
   ]),
 }) {
   override get message(): string {

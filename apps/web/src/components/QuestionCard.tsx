@@ -17,6 +17,7 @@ import { ChoiceIndicator, choiceRow } from "./ui/choice";
 interface QuestionCardProps {
   readonly entry: QuestionEntry;
   readonly onAnswer: (answers: QuestionAnswers) => void;
+  /** Offered only for a bot's own `ask` question. */
   readonly onDismiss: () => void;
   /** An answer or a dismissal is on its way: the card takes no second one. */
   readonly submitting?: boolean;
@@ -29,7 +30,9 @@ interface QuestionCardProps {
  * `ask` question takes a note beside a choice; the harness's own question
  * takes one or the other, so typing clears the choice and choosing clears the
  * text.
- * Dismissing reads as "no", and its button says so. An option the bot
+ * Only an `ask` question can be dismissed, which reads as "no", and its button
+ * says so: the harness's own question holds its turn until it is answered or
+ * the turn is stopped. An option the bot
  * recommends says so in words; one that loses something says that too, and
  * is drawn in the blocked color.
  */
@@ -50,9 +53,12 @@ export function QuestionCard({
   const answer = (answers: QuestionAnswers) => {
     if (!submitting) onAnswer(answers);
   };
-  const dismiss = () => {
-    if (!submitting) onDismiss();
-  };
+  const dismiss =
+    entry.origin === "ask"
+      ? () => {
+          if (!submitting) onDismiss();
+        }
+      : null;
   const answersOnTap =
     pending && entry.questions.length === 1 && !first.multiple && !first.acceptsText;
 
@@ -79,7 +85,9 @@ export function QuestionCard({
               ? t("question.answered")
               : status._tag === "dismissed"
                 ? t("question.dismissed")
-                : t("question.expired")}
+                : status._tag === "refused"
+                  ? t("question.refused")
+                  : t("question.expired")}
           </p>
         </>
       ) : answersOnTap ? (
@@ -100,7 +108,7 @@ export function QuestionCard({
               ))}
             </div>
           </fieldset>
-          <Actions onDismiss={dismiss} submitting={submitting} />
+          {dismiss !== null && <Actions onDismiss={dismiss} submitting={submitting} />}
         </div>
       ) : (
         // Keyed by the entry, so a draft never outlives the card it was typed into.
@@ -129,7 +137,7 @@ function QuestionForm({
   questions: ReadonlyArray<Question>;
   textReplacesChoice: boolean;
   onAnswer: (answers: QuestionAnswers) => void;
-  onDismiss: () => void;
+  onDismiss: (() => void) | null;
   submitting: boolean;
   focusWatch: FocusWatch;
 }) {
@@ -291,7 +299,7 @@ function Actions({
   submitting,
   canSend,
 }: {
-  onDismiss: () => void;
+  onDismiss: (() => void) | null;
   submitting: boolean;
   /** Set when the card is a form; tap-to-answer cards have no send button. */
   canSend?: boolean;
@@ -299,9 +307,11 @@ function Actions({
   const { t } = useI18n();
   return (
     <div className="flex flex-wrap items-center justify-end gap-2">
-      <Button variant="ghost-muted" size="sm" onClick={onDismiss} aria-disabled={submitting}>
-        {t("question.dismiss")}
-      </Button>
+      {onDismiss !== null && (
+        <Button variant="ghost-muted" size="sm" onClick={onDismiss} aria-disabled={submitting}>
+          {t("question.dismiss")}
+        </Button>
+      )}
       {canSend !== undefined && (
         <Button type="submit" variant="primary" size="sm" aria-disabled={!canSend || submitting}>
           {t("question.send")}

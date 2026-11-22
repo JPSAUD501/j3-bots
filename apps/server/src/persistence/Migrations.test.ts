@@ -18,6 +18,13 @@ import Migration0003 from "./migrations/0003_turns.ts";
 import Migration0004 from "./migrations/0004_routines.ts";
 import Migration0005 from "./migrations/0005_sessions.ts";
 import Migration0006 from "./migrations/0006_notifications.ts";
+import Migration0007 from "./migrations/0007_routine_runs.ts";
+import Migration0008 from "./migrations/0008_teammate_messages.ts";
+import Migration0009 from "./migrations/0009_room_turns.ts";
+import Migration0010 from "./migrations/0010_push_registrations.ts";
+import Migration0011 from "./migrations/0011_push_deliveries.ts";
+import Migration0012 from "./migrations/0012_room_integrity.ts";
+import Migration0013 from "./migrations/0013_bot_avatar_colors.ts";
 import { json } from "./columns.ts";
 import { migrate } from "./Migrations.ts";
 import * as Sqlite from "./Sqlite.ts";
@@ -232,6 +239,132 @@ it.effect("replays a routine's receipt written before runs counted their attempt
       `;
       const replayed = yield* Schema.decodeUnknownEffect(json(Routine))(row?.result_json);
       assert.strictEqual(replayed.lastRun?.attempts, 0);
+    }).pipe(Effect.provide(Sqlite.layer.pipe(Layer.provide(Layer.succeed(ServerConfig, config)))));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("closes a card whose dismissal was sent, and reopens one never sent", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fs.makeTempDirectoryScoped();
+    const config = TestDatabase.configFor(path, home);
+    const answer = JSON.stringify({
+      _tag: "question",
+      answers: { "question-1": { optionIds: ["option-1"], text: null } },
+    });
+    const pending = JSON.stringify({ origin: "engine", status: { _tag: "pending" } });
+
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* SqliteMigrator.run({
+        loader: SqliteMigrator.fromRecord({
+          "1_initial": Migration0001,
+          "2_operator_name": Migration0002,
+          "3_turns": Migration0003,
+          "4_routines": Migration0004,
+          "5_sessions": Migration0005,
+          "6_notifications": Migration0006,
+          "7_routine_runs": Migration0007,
+          "8_teammate_messages": Migration0008,
+          "9_room_turns": Migration0009,
+          "10_push_registrations": Migration0010,
+          "11_push_deliveries": Migration0011,
+          "12_room_integrity": Migration0012,
+          "13_bot_avatar_colors": Migration0013,
+        }),
+      });
+      yield* sql`
+        INSERT INTO bots (
+          id, name, title, avatar_shape, avatar_color, job, provider_id, model_id,
+          permission_mode, workspace_path, created_at, updated_at
+        ) VALUES (
+          'scout', 'scout', '', 'circle', 'blue', '', 'claude', 'haiku', 'auto', '/bots/scout',
+          ${now}, ${now}
+        )
+      `;
+      yield* sql`INSERT INTO conversations (bot_id, created_at) VALUES ('scout', ${now})`;
+      yield* sql`
+        INSERT INTO sessions (id, bot_id, purpose, engine_session_id, prompt_version, created_at)
+        VALUES ('session-1', 'scout', 'main', 'engine-1', 'v1', ${now})
+      `;
+      yield* sql`
+        INSERT INTO entries (
+          id, conversation_bot_id, position, kind, author_kind, author_bot_id, body_json,
+          created_at, updated_at
+        ) VALUES
+          ('entry-1', 'scout', 0, 'question', 'bot', 'scout', ${pending}, ${now}, ${now}),
+          ('entry-2', 'scout', 1, 'question', 'bot', 'scout', ${pending}, ${now}, ${now}),
+          ('entry-3', 'scout', 2, 'question', 'bot', 'scout', ${pending}, ${now}, ${now}),
+          ('entry-4', 'scout', 3, 'question', 'bot', 'scout', ${pending}, ${now}, ${now})
+      `;
+      // A dismissal the engine refused, sent again ever since; an answer
+      // still on its way; a dismissal recorded while the engine was away,
+      // never sent; and one the engine took, whose request has not closed yet.
+      yield* sql`
+        INSERT INTO engine_requests (
+          entry_id, session_id, engine_request_id, engine_turn_id, response_json,
+          response_sent_at, response_failures, response_retry_at
+        ) VALUES
+          ('entry-1', 'session-1', 'request-1', 'turn-1', '{"_tag":"dismiss"}', NULL, 7, ${now}),
+          ('entry-2', 'session-1', 'request-2', 'turn-1', ${answer}, NULL, 1, ${now}),
+          ('entry-3', 'session-1', 'request-3', 'turn-1', '{"_tag":"dismiss"}', NULL, 0, NULL),
+          ('entry-4', 'session-1', 'request-4', 'turn-1', '{"_tag":"dismiss"}', ${now}, 0, NULL)
+      `;
+    }).pipe(Effect.provide(SqliteClient.layer({ filename: config.databasePath })));
+
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const rows = yield* sql<{
+        readonly entry_id: string;
+        readonly closed: number;
+        readonly response_json: string | null;
+        readonly response_failures: number;
+        readonly status: string;
+      }>`
+        SELECT r.entry_id, r.closed_at IS NOT NULL AS closed, r.response_json,
+          r.response_failures, json_extract(e.body_json, '$.status._tag') AS status
+        FROM engine_requests r JOIN entries e ON e.id = r.entry_id
+        ORDER BY r.entry_id
+      `;
+      assert.deepStrictEqual(rows, [
+        {
+          entry_id: "entry-1",
+          closed: 1,
+          response_json: null,
+          response_failures: 0,
+          status: "refused",
+        },
+        {
+          entry_id: "entry-2",
+          closed: 0,
+          response_json: answer,
+          response_failures: 1,
+          status: "pending",
+        },
+        {
+          entry_id: "entry-3",
+          closed: 0,
+          response_json: null,
+          response_failures: 0,
+          status: "pending",
+        },
+        {
+          entry_id: "entry-4",
+          closed: 1,
+          response_json: null,
+          response_failures: 0,
+          status: "dismissed",
+        },
+      ]);
+      // Clients read the closed cards again.
+      const changed = yield* sql<{ readonly scope: string; readonly entity_id: string }>`
+        SELECT scope, entity_id FROM changes ORDER BY entity_id
+      `;
+      assert.deepStrictEqual(changed, [
+        { scope: "conversation:scout", entity_id: "entry-1" },
+        { scope: "conversation:scout", entity_id: "entry-4" },
+      ]);
     }).pipe(Effect.provide(Sqlite.layer.pipe(Layer.provide(Layer.succeed(ServerConfig, config)))));
   }).pipe(Effect.provide(NodeServices.layer)),
 );

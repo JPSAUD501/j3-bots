@@ -226,7 +226,11 @@ export function ApprovalCard({ entry }: { readonly entry: ApprovalEntry }) {
             ref={outcome}
             className={`text-xs ${status._tag === "decided" && status.decision === "deny" ? "text-blocked" : "text-muted-foreground"}`}
           >
-            {status._tag === "decided" ? t(decisionText[status.decision]) : t("approval.expired")}
+            {status._tag === "decided"
+              ? t(decisionText[status.decision])
+              : status._tag === "refused"
+                ? t("approval.refused")
+                : t("approval.expired")}
           </Text>
           {status._tag === "decided" &&
             status.decision === "allow-session" &&
