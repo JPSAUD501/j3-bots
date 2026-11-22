@@ -365,10 +365,11 @@ const notices = <Failure extends Schema.Top>(failure: Failure) =>
       allowed: Schema.NullOr(PermissionMode),
     }),
     /**
-     * In a room: the engine refuses this member's permission mode, so it
-     * takes no part here until the operator chooses a lower one or raises the
-     * policy's limit. Its own conversation says which modes. The rest of the
-     * room goes on, and what was said to it waits.
+     * In a room, at the time it was written: the engine refused this member's
+     * permission mode, so it took no part here from then until the operator
+     * chose a lower one or raised the policy's limit. Its own conversation
+     * says which modes. The rest of the room went on, and what was said to it
+     * waited.
      */
     Schema.TaggedStruct("member-mode-refused", { botId: BotId }),
     /**

@@ -28,24 +28,58 @@ export const modeRefusedSql = (sql: SqlClient.SqlClient, botId: BotId | Statemen
 `;
 
 /**
+ * Whether the room `roomId` was told that the bot `botId`, a member, takes no
+ * part there, since its conversation was last told of a refusal of its
+ * permission mode: one of its `member-mode-refused` lines for the bot is
+ * newer than the conversation's last `permission-mode-refused` notice. Each
+ * refusal the conversation is told of, the first after a turn the engine took
+ * included, so asks every room of the bot afresh; a room that took the bot in
+ * since was never told. Both are a column or a value.
+ */
+const roomToldSql = (
+  sql: SqlClient.SqlClient,
+  roomId: RoomId | Statement.Fragment,
+  botId: BotId | Statement.Fragment,
+) => sql`
+  EXISTS (
+    SELECT 1 FROM entries rt_line
+    WHERE rt_line.room_id = ${roomId} AND rt_line.kind = 'notice'
+      AND json_extract(rt_line.body_json, '$.notice._tag') = 'member-mode-refused'
+      AND json_extract(rt_line.body_json, '$.notice.botId') = ${botId}
+      AND rt_line.seq > COALESCE((
+        SELECT MAX(rt_told.seq) FROM entries rt_told
+        WHERE rt_told.conversation_bot_id = ${botId} AND rt_told.kind = 'notice'
+          AND json_extract(rt_told.body_json, '$.notice._tag') = 'permission-mode-refused'
+      ), 0)
+  )
+`;
+
+/**
  * The rooms told that a member's permission mode is refused: it takes no part
  * there until the operator acts, and the rest of the room goes on without it
- * (`roomQueue` in the dispatcher). In the caller's transaction.
+ * (`roomQueue` in the dispatcher). Each room is told once for each refusal
+ * the bot's conversation is told of (`roomToldSql`). In the caller's
+ * transaction.
  */
 export const roomRefusals = (sql: SqlClient.SqlClient, entries: Entries["Service"]) => {
   const { notify } = notices(sql, entries);
 
-  const roomsOf = SqlSchema.findAll({
+  const untoldRooms = SqlSchema.findAll({
     Request: BotId,
     Result: Schema.Struct({ room_id: RoomId }),
-    execute: (botId) => sql`SELECT room_id FROM room_members WHERE bot_id = ${botId}`,
+    execute: (botId) => sql`
+      SELECT room_id FROM room_members
+      WHERE bot_id = ${botId} AND NOT ${roomToldSql(sql, sql`room_members.room_id`, sql`${botId}`)}
+    `,
   });
 
-  const refusedOf = SqlSchema.findAll({
-    Request: Schema.Array(BotId),
+  const untoldRefused = SqlSchema.findAll({
+    Request: Schema.Struct({ roomId: RoomId, botIds: Schema.Array(BotId) }),
     Result: Schema.Struct({ id: BotId }),
-    execute: (botIds) => sql`
-      SELECT id FROM bots WHERE ${sql.in("id", botIds)} AND ${modeRefusedSql(sql, sql`bots.id`)}
+    execute: ({ roomId, botIds }) => sql`
+      SELECT id FROM bots
+      WHERE ${sql.in("id", botIds)} AND ${modeRefusedSql(sql, sql`bots.id`)}
+        AND NOT ${roomToldSql(sql, sql`${roomId}`, sql`bots.id`)}
     `,
   });
 
@@ -53,22 +87,25 @@ export const roomRefusals = (sql: SqlClient.SqlClient, entries: Entries["Service
   const tell = (botId: BotId, roomId: RoomId) =>
     notify(botId, { _tag: "room", roomId }, { _tag: "member-mode-refused", botId }, null);
 
-  /** Tells every room of the bot, as its own conversation is told of a refusal. */
+  /**
+   * Tells every room of the bot not told yet of its refusal as it stands,
+   * after its conversation was told, or found it was told before.
+   */
   const refused = Effect.fn("roomRefusals.refused")(function* (botId: BotId) {
-    for (const room of yield* roomsOf(botId)) yield* tell(botId, room.room_id);
+    for (const room of yield* untoldRooms(botId)) yield* tell(botId, room.room_id);
   }, Effect.orDie);
 
   /**
    * Tells the room of each of `botIds`, members it has just taken in, whose
-   * permission mode the engine refuses now: it was not in the room when its
-   * refusal was told.
+   * permission mode the engine refuses now, unless it was told already. One
+   * not refused now is told with its next refusal (`refused`).
    */
   const joined = Effect.fn("roomRefusals.joined")(function* (
     roomId: RoomId,
     botIds: ReadonlyArray<BotId>,
   ) {
     if (botIds.length === 0) return;
-    for (const bot of yield* refusedOf(botIds)) yield* tell(bot.id, roomId);
+    for (const bot of yield* untoldRefused({ roomId, botIds })) yield* tell(bot.id, roomId);
   }, Effect.orDie);
 
   return { refused, joined };
@@ -104,7 +141,9 @@ export const modeRefusals = (
    * cleared or not written. The bot's conversation is told of a refusal at a
    * revision, or naming an allowed mode, it was not told of yet, so a refusal
    * the engine repeats after a restart is not told twice; each room it is a
-   * member of is told with it, in one line naming the bot.
+   * member of is told once for each refusal its conversation is told of, in
+   * one line naming the bot, also a room it joined after the conversation
+   * was told (`roomRefusals`).
    */
   const refused = Effect.fn("modeRefusals.refused")(
     function* (botId: BotId, revision: number, refusal: PermissionModeRefused, generation: number) {
@@ -127,17 +166,20 @@ export const modeRefusals = (
             OR mode_refusal_told_allowed IS NOT ${refusal.allowed})
         RETURNING id
       `;
-      if (told.length === 0) return;
-      yield* notify(
-        botId,
-        conversation,
-        {
-          _tag: "permission-mode-refused",
-          permissionMode: refusal.permissionMode,
-          allowed: refusal.allowed,
-        },
-        null,
-      );
+      if (told.length > 0) {
+        yield* notify(
+          botId,
+          conversation,
+          {
+            _tag: "permission-mode-refused",
+            permissionMode: refusal.permissionMode,
+            allowed: refusal.allowed,
+          },
+          null,
+        );
+      }
+      // Asked also when the conversation was told before: a room may have
+      // taken the bot in while no refusal of it stood, after a restart.
       yield* rooms.refused(botId);
     },
     transaction,

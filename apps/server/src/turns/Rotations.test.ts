@@ -951,6 +951,52 @@ it.effect(
 );
 
 it.effect(
+  "tells a room a bot joined after an engine restart once the engine refuses its permission mode again, which its conversation was told of before",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const bots = yield* Bots;
+      const host = yield* createBot("Ana");
+      const room = yield* roomOf(host.id);
+      const late = yield* createBot("Caio");
+      yield* bots.update({
+        commandId: command(),
+        botId: late.id,
+        changes: { permissionMode: "full-access" },
+      });
+      const session = yield* engineSession(late.id);
+      yield* (yield* Rotations).rotateDue;
+      yield* until(
+        Effect.map(control.sessionPermissionMode(session), (mode) => mode === "full-access"),
+      );
+      yield* engineRestarts("auto");
+      yield* sendToBot(late.id, "Hello.");
+      yield* modeRefused(1);
+      yield* until(Effect.map(refusalRecorded(late.id), (recorded) => recorded));
+
+      // The engine starts again under the same policy, and the bot joins the
+      // room before the engine refuses its waiting message again.
+      const resend = yield* control.holdNext("dispatch");
+      yield* engineRestarts("auto");
+      yield* until(Effect.map(refusalRecorded(late.id), (recorded) => !recorded));
+      yield* (yield* Rooms).update({
+        commandId: command(),
+        roomId: room.id,
+        changes: { members: [...room.members, late.id] },
+      });
+      assert.deepStrictEqual(yield* membersRefused(room.id), []);
+      yield* resend.entered;
+      yield* resend.release;
+      yield* until(Effect.map(refusalRecorded(late.id), (recorded) => recorded));
+
+      assert.deepStrictEqual(
+        [yield* membersRefused(room.id), yield* modeNotices(late.id)],
+        [[late.id], [["full-access", "auto"]]],
+      );
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
   "opens a bot's session with the permission mode it has now, after the reply to an opening was lost",
   () =>
     Effect.gen(function* () {
