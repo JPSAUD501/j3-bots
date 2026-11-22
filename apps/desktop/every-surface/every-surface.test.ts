@@ -691,9 +691,10 @@ it.layer(
           const red = question.options.find((option) => option.label === "Red");
           if (red === undefined) return yield* Effect.die("The question offers no Red");
           yield* onDesktop((page) => card(page, asked.id).waitFor({ timeout: STEP }));
-          // A single choice answers on a tap. The scripted agent's option reads its label twice.
+          // A single choice answers on a tap. The scripted agent's option repeats its label as its
+          // description, which the card leaves out.
           yield* phone.waitText("Needs your answer", STEP);
-          yield* phone.press(labelled("Red, Red", "button"));
+          yield* phone.press(labelled("Red", "button"));
           yield* onDesktop(async (page) => {
             await card(page, asked.id)
               .getByText("Answered", { exact: true })
