@@ -21,6 +21,7 @@ import type {
   EngineIncompatible,
   ModelUnavailable,
   OpenRejected,
+  PermissionModeRefused,
   RequestClosed,
   RetireRejected,
   SessionBusy,
@@ -360,7 +361,10 @@ export class Engine extends Context.Service<
      *
      * `OpenRejected`: the engine refused it and keeps that refusal for the
      * key, which is spent. The caller opens the session later under a fresh
-     * key.
+     * key. `PermissionModeRefused`: the engine refuses the permission mode,
+     * and keeps nothing for the key; it opens no session in that mode until
+     * it starts again under a policy that allows it. The error names the
+     * highest mode the policy allows, when the engine reports one.
      */
     readonly openSession: (input: {
       readonly key: IdempotencyKey;
@@ -368,7 +372,10 @@ export class Engine extends Context.Service<
       readonly title: string;
       readonly model: ModelChoice;
       readonly permissionMode: PermissionMode;
-    }) => Effect.Effect<SessionId, EngineDown | ModelUnavailable | OpenRejected>;
+    }) => Effect.Effect<
+      SessionId,
+      EngineDown | ModelUnavailable | OpenRejected | PermissionModeRefused
+    >;
 
     /**
      * Changes the model or permission mode of a session, from its next turn.
@@ -383,8 +390,10 @@ export class Engine extends Context.Service<
      * only waits in the queue does not count. Like the dispatch's busy check,
      * a turn the engine starts on its own between the check and the change
      * is not seen. `BackgroundWorkRunning`: the engine refused a change that
-     * would end the session's background work. A model sent before a refused
-     * permission mode stays applied; calling again sends what still differs.
+     * would end the session's background work. `PermissionModeRefused`: the
+     * engine refuses the permission mode, as `openSession` says. A model sent
+     * before a refused permission mode stays applied; calling again sends what
+     * still differs.
      */
     readonly configureSession: (input: {
       readonly sessionId: SessionId;
@@ -392,7 +401,12 @@ export class Engine extends Context.Service<
       readonly permissionMode?: PermissionMode;
     }) => Effect.Effect<
       void,
-      EngineDown | SessionNotFound | ModelUnavailable | SessionBusy | BackgroundWorkRunning
+      | EngineDown
+      | SessionNotFound
+      | ModelUnavailable
+      | SessionBusy
+      | BackgroundWorkRunning
+      | PermissionModeRefused
     >;
 
     /**

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Schema from "effect/Schema";
 import { BotId, EntryId, Label, NonNegativeInt, RoutineId, RoutineRunId } from "./base.ts";
+import { PermissionMode } from "./bot.ts";
 
 export const RoutineTrigger = Schema.Union([
   /** A five-field cron expression, evaluated in `timeZone` (an IANA name). */
@@ -16,6 +17,18 @@ export const RoutineInstruction = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(10_000),
 );
+
+/**
+ * Why a run's last attempt failed, when J3 Bots can name it: the engine
+ * refused the bot's permission mode, as an administrator's policy on its
+ * machine can, so the attempt's session never opened. `allowed` is the
+ * highest mode the policy allows, when the engine names one.
+ */
+export const RoutineRunFailure = Schema.TaggedStruct("permission-mode-refused", {
+  permissionMode: PermissionMode,
+  allowed: Schema.NullOr(PermissionMode),
+});
+export type RoutineRunFailure = typeof RoutineRunFailure.Type;
 
 export const RoutineRun = Schema.Struct({
   id: RoutineRunId,
@@ -40,6 +53,11 @@ export const RoutineRun = Schema.Struct({
   attempts: NonNegativeInt,
   delivered: Schema.Array(EntryId),
   note: Schema.NullOr(Schema.String.check(Schema.isMaxLength(10_000))),
+  /**
+   * Why its last attempt failed, on a failed run whose reason J3 Bots can
+   * name. Absent otherwise, and from a server that names none.
+   */
+  failure: Schema.optionalKey(RoutineRunFailure),
 });
 export type RoutineRun = typeof RoutineRun.Type;
 

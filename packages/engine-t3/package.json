@@ -21,7 +21,8 @@
   "scripts": {
     "typecheck": "effect-tsgo tsrs --noEmit",
     "test": "vp test run --config ../../vite.config.ts --dir .",
-    "test:conformance": "J3_CONFORMANCE_HOME=\"${J3_CONFORMANCE_HOME:-$HOME/.cache/j3-conformance}\" vp test run --config conformance/vite.config.ts --dir ."
+    "test:conformance": "J3_CONFORMANCE_HOME=\"${J3_CONFORMANCE_HOME:-$HOME/.cache/j3-conformance}\" vp test run --config conformance/vite.config.ts --dir .",
+    "test:conformance:policy": "conformance/with-policy.sh"
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",

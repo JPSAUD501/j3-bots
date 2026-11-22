@@ -13,6 +13,7 @@ import {
 import type * as DateTime from "effect/DateTime";
 import { firstLine } from "../presentation/roster.ts";
 import { millisBetween, shortDuration } from "../presentation/time.ts";
+import { permissionModeText } from "./details.ts";
 import { timeInSentence, type TimeContext } from "./time.ts";
 
 export interface PresentationContext extends TimeContext {
@@ -177,6 +178,15 @@ export function noticeText(
       return t("notice.sessionLost");
     case "session-not-ready":
       return t("notice.sessionNotReady");
+    case "permission-mode-refused": {
+      const mode = permissionModeText(notice.permissionMode, ctx.i18n).name;
+      return notice.allowed === null
+        ? t("notice.permissionModeRefused", { mode })
+        : t("notice.permissionModeAllowed", {
+            mode,
+            allowed: permissionModeText(notice.allowed, ctx.i18n).name,
+          });
+    }
     case "settings-held":
       return t("notice.settingsHeld");
     case "observation-failed":

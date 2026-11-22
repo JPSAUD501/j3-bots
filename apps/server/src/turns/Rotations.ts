@@ -204,7 +204,9 @@ export const layer = Layer.effect(
      * Live bots whose main session is missing, not opened yet, or not brought
      * to the bot's settings; `opened` when it is opened and only its
      * alignment is due. A lost session, and one on a provider the bot left,
-     * are replaced instead.
+     * are replaced instead. A bot whose permission mode the engine refused
+     * waits for its settings to change, or the engine to become ready again
+     * (`EngineSessions`, `mode-refused`).
      */
     const unprovisioned = SqlSchema.findAll({
       Request: Schema.Void,
@@ -221,7 +223,7 @@ export const layer = Layer.effect(
           WHERE s.bot_id = b.id AND s.purpose = 'main' AND s.retired_at IS NULL
             AND s.engine_session_id IS NOT NULL
             AND (s.settings_pending = 0 OR s.lost_at IS NOT NULL OR s.provider_id <> b.provider_id)
-        )
+        ) AND b.mode_refused_revision IS NOT b.settings_revision
         ORDER BY b.rowid
       `,
     });
@@ -424,7 +426,10 @@ export const layer = Layer.effect(
      * the next pass to replace it; any other failure is tried again with
      * backoff, under a fresh key after a refused opening, and the bot's
      * conversation is told once it failed `NOT_READY_AFTER` times in a row.
-     * An alignment waiting for a turn is tried again when the turn
+     * A permission mode the engine refuses is not a failure and is not tried
+     * on the backoff: the bot waits for its settings to change, or for the
+     * engine to become ready again, perhaps under another policy, either of
+     * which nudges the rotator. An alignment waiting for a turn is tried again when the turn
      * ends, which nudges the rotator, and one held by background work as
      * often as a rotation held by it.
      */

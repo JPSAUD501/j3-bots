@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type {
-  EngineStatus,
-  FailureClass,
-  ModelChoice,
+import {
+  type EngineStatus,
+  type FailureClass,
+  type ModelChoice,
   PermissionMode,
-  WorkStep,
-  WorkStepId,
+  type WorkStep,
+  type WorkStepId,
 } from "@j3-bots/contracts";
 import type * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -37,6 +37,7 @@ import {
   EngineUnavailable,
   ModelUnavailable,
   OpenRejected,
+  PermissionModeRefused,
   RequestClosed,
   RetireRejected,
   SessionBusy,
@@ -89,7 +90,8 @@ import { toolInputDigest } from "../toolCaller.ts";
 // speech; replies lost after a command was applied; staged files that expire;
 // calls held in flight, a Stop whose effects lag its acknowledgment, a Stop
 // refused while its work can still run, an opening refused for good under its
-// key, a retirement refused for now, a turn whose provider is slow to
+// key, permission modes above an administrator's ceiling refused, a retirement
+// refused for now, a turn whose provider is slow to
 // start it, and a dispatch that waits in the startup queue and lands late;
 // synchronization markers; and resume by cursor with replay or a replacement
 // that repeats turns already seen end, as the real engine may. The adapter's
@@ -223,6 +225,19 @@ export class TestEngineControl extends Context.Service<
      * fail with `OpenRejected`. A call under another key opens a session.
      */
     readonly rejectNextOpenSession: Effect.Effect<void>;
+    /**
+     * The engine refuses every session opened in, and every change to, a
+     * permission mode above `ceiling`, applying nothing and keeping nothing
+     * for the key, with `PermissionModeRefused` naming `ceiling`, as under an
+     * administrator's policy. A model sent with a refused mode change stays
+     * applied. Sessions already in such a mode keep it. The real engine reads
+     * its policy when it starts, so a test that changes the ceiling later
+     * makes the engine unreachable around the change, as a restart does
+     * (`setReachable`).
+     */
+    readonly limitPermissionModes: (ceiling: PermissionMode) => Effect.Effect<void>;
+    /** How many openings and settings changes the engine refused for their permission mode. */
+    readonly modeRefusals: Effect.Effect<number>;
     /**
      * The next `count` calls of `retireSession` on a session still in use
      * fail with `RetireRejected`, applying nothing, as while delegated tasks
@@ -566,6 +581,19 @@ const make = Effect.gen(function* () {
   let losingOpenSessionReply = false;
   let refusingOpenSessionModels = 0;
   let rejectOpenSession = false;
+  let modeCeiling: PermissionMode | null = null;
+  let modeRefusals = 0;
+  /** The ceiling's refusal of `mode`, counted, if it refuses it. */
+  const modeRefusal = (mode: PermissionMode) => {
+    if (
+      modeCeiling === null ||
+      PermissionMode.literals.indexOf(mode) <= PermissionMode.literals.indexOf(modeCeiling)
+    ) {
+      return Option.none<PermissionModeRefused>();
+    }
+    modeRefusals++;
+    return Option.some(new PermissionModeRefused({ permissionMode: mode, allowed: modeCeiling }));
+  };
   let rejectingRetirements = 0;
   let rejectStop = false;
   const holds = new Map<
@@ -1212,6 +1240,8 @@ const make = Effect.gen(function* () {
               modelId: model.modelId,
             });
           }
+          const refusal = modeRefusal(permissionMode);
+          if (Option.isSome(refusal)) return yield* refusal.value;
           if (rejectOpenSession) {
             rejectOpenSession = false;
             keys.set(key, { command: "openSession", sessionId: null });
@@ -1278,6 +1308,10 @@ const make = Effect.gen(function* () {
               return yield* new BackgroundWorkRunning({ sessionId });
             }
             if (model !== undefined) session.model = model;
+            if (permissionMode !== undefined && changesMode) {
+              const refusal = modeRefusal(permissionMode);
+              if (Option.isSome(refusal)) return yield* refusal.value;
+            }
             if (permissionMode !== undefined) session.permissionMode = permissionMode;
           }),
         ),
@@ -1696,6 +1730,13 @@ const make = Effect.gen(function* () {
     rejectNextOpenSession: Effect.sync(() => {
       rejectOpenSession = true;
     }),
+
+    limitPermissionModes: (ceiling) =>
+      Effect.sync(() => {
+        modeCeiling = ceiling;
+      }),
+
+    modeRefusals: Effect.sync(() => modeRefusals),
 
     rejectNextRetirements: (count) =>
       Effect.sync(() => {

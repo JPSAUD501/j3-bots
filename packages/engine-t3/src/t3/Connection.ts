@@ -13,12 +13,14 @@ import * as RpcClient from "effect/rpc/RpcClient";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Socket from "effect/socket/Socket";
 import { ORCHESTRATION_PROTOCOL } from "./Pin.ts";
+import { GetServerConfigRpc } from "./Policy.ts";
 import { SubscribeServerConfigRpc } from "./Providers.ts";
 import { baseUrl } from "./Supervisor.ts";
 
 // The adapter's one WebSocket to the engine, with the engine's own RPC group,
 // except that its config stream reads each provider's usage limits apart
-// (`SubscribeServerConfigRpc`).
+// (`SubscribeServerConfigRpc`), and a read of its config reads only its
+// policy's runtime-mode ceiling (`GetServerConfigRpc`).
 // Each dial signs in with a fresh one-use ticket bought with the bearer token,
 // as the engine's own clients do, so a reconnect never replays a spent ticket.
 //
@@ -100,6 +102,9 @@ export const makeEngineRpc = Effect.fn("engine.makeEngineRpc")(function* (input:
   // Built into the caller's scope: the socket lives exactly as long as the client.
   const context = yield* Layer.build(protocol);
   return yield* RpcClient.make(
-    WsRpcGroup.omit(SubscribeServerConfigRpc._tag).add(SubscribeServerConfigRpc),
+    WsRpcGroup.omit(SubscribeServerConfigRpc._tag, GetServerConfigRpc._tag).add(
+      SubscribeServerConfigRpc,
+      GetServerConfigRpc,
+    ),
   ).pipe(Effect.provideContext(context));
 });

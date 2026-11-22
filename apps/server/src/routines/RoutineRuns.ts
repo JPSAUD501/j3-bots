@@ -364,8 +364,9 @@ export const layer = Layer.effect(
           new TurnsInvariant({ invariant: "A routine's wake is always written" }),
         );
       }
+      // What the failed attempt failed of is no longer the run's last word.
       yield* sql`
-        UPDATE routine_runs SET wake_id = ${wakeId},
+        UPDATE routine_runs SET wake_id = ${wakeId}, failure_json = NULL,
           retry_at = ${timeText(DateTime.addDuration(now, retryDelay(run.attempts)))}
         WHERE id = ${run.id} AND status = 'running'
       `;

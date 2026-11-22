@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { ModelId, ProviderId } from "@j3-bots/contracts";
+import { ModelId, PermissionMode, ProviderId } from "@j3-bots/contracts";
 import * as Schema from "effect/Schema";
 import { IdempotencyKey, RequestId, SessionId, TurnId } from "./ids.ts";
 
@@ -213,6 +213,36 @@ export class OpenRejected extends Schema.TaggedError<OpenRejected>()("OpenReject
 }) {
   override get message(): string {
     return `The engine refused to open a session under ${this.key}; nothing was opened.`;
+  }
+}
+
+/**
+ * The engine refuses the permission mode a session was to be opened with or
+ * changed to, and nothing was applied: an administrator's policy on the
+ * engine's machine limits threads to a lower mode
+ * (`OrchestratorRuntimeModeAboveCeilingError`). The engine checks it after
+ * the receipt lookup and records no receipt for it, since the mode can be
+ * changed, so the key is not spent (**Read** at `59651c1`, `Orchestrator.ts`
+ * `dispatchWithReceiptEffect`, and `DispatchModeLimit.ts`
+ * `runtimeModeCeilingRefusal`, which refuses a `thread.created` or a
+ * `thread.runtime-mode-updated` above the ceiling). The engine reads the
+ * policy once, when it starts, so the same mode is refused until the caller
+ * asks for a lower one or the engine starts again under another policy
+ * (**Verified** on `0.1.11`, in the conformance suite, under a policy that
+ * limits threads to Supervised). The dispatch-mode limit
+ * (`OrchestratorThreadAboveModeLimitError`) is refused the same way, and
+ * binds only the engine's agent and MCP callers, never `/ws`.
+ *
+ * `allowed` is the highest mode the policy allows, as the engine reports its
+ * policy, or `null` when it reports none the refusal can be put down to.
+ */
+export class PermissionModeRefused extends Schema.TaggedError<PermissionModeRefused>()(
+  "PermissionModeRefused",
+  { permissionMode: PermissionMode, allowed: Schema.NullOr(PermissionMode) },
+) {
+  override get message(): string {
+    const allowed = this.allowed === null ? "" : `; it allows up to ${this.allowed}`;
+    return `The engine refuses sessions in the permission mode ${this.permissionMode}${allowed}.`;
   }
 }
 
