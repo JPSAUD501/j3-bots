@@ -70,7 +70,7 @@ import { SecretRequestCard } from "../components/SecretRequestCard";
 import { Timeline, type TimelineIntents } from "../components/Timeline";
 import { UsageSection } from "../components/UsageSection";
 import { WorkFold } from "../components/WorkFold";
-import { notificationText } from "@j3-bots/i18n";
+import { LANGUAGE_NAMES, notificationText } from "@j3-bots/i18n";
 import { cn } from "../lib/cn";
 import { iconUrl, notificationIcon } from "../live/notificationIcon";
 import { addresseeLine } from "@j3-bots/client-runtime/wording";
@@ -96,8 +96,6 @@ const restingRoom: Room = {
 /** The sample room while the server ends its work. */
 const stoppingRoom: Room = { ...team.room, work: "stopping" };
 const shortcuts = shellShortcuts();
-
-const languageNames: Record<Language, string> = { en: "English", "pt-BR": "Português (Brasil)" };
 
 export default function GalleryPage() {
   const [locale, setLocale] = useState<Language>("en");
@@ -130,7 +128,7 @@ export default function GalleryPage() {
                         onClick={() => setLocale(l)}
                         className="rounded-sm px-2.5 py-1 text-xs aria-checked:bg-background aria-checked:shadow-sm"
                       >
-                        {languageNames[l]}
+                        {LANGUAGE_NAMES[l]}
                       </button>
                     ))}
                   </div>

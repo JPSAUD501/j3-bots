@@ -31,6 +31,21 @@ describe("settingsPatch", () => {
     });
     expect(settingsPatch(saved, { name: "n".repeat(201), zone: null })).toEqual({
       _tag: "invalid",
+      field: "name",
+    });
+  });
+
+  it("saves a zone as the device names it, and refuses one it does not know", () => {
+    expect(settingsPatch(saved, { name: null, zone: " europe/lisbon " })).toEqual({
+      _tag: "changes",
+      changes: { timeZone: "Europe/Lisbon" },
+    });
+    expect(settingsPatch(saved, { name: null, zone: "america/sao_paulo" })).toEqual({
+      _tag: "unchanged",
+    });
+    expect(settingsPatch(saved, { name: null, zone: "Mars/Olympus" })).toEqual({
+      _tag: "invalid",
+      field: "zone",
     });
   });
 });

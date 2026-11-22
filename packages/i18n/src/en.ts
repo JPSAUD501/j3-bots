@@ -470,6 +470,16 @@ export const en = {
   "pairing.deviceName": "Name for this device",
   "pairing.submit": "Pair",
   "pairing.pairing": "Pairing…",
+  "pairing.scan": "Scan the QR code",
+  "pairing.scan.title": "Point the camera at the QR code on the other device",
+  "pairing.scan.notPairing": "That QR code doesn’t pair a device with J3 Bots.",
+  "pairing.scan.denied":
+    "J3 Bots can’t use the camera. Allow it in the phone’s settings, or type the address and the code.",
+  "pairing.scan.refused":
+    "J3 Bots can’t use the camera without your permission. Allow it, or type the address and the code.",
+  "pairing.scan.allow": "Allow the camera",
+  "pairing.scan.openSettings": "Open the phone’s settings",
+  "pairing.scan.close": "Close",
   "pairing.invalid":
     "That code is wrong, expired or already used. A code works once, within five minutes of being made.",
   "pairing.rateLimited": "Too many wrong codes. Pairing opens again at {time}.",
@@ -657,6 +667,9 @@ export const en = {
   "settings.name.placeholder": "Your name",
   "settings.timeZone": "Time zone",
   "settings.timeZone.hint": "Routines run on this clock, and bots tell time by it.",
+  "settings.timeZone.usePhone": "Use this phone’s, {zone}",
+  "settings.timeZone.invalid":
+    "J3 Bots doesn’t know that time zone. Write it as Region/City, such as Europe/Lisbon.",
   "settings.save": "Save",
   "settings.saved": "Saved",
   "settings.saveFailed": "Not saved. Try again.",
@@ -669,6 +682,11 @@ export const en = {
   "settings.notifications.previews.hint":
     "Notifications include the first line of the message. Anyone who can see your screen can read it.",
   "settings.notifications.allow": "Allow notifications in this browser",
+  "settings.notifications.allowPhone": "Allow notifications on this phone",
+  "settings.notifications.phone.default": "This phone shows none until you allow them.",
+  "settings.notifications.phone.granted": "This phone shows notifications.",
+  "settings.notifications.phone.denied":
+    "This phone blocks notifications from J3 Bots. Allow them in the phone’s settings.",
   "settings.notifications.browser.default": "This browser shows none until you allow them.",
   "settings.notifications.browser.granted": "This browser shows notifications.",
   "settings.notifications.browser.denied":
@@ -684,6 +702,7 @@ export const en = {
   "settings.device.lastSeen": "Last seen {when}",
   "settings.device.pushOn": "Push notifications on",
   "settings.device.revoke": "Sign out",
+  "settings.device.revoke.named": "Sign out {name}",
   "settings.device.revoke.title": "Sign out {name}?",
   "settings.device.revoke.body": "{name} loses access at once. Pairing it again takes a new code.",
   "settings.device.revoke.cancel": "Keep it",

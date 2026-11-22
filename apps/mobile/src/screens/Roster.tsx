@@ -20,6 +20,7 @@ import { Connecting, ConnectionLine } from "../components/ConnectionLine.tsx";
 import { FirstRun } from "../components/FirstRun.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { RosterRow } from "../components/RosterRow.tsx";
+import { SettingsEntry } from "../components/SettingsEntry.tsx";
 import { ConversationView, Gone } from "../conversation/ConversationView.tsx";
 import { useI18n } from "../i18n.ts";
 import { useSideBySide } from "../layout.ts";
@@ -128,6 +129,7 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
         >
           <Icon icon={Plus} size={20} color="accent-foreground" />
         </Pressable>
+        <SettingsEntry />
       </View>
       <View className="mx-4 my-2 min-h-11 flex-row items-center gap-2 rounded-md bg-muted px-3">
         <Icon icon={Search} size={14} color="accent-muted-foreground" />

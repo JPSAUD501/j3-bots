@@ -18,6 +18,9 @@ const VARIANTS = {
 /** Why the app asks for the microphone: only dictation uses it. */
 const MICROPHONE_USE = "J3 Bots listens while you dictate a message, and only then.";
 
+/** Why the app asks for the camera, as the system shows it. */
+const CAMERA_USE = "J3 Bots uses the camera to read the QR code that pairs this device.";
+
 const variantOf = (value: string | undefined): keyof typeof VARIANTS => {
   switch (value) {
     case "development":
@@ -70,12 +73,27 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       // so the app asks for no permission to use it.
       ["expo-secure-store", { faceIDPermission: false }],
       // Photos are picked through the system's photo picker, which needs no
-      // permission; nothing is taken with the camera. Its microphone setting
-      // must name the same use as dictation's: `false` would block the
-      // microphone for the whole app, dictation included.
+      // permission. The camera only reads a pairing QR code, asked for when
+      // the operator opens the scanner; the microphone only hears dictation,
+      // asked for at the first dictation. Every plugin that names one of them
+      // gets the same sentence for it: `false` in any one would block that
+      // permission for the whole app on Android, the scanner or dictation
+      // included. The camera records nothing, so it takes no audio.
       [
         "expo-image-picker",
-        { photosPermission: false, cameraPermission: false, microphonePermission: MICROPHONE_USE },
+        {
+          photosPermission: false,
+          cameraPermission: CAMERA_USE,
+          microphonePermission: MICROPHONE_USE,
+        },
+      ],
+      [
+        "expo-camera",
+        {
+          cameraPermission: CAMERA_USE,
+          microphonePermission: MICROPHONE_USE,
+          recordAudioAndroid: false,
+        },
       ],
       // Dictation in the composer, with the platform's speech recognizer.
       [

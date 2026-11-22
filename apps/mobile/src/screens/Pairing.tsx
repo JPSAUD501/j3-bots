@@ -7,6 +7,7 @@ import { getCalendars } from "expo-localization";
 import { useState } from "react";
 import { KeyboardAvoidingView, Platform, ScrollView, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { PairingScanner } from "../components/PairingScanner.tsx";
 import { useI18n } from "../i18n.ts";
 import { session } from "../platform/platform.ts";
 import { Body, Button, Title } from "../ui.tsx";
@@ -73,6 +74,7 @@ export function PairingScreen(props: {
   const [code, setCode] = useState("");
   const [name, setName] = useState(defaultDeviceName);
   const [state, setState] = useState<FormState>({ _tag: "editing" });
+  const [scanning, setScanning] = useState(false);
 
   // A lockout only shows its time: the server enforces it, and the operator
   // can lift it on the host before then, so Pair stays available.
@@ -143,6 +145,8 @@ export function PairingScreen(props: {
           </Text>
         )}
         <View className="gap-4">
+          {/* The QR code another device shows carries the address and the code, so neither is typed. */}
+          <Button label={t("pairing.scan")} disabled={busy} onPress={() => setScanning(true)} />
           <Field
             kind="address"
             label={t("server.address")}
@@ -182,6 +186,17 @@ export function PairingScreen(props: {
           )}
         </View>
       </ScrollView>
+      {scanning && (
+        <PairingScanner
+          onClose={() => setScanning(false)}
+          onScanned={(target) => {
+            setScanning(false);
+            setAddress(target.server);
+            setCode(target.code);
+            if (state._tag === "refused") setState({ _tag: "editing" });
+          }}
+        />
+      )}
     </KeyboardAvoidingView>
   );
 }

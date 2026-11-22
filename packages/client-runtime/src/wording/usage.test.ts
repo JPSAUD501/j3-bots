@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vite-plus/test";
-import { at, context } from "@j3-bots/client-runtime/testing";
-import { windowText } from "./usage";
+import { at, context } from "../../test/fixtures.ts";
+import { windowText } from "./usage.ts";
 
 describe("windowText", () => {
   // 11:00 in São Paulo, the fixtures' zone.
