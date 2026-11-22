@@ -6,12 +6,12 @@ import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import {
   type BotId,
   CommandId,
-  Entry,
   type EntryTarget,
   HTTP_PATHS,
   J3Rpcs,
   PairRequest,
   PairResult,
+  ReceivedEntry,
   type RoomId,
   RosterItem,
   Routine,
@@ -93,7 +93,7 @@ const encodeView = Schema.encodeUnknownSync(
   Schema.toCodecJson(
     Schema.Struct({
       roster: Schema.Array(RosterItem),
-      entries: Schema.Array(Schema.Array(Entry)),
+      entries: Schema.Array(Schema.Array(ReceivedEntry)),
       routines: Schema.Array(Routine),
       runs: Schema.Array(RoutineRun),
     }),
@@ -138,7 +138,7 @@ const ABOUT_THE_MACHINE: ReadonlySet<string> = new Set([
 ]);
 
 /** One line about an entry, for a failure's message. */
-const describe = (entry: Entry) => {
+const describe = (entry: ReceivedEntry) => {
   switch (entry._tag) {
     case "message":
       return `${entry.author._tag} said ${JSON.stringify(entry.text)}`;
@@ -349,10 +349,10 @@ it.layer(services, { excludeTestServices: true })("upgrade check", (it) => {
           );
 
         /** The first entry of `target` that `matches`, as soon as there is one. */
-        const awaitEntry = <A extends Entry>(
+        const awaitEntry = <A extends ReceivedEntry>(
           client: Client,
           target: EntryTarget,
-          matches: (entry: Entry) => entry is A,
+          matches: (entry: ReceivedEntry) => entry is A,
         ) =>
           client["entries.subscribe"]({ target, after: null }).pipe(
             Stream.flatMap((frame) =>
@@ -388,7 +388,7 @@ it.layer(services, { excludeTestServices: true })("upgrade check", (it) => {
 
         const botSaid =
           (text: string) =>
-          (entry: Entry): entry is Extract<Entry, { _tag: "message" }> =>
+          (entry: ReceivedEntry): entry is Extract<ReceivedEntry, { _tag: "message" }> =>
             entry._tag === "message" && entry.author._tag === "bot" && entry.text === text;
 
         /**
@@ -619,7 +619,7 @@ it.layer(services, { excludeTestServices: true })("upgrade check", (it) => {
                     : Effect.die("roster.subscribe did not start with a snapshot"),
                 ),
               );
-              const entries: Array<ReadonlyArray<Entry>> = [];
+              const entries: Array<ReadonlyArray<ReceivedEntry>> = [];
               for (const botId of bots) {
                 entries.push(yield* entriesOf(client, { _tag: "conversation", botId }));
               }
@@ -730,7 +730,7 @@ it.layer(services, { excludeTestServices: true })("upgrade check", (it) => {
             const approval = yield* awaitEntry(
               client,
               target,
-              (entry): entry is Extract<Entry, { _tag: "approval" }> =>
+              (entry): entry is Extract<ReceivedEntry, { _tag: "approval" }> =>
                 entry._tag === "approval" && entry.status._tag === "pending",
             );
             yield* client["card.answer"]({
@@ -745,7 +745,7 @@ it.layer(services, { excludeTestServices: true })("upgrade check", (it) => {
             const asked = yield* awaitEntry(
               client,
               target,
-              (entry): entry is Extract<Entry, { _tag: "question" }> =>
+              (entry): entry is Extract<ReceivedEntry, { _tag: "question" }> =>
                 entry._tag === "question" && entry.status._tag === "pending",
             );
             const [question] = asked.questions;

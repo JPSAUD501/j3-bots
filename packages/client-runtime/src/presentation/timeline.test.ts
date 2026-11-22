@@ -52,6 +52,31 @@ describe("buildTimeline", () => {
     expect(shape(items)).toEqual(["divider", "single", "card", "single"]);
   });
 
+  it("keeps an entry, and a notice, of a kind added after this build as a line in its place", () => {
+    const placed = (n: number, iso: string) => ({
+      id: EntryId.make(`later-${n}`),
+      order: EntryOrder.make(100 + n),
+      createdAt: at(iso),
+    });
+    const items = buildTimeline([
+      message("2026-11-20T10:00:00Z", scout),
+      { _tag: "unknown", kind: "poll", ...placed(1, "2026-11-20T10:00:10Z") },
+      {
+        _tag: "notice",
+        ...placed(2, "2026-11-20T10:00:20Z"),
+        author: { _tag: "system" },
+        notice: { _tag: "unknown", kind: "budget-reached" },
+        retryable: true,
+      },
+      message("2026-11-20T10:00:30Z", scout),
+    ]);
+    expect(shape(items)).toEqual(["divider", "single", "unknown", "unknown", "single"]);
+    expect(items.filter((item) => item.kind === "unknown")).toEqual([
+      { kind: "unknown", key: "later-1", id: "later-1", order: 101 },
+      { kind: "unknown", key: "later-2", id: "later-2", order: 102 },
+    ]);
+  });
+
   it("joins a message on its way to the operator's group, and keeps its key once it arrives", () => {
     const commandId = CommandId.make("cmd_hello");
     const outgoing: OutgoingMessage = {

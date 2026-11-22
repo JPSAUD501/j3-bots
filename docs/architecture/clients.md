@@ -188,6 +188,29 @@ A request in flight when its socket closes is sent again on the next socket. Tha
 
 No HTTP request waits forever, since a server or a proxy can take one and never answer. The server check, pairing and the ticket get ten seconds each, after which the server counts as out of reach and the pause above follows. A file transfer gets the same ten seconds plus time for its bytes over a slow link (32 KiB a second), fifteen minutes at most, counted until its last byte is read: an upload then starts again after the same pause, and a download says the file could not be opened. The installed web app's service worker sends a page load to the network first and opens the copy of the app it keeps when the network fails, when the server answers with an error of its own (a 5xx), or when the whole page, headers and body, has not arrived after four seconds. The page that loads is the network's answer itself, its headers, status and address untouched; the worker only reads a copy of it to the end. After the four seconds, a page still arriving is cancelled, and so is the body of one whose headers come later. A request with no answer yet is left to end on its own while the kept page shows: sent with an abort signal, it would no longer be a page load to the server or a proxy.
 
+## Protocol compatibility
+
+`PROTOCOL_VERSION` (`packages/contracts/src/http.ts`) is the first thing a client checks, and a server that speaks another version is shown as incompatible ([Connecting](#connecting)). Raising it locks out every client built before, the installed Android app included, which does not update itself. So it is raised only for a change an older client cannot survive, and a server may add, without raising it, what a client is built to pass over.
+
+**What a client passes over.** Three sets stay open, because each is in data a client cannot avoid reading and each grows whenever J3 Bots learns something new to say:
+
+- **Kinds of entry.** `entries.subscribe` and `entries.history` carry `ReceivedEntry`. An entry whose `_tag` the client does not know decodes as `UnknownEntry`: its kind, id, order and time, and nothing else. Entries stay in history, so one a client refused would keep the whole conversation from opening, for good.
+- **Kinds of notice.** A notice whose `_tag` the client does not know decodes as `UnknownNotice`. Notices are the kind added most often: each new way for something to stop gets one.
+- **Kinds in a roster preview.** `EntryPreview.kind` decodes a kind the client does not know as `unknown`. The roster carries every conversation's latest entry, so one new kind there would stop the whole roster.
+
+An unknown entry or notice shows in its place as one quiet line, "This needs a newer version of the app.", and a roster row as "Needs a newer version of the app". The read mark passes it like any other entry. An unknown notice offers no Try again: the operator could not tell what it would run again. Only a tag the client does not know is unknown: an entry or notice of a known kind that does not decode is refused as before, so a broken server is never mistaken for a newer one. The server itself writes and stores only the closed `Entry` and `Notice`, and never sends `unknown`.
+
+A field a client does not know is dropped as the client decodes, so a server may add a field that older clients can do without (**Read** in Effect 4.1.3: `effect/rpc/RpcClient` decodes with the RPC's parse options, which J3 Bots leaves at the default, and `onExcessProperty` defaults to `ignore`).
+
+**What needs a bump.** Everything else is closed, because a client acts on it: whether a card can still be answered, what Try again runs, how a bot's state reads, which Android channel a push goes to. A value it misread would make it do the wrong thing, which is worse than saying the app needs updating. These need `PROTOCOL_VERSION` raised:
+
+- a new value in any other set the contract lists: authors, a message's delivery and mentions, a card's status, an approval's kind, a work step's kind or status, a turn's ending, failure classes, bot states, routine triggers and runs, roster items, subscription frames, errors, and `NotificationKind`, so a new kind of entry that notifies needs a bump where one that does not, does not;
+- a field removed, renamed, made required, or given a new type or a narrower range, in anything a client decodes;
+- a field a client must understand to act correctly, even when it is new;
+- a new RPC or route a client relies on, and a change to what an existing one takes or answers: a client compares versions for equality, so it also refuses an older server, and a newer client of the same version would call what that server lacks.
+
+Clients released up to 0.1.0 predate the open sets: they refuse a conversation, or a roster, that holds a kind they do not know.
+
 ## Behavior every client must get right
 
 - **Offline and reconnect.** A message typed while disconnected is kept and sent on reconnect, exactly once, and the messages of one conversation reach the server in the order they were written. Sending moves the message from its draft to the outbox in one storage transaction, so a crash leaves it in exactly one of them; if the device cannot keep it, it stays in the draft and the operator is told. A draft is kept whatever its length; the limits of a message apply when it is sent, checked against the same schemas and limits the server applies (its text, its number of files, an empty file, the size of each inline image and of all of them together), both where the composer sends a draft and where any message enters the outbox: a message over one is not sent, the draft stays as it is, and the composer says why. While that transaction runs, a few milliseconds, the composer is read-only and takes no files, so nothing typed meanwhile is lost.

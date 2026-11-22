@@ -21,13 +21,13 @@ import { Device, PairingCode, PushRegistration } from "./device.ts";
 import { EngineStatus, MAX_USAGE_TURNS, UsageTurn } from "./engineStatus.ts";
 import {
   ApprovalDecision,
-  Entry,
   EntryPreview,
   EntryTarget,
   Mentions,
   MessageText,
   PREVIEW_LENGTH,
   QuestionAnswers,
+  ReceivedEntry,
   WorkStep,
 } from "./entry.ts";
 import { CommandError, NotFound } from "./errors.ts";
@@ -128,10 +128,10 @@ export const EntryRpcs = RpcGroup.make(
     success: Schema.Union([
       Schema.TaggedStruct("snapshot", {
         sequence: Sequence,
-        entries: Schema.Array(Entry),
+        entries: Schema.Array(ReceivedEntry),
         hasOlder: Schema.Boolean,
       }),
-      Schema.TaggedStruct("changed", { sequence: Sequence, upsert: Schema.Array(Entry) }),
+      Schema.TaggedStruct("changed", { sequence: Sequence, upsert: Schema.Array(ReceivedEntry) }),
     ]),
     error: NotFound,
     stream: true,
@@ -139,7 +139,7 @@ export const EntryRpcs = RpcGroup.make(
   /** Entries before `before`, oldest first, for scrolling back. */
   Rpc.make("entries.history", {
     payload: { target: EntryTarget, before: EntryOrder, limit: HistoryLimit },
-    success: Schema.Struct({ entries: Schema.Array(Entry), hasOlder: Schema.Boolean }),
+    success: Schema.Struct({ entries: Schema.Array(ReceivedEntry), hasOlder: Schema.Boolean }),
     error: NotFound,
   }),
   /**

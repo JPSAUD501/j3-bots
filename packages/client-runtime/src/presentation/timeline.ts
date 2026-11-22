@@ -1,5 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BotId, Entry, HandoffEntry, MessageEntry } from "@j3-bots/contracts";
+import type {
+  BotId,
+  Entry,
+  EntryId,
+  EntryOrder,
+  HandoffEntry,
+  MessageEntry,
+  ReceivedEntry,
+} from "@j3-bots/contracts";
 import type { ConversationItem, OutgoingMessage } from "../stores/Conversations.ts";
 import * as DateTime from "effect/DateTime";
 
@@ -16,7 +24,17 @@ export type TimelineItem =
       readonly message: TimelineMessage;
       readonly position: GroupPosition;
     }
-  | { readonly kind: "card"; readonly key: string; readonly entry: Exclude<Entry, MessageEntry> };
+  | { readonly kind: "card"; readonly key: string; readonly entry: Exclude<Entry, MessageEntry> }
+  /**
+   * An entry, or a notice, of a kind added after this build: one line saying
+   * it needs a newer version of the app, in the entry's place.
+   */
+  | {
+      readonly kind: "unknown";
+      readonly key: string;
+      readonly id: EntryId;
+      readonly order: EntryOrder;
+    };
 
 /** A quiet stretch longer than this gets a time between the entries around it. */
 const DIVIDER_GAP = 15 * 60_000;
@@ -46,6 +64,22 @@ const sameAuthor = (a: TimelineMessage, b: TimelineMessage) => {
   );
 };
 
+/** The entry as this build knows it, or null when its kind, or its notice's, came after it. */
+const known = (
+  entry: Exclude<ReceivedEntry, MessageEntry>,
+): Exclude<Entry, MessageEntry> | null => {
+  switch (entry._tag) {
+    case "unknown":
+      return null;
+    case "notice": {
+      const { notice } = entry;
+      return notice._tag === "unknown" ? null : { ...entry, notice };
+    }
+    default:
+      return entry;
+  }
+};
+
 /**
  * A conversation's items, oldest first, laid out with times between groups
  * and messages grouped by author. Messages still on their way come last and
@@ -71,7 +105,12 @@ export function buildTimeline(entries: ReadonlyArray<ConversationItem>): Timelin
       }
       items.push({ kind: "message", key, message: entry, position: joins ? "last" : "single" });
     } else {
-      items.push({ kind: "card", key, entry });
+      const card = known(entry);
+      items.push(
+        card === null
+          ? { kind: "unknown", key, id: entry.id, order: entry.order }
+          : { kind: "card", key, entry: card },
+      );
     }
     previous = entry;
   }

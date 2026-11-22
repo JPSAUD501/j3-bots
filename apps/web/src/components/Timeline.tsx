@@ -26,7 +26,7 @@ import { resendLabel } from "@j3-bots/client-runtime/wording";
 import { ApprovalCard } from "./ApprovalCard";
 import { HandoffCard } from "./HandoffCard";
 import { MessageBubble } from "./MessageBubble";
-import { NoticeLine } from "./NoticeLine";
+import { NeedsUpdateLine, NoticeLine } from "./NoticeLine";
 import { QuestionCard } from "./QuestionCard";
 import { RoutineChangeCard } from "./RoutineChangeCard";
 import { SecretRequestCard } from "./SecretRequestCard";
@@ -74,7 +74,10 @@ interface TimelineProps {
   readonly intents: TimelineIntents;
 }
 
-/** Every entry of a conversation or room, oldest first: bubbles, cards, folds and notices. */
+/**
+ * Every entry of a conversation or room, oldest first: bubbles, cards, folds
+ * and notices, and a line for each of a kind this version does not know.
+ */
 export function Timeline({ entries, room, workSteps, submitting, intents }: TimelineProps) {
   const bots = useBots();
   const i18n = useI18n();
@@ -87,6 +90,13 @@ export function Timeline({ entries, room, workSteps, submitting, intents }: Time
     <div className="flex flex-col">
       {buildTimeline(entries).map((item) => {
         if (item.kind === "divider") return <TimeDivider key={item.key} at={item.at} />;
+        if (item.kind === "unknown") {
+          return (
+            <div key={item.key} data-seen-id={item.id}>
+              <NeedsUpdateLine />
+            </div>
+          );
+        }
         if (item.kind === "message") {
           const { message } = item;
           // One element, under one key, from Send to the server's entry, so

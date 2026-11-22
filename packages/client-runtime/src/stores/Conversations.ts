@@ -6,7 +6,6 @@ import {
   CommandError,
   CommandId,
   DeviceId,
-  type Entry,
   EntryId,
   type EntryOrder,
   EntryTarget,
@@ -15,6 +14,7 @@ import {
   MessageText,
   NonNegativeInt,
   type QuestionAnswers,
+  type ReceivedEntry,
   type Sequence,
 } from "@j3-bots/contracts";
 import * as Cause from "effect/Cause";
@@ -226,7 +226,7 @@ export class OutboxSweep extends Context.Reference<Duration.Duration>(
   { defaultValue: () => Duration.seconds(5) },
 ) {}
 
-export type ConversationItem = Entry | OutgoingMessage;
+export type ConversationItem = ReceivedEntry | OutgoingMessage;
 
 export interface ConversationState {
   readonly phase: "loading" | "ready" | "not-found";
@@ -449,7 +449,7 @@ export const layer = Layer.effect(
     const openStore = (target: EntryTarget) =>
       Effect.sync(() => {
         const key = targetKey(target);
-        const entries = new Map<EntryId, Entry>();
+        const entries = new Map<EntryId, ReceivedEntry>();
         let phase: ConversationState["phase"] = "loading";
         let stale = true;
         let sequence: Sequence | null = null;
@@ -491,7 +491,7 @@ export const layer = Layer.effect(
         const state = new Cell<ConversationState>(project());
         const publish = () => state.set(project());
 
-        const take = (entry: Entry) => {
+        const take = (entry: ReceivedEntry) => {
           entries.set(entry.id, entry);
           actions.entryChanged(entry.id);
         };
@@ -514,13 +514,13 @@ export const layer = Layer.effect(
             | {
                 readonly _tag: "snapshot";
                 readonly sequence: Sequence;
-                readonly entries: ReadonlyArray<Entry>;
+                readonly entries: ReadonlyArray<ReceivedEntry>;
                 readonly hasOlder: boolean;
               }
             | {
                 readonly _tag: "changed";
                 readonly sequence: Sequence;
-                readonly upsert: ReadonlyArray<Entry>;
+                readonly upsert: ReadonlyArray<ReceivedEntry>;
               },
           read: number | null,
         ) => {

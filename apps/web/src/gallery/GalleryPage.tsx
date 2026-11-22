@@ -60,7 +60,7 @@ import { FirstRun, NoSelection, QuietConversation } from "../components/EmptySta
 import { HandoffCard } from "../components/HandoffCard";
 import { MemoryFile, type MemoryFileProps } from "../components/MemoryViewer";
 import { MessageBubble } from "../components/MessageBubble";
-import { NoticeLine } from "../components/NoticeLine";
+import { NeedsUpdateLine, NoticeLine } from "../components/NoticeLine";
 import { Incompatible, Pairing, StorageFailed } from "../components/Pairing";
 import { QuestionCard } from "../components/QuestionCard";
 import { RoomForm, type RoomFormProps } from "../components/RoomDialog";
@@ -647,6 +647,9 @@ function NoticesSection() {
             />
           ))}
         </div>
+      </Labeled>
+      <Labeled label="A kind from a newer server">
+        <NeedsUpdateLine />
       </Labeled>
       <Labeled label="Handoffs">
         <div className="flex flex-col">

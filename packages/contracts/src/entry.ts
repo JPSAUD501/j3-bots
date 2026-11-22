@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Schema from "effect/Schema";
+import * as SchemaGetter from "effect/SchemaGetter";
 import { Attachment } from "./attachment.ts";
 import {
   BotId,
@@ -52,6 +53,16 @@ export const Mentions = Schema.Union([
   Schema.TaggedStruct("everyone", {}),
 ]);
 export type Mentions = typeof Mentions.Type;
+
+/**
+ * A tag none of `known` is: what a newer server sends that this build cannot
+ * read. A known tag never passes, so an entry or notice of a kind this build
+ * knows that fails to decode still fails, instead of passing as unknown.
+ */
+const UnknownTag = (known: ReadonlyArray<string>) =>
+  Schema.String.check(
+    Schema.makeFilter((tag: string) => !known.includes(tag) || "a kind this build does not know"),
+  );
 
 const entry = {
   id: EntryId,
@@ -362,13 +373,44 @@ export const Notice = Schema.Union([
 ]);
 export type Notice = typeof Notice.Type;
 
+/**
+ * A notice of a kind added after this build, as a client receives it. The
+ * client shows one line saying it needs a newer version of the app, and
+ * offers no Retry: the operator could not tell what it would run again.
+ */
+export const UnknownNotice = Schema.Struct({
+  _tag: UnknownTag(Notice.members.map((member) => member.fields._tag.schema.literal)),
+}).pipe(
+  Schema.decodeTo(Schema.toType(Schema.TaggedStruct("unknown", { kind: Schema.String })), {
+    decode: SchemaGetter.transform(({ _tag }: { readonly _tag: string }) => ({
+      _tag: "unknown" as const,
+      kind: _tag,
+    })),
+    encode: SchemaGetter.transform(({ kind }: { readonly kind: string }) => ({ _tag: kind })),
+  }),
+);
+export type UnknownNotice = typeof UnknownNotice.Type;
+
+const retryable = {
+  /** Whether `notice.retry` is still accepted for it. */
+  retryable: Schema.Boolean,
+};
+
+/** A notice the server writes: always of a kind this build knows. */
 export const NoticeEntry = Schema.TaggedStruct("notice", {
   ...entry,
   notice: Notice,
-  /** Whether `notice.retry` is still accepted for it. */
-  retryable: Schema.Boolean,
+  ...retryable,
 });
 export type NoticeEntry = typeof NoticeEntry.Type;
+
+/** A notice entry as a client receives it, of any kind, known or not. */
+export const ReceivedNoticeEntry = Schema.TaggedStruct("notice", {
+  ...entry,
+  notice: Schema.Union([...Notice.members, UnknownNotice]),
+  ...retryable,
+});
+export type ReceivedNoticeEntry = typeof ReceivedNoticeEntry.Type;
 
 /** Where a teammate message stands (`HandoffEntry.state`). */
 export const HandoffState = Schema.Literals(["sent", "not-delivered", "stopped", "unconfirmed"]);
@@ -428,6 +470,55 @@ export const Entry = Schema.Union([
 ]);
 export type Entry = typeof Entry.Type;
 
+/** Every kind of entry this build knows. */
+const entryKinds = Entry.members.map((member) => member.fields._tag.schema.literal);
+
+/** What keeps an entry in its place in a conversation. */
+const placement = { id: EntryId, order: EntryOrder, createdAt: Schema.DateTimeUtc };
+
+const UnknownEntryWire = Schema.Struct({ _tag: UnknownTag(entryKinds), ...placement });
+const UnknownEntryValue = Schema.TaggedStruct("unknown", { kind: Schema.String, ...placement });
+
+/**
+ * An entry of a kind added after this build, as a client receives it: its
+ * kind, and only what keeps it in its place, so the rest of the conversation
+ * stays readable and the read mark can pass it. The client shows one line
+ * saying it needs a newer version of the app.
+ */
+export const UnknownEntry = UnknownEntryWire.pipe(
+  Schema.decodeTo(Schema.toType(UnknownEntryValue), {
+    decode: SchemaGetter.transform(({ _tag: kind, ...placed }: typeof UnknownEntryWire.Type) => ({
+      _tag: "unknown" as const,
+      kind,
+      ...placed,
+    })),
+    encode: SchemaGetter.transform(
+      ({ kind, _tag: _, ...placed }: typeof UnknownEntryValue.Type) => ({ _tag: kind, ...placed }),
+    ),
+  }),
+);
+export type UnknownEntry = typeof UnknownEntry.Type;
+
+/**
+ * An entry as a client receives it. The kinds of entry, and of notice, stay
+ * open: a server newer than the client may add one, which the client decodes
+ * as `UnknownEntry` or `UnknownNotice` instead of refusing the conversation
+ * that holds it (docs/architecture/clients.md, "Protocol compatibility").
+ * The server only ever writes an `Entry`.
+ */
+export const ReceivedEntry = Schema.Union([
+  MessageEntry,
+  QuestionEntry,
+  ApprovalEntry,
+  SecretRequestEntry,
+  WorkFoldEntry,
+  ReceivedNoticeEntry,
+  HandoffEntry,
+  RoutineChangeEntry,
+  UnknownEntry,
+]);
+export type ReceivedEntry = typeof ReceivedEntry.Type;
+
 /** The most text an `EntryPreview` carries. */
 export const PREVIEW_LENGTH = 200;
 
@@ -456,22 +547,25 @@ export const entryText = (entry: Entry): string => {
 };
 
 /**
+ * A kind of entry added after this build, in a preview: `unknown`, which the
+ * roster words as needing a newer version of the app.
+ */
+const UnknownEntryKind = UnknownTag(entryKinds).pipe(
+  Schema.decodeTo(Schema.Literal("unknown"), {
+    decode: SchemaGetter.transform(() => "unknown" as const),
+    encode: SchemaGetter.transform((kind: string) => kind),
+  }),
+);
+
+/**
  * What the roster shows under a name: the latest entry, cut short. `text` is
  * the message, the question or the action, at most `PREVIEW_LENGTH` characters,
  * and empty for entries with no text of their own.
  */
 export const EntryPreview = Schema.Struct({
   entryId: EntryId,
-  kind: Schema.Literals([
-    "message",
-    "question",
-    "approval",
-    "secret-request",
-    "work-fold",
-    "notice",
-    "handoff",
-    "routine-change",
-  ]),
+  /** The entry's kind; `unknown` for one added after this build. */
+  kind: Schema.Union([Schema.Literals(entryKinds), UnknownEntryKind]),
   author: Author,
   text: Schema.String.check(Schema.isMaxLength(PREVIEW_LENGTH)),
   /** A teammate message's recipient; `null` for every other entry. */

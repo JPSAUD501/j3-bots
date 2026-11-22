@@ -47,6 +47,7 @@ export const en = {
   "summary.askedSecret": "Asked for a credential: {label}",
   "summary.workFold": "Did some work",
   "summary.notice": "Left a notice",
+  "summary.needsUpdate": "Needs a newer version of the app",
   "summary.handoffTo": "To {name}: {text}",
   "summary.handoffSent": "To a teammate: {text}",
   "summary.handoffFrom": "From {name}: {text}",
@@ -165,6 +166,7 @@ export const en = {
   "work.stepDone": "Done",
   "work.stepFailed": "Failed",
 
+  "entry.needsUpdate": "This needs a newer version of the app.",
   "notice.chainHops": "Bots stopped replying to each other here. The room waits for you.",
   "notice.chainFanOut": "Not every bot was asked: one message may wake only a few.",
   "notice.undelivered": "A reply didn’t arrive",

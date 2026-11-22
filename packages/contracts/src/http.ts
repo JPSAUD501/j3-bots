@@ -10,7 +10,10 @@ import { DeviceToken, PairingCode, SocketTicket } from "./device.ts";
 
 /**
  * Bumped when a change to the contract would break a client built against the
- * previous version. Clients compare it with `GET /api/server` before anything else.
+ * previous version. Clients compare it with `GET /api/server` before anything
+ * else. A new kind of entry, of notice or in a roster preview, and a field a
+ * client can do without, are not such a change: docs/architecture/clients.md,
+ * "Protocol compatibility", says what is.
  */
 export const PROTOCOL_VERSION = 5;
 
