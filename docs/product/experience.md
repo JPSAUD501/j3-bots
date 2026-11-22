@@ -30,7 +30,7 @@ A bot needs a decision or permission.
 - A **question** arrives as a card with a few options and, when it makes sense, room for a typed answer. Tapping an option answers it.
 - An **approval** arrives as a card that names the exact action, with Allow and Deny. Allowing can be for this once or for the session.
 - Both produce a notification on the operator's devices. Answering on any device resolves the card everywhere.
-- A dismissed question is a "no". The bot does not ask again.
+- A question the bot asked on its own can be dismissed, which is a "no". The bot does not ask again. A question its coding tool asks mid-task has no dismiss: it waits for an answer, or for the operator to stop the bot.
 
 ### Work that starts on its own
 

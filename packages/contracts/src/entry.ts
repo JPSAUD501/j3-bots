@@ -141,7 +141,9 @@ export type QuestionAnswers = typeof QuestionAnswers.Type;
  *   wakes the bot again with the answer. In a room, archiving the room expires
  *   it.
  * - `engine`: the harness's own question tool held a running turn. Answering it
- *   lets that turn continue. It expires when its turn ends.
+ *   lets that turn continue. It cannot be dismissed: the engine refuses that
+ *   while the turn waits, so the turn goes on only once it is answered or
+ *   stopped. It expires when its turn ends.
  */
 export const QuestionEntry = Schema.TaggedStruct("question", {
   ...entry,
@@ -150,7 +152,7 @@ export const QuestionEntry = Schema.TaggedStruct("question", {
   status: Schema.Union([
     Schema.TaggedStruct("pending", {}),
     Schema.TaggedStruct("answered", { answers: QuestionAnswers }),
-    /** The operator dismissed it, which the bot reads as "no". */
+    /** The operator dismissed an `ask` question, which the bot reads as "no". */
     Schema.TaggedStruct("dismissed", {}),
     /**
      * Closed before an answer: an `engine` question when its turn ended, an

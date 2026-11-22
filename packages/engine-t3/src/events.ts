@@ -81,7 +81,7 @@ export const EngineRequest = Schema.Union([
    * A question from the harness's own tool that a card cannot show whole: more
    * questions than one card holds, or a question with more options than one
    * shows. Nothing of it is dropped silently: the server shows a notice saying
-   * why, and the only answer is `dismiss`, which the bot reads as "no".
+   * why. It takes no answer, so its turn waits until it is stopped.
    * `count` is how many the engine asked for, `max` how many a card shows.
    */
   Schema.TaggedStruct("unsupported-question", {
@@ -109,7 +109,7 @@ export type OpenRequest = typeof OpenRequest.Type;
 
 /**
  * How a request closed. Never carries a secret value.
- * - `answered`: an approval or a question was answered or dismissed.
+ * - `answered`: an approval or a question was answered.
  * - `provided`, `declined`: a secret request was answered that way, by
  *   whichever answer reached the engine first. It says nothing about which
  *   submission that was: see `Engine.respondSecret`.

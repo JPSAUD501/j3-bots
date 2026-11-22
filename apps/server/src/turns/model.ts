@@ -264,6 +264,5 @@ export const STALL_AFTER = Duration.minutes(10);
 export const StoredResponse = Schema.Union([
   Schema.TaggedStruct("approval", { decision: ApprovalDecision }),
   Schema.TaggedStruct("question", { answers: QuestionAnswers }),
-  Schema.TaggedStruct("dismiss", {}),
 ]);
 export type StoredResponse = typeof StoredResponse.Type;

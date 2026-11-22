@@ -186,10 +186,11 @@ export const EntryRpcs = RpcGroup.make(
   /**
    * Resolves a question or approval card everywhere. Answering or dismissing an
    * `ask` question wakes the bot with the answer; answering an `engine` question
-   * or an approval lets the turn that raised it continue. Fails with
-   * `Invalid("answer-length")`, leaving the card open, when the answer to an
-   * `ask` question as the bot would read it is too long for the engine that
-   * runs the bot to take in one message.
+   * or an approval lets the turn that raised it continue. An `engine` question
+   * takes no dismissal: it fails with `Invalid("answer")`, leaving the card
+   * open. Fails with `Invalid("answer-length")`, leaving the card open, when
+   * the answer to an `ask` question as the bot would read it is too long for
+   * the engine that runs the bot to take in one message.
    */
   Rpc.make("card.answer", {
     payload: {

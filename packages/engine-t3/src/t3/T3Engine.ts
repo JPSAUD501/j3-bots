@@ -53,6 +53,7 @@ import {
   type SecretAnswer,
 } from "../Engine.ts";
 import {
+  AnswerRejected,
   BackgroundWorkRunning,
   DispatchRejected,
   EngineIncompatible,
@@ -1161,28 +1162,26 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   });
 
   /**
-   * Sends an answer to an approval or a question. The engine replays a command
-   * id it already applied (**Read**, `db51b67`, `Orchestrator.ts`), so a retry
-   * with the same key succeeds even after the answer closed the request. It
-   * refuses any other answer to a request that is no longer pending, which is
-   * `RequestClosed`.
+   * Sends an answer to an approval or a question, settled by its key's receipt
+   * as a dispatch is (`sendByReceipt`). The engine replays a command id it
+   * already applied (**Read**, `db51b67`, `Orchestrator.ts`), so a retry with
+   * the same key succeeds even after the answer closed the request. A refusal
+   * is final for the key, since the engine keeps its rejected receipt:
+   * `RequestClosed` when the request is no longer pending, `AnswerRejected`
+   * when it still is.
    */
-  const sendAnswer = (sessionId: SessionId, requestId: RequestId, input: OrchestrationV2Command) =>
-    command(input).pipe(
-      Effect.catchTags({
-        EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
-        OrchestrationV2DispatchCommandError: (error) =>
-          afterSending(projection(sessionId)).pipe(
-            Effect.flatMap((mirror) => {
-              const now = findRequest(mirror, requestId);
-              return Option.isSome(now) && now.value.resolution === undefined
-                ? refused(error)
-                : Effect.fail(new RequestClosed({ requestId }));
-            }),
-          ),
-      }),
-      Effect.asVoid,
-    );
+  const sendAnswer = Effect.fnUntraced(function* (
+    key: IdempotencyKey,
+    sessionId: SessionId,
+    requestId: RequestId,
+    input: OrchestrationV2Command,
+  ) {
+    if ((yield* sendByReceipt(input)) === "applied") return;
+    const now = findRequest(yield* afterSending(projection(sessionId)), requestId);
+    return yield* Option.isSome(now) && now.value.resolution === undefined
+      ? new AnswerRejected({ key, requestId })
+      : new RequestClosed({ requestId });
+  });
 
   const respond = Effect.fn("Engine.respond")(function* (input: {
     readonly key: IdempotencyKey;
@@ -1201,7 +1200,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       case "approval":
         if (answerTo._tag !== "runtime-request" || request._tag !== "approval")
           return yield* misuse();
-        return yield* sendAnswer(input.sessionId, input.requestId, {
+        return yield* sendAnswer(input.key, input.sessionId, input.requestId, {
           type: "runtime-request.respond",
           commandId: commandIdOf,
           threadId,
@@ -1212,7 +1211,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
         if (answerTo._tag !== "user-input" || request._tag !== "question") return yield* misuse();
         const answers = engineAnswersOf(answerTo.questions, response.answers);
         if (answers === undefined) return yield* misuse();
-        return yield* sendAnswer(input.sessionId, input.requestId, {
+        return yield* sendAnswer(input.key, input.sessionId, input.requestId, {
           type: "runtime-request.respond",
           commandId: commandIdOf,
           threadId,
@@ -1220,14 +1219,6 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
           answers,
         });
       }
-      case "dismiss":
-        if (answerTo._tag !== "user-input") return yield* misuse();
-        return yield* sendAnswer(input.sessionId, input.requestId, {
-          type: "thread.user-input.dismiss",
-          commandId: commandIdOf,
-          threadId,
-          requestId: RuntimeRequestId.make(answerTo.requestId),
-        });
     }
   });
 

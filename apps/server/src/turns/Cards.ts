@@ -135,8 +135,9 @@ const responseFor = (card: Entry, answer: CardAnswer): StoredResponse | "invalid
       if (answer.decision === "allow-session" && card.sessionGrant === null) return "invalid";
       return { _tag: "approval", decision: answer.decision };
     case "question":
+      // The engine takes no dismissal of a question that holds a turn: it is
+      // answered, or the turn is stopped.
       if (card.status._tag !== "pending") return "closed";
-      if (answer._tag === "dismiss") return { _tag: "dismiss" };
       return answer._tag === "question" && fits(card.questions, answer.answers, card.origin)
         ? { _tag: "question", answers: answer.answers }
         : "invalid";
@@ -358,6 +359,19 @@ export const layer = Layer.effect(
       return "done";
     });
 
+    /**
+     * The engine refused the answer while its request stays open, and keeps
+     * that refusal for the answer's key: it is never sent again, and the card
+     * takes no other answer. The turn waits until it ends or is stopped.
+     */
+    const rejected = (pending: typeof PendingResponse.Type) =>
+      Effect.logWarning(
+        "The engine refused an answer; it is not sent again, and its turn waits for a Stop",
+      ).pipe(
+        Effect.annotateLogs({ entryId: pending.entry_id }),
+        Effect.andThen(taken(pending.entry_id)),
+      );
+
     /** The answer waits until `next` before it is sent again. */
     const later = Effect.fn("Cards.later")(function* (
       pending: typeof PendingResponse.Type,
@@ -397,6 +411,7 @@ export const layer = Layer.effect(
           Effect.andThen(taken(pending.entry_id)),
           Effect.catchTags({
             RequestClosed: () => taken(pending.entry_id),
+            AnswerRejected: () => rejected(pending),
             SessionNotFound: () =>
               transaction(sessionLost(pending.session_id)).pipe(Effect.as<Sent>("done")),
             EngineIndeterminate: () => unanswered(pending),
