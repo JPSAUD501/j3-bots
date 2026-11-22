@@ -113,7 +113,15 @@ Each release has the app as `j3-bots-<version>-android-arm64.apk`, for arm64 pho
 2. Open the download. Android asks to allow the browser, or the files app, to install apps; allow it, go back, and install. Play Protect may say it does not know the app; it lets the install go on.
 3. Open J3 Bots and pair it with the server: scan the QR code that Settings → Devices on a paired device, or `j3-bots pair` on the server's machine, shows.
 
-A newer release installs the same way, over the one installed, and keeps its pairing, drafts and settings; the app does not update itself. **Verified** on the Pixel 8 emulator (Android 16) with an x86_64 build of the release variant, signed with a test key: it started with no Metro, paired with a server and showed the roster, and a build with a higher version code, signed with the same key, installed over it and opened on the same roster. The release APK cannot show push notifications: it is built without the Expo and Firebase projects they need. It installs beside a development build, which has another app id.
+Every later release is checked by the phone itself: it installs over the app only when it is signed with the same key. The first install has nothing to compare with, so whoever wants to check it compares the APK's signing certificate with the project's, before installing, on a computer with the Android SDK's build tools:
+
+```sh
+apksigner verify --print-certs j3-bots-<version>-android-arm64.apk
+```
+
+The line `certificate SHA-256 digest` must read `bfd3b598e6bd1c1ccdc969076a4254fd5a3696bddd5092df44b2bb51581431ff`, the release certificate's, which each release's notes repeat. Any other value means the APK was not signed by the project.
+
+A newer release installs the same way, over the one installed, and keeps its pairing, drafts and settings; the app does not update itself. **Verified** on the Pixel 8 emulator (Android 16) with x86_64 builds of the release variant, built unsigned and signed with `apksigner` and a test key as the release workflow does: the APK started with no Metro, paired with a server and showed the roster, and the next version, built and signed the same way, installed over it and opened on the same roster. The release APK cannot show push notifications: it is built without the Expo and Firebase projects they need. It installs beside a development build, which has another app id.
 
 Mobile uses its own components. Web and mobile share logic, tokens and vocabulary, not React components. See [decision 0007](../decisions/0007-client-and-server-stack.md) for why, and for the alternative of a single universal codebase.
 

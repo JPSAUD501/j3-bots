@@ -3,6 +3,8 @@
 import * as NodePath from "node:path";
 import nativeColors from "@j3-bots/design-tokens/icons/colors.json";
 import type { ConfigContext, ExpoConfig } from "expo/config";
+import packageJson from "./package.json";
+import { androidVersionCode } from "./src/androidVersionCode.ts";
 
 // Expo installs TypeScript on start otherwise; the workspace typechecks with tsrs.
 process.env.EXPO_NO_TYPESCRIPT_SETUP = "1";
@@ -64,19 +66,6 @@ const fromEnvironment = (value: string | undefined) => (value === "" ? undefined
 const pushProjectId = fromEnvironment(process.env.EAS_PROJECT_ID);
 const googleServicesFile = fromEnvironment(process.env.GOOGLE_SERVICES_JSON);
 
-/**
- * Android installs an APK over the app only when its version code is not
- * lower than the installed one's. The release workflow gives each release a
- * higher one; any other build is 1.
- */
-const versionCodeOf = (value: string | undefined): number => {
-  if (value === undefined) return 1;
-  const code = Number(value);
-  if (!/^[1-9][0-9]*$/.test(value) || code > 2_100_000_000)
-    throw new Error("ANDROID_VERSION_CODE must be a whole number from 1 to 2100000000.");
-  return code;
-};
-
 export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
   const variantName = variantOf(process.env.APP_VARIANT);
   const variant = VARIANTS[variantName];
@@ -86,8 +75,8 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
     name: variant.name,
     slug: "j3-bots",
     scheme: variant.scheme,
-    // No version here: Expo takes package.json's, which the release workflow
-    // sets to the tag's.
+    // The release workflow sets package.json's version to the tag's.
+    version: packageJson.version,
     orientation: "default",
     userInterfaceStyle: "automatic",
     // The light theme's; plugins/accentColor.js adds the dark one.
@@ -112,7 +101,7 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
     },
     android: {
       package: variant.id,
-      versionCode: versionCodeOf(process.env.ANDROID_VERSION_CODE),
+      versionCode: androidVersionCode(packageJson.version),
       adaptiveIcon: {
         foregroundImage: icon("adaptive-foreground.png"),
         monochromeImage: icon("adaptive-monochrome.png"),
@@ -218,6 +207,7 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
       "./plugins/accentColor.js",
       "./plugins/cleartextToPrivateHosts.js",
       "./plugins/foldInPlace.js",
+      "./plugins/unsignedRelease.js",
     ],
   };
 };

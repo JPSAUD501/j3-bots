@@ -30,13 +30,21 @@ The Android app:
 
 | File | What it is |
 | --- | --- |
-| `j3-bots-<version>-android-arm64.apk` | The app's production variant (`APP_VARIANT=production`: "J3 Bots", `dev.j3bots.mobile`), with its JavaScript bundled, for arm64 phones, signed with the key in the repository's secrets ([Android signing](#android-signing)) |
+| `j3-bots-<version>-android-arm64.apk` | The app's production variant (`APP_VARIANT=production`: "J3 Bots", `dev.j3bots.mobile`), with its JavaScript bundled, for arm64 phones, signed with the release key ([Android signing](#android-signing)), whose certificate's SHA-256 is `bfd3b598e6bd1c1ccdc969076a4254fd5a3696bddd5092df44b2bb51581431ff` |
 
-The APK carries the release's version as its version name, and the workflow's run number as its version code: Android installs an APK over the app only when its version code is not lower than the installed one's, and the run number grows with every run of the workflow. It is built without an Expo or a Firebase project, so it cannot turn push notifications on. It holds no development client: the generated project compiles `expo-dev-launcher` and `expo-dev-menu` for a release build from their stubs, which start no launcher, open no menu and never reach Metro (**Read** in `expo-dev-launcher` 58.0.21 and `expo-dev-menu` 58.0.13, `android/build.gradle`: their `release` source sets are `src/disableInRelease`, and the launcher's and the menu's own dependencies are `debugImplementation` only). The release build also runs R8, which the generated project turns on (`android.enableMinifyInReleaseBuilds`). `SHA256SUMS` does not list it: it covers what `install.sh` checks, and Android checks the APK's signature itself. [Clients: installing the Android app](../architecture/clients.md#installing-the-android-app) describes the install.
+The APK carries the release's version as its version name, and a version code made from it (`apps/mobile/src/androidVersionCode.ts`). Android installs an APK over the app only when its version code is not lower than the installed one's, so the code grows with the version:
+
+```
+major * 1,000,000 + minor * 10,000 + patch * 100 + stage
+```
+
+The stage is `n` for a release candidate `-rc.n` and 99 for the release, so `1.5.0-rc.2` is 1,050,002, below `1.5.0`, 1,050,099, and a hotfix `1.4.1`, 1,040,199, stays below `1.5.0` whenever it is tagged. **Verified** on the Pixel 8 emulator: `0.1.0` (10,099) installed over `0.1.0-rc.1` (10,001) and kept its pairing, and `0.1.0-rc.1` over `0.1.0` was refused as a downgrade. The minor and the patch go up to 99, a release candidate up to `rc.98`, and the major up to 2099, which keeps the code under 2,100,000,000, the largest Google Play takes. A version outside these, or with another pre-release label such as `-beta.1`, has no version code: the Android job fails on it before it builds, and with it the release, so an Android release's pre-releases are `-rc.n`.
+
+It is built without an Expo or a Firebase project, so it cannot turn push notifications on. It holds no development client: the generated project compiles `expo-dev-launcher` and `expo-dev-menu` for a release build from their stubs, which start no launcher, open no menu and never reach Metro (**Read** in `expo-dev-launcher` 58.0.21 and `expo-dev-menu` 58.0.13, `android/build.gradle`: their `release` source sets are `src/disableInRelease`, and the launcher's and the menu's own dependencies are `debugImplementation` only). The release build also runs R8, which the generated project turns on (`android.enableMinifyInReleaseBuilds`). `SHA256SUMS` does not list it: it covers what `install.sh` checks, and Android checks the APK's signature itself. [Clients: installing the Android app](../architecture/clients.md#installing-the-android-app) describes the install.
 
 ## Cutting a release
 
-1. Pick the version. It is [semver](https://semver.org): `1.4.0` for a release, `1.4.0-beta.1` for a pre-release. The tag is the version with a `v`: `v1.4.0`.
+1. Pick the version. It is [semver](https://semver.org): `1.4.0` for a release, `1.4.0-rc.1` for a pre-release. The Android app takes only these two forms, with a minor and a patch up to 99 and a release candidate up to `rc.98` ([its version code](#what-a-release-contains)). The tag is the version with a `v`: `v1.4.0`.
 2. Make sure the commit to release is on `main` and its CI passed.
 3. Tag it and push the tag:
 
@@ -45,7 +53,7 @@ The APK carries the release's version as its version name, and the workflow's ru
    git push origin v1.4.0
    ```
 
-4. Watch the **Release** workflow in the repository's Actions tab. Its first job creates a draft release for the tag, saying the builds are unsigned, and marks it a pre-release when the version has a suffix. Then one job per desktop platform builds the web client and the app and packages it with the tag's version, one job per Linux architecture builds the server's archive with the tag's version and runs the same smoke as CI on it: the archive with no Node on `PATH`, and `install.sh` from a local mirror, and one job builds and signs the APK. It fails at once, before it checks anything out, when any of the [four signing secrets](#android-signing) is missing. Another job writes `SHA256SUMS`. A last job checks that the release is still a draft and uploads every package, feed file, archive, the APK, `SHA256SUMS` and `install.sh` to it. The platform jobs take about 10 to 20 minutes (**Assumed**: not yet run on GitHub's runners).
+4. Watch the **Release** workflow in the repository's Actions tab. Its first job creates a draft release for the tag, saying the builds are unsigned, and marks it a pre-release when the version has a suffix. Then one job per desktop platform builds the web client and the app and packages it with the tag's version, one job per Linux architecture builds the server's archive with the tag's version and runs the same smoke as CI on it: the archive with no Node on `PATH`, and `install.sh` from a local mirror, one job builds the APK unsigned, and another signs it. The signing job waits for approval if the `android-signing` environment asks for one, and fails at once when any of the [four signing secrets](#android-signing) or `ANDROID_CERT_SHA256` is missing. Another job writes `SHA256SUMS`. A last job checks that the release is still a draft and uploads every package, feed file, archive, the APK, `SHA256SUMS` and `install.sh` to it. The platform jobs take about 10 to 20 minutes (**Assumed**: not yet run on GitHub's runners).
 5. Open the draft under Releases. Check that it has every file in the tables above, then add what changed to its description.
 6. Publish it. Leave a pre-release marked as one. Apps on a release version read GitHub's latest release, which skips pre-releases, and look in it for `latest-linux.yml`, `latest-mac.yml` or `latest.yml`; a pre-release published as a release has them too, so every installed app would take it as an update (**Read** in electron-updater 6.8.9, `providers/GitHubProvider.js`, `getLatestTagName`, and `AppUpdater.js`, which turns pre-releases on only for an app that runs one). The workflow refuses to upload to a draft whose pre-release mark disagrees with its tag, as one drafted by hand before the tag was pushed can.
 
@@ -59,9 +67,16 @@ Installed apps check at start and every six hours, so most see a release within 
 
 ## What the workflow may do
 
-`.github/workflows/release.yml` runs only when a tag matching `v*` is pushed: never on a pull request, so code from a fork never runs in it. It is the only workflow with `contents: write`, and only two of its jobs have it, neither of which checks out or runs code from the repository: the one that creates the draft, and the one that uploads to it, which takes the files the other jobs built as artifacts and refuses to upload to a release that is no longer a draft. The jobs that install dependencies and build have `contents: read`, as every other workflow does. Each job that builds hands its files over as an artifact named `release-<something>` and is in the upload job's `needs`, which otherwise starts without waiting for it and leaves its files out: the desktop jobs, the server jobs, and the one that writes `SHA256SUMS`, which reads the archives and runs none of them. A job added later is added there too. The upload job refuses two files with the same name. Every job but one uses the run's own `GITHUB_TOKEN` and no other secret. The Android job alone reads the four `ANDROID_*` secrets, the key that signs the APK. A pushed `v*` tag is the only thing that runs it, so only code a maintainer tagged reaches the key. The job writes the keystore to the runner's temporary folder, readable by its user only, right before the Gradle build that signs with it, and deletes it right after, whether the build passed or not. No step prints a secret: the job prints only the certificate's DN and SHA-256 digest, which are public. Its actions are pinned by commit, as in every workflow.
+`.github/workflows/release.yml` runs only when a tag matching `v*` is pushed: never on a pull request, so code from a fork never runs in it. It is the only workflow with `contents: write`, and only two of its jobs have it, neither of which checks out or runs code from the repository: the one that creates the draft, and the one that uploads to it, which takes the files the other jobs built as artifacts and refuses to upload to a release that is no longer a draft. The jobs that install dependencies and build have `contents: read`, as every other workflow does. Each job that builds hands its files over as an artifact named `release-<something>` and is in the upload job's `needs`, which otherwise starts without waiting for it and leaves its files out: the desktop jobs, the server jobs, and the one that writes `SHA256SUMS`, which reads the archives and runs none of them. A job added later is added there too. The upload job refuses two files with the same name. Every job but one uses the run's own `GITHUB_TOKEN` and no other secret.
 
-The Android job keeps two caches: Gradle's, and the SDK packages Gradle downloads because the runner image lacks them, such as the NDK, kept as one archive. GitHub lets a run read only the caches of its own ref and of the default branch, and the release workflow runs only on tags, so a tag's caches serve a retry of the same release, not the next one: each new release downloads them again.
+The Android app is built and signed by two jobs, so that the key never meets code from the repository or its dependencies:
+
+- **`android`** builds the APK unsigned (`plugins/unsignedRelease.js`) and holds no secret. Gradle runs build scripts and plugins from `node_modules` and downloads from Maven repositories, and a process started by `pnpm install` or `expo prebuild` could outlive its step, so this job is never given the key. It hands the APK to the next job as `android-unsigned`, an artifact `publish` does not take.
+- **`android-sign`** is the only job that reads a secret. Its four secrets are in the `android-signing` environment, which admits only `v*` tags, so neither a pull request nor a branch can reach them. It checks nothing out, installs nothing and runs nothing from the repository or the build: it downloads the unsigned APK, writes the keystore to the runner's temporary folder, readable by its user only, and signs with the runner image's own `apksigner`, which reads the passwords from its environment, never its command line. The keystore is deleted in the next step, which runs even when signing failed. The job then fails unless `apksigner verify` finds exactly one signer, whose certificate's SHA-256 is the repository variable `ANDROID_CERT_SHA256`, and unless `zipalign -c -P 16 4` finds the native libraries aligned to 16 KB pages. It hands the APK to `publish` as `release-android`.
+
+No step prints a secret: the sign job prints only the certificate's DN and SHA-256, which are public. The actions are pinned by commit, as in every workflow.
+
+The Android jobs keep no cache. GitHub lets a run read only the caches of its own ref and of the default branch, and this workflow runs only on tags, so a cache a release saved would be read by nothing but a retry of that same tag.
 
 ## Signing
 
@@ -75,7 +90,7 @@ Adding signing means secrets in the release workflow, used only by the jobs that
 
 ### Android signing
 
-Android installs an update only when it is signed with the same key as the installed app. The release workflow signs with one key, kept in four repository secrets:
+Android installs an update only when it is signed with the same key as the installed app. The release workflow signs with one key, held in four secrets of the repository's `android-signing` environment, which only the sign job reads:
 
 | Secret | What it holds |
 | --- | --- |
@@ -84,7 +99,9 @@ Android installs an update only when it is signed with the same key as the insta
 | `ANDROID_KEY_ALIAS` | The key's alias in the keystore |
 | `ANDROID_KEY_PASSWORD` | The key's password. A PKCS12 keystore, which `keytool` makes by default, has one password for both, so this is the keystore's password again |
 
-The Android Gradle Plugin signs with the key the build is given as `android.injected.signing.*` properties, in place of the generated project's own release signing config, which is the debug key (**Verified**: an APK built that way carried the given certificate), so the repository holds no signing config and no key.
+Beside them, the repository variable `ANDROID_CERT_SHA256` holds the release certificate's SHA-256, in lowercase hex without colons, as `apksigner verify --print-certs` prints it: `bfd3b598e6bd1c1ccdc969076a4254fd5a3696bddd5092df44b2bb51581431ff`. It is public. The sign job refuses an APK signed by any other certificate, and anyone can compare a downloaded APK with it ([Clients: installing the Android app](../architecture/clients.md#installing-the-android-app)).
+
+The generated project would sign a release build with the debug key; `plugins/unsignedRelease.js` takes that signing config away, so Gradle writes `app-release-unsigned.apk`, and the repository holds no signing config and no key.
 
 A maintainer creates the key once, on their own machine, outside any checkout:
 
@@ -94,9 +111,24 @@ keytool -genkeypair -v -storetype PKCS12 -keystore j3-bots-release.jks \
 base64 -w 0 j3-bots-release.jks > j3-bots-release.jks.base64   # macOS: base64 -i j3-bots-release.jks -o j3-bots-release.jks.base64
 ```
 
-`keytool` asks for the password. The key is valid for 100 years, since an app's key cannot be replaced by a newer one. Then, in the repository's settings (Secrets and variables → Actions), or with `gh secret set <name>`, which reads the value without echoing it, set the four secrets: the `.base64` file's content, the password twice and the alias, `j3-bots`. Delete the `.base64` file afterwards.
+`keytool` asks for the password. The key is valid for 100 years, so it never expires under the app.
 
-**Keep the keystore and its password backed up outside the repository**, in a password manager or an encrypted backup. Losing either means no release can be installed over an installed app: every phone has to uninstall the app, which deletes its pairing, drafts and unsent messages, before it installs the next one. A leaked key lets anyone sign an APK a phone takes as an update. `.gitignore` keeps `*.jks` and `*.keystore` files out of commits.
+Then create the environment, in the repository's settings (Environments → New environment): name it `android-signing`, and under Deployment branches and tags allow only tags matching `v*`. Required reviewers are optional; with them, each release's sign job waits for one to approve. Set the four secrets in it, then the variable, with `gh`, which reads a secret from its input without echoing it:
+
+```sh
+gh secret set ANDROID_KEYSTORE_BASE64 --env android-signing < j3-bots-release.jks.base64
+gh secret set ANDROID_KEYSTORE_PASSWORD --env android-signing   # asks for the value
+gh secret set ANDROID_KEY_ALIAS --env android-signing --body j3-bots
+gh secret set ANDROID_KEY_PASSWORD --env android-signing        # the keystore's password again
+gh variable set ANDROID_CERT_SHA256 --body "$(keytool -exportcert -keystore j3-bots-release.jks -alias j3-bots | sha256sum | cut -d' ' -f1)"
+rm j3-bots-release.jks.base64
+```
+
+`keytool -exportcert` writes the certificate in DER, whose SHA-256 is the digest `apksigner` prints (**Verified**: they matched for a test key). The secrets belong in the environment only: a repository secret of the same name would be readable by any job of any workflow.
+
+**Keep the keystore and its password backed up outside the repository**, in a password manager or an encrypted backup. A leaked key lets anyone sign an APK a phone takes as an update. `.gitignore` keeps `*.jks` and `*.keystore` files out of commits.
+
+**A key can be replaced, but only by its holder.** APK Signature Scheme v3 lets a new key take over on Android 9 and later: `apksigner rotate` writes a lineage, signed with the old key, that vouches for the new one, and releases from then on are signed with the new key and that lineage. Phones on Android 7 and 8, which the app still supports (`minSdk` 24), check only the original key, so it keeps signing for them, and `apksigner` by default applies the new key only from Android 13, through scheme v3.1 (**Read** in Android's documentation of `apksigner` and of the APK signature schemes). Every step of a rotation needs the old key. **Losing it cannot be undone**: no release can then be installed over an installed app, and every phone has to uninstall the app, which deletes its pairing, drafts and unsent messages, before it installs the next one.
 
 ## Trying an install locally
 
@@ -159,17 +191,16 @@ To try an update without publishing, build two versions against a feed on loopba
 
 ## Building the APK locally
 
-The same build as the release job, with a key of your own (any keystore will do for a phone that has no release installed) and the ABI of the device: `arm64-v8a` for a phone, `x86_64` for an emulator.
+The same two steps as the release jobs, with a key of your own (any keystore will do for a phone that has no release installed) and the ABI of the device: `arm64-v8a` for a phone, `x86_64` for an emulator. `apksigner` and `zipalign` are in the Android SDK's `build-tools/<version>/`.
 
 ```sh
 cd apps/mobile
 APP_VARIANT=production pnpm exec expo prebuild --platform android --clean --no-install
 cd android
-APP_VARIANT=production ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a \
-  -Pandroid.injected.signing.store.file=<keystore> \
-  -Pandroid.injected.signing.store.password=<password> \
-  -Pandroid.injected.signing.key.alias=<alias> \
-  -Pandroid.injected.signing.key.password=<password>
+APP_VARIANT=production ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a
+KS_PASS=<password> apksigner sign --ks <keystore> --ks-key-alias <alias> \
+  --ks-pass env:KS_PASS --key-pass env:KS_PASS \
+  --out j3-bots.apk app/build/outputs/apk/release/app-release-unsigned.apk
 ```
 
-The APK is `app/build/outputs/apk/release/app-release.apk`. `APP_VARIANT` is needed for the Gradle build too: it bundles the app's config with the JavaScript. Run `pnpm android` afterwards to go back to the development variant, whose prebuild replaces the native project.
+`APP_VARIANT` is needed for the Gradle build too: it bundles the app's config with the JavaScript. Run `pnpm android` afterwards to go back to the development variant, whose prebuild replaces the native project.
