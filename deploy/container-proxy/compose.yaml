@@ -3,7 +3,7 @@
 # from a container: for platforms that publish containers only, such as
 # Coolify. It forwards HTTP and WebSocket traffic unchanged to the server's
 # port on the host. TLS ends at the platform's proxy in front of it. See
-# docs/operations/running-on-a-pi.md, "Serve it through a container".
+# docs/operations/exposing.md, "Through a proxy or a tunnel".
 #
 # Caddy keeps no access log here, but it logs the request with every error it
 # answers, such as a 502 while the server restarts, and a webhook's path holds

@@ -36,7 +36,7 @@ A run must be over within 30 minutes of its start, boot included. A run that fai
 
 ### Running it
 
-You need Claude Code installed, and an endpoint that speaks Anthropic's Messages API for it, as for `j3-bots provider connect` ([Running on a Pi](../docs/operations/running-on-a-pi.md#connect-the-providers)).
+You need Claude Code installed, and an endpoint that speaks Anthropic's Messages API for it, as for `j3-bots provider connect` ([Installing J3 Bots](../docs/operations/install.md#connect-the-providers)).
 
 ```sh
 J3_EVAL_BASE_URL=http://127.0.0.1:8317 J3_EVAL_API_KEY=… pnpm --filter @j3-bots/evals room
