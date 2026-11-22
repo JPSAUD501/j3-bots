@@ -2,7 +2,7 @@
 
 This guide takes a Linux machine from nothing to a browser paired with your own J3 Bots server and a first bot that answers. The server runs as a systemd user service of one user, and bots act as that user. Once it runs, [Operating J3 Bots](operating.md) covers configuration, logs, updates, backups and removal, and [Reaching it from elsewhere](exposing.md) covers HTTPS, Tailscale, proxies and webhooks.
 
-> No release of J3 Bots is published yet. The one-line command below answers only once the first release is out. Until then, install [from a checkout](#from-a-checkout), or build a release archive and install it from a local mirror as [Releasing](releasing.md#trying-an-install-locally) describes.
+> The one-line command below installs the latest published release. To run code no release has yet, install [from a checkout](#from-a-checkout), or build a release archive and install it from a local mirror as [Releasing](releasing.md#trying-an-install-locally) describes.
 
 ## Supported systems
 
