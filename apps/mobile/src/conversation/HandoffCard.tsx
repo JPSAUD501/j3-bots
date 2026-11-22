@@ -74,11 +74,12 @@ export function HandoffCard({
             )}
             {marks}
           </View>
+          {/* The text starts where the name's box ends, as close to it as two 44 px boxes allow. */}
           <Pressable
             accessibilityRole="button"
             accessibilityState={{ expanded }}
             onPress={() => setExpanded((open) => !open)}
-            className="min-h-11 justify-center"
+            className="min-h-11 pb-2"
           >
             <Text
               numberOfLines={expanded ? undefined : 2}
