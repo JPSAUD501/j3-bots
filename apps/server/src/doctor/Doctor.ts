@@ -403,6 +403,8 @@ const scriptedAgentCheck = (config: ServerConfig.ServerConfigShape) =>
 const providerCheck = Effect.fn("doctor.provider")(function* (
   id: Harness,
   status: Option.Option<AdminStatus>,
+  /** The Engine line, whose fix is the one to follow while the engine is not ready. */
+  engineLine: Check,
   servicePath: Option.Option<string>,
   serviceHome: Option.Option<string>,
 ) {
@@ -415,6 +417,16 @@ const providerCheck = Effect.fn("doctor.provider")(function* (
       "ok",
       `Found at ${found.value}. Start the server to see what the engine reports about it.`,
     );
+  }
+  // Only a ready engine reports its providers: until then the server reports
+  // none, which says nothing about the harness or the providers set up.
+  if (status.value.engine.state._tag !== "ready") {
+    return {
+      name: harness.name,
+      status: "warning",
+      summary: `Found at ${found.value}; it cannot be checked until the engine is ready.`,
+      fix: engineLine.fix,
+    } satisfies Check;
   }
   const providers = status.value.engine.providers.filter(
     (provider: ProviderStatus) => provider.harness === id,
@@ -847,12 +859,15 @@ export const diagnose = Effect.gen(function* () {
     case "blocked":
       checks.push(yield* freePortsCheck(config));
   }
-  checks.push(yield* engineCheck(config, status, live._tag === "none"));
+  const engine = yield* engineCheck(config, status, live._tag === "none");
+  checks.push(engine);
   const scripted = scriptedAgentCheck(config);
   if (Option.isSome(scripted)) checks.push(scripted.value);
   const servicePath = Unit.servicePathOf(unitText);
   for (const harness of PROVIDER_HOMES) {
-    checks.push(yield* providerCheck(harness, status, servicePath, Unit.serviceHomeOf(unitText)));
+    checks.push(
+      yield* providerCheck(harness, status, engine, servicePath, Unit.serviceHomeOf(unitText)),
+    );
   }
   checks.push(yield* webClientCheck(config, live, installation));
   checks.push(pairingCheck(status, live._tag === "outside"));
