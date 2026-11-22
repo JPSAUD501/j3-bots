@@ -396,8 +396,11 @@ export const layer = Layer.effect(
      * bot's model and permission mode, on the provider its row names. The
      * row's id is the request's key, so a retried opening returns the same
      * engine session, with the settings of its first attempt. An opening the
-     * engine refused spends the key: the attempt fails unsent, and its retry
-     * opens a fresh side session, under a key of its own.
+     * engine refused fails the attempt unsent, and its retry opens a fresh
+     * side session, under a key of its own, as every new attempt does. A
+     * refusal with a rejected receipt spends the key; one of the bot's
+     * permission mode leaves no receipt and spends nothing, and is what the
+     * run's history names.
      */
     const openInEngine = Effect.fn("RoutineRunner.openInEngine")(function* (
       attempt: Attempt,

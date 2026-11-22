@@ -427,8 +427,9 @@ export const layer = Layer.effect(
      * backoff, under a fresh key after a refused opening, and the bot's
      * conversation is told once it failed `NOT_READY_AFTER` times in a row.
      * A permission mode the engine refuses is not a failure and is not tried
-     * again: the bot waits for its settings to change, which nudges the
-     * rotator. An alignment waiting for a turn is tried again when the turn
+     * on the backoff: the bot waits for its settings to change, or for the
+     * engine to become ready again, perhaps under another policy, either of
+     * which nudges the rotator. An alignment waiting for a turn is tried again when the turn
      * ends, which nudges the rotator, and one held by background work as
      * often as a rotation held by it.
      */
