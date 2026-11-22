@@ -427,6 +427,21 @@ const providerCheck = Effect.fn("doctor.provider")(function* (
       "Update the server: a release that runs bots sets up a Claude Code and a Codex provider.",
     );
   }
+  // While the engine's first check since it started is under way, what it
+  // reports says nothing of the harness, so no other line is drawn from it. A
+  // check that never ends stops counting as under way after a minute and a
+  // half (`FIRST_CHECK_BUDGET` in the engine adapter), and is then a problem.
+  const unchecked = providers.find(
+    (provider) => provider.status._tag === "unavailable" && provider.status.checking,
+  );
+  if (unchecked !== undefined) {
+    return check(
+      harness.name,
+      "warning",
+      `Found at ${found.value}; the engine is still checking ${unchecked.name}, which can take up to a minute after it starts.`,
+      "Run this again in half a minute.",
+    );
+  }
   for (const provider of providers) {
     if (provider.status._tag === "sign-in-required") {
       return noWayToModels(id, provider.status.command);

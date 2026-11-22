@@ -2,13 +2,19 @@
 import { ModelId, ProviderId } from "@j3-bots/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import type { ProviderInstance } from "../Engine.ts";
 import {
   CONNECT_COMMAND,
   ConfigStreamEvent,
   providerStatuses,
   providersOfEvent,
+  withFirstCheckBudget,
 } from "./Providers.ts";
 import { instanceIdFor } from "./Provision.ts";
 
@@ -59,8 +65,17 @@ const reported = (provider: ProviderInstance, fields: Record<string, unknown>) =
     }),
   ) ?? [];
 
-const statusOf = (provider: ProviderInstance, fields: Record<string, unknown> | undefined) =>
-  providerStatuses([provider], fields === undefined ? [] : reported(provider, fields))[0];
+/** One instance's status, within the engine's first-check budget unless `firstCheck` says otherwise. */
+const statusOf = (
+  provider: ProviderInstance,
+  fields: Record<string, unknown> | undefined,
+  firstCheck = true,
+) =>
+  providerStatuses(
+    [provider],
+    fields === undefined ? [] : reported(provider, fields),
+    firstCheck,
+  )[0];
 
 /** A five-hour window as Claude Code's probe reports it, with what a case changes. */
 const window = (fields: Record<string, unknown>) => ({
@@ -88,6 +103,7 @@ describe("providerStatuses", () => {
     // An ACP agent cannot be connected that way.
     assert.deepStrictEqual(statusOf(scripted, { auth: { status: "unauthenticated" } })?.status, {
       _tag: "unavailable",
+      checking: false,
     });
   });
 
@@ -95,12 +111,41 @@ describe("providerStatuses", () => {
     for (const fields of [
       undefined,
       { installed: false },
+      // A check that did not find it.
+      { installed: false, status: "error" },
       { enabled: false },
       { availability: "unavailable" },
       { status: "error" },
     ]) {
-      assert.deepStrictEqual(statusOf(claude, fields)?.status, { _tag: "unavailable" });
+      assert.deepStrictEqual(statusOf(claude, fields)?.status, {
+        _tag: "unavailable",
+        checking: false,
+      });
     }
+  });
+
+  it("is still being checked until the engine's first check since it started ends", () => {
+    // What the engine publishes for Claude Code and Codex before that check.
+    const notChecked = {
+      installed: false,
+      status: "warning",
+      auth: { status: "unknown" },
+      message: "Claude provider status has not been checked in this session yet.",
+    };
+    assert.deepStrictEqual(statusOf(claude, notChecked)?.status, {
+      _tag: "unavailable",
+      checking: true,
+    });
+    // The engine reports an ACP agent it checked and found not set up the same way.
+    assert.deepStrictEqual(statusOf(scripted, notChecked)?.status, {
+      _tag: "unavailable",
+      checking: false,
+    });
+    // Past the budget the check failed or died, and the placeholder says nothing more.
+    assert.deepStrictEqual(statusOf(claude, notChecked, false)?.status, {
+      _tag: "unavailable",
+      checking: false,
+    });
   });
 
   it("reports the usage windows the engine reports, as percent used with their resets", () => {
@@ -203,4 +248,52 @@ describe("providerStatuses", () => {
       assert.strictEqual(resetOf(malformed), null);
     }
   });
+});
+
+describe("withFirstCheckBudget", () => {
+  it.effect(
+    "ends the first check's budget once it passes, and starts it again whenever the engine is ready",
+    () =>
+      Effect.gen(function* () {
+        const states = yield* Queue.unbounded<{ readonly _tag: "ready" | "unavailable" }>();
+        const seen = yield* Ref.make<ReadonlyArray<boolean>>([]);
+        yield* withFirstCheckBudget(Stream.fromQueue(states)).pipe(
+          Stream.runForEach(({ firstCheck }) => Ref.update(seen, (all) => [...all, firstCheck])),
+          Effect.forkChild,
+        );
+        /**
+         * What has been emitted, once there are `count` of them, after the
+         * stream has had its turns: a budget's timer starts only once the
+         * value before it is taken, at the same moment on the clock, and must
+         * have started before the clock moves.
+         */
+        const emitted = (count: number) =>
+          Effect.gen(function* () {
+            let all = yield* Ref.get(seen);
+            while (all.length < count) {
+              yield* Effect.yieldNow;
+              all = yield* Ref.get(seen);
+            }
+            for (let turn = 0; turn < 10; turn++) yield* Effect.yieldNow;
+            return yield* Ref.get(seen);
+          });
+
+        yield* Queue.offer(states, { _tag: "ready" });
+        assert.deepStrictEqual(yield* emitted(1), [true]);
+
+        // Down and back before the budget passes: a new budget, counted from then.
+        yield* TestClock.adjust("60 seconds");
+        yield* Queue.offer(states, { _tag: "unavailable" });
+        assert.deepStrictEqual(yield* emitted(2), [true, false]);
+        yield* Queue.offer(states, { _tag: "ready" });
+        assert.deepStrictEqual(yield* emitted(3), [true, false, true]);
+        // 120 seconds since the first time it was ready, 60 since the second.
+        yield* TestClock.adjust("60 seconds");
+        assert.deepStrictEqual(yield* emitted(3), [true, false, true]);
+
+        // At 90 seconds it passes: a change of its own, with no new state from the engine.
+        yield* TestClock.adjust("30 seconds");
+        assert.deepStrictEqual(yield* emitted(4), [true, false, true, false]);
+      }),
+  );
 });

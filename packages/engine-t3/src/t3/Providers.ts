@@ -15,8 +15,11 @@ import {
   WsSubscribeServerConfigRpc,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as Struct from "effect/Struct";
 import * as RpcSchema from "effect/rpc/RpcSchema";
 import type { ProviderInstance } from "../Engine.ts";
@@ -89,7 +92,65 @@ export const providersOfEvent = (
   }
 };
 
-const unavailable = { _tag: "unavailable" } as const;
+const unavailable = { _tag: "unavailable", checking: false } as const;
+const checking = { _tag: "unavailable", checking: true } as const;
+
+/**
+ * Whether the report is the one the engine publishes for a Claude Code or
+ * Codex instance before its first check since the engine started: enabled,
+ * not installed, a `warning` and its sign-in `unknown`. A check that does not
+ * find the harness reports an `error` instead, and one that finds it signed
+ * out reports `unauthenticated`. **Read** at `59651c1`,
+ * `makePendingClaudeProvider` in `ClaudeProvider.ts` and
+ * `makePendingCodexProvider` in `CodexProvider.ts`, published first by
+ * `makeManagedServerProvider` in `provider-core/src/server/managedProvider.ts`.
+ * An ACP agent is left out: the engine reports the same for one it checked
+ * and found not set up or not prepared (`acpRegistrySnapshotReadiness`).
+ */
+const notCheckedYet = (provider: ProviderInstance, engine: ReportedProvider) =>
+  provider.harness !== "acp-command" &&
+  engine.enabled &&
+  !engine.installed &&
+  engine.status === "warning" &&
+  engine.auth.status === "unknown";
+
+/**
+ * How long after the engine becomes ready its placeholder still counts as a
+ * first check under way. The engine starts that check in the background once
+ * it is ready and ignores its failure: a check that fails or dies leaves the
+ * placeholder until the periodic refresh, five minutes later by default and
+ * only when something asks for it (**Read** at `59651c1`,
+ * `makeManagedServerProvider` in `provider-core/src/server/managedProvider.ts`,
+ * `DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL` in `contracts/src/settings.ts`).
+ * A check that ends takes at most 45 seconds: Claude Code's version check
+ * allows 20 and its capabilities probe 25, Codex's probe 20 (**Read** at
+ * `59651c1`, `ClaudeProvider.ts` and `CodexProvider.ts`). Past the budget, the
+ * placeholder is `unavailable` without `checking`.
+ */
+const FIRST_CHECK_BUDGET = Duration.seconds(90);
+
+/**
+ * Each engine state, with whether the engine is within its first-check
+ * budget: from each time it becomes ready until `FIRST_CHECK_BUDGET` passes,
+ * when the same state comes again without it, so what depends on the budget
+ * changes without a new report from the engine. `states` emits a state only
+ * when its tag changes, as `stateChanges` does.
+ */
+export const withFirstCheckBudget = <S extends { readonly _tag: string }, E, R>(
+  states: Stream.Stream<S, E, R>,
+): Stream.Stream<{ readonly state: S; readonly firstCheck: boolean }, E, R> =>
+  states.pipe(
+    Stream.switchMap((state) =>
+      state._tag === "ready"
+        ? Stream.concat(
+            Stream.succeed({ state, firstCheck: true }),
+            Stream.fromEffect(
+              Effect.as(Effect.sleep(FIRST_CHECK_BUDGET), { state, firstCheck: false }),
+            ),
+          )
+        : Stream.succeed({ state, firstCheck: false }),
+    ),
+  );
 
 const decodeModelId = Schema.decodeUnknownOption(ModelId);
 
@@ -108,6 +169,8 @@ const modelsOf = (engine: ReportedProvider | undefined): ProviderStatus["models"
 
 /**
  * Whether the engine's instance can run a bot, in J3 Bots' terms:
+ * - not checked yet since the engine started (`notCheckedYet`), within the
+ *   first-check budget: `unavailable`, `checking`;
  * - missing from the engine's list (not provisioned yet), disabled, not
  *   installed or unavailable: `unavailable`;
  * - signed out: `sign-in-required`, with the command that connects Claude
@@ -121,7 +184,11 @@ const modelsOf = (engine: ReportedProvider | undefined): ProviderStatus["models"
 const statusOf = (
   provider: ProviderInstance,
   engine: ReportedProvider | undefined,
+  firstCheck: boolean,
 ): ProviderStatus["status"] => {
+  if (engine !== undefined && notCheckedYet(provider, engine)) {
+    return firstCheck ? checking : unavailable;
+  }
   if (
     engine === undefined ||
     !engine.enabled ||
@@ -208,10 +275,15 @@ const usageOf = (engine: ReportedProvider | undefined): ProviderStatus["usage"] 
       ),
   });
 
-/** Each of J3 Bots' providers as the engine reports its instance, in the order J3 Bots lists them. */
+/**
+ * Each of J3 Bots' providers as the engine reports its instance, in the order
+ * J3 Bots lists them. `firstCheck`: the engine is within its first-check
+ * budget (`withFirstCheckBudget`).
+ */
 export const providerStatuses = (
   providers: ReadonlyArray<ProviderInstance>,
   engine: ReadonlyArray<ReportedProvider>,
+  firstCheck: boolean,
 ): ReadonlyArray<ProviderStatus> =>
   providers.map((provider) => {
     const reported = engine.find(
@@ -221,7 +293,7 @@ export const providerStatuses = (
       id: provider.id,
       name: provider.name,
       harness: provider.harness === "acp-command" ? "other" : provider.harness,
-      status: statusOf(provider, reported),
+      status: statusOf(provider, reported, firstCheck),
       models: modelsOf(reported),
       usage: usageOf(reported),
     };

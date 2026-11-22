@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Bot, EngineStatus, ProviderStatus } from "@j3-bots/contracts";
-import { canRunBots, connectCommand } from "@j3-bots/client-runtime/presentation";
+import { connectCommand, providerGate } from "@j3-bots/client-runtime/presentation";
 import { ensemble } from "@j3-bots/design-tokens";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
@@ -71,18 +71,20 @@ export function FirstRun({ engine, onCreateBot }: FirstRunProps) {
       </Centered>
     );
   }
-  if (!engine.providers.some(canRunBots)) {
-    const connect = connectCommand(engine);
+  const gate = providerGate(engine);
+  if (gate._tag !== "ready") {
     return (
       <Centered>
         <Ensemble />
-        {connect === null ? (
+        {gate._tag === "checking" ? (
+          <Heading title={t("firstRun.checking.title")} body={t("firstRun.checking.body")} />
+        ) : gate._tag === "unavailable" ? (
           <Heading title={t("firstRun.unavailable.title")} body={t("firstRun.unavailable.body")} />
         ) : (
           <>
             <Heading title={t("firstRun.connect.title")} body={t("firstRun.connect.body")} />
             <span className="w-full max-w-sm text-start">
-              <CommandLine command={connect} copyLabel={t("firstRun.connect.copy")} />
+              <CommandLine command={gate.command} copyLabel={t("firstRun.connect.copy")} />
             </span>
           </>
         )}

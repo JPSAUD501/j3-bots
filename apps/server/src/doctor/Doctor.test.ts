@@ -22,12 +22,14 @@ const GIB = 1024 ** 3;
 
 const SCRIPTED_AGENT = `${import.meta.dirname}/../../../../packages/engine-t3/scripted-agent/agent.ts`;
 
+/** A provider as the server reports it; `checking` is unavailable while the engine's first check runs. */
 const provider = (harness: "claude-code" | "codex", status: string) => ({
   id: harness,
   name: harness === "codex" ? "Codex" : "Claude Code",
   harness,
   status: {
-    _tag: status,
+    _tag: status === "checking" ? "unavailable" : status,
+    ...(status === "checking" ? { checking: true } : {}),
     ...(status === "limited" ? { resetsAt: null } : {}),
     ...(status === "sign-in-required" ? { command: "j3-bots provider connect" } : {}),
   },
@@ -502,6 +504,29 @@ it.layer(NodeServices.layer)("doctor", (it) => {
         Option.getOrElse(named(codexSignedOut.checks, "Codex").fix, () => ""),
         "`j3-bots provider login codex --device-auth`",
       );
+    }),
+  );
+
+  it.effect("says a harness the engine has not finished checking is still being checked", () =>
+    Effect.gen(function* () {
+      const { checks } = yield* diagnoseIn({
+        server: Option.some(
+          running({
+            engine: {
+              state: { _tag: "ready" },
+              pinnedVersion: "0.1.11",
+              providers: [provider("claude-code", "checking"), provider("codex", "checking")],
+            },
+          }),
+        ),
+      });
+      for (const name of ["Claude Code", "Codex"]) {
+        const harness = named(checks, name);
+        assertFlagged(harness, "warning", "still checking");
+        assert.strictEqual(Option.getOrNull(harness.fix), "Run this again in half a minute.");
+      }
+      // Nothing is broken, so the report finds no problem to fix.
+      assert.isFalse(checks.some((check) => check.status === "problem"));
     }),
   );
 

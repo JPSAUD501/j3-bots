@@ -91,6 +91,14 @@ describe("providerLine", () => {
       text: "Usage limit reached",
       tone: "blocked",
     });
-    expect(providerLine(provider({ status: { _tag: "unavailable" } }), en).tone).toBe("muted");
+    expect(
+      providerLine(provider({ status: { _tag: "unavailable", checking: false } }), en).tone,
+    ).toBe("muted");
+  });
+
+  it("says a provider the engine has not finished checking is being checked, not unavailable", () => {
+    expect(providerLine(provider({ status: { _tag: "unavailable", checking: true } }), en)).toEqual(
+      { text: "Checking…", tone: "waiting" },
+    );
   });
 });

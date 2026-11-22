@@ -80,11 +80,11 @@ describe("providerUsage", () => {
     const listed = providerUsage(
       [
         provider(claude, { _tag: "limited", resetsAt: null }),
-        provider(codex, { _tag: "unavailable" }),
+        provider(codex, { _tag: "unavailable", checking: false }),
         provider(ProviderId.make("signed-out"), { _tag: "sign-in-required", command: "connect" }, [
           { label: "Weekly", usedPercent: 12, resetsAt: null },
         ]),
-        provider(ProviderId.make("idle"), { _tag: "unavailable" }),
+        provider(ProviderId.make("idle"), { _tag: "unavailable", checking: false }),
       ],
       [turn("10:59", ana.id, null, codex), turn("10:58", ana.id, null, gone)],
       new Map(),

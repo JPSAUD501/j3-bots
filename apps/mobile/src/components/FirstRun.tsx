@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { canRunBots, connectCommand } from "@j3-bots/client-runtime/presentation";
+import { providerGate } from "@j3-bots/client-runtime/presentation";
 import { useEngineStatus } from "@j3-bots/client-runtime/react";
 import { engineProblem } from "@j3-bots/client-runtime/wording";
 import type { BotState, EngineStatus } from "@j3-bots/contracts";
@@ -59,8 +59,8 @@ function FirstRunBody({ engine }: { readonly engine: EngineStatus }) {
   const insets = useSafeAreaInsets();
   const openConversation = useOpenConversation();
   const problem = engineProblem(engine, i18n);
-  const connect = connectCommand(engine);
-  const ready = engine.providers.some(canRunBots);
+  const gate = providerGate(engine);
+  const ready = gate._tag === "ready";
   return (
     <ScrollView
       className="flex-1"
@@ -75,18 +75,21 @@ function FirstRunBody({ engine }: { readonly engine: EngineStatus }) {
             <Title>{problem.title}</Title>
             <Body>{problem.body}</Body>
           </>
-        ) : !ready ? (
-          connect === null ? (
-            <>
-              <Title>{t("firstRun.unavailable.title")}</Title>
-              <Body>{t("firstRun.unavailable.body")}</Body>
-            </>
-          ) : (
-            <>
-              <Title>{t("firstRun.connect.title")}</Title>
-              <Body>{t("firstRun.connect.body")}</Body>
-            </>
-          )
+        ) : gate._tag === "checking" ? (
+          <>
+            <Title>{t("firstRun.checking.title")}</Title>
+            <Body>{t("firstRun.checking.body")}</Body>
+          </>
+        ) : gate._tag === "unavailable" ? (
+          <>
+            <Title>{t("firstRun.unavailable.title")}</Title>
+            <Body>{t("firstRun.unavailable.body")}</Body>
+          </>
+        ) : gate._tag === "connect" ? (
+          <>
+            <Title>{t("firstRun.connect.title")}</Title>
+            <Body>{t("firstRun.connect.body")}</Body>
+          </>
         ) : (
           <>
             <Title>{t("firstRun.create.title")}</Title>
@@ -96,7 +99,7 @@ function FirstRunBody({ engine }: { readonly engine: EngineStatus }) {
       </View>
       {problem === null && !ready && (
         <View className="gap-2">
-          {connect !== null && <ConnectCommand command={connect} />}
+          {gate._tag === "connect" && <ConnectCommand command={gate.command} />}
           {engine.providers.map((provider) => (
             <ProviderRow key={provider.id} provider={provider} />
           ))}

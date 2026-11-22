@@ -382,6 +382,9 @@ const sentences = {
   "firstRun.connect.copy": "Copiar o comando que conecta seus provedores",
   "firstRun.connect.copied": "Copiado",
   "firstRun.connect.selected": "Comando selecionado. Copie manualmente.",
+  "firstRun.checking.title": "Verificando seus provedores",
+  "firstRun.checking.body":
+    "O motor verifica cada provedor ao iniciar, o que pode levar até um minuto. Esta página atualiza quando ele terminar.",
   "firstRun.unavailable.title": "Nenhum provedor pode rodar um bot agora",
   "firstRun.unavailable.body":
     "O estado de cada provedor está abaixo. Esta página atualiza assim que um deles estiver pronto.",
@@ -389,6 +392,7 @@ const sentences = {
   "provider.notConnected": "Não conectado",
   "provider.noModels": "Conectado, mas o motor ainda não lista nenhum modelo dele",
   "provider.unavailable": "Indisponível agora",
+  "provider.checking": "Verificando…",
   "firstRun.create.title": "Conheça seu primeiro bot",
   "firstRun.create.body":
     "Dê um nome a ele. Ele vai perguntar para que você o quer, uma pergunta por vez.",
