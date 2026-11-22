@@ -104,7 +104,15 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
         ) : routines.length === 0 ? (
           <Quiet>{t("details.noRoutines", { name })}</Quiet>
         ) : (
-          routines.map((routine) => <RoutineRow key={routine.id} routine={routine} />)
+          routines.map((routine) => (
+            <RoutineRow
+              key={routine.id}
+              routine={routine}
+              onOpen={() =>
+                navigation.navigate("routineRuns", { botId: bot.id, routineId: routine.id })
+              }
+            />
+          ))
         )}
       </Section>
 
@@ -189,10 +197,15 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
 
 /**
  * A routine: its name, its trigger in words, its next run, how its last run
- * went, and a switch that pauses it. A routine has no screen of its own, so
- * the row only shows it.
+ * went, and a switch that pauses it. The rest of the row opens its runs.
  */
-function RoutineRow({ routine }: { readonly routine: Routine }) {
+function RoutineRow({
+  routine,
+  onOpen,
+}: {
+  readonly routine: Routine;
+  readonly onOpen: () => void;
+}) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
   const client = useJ3Client();
@@ -212,7 +225,12 @@ function RoutineRow({ routine }: { readonly routine: Routine }) {
       <View className="pt-0.5">
         <Icon icon={icon} color={routine.enabled ? "accent-success" : "accent-muted-foreground"} />
       </View>
-      <View className="min-w-0 flex-1 gap-0.5">
+      <Pressable
+        accessibilityRole="button"
+        accessibilityHint={t("routine.runs.hint")}
+        onPress={onOpen}
+        className="-my-1 min-w-0 flex-1 gap-0.5 rounded-md py-1 active:bg-muted"
+      >
         <Text numberOfLines={1} className="text-base text-foreground">
           {routine.name}
         </Text>
@@ -238,7 +256,7 @@ function RoutineRow({ routine }: { readonly routine: Routine }) {
             )}
           </Text>
         )}
-      </View>
+      </Pressable>
       <Switch
         accessibilityLabel={routine.name}
         value={routine.enabled}

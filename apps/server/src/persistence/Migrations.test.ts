@@ -3,7 +3,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import * as SqliteMigrator from "@effect/sql-sqlite-node/SqliteMigrator";
 import { assert, it } from "@effect/vitest";
-import { Bot, Routine } from "@j3-bots/contracts";
+import { Bot, Routine, TimeZone } from "@j3-bots/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -11,6 +12,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import { ServerConfig } from "../config.ts";
+import * as SettingsStore from "../settings/SettingsStore.ts";
 import * as TestDatabase from "../testing/database.ts";
 import Migration0001 from "./migrations/0001_initial.ts";
 import Migration0002 from "./migrations/0002_operator_name.ts";
@@ -423,4 +425,43 @@ it.effect(
       assert.strictEqual(refused._tag, "MigrationError");
       assert.include(refused.message, "13_newer");
     }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("keeps a time zone set before devices gave theirs, and lets UTC take the device's", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+
+    /** The zone a database the last release wrote at `zone` keeps once a device gives its own. */
+    const afterDevice = (zone: string) =>
+      Effect.gen(function* () {
+        const config = TestDatabase.configFor(path, yield* fs.makeTempDirectoryScoped());
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* SqliteMigrator.run({
+            loader: SqliteMigrator.fromRecord({
+              "1_initial": Migration0001,
+              "2_operator_name": Migration0002,
+            }),
+          });
+          yield* sql`UPDATE settings SET time_zone = ${zone}`;
+        }).pipe(Effect.provide(SqliteClient.layer({ filename: config.databasePath })));
+
+        return yield* Effect.gen(function* () {
+          const store = yield* SettingsStore.SettingsStore;
+          yield* store.adoptTimeZone(TimeZone.make("America/Sao_Paulo"), DateTime.makeUnsafe(now));
+          return (yield* store.get).timeZone;
+        }).pipe(
+          Effect.provide(
+            SettingsStore.layer.pipe(
+              Layer.provide(Sqlite.layer),
+              Layer.provide(Layer.succeed(ServerConfig, config)),
+            ),
+          ),
+        );
+      });
+
+    assert.strictEqual(yield* afterDevice("Europe/Lisbon"), "Europe/Lisbon");
+    assert.strictEqual(yield* afterDevice("UTC"), "America/Sao_Paulo");
+  }).pipe(Effect.provide(NodeServices.layer)),
 );

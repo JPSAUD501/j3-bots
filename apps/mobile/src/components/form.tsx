@@ -15,7 +15,8 @@ import { Icon } from "./Icon.tsx";
 
 /** A titled part of a screen, ruled off from the next. */
 export function Section(props: {
-  readonly title?: string;
+  /** None, or undefined, for a section the screen's own title names. */
+  readonly title?: string | undefined;
   /** Beside the title, at its end. */
   readonly action?: ReactNode;
   readonly children: ReactNode;

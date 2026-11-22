@@ -21,6 +21,7 @@ import {
   ClientStorage,
   CredentialStore,
   type DeviceCredential,
+  DeviceTimeZone,
   FileTransfer,
   LocalStorageError,
   type LocalTable,
@@ -244,6 +245,11 @@ interface StorageOptions {
   readonly reading?: Queue.Queue<void>;
 }
 
+interface DeviceOptions extends StorageOptions {
+  /** The device's time zone; none, as a platform that cannot tell, unless given. */
+  readonly timeZone?: string;
+}
+
 /** One window's watch on the device's storage: what it is told when another window changes it. */
 interface Watcher {
   readonly window: object;
@@ -397,9 +403,11 @@ export interface TestDevice {
    * window hears of another window's change only once the latch is open.
    */
   readonly credentials: (heard?: Latch.Latch) => CredentialStore["Service"];
+  /** The device's time zone, as the platform reports it. */
+  readonly timeZone: string | null;
 }
 
-export const makeDevice = (options: StorageOptions = {}): TestDevice => {
+export const makeDevice = (options: DeviceOptions = {}): TestDevice => {
   const credentials = makeCredentials();
   const view = makeStorage(options, credentials.pairing);
   return {
@@ -409,6 +417,7 @@ export const makeDevice = (options: StorageOptions = {}): TestDevice => {
     locks: makeInProcessLocks(),
     seed: credentials.seed,
     credentials: (heard) => credentials.view({}, heard),
+    timeZone: options.timeZone ?? null,
   };
 };
 
@@ -441,6 +450,7 @@ export const layer = (
     }),
     Layer.sync(ClientStorage, device.window),
     Layer.succeed(WindowLocks, device.locks),
+    Layer.succeed(DeviceTimeZone, { current: Effect.succeed(device.timeZone) }),
     transfer.pipe(Layer.provide(http)),
     network,
     lifecycle,

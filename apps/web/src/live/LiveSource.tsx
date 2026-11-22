@@ -13,6 +13,7 @@ import {
   useMemory,
   useReadable,
   useRecentTurns,
+  useRoutineRuns,
   useRoutines,
   useSettings,
   useWorkSteps,
@@ -28,6 +29,7 @@ import type {
   Notification,
   Room,
   RoomId,
+  RoutineId,
   WorkStep,
 } from "@j3-bots/contracts";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
@@ -75,9 +77,11 @@ import { EditBotDialog } from "../components/EditBotDialog";
 import { MemoryViewer } from "../components/MemoryViewer";
 import { NewBotDialog } from "../components/NewBotDialog";
 import { RoomDialog } from "../components/RoomDialog";
+import { RoutineRunsDialog } from "../components/RoutineRuns";
 import { guessDeviceName, Incompatible, Pairing, StorageFailed } from "../components/Pairing";
 import { ServerAddress } from "../components/ServerAddress";
 import { type Notice, Toast } from "../components/Toast";
+import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
 import { notificationAccess } from "../preferences/notifications";
 import type { ConversationView, DesktopServer, ShellData, ShellIntents } from "../shell/data";
 import { runShellAction } from "../shell/commands";
@@ -435,6 +439,16 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   const files = useBotFiles(detailsBotId);
   const memory = useMemory(detailsBotId === null ? null : { _tag: "bot", botId: detailsBotId });
   const routines = useRoutines(detailsBotId);
+  // The routine whose runs show over its bot's details, as the address names it.
+  const runsOf: RoutineId | null = detailsBotId === null ? null : (search.routine ?? null);
+  // Kept while its dialog fades out.
+  const runsShown = useHeldWhileClosing(runsOf);
+  const runsId = runsShown.held?.value ?? null;
+  const routineRuns = useRoutineRuns(runsId);
+  const runsRoutine =
+    runsId === null
+      ? null
+      : (loadedList(routines)?.find((routine) => routine.id === runsId) ?? null);
   const inView = useSyncExternalStore(subscribeInView, isInView, isInView);
 
   const [openFolds, setOpenFolds] = useState<ReadonlySet<EntryId>>(new Set());
@@ -896,8 +910,12 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
       const handoff = view.items.find((item) => item._tag === "handoff" && item.id === entryId);
       if (handoff?._tag === "handoff") goToBot(handoffPeer(handoff));
     },
-    // A routine has no screen of its own yet: its bot's details list it.
-    openRoutine: () => void navigate({ to: ".", search: (prev) => ({ ...prev, details: true }) }),
+    // Over its bot's details, which list it with the bot's other routines.
+    openRoutine: (routineId) =>
+      void navigate({
+        to: ".",
+        search: (prev) => ({ ...prev, details: true, routine: routineId }),
+      }),
     openConversation: (botId) => void goToBot(botId),
     setRoutineEnabled: (routineId, enabled) => void j3.setRoutineEnabled(routineId, enabled),
     setDraftText: j3.setDraftText,
@@ -1045,6 +1063,14 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
           if (editingBotValue !== null) updateBot(editingBotValue, changes);
         }}
         onClose={closeBotEditor}
+      />
+      <RoutineRunsDialog
+        open={runsOf !== null}
+        name={runsRoutine?.name ?? t("routine.runs.title")}
+        routine={runsRoutine}
+        runs={routineRuns}
+        onClose={() => void navigate({ to: ".", search: { details: true } })}
+        onClosed={runsShown.closed}
       />
       <MemoryViewer
         file={memoryView}

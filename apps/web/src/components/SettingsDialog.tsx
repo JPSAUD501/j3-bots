@@ -39,7 +39,13 @@ import type {
   ShellIntents,
 } from "../shell/data";
 import { cn } from "../lib/cn";
-import { activityTime, engineProblem } from "@j3-bots/client-runtime/wording";
+import { systemTimeZone } from "../lib/timeZone";
+import {
+  activityTime,
+  deviceZoneOffer,
+  engineProblem,
+  timeZoneHint,
+} from "@j3-bots/client-runtime/wording";
 import { AppUpdate } from "./AppUpdate";
 import { ShortcutSetting } from "./ShortcutSetting";
 import { ConnectProviders, ProviderRow } from "./EmptyStates";
@@ -264,14 +270,16 @@ interface YouFormProps {
  * way, even one started before Settings last closed, the form shows what it
  * sends and takes no edit. A field the operator left alone shows the saved
  * value as it arrives; one they changed keeps their edit until the form saves
- * it.
+ * it. This computer's own zone is one press away.
  */
 function YouForm({ settings, save, profile, connected, onSave }: YouFormProps) {
-  const { t } = useI18n();
+  const ctx = usePresentation();
+  const { t } = ctx.i18n;
   const nameId = useId();
   const zoneId = useId();
   const offlineId = useId();
   const form = useProfileForm({ settings, save, profile, connected });
+  const computerZone = deviceZoneOffer(systemTimeZone(), ctx);
   return (
     <form
       className="flex flex-col gap-3"
@@ -312,7 +320,21 @@ function YouForm({ settings, save, profile, connected, onSave }: YouFormProps) {
             </option>
           ))}
         </select>
-        <p className="text-2xs text-muted-foreground">{t("settings.timeZone.hint")}</p>
+        <p className="text-2xs text-muted-foreground">{timeZoneHint(form.zone, ctx)}</p>
+        {computerZone !== null && computerZone.zone !== form.zone && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="mt-1 self-start"
+            aria-disabled={form.saving}
+            onClick={() => {
+              if (!form.saving) form.editZone(computerZone.zone);
+            }}
+          >
+            {t("settings.timeZone.useComputer", { zone: computerZone.name })}
+          </Button>
+        )}
       </div>
       <div className="flex items-center gap-3">
         <Button

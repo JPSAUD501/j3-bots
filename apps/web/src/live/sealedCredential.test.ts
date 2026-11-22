@@ -5,6 +5,7 @@ import {
   ClientStorage,
   CredentialStorageError,
   CredentialStore,
+  DeviceTimeZone,
   createJ3Client,
   type DeviceCredential,
   FileTransfer,
@@ -209,6 +210,7 @@ const launch = (
       Layer.succeed(CredentialStore, storeFor(serverA, sealer, cell)),
       Layer.succeed(ClientStorage, device.storage),
       Layer.succeed(WindowLocks, makeInProcessLocks()),
+      Layer.succeed(DeviceTimeZone, { current: Effect.succeed(null) }),
       Layer.succeed(
         FileTransfer,
         FileTransfer.of({ upload: () => Effect.fail(new TransferFailed()) }),

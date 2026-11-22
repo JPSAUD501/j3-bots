@@ -16,6 +16,7 @@ import type {
   RoomId,
   Routine,
   RoutineId,
+  RoutineRun,
 } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -34,6 +35,15 @@ import { type Loaded, makeLive } from "./reads.ts";
 
 /** How many of a bot's newest files its details list. */
 const FILES_PAGE = 50;
+
+/** How many of a routine's newest runs its history lists. */
+const RUNS_PAGE = 50;
+
+/** A routine's newest runs, newest first, and whether it kept older ones. */
+export interface RoutineRuns {
+  readonly runs: ReadonlyArray<RoutineRun>;
+  readonly hasOlder: boolean;
+}
 
 const memoryKey = (scope: MemoryScope) => (scope._tag === "bot" ? `bot:${scope.botId}` : "shared");
 
@@ -133,6 +143,14 @@ export class Details extends Context.Service<
     readonly routines: (
       botId: BotId,
     ) => Effect.Effect<Readable<Loaded<ReadonlyArray<Routine>>>, never, Scope.Scope>;
+    /**
+     * A routine's newest runs, read again whenever a socket opens and each
+     * time the routine changes while its bot's routines are open, as when a
+     * run starts or ends.
+     */
+    readonly routineRuns: (
+      routineId: RoutineId,
+    ) => Effect.Effect<Readable<Loaded<RoutineRuns>>, never, Scope.Scope>;
     readonly setRoutineEnabled: (
       routineId: RoutineId,
       enabled: boolean,
@@ -215,6 +233,20 @@ export const layer = Layer.effect(
       },
     });
 
+    // How many times each routine changed in this window's subscriptions, so its runs are read again.
+    const routineChanges = new Cell<ReadonlyMap<RoutineId, number>>(new Map());
+    const changesOf = (routineId: RoutineId) => routineChanges.get().get(routineId) ?? 0;
+    const changed = (routineIds: ReadonlySet<RoutineId>) =>
+      Effect.sync(() =>
+        routineChanges.update((current) => {
+          const next = new Map(current);
+          for (const routineId of routineIds) {
+            next.set(routineId, (current.get(routineId) ?? 0) + 1);
+          }
+          return next;
+        }),
+      );
+
     // Routines are few, so every socket starts again from a snapshot.
     const routines = makeLive<BotId, ReadonlyArray<Routine>>({
       scope,
@@ -222,9 +254,21 @@ export const layer = Layer.effect(
       keyOf: (botId) => botId,
       follow: (botId, client, set) =>
         client["routines.subscribe"]({ botId, after: null }).pipe(
-          Stream.runForEach((frame) =>
-            set((current) => {
-              if (frame._tag === "snapshot") return frame.routines;
+          Stream.runForEach((frame) => {
+            // Every routine the frame changed, deleted ones too, so their
+            // runs are read again and a deleted one's read finds it gone. A
+            // snapshot also changes those the one before held: one missing
+            // from it was deleted.
+            const touched = new Set<RoutineId>(
+              frame._tag === "snapshot"
+                ? frame.routines.map((routine) => routine.id)
+                : [...frame.remove, ...frame.upsert.map((routine) => routine.id)],
+            );
+            return set((current) => {
+              if (frame._tag === "snapshot") {
+                for (const routine of current ?? []) touched.add(routine.id);
+                return frame.routines;
+              }
               const removed = new Set(frame.remove);
               const byId = new Map(
                 (current ?? [])
@@ -233,9 +277,24 @@ export const layer = Layer.effect(
               );
               for (const routine of frame.upsert) byId.set(routine.id, routine);
               return [...byId.values()];
-            }),
-          ),
+            }).pipe(Effect.andThen(changed(touched)));
+          }),
         ),
+    });
+
+    const routineRuns = makeLive<RoutineId, RoutineRuns>({
+      scope,
+      connection,
+      keyOf: (routineId) => routineId,
+      // Counted before the read, so a change the read may have missed reads it again.
+      follow: (routineId, client, set) =>
+        Effect.suspend(() => {
+          const seen = changesOf(routineId);
+          return client["routine.runs"]({ routineId, before: null, limit: RUNS_PAGE }).pipe(
+            Effect.flatMap((page) => set(() => page)),
+            Effect.andThen(waitFor(routineChanges, () => changesOf(routineId) !== seen)),
+          );
+        }).pipe(Effect.forever),
     });
 
     const readMemory = (memoryScope: MemoryScope, path: MemoryPath) =>
@@ -407,6 +466,7 @@ export const layer = Layer.effect(
       dismissMemorySave: (memoryScope, path) =>
         dismissFailed(memorySaves, memorySaveKey(memoryScope, path)),
       routines: routines.acquire,
+      routineRuns: routineRuns.acquire,
       setRoutineEnabled,
       createBot,
       updateBot,

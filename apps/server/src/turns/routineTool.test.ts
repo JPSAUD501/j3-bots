@@ -160,6 +160,36 @@ it.effect("reads a new schedule in the operator's zone as set now, and keeps a s
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("reads a schedule in the zone the operator's device gave, before they chose one", () =>
+  Effect.gen(function* () {
+    yield* (yield* SettingsService).deviceTimeZone(TimeZone.make("America/Sao_Paulo"));
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Every day at 8:47, tell me what is on my calendar.");
+    const turnId = yield* nextTurn(bot.id);
+
+    const created = savedBy(
+      yield* setRoutine(
+        session,
+        turnId,
+        {
+          action: "create",
+          name: "Calendar",
+          instruction: "Tell my user what is on their calendar today.",
+          schedule: "47 8 * * *",
+        },
+        "call-1",
+      ),
+    );
+
+    assert.deepStrictEqual(created.trigger, {
+      _tag: "schedule",
+      cron: "47 8 * * *",
+      timeZone: "America/Sao_Paulo",
+    });
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("refuses a routine of another bot, and changes nothing", () =>
   Effect.gen(function* () {
     const { session, turnId } = yield* working;

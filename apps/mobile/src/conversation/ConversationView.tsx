@@ -30,6 +30,7 @@ import type {
   Mentions,
   Room,
   RosterItem,
+  RoutineId,
 } from "@j3-bots/contracts";
 import { layout } from "@j3-bots/design-tokens";
 import { KeyboardAwareLegendList, useKeyboardChatComposerInset } from "@legendapp/list/keyboard";
@@ -38,13 +39,14 @@ import type {
   OnViewableItemsChangedInfo,
   ViewabilityConfigCallbackPairs,
 } from "@legendapp/list/react-native";
-import { useIsFocused } from "@react-navigation/native";
+import { useIsFocused, useNavigation } from "@react-navigation/native";
 import { type ComponentRef, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AppState, Text, View } from "react-native";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BotAvatar } from "../components/Avatar.tsx";
 import { PendingButton } from "../components/form.tsx";
+import type { Navigation } from "../navigation.tsx";
 import { useRoomActions } from "../details/actions.ts";
 import { useBots, usePresentation } from "../presentation.tsx";
 import { useSay } from "../toast.tsx";
@@ -178,8 +180,16 @@ export function ConversationView({
   const say = useSay();
   const bots = useBots();
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation<Navigation>();
   // Mounted per conversation: the target stays the one it opened with.
   const [target] = useState(() => rosterTarget(rosterKeyOf(item)));
+  /** A routine's runs, over its bot's details, which list it with the bot's other routines. */
+  const openRoutine = (routineId: RoutineId) => {
+    onOpenDetails();
+    if (target._tag === "conversation") {
+      navigation.navigate("routineRuns", { botId: target.botId, routineId });
+    }
+  };
   const { state, loadOlder, markRead } = useConversation(target);
   const rows = useMemo(() => buildTimeline(state?.items ?? []), [state?.items]);
   const inView = useInView();
@@ -279,12 +289,7 @@ export function ConversationView({
                 recycleItems={false}
                 renderItem={({ item: row }) => (
                   <View className="w-full self-center" style={{ maxWidth: layout.textColumn }}>
-                    <Row
-                      row={row}
-                      room={room}
-                      onOpenBot={onOpenBot}
-                      onOpenDetails={onOpenDetails}
-                    />
+                    <Row row={row} room={room} onOpenBot={onOpenBot} onOpenRoutine={openRoutine} />
                   </View>
                 )}
                 extraData={{ room, widths }}
@@ -399,13 +404,13 @@ function Row({
   row,
   room,
   onOpenBot,
-  onOpenDetails,
+  onOpenRoutine,
 }: {
   readonly row: TimelineItem;
   /** In a room, its members and host now; null in a bot's conversation. */
   readonly room: Pick<Room, "members" | "hostId"> | null;
   readonly onOpenBot: (botId: BotId) => void;
-  readonly onOpenDetails: () => void;
+  readonly onOpenRoutine: (routineId: RoutineId) => void;
 }) {
   const ctx = usePresentation();
   const client = useJ3Client();
@@ -440,7 +445,7 @@ function Row({
             />
           );
         default:
-          return <Card entry={entry} onOpenBot={onOpenBot} onOpenDetails={onOpenDetails} />;
+          return <Card entry={entry} onOpenBot={onOpenBot} onOpenRoutine={onOpenRoutine} />;
       }
     }
     case "unknown":

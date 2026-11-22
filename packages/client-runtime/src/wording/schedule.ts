@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { RoutineTrigger } from "@j3-bots/contracts";
+import { keepsUtcClock, type RoutineTrigger } from "@j3-bots/contracts";
 import type { I18n } from "@j3-bots/i18n";
+import * as DateTime from "effect/DateTime";
 import {
   minuteText,
   readCron,
@@ -8,7 +9,7 @@ import {
   weekdayList,
   zoneName,
 } from "../presentation/schedule.ts";
-import { fullTime } from "../presentation/time.ts";
+import { fullTime, knownTimeZone } from "../presentation/time.ts";
 import type { TimeContext } from "./time.ts";
 
 /**
@@ -32,6 +33,42 @@ export function scheduleInWords(trigger: RoutineTrigger, ctx: TimeContext): stri
         trigger.timeZone === ctx.timeZone ? null : zoneName(trigger.timeZone, ctx),
       );
   }
+}
+
+/** A time zone as the language names it, "Brasília Standard Time"; null for one this runtime does not know. */
+function timeZoneName(timeZone: string, ctx: TimeContext): string | null {
+  return knownTimeZone(timeZone) === null ? null : zoneName(timeZone, ctx);
+}
+
+/** What the time zone setting says under its field: the zone's name, when known, and what it sets. */
+export function timeZoneHint(timeZone: string, ctx: TimeContext): string {
+  const name = timeZoneName(timeZone, ctx);
+  return name === null
+    ? ctx.i18n.t("settings.timeZone.hint")
+    : ctx.i18n.t("settings.timeZone.named", { zone: name });
+}
+
+/** A device's own time zone, as Settings offers it in one press. */
+interface DeviceZoneOffer {
+  /** The zone as this device names it, in its canonical case. */
+  readonly zone: string;
+  /** The zone as the language names it. */
+  readonly name: string;
+}
+
+/**
+ * The device's own time zone for Settings to offer: null when the device
+ * names none, one this runtime does not know, or one that keeps UTC's clock
+ * all year, which a device reports when it hides its zone or never had one
+ * set. The server passes those over too.
+ */
+export function deviceZoneOffer(
+  deviceZone: string | null,
+  ctx: TimeContext,
+): DeviceZoneOffer | null {
+  const zone = deviceZone === null ? null : knownTimeZone(deviceZone);
+  if (zone === null || keepsUtcClock(zone, DateTime.toPartsUtc(ctx.now).year)) return null;
+  return { zone, name: zoneName(zone, ctx) };
 }
 
 /** `zone` is null when the schedule runs in the operator's own time zone. */

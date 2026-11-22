@@ -488,6 +488,14 @@ export const SettingsRpcs = RpcGroup.make(
     success: Settings,
     error: CommandError,
   }),
+  /**
+   * This device's time zone, which every client gives when its socket opens.
+   * Until the operator chooses a time zone, the first device to give one sets
+   * the operator's; after that it changes nothing. A zone the server does not
+   * know is passed over. A server older than this RPC answers it with a
+   * defect, which a client passes over too: it relies on nothing here.
+   */
+  Rpc.make("settings.deviceTimeZone", { payload: { timeZone: TimeZone } }),
 );
 
 /**

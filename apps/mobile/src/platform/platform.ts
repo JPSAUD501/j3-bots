@@ -2,6 +2,7 @@
 import {
   ClientStorage,
   CredentialStore,
+  DeviceTimeZone,
   FileTransfer,
   Lifecycle,
   type LifecycleState,
@@ -27,6 +28,7 @@ import * as SecureStore from "expo-secure-store";
 import * as SQLite from "expo-sqlite";
 import { AppState } from "react-native";
 import { makeSession } from "../session.ts";
+import { phoneTimeZone } from "./timeZone.ts";
 import { forgetOpenedFiles } from "./openFile.ts";
 import { endPush } from "./push.ts";
 import { makeUploader } from "./upload.ts";
@@ -161,6 +163,9 @@ const secureRandom = Layer.succeed(
   SecureRandom.make((size) => ExpoCrypto.getRandomBytes(size)),
 );
 
+/** The phone's time zone, which it gives the server on every socket. */
+const timeZone = Layer.succeed(DeviceTimeZone, { current: Effect.sync(phoneTimeZone) });
+
 /**
  * The phone's platform for the server at `origin`. The credential is kept
  * with the origin of the server that issued it, and is absent for any other.
@@ -178,6 +183,7 @@ const makePlatform = (origin: URL): Layer.Layer<Platform> =>
     transfer,
     network,
     lifecycle,
+    timeZone,
     FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, nativeFetch))),
     Socket.layerWebSocketConstructorGlobal,
     secureRandom,

@@ -99,6 +99,18 @@ export class Network extends Context.Service<
   }
 >()("@j3-bots/client-runtime/ports/Network") {}
 
+/**
+ * The device's time zone, an IANA name such as `America/Sao_Paulo`:
+ * `Intl.DateTimeFormat().resolvedOptions().timeZone` in a browser and the
+ * desktop app, the system's calendar on a phone. Null where the platform
+ * cannot tell. Read each time a socket opens, so a device that travels gives
+ * the zone it is in.
+ */
+export class DeviceTimeZone extends Context.Service<
+  DeviceTimeZone,
+  { readonly current: Effect.Effect<string | null> }
+>()("@j3-bots/client-runtime/ports/DeviceTimeZone") {}
+
 /** Whether the app is in the foreground, or the system has put it in the background. */
 export type LifecycleState = "foreground" | "background";
 

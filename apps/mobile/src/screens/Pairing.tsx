@@ -3,13 +3,13 @@ import type { PairingFailure, ServerAddressProblem, UnpairedReason } from "@j3-b
 import { clockTime } from "@j3-bots/client-runtime/presentation";
 import * as DateTime from "effect/DateTime";
 import * as Device from "expo-device";
-import { getCalendars } from "expo-localization";
 import { useState } from "react";
 import { KeyboardAvoidingView, Platform, ScrollView, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { PairingScanner } from "../components/PairingScanner.tsx";
 import { useI18n } from "../i18n.ts";
 import { session } from "../platform/platform.ts";
+import { phoneTimeZone } from "../platform/timeZone.ts";
 import { Body, Button, Title } from "../ui.tsx";
 
 type Problem =
@@ -95,7 +95,7 @@ export function PairingScreen(props: {
         return t("pairing.rateLimited", {
           time: clockTime(reason.retryAt, {
             i18n,
-            timeZone: getCalendars()[0]?.timeZone ?? "UTC",
+            timeZone: phoneTimeZone() ?? "UTC",
             now: DateTime.nowUnsafe(),
           }),
         });
