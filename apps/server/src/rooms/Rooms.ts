@@ -20,11 +20,13 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Attachments } from "../attachments/Attachments.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
+import { Entries } from "../entries/Entries.ts";
 import { Ids } from "../Ids.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { Flag, Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { SettingsStore } from "../settings/SettingsStore.ts";
+import { roomRefusals } from "../turns/modeRefusals.ts";
 import { RoomStates } from "../turns/RoomStates.ts";
 import { RoomWork } from "./RoomWork.ts";
 
@@ -112,6 +114,7 @@ export const layer = Layer.effect(
     const states = yield* RoomStates;
     const ids = yield* Ids;
     const attachments = yield* Attachments;
+    const refusals = roomRefusals(sql, yield* Entries);
 
     const SELECT = sql.literal(`
       SELECT id, name, status, host_bot_id, hop_limit, pinned, archived_at, created_at
@@ -242,6 +245,7 @@ export const layer = Layer.effect(
             VALUES (${id}, ${input.name}, ${input.hostId}, ${hopLimit}, ${at}, ${at})
           `.pipe(Effect.orDie);
           yield* writeMembers(id, input.members);
+          yield* refusals.joined(id, input.members);
           yield* changes.touch({ _tag: "room", roomId: id });
           return yield* require(id).pipe(Effect.orDie);
         }),
@@ -299,6 +303,14 @@ export const layer = Layer.effect(
             );
           }
           if (!active && room.status === "active") yield* archive(room.id, now);
+          if (active) {
+            // A room taken out of the archive has every member arrive anew.
+            const before = new Set(room.status === "active" ? room.members : []);
+            yield* refusals.joined(
+              room.id,
+              members.filter((botId) => !before.has(botId)),
+            );
+          }
           yield* changes.touch({ _tag: "room", roomId: room.id });
           return yield* require(room.id).pipe(Effect.orDie);
         }),

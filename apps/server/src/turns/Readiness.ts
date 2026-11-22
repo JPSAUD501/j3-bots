@@ -31,6 +31,13 @@ export class Readiness extends Context.Service<
      * passes, since the engine's status can trail it.
      */
     readonly changeOrRetry: Effect.Effect<void>;
+    /**
+     * The engine's start generation, as the turn machinery sees it: how many
+     * times the machinery was released after the engine became ready. An
+     * answer to a call made under an older one came from an engine that has
+     * been unready since, and may no longer hold.
+     */
+    readonly generation: Effect.Effect<number>;
     readonly release: Effect.Effect<void>;
     readonly hold: Effect.Effect<void>;
   }
@@ -57,6 +64,7 @@ export const layer = Layer.effect(
     return Readiness.of({
       released,
       changeOrRetry,
+      generation: SubscriptionRef.get(state).pipe(Effect.map((current) => current.generation)),
       release: SubscriptionRef.update(state, (current) => ({
         released: true,
         generation: current.released ? current.generation : current.generation + 1,

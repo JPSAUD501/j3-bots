@@ -6,6 +6,7 @@ import {
   type DispatchInput,
   Engine,
   EngineAttachmentId,
+  type PermissionModeRefused,
   SessionId,
   TurnId,
 } from "@j3-bots/engine-t3";
@@ -26,6 +27,7 @@ import { Entries } from "../entries/Entries.ts";
 import { Layout } from "../Layout.ts";
 import { Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
+import { recordRunFailure } from "../routines/runFailure.ts";
 import { SettingsStore } from "../settings/SettingsStore.ts";
 import { admission } from "./admission.ts";
 import { type DispatchRow, keyOf, Ledger } from "./Ledger.ts";
@@ -39,7 +41,9 @@ import {
   type WakeFailure,
 } from "./model.ts";
 import { inboxPath } from "./inbox.ts";
+import { modeRefusals } from "./modeRefusals.ts";
 import { Observer } from "./Observer.ts";
+import { Readiness } from "./Readiness.ts";
 import { automatedSql, providerLimit } from "./providerLimit.ts";
 import { DEFECT_RETRY } from "./reconciler.ts";
 import { SendPause } from "./SendPause.ts";
@@ -83,6 +87,7 @@ const FileRow = Schema.Struct({
 });
 
 const SessionState = Schema.Struct({
+  main: Schema.BooleanFromBit,
   engine_session_id: Schema.NullOr(SessionId),
   admitted_turn_id: Schema.NullOr(TurnId),
   lost: Schema.BooleanFromBit,
@@ -162,7 +167,11 @@ export const layer = Layer.effect(
     const targets = stopTargets(sql);
     const { admitsStart } = admission(sql, yield* SettingsStore);
     const limitOf = providerLimit(sql, yield* EngineState);
-    const { sessionLost } = sessionLoss(sql, yield* Entries, ledger, yield* WorkSteps, signals);
+    const entries = yield* Entries;
+    const readiness = yield* Readiness;
+    const { sessionLost } = sessionLoss(sql, entries, ledger, yield* WorkSteps, signals);
+    const refusals = modeRefusals(sql, entries, readiness, signals);
+    const runFailed = recordRunFailure(sql);
 
     const files = SqlSchema.findAll({
       Request: Schema.String,
@@ -177,7 +186,8 @@ export const layer = Layer.effect(
       Request: Schema.String,
       Result: SessionState,
       execute: (sessionId) => sql`
-        SELECT s.engine_session_id, s.admitted_turn_id, s.lost_at IS NOT NULL AS lost,
+        SELECT s.purpose = 'main' AS main, s.engine_session_id, s.admitted_turn_id,
+          s.lost_at IS NOT NULL AS lost,
           (s.retired_at IS NOT NULL OR s.lost_at IS NOT NULL) AS gone,
           s.settings_pending > 0 AS unaligned
         FROM sessions s WHERE s.id = ${sessionId}
@@ -247,6 +257,8 @@ export const layer = Layer.effect(
     /**
      * The engine took the key. If its session was lost while the call was on
      * its way, nothing will ever report the turn: it fails as `unresolved`.
+     * One the engine took in its bot's main session ran in the bot's
+     * permission mode, so a later refusal of that mode is told again.
      */
     const accepted = (row: DispatchRow, disposition: DispatchDisposition | null) =>
       transaction(
@@ -255,6 +267,51 @@ export const layer = Layer.effect(
           const session = yield* sessionState(row.session_id).pipe(Effect.orDie);
           if (session.lost) {
             yield* ledger.abandon(row.id, yield* sentWakes(row, "unresolved"));
+          }
+          if (session.main) yield* refusals.accepted(row.bot_id);
+          return "settled" as const;
+        }),
+      );
+
+    /**
+     * The engine refuses to run the dispatch's turn in its session's
+     * permission mode, as under a policy installed after the session was
+     * opened in it, and holds no receipt for its key: nothing of it was ever
+     * applied, under this send or an earlier one (`PermissionModeRefused`).
+     *
+     * In the bot's main session it is released, so its wakes wait again,
+     * unless the operator stopped them, and the bot records the refusal at
+     * its settings revision, which the session, aligned and in its gate, runs:
+     * the dispatcher plans nothing into the session until the bot's settings
+     * change or the engine is ready again, and the bot's conversation is told
+     * once, as for a refused opening (`modeRefusals`). The wakes then go in a
+     * new dispatch, under a key of its own, so the message is delivered once.
+     *
+     * In a side session the routine's attempt fails as one whose session the
+     * engine refused to open does: `unresolved`, which its run tries again
+     * after its delay in a fresh side session, with the refusal named in the
+     * run's history.
+     */
+    const modeRefused = (row: DispatchRow, refusal: PermissionModeRefused, generation: number) =>
+      transaction(
+        Effect.gen(function* () {
+          const [bot] = yield* sql<{ readonly settings_revision: number }>`
+            SELECT settings_revision FROM bots WHERE id = ${row.bot_id}
+          `.pipe(Effect.orDie);
+          const session = yield* sessionState(row.session_id).pipe(Effect.orDie);
+          if (session.main) {
+            yield* releaseUnsent(row.id);
+            if (bot !== undefined) {
+              yield* refusals.refused(row.bot_id, bot.settings_revision, refusal, generation);
+            }
+          } else {
+            yield* runFailed(row.id, {
+              _tag: "permission-mode-refused",
+              permissionMode: refusal.permissionMode,
+              allowed: refusal.allowed,
+            });
+            yield* failSent(row.id, "unresolved");
+            yield* sql.afterCommit(signals.routines.fire);
           }
           return "settled" as const;
         }),
@@ -793,6 +850,8 @@ export const layer = Layer.effect(
       input: DispatchInput,
       firstSend: boolean,
     ) {
+      // An answer from an engine that was unready since is stale (`modeRefusals`).
+      const generation = yield* readiness.generation;
       if (firstSend) {
         return yield* engine.dispatch(input).pipe(
           Effect.flatMap((disposition) => accepted(row, disposition)),
@@ -806,6 +865,7 @@ export const layer = Layer.effect(
               ),
             DispatchRejected: () =>
               failSent(row.id, "rejected").pipe(Effect.as("settled" as const)),
+            PermissionModeRefused: (refusal) => modeRefused(row, refusal, generation),
             EngineUnavailable: () => notSent(row.id),
             EngineIncompatible: () => notSent(row.id),
             EngineIndeterminate: () => undecided(row.id),
@@ -816,6 +876,7 @@ export const layer = Layer.effect(
         Effect.flatMap(() => accepted(row, null)),
         Effect.catchTags({
           DispatchRejected: () => failSent(row.id, "rejected").pipe(Effect.as("settled" as const)),
+          PermissionModeRefused: (refusal) => modeRefused(row, refusal, generation),
           // While the engine is unreachable the recovery waits, and counts nothing.
           EngineUnavailable: () => notSent(row.id),
           EngineIncompatible: () => notSent(row.id),

@@ -21,8 +21,8 @@ export const RoutineInstruction = Schema.String.check(
 /**
  * Why a run's last attempt failed, when J3 Bots can name it: the engine
  * refused the bot's permission mode, as an administrator's policy on its
- * machine can, so the attempt's session never opened. `allowed` is the
- * highest mode the policy allows, when the engine names one.
+ * machine can, so the attempt's session never opened or its turn never ran.
+ * `allowed` is the highest mode the policy allows, when the engine names one.
  */
 export const RoutineRunFailure = Schema.TaggedStruct("permission-mode-refused", {
   permissionMode: PermissionMode,

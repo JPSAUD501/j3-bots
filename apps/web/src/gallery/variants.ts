@@ -480,6 +480,7 @@ export function galleryVariants(now: DateTime.Utc) {
       permissionMode: "full-access",
       allowed: "supervised",
     }),
+    notice("notice-member-mode-refused", { _tag: "member-mode-refused", botId: ids.juniper }),
     notice("notice-settings", { _tag: "settings-held" }),
     notice("notice-behind", { _tag: "observation-failed" }),
     notice("notice-too-long", { _tag: "too-long" }),

@@ -6,7 +6,6 @@ import {
   IdempotencyKey,
   type ModelUnavailable,
   type OpenRejected,
-  type PermissionModeRefused,
   SessionId,
   type SessionNotFound,
 } from "@j3-bots/engine-t3";
@@ -25,8 +24,10 @@ import { Ids } from "../Ids.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
+import { modeRefusals } from "../turns/modeRefusals.ts";
 import { conversation, SessionRowId } from "../turns/model.ts";
 import { notices } from "../turns/notices.ts";
+import { Readiness } from "../turns/Readiness.ts";
 import { SessionGate } from "../turns/SessionGate.ts";
 import { sessionWork } from "../turns/sessionWork.ts";
 import { Signals } from "../turns/Signals.ts";
@@ -98,7 +99,8 @@ interface Pending {
  * - `mode-refused`: the engine refuses the bot's permission mode, to open the
  *   session in or to change it to. The session is neither opened nor aligned
  *   again until the bot's settings change or the engine becomes ready again,
- *   and the bot's conversation is told once per refusal (`modeRefused`).
+ *   and the bot's conversation is told once per refusal
+ *   (`turns/modeRefusals.ts`).
  */
 export type Alignment = "aligned" | "turn-running" | "background-work" | "mode-refused";
 
@@ -160,9 +162,10 @@ export interface BotSession {
  * and the engine's policy stay as they are, as under an administrator's
  * policy on the engine's machine, which the engine reads when it starts: the
  * bot records the settings revision it was refused at
- * (`mode_refused_revision`), and its session is neither opened nor aligned
- * at that revision again until the engine becomes ready again
- * (`engineStarted`), when it is asked once more.
+ * (`mode_refused_revision`), and its session is neither opened, aligned nor
+ * planned into at that revision again until the engine becomes ready again
+ * (`engineStarted`), when it is asked once more. A refusal of a turn in its
+ * session, which the sender meets, puts it in the same state.
  */
 export class EngineSessions extends Context.Service<
   EngineSessions,
@@ -211,7 +214,9 @@ export class EngineSessions extends Context.Service<
      * The engine became ready, perhaps after it started again under another
      * policy: every bot whose permission mode it refused is asked for once
      * more. Its conversation is told again only of a refusal that differs
-     * from the one it was told of.
+     * from the one it was told of. Called once the machinery is released, so
+     * the engine's start generation has moved past every call made before
+     * the engine was ready again, whose refusal is never written after this.
      */
     readonly engineStarted: Effect.Effect<void>;
     /** Removes the bot's project, and every session in it, from the engine. */
@@ -241,7 +246,10 @@ export const layer = Layer.effect(
     const signals = yield* Signals;
     const gate = yield* SessionGate;
     const workOf = sessionWork(sql);
-    const { notify } = notices(sql, yield* Entries);
+    const entries = yield* Entries;
+    const readiness = yield* Readiness;
+    const { notify } = notices(sql, entries);
+    const refusals = modeRefusals(sql, entries, readiness, signals);
     const changes = yield* ChangeLog;
     // One provisioning at a time: a bot's creation and the rotator may both
     // find its session missing.
@@ -427,47 +435,6 @@ export const layer = Layer.effect(
       Effect.orDie,
     );
 
-    /**
-     * Records that the engine refuses the bot's permission mode at the
-     * settings revision `revision`, so it is not asked again until the bot's
-     * settings change or the engine becomes ready again. A change committed
-     * since that revision was read is recorded nothing for: the rotator,
-     * which the change nudged, tries it. The bot's conversation is told of a
-     * refusal at a revision, or naming an allowed mode, it was not told of
-     * yet, so a refusal the engine repeats after a restart is not told twice.
-     */
-    const modeRefused = Effect.fn("EngineSessions.modeRefused")(
-      function* (botId: BotId, revision: number, refusal: PermissionModeRefused) {
-        const refused = yield* sql`
-          UPDATE bots SET mode_refused_revision = ${revision}
-          WHERE id = ${botId} AND settings_revision = ${revision}
-          RETURNING id
-        `;
-        if (refused.length === 0) return;
-        const told = yield* sql`
-          UPDATE bots
-          SET mode_refusal_told_revision = ${revision}, mode_refusal_told_allowed = ${refusal.allowed}
-          WHERE id = ${botId}
-            AND (mode_refusal_told_revision IS NOT ${revision}
-              OR mode_refusal_told_allowed IS NOT ${refusal.allowed})
-          RETURNING id
-        `;
-        if (told.length === 0) return;
-        yield* notify(
-          botId,
-          conversation,
-          {
-            _tag: "permission-mode-refused",
-            permissionMode: refusal.permissionMode,
-            allowed: refusal.allowed,
-          },
-          null,
-        );
-      },
-      transaction,
-      Effect.orDie,
-    );
-
     const engineStarted = sql`
       UPDATE bots SET mode_refused_revision = NULL WHERE mode_refused_revision IS NOT NULL
     `.pipe(Effect.orDie, Effect.asVoid, Effect.withSpan("EngineSessions.engineStarted"));
@@ -488,10 +455,7 @@ export const layer = Layer.effect(
         // Ready: a later run of failures is told again, and so is a later
         // refusal of its permission mode.
         yield* sql`UPDATE bots SET unready_told = 0 WHERE id = ${botId} AND unready_told = 1`;
-        yield* sql`
-          UPDATE bots SET mode_refusal_told_revision = NULL, mode_refusal_told_allowed = NULL
-          WHERE id = ${botId} AND mode_refusal_told_revision IS NOT NULL
-        `;
+        yield* refusals.accepted(botId);
         return true;
       },
       transaction,
@@ -526,6 +490,7 @@ export const layer = Layer.effect(
             if (work.admitted !== null || work.runningTurns > 0) {
               return "turn-running" as const;
             }
+            const generation = yield* readiness.generation;
             const refused = yield* engine
               .configureSession({
                 sessionId: due.sessionId,
@@ -547,7 +512,7 @@ export const layer = Layer.effect(
               return refused;
             }
             if (refused !== null) {
-              yield* modeRefused(botId, due.revision, refused);
+              yield* refusals.refused(botId, due.revision, refused, generation);
               return "mode-refused" as const;
             }
             if (yield* aligned(botId, rowId, due.changes)) {
@@ -591,6 +556,7 @@ export const layer = Layer.effect(
       // the engine is ready again.
       if (selected.modeRefused) return "mode-refused" as const;
       if (session.engine_session_id === null) {
+        const generation = yield* readiness.generation;
         const opened = yield* engine
           .openSession({
             key: openingKey(session),
@@ -610,7 +576,7 @@ export const layer = Layer.effect(
             ),
           );
         if (opened._tag === "refused") {
-          yield* modeRefused(botId, selected.revision, opened.refusal);
+          yield* refusals.refused(botId, selected.revision, opened.refusal, generation);
           return "mode-refused" as const;
         }
         // Recorded before it is aligned, which it takes no work until.

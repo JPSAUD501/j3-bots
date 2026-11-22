@@ -178,6 +178,8 @@ export const en = {
     "Can’t work in {mode}: a policy on the computer running J3 Bots allows less. New messages wait until you edit it and choose a lower permission mode, or raise the policy’s limit and restart J3 Bots.",
   "notice.permissionModeAllowed":
     "Can’t work in {mode}: a policy on the computer running J3 Bots allows up to {allowed}. New messages wait until you edit it and choose {allowed} or lower, or raise the policy’s limit and restart J3 Bots.",
+  "notice.memberModeRefused":
+    "{name} couldn’t take part: a policy on the computer running J3 Bots refused its permission mode. Messages for {name} wait until you edit {name} and choose a lower mode, or raise the policy’s limit and restart J3 Bots.",
   "notice.settingsHeld":
     "Its new settings apply once its background work ends, and messages wait until then. Stop it to apply them now.",
   "notice.observationFailed":
