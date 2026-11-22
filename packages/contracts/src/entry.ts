@@ -143,7 +143,8 @@ export type QuestionAnswers = typeof QuestionAnswers.Type;
  * - `engine`: the harness's own question tool held a running turn. Answering it
  *   lets that turn continue. It cannot be dismissed: the engine refuses that
  *   while the turn waits, so the turn goes on only once it is answered or
- *   stopped. It expires when its turn ends.
+ *   stopped. It expires when its turn ends, and closes as `refused` when the
+ *   engine refuses its answer.
  */
 export const QuestionEntry = Schema.TaggedStruct("question", {
   ...entry,
@@ -159,6 +160,12 @@ export const QuestionEntry = Schema.TaggedStruct("question", {
      * `ask` question when its room was archived. Answering it is refused.
      */
     Schema.TaggedStruct("expired", {}),
+    /**
+     * An `engine` question whose answer the engine refused. The bot cannot
+     * take another, and its turn waits until the operator stops it or it
+     * ends; the bot can be asked again in a message.
+     */
+    Schema.TaggedStruct("refused", {}),
   ]),
 });
 export type QuestionEntry = typeof QuestionEntry.Type;
@@ -249,6 +256,11 @@ export const ApprovalEntry = Schema.TaggedStruct("approval", {
     Schema.TaggedStruct("pending", {}),
     Schema.TaggedStruct("decided", { decision: ApprovalDecision }),
     Schema.TaggedStruct("expired", {}),
+    /**
+     * The engine refused the operator's decision. The bot cannot take
+     * another, and its turn waits until the operator stops it or it ends.
+     */
+    Schema.TaggedStruct("refused", {}),
   ]),
 });
 export type ApprovalEntry = typeof ApprovalEntry.Type;

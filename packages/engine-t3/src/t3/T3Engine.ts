@@ -679,6 +679,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
           Effect.succeedSome(Option.getOrElse(causeName(error), () => "")),
       }),
     );
+    const refusals: Array<string> = [];
     for (let attempt = 0; attempt < 2; attempt++) {
       // Once the first send went out, no failure but a named refusal proves
       // that nothing was applied: the engine may have taken the first one.
@@ -690,8 +691,13 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
           new Error(`A staged file the engine cannot claim: ${input.commandId}`),
         );
       }
+      refusals.push(refusal.value === "" ? "unnamed" : refusal.value);
     }
-    // Twice an error that proves nothing either way.
+    // Twice an error that proves nothing either way: sent again as a lost
+    // reply is, so the caller's retry is not silent.
+    yield* Effect.logWarning(
+      "The engine answered a command with an error twice, with no rejected receipt; it is sent again later",
+    ).pipe(Effect.annotateLogs({ command: input.type, commandId: input.commandId, refusals }));
     return yield* new EngineIndeterminate();
   });
 

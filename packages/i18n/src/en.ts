@@ -103,6 +103,8 @@ export const en = {
   "question.answered": "Answered",
   "question.dismissed": "Dismissed. The bot reads this as a no.",
   "question.expired": "This question expired before it was answered.",
+  "question.refused":
+    "The bot couldn’t take this answer. Stop the bot, then ask it again in a message.",
   "question.tooLong": "Your answer is too long to reach the bot. Shorten it and send it again.",
 
   "secret.title": "Credential",
@@ -150,6 +152,8 @@ export const en = {
   "approval.allowedSession": "Allowed for this session",
   "approval.denied": "Denied",
   "approval.expired": "This request expired before it was answered.",
+  "approval.refused":
+    "The bot couldn’t take this answer. Stop the bot, then ask it again in a message.",
 
   "work.workedFor": "Worked for {duration}",
   "work.stoppedAfter": "Stopped after {duration}",

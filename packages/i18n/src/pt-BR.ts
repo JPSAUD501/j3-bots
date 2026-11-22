@@ -101,6 +101,8 @@ const sentences = {
   "question.answered": "Respondida",
   "question.dismissed": "Dispensada. O bot entende isso como um não.",
   "question.expired": "Esta pergunta expirou antes de ser respondida.",
+  "question.refused":
+    "O bot não conseguiu receber esta resposta. Pare o bot e peça de novo em uma mensagem.",
   "question.tooLong": "Sua resposta é longa demais para chegar ao bot. Encurte e envie de novo.",
 
   "secret.title": "Credencial",
@@ -148,6 +150,8 @@ const sentences = {
   "approval.allowedSession": "Permitido nesta sessão",
   "approval.denied": "Negado",
   "approval.expired": "Este pedido expirou antes de ser respondido.",
+  "approval.refused":
+    "O bot não conseguiu receber esta resposta. Pare o bot e peça de novo em uma mensagem.",
 
   "work.workedFor": "Trabalhou por {duration}",
   "work.stoppedAfter": "Parou depois de {duration}",

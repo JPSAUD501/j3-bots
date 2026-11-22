@@ -243,7 +243,7 @@ it.effect("replays a routine's receipt written before runs counted their attempt
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect("forgets an engine question's recorded dismissal, and keeps a recorded answer", () =>
+it.effect("closes a card whose dismissal was sent, and reopens one never sent", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -253,6 +253,7 @@ it.effect("forgets an engine question's recorded dismissal, and keeps a recorded
       _tag: "question",
       answers: { "question-1": { optionIds: ["option-1"], text: null } },
     });
+    const pending = JSON.stringify({ origin: "engine", status: { _tag: "pending" } });
 
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -292,18 +293,23 @@ it.effect("forgets an engine question's recorded dismissal, and keeps a recorded
           id, conversation_bot_id, position, kind, author_kind, author_bot_id, body_json,
           created_at, updated_at
         ) VALUES
-          ('entry-1', 'scout', 0, 'question', 'bot', 'scout', '{}', ${now}, ${now}),
-          ('entry-2', 'scout', 1, 'question', 'bot', 'scout', '{}', ${now}, ${now})
+          ('entry-1', 'scout', 0, 'question', 'bot', 'scout', ${pending}, ${now}, ${now}),
+          ('entry-2', 'scout', 1, 'question', 'bot', 'scout', ${pending}, ${now}, ${now}),
+          ('entry-3', 'scout', 2, 'question', 'bot', 'scout', ${pending}, ${now}, ${now}),
+          ('entry-4', 'scout', 3, 'question', 'bot', 'scout', ${pending}, ${now}, ${now})
       `;
-      // A dismissal the engine refused, sent again ever since, and an answer
-      // still on its way.
+      // A dismissal the engine refused, sent again ever since; an answer
+      // still on its way; a dismissal recorded while the engine was away,
+      // never sent; and one the engine took, whose request has not closed yet.
       yield* sql`
         INSERT INTO engine_requests (
           entry_id, session_id, engine_request_id, engine_turn_id, response_json,
           response_sent_at, response_failures, response_retry_at
         ) VALUES
           ('entry-1', 'session-1', 'request-1', 'turn-1', '{"_tag":"dismiss"}', NULL, 7, ${now}),
-          ('entry-2', 'session-1', 'request-2', 'turn-1', ${answer}, NULL, 1, ${now})
+          ('entry-2', 'session-1', 'request-2', 'turn-1', ${answer}, NULL, 1, ${now}),
+          ('entry-3', 'session-1', 'request-3', 'turn-1', '{"_tag":"dismiss"}', NULL, 0, NULL),
+          ('entry-4', 'session-1', 'request-4', 'turn-1', '{"_tag":"dismiss"}', ${now}, 0, NULL)
       `;
     }).pipe(Effect.provide(SqliteClient.layer({ filename: config.databasePath })));
 
@@ -311,12 +317,53 @@ it.effect("forgets an engine question's recorded dismissal, and keeps a recorded
       const sql = yield* SqlClient.SqlClient;
       const rows = yield* sql<{
         readonly entry_id: string;
+        readonly closed: number;
         readonly response_json: string | null;
         readonly response_failures: number;
-      }>`SELECT entry_id, response_json, response_failures FROM engine_requests ORDER BY entry_id`;
+        readonly status: string;
+      }>`
+        SELECT r.entry_id, r.closed_at IS NOT NULL AS closed, r.response_json,
+          r.response_failures, json_extract(e.body_json, '$.status._tag') AS status
+        FROM engine_requests r JOIN entries e ON e.id = r.entry_id
+        ORDER BY r.entry_id
+      `;
       assert.deepStrictEqual(rows, [
-        { entry_id: "entry-1", response_json: null, response_failures: 0 },
-        { entry_id: "entry-2", response_json: answer, response_failures: 1 },
+        {
+          entry_id: "entry-1",
+          closed: 1,
+          response_json: null,
+          response_failures: 0,
+          status: "refused",
+        },
+        {
+          entry_id: "entry-2",
+          closed: 0,
+          response_json: answer,
+          response_failures: 1,
+          status: "pending",
+        },
+        {
+          entry_id: "entry-3",
+          closed: 0,
+          response_json: null,
+          response_failures: 0,
+          status: "pending",
+        },
+        {
+          entry_id: "entry-4",
+          closed: 1,
+          response_json: null,
+          response_failures: 0,
+          status: "dismissed",
+        },
+      ]);
+      // Clients read the closed cards again.
+      const changed = yield* sql<{ readonly scope: string; readonly entity_id: string }>`
+        SELECT scope, entity_id FROM changes ORDER BY entity_id
+      `;
+      assert.deepStrictEqual(changed, [
+        { scope: "conversation:scout", entity_id: "entry-1" },
+        { scope: "conversation:scout", entity_id: "entry-4" },
       ]);
     }).pipe(Effect.provide(Sqlite.layer.pipe(Layer.provide(Layer.succeed(ServerConfig, config)))));
   }).pipe(Effect.provide(NodeServices.layer)),

@@ -85,7 +85,9 @@ export function QuestionCard({
               ? t("question.answered")
               : status._tag === "dismissed"
                 ? t("question.dismissed")
-                : t("question.expired")}
+                : status._tag === "refused"
+                  ? t("question.refused")
+                  : t("question.expired")}
           </p>
         </>
       ) : answersOnTap ? (

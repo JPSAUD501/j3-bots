@@ -228,6 +228,7 @@ export function galleryVariants(now: DateTime.Utc) {
     }),
     question("question-dismissed", { _tag: "dismissed" }),
     question("question-expired", { _tag: "expired" }, "engine"),
+    question("question-refused", { _tag: "refused" }, "engine"),
   ];
 
   const approval = (name: string, extra: Partial<ApprovalEntry>): ApprovalEntry => ({
@@ -332,6 +333,7 @@ export function galleryVariants(now: DateTime.Utc) {
       status: { _tag: "decided", decision: "deny" },
     }),
     approval("approval-expired", { status: { _tag: "expired" } }),
+    approval("approval-refused", { status: { _tag: "refused" } }),
   ];
   // The operator has just allowed the calendar change, and the decision is on its way.
   const approvals = approvalEntries.map((entry) => ({

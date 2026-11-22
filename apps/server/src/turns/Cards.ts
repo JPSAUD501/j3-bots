@@ -127,7 +127,10 @@ const fits = (
 };
 
 /** What the engine is sent for an answer to its request's card, if the answer fits the card. */
-const responseFor = (card: Entry, answer: CardAnswer): StoredResponse | "invalid" | "closed" => {
+const responseFor = (
+  card: Entry,
+  answer: CardAnswer,
+): StoredResponse | "invalid" | "not-dismissible" | "closed" => {
   switch (card._tag) {
     case "approval":
       if (card.status._tag !== "pending") return "closed";
@@ -135,9 +138,10 @@ const responseFor = (card: Entry, answer: CardAnswer): StoredResponse | "invalid
       if (answer.decision === "allow-session" && card.sessionGrant === null) return "invalid";
       return { _tag: "approval", decision: answer.decision };
     case "question":
+      if (card.status._tag !== "pending") return "closed";
       // The engine takes no dismissal of a question that holds a turn: it is
       // answered, or the turn is stopped.
-      if (card.status._tag !== "pending") return "closed";
+      if (answer._tag === "dismiss") return "not-dismissible";
       return answer._tag === "question" && fits(card.questions, answer.answers, card.origin)
         ? { _tag: "question", answers: answer.answers }
         : "invalid";
@@ -301,6 +305,7 @@ export const layer = Layer.effect(
       const response = responseFor(card, answer);
       if (response === "closed") return yield* new Conflict({ reason: "card-closed" });
       if (response === "invalid") return yield* new Invalid({ reason: "answer" });
+      if (response === "not-dismissible") return yield* new Invalid({ reason: "not-dismissible" });
       yield* sql`
         UPDATE engine_requests
         SET response_json = ${yield* encodeResponse(response).pipe(Effect.orDie)}
@@ -361,16 +366,35 @@ export const layer = Layer.effect(
 
     /**
      * The engine refused the answer while its request stays open, and keeps
-     * that refusal for the answer's key: it is never sent again, and the card
-     * takes no other answer. The turn waits until it ends or is stopped.
+     * that refusal for the answer's key: it is never sent again. The card
+     * closes as `refused`, saying so, and takes no other answer; the turn
+     * waits until it ends or is stopped. The request is closed here, so its
+     * engine record closing later changes nothing.
      */
-    const rejected = (pending: typeof PendingResponse.Type) =>
-      Effect.logWarning(
-        "The engine refused an answer; it is not sent again, and its turn waits for a Stop",
-      ).pipe(
-        Effect.annotateLogs({ entryId: pending.entry_id }),
-        Effect.andThen(taken(pending.entry_id)),
+    const rejected = Effect.fn("Cards.rejected")(function* (
+      pending: typeof PendingResponse.Type,
+    ): Effect.fn.Return<Sent> {
+      yield* Effect.logWarning(
+        "The engine refused an answer; its card closes, and its turn waits for a Stop",
+      ).pipe(Effect.annotateLogs({ entryId: pending.entry_id }));
+      yield* transaction(
+        Effect.gen(function* () {
+          const now = timeText(yield* DateTime.now);
+          yield* sql`
+            UPDATE engine_requests SET closed_at = ${now}, response_sent_at = ${now},
+              response_retry_at = NULL
+            WHERE entry_id = ${pending.entry_id} AND closed_at IS NULL
+          `.pipe(Effect.orDie);
+          const found = yield* entries.find(pending.entry_id);
+          if (Option.isNone(found)) return;
+          const card = found.value.entry;
+          if (card._tag === "question" || card._tag === "approval") {
+            yield* entries.update({ ...card, status: { _tag: "refused" } });
+          }
+        }),
       );
+      return "done";
+    });
 
     /** The answer waits until `next` before it is sent again. */
     const later = Effect.fn("Cards.later")(function* (

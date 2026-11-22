@@ -283,7 +283,7 @@ it.effect("refuses a dismissal of an engine question, sending nothing, and takes
     const dismissed = yield* Effect.flip(
       cards.answer({ commandId: command(), entryId: card.id, answer: { _tag: "dismiss" } }),
     );
-    assert.deepStrictEqual(dismissed, new Invalid({ reason: "answer" }));
+    assert.deepStrictEqual(dismissed, new Invalid({ reason: "not-dismissible" }));
     yield* cards.respondPending;
     assert.deepStrictEqual(yield* control.rejectedAnswers(session), []);
     assert.deepStrictEqual(yield* control.responses(session), []);
@@ -305,7 +305,7 @@ it.effect("refuses a dismissal of an engine question, sending nothing, and takes
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
-it.effect("never sends again an answer the engine refused, and the turn still stops", () =>
+it.effect("closes a card whose answer the engine refused, never sends it again, and stops", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;
     const cards = yield* Cards;
@@ -328,25 +328,30 @@ it.effect("never sends again an answer the engine refused, and the turn still st
     });
     const card = yield* awaitEntry(bot.id, "approval");
 
+    const allow = (decision: "allow-once" | "deny") =>
+      cards.answer({
+        commandId: command(),
+        entryId: card.id,
+        answer: { _tag: "approval", decision },
+      });
     yield* control.rejectNextAnswer;
-    yield* cards.answer({
-      commandId: command(),
-      entryId: card.id,
-      answer: { _tag: "approval", decision: "allow-once" },
-    });
+    yield* allow("allow-once");
     yield* cards.respondPending;
+    // The card says the bot could not take it, and takes no other answer.
+    assert.deepStrictEqual((yield* awaitEntry(bot.id, "approval")).status, { _tag: "refused" });
+    const again = yield* Effect.flip(allow("deny"));
+    assert.strictEqual(again._tag === "Conflict" ? again.reason : again._tag, "card-closed");
     // Past the longest backoff of an answer whose reply was lost.
     yield* TestClock.adjust(Duration.minutes(11));
     yield* cards.respondPending;
     assert.deepStrictEqual(yield* control.rejectedAnswers(session), [requestId]);
     assert.deepStrictEqual(yield* control.responses(session), []);
 
+    // The turn still waits on the request, until a Stop ends it.
     yield* (yield* Stops).stopBot({ commandId: command(), botId: bot.id });
     yield* stopSettled;
     yield* turnEnded(bot.id);
-    yield* until(
-      awaitEntry(bot.id, "approval").pipe(Effect.map((found) => found.status._tag === "expired")),
-    );
+    assert.deepStrictEqual((yield* awaitEntry(bot.id, "approval")).status, { _tag: "refused" });
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

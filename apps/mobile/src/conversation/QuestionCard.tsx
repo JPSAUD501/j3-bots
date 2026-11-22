@@ -76,7 +76,9 @@ export function QuestionCard({ entry }: { readonly entry: QuestionEntry }) {
               ? t("question.answered")
               : status._tag === "dismissed"
                 ? t("question.dismissed")
-                : t("question.expired")}
+                : status._tag === "refused"
+                  ? t("question.refused")
+                  : t("question.expired")}
           </Text>
         </>
       ) : answersOnTap ? (
