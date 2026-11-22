@@ -3,11 +3,13 @@ import { needsOperator } from "@j3-bots/client-runtime";
 import { avatarAppearance } from "@j3-bots/client-runtime/presentation";
 import { activityTime, type LineTone, rosterLine } from "@j3-bots/client-runtime/wording";
 import type { RosterItem } from "@j3-bots/contracts";
-import { Pressable, Text, View } from "react-native";
+import { View } from "react-native";
+import { Text } from "../text.tsx";
 import { useI18n } from "../i18n.ts";
 import { useBots, usePresentation } from "../presentation.tsx";
 import { itemName } from "../screens/rosterItem.ts";
 import { BotAvatar, RoomAvatar } from "./Avatar.tsx";
+import { PressScale } from "../press.tsx";
 
 export const toneClass = {
   default: "text-muted-foreground",
@@ -45,14 +47,15 @@ export function RosterRow({
     (item._tag === "room" || avatarAppearance(item.bot.state, item.unread).badge !== "unread");
   const ground = selected ? "muted" : "background";
   return (
-    <Pressable
+    <PressScale
+      depth="row"
       accessibilityRole="button"
       accessibilityState={{ selected }}
       accessibilityLabel={[name, time, line.text, item.unread ? t("roster.unread") : null]
         .filter((part) => part !== null)
         .join(", ")}
       onPress={onOpen}
-      className={`h-(--layout-row-touch) flex-row items-center gap-3 px-4 active:bg-muted ${selected ? "bg-muted" : ""}`}
+      className={`mx-2 h-(--layout-row-touch) flex-row items-center gap-3 rounded-lg px-2 active:bg-muted ${selected ? "bg-muted" : ""}`}
     >
       {item._tag === "bot" ? (
         <BotAvatar
@@ -89,6 +92,6 @@ export function RosterRow({
           {unreadDot && <View className="size-2 rounded-pill bg-accent" />}
         </View>
       </View>
-    </Pressable>
+    </PressScale>
   );
 }

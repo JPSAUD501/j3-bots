@@ -2,11 +2,13 @@
 import { useNavigation, usePreventRemove } from "@react-navigation/native";
 import { Check } from "lucide-react-native";
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Alert, Pressable, Switch, Text, TextInput, View } from "react-native";
+import { Alert, Switch, View } from "react-native";
+import { Text, TextInput } from "../text.tsx";
 import { KeyboardAwareScrollView, KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useI18n } from "../i18n.ts";
 import { useColor } from "../theme.ts";
+import { PressScale } from "../press.tsx";
 import { Button } from "../ui.tsx";
 import { Icon } from "./Icon.tsx";
 
@@ -51,7 +53,8 @@ export function Problem(props: { readonly children: string | null }) {
   );
 }
 
-const fieldClass = "min-h-11 rounded-md border bg-surface px-3 text-base";
+/** Filled, with no outline until something is wrong with it: its label and its text say it is a field. */
+const fieldClass = "min-h-11 rounded-md border bg-muted px-3 text-base";
 
 /** A labelled text field, with a hint under it and, once something is wrong, why. */
 export function TextField(props: {
@@ -89,7 +92,7 @@ export function TextField(props: {
         autoCapitalize={props.autoCapitalize ?? "sentences"}
         autoCorrect={props.multiline === true}
         textAlignVertical={props.multiline === true ? "top" : "center"}
-        className={`${fieldClass} ${error === null ? "border-input" : "border-blocked"} ${props.readOnly === true ? "text-muted-foreground" : "text-foreground"} ${props.multiline === true ? "min-h-28 py-2" : ""}`}
+        className={`${fieldClass} ${error === null ? "border-transparent" : "border-blocked"} ${props.readOnly === true ? "text-muted-foreground" : "text-foreground"} ${props.multiline === true ? "min-h-28 py-2" : ""}`}
       />
       {props.hint !== undefined && (
         <Text className="text-xs text-muted-foreground">{props.hint}</Text>
@@ -116,7 +119,8 @@ export function ChoiceRow(props: {
 }) {
   const unavailable = props.unavailable === true;
   return (
-    <Pressable
+    <PressScale
+      depth="row"
       accessibilityRole={props.kind === "one" ? "radio" : "checkbox"}
       accessibilityState={
         props.kind === "one"
@@ -152,7 +156,7 @@ export function ChoiceRow(props: {
           <Text className="text-xs text-muted-foreground">{props.description}</Text>
         )}
       </View>
-    </Pressable>
+    </PressScale>
   );
 }
 
@@ -165,7 +169,7 @@ export function SwitchRow(props: {
   /** Shows the value it holds and takes no change, as while a save is under way. */
   readonly readOnly?: boolean;
 }) {
-  const on = useColor("accent-accent");
+  const on = useColor("accent-success");
   const off = useColor("accent-control-off");
   const thumb = useColor("accent-control-thumb");
   return (

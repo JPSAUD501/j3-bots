@@ -41,7 +41,8 @@ import type {
 } from "@legendapp/list/react-native";
 import { useIsFocused, useNavigation } from "@react-navigation/native";
 import { type ComponentRef, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { AppState, Text, View } from "react-native";
+import { AppState, View } from "react-native";
+import { Text } from "../text.tsx";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BotAvatar } from "../components/Avatar.tsx";

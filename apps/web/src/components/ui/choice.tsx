@@ -4,7 +4,7 @@ import { cn } from "../../lib/cn";
 
 /** A bordered row the operator picks, holding a `ChoiceIndicator` and its text. */
 export const choiceRow =
-  "flex min-h-9 w-full items-start gap-2.5 rounded-md border border-input px-3 py-2 text-start text-sm transition-colors duration-(--duration-fast) focus-visible:outline-2 focus-visible:outline-accent aria-disabled:cursor-default data-readonly:cursor-default pointer-coarse:min-h-11";
+  "pressable pressable-row flex min-h-9 w-full items-start gap-2.5 rounded-md border border-input px-3 py-2 text-start text-sm focus-visible:outline-2 focus-visible:outline-accent aria-disabled:cursor-default data-readonly:cursor-default pointer-coarse:min-h-11";
 
 /**
  * The drawn box or circle of a choice. The row carries the checked state, as

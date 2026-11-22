@@ -12,6 +12,7 @@ import {
   type LinearRgb,
   type Vision,
 } from "./color.ts";
+import { renderFontManifest } from "./fontManifest.ts";
 import { botPalette, colors, type ColorRole } from "./tokens.ts";
 import { renderUniwindCss } from "./uniwind.ts";
 import { renderWebCss } from "./web.ts";
@@ -21,6 +22,7 @@ const modes = ["light", "dark"] as const;
 describe.each([
   ["web.css", renderWebCss],
   ["uniwind.css", renderUniwindCss],
+  ["fonts.json", renderFontManifest],
 ])("generated %s", (file, render) => {
   it("is regenerated after every token change", () => {
     const committed = NodeFS.readFileSync(new URL(`../generated/${file}`, import.meta.url), "utf8");
@@ -42,15 +44,19 @@ describe.each(modes)("%s theme contrast", (mode) => {
     ["foreground", "surface"],
     ["foreground", "sidebar"],
     ["foreground", "muted"],
+    ["foreground", "muted-strong"],
     ["muted-foreground", "background"],
     ["muted-foreground", "surface"],
     ["muted-foreground", "sidebar"],
     ["muted-foreground", "muted"],
+    ["muted-foreground", "muted-strong"],
     ["muted-foreground", "bubble-bot"],
     ["bubble-operator-foreground", "bubble-operator"],
     ["bubble-bot-foreground", "bubble-bot"],
     ["accent", "background"],
     ["accent", "surface"],
+    ["accent", "sidebar"],
+    ["accent", "muted"],
     ["accent-foreground", "accent"],
     ["waiting", "background"],
     ["waiting", "sidebar"],

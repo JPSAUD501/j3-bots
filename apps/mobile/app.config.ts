@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @effect-diagnostics nodeBuiltinImport:off -- Expo reads this config in its Node process, outside any Effect program.
 import * as NodePath from "node:path";
+import fontFaces from "@j3-bots/design-tokens/fonts.json";
 import nativeColors from "@j3-bots/design-tokens/icons/colors.json";
 import type { ConfigContext, ExpoConfig } from "expo/config";
 import packageJson from "./package.json";
@@ -35,6 +36,28 @@ const CAMERA_USE = "J3 Bots uses the camera to read the QR code that pairs this 
  */
 const iconIn = (projectRoot: string) => (name: string) =>
   NodePath.relative(projectRoot, require.resolve(`@j3-bots/design-tokens/icons/${name}`));
+
+/**
+ * The bundled faces (packages/design-tokens/fonts), embedded at build time.
+ * Android takes each family with its weights, so a `fontWeight` picks the
+ * file; iOS reads the family from each file.
+ */
+const fontsIn = (projectRoot: string) => {
+  const path = (file: string) =>
+    NodePath.relative(projectRoot, require.resolve(`@j3-bots/design-tokens/fonts/${file}.ttf`));
+  const families = [...new Set(fontFaces.map((face) => face.family))];
+  return {
+    android: {
+      fonts: families.map((fontFamily) => ({
+        fontFamily,
+        fontDefinitions: fontFaces
+          .filter((face) => face.family === fontFamily)
+          .map((face) => ({ path: path(face.file), weight: face.weight })),
+      })),
+    },
+    ios: { fonts: fontFaces.map((face) => path(face.file)) },
+  };
+};
 
 /**
  * The canvas the app opens on, in each theme: its first screen, and what
@@ -125,6 +148,7 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
     // No over-the-air updates: a build runs the JavaScript it was built with.
     updates: { enabled: false },
     plugins: [
+      ["expo-font", fontsIn(projectRoot)],
       // The splash screen on the canvas of the theme the system is in, with
       // the ensemble in that theme's colors. It stays until the first screen
       // has drawn in the operator's theme (index.ts).

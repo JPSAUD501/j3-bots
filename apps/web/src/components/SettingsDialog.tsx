@@ -56,6 +56,8 @@ import { UsageSection } from "./UsageSection";
 import { Button } from "./ui/button";
 import { Confirm } from "./ui/confirm";
 import { Switch } from "./ui/switch";
+import { dialogBackdrop, screenDialog } from "./ui/dialog";
+import { lineField } from "./ui/field";
 
 type SettingsIntents = Pick<
   ShellIntents,
@@ -123,13 +125,13 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
           {t("settings.title")}
         </Dialog.Trigger>
         <Dialog.Portal>
-          <Dialog.Backdrop className="fixed inset-0 z-40 bg-scrim transition-opacity duration-(--duration-slow) data-ending-style:opacity-0 data-starting-style:opacity-0" />
+          <Dialog.Backdrop className={dialogBackdrop} />
           <Dialog.Popup
             aria-labelledby={titleId}
-            className="fixed inset-0 z-40 flex flex-col bg-background pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] text-foreground outline-none transition-opacity duration-(--duration-slow) data-ending-style:opacity-0 data-starting-style:opacity-0 tablet:inset-x-4 tablet:top-12 tablet:bottom-12 tablet:mx-auto tablet:max-w-lg tablet:rounded-lg tablet:border tablet:border-border tablet:shadow-xl"
+            className={`${screenDialog} tablet:top-12 tablet:bottom-12 tablet:max-w-lg`}
           >
             <header className="flex h-14 shrink-0 items-center border-b border-border ps-4 pe-2">
-              <Dialog.Title id={titleId} className="text-sm font-medium">
+              <Dialog.Title id={titleId} className="display-type text-lg">
                 {t("settings.title")}
               </Dialog.Title>
               <Dialog.Close
@@ -189,9 +191,6 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
     </div>
   );
 }
-
-const fieldClass =
-  "h-9 w-full rounded-md border border-input bg-surface px-3 text-sm placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:h-11";
 
 /**
  * Whether the engine runs, and if not, why and what to do; then each provider.
@@ -300,7 +299,7 @@ function YouForm({ settings, save, profile, connected, onSave }: YouFormProps) {
           placeholder={t("settings.name.placeholder")}
           readOnly={form.saving}
           onChange={(event) => form.editName(event.currentTarget.value)}
-          className={fieldClass}
+          className={lineField}
         />
       </div>
       <div className="flex flex-col gap-1">
@@ -312,7 +311,7 @@ function YouForm({ settings, save, profile, connected, onSave }: YouFormProps) {
           value={form.zone}
           aria-readonly={form.saving}
           onChange={(event) => form.editZone(event.currentTarget.value)}
-          className={fieldClass}
+          className={lineField}
         >
           {timeZones(form.zone).map((value) => (
             <option key={value} value={value}>
@@ -663,7 +662,7 @@ function PairingCodeShown({ offer }: { offer: PairingOffer }) {
                   );
                   if (chosen !== undefined) setPicked(chosen);
                 }}
-                className={fieldClass}
+                className={lineField}
               >
                 {offer.origins.map((origin) => (
                   <option key={origin} value={origin}>
@@ -789,7 +788,7 @@ function BrowserSection({
             const picked = appearances.find((a) => a.value === event.currentTarget.value);
             if (picked) setAppearance(picked.value);
           }}
-          className={fieldClass}
+          className={lineField}
         >
           {appearances.map(({ value, label }) => (
             <option key={value} value={value}>
@@ -809,7 +808,7 @@ function BrowserSection({
             const picked = languages.find((l) => l.value === event.currentTarget.value);
             if (picked) setLanguage(picked.value);
           }}
-          className={fieldClass}
+          className={lineField}
         >
           {languages.map(({ value, label }) => (
             <option key={value} value={value}>

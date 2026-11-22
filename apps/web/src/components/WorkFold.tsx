@@ -85,7 +85,7 @@ export function WorkFold({ entry, steps, onOpenChange, defaultOpen = false }: Wo
           <span className="text-muted-foreground">· {plural("work.steps", entry.stepCount)}</span>
         )}
       </Collapsible.Trigger>
-      <Collapsible.Panel className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-(--duration-slow) ease-standard data-ending-style:h-0 data-starting-style:h-0">
+      <Collapsible.Panel className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-(--duration-slow) ease-out data-ending-style:h-0 data-starting-style:h-0">
         {steps === null ? (
           <p className="py-2 ps-5 text-xs text-muted-foreground">{t("work.loading")}</p>
         ) : (

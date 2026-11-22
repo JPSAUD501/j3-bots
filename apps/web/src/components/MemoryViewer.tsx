@@ -8,6 +8,9 @@ import { memoryEditProblemText } from "@j3-bots/client-runtime/wording";
 import { useI18n } from "../app/context";
 import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
 import { Button } from "./ui/button";
+import { dialogBackdrop, screenDialog } from "./ui/dialog";
+import { cn } from "../lib/cn";
+import { textField } from "./ui/field";
 
 /** The props of the file's view, whatever frames it: the dialog in the app, a pane in the gallery. */
 export interface MemoryFileProps {
@@ -86,7 +89,7 @@ export function MemoryFile({
       }}
     >
       <header className="flex h-14 shrink-0 items-center gap-1 border-b border-border ps-4 pe-2">
-        <h2 id={titleId} className="truncate text-sm font-medium">
+        <h2 id={titleId} className="display-type truncate text-lg">
           {title}
         </h2>
         {document !== null && text === undefined && (
@@ -114,7 +117,7 @@ export function MemoryFile({
             aria-invalid={edit.tooLong || undefined}
             aria-describedby={edit.tooLong ? alertId : undefined}
             onChange={(event) => edit.changeText(event.currentTarget.value)}
-            className={`${pre} min-h-0 flex-1 resize-none rounded-md border border-input bg-surface p-3 focus-visible:outline-2 focus-visible:outline-accent read-only:text-muted-foreground`}
+            className={cn(textField, pre, "min-h-0 flex-1 resize-none p-3")}
           />
         ) : reading._tag === "reading" ? (
           <p className="text-xs text-muted-foreground">{t("details.loading")}</p>
@@ -206,10 +209,10 @@ export function MemoryViewer({
       }}
     >
       <Dialog.Portal>
-        <Dialog.Backdrop className="fixed inset-0 z-40 bg-scrim transition-opacity duration-(--duration-slow) data-ending-style:opacity-0 data-starting-style:opacity-0" />
+        <Dialog.Backdrop className={dialogBackdrop} />
         <Dialog.Popup
           aria-labelledby={titleId}
-          className="fixed inset-0 z-40 flex flex-col bg-background pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] text-foreground outline-none transition-opacity duration-(--duration-slow) data-ending-style:opacity-0 data-starting-style:opacity-0 tablet:inset-x-4 tablet:top-12 tablet:bottom-12 tablet:mx-auto tablet:max-w-2xl tablet:rounded-lg tablet:border tablet:border-border tablet:shadow-xl"
+          className={`${screenDialog} tablet:top-12 tablet:bottom-12 tablet:max-w-2xl`}
         >
           {/* Mounted afresh with each opening, so it starts from the file as read. */}
           {held !== null && (

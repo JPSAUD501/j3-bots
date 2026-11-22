@@ -26,7 +26,8 @@ import {
   Webhook,
 } from "lucide-react-native";
 import { type ReactElement, useMemo } from "react";
-import { Pressable, ScrollView, Switch, Text, useWindowDimensions, View } from "react-native";
+import { Pressable, ScrollView, Switch, useWindowDimensions, View } from "react-native";
+import { Text } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BotAvatar } from "../components/Avatar.tsx";
 import { confirm, DeleteButton, Quiet, Section } from "../components/form.tsx";
@@ -234,7 +235,7 @@ function RoutineRow({
         <Text numberOfLines={1} className="text-base text-foreground">
           {routine.name}
         </Text>
-        <Text className={`text-sm text-muted-foreground ${lines.expression ? "font-mono" : ""}`}>
+        <Text face={lines.expression ? "mono" : "text"} className="text-sm text-muted-foreground">
           {lines.schedule}
         </Text>
         {lines.status !== null && (

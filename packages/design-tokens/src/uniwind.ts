@@ -24,8 +24,9 @@ const px = (value: number) => `${value}px`;
  * whole.
  *
  * Tailwind's default palette, type scale, radii and font families are removed.
- * The fonts are left to the app: React Native takes one family name, which
- * differs by platform.
+ * The fonts are left to the app, which embeds the bundled faces at build time
+ * and sets them with its own `Text` (`apps/mobile/src/text.tsx`): React Native
+ * has no inherited font, and takes one family name rather than a list.
  * Removing the palette also drops the names Uniwind registers for the theme's
  * variables, so the color names are registered again after it, the way Uniwind
  * does, and the file works wherever it is imported relative to Uniwind's own.

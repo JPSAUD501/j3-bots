@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { useConnection, useJ3Client } from "@j3-bots/client-runtime/react";
-import { Text, View } from "react-native";
+import { View } from "react-native";
+import { Text } from "../text.tsx";
 import { useI18n } from "../i18n.ts";
 import { ChangeServer } from "../Leave.tsx";
 import { Button, Centered, Title } from "../ui.tsx";

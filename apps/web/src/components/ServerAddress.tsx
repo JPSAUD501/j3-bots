@@ -6,9 +6,7 @@ import { cn } from "../lib/cn";
 import { Centered, Ensemble, Heading } from "./EmptyStates";
 import { Button } from "./ui/button";
 import { Confirm } from "./ui/confirm";
-
-const fieldClass =
-  "h-10 w-full rounded-md border border-input bg-surface px-3 text-sm placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:h-11";
+import { lineField } from "./ui/field";
 
 interface ServerAddressProps {
   /** Resolves with the app's answer; once connected, the page loads again on that server. */
@@ -109,7 +107,7 @@ export function ServerAddress({
             placeholder="192.168.1.20:3737"
             aria-invalid={state._tag === "failed"}
             aria-describedby={state._tag === "failed" ? errorId : undefined}
-            className={`${fieldClass} font-mono`}
+            className={`${lineField} font-mono`}
           />
         </div>
         <Button type="submit" variant="primary" aria-disabled={!ready}>

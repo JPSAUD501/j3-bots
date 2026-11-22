@@ -14,7 +14,8 @@ import * as Schema from "effect/Schema";
 import { generate } from "lean-qr";
 import { toSvgPath } from "lean-qr/extras/svg";
 import { useMemo, useState } from "react";
-import { Text, View } from "react-native";
+import { View } from "react-native";
+import { Text } from "../text.tsx";
 import Svg, { Path, Rect } from "react-native-svg";
 import { ChoiceRow, confirm, Problem, Quiet, Section } from "../components/form.tsx";
 import { usePresentation } from "../presentation.tsx";
@@ -179,7 +180,7 @@ function PairingCodeShown({ offer }: { readonly offer: PairingOffer }) {
         />
       )}
       <View className="gap-1">
-        <Text selectable className="font-mono text-lg tracking-wider text-foreground">
+        <Text selectable face="mono" className="text-lg tracking-wider text-foreground">
           {shownCode(offer.code)}
         </Text>
         <Text className="text-xs text-muted-foreground">

@@ -3,7 +3,8 @@ import { useJ3Client, useReadable } from "@j3-bots/client-runtime/react";
 import { LANGUAGES } from "@j3-bots/contracts";
 import { LANGUAGE_NAMES } from "@j3-bots/i18n";
 import { useState } from "react";
-import { Text, View } from "react-native";
+import { View } from "react-native";
+import { Text } from "../text.tsx";
 import { ChoiceRow, confirm, Problem, Quiet, Section } from "../components/form.tsx";
 import { useI18n } from "../i18n.ts";
 import { ChangeServer } from "../Leave.tsx";
@@ -25,7 +26,7 @@ export function ServerSection() {
   if (state._tag !== "open") return null;
   return (
     <Section title={t("settings.server")}>
-      <Text selectable className="font-mono text-sm text-foreground">
+      <Text selectable face="mono" className="text-sm text-foreground">
         {state.origin.origin}
       </Text>
       <View className="items-start">

@@ -4,6 +4,7 @@ import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
+import { lineField } from "./ui/field";
 
 interface NewBotFormProps {
   /** Whether "primary" starts checked: the first bot is the primary one unless the operator says otherwise. */
@@ -68,7 +69,7 @@ export function NewBotForm({
         maxLength={40}
         onChange={(event) => setName(event.currentTarget.value)}
         placeholder={t("firstRun.create.placeholder")}
-        className="h-9 rounded-md border border-input bg-surface px-3 text-sm placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:h-11"
+        className={lineField}
       />
       <label className="flex items-start gap-2 text-xs text-muted-foreground">
         <span className="mt-px">

@@ -4,7 +4,8 @@ import { clockTime } from "@j3-bots/client-runtime/presentation";
 import * as DateTime from "effect/DateTime";
 import * as Device from "expo-device";
 import { useState } from "react";
-import { KeyboardAvoidingView, Platform, ScrollView, Text, TextInput, View } from "react-native";
+import { KeyboardAvoidingView, Platform, ScrollView, View } from "react-native";
+import { Text, TextInput } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { PairingScanner } from "../components/PairingScanner.tsx";
 import { useI18n } from "../i18n.ts";
@@ -24,8 +25,7 @@ type FormState =
 /** The name the operator sees for this phone in their list of devices, until they change it. */
 const defaultDeviceName = () => Device.deviceName ?? Device.modelName ?? "";
 
-const fieldClass =
-  "min-h-11 rounded-md border border-input bg-surface px-3 text-base text-foreground";
+const fieldClass = "min-h-11 rounded-md border bg-muted px-3 text-base text-foreground";
 
 function Field(props: {
   readonly label: string;
@@ -50,7 +50,8 @@ function Field(props: {
         keyboardType={props.kind === "address" ? "url" : "default"}
         textContentType={props.kind === "code" ? "oneTimeCode" : "none"}
         maxLength={props.kind === "address" ? 2048 : props.kind === "code" ? 24 : 200}
-        className={props.kind === "code" ? `${fieldClass} font-mono tracking-widest` : fieldClass}
+        face={props.kind === "code" ? "mono" : "text"}
+        className={`${fieldClass} ${props.invalid ? "border-blocked" : "border-transparent"} ${props.kind === "code" ? "tracking-widest" : ""}`}
       />
     </View>
   );
@@ -132,7 +133,7 @@ export function PairingScreen(props: {
           <Body>
             {parts("pairing.body", {
               command: (
-                <Text key="command" className="font-mono text-foreground">
+                <Text key="command" face="mono" className="text-foreground">
                   j3-bots pair
                 </Text>
               ),

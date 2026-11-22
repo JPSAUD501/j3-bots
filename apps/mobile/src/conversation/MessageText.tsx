@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { type Inline, parseMessageText } from "@j3-bots/client-runtime/presentation";
-import { Linking, Platform, Text, View } from "react-native";
-
-export const monospace = Platform.select({ ios: "Menlo", default: "monospace" });
+import { Linking, View } from "react-native";
+import { Text } from "../text.tsx";
 
 /**
  * Message text with paragraphs, code and links, in the bubble's own text
@@ -24,7 +23,7 @@ export function MessageText({
           // Blocks have no identity besides their order, which never changes for a given text.
           // oxlint-disable-next-line react/no-array-index-key -- see above
           <View key={i} className="rounded-md bg-code-background px-2.5 py-2">
-            <Text selectable className={`text-xs ${className}`} style={{ fontFamily: monospace }}>
+            <Text selectable className={`text-xs ${className}`} face="mono">
               {block.text}
             </Text>
           </View>
@@ -48,7 +47,7 @@ function InlinePart({ inline }: { readonly inline: Inline }) {
       return inline.text;
     case "code":
       return (
-        <Text className="bg-code-background" style={{ fontFamily: monospace }}>
+        <Text className="bg-code-background" face="mono">
           {inline.text}
         </Text>
       );

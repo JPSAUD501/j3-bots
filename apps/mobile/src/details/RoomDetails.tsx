@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Room } from "@j3-bots/contracts";
 import { useNavigation } from "@react-navigation/native";
-import { ScrollView, Text, View } from "react-native";
+import { ScrollView, View } from "react-native";
+import { Text } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BotAvatar } from "../components/Avatar.tsx";
 import { DeleteButton, PendingButton, Quiet, Section } from "../components/form.tsx";

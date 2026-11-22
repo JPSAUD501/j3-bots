@@ -1,14 +1,8 @@
 # Design language
 
-**Status:** final in both themes on the web, the Linux desktop app and Android. The values below are the ones in [`packages/design-tokens`](../../packages/design-tokens/src/tokens.ts), and the contrast and distinguishability figures are checked by its tests. The web client's development build has a gallery at `/gallery` that shows every component in every state, in both themes; it is the place to review the design, and it is not part of a production build.
+**Status:** the chrome is the Pips direction ([decision 0018](../decisions/0018-the-interface-follows-pips.md)) on the web, the desktop app, which draws the web build, and Android. The avatars, the bot palette, the conversation and the first run are being rebuilt for it, each by its own change; until then they keep their earlier form, and [Avatars](#avatars) and [Bot palette](#bot-palette) say what holds now. The values below are the ones in [`packages/design-tokens`](../../packages/design-tokens/src/tokens.ts), and the contrast figures are checked by its tests. The web client's development build has a gallery at `/gallery` that shows every component in every state, in both themes, with the springs to replay; it is the place to review the design, and it is not part of a production build.
 
-Each surface was checked in light and dark, and with a chosen appearance that differs from the system's:
-
-- **Web**, in Chromium at 1280 and 390 px, against a server with the scripted agent: the gallery, pairing, the first run, a conversation, a bot's details and Settings. A scan of every drawn line of text found none below the contrast in [Accessibility](#accessibility) apart from disabled controls, which those rules exempt, every focusable control showed the accent ring on itself or on the field around it, and no surface took the other theme's colors.
-- **Desktop**, the Linux development build under Xvfb with GTK's Adwaita and Adwaita dark: with each of the three choices kept, the window's first frame was the canvas of the theme it opened in, the page painted in that theme, and the theme the app draws its tray and notification icons in stayed the system's. The deb installs the app's icons.
-- **Android**, a release build on a Pixel 8 emulator (Android 16): the splash, pairing, the first run, the roster, a conversation, a bot's details and its editor, the New alert and Settings. From a cold start the splash, the system bars and the first frame are in the chosen theme, with no frame of the other.
-
-Not checked: iOS and iPadOS, where nothing has run; macOS and Windows; a desktop title bar, which Xvfb does not draw; the Linux packages' icons in a desktop's launcher; Android before 12, where the splash follows the system's theme rather than the chosen one; and foldables. On Android, a system alert opened after the system's theme changed while the app was open keeps the theme the app opened in until it starts again; choosing an appearance in Settings does not have this.
+The chrome was checked on the web in Chromium, in light and dark, with the sample team: at 1280 px in the gallery and the app, at 390 px in the app, and in English and Brazilian Portuguese, with no console errors; and on Android, in a debug build on a Pixel 8 emulator, on the pairing screen in light and dark, with the bundled faces drawn. Not checked: iOS and iPadOS, where nothing has run, and where each face's family name is read from its file; macOS and Windows; and foldables.
 
 ## Two references, one product
 
@@ -32,9 +26,10 @@ J3 Bots' interface is a deliberate mix of two existing designs. Both are describ
 - A command palette that reaches every action, and a shortcut for everything.
 - Semantic color tokens as CSS variables with a light and a dark value each.
 - Components in a `ui` layer own their look; callers choose a variant.
-- No animation that repaints continuously.
 
-**The synthesis.** J3 Bots looks like a messaging app and behaves like a professional tool. Messaging gives the structure: roster, bubbles, presence. The developer tool gives the manner: density, restraint, keyboard reach, and work that is always inspectable but never in the way.
+**The synthesis.** J3 Bots looks like a messaging app and behaves like a professional tool. Messaging gives the structure: roster, bubbles, presence. The developer tool gives the manner: density, keyboard reach, and work that is always inspectable but never in the way.
+
+**Pips.** The bots are where the life is: small characters that look at the operator and show what they are doing with their bodies, on chrome that stays quiet, near-monochrome and precise. Motion is quick and springy, and it serves the bots and the operator's hands, never decoration ([decision 0018](../decisions/0018-the-interface-follows-pips.md)).
 
 ## Principles
 
@@ -42,7 +37,7 @@ J3 Bots' interface is a deliberate mix of two existing designs. Both are describ
 2. **One line of truth.** Each roster row carries one line: what the bot last said, or what it is doing now, or what it needs. The row that needs the operator is visibly different from the rest.
 3. **Work is available, not present.** The steps of a turn are one tap away and never open by themselves.
 4. **Color means someone or something.** A color on screen is a bot's identity or a state (waiting, blocked, error). Decoration does not use color.
-5. **Quiet motion.** Motion marks a change of state and then stops. Nothing loops at full frame rate.
+5. **Lively bots, quiet chrome.** The bots move; the chrome around them answers the operator's hand and then keeps still. Nothing moves that reduced motion would not stop.
 6. **Same words everywhere.** A bot, a room, a routine, a card: the same nouns on every surface and in every prompt.
 
 ## Layout
@@ -79,96 +74,61 @@ Three regions, the same on every surface.
 
 ## Color
 
-Neutrals carry the interface. One accent marks focus and links. Semantic colors mark state. A separate palette belongs to bots.
+Near-monochrome neutrals carry the interface, on a true-black dark canvas. The focus ring, links, unread and the primary action are the text color, so the chrome adds no hue of its own. Semantic colors mark state. A separate palette belongs to bots.
 
 ### Interface tokens
 
 | Token | Light | Dark | Use |
 | --- | --- | --- | --- |
-| `background` | `#fcfcfc` | `#000000` | The canvas |
-| `surface` | `#ffffff` | `#0e0e0f` | Cards, popovers, the composer |
-| `sidebar` | `#f5f5f5` | `#070707` | The roster |
-| `muted` | `#ebebed` | `#18181a` | Hover and selection fills, quiet controls |
-| `border` | `#e4e4e7` | white at 9% | Hairlines |
-| `input` | `#d4d4d8` | white at 14% | Borders of fields and outline buttons |
-| `foreground` | `#18181b` | `#f4f4f5` | Text |
-| `muted-foreground` | `#67676f` | `#a1a1aa` | Metadata, secondary text |
-| `bubble-operator` | `#18181b`, text `#fafafa` | `#f4f4f5`, text `#09090b` | The operator's bubbles |
-| `bubble-bot` | `#f0f0f2`, text `#18181b` | `#18181b`, text `#f4f4f5` | Bots' bubbles |
-| `code-background` | black at 6% | white at 8% | Inline code and code blocks, over any fill |
-| `accent` | `oklch(0.49 0.22 264)` | `oklch(0.72 0.15 264)` | Focus rings, links, unread |
+| `background` | `#ffffff` | `#000000` | The canvas |
+| `surface` | `#ffffff` | `#101012` | Cards, popovers, dialogs, sheets, the composer |
+| `sidebar` | `#f6f6f7` | `#09090a` | The roster |
+| `muted` | `#f0f0f2` | `#19191c` | Fields, quiet filled buttons, the hover and selection fill of a row |
+| `muted-strong` | `#e5e5e9` | `#242428` | The hover fill of something already `muted` |
+| `border` | `#e8e8ec` | white at 9% | Hairlines |
+| `input` | `#d4d4da` | white at 15% | Borders of outline buttons and choice rows |
+| `foreground` | `#101012` | `#f5f5f6` | Text |
+| `muted-foreground` | `#5f5f69` | `#a3a3ad` | Metadata, secondary text, placeholders |
+| `bubble-operator` | `#101012`, text `#ffffff` | `#2a2a30`, text `#f5f5f6` | The operator's bubbles |
+| `bubble-bot` | `#f0f0f2`, text `#101012` | `#19191c`, text `#f5f5f6` | Bots' bubbles |
+| `code-background` | black at 5.5% | white at 7% | Inline code and code blocks, over any fill |
+| `accent` | `#101012`, text `#ffffff` | `#f5f5f6`, text `#0a0a0b` | Focus rings, links, unread, the primary action |
 | `waiting` | `oklch(0.52 0.12 65)` | `oklch(0.82 0.15 80)` | A bot needs the operator |
 | `waiting-surface` | `oklch(0.975 0.03 85)` | `oklch(0.21 0.045 70)` | Header of a card awaiting the operator |
 | `blocked` | `oklch(0.53 0.2 27)` | `oklch(0.71 0.17 25)` | A turn cannot continue; destructive actions |
 | `blocked-surface` | `oklch(0.975 0.015 20)` | `oklch(0.2 0.05 25)` | |
-| `success` | `oklch(0.52 0.12 160)` | `oklch(0.78 0.14 160)` | A routine that is on |
+| `success` | `oklch(0.52 0.12 160)` | `oklch(0.78 0.14 160)` | A switch that is on; a routine that is on |
 | `control-off` | `#82828a` | `#6b6b73` | A switch that is off; the boundary of an empty checkbox or radio |
-| `control-thumb` | `#ffffff` | `#f4f4f5` | The thumb of a switch the system draws, as on Android, where it reaches past the track over the page |
-| `avatar-ink` | `#ffffff` | `#0b0b0c` | The mark inside an avatar |
-| `scrim` | black at 32% | black at 60% | Behind a pane or sheet that lies over content |
+| `control-thumb` | `#ffffff` | `#f5f5f6` | A switch's thumb, light in both themes |
+| `avatar-ink` | `#ffffff` | `#0b0b0c` | The mark inside an avatar, until the avatars change |
+| `scrim` | black at 30% | black at 62% | Behind a dialog or sheet that lies over content |
 
-Destructive actions use `blocked`: there is no separate destructive red. Every text color reaches 4.5:1 on the fills it is used on, code reaches 4.5:1 inside both bubbles, and `waiting`, `blocked`, `success`, `accent` and `control-off` reach 3:1 on every canvas and on `muted`. Text is never drawn with a text token at reduced opacity, since that would put it below the measured contrast; the one exception is a disabled control (see [Accessibility](#accessibility)).
+Elevation is for what lies over other content. `raised` is a faint shadow under a card in light and none in dark; `overlay`, under popovers, menus, dialogs and sheets, is a soft drop shadow in light and, since no shadow shows on black, a darker one with a hairline of white at 7% in dark.
+
+Destructive actions use `blocked`: there is no separate destructive red. Text is never drawn with a text token at reduced opacity, since that would put it below the measured contrast; the one exception is a disabled control (see [Accessibility](#accessibility)).
+
+**Contrast, as measured** (WCAG 2.2, translucent colors composited over what they lie on; the tests fail below the targets):
+
+| Pair | Target | Light, lowest | Dark, lowest |
+| --- | --- | --- | --- |
+| `foreground` and `muted-foreground` on `background`, `surface`, `sidebar`, `muted` and `muted-strong` | 4.5 | 5.02 (`muted-foreground` on `muted-strong`) | 6.19 (the same) |
+| `waiting`, `blocked` and `success` as text on the canvases and `muted` | 4.5 | 4.54 (`success` on `muted`) | 6.32 (`blocked` on `muted`) |
+| `waiting` on `waiting-surface`, `blocked` on `blocked-surface` | 4.5 | 5.28 | 6.60 |
+| Text in both bubbles, and code inside them | 4.5 | 16.70 | 13.09 |
+| `accent-foreground` on `accent` | 4.5 | 19.01 | 18.16 |
+| `accent` (focus rings), state marks and `control-off` on the canvases and `muted` | 3 | 3.35 (`control-off` on `muted`) | 3.32 (the same) |
+| `border` on the canvases and `muted` | none | 1.07 | 2.49 |
+| `input` on the canvases and `muted` | none | 1.30 | 3.48 |
+
+Hairlines and the outlines of outline buttons have no target: they separate, and what they hold says what it is. A text field has no outline at all until it has focus: it is filled with `muted`, and its label and its placeholder or value, both at the text contrast, say it is a field; with focus it takes the `accent` ring, at 3:1 or more.
 
 ### Bot palette
 
-Each bot has one color, chosen by the operator from ten: red, orange, yellow, green, teal, blue, indigo, violet, pink and gray. Each has a light and a dark value.
-
-A bot created without an avatar gets one from the server, which chooses from these same tokens (`avatarShapeNames` and `botHues` in `packages/design-tokens`): the first of the shape and color pairs fewest bots use, walking the ten shapes and the nine hues in step. Ten and nine share no factor, so the walk meets all ninety pairs before any repeats, and bots created one after another differ in both color and shape: the first nine bots have nine shapes and nine colors. The server never chooses gray, which is also what a client draws for a color it does not know. The operator, or a bot asked to change its avatar, can choose only these names: the server refuses any other.
-
-Ten hues cannot all have the same lightness and still be told apart by someone with a color vision deficiency: protanopia and deuteranopia collapse red, orange, yellow and green onto one axis. The palette therefore varies lightness on purpose and gives up equal perceived weight. What it guarantees instead, and what the tests check:
-
-- every fill reaches 3:1 against `background`, `surface`, `sidebar` and `muted`, and against `avatar-ink`, so both the avatar's silhouette and its inner mark are legible (measured minimum 3.05 in light, 3.06 in dark);
-- every pair of fills stays at least 0.085 apart in OKLab for typical vision and for protanopia, deuteranopia and tritanopia, simulated after Machado, Oliveira and Fernandes (2009) at full severity (measured minimum 0.088 in light and 0.115 in dark).
-
-| Color | Light | Dark |
-| --- | --- | --- |
-| red | `oklch(0.441 0.179 29)` | `oklch(0.555 0.193 33)` |
-| orange | `oklch(0.535 0.11 72)` | `oklch(0.682 0.132 57)` |
-| yellow | `oklch(0.621 0.125 86)` | `oklch(0.79 0.162 94)` |
-| green | `oklch(0.401 0.091 159)` | `oklch(0.812 0.104 149)` |
-| teal | `oklch(0.61 0.102 206)` | `oklch(0.708 0.093 189)` |
-| blue | `oklch(0.516 0.124 243)` | `oklch(0.596 0.217 271)` |
-| indigo | `oklch(0.322 0.193 281)` | `oklch(0.72 0.151 295)` |
-| violet | `oklch(0.622 0.183 295)` | `oklch(0.523 0.148 298)` |
-| pink | `oklch(0.451 0.136 336)` | `oklch(0.584 0.094 349)` |
-| gray | `oklch(0.532 0 0)` | `oklch(0.93 0 0)` |
-
-Color is never the only thing that tells two bots apart: the shape does too.
+The Avatar change ([decision 0018](../decisions/0018-the-interface-follows-pips.md)) replaces this section with Pips' twelve colors and their measured contrast. Until it lands, each bot keeps one of the ten earlier colors (red, orange, yellow, green, teal, blue, indigo, violet, pink and gray), named in [`names.ts`](../../packages/design-tokens/src/names.ts) and valued by `botPalette` in [`tokens.ts`](../../packages/design-tokens/src/tokens.ts), whose tests check that every fill reaches 3:1 against the canvases and `avatar-ink` and that every pair stays apart for typical vision and the three dichromacies.
 
 ## Avatars
 
-The avatar is the most important element on screen: it is how the operator recognizes a bot at a glance and how they read its state.
-
-Requirements:
-
-- Recognizable at 24 px in a list and expressive at 96 px in a profile.
-- Built from two choices the operator makes, a **shape** and a **color**, so that a roster of ten bots has ten distinct silhouettes.
-- Carries the six states (idle, thinking, working, waiting, blocked, done) through its own form, with motion only as an addition. Done is not a state the server reports: it is an idle bot with something unread.
-- Works as a still image for notifications and for reduced-motion settings.
-
-J3 Bots has **its own** avatar system. Existing products use friendly blob characters with eyes; J3 Bots does not resemble them. An avatar is a solid geometric shape in the bot's color with a single inner mark in `avatar-ink`. The shape is the bot's identity; the mark is its state.
-
-**Shapes.** Ten, drawn on a 100 × 100 grid with softened corners: circle, square, hexagon, diamond, triangle, clover, burst, arch, plus and leaf. The mark sits at each shape's visual center, which is lower than the box's center for the triangle and the arch.
-
-**States.**
-
-| State | Mark | Motion | Corner badge |
-| --- | --- | --- | --- |
-| Idle | A small dot | None | None |
-| Thinking | A ring | Breathes: grows and shrinks slowly | None |
-| Working | An open arc | Turns | None |
-| Waiting | A notched ring, open at the top | None | `waiting` |
-| Blocked | A ring with a slash | None | `blocked` |
-| Done (idle, with something unread) | A check | None | `accent` |
-| Stalled (thinking or working with no activity) | A dotted ring | None: a stuck turn stops moving | None |
-
-- Every state has its own mark, so the avatar reads with motion off. The still form is the same drawing with the motion removed; there is no separate "small mark" for still use.
-- The waiting and blocked badges carry the color that matches the roster line's wording, so state is never carried by color alone.
-- Small avatars (28 px and under) draw the mark 30% larger so it stays legible.
-- When the state changes, the avatar nudges once and the new mark eases in; then it is still apart from its state motion. Nothing plays when an avatar first appears, so opening a screen does not set every avatar moving.
-- A room's avatar overlaps the shapes of its first two members.
-
-**Image avatars** are not available yet: the contract's avatar is a shape and a color only. When images are added, state moves to the corner badge and a ring around the image.
+The Avatar change fills this section in for Pips: twelve silhouettes, each a character with one lens eye and an antenna; the states shown by the eye, the antenna and the body, with the antenna's tip as the status light; the shared frame loop and its guard rails ([decision 0018](../decisions/0018-the-interface-follows-pips.md)). Until it lands, an avatar is a geometric shape in the bot's color with an inner mark for its state, drawn from [`avatarShapes.ts`](../../packages/design-tokens/src/avatarShapes.ts) and [`avatar.ts`](../../packages/design-tokens/src/avatar.ts), with a still form for reduced motion and for notifications.
 
 ### App icons
 
@@ -181,30 +141,65 @@ Every platform's icon is the row of three avatars the first run shows (a teal he
 
 ## Typography
 
-- **Interface:** the platform's system font, with Inter Variable as the web fallback. No display face.
-- **Code and identifiers:** the platform's monospace.
-- **Scale:** 11, 12, 13, 14, 16, 20 px, with line heights of 16, 16, 18, 20, 24 and 28. Message text is 14 on pointer devices and 16 on touch screens. Metadata (times, statuses) is 11 or 12. Tailwind's own scale is removed, so only these sizes exist.
-- **Weight:** regular (400) and medium (500). Semibold (600) is rare.
+Three faces, bundled with every client under the SIL Open Font License, so the app works offline and loads nothing from a font service ([the fonts and how they were cut](../../packages/design-tokens/fonts/README.md)):
+
+| Face | Use | Weights |
+| --- | --- | --- |
+| **Bricolage Grotesque** | Display: page and dialog titles, the gallery, a bot's name on its profile, the first run. Set tight, at −0.035 em | 700 |
+| **Instrument Sans** | Everything that is read: messages, rows, controls, metadata | 400, 500, 600 |
+| **JetBrains Mono** | Code, commands, identifiers and the steps of a turn, without ligatures, so `!=` and `->` read as typed | 400 |
+
+- The files hold Latin, Latin-1, Latin Extended-A, general punctuation and arrows. A character outside them, as in a bot's name in another script, is drawn in the platform's font.
+- On the web the faces are `@font-face` rules in the tokens' stylesheet, loaded from the bundle with the platform's font shown until they arrive. On Android they are embedded at build time, each family with its weights, so a weight picks its file; React Native has no inherited font, so every `Text` and `TextInput` comes from the app's own `text.tsx`, which sets the face.
+- **Scale:** 11, 12, 13, 14, 15, 16 and 20 px for text, with line heights of 16, 16, 18, 20, 20, 24 and 26; 24, 30 and 40 px for display, with line heights of 28, 34 and 42. Message text is 14 on pointer devices and 16 on touch screens. Metadata (times, statuses) is 11 or 12. Tailwind's own scale is removed, so only these sizes exist.
+- **Weight:** text is regular (400) and medium (500); controls, a name that needs the operator, and buttons are semibold (600). Display is bold (700) only.
 - Message text sets no line longer than about 70 characters.
 
 ## Shape and space
 
 - A 4 px spacing grid.
-- Radii: 4 for badges and a bubble's tightened corner, 8 for controls and cards, 12 for popovers and sheets, 16 for bubbles, and a pill for the composer and round buttons.
-- Consecutive bubbles from one speaker within five minutes form a group: the corners where two bubbles meet, on the speaker's side, tighten to 4. A bubble on its own keeps all four corners round. A pause of more than fifteen minutes puts a time between entries.
+- Controls are 36 px tall on pointer devices and 44 px on touch screens; roster rows 56 and 64.
+- Shapes are soft. Radii: 6 for badges, key caps, checkboxes and a bubble's tightened corner; 12 for fields, menu rows and small tiles; 16 for roster rows, popovers, menus and cards; 20 for dialogs and bubbles; 28 for the top corners of a sheet rising from a phone's bottom edge; and a pill for every button, the composer, switches and chips.
+- Consecutive bubbles from one speaker within five minutes form a group: the corners where two bubbles meet, on the speaker's side, tighten to 6. A bubble on its own keeps all four corners round. A pause of more than fifteen minutes puts a time between entries.
 - Entry widths are layout tokens: a bubble takes up to 36 rem or 85% of the column, a card up to 36 rem or 92%, and the compact handoff and routine-change cards up to 28 rem. On a phone a card that asks the operator for something (a question, an approval, a credential) takes the full column. The composer grows with its text up to 15 rem, then scrolls.
-- Borders are hairlines. Elevation is used for popovers and sheets only.
+- Borders are hairlines. Elevation is for popovers, menus, dialogs and sheets.
 - A filled area inside a bordered box, such as the header of a card awaiting the operator, rounds its corners to the box's radius less the border, so the fill follows the box's outline.
-- Roster rows are 52 px on pointer devices and 64 px on touch.
 
 ## Motion
 
-- Durations: 120 ms for hover and press feedback, 160 ms for a change of state, 200 ms for larger moves, all on `cubic-bezier(0.2, 0, 0, 1)`. State changes animate once and stop.
-- Avatar state motion is stepped: the breathing ring changes 12 times in 2.4 s and the working arc 8 times in 1.6 s, instead of every frame, so a roster full of busy bots does not hold the display at full refresh rate.
+Quick and springy: things overshoot a little and settle fast. Every move runs on one of three springs, each named by its natural frequency and damping ratio, so every platform draws the same motion from the same two numbers ([`springs.ts`](../../packages/design-tokens/src/springs.ts)):
+
+| Spring | Frequency, damping | Settles in | Overshoot | For |
+| --- | --- | --- | --- | --- |
+| `pop` | 3.6 Hz, 0.5 | 571 ms | 15% | A press springing back, a menu or a short dialog opening, a switch's thumb, something arriving |
+| `soft` | 2.3 Hz, 0.72 | 562 ms | 3% | Something moving into place: a dialog's panel rising |
+| `slide` | 2.5 Hz, 0.86 | 392 ms | under 1% | A pane or a sheet sliding, a fold opening |
+
+- **On the web** each spring is simulated once and written as a CSS `linear()` easing, sampled about 60 times a second, with the time it takes to settle as its duration: the utility `ease-pop` with `duration-(--duration-pop)`, and so on. **On Android** the same spring drives Reanimated as a physical spring of mass 1, stiffness ω² and damping 2ζω, so it has the same frequency and damping ratio.
+- What has nothing to overshoot, a fade or a color, uses the `out` ease, `cubic-bezier(0.2, 0.8, 0.2, 1)`, over 150 ms for hover and press colors, 200 ms for a change of state, and 300 ms for a scrim. Something leaving, such as a dialog closing, leaves on `out` in 200 ms, so a closed dialog never lingers.
+- **Press:** a button goes down to 0.955 in 70 ms when pressed, a round icon button to 0.88 and a list row to 0.975, and springs back on `pop` when let go. Hover changes only the fill.
+- **Dialogs and sheets:** on a phone a dialog that takes the screen rises from the bottom on `slide` and sinks back; from the tablet layout up it is a panel that rises a little and fades in on `soft`. A short dialog, such as a confirmation, and a menu pop in from slightly smaller on `pop`. On Android a pushed screen slides in over the one under it, which drifts back, and a form, Settings or a routine's runs rises from the bottom like a sheet; the system draws both.
 - New messages appear in place; the list does not jump.
-- Everything honors the platform's reduced-motion setting.
+- **Reduced motion** stops every move and every loop: nothing scales, slides or springs, colors still change, and each state keeps its still form.
 
 ## Components
+
+### Primitives
+
+Every surface is built from the same few parts, each owning its look in the `ui` layer (`apps/web/src/components/ui`, `apps/mobile/src/ui.tsx`); callers choose a variant.
+
+| Part | Look |
+| --- | --- |
+| Button | A pill, semibold. Variants: primary (filled with `accent`, the text color), secondary (filled `muted`, darkening to `muted-strong` on hover), outline, ghost, a quieter ghost, and destructive filled or outlined in `blocked`. Icon buttons are round and take the deeper press |
+| Field | Filled with `muted`, darker on hover, with no outline until it has focus, when it takes the focus ring; a field the operator got wrong takes a `blocked` border. Read-only text is muted |
+| Choice row | A rounded row with a box or a circle, `input` outlined, taking the row's press |
+| Switch | A pill, `success` when on and `control-off` when off, whose thumb springs across on `pop` |
+| Checkbox | A 16 px box with the 6 px radius, filled with the text color when checked |
+| Menu | A `surface` popover with `overlay` elevation, the 16 px radius, and rows of the 12 px radius that fill with `muted` when highlighted |
+| Dialog | A `surface` panel with the 20 px radius and `overlay` elevation over the `scrim`; on a phone, the whole screen. Its title is in the display face |
+| Roster row | Rounded, filled with `muted` on hover and when selected, taking the row's press |
+
+### Behavior
 
 | Component | Notes |
 | --- | --- |
@@ -262,6 +257,7 @@ Every interface sentence goes through the translation layer as a whole sentence 
 - Disabled controls are exempt from those minimums, as WCAG 1.4.3 exempts inactive components: a disabled control is drawn at half opacity, which is what marks it disabled, and it keeps its name for a screen reader.
 - State is never carried by color alone: the avatar's form or a mark changes too.
 - Every action is reachable by keyboard on desktop and by screen reader on every platform, with the same name it has on screen.
+- Motion: everything honors the platform's reduced-motion setting (see [Motion](#motion)).
 - Touch targets are at least 44 px. On touch screens a compact control grows to a real 44 px box, so controls that sit side by side or wrap onto a second line never cover one another; pointer devices keep the compact size. Menu rows, such as New, do the same.
 - Light and dark follow the system unless the operator picks one in Settings. The choice is applied before the first paint: on the desktop the window opens with that theme's canvas as its background, and on Android 12 and later the splash takes it too. What the system draws for the app, its notifications and the desktop's tray, stays in the system's theme.
 

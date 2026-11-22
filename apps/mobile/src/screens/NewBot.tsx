@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useState } from "react";
-import { ScrollView, Text } from "react-native";
+import { ScrollView } from "react-native";
+import { Text } from "../text.tsx";
 import { useDiscardGuard } from "../components/form.tsx";
 import { NewBotForm } from "../components/NewBotForm.tsx";
 import { useI18n } from "../i18n.ts";

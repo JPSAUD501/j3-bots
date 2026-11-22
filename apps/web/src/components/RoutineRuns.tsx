@@ -16,6 +16,7 @@ import { useId } from "react";
 import { useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
 import { Button } from "./ui/button";
+import { dialogBackdrop, screenDialog } from "./ui/dialog";
 
 const RUN_ICON: Record<RoutineRun["status"], readonly [LucideIcon, string]> = {
   running: [CircleDotIcon, "text-accent"],
@@ -147,13 +148,13 @@ export function RoutineRunsDialog({
       }}
     >
       <Dialog.Portal>
-        <Dialog.Backdrop className="fixed inset-0 z-40 bg-scrim transition-opacity duration-(--duration-slow) data-ending-style:opacity-0 data-starting-style:opacity-0" />
+        <Dialog.Backdrop className={dialogBackdrop} />
         <Dialog.Popup
           aria-labelledby={titleId}
-          className="fixed inset-0 z-40 flex flex-col bg-background pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] text-foreground outline-none transition-opacity duration-(--duration-slow) data-ending-style:opacity-0 data-starting-style:opacity-0 tablet:inset-x-4 tablet:top-12 tablet:bottom-auto tablet:mx-auto tablet:max-h-[calc(100dvh-6rem)] tablet:max-w-lg tablet:rounded-lg tablet:border tablet:border-border tablet:shadow-xl"
+          className={`${screenDialog} tablet:top-12 tablet:bottom-auto tablet:max-h-[calc(100dvh-6rem)] tablet:max-w-lg`}
         >
           <header className="flex h-14 shrink-0 items-center gap-1 border-b border-border ps-4 pe-2">
-            <Dialog.Title id={titleId} className="truncate text-sm font-medium">
+            <Dialog.Title id={titleId} className="display-type truncate text-lg">
               {name}
             </Dialog.Title>
             <Button

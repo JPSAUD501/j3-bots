@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { CodeLineTone } from "@j3-bots/client-runtime/presentation";
 import { type ReactNode, useState } from "react";
-import { ScrollView, Text, View } from "react-native";
-import { monospace } from "./MessageText.tsx";
+import { ScrollView, View } from "react-native";
+import { Text } from "../text.tsx";
 
 /** The most a block of code or a summary shows before it scrolls, in px. */
 const SCROLLS_FROM = 256;
@@ -107,7 +107,7 @@ export function CodeBlock({
                 setBoxes(event.nativeEvent.lines.map(({ y, height }) => ({ y, height })))
               }
               className={`px-2.5 text-xs leading-5 text-foreground ${strong ? "font-medium" : ""}`}
-              style={{ fontFamily: monospace }}
+              face="mono"
             >
               {lines.map((line, index) => (
                 <Text

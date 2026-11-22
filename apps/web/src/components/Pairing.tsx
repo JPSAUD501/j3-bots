@@ -9,6 +9,7 @@ import { AppUpdate } from "./AppUpdate";
 import { Centered, Ensemble, Heading } from "./EmptyStates";
 import { ChangeServer } from "./ServerAddress";
 import { Button } from "./ui/button";
+import { lineField } from "./ui/field";
 
 /** A name for this device that the operator recognises in their list: browser and system. */
 export function guessDeviceName(userAgent: string): string {
@@ -38,9 +39,6 @@ export function guessDeviceName(userAgent: string): string {
               : null;
   return system === null ? browser : `${browser} on ${system}`;
 }
-
-const fieldClass =
-  "h-10 w-full rounded-md border border-input bg-surface px-3 text-sm placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:h-11";
 
 interface PairingProps {
   /** Why this device has no credential, said above the form unless it never had one. */
@@ -197,7 +195,7 @@ export function Pairing({
             placeholder="ABCDE-12345"
             aria-invalid={state._tag === "failed" && state.reason._tag === "invalid-code"}
             aria-describedby={error === null ? undefined : errorId}
-            className={`${fieldClass} font-mono tracking-wider uppercase placeholder:normal-case`}
+            className={`${lineField} font-mono tracking-wider uppercase placeholder:normal-case`}
           />
         </div>
         <div className="flex flex-col gap-1">
@@ -209,7 +207,7 @@ export function Pairing({
             value={name}
             onChange={(event) => setName(event.currentTarget.value)}
             maxLength={200}
-            className={fieldClass}
+            className={lineField}
           />
         </div>
         <Button type="submit" variant="primary" aria-disabled={!ready}>

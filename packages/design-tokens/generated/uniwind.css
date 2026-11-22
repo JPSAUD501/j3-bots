@@ -3,20 +3,21 @@
 @layer theme {
   :root {
     @variant light {
-      --color-background: #fcfcfc;
+      --color-background: #ffffff;
       --color-surface: #ffffff;
-      --color-sidebar: #f5f5f5;
-      --color-muted: #ebebed;
-      --color-border: #e4e4e7;
-      --color-input: #d4d4d8;
-      --color-foreground: #18181b;
-      --color-muted-foreground: #67676f;
-      --color-bubble-operator: #18181b;
-      --color-bubble-operator-foreground: #fafafa;
+      --color-sidebar: #f6f6f7;
+      --color-muted: #f0f0f2;
+      --color-muted-strong: #e5e5e9;
+      --color-border: #e8e8ec;
+      --color-input: #d4d4da;
+      --color-foreground: #101012;
+      --color-muted-foreground: #5f5f69;
+      --color-bubble-operator: #101012;
+      --color-bubble-operator-foreground: #ffffff;
       --color-bubble-bot: #f0f0f2;
-      --color-bubble-bot-foreground: #18181b;
-      --color-code-background: oklch(0 0 0 / 0.06);
-      --color-accent: oklch(0.49 0.22 264);
+      --color-bubble-bot-foreground: #101012;
+      --color-code-background: oklch(0 0 0 / 0.055);
+      --color-accent: #101012;
       --color-accent-foreground: #ffffff;
       --color-waiting: oklch(0.52 0.12 65);
       --color-waiting-surface: oklch(0.975 0.03 85);
@@ -26,7 +27,7 @@
       --color-control-off: #82828a;
       --color-control-thumb: #ffffff;
       --color-avatar-ink: #ffffff;
-      --color-scrim: oklch(0 0 0 / 0.32);
+      --color-scrim: oklch(0 0 0 / 0.3);
       --color-bot-red: oklch(0.441 0.179 29);
       --color-bot-orange: oklch(0.535 0.11 72);
       --color-bot-yellow: oklch(0.621 0.125 86);
@@ -41,29 +42,30 @@
 
     @variant dark {
       --color-background: #000000;
-      --color-surface: #0e0e0f;
-      --color-sidebar: #070707;
-      --color-muted: #18181a;
+      --color-surface: #101012;
+      --color-sidebar: #09090a;
+      --color-muted: #19191c;
+      --color-muted-strong: #242428;
       --color-border: oklch(1 0 0 / 0.09);
-      --color-input: oklch(1 0 0 / 0.14);
-      --color-foreground: #f4f4f5;
-      --color-muted-foreground: #a1a1aa;
-      --color-bubble-operator: #f4f4f5;
-      --color-bubble-operator-foreground: #09090b;
-      --color-bubble-bot: #18181b;
-      --color-bubble-bot-foreground: #f4f4f5;
-      --color-code-background: oklch(1 0 0 / 0.08);
-      --color-accent: oklch(0.72 0.15 264);
-      --color-accent-foreground: #09090b;
+      --color-input: oklch(1 0 0 / 0.15);
+      --color-foreground: #f5f5f6;
+      --color-muted-foreground: #a3a3ad;
+      --color-bubble-operator: #2a2a30;
+      --color-bubble-operator-foreground: #f5f5f6;
+      --color-bubble-bot: #19191c;
+      --color-bubble-bot-foreground: #f5f5f6;
+      --color-code-background: oklch(1 0 0 / 0.07);
+      --color-accent: #f5f5f6;
+      --color-accent-foreground: #0a0a0b;
       --color-waiting: oklch(0.82 0.15 80);
       --color-waiting-surface: oklch(0.21 0.045 70);
       --color-blocked: oklch(0.71 0.17 25);
       --color-blocked-surface: oklch(0.2 0.05 25);
       --color-success: oklch(0.78 0.14 160);
       --color-control-off: #6b6b73;
-      --color-control-thumb: #f4f4f5;
+      --color-control-thumb: #f5f5f6;
       --color-avatar-ink: #0b0b0c;
-      --color-scrim: oklch(0 0 0 / 0.6);
+      --color-scrim: oklch(0 0 0 / 0.62);
       --color-bot-red: oklch(0.555 0.193 33);
       --color-bot-orange: oklch(0.682 0.132 57);
       --color-bot-yellow: oklch(0.79 0.162 94);
@@ -87,6 +89,7 @@
   --color-surface: unset;
   --color-sidebar: unset;
   --color-muted: unset;
+  --color-muted-strong: unset;
   --color-border: unset;
   --color-input: unset;
   --color-foreground: unset;
@@ -128,14 +131,24 @@
   --text-sm--line-height: 18px;
   --text-base: 14px;
   --text-base--line-height: 20px;
+  --text-md: 15px;
+  --text-md--line-height: 20px;
   --text-lg: 16px;
   --text-lg--line-height: 24px;
   --text-xl: 20px;
-  --text-xl--line-height: 28px;
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-bubble: 16px;
+  --text-xl--line-height: 26px;
+  --text-2xl: 24px;
+  --text-2xl--line-height: 28px;
+  --text-3xl: 30px;
+  --text-3xl--line-height: 34px;
+  --text-4xl: 40px;
+  --text-4xl--line-height: 42px;
+  --radius-sm: 6px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-sheet: 28px;
+  --radius-bubble: 20px;
   --radius-pill: 9999px;
 }
 

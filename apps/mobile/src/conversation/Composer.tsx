@@ -21,15 +21,8 @@ import type { Avatar, EntryTarget } from "@j3-bots/contracts";
 import { layout } from "@j3-bots/design-tokens";
 import { ArrowUp, File, Plus, Users, X } from "lucide-react-native";
 import { type ComponentRef, useEffect, useLayoutEffect, useRef, useState } from "react";
-import {
-  AccessibilityInfo,
-  Alert,
-  Pressable,
-  ScrollView,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { AccessibilityInfo, Alert, Pressable, ScrollView, View } from "react-native";
+import { Text, TextInput } from "../text.tsx";
 import { AvatarShape } from "../components/Avatar.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { useI18n } from "../i18n.ts";

@@ -1,0 +1,27 @@
+[
+  {
+    "family": "Bricolage Grotesque",
+    "weight": 700,
+    "file": "BricolageGrotesque-Bold"
+  },
+  {
+    "family": "Instrument Sans",
+    "weight": 400,
+    "file": "InstrumentSans-Regular"
+  },
+  {
+    "family": "Instrument Sans",
+    "weight": 500,
+    "file": "InstrumentSans-Medium"
+  },
+  {
+    "family": "Instrument Sans",
+    "weight": 600,
+    "file": "InstrumentSans-SemiBold"
+  },
+  {
+    "family": "JetBrains Mono",
+    "weight": 400,
+    "file": "JetBrainsMono-Regular"
+  }
+]

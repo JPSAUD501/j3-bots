@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import "@fontsource-variable/inter";
 import "./index.css";
 
 import { RouterProvider } from "@tanstack/react-router";

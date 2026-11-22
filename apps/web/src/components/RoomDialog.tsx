@@ -17,6 +17,8 @@ import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
 import { AvatarShape } from "./BotAvatar";
 import { Button } from "./ui/button";
 import { ChoiceIndicator, choiceRow } from "./ui/choice";
+import { dialogBackdrop, screenDialog } from "./ui/dialog";
+import { lineField, textField } from "./ui/field";
 
 /** The props of the form, whatever frames it: the dialog in the app, a pane in the gallery. */
 export interface RoomFormProps {
@@ -39,9 +41,6 @@ export interface RoomFormProps {
   /** A failure to show from the start, for the gallery. */
   readonly initialFailure?: IntentFailure;
 }
-
-const fieldClass =
-  "w-full rounded-md border border-input bg-surface px-3 text-sm placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-accent read-only:text-muted-foreground disabled:text-muted-foreground aria-invalid:border-blocked";
 
 /**
  * A room's name, its bots, which of them hosts, and how many replies in a
@@ -141,7 +140,7 @@ export function RoomForm({
       }}
     >
       <header className="flex h-14 shrink-0 items-center border-b border-border ps-4 pe-2">
-        <h2 id={titleId} className="truncate text-sm font-medium">
+        <h2 id={titleId} className="display-type truncate text-lg">
           {title}
         </h2>
         <Button
@@ -173,7 +172,7 @@ export function RoomForm({
             onChange={(event) => form.change({ ...values, name: event.currentTarget.value })}
             aria-invalid={problems.has("name") || undefined}
             aria-describedby={problems.has("name") ? ids.nameError : undefined}
-            className={cn(fieldClass, "h-9 pointer-coarse:h-11")}
+            className={cn(lineField, "disabled:text-muted-foreground")}
           />
           {problems.has("name") && (
             <p id={ids.nameError} className="text-xs text-blocked">
@@ -264,7 +263,7 @@ export function RoomForm({
                 const picked = members.find((bot) => bot.id === event.currentTarget.value);
                 if (picked) form.pickHost(picked.id);
               }}
-              className={cn(fieldClass, "h-9 pointer-coarse:h-11")}
+              className={cn(lineField, "disabled:text-muted-foreground")}
             >
               {/* A room the server has without a host shows none until the operator picks one. */}
               {hostId === null && (
@@ -308,7 +307,7 @@ export function RoomForm({
                 ? `${ids.hopLimitHint} ${ids.hopLimitError}`
                 : ids.hopLimitHint
             }
-            className={cn(fieldClass, "h-9 w-24 pointer-coarse:h-11")}
+            className={cn(textField, "h-9 w-24 pointer-coarse:h-11 disabled:text-muted-foreground")}
           />
           <p id={ids.hopLimitHint} className="text-2xs text-muted-foreground">
             {t("roomForm.hopLimit.hint")}
@@ -373,10 +372,10 @@ export function RoomDialog({ mode, onClose, unsaved, onUnsavedChange, ...form }:
       }}
     >
       <Dialog.Portal>
-        <Dialog.Backdrop className="fixed inset-0 z-40 bg-scrim transition-opacity duration-(--duration-slow) data-ending-style:opacity-0 data-starting-style:opacity-0" />
+        <Dialog.Backdrop className={dialogBackdrop} />
         <Dialog.Popup
           aria-labelledby={titleId}
-          className="fixed inset-0 z-40 flex flex-col bg-background pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] text-foreground outline-none transition-opacity duration-(--duration-slow) data-ending-style:opacity-0 data-starting-style:opacity-0 tablet:inset-x-4 tablet:top-12 tablet:bottom-12 tablet:mx-auto tablet:max-w-lg tablet:rounded-lg tablet:border tablet:border-border tablet:shadow-xl"
+          className={`${screenDialog} tablet:top-12 tablet:bottom-12 tablet:max-w-lg`}
         >
           {/* Mounted afresh with each opening and each other target, so it starts from the room as saved. */}
           {held !== null && (

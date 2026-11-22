@@ -34,12 +34,18 @@ import {
   avatarShapeNames,
   botColors,
   colors,
+  fontFamilies,
+  press,
   radii,
+  shadows,
+  springs,
   typeScale,
+  type Spring,
   type Themed,
 } from "@j3-bots/design-tokens";
 import * as DateTime from "effect/DateTime";
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { PlusIcon, SettingsIcon } from "lucide-react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import {
   turnsNotRead,
   type DraftFile,
@@ -73,6 +79,12 @@ import { SecretRequestCard } from "../components/SecretRequestCard";
 import { Timeline, type TimelineIntents } from "../components/Timeline";
 import { UsageSection } from "../components/UsageSection";
 import { WorkFold } from "../components/WorkFold";
+import { Button } from "../components/ui/button";
+import { Checkbox } from "../components/ui/checkbox";
+import { Confirm } from "../components/ui/confirm";
+import { lineField, textField } from "../components/ui/field";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../components/ui/menu";
+import { Switch } from "../components/ui/switch";
 import { LANGUAGE_NAMES, notificationText } from "@j3-bots/i18n";
 import { cn } from "../lib/cn";
 import { iconUrl, notificationIcon } from "../live/notificationIcon";
@@ -111,7 +123,7 @@ export default function GalleryPage() {
               <div className="mx-auto flex max-w-[90rem] flex-col gap-12 px-4 py-8 @container">
                 <header className="flex flex-wrap items-end justify-between gap-4">
                   <div>
-                    <h1 className="text-xl font-semibold">Gallery</h1>
+                    <h1 className="display-type text-3xl">Gallery</h1>
                     <p className="text-sm text-muted-foreground">
                       Every component and state, in both themes, from the sample team. Development
                       only.
@@ -137,6 +149,8 @@ export default function GalleryPage() {
                   </div>
                 </header>
                 <TokensSection />
+                <PrimitivesSection />
+                <MotionSection />
                 <AvatarsSection />
                 <NotificationsSection />
                 <RosterSection />
@@ -173,7 +187,7 @@ function Section({
 }) {
   return (
     <section className="flex flex-col gap-3">
-      <h2 className="text-lg font-medium">{title}</h2>
+      <h2 className="display-type text-2xl">{title}</h2>
       <div className={cn("grid gap-4", !stacked && "@wide:grid-cols-2")}>
         {(["light", "dark"] as const).map((theme) => (
           <div
@@ -239,18 +253,42 @@ function TokensSection() {
           ))}
         </div>
       </Labeled>
+      <Labeled label="Faces">
+        <div className="flex flex-col gap-1">
+          <p className="display-type text-3xl">{fontFamilies.display}</p>
+          <p className="text-lg">
+            {fontFamilies.text} <span className="font-medium">medium</span>{" "}
+            <span className="font-semibold">semibold</span>
+          </p>
+          <p className="font-mono text-sm">{fontFamilies.mono}: pnpm test --filter web != 0</p>
+        </div>
+      </Labeled>
       <Labeled label="Type scale">
         <div className="flex flex-col gap-1">
           {Object.entries(typeScale).map(([name, { size, lineHeight }]) => (
             <p
               key={name}
+              className={size >= typeScale["2xl"].size ? "display-type" : undefined}
               style={{ fontSize: `${size / 16}rem`, lineHeight: `${lineHeight / 16}rem` }}
             >
-              <span className="me-3 inline-block w-10 font-mono text-2xs text-muted-foreground">
+              <span className="me-3 inline-block w-10 font-sans font-normal tracking-normal text-2xs text-muted-foreground">
                 {name}
               </span>
               Scout finished the report
             </p>
+          ))}
+        </div>
+      </Labeled>
+      <Labeled label="Elevation">
+        <div className="flex flex-wrap gap-4">
+          {Object.keys(shadows).map((name) => (
+            <div key={name} className="flex flex-col items-center gap-1">
+              <span
+                className="size-16 rounded-lg bg-surface"
+                style={{ boxShadow: `var(--elevation-${name})` }}
+              />
+              <span className="font-mono text-2xs text-muted-foreground">{name}</span>
+            </div>
           ))}
         </div>
       </Labeled>
@@ -272,6 +310,157 @@ function TokensSection() {
 }
 
 const scoutAvatar = team.bots.scout.profile.avatar;
+
+function PrimitivesSection() {
+  const { t } = useI18n();
+  const [on, setOn] = useState(true);
+  const [checked, setChecked] = useState(true);
+  return (
+    <Section title="Primitives">
+      <Labeled label="Buttons: hover, and press to feel the spring back">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="primary">{t("editBot.save")}</Button>
+          <Button variant="secondary">{t("editBot.cancel")}</Button>
+          <Button>{t("details.freshStart")}</Button>
+          <Button variant="ghost">{t("settings.title")}</Button>
+          <Button variant="ghost-muted">{t("roster.new.cancel")}</Button>
+          <Button variant="destructive">{t("details.delete", { name: "Scout" })}</Button>
+          <Button variant="destructive-outline">{t("room.delete", { name: "Launch" })}</Button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="primary" size="sm">
+            {t("editBot.save")}
+          </Button>
+          <Button size="sm">{t("details.freshStart")}</Button>
+          <Button variant="primary" disabled>
+            {t("editBot.save")}
+          </Button>
+          <Button size="icon" variant="ghost" aria-label={t("roster.new")}>
+            <PlusIcon />
+          </Button>
+          <Button size="icon-sm" variant="ghost-muted" aria-label={t("settings.title")}>
+            <SettingsIcon />
+          </Button>
+        </div>
+      </Labeled>
+      <Labeled label="Fields: empty, filled, refused, read-only">
+        <div className="grid max-w-sm gap-2">
+          <input className={lineField} placeholder={t("settings.name.placeholder")} />
+          <input className={lineField} defaultValue="Ada" aria-label={t("editBot.name")} />
+          <input
+            className={lineField}
+            defaultValue=""
+            aria-invalid
+            aria-label={t("editBot.name")}
+          />
+          <input
+            className={lineField}
+            defaultValue="Scout"
+            readOnly
+            aria-label={t("editBot.name")}
+          />
+          <textarea
+            className={cn(textField, "field-sizing-content min-h-20 resize-none py-2")}
+            placeholder={t("editBot.titleField.placeholder")}
+          />
+        </div>
+      </Labeled>
+      <Labeled label="Switch and checkbox">
+        <div className="flex items-center gap-6">
+          <Switch checked={on} onCheckedChange={setOn} aria-label="Switch" />
+          <Switch checked={false} disabled aria-label="Disabled switch" />
+          <label className="flex items-center gap-2 text-sm">
+            <Checkbox checked={checked} onCheckedChange={setChecked} />
+            Checkbox
+          </label>
+        </div>
+      </Labeled>
+      <Labeled label="Menu and confirmation: open to see them spring in">
+        <div className="flex flex-wrap items-center gap-2">
+          <Menu>
+            <MenuTrigger render={<Button />}>{t("roster.new")}</MenuTrigger>
+            <MenuPopup side="bottom">
+              <MenuItem onClick={nothing}>{t("newBot.title")}</MenuItem>
+              <MenuItem onClick={nothing} hint={t("details.freshStart")}>
+                {t("settings.title")}
+              </MenuItem>
+            </MenuPopup>
+          </Menu>
+          <Confirm
+            trigger={<Button variant="destructive-outline" />}
+            title={t("details.delete.title", { name: "Scout" })}
+            body={t("details.delete.body", { name: "Scout" })}
+            cancel={t("details.delete.cancel", { name: "Scout" })}
+            confirm={t("details.delete", { name: "Scout" })}
+            onConfirm={nothing}
+          >
+            {t("details.delete", { name: "Scout" })}
+          </Confirm>
+        </div>
+      </Labeled>
+    </Section>
+  );
+}
+
+/** A spring's track: pressing the card sends the ball to the other end on that spring. */
+function SpringCard({ name, spring }: { name: string; spring: Spring }) {
+  const track = useRef<HTMLSpanElement>(null);
+  const ball = useRef<HTMLSpanElement>(null);
+  const [atEnd, setAtEnd] = useState(false);
+  const replay = () => {
+    const box = track.current;
+    const dot = ball.current;
+    if (box === null || dot === null) return;
+    const end = `translateX(${box.clientWidth - dot.clientWidth}px)`;
+    const [from, to] = atEnd ? [end, "translateX(0)"] : ["translateX(0)", end];
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    dot.animate([{ transform: from }, { transform: to }], {
+      duration: reduced ? 0 : spring.duration,
+      easing: spring.easing,
+      fill: "both",
+    });
+    setAtEnd(!atEnd);
+  };
+  return (
+    <button
+      type="button"
+      onClick={replay}
+      className="pressable flex flex-col gap-1 rounded-lg border border-border bg-surface p-4 text-start shadow-raised hover:bg-muted"
+    >
+      <span className="display-type text-lg capitalize">{name}</span>
+      <span ref={track} className="relative my-2 block h-3.5 w-full rounded-pill bg-muted">
+        <span
+          ref={ball}
+          className="absolute start-0 top-0 block size-3.5 rounded-pill bg-foreground"
+        />
+      </span>
+      <span className="text-xs text-muted-foreground">
+        {spring.frequency} Hz, damping {spring.damping}, settles in {spring.duration} ms
+      </span>
+    </button>
+  );
+}
+
+function MotionSection() {
+  return (
+    <Section title="Motion">
+      <Labeled label="Springs: press a card to replay it">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(12rem,1fr))] gap-3">
+          {Object.entries(springs).map(([name, spring]) => (
+            <SpringCard key={name} name={name} spring={spring} />
+          ))}
+        </div>
+      </Labeled>
+      <Labeled label="Press">
+        <p className="text-sm text-muted-foreground">
+          A control scales to {press.scale} in {press.duration} ms, a round icon button to{" "}
+          {press.roundScale} and a row to {press.rowScale}, then springs back on pop. Reduced motion
+          keeps the colors and drops every move.
+        </p>
+      </Labeled>
+    </Section>
+  );
+}
 
 function AvatarsSection() {
   return (
