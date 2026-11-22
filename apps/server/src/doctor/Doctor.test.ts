@@ -561,7 +561,10 @@ it.layer(NodeServices.layer)("doctor", (it) => {
       assert.strictEqual(named(ready.checks, "Claude Code").status, "ok");
       const codex = named(ready.checks, "Codex");
       assertFlagged(codex, "warning", "the server has no Codex provider set up");
-      assert.include(Option.getOrElse(codex.fix, () => ""), "Update the server");
+      assert.include(
+        Option.getOrElse(codex.fix, () => ""),
+        "Update the server",
+      );
     }),
   );
 
