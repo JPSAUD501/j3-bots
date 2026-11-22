@@ -44,7 +44,8 @@ const PROVIDER = ProviderId.make("scripted");
  * Set when the engine's machine has an administrator's policy that limits
  * threads to Supervised (`"limits": { "maxRuntimeMode": "approval-required" }`).
  * The engine reads it only from a file root owns, so only a run set up for it
- * has one, and every other run skips what needs it.
+ * has one (`with-policy.sh`, `pnpm test:conformance:policy`), and every other
+ * run skips what needs it.
  */
 const SUPERVISED_ONLY = NodeProcess.env["J3_CONFORMANCE_SUPERVISED_ONLY"] === "1";
 
@@ -371,7 +372,7 @@ describe("Engine conformance, real engine only", () => {
   );
 
   it.live.runIf(SUPERVISED_ONLY)(
-    "refuses a permission mode above the policy's ceiling, keeping nothing for the key",
+    "refuses a permission mode above the policy's ceiling, naming it and keeping nothing for the key",
     () =>
       Effect.gen(function* () {
         const engine = yield* Engine;
@@ -398,8 +399,13 @@ describe("Engine conformance, real engine only", () => {
           .configureSession({ sessionId, permissionMode: "full-access" })
           .pipe(Effect.flip);
 
-        assert.strictEqual(above._tag, "PermissionModeRefused");
-        assert.strictEqual(raised._tag, "PermissionModeRefused");
+        // Each refusal names the policy's ceiling, read from the engine's config.
+        assert.deepStrictEqual(
+          [above, raised].map((error) =>
+            error._tag === "PermissionModeRefused" ? error.allowed : error._tag,
+          ),
+          ["supervised", "supervised"],
+        );
       }).pipe(
         Effect.provide(bench.pipe(Layer.provideMerge(realEngine), Layer.provideMerge(platform))),
       ),

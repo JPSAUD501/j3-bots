@@ -205,7 +205,8 @@ export const layer = Layer.effect(
      * to the bot's settings; `opened` when it is opened and only its
      * alignment is due. A lost session, and one on a provider the bot left,
      * are replaced instead. A bot whose permission mode the engine refused
-     * waits for its settings to change (`EngineSessions`, `mode-refused`).
+     * waits for its settings to change, or the engine to become ready again
+     * (`EngineSessions`, `mode-refused`).
      */
     const unprovisioned = SqlSchema.findAll({
       Request: Schema.Void,

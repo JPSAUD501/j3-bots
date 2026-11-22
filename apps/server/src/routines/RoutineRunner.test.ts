@@ -800,6 +800,50 @@ it.effect("tries an attempt again after its delay when the engine refuses the bo
 );
 
 it.effect(
+  "fails a run whose side session the engine refuses for the bot's permission mode, saying so in its history",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const sql = yield* SqlClient.SqlClient;
+      const bot = yield* createBot("Ana");
+      const routine = yield* routineOf(bot.id);
+      const attemptsRecorded = (count: number) =>
+        until(
+          sql<{ readonly n: number }>`
+            SELECT COUNT(*) AS n FROM wakes WHERE routine_id = ${routine.id}
+          `.pipe(
+            Effect.orDie,
+            Effect.map(([row]) => row?.n === count),
+          ),
+        );
+
+      // Below the bot's mode: its main session, opened before, keeps working.
+      yield* control.limitPermissionModes("supervised");
+      yield* (yield* Routines).run({ commandId: command(), routineId: routine.id });
+      for (let attempt = 1; attempt < RUN_ATTEMPTS; attempt++) {
+        yield* attemptsRecorded(attempt + 1);
+        yield* TestClock.adjust(retryDelay(attempt));
+      }
+
+      const run = yield* settled(routine);
+      assert.deepStrictEqual(
+        [run.status, run.attempts, run.failure, yield* control.modeRefusals],
+        [
+          "failed",
+          RUN_ATTEMPTS,
+          {
+            _tag: "permission-mode-refused",
+            permissionMode: bot.permissionMode,
+            allowed: "supervised",
+          },
+          RUN_ATTEMPTS,
+        ],
+      );
+      assert.deepStrictEqual(yield* sideSessions(bot.id), []);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
   "tries an attempt again in a fresh side session when the engine refuses to open one",
   () =>
     Effect.gen(function* () {

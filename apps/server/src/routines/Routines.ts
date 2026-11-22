@@ -10,6 +10,7 @@ import {
   Routine,
   RoutineId,
   type RoutineRun,
+  RoutineRunFailure,
   RoutineRunId,
   RoutineTrigger,
   type Sequence,
@@ -67,6 +68,7 @@ const RunRow = Schema.Struct({
   note: Schema.NullOr(Schema.String),
   started_at: Time,
   finished_at: Schema.NullOr(Time),
+  failure_json: Schema.NullOr(json(RoutineRunFailure)),
 });
 
 const decodeRoutine = Schema.decodeUnknownEffect(Routine);
@@ -239,7 +241,8 @@ export const layer = Layer.effect(
       FROM routines
     `);
     const RUNS = sql.literal(`
-      SELECT id, routine_id, wake_id, status, attempts, note, started_at, finished_at
+      SELECT id, routine_id, wake_id, status, attempts, note, started_at, finished_at,
+        failure_json
       FROM routine_runs
     `);
 
@@ -316,6 +319,9 @@ export const layer = Layer.effect(
         attempts: row.attempts,
         delivered: delivered.map((entry) => EntryId.make(entry.id)),
         note: row.note,
+        ...(row.status === "failed" && row.failure_json !== null
+          ? { failure: row.failure_json }
+          : {}),
       } satisfies RoutineRun;
     }, Effect.orDie);
 

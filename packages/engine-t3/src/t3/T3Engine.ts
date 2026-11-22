@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { EngineStatus, type ModelChoice, type PermissionMode } from "@j3-bots/contracts";
+import { EngineStatus, type ModelChoice, PermissionMode } from "@j3-bots/contracts";
 import {
   AttachmentCreateUploadUrlInput,
   CommandId,
@@ -23,6 +23,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -94,6 +95,7 @@ import { isBackgroundWorkRefusal } from "./backgroundRefusal.ts";
 import { ORCHESTRATION_PROTOCOL, pin } from "./Pin.ts";
 import type { FileChangeItem } from "./approvalDetail.ts";
 import { cursorFor, makeBatches, type BatchPlace } from "./Batches.ts";
+import { PERMISSION_MODES, RUNTIME_MODES } from "./Policy.ts";
 import { makePrivateFiles } from "./PrivateFiles.ts";
 import { type ReportedProvider, providerStatuses, providersOfEvent } from "./Providers.ts";
 import {
@@ -188,13 +190,6 @@ const INSTALL_RETRY = Schedule.min([
   Schedule.exponential(Duration.minutes(1)),
   Schedule.spaced(Duration.minutes(30)),
 ]);
-
-const RUNTIME_MODES = {
-  supervised: "approval-required",
-  "auto-accept-edits": "auto-accept-edits",
-  auto: "auto",
-  "full-access": "full-access",
-} as const satisfies Record<PermissionMode, string>;
 
 const APPROVAL_DECISIONS = {
   "allow-once": "accept",
@@ -715,6 +710,30 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     return yield* new EngineIndeterminate();
   });
 
+  /**
+   * The engine's refusal of `permissionMode` for the mode it would run in,
+   * naming the highest mode the engine's policy allows. A reply keeps only
+   * the error's name and message, so the ceiling is read from the engine's
+   * config: `null` when that read fails in any way, a mode this adapter does
+   * not know included, or its ceiling is not below the mode and so cannot be
+   * what refused it. The refusal stands either way.
+   */
+  const permissionModeRefused = Effect.fnUntraced(function* (permissionMode: PermissionMode) {
+    const config = yield* rpc["server.getConfig"]({}).pipe(
+      Effect.timeout(COMMAND_TIMEOUT),
+      Effect.exit,
+    );
+    const ceiling = Exit.isSuccess(config)
+      ? config.value.managedPolicy?.limits?.maxRuntimeMode
+      : undefined;
+    const allowed = ceiling === undefined ? null : PERMISSION_MODES[ceiling];
+    const rank = (mode: PermissionMode) => PermissionMode.literals.indexOf(mode);
+    return yield* new PermissionModeRefused({
+      permissionMode,
+      allowed: allowed !== null && rank(allowed) < rank(permissionMode) ? allowed : null,
+    });
+  });
+
   /** An engine refusal the interface has no error for: a bug or a broken setup, not a state. */
   const refused = (error: { readonly message: string }) =>
     Effect.die(new Error(`The engine refused a command: ${error.message}`));
@@ -836,9 +855,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       creationSource: "server",
     });
     if (sent === "rejected") return yield* new OpenRejected({ key: input.key });
-    if (sent === "mode-refused") {
-      return yield* new PermissionModeRefused({ permissionMode: input.permissionMode });
-    }
+    if (sent === "mode-refused") return yield* permissionModeRefused(input.permissionMode);
     return sessionId;
   });
 
@@ -855,7 +872,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     yield* afterSending(projection(sessionId));
     const name = causeName(error);
     if (permissionMode !== undefined && Option.isSome(name) && MODE_LIMITS.has(name.value)) {
-      return yield* new PermissionModeRefused({ permissionMode });
+      return yield* permissionModeRefused(permissionMode);
     }
     if (isBackgroundWorkRefusal(error)) return yield* new BackgroundWorkRunning({ sessionId });
     return yield* refused(error);

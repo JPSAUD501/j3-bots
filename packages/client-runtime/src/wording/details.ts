@@ -70,6 +70,22 @@ const LAST_RUN_TEXT: Record<NonNullable<Routine["lastRun"]>["status"], KeyWith<"
   skipped: "routine.lastRun.skipped",
 };
 
+/** What a routine's last run did, with why it failed when the server names it. */
+function lastRunText(run: NonNullable<Routine["lastRun"]>, ctx: TimeContext): string {
+  const { t } = ctx.i18n;
+  const when = timeInSentence(run.startedAt, ctx);
+  const failure = run.status === "failed" ? run.failure : undefined;
+  if (failure === undefined) return t(LAST_RUN_TEXT[run.status], { when });
+  const mode = permissionModeText(failure.permissionMode, ctx.i18n).name;
+  return failure.allowed === null
+    ? t("routine.lastRun.modeRefused", { when, mode })
+    : t("routine.lastRun.modeAllowed", {
+        when,
+        mode,
+        allowed: permissionModeText(failure.allowed, ctx.i18n).name,
+      });
+}
+
 /** A routine as its row in the details says it. */
 export interface RoutineLines {
   /** Its trigger in words, or a schedule's expression when it has no plain sentence. */
@@ -102,7 +118,7 @@ export function routineLines(routine: Routine, ctx: TimeContext): RoutineLines {
       last === null
         ? null
         : {
-            text: t(LAST_RUN_TEXT[last.status], { when: timeInSentence(last.startedAt, ctx) }),
+            text: lastRunText(last, ctx),
             failed: last.status === "failed",
           },
   };

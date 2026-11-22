@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Equivalence from "effect/Equivalence";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import { EngineSessions } from "../bots/EngineSessions.ts";
 import { EngineState } from "../engine/EngineState.ts";
 import { RoutineRunner } from "../routines/RoutineRunner.ts";
 import { BotStates } from "./BotStates.ts";
@@ -44,6 +45,7 @@ export const layer = Layer.effectDiscard(
     const routines = yield* RoutineRunner;
     const readiness = yield* Readiness;
     const rotations = yield* Rotations;
+    const sessions = yield* EngineSessions;
     const scope = yield* Effect.scope;
 
     /** A failure is logged and the sequence goes on. */
@@ -63,6 +65,8 @@ export const layer = Layer.effectDiscard(
       yield* signals.resumes.fire;
       yield* signals.responses.fire;
       yield* signals.dispatch.fire;
+      // It may have started again under another policy.
+      yield* step("Refused permission modes could not be cleared", sessions.engineStarted);
       yield* signals.rotations.fire;
       yield* signals.routines.fire;
       // A submission whose answer was lost, in the background: its card's

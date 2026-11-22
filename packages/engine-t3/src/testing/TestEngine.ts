@@ -228,9 +228,12 @@ export class TestEngineControl extends Context.Service<
     /**
      * The engine refuses every session opened in, and every change to, a
      * permission mode above `ceiling`, applying nothing and keeping nothing
-     * for the key, with `PermissionModeRefused`, as under an administrator's
-     * policy. A model sent with a refused mode change stays applied.
-     * Sessions already in such a mode keep it.
+     * for the key, with `PermissionModeRefused` naming `ceiling`, as under an
+     * administrator's policy. A model sent with a refused mode change stays
+     * applied. Sessions already in such a mode keep it. The real engine reads
+     * its policy when it starts, so a test that changes the ceiling later
+     * makes the engine unreachable around the change, as a restart does
+     * (`setReachable`).
      */
     readonly limitPermissionModes: (ceiling: PermissionMode) => Effect.Effect<void>;
     /** How many openings and settings changes the engine refused for their permission mode. */
@@ -580,13 +583,16 @@ const make = Effect.gen(function* () {
   let rejectOpenSession = false;
   let modeCeiling: PermissionMode | null = null;
   let modeRefusals = 0;
-  /** Whether the ceiling refuses `mode`, counting the refusal. */
-  const refusesMode = (mode: PermissionMode) => {
-    const above =
-      modeCeiling !== null &&
-      PermissionMode.literals.indexOf(mode) > PermissionMode.literals.indexOf(modeCeiling);
-    if (above) modeRefusals++;
-    return above;
+  /** The ceiling's refusal of `mode`, counted, if it refuses it. */
+  const modeRefusal = (mode: PermissionMode) => {
+    if (
+      modeCeiling === null ||
+      PermissionMode.literals.indexOf(mode) <= PermissionMode.literals.indexOf(modeCeiling)
+    ) {
+      return Option.none<PermissionModeRefused>();
+    }
+    modeRefusals++;
+    return Option.some(new PermissionModeRefused({ permissionMode: mode, allowed: modeCeiling }));
   };
   let rejectingRetirements = 0;
   let rejectStop = false;
@@ -1234,9 +1240,8 @@ const make = Effect.gen(function* () {
               modelId: model.modelId,
             });
           }
-          if (refusesMode(permissionMode)) {
-            return yield* new PermissionModeRefused({ permissionMode });
-          }
+          const refusal = modeRefusal(permissionMode);
+          if (Option.isSome(refusal)) return yield* refusal.value;
           if (rejectOpenSession) {
             rejectOpenSession = false;
             keys.set(key, { command: "openSession", sessionId: null });
@@ -1303,8 +1308,9 @@ const make = Effect.gen(function* () {
               return yield* new BackgroundWorkRunning({ sessionId });
             }
             if (model !== undefined) session.model = model;
-            if (permissionMode !== undefined && changesMode && refusesMode(permissionMode)) {
-              return yield* new PermissionModeRefused({ permissionMode });
+            if (permissionMode !== undefined && changesMode) {
+              const refusal = modeRefusal(permissionMode);
+              if (Option.isSome(refusal)) return yield* refusal.value;
             }
             if (permissionMode !== undefined) session.permissionMode = permissionMode;
           }),

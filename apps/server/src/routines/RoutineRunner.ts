@@ -6,6 +6,7 @@ import {
   ProviderId,
   RoutineId,
   RoutineInstruction,
+  RoutineRunFailure,
   RoutineRunId,
   RoutineTrigger,
 } from "@j3-bots/contracts";
@@ -61,6 +62,9 @@ const RECENT_RUNS = 5;
 
 /** The most of what an earlier run said that its envelope repeats. */
 const RECENT_RUN_TEXT = 2_000;
+
+const encodeRunFailure = (failure: RoutineRunFailure) =>
+  Schema.encodeEffect(json(RoutineRunFailure))(failure).pipe(Effect.orDie);
 
 /** An attempt of a run whose wake waits for its side session. */
 const Attempt = Schema.Struct({
@@ -411,33 +415,45 @@ export const layer = Layer.effect(
         })
         .pipe(Effect.result);
       if (opened._tag === "Failure") {
-        switch (opened.failure._tag) {
+        const failure = opened.failure;
+        switch (failure._tag) {
           case "EngineUnavailable":
             return "unavailable";
+          case "EngineIndeterminate":
+          case "EngineIncompatible":
+            // Not now: the engine's answer was lost, or it is not the one
+            // pinned. The same key is sent again.
+            yield* Effect.logWarning("A routine's side session could not be opened yet", {
+              routineId: attempt.routine_id,
+              reason: failure._tag,
+            });
+            return "deferred";
           case "ModelUnavailable":
           case "OpenRejected":
           case "PermissionModeRefused":
             // The engine does not offer the bot's model, refused the opening
             // and keeps that refusal for the key, or refuses the bot's
             // permission mode: the attempt fails, and the run tries again
-            // after its delay, as for a failed turn.
+            // after its delay, as for a failed turn. A refused permission
+            // mode is what the run's history names.
             // Its dispatch is certainly never sent, yet fails `unresolved`:
             // `rejected` would fail the run at once, and a routine's
             // envelope consumes nothing a failure would have to give back.
             yield* Effect.logWarning("The engine refused to open a routine's side session", {
               routineId: attempt.routine_id,
-              reason: opened.failure._tag,
+              reason: failure._tag,
             });
-            yield* writeDispatch(attempt, sessionId, "unresolved");
+            yield* writeDispatch(attempt, sessionId, {
+              runFailure:
+                failure._tag === "PermissionModeRefused"
+                  ? {
+                      _tag: "permission-mode-refused",
+                      permissionMode: failure.permissionMode,
+                      allowed: failure.allowed,
+                    }
+                  : null,
+            });
             return "done";
-          default:
-            // Not now: the engine's answer was lost. The same key is sent
-            // again.
-            yield* Effect.logWarning("A routine's side session could not be opened yet", {
-              routineId: attempt.routine_id,
-              reason: opened.failure._tag,
-            });
-            return "deferred";
         }
       }
       yield* sql`
@@ -451,18 +467,23 @@ export const layer = Layer.effect(
      * Writes the attempt's dispatch into its side session, in one transaction
      * that finds the wake still waiting and the session still live and opened
      * with its bot's settings as they stand. The dispatcher sends it. One
-     * `failed` already ends the attempt unsent: `unresolved` for a session
-     * the engine refused to open, which the run tries again, and `rejected`
-     * for an envelope the engine would refuse, which fails the run. Its run
-     * settles from the failed wake as for any other.
+     * already ends the attempt unsent, failed `unresolved` for a session the
+     * engine refused to open (`unopened`), which the run tries again, with
+     * the reason its history names, if any, and `rejected` for an envelope
+     * the engine would refuse, which fails the run. Its run settles from the
+     * failed wake as for any other.
      */
     const writeDispatch = Effect.fn("RoutineRunner.writeDispatch")(function* (
       attempt: Attempt,
       sessionId: SessionRowId,
-      failed: "unresolved" | null,
+      unopened: { readonly runFailure: RoutineRunFailure | null } | null,
     ): Effect.fn.Return<Step> {
       const { wake, fits } = yield* envelopeOf(attempt);
-      const failure = failed ?? (fits ? null : "rejected");
+      const failure = unopened !== null ? "unresolved" : fits ? null : "rejected";
+      const runFailure =
+        unopened === null || unopened.runFailure === null
+          ? null
+          : yield* encodeRunFailure(unopened.runFailure);
       const envelope = yield* renderWake(wake).pipe(
         Effect.provideService(SecureRandom.SecureRandom, random),
       );
@@ -492,6 +513,12 @@ export const layer = Layer.effect(
             UPDATE wakes SET status = 'dispatched', dispatch_id = ${id}, updated_at = ${at}
             WHERE id = ${attempt.wake_id}
           `;
+          if (runFailure !== null) {
+            yield* sql`
+              UPDATE routine_runs SET failure_json = ${runFailure}
+              WHERE id = ${attempt.run_id} AND status = 'running'
+            `;
+          }
           if (failure !== null) {
             yield* ledger.fail(id, failure, { _tag: "failed", reason: failure });
             yield* sql.afterCommit(signals.routines.fire);

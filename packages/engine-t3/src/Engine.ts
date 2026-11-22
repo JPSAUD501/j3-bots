@@ -363,7 +363,8 @@ export class Engine extends Context.Service<
      * key, which is spent. The caller opens the session later under a fresh
      * key. `PermissionModeRefused`: the engine refuses the permission mode,
      * and keeps nothing for the key; it opens no session in that mode until
-     * its policy changes.
+     * it starts again under a policy that allows it. The error names the
+     * highest mode the policy allows, when the engine reports one.
      */
     readonly openSession: (input: {
       readonly key: IdempotencyKey;

@@ -475,7 +475,11 @@ export function galleryVariants(now: DateTime.Utc) {
     notice("notice-waiting", { _tag: "waiting-in-conversation", botId: ids.juniper }),
     notice("notice-lost", { _tag: "session-lost" }),
     notice("notice-not-ready", { _tag: "session-not-ready" }),
-    notice("notice-mode-refused", { _tag: "permission-mode-refused" }),
+    notice("notice-mode-refused", {
+      _tag: "permission-mode-refused",
+      permissionMode: "full-access",
+      allowed: "supervised",
+    }),
     notice("notice-settings", { _tag: "settings-held" }),
     notice("notice-behind", { _tag: "observation-failed" }),
     notice("notice-too-long", { _tag: "too-long" }),

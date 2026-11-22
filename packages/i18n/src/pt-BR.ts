@@ -174,7 +174,9 @@ const sentences = {
   "notice.sessionNotReady":
     "Não deu para preparar o contexto de trabalho, e continua tentando; novas mensagens esperam. Se não resolver, edite o bot e confira o modelo.",
   "notice.permissionModeRefused":
-    "Não pode trabalhar no modo de permissão atual: uma política no computador que roda o J3 Bots permite menos. Edite o bot e escolha um modo de permissão mais baixo; novas mensagens esperam até lá.",
+    "Não pode trabalhar em {mode}: uma política no computador que roda o J3 Bots permite menos. Novas mensagens esperam até você editar o bot e escolher um modo de permissão mais baixo, ou aumentar o limite da política e reiniciar o J3 Bots.",
+  "notice.permissionModeAllowed":
+    "Não pode trabalhar em {mode}: uma política no computador que roda o J3 Bots permite até {allowed}. Novas mensagens esperam até você editar o bot e escolher {allowed} ou um modo mais baixo, ou aumentar o limite da política e reiniciar o J3 Bots.",
   "notice.settingsHeld":
     "As novas configurações valem quando o trabalho em segundo plano terminar, e as mensagens esperam até lá. Pare o bot para aplicá-las agora.",
   "notice.observationFailed":
@@ -207,6 +209,10 @@ const sentences = {
   "routine.lastRun.delivered": "A última execução trouxe novidades {when}",
   "routine.lastRun.silent": "A última execução não tinha nada a relatar {when}",
   "routine.lastRun.failed": "A última execução falhou {when}",
+  "routine.lastRun.modeRefused":
+    "A última execução falhou {when}: uma política no computador que roda o J3 Bots não permite {mode}",
+  "routine.lastRun.modeAllowed":
+    "A última execução falhou {when}: uma política no computador que roda o J3 Bots permite até {allowed}, não {mode}",
   "routine.lastRun.skipped": "A última execução foi pulada {when}: a anterior ainda estava rodando",
   "routine.lastRunWithCount.one": "{lastRun}\u00a0·\u00a0{count}\u00a0execução",
   "routine.lastRunWithCount.other": "{lastRun}\u00a0·\u00a0{count}\u00a0execuções",

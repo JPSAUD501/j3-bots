@@ -175,7 +175,9 @@ export const en = {
   "notice.sessionNotReady":
     "Couldn’t get its working context ready, and keeps trying; new messages wait. If this doesn’t clear, edit it and check its model.",
   "notice.permissionModeRefused":
-    "Can’t work in its permission mode: a policy on the computer running J3 Bots allows less. Edit it and choose a lower permission mode; new messages wait until then.",
+    "Can’t work in {mode}: a policy on the computer running J3 Bots allows less. New messages wait until you edit it and choose a lower permission mode, or raise the policy’s limit and restart J3 Bots.",
+  "notice.permissionModeAllowed":
+    "Can’t work in {mode}: a policy on the computer running J3 Bots allows up to {allowed}. New messages wait until you edit it and choose {allowed} or lower, or raise the policy’s limit and restart J3 Bots.",
   "notice.settingsHeld":
     "Its new settings apply once its background work ends, and messages wait until then. Stop it to apply them now.",
   "notice.observationFailed":
@@ -208,6 +210,10 @@ export const en = {
   "routine.lastRun.delivered": "Last run reported back {when}",
   "routine.lastRun.silent": "Last run had nothing to report {when}",
   "routine.lastRun.failed": "Last run failed {when}",
+  "routine.lastRun.modeRefused":
+    "Last run failed {when}: a policy on the computer running J3 Bots doesn’t allow {mode}",
+  "routine.lastRun.modeAllowed":
+    "Last run failed {when}: a policy on the computer running J3 Bots allows up to {allowed}, not {mode}",
   "routine.lastRun.skipped": "Last run was skipped {when}: the one before was still going",
   // No-break spaces: the line may wrap inside the last run's sentence, never around the count.
   "routine.lastRunWithCount.one": "{lastRun}\u00a0·\u00a0{count}\u00a0run",

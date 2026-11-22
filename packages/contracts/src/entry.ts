@@ -15,7 +15,7 @@ import {
   UnknownLiteral,
   WorkStepId,
 } from "./base.ts";
-import { FailureClass, ReceivedFailureClass } from "./bot.ts";
+import { FailureClass, PermissionMode, ReceivedFailureClass } from "./bot.ts";
 import { RoutineTrigger } from "./routine.ts";
 
 /** Where entries live: a bot's conversation with the operator, or a room. */
@@ -355,10 +355,14 @@ const notices = <Failure extends Schema.Top>(failure: Failure) =>
     /**
      * The engine refuses the bot's permission mode, as an administrator's
      * policy on its machine can, so the bot cannot start, or cannot take its
-     * new settings. Messages wait until the operator chooses a lower
-     * permission mode; any change of the bot's settings is tried again.
+     * new settings. `allowed` is the highest mode the policy allows, when the
+     * engine names one. Messages wait until the operator chooses a lower
+     * permission mode, or raises the policy's limit and restarts J3 Bots.
      */
-    Schema.TaggedStruct("permission-mode-refused", {}),
+    Schema.TaggedStruct("permission-mode-refused", {
+      permissionMode: PermissionMode,
+      allowed: Schema.NullOr(PermissionMode),
+    }),
     /**
      * The bot's new model or permission mode waits for background work its
      * session runs, which applying it would end; its messages wait too. A Stop

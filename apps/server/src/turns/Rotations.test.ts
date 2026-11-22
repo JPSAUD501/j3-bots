@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import type { BotId, Notice } from "@j3-bots/contracts";
+import type { BotId, PermissionMode } from "@j3-bots/contracts";
 import type { SessionId, TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as DateTime from "effect/DateTime";
@@ -17,6 +17,7 @@ import { BotTools } from "../tools/BotTools.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
   command,
+  conversation,
   createBot,
   createNewBot,
   deliveryIs,
@@ -138,8 +139,36 @@ const replacementUnopened = (botId: BotId) =>
   });
 
 /** How many notices of the kind the bot's conversation shows. */
-const noticeCount = (botId: BotId, tag: Notice["_tag"]) =>
-  noticesOf(botId).pipe(Effect.map((tags) => tags.filter((found) => found === tag).length));
+/**
+ * What the bot's conversation was told of the engine's refusals of its
+ * permission mode, oldest first: the mode refused, and the one allowed.
+ */
+const modeNotices = (botId: BotId) =>
+  conversation(botId).pipe(
+    Effect.map((entries) =>
+      entries.flatMap((found): ReadonlyArray<readonly [PermissionMode, PermissionMode | null]> =>
+        found._tag === "notice" && found.notice._tag === "permission-mode-refused"
+          ? [[found.notice.permissionMode, found.notice.allowed]]
+          : [],
+      ),
+    ),
+  );
+
+/** The engine stops and starts again, under a policy allowing up to `ceiling`. */
+const engineRestarts = (ceiling: PermissionMode) =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    yield* control.setReachable(false);
+    yield* control.limitPermissionModes(ceiling);
+    yield* control.setReachable(true);
+  });
+
+/** Waits for the engine to have refused `count` permission modes in all. */
+const modeRefused = (count: number) =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    yield* until(Effect.map(control.modeRefusals, (refusals) => refusals === count));
+  });
 
 /** An hour of the rotator's passes, five minutes apart: the longest backoff. */
 const anHourOfPasses = Effect.gen(function* () {
@@ -503,6 +532,7 @@ it.effect(
       yield* anHourOfPasses;
       assert.strictEqual(yield* control.modeRefusals, 1);
       assert.deepStrictEqual(yield* noticesOf(bot.id), ["permission-mode-refused"]);
+      assert.deepStrictEqual(yield* modeNotices(bot.id), [["full-access", "auto"]]);
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
@@ -532,7 +562,67 @@ it.effect(
       yield* deliveryIs(waiting, "delivered");
       assert.strictEqual(yield* timesSent(session, "Plan the launch."), 1);
       assert.strictEqual(yield* control.modeRefusals, 1);
-      assert.strictEqual(yield* noticeCount(bot.id, "permission-mode-refused"), 1);
+      assert.strictEqual((yield* modeNotices(bot.id)).length, 1);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "opens a bot's main session once the engine starts again under a policy that allows its permission mode",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      yield* control.limitPermissionModes("auto");
+      yield* TestClock.adjust("1 second");
+      const bot = yield* (yield* Bots).create({
+        commandId: command(),
+        draft: { name: "Ana", job: "", permissionMode: "full-access" },
+      });
+      const waiting = yield* sendToBot(bot.id, "Plan the launch.");
+      yield* anHourOfPasses;
+
+      // Started again under the same policy: asked once more, and refused
+      // as before, which the conversation was already told of.
+      yield* engineRestarts("auto");
+      yield* modeRefused(2);
+      yield* anHourOfPasses;
+      assert.strictEqual(yield* control.modeRefusals, 2);
+
+      yield* engineRestarts("full-access");
+      const session = yield* engineSession(bot.id);
+      assert.strictEqual(yield* control.sessionPermissionMode(session), "full-access");
+      yield* finish(bot.id, session, yield* nextTurn(bot.id));
+      yield* deliveryIs(waiting, "delivered");
+      assert.strictEqual(yield* timesSent(session, "Plan the launch."), 1);
+      assert.deepStrictEqual(yield* modeNotices(bot.id), [["full-access", "auto"]]);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "tells a bot's conversation once more when the engine refuses a later permission mode of it too",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const bots = yield* Bots;
+      yield* control.limitPermissionModes("supervised");
+      yield* TestClock.adjust("1 second");
+      const bot = yield* bots.create({
+        commandId: command(),
+        draft: { name: "Ana", job: "", permissionMode: "full-access" },
+      });
+      yield* anHourOfPasses;
+
+      yield* bots.update({
+        commandId: command(),
+        botId: bot.id,
+        changes: { permissionMode: "auto" },
+      });
+      yield* modeRefused(2);
+      yield* anHourOfPasses;
+      assert.strictEqual(yield* control.modeRefusals, 2);
+      assert.deepStrictEqual(yield* modeNotices(bot.id), [
+        ["full-access", "supervised"],
+        ["auto", "supervised"],
+      ]);
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
@@ -554,7 +644,7 @@ it.effect(
       yield* (yield* Rotations).rotateDue;
       yield* anHourOfPasses;
       assert.strictEqual(yield* control.modeRefusals, 1);
-      assert.strictEqual(yield* noticeCount(bot.id, "permission-mode-refused"), 1);
+      assert.deepStrictEqual(yield* modeNotices(bot.id), [["full-access", "auto"]]);
       assert.strictEqual(yield* timesSent(session, "Plan the launch."), 0);
 
       yield* bots.update({
@@ -566,7 +656,7 @@ it.effect(
       yield* deliveryIs(waiting, "delivered");
       assert.strictEqual(yield* control.sessionPermissionMode(session), "auto-accept-edits");
       assert.strictEqual(yield* timesSent(session, "Plan the launch."), 1);
-      assert.strictEqual(yield* noticeCount(bot.id, "permission-mode-refused"), 1);
+      assert.strictEqual((yield* modeNotices(bot.id)).length, 1);
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
