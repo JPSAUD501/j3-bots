@@ -61,8 +61,9 @@ export function NewBotForm(props: {
             setState("creating");
             props.onCreating?.(true);
             void client.createBot({ name: trimmed, primary }).then((result) => {
+              // A created bot opens, which takes the form off the screen: until then it stays
+              // creating, so Create cannot make a second bot.
               if (result._tag === "done") {
-                setState("editing");
                 props.onCreated(result.value.id);
               } else {
                 setState("failed");

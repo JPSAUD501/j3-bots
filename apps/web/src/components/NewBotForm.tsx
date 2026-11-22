@@ -54,10 +54,9 @@ export function NewBotForm({
         event.preventDefault();
         if (!ready) return;
         setState("creating");
-        onCreate(trimmed, primary).then(
-          () => setState("editing"),
-          () => setState("failed"),
-        );
+        // A created bot opens, which takes the form off the screen: until then it stays
+        // creating, so Create cannot make a second bot.
+        onCreate(trimmed, primary).catch(() => setState("failed"));
       }}
     >
       <label htmlFor={nameId} className="sr-only">

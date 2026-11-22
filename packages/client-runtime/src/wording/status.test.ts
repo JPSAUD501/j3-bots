@@ -120,6 +120,18 @@ describe("rosterLine", () => {
     expect(rosterLine(row(opening), ctx).text).not.toBe(rosterLine(row(bot("Scout")), ctx).text);
   });
 
+  it("never says a blocked bot is getting ready, whatever its opening", () => {
+    const blocked = bot(
+      "Scout",
+      { _tag: "blocked", failure: "usage-limit", retryAt: null },
+      { opening: true },
+    );
+    expect(quietConversationText(blocked, ctx)).toBe(
+      quietConversationText(bot("Scout", blocked.state), ctx),
+    );
+    expect(rosterLine(row(blocked), ctx).tone).toBe("blocked");
+  });
+
   it("says how long a stalled turn has been quiet", () => {
     const stalled = bot("Scout", {
       _tag: "working",

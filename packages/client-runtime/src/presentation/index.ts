@@ -95,6 +95,8 @@ export {
   buildTimeline,
   type GroupPosition,
   handoffPeer,
+  readThrough,
+  rowOrder,
   type TimelineItem,
   type TimelineMessage,
 } from "./timeline.ts";

@@ -111,6 +111,7 @@ export function ConversationHeader({
             numberOfLines={1}
             className={`text-2xs ${line === null ? "" : toneClass[line.tone]}`}
             importantForAccessibility={line === null ? "no" : "auto"}
+            accessibilityElementsHidden={line === null}
           >
             {line?.text ?? " "}
           </Text>

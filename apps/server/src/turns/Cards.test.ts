@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import { type BotId, type Conflict, Invalid, type NotFound } from "@j3-bots/contracts";
+import { type BotId, type Conflict, Invalid, type NotFound, WorkStepId } from "@j3-bots/contracts";
 import { Engine } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as DateTime from "effect/DateTime";
@@ -458,5 +458,111 @@ it.effect("refuses an answer too long to reach the bot, and leaves the card open
 
     yield* typed("Europe, but eu-central-1.");
     assert.strictEqual((yield* awaitEntry(bot.id, "question")).status._tag, "answered");
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+/** A running turn with a step, so its work fold shows from the start, and an approval it holds on after a minute. */
+const holdsOnApprovalAfterAMinute = Effect.gen(function* () {
+  const control = yield* TestEngineControl;
+  const bot = yield* createBot("Ana");
+  const session = yield* engineSession(bot.id);
+  yield* sendToBot(bot.id, "Clean up.");
+  const turnId = yield* nextTurn(bot.id);
+  const startedAt = yield* DateTime.now;
+  yield* control.step({
+    sessionId: session,
+    turnId,
+    step: {
+      id: WorkStepId.make("step-1"),
+      kind: "command",
+      tool: null,
+      label: "ls build",
+      status: "completed",
+      startedAt,
+      finishedAt: startedAt,
+    },
+  });
+  yield* awaitEntry(bot.id, "work-fold");
+  yield* TestClock.adjust(Duration.minutes(1));
+  yield* control.openRequest({
+    sessionId: session,
+    turnId,
+    request: {
+      _tag: "approval",
+      kind: "command",
+      action: "rm -rf build",
+      detail: null,
+      reason: null,
+      exact: true,
+      sessionGrant: null,
+    },
+  });
+  const card = yield* awaitEntry(bot.id, "approval");
+  const answer = (decision: "allow-once" | "deny") =>
+    Effect.gen(function* () {
+      const cards = yield* Cards;
+      yield* cards.answer({
+        commandId: command(),
+        entryId: card.id,
+        answer: { _tag: "approval", decision },
+      });
+      yield* cards.respondPending;
+    });
+  return { control, bot, session, turnId, card, answer };
+});
+
+/** How long the turn's fold says it worked, once it ended. */
+const workedMs = (botId: BotId) =>
+  Effect.gen(function* () {
+    yield* until(
+      awaitEntry(botId, "work-fold").pipe(Effect.map((fold) => fold.status._tag === "finished")),
+    );
+    const fold = yield* awaitEntry(botId, "work-fold");
+    if (fold.status._tag !== "finished") return yield* Effect.die(new Error("The fold runs"));
+    const spanMs =
+      DateTime.toEpochMillis(fold.status.finishedAt) - DateTime.toEpochMillis(fold.createdAt);
+    return spanMs - fold.status.waitedMs;
+  });
+
+it.effect("leaves out of a turn's work the time it waited on a card, and only that time", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const { control, bot, session, turnId, card, answer } = yield* holdsOnApprovalAfterAMinute;
+    yield* TestClock.adjust(Duration.minutes(2));
+    yield* answer("allow-once");
+    yield* until(
+      sql<{ readonly closed_at: string | null }>`
+        SELECT closed_at FROM engine_requests WHERE entry_id = ${card.id}
+      `.pipe(
+        Effect.orDie,
+        Effect.map((rows) => rows.length === 1 && rows[0]?.closed_at !== null),
+      ),
+    );
+    yield* TestClock.adjust(Duration.minutes(3));
+    yield* control.finishTurn({ sessionId: session, turnId, outcome: { _tag: "completed" } });
+
+    // A minute before the card, three after it was answered.
+    assert.strictEqual(yield* workedMs(bot.id), Duration.toMillis(Duration.minutes(4)));
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("counts the time after a refused answer as waiting, until the turn ends", () =>
+  Effect.gen(function* () {
+    const { control, bot, session, turnId, answer } = yield* holdsOnApprovalAfterAMinute;
+    yield* TestClock.adjust(Duration.minutes(2));
+    yield* control.rejectNextAnswer;
+    yield* answer("allow-once");
+    yield* until(
+      awaitEntry(bot.id, "approval").pipe(Effect.map((found) => found.status._tag === "refused")),
+    );
+    yield* TestClock.adjust(Duration.minutes(5));
+    yield* control.finishTurn({
+      sessionId: session,
+      turnId,
+      outcome: { _tag: "interrupted" },
+    });
+
+    // Only the minute before the card was work.
+    assert.strictEqual(yield* workedMs(bot.id), Duration.toMillis(Duration.minutes(1)));
   }).pipe(Effect.provide(TestDomain.layer)),
 );

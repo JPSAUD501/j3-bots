@@ -11,6 +11,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Entries } from "../entries/Entries.ts";
 import { json } from "../persistence/columns.ts";
+import { shownStep } from "./shownStep.ts";
 
 /**
  * What `entries.workSteps` streams: every step so far, then each step as it
@@ -40,11 +41,7 @@ export class WorkSteps extends Context.Service<
      */
     readonly finished: (entryId: EntryId) => Effect.Effect<void>;
     readonly follow: (entryId: EntryId) => Stream.Stream<WorkStepsFrame, NotFound>;
-    /**
-     * The step that says what the fold's work is doing or did: the newest
-     * one still running, since steps run in parallel and a later one may
-     * finish first; else the newest.
-     */
+    /** The step that says what the fold's work is doing or did (`shownStep`). */
     readonly shown: (entryId: EntryId) => Effect.Effect<Option.Option<WorkStep>>;
   }
 >()("@j3-bots/server/turns/WorkSteps") {}
@@ -64,17 +61,7 @@ export const layer = Layer.effect(
       `,
     });
 
-    const shownRow = SqlSchema.findOneOption({
-      Request: EntryId,
-      Result: Schema.Struct({ step_json: json(WorkStep) }),
-      execute: (entryId) => sql`
-        SELECT step_json FROM work_steps WHERE entry_id = ${entryId}
-        ORDER BY json_extract(step_json, '$.status') = 'running' DESC, position DESC LIMIT 1
-      `,
-    });
-
-    const shown = (entryId: EntryId) =>
-      shownRow(entryId).pipe(Effect.map(Option.map((row) => row.step_json)), Effect.orDie);
+    const shown = shownStep(sql);
 
     const changed = (entryId: EntryId, step: WorkStep) =>
       PubSub.publish(pubsub, { _tag: "step", entryId, step }).pipe(Effect.asVoid);

@@ -1120,7 +1120,9 @@ const stepKind = (item: Item): WorkStep["kind"] | undefined => {
       return "delegation";
     case "dynamic_tool":
       // Host speech and `j3` calls are events of their own.
-      return isHostSpeech(item) || j3ToolOf(item) !== undefined ? undefined : "tool";
+      return isHostSpeech(item) || j3ToolOf(item) !== undefined
+        ? undefined
+        : dynamicToolStep(item).kind;
     default:
       return undefined;
   }
@@ -1149,10 +1151,13 @@ const stepLabel = (item: Item): string => {
  * A tool call in J3 Bots' words. A harness may give only a title, which then
  * carries the tool's name in the same forms.
  */
-const dynamicToolStep = (item: DynamicTool) => {
-  const step = toolStep(item.toolName ?? item.title, item.viewedImagePath !== undefined);
-  return step.label === null && item.title !== null ? { tool: step.tool, label: item.title } : step;
-};
+const dynamicToolStep = (item: DynamicTool) =>
+  toolStep({
+    name: item.toolName ?? item.title,
+    title: item.toolName === null ? null : item.title,
+    input: item.input,
+    viewsImage: item.viewedImagePath !== undefined,
+  });
 
 const stepStatus = (item: Item): WorkStep["status"] =>
   LIVE_ITEM.has(item.status) ? "running" : item.status === "completed" ? "completed" : "failed";

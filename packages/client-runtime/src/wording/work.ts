@@ -22,7 +22,6 @@ const toolWords: Record<WorkTool, { readonly did: Phrase; readonly doing: Phrase
   issue: { did: "tool.issue.did", doing: "tool.issue.doing" },
   schedule: { did: "tool.schedule.did", doing: "tool.schedule.doing" },
   device: { did: "tool.device.did", doing: "tool.device.doing" },
-  page: { did: "tool.page.did", doing: "tool.page.doing" },
   "web-page": { did: "tool.webPage.did", doing: "tool.webPage.doing" },
   plan: { did: "tool.plan.did", doing: "tool.plan.doing" },
   image: { did: "tool.image.did", doing: "tool.image.doing" },
@@ -82,23 +81,29 @@ export function workDoneText(step: StepSummary | null, i18n: I18n): string {
 
 /**
  * A work fold's title. While the turn runs it says so, with no duration: the
- * time is not known until it ends. Once the turn ends with work it handed off
- * still running, it says that. Then it says how long the turn worked, less
- * the time it waited on the operator.
+ * time is not known until it ends. Once the turn has completed with work it
+ * handed off still running, it says that. Otherwise it says how the turn
+ * ended and how long it worked, less the time it waited on the operator; a
+ * turn stopped or failed says so even while work it handed off still runs,
+ * and then says that too.
  */
 export function workFoldTitle(entry: WorkFoldEntry, ctx: PresentationContext): string {
   const { t } = ctx.i18n;
   const { status } = entry;
   if (status._tag === "running") return t("presence.working");
-  if (status.background) return t("work.inBackground");
+  if (status.background && status.ending === "completed") return t("work.inBackground");
   const worked = Math.max(0, millisBetween(entry.createdAt, status.finishedAt) - status.waitedMs);
   const duration = shortDuration(worked, ctx.i18n);
   switch (status.ending) {
     case "completed":
       return t("work.workedFor", { duration });
     case "interrupted":
-      return t("work.stoppedAfter", { duration });
+      return t(status.background ? "work.stoppedAfterInBackground" : "work.stoppedAfter", {
+        duration,
+      });
     case "failed":
-      return t("work.failedAfter", { duration });
+      return t(status.background ? "work.failedAfterInBackground" : "work.failedAfter", {
+        duration,
+      });
   }
 }

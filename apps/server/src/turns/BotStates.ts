@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BotId, type BotState, EntryId, WorkStep } from "@j3-bots/contracts";
+import { BotId, type BotState, EntryId } from "@j3-bots/contracts";
 import { TurnOutcome } from "@j3-bots/engine-t3";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -15,6 +15,7 @@ import { EngineState } from "../engine/EngineState.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { json, Time, timeText } from "../persistence/columns.ts";
 import { STALL_AFTER } from "./model.ts";
+import { shownStep } from "./shownStep.ts";
 
 const Card = Schema.Struct({ entry_id: EntryId });
 
@@ -23,8 +24,6 @@ const RunningTurn = Schema.Struct({
   last_activity_at: Time,
   work_fold_entry_id: Schema.NullOr(EntryId),
 });
-
-const StepRow = Schema.Struct({ step_json: json(WorkStep) });
 
 const Continuation = Schema.Struct({
   continuation_resumes_at: Time,
@@ -88,18 +87,7 @@ export const layer = Layer.effect(
       `,
     });
 
-    /**
-     * The step the roster shows: the newest one still running, since steps run
-     * in parallel and a later one may finish first; else the newest.
-     */
-    const shownStep = SqlSchema.findOneOption({
-      Request: EntryId,
-      Result: StepRow,
-      execute: (foldId) => sql`
-        SELECT step_json FROM work_steps WHERE entry_id = ${foldId}
-        ORDER BY json_extract(step_json, '$.status') = 'running' DESC, position DESC LIMIT 1
-      `,
-    });
+    const shown = shownStep(sql);
 
     const continuation = SqlSchema.findOneOption({
       Request: BotId,
@@ -169,9 +157,9 @@ export const layer = Layer.effect(
         );
         const since = turn.value.started_at;
         const fold = turn.value.work_fold_entry_id;
-        const step = fold === null ? Option.none() : yield* shownStep(fold);
+        const step = fold === null ? Option.none() : yield* shown(fold);
         if (Option.isNone(step)) return { _tag: "thinking", since, stalled } as const;
-        const latest = step.value.step_json;
+        const latest = step.value;
         const running = latest.status === "running";
         return {
           _tag: "working",

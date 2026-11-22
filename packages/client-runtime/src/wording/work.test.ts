@@ -16,14 +16,27 @@ const fold = (status: WorkFoldEntry["status"]): WorkFoldEntry => ({
   stepCount: 3,
 });
 
-const finished = (finishedAt: string, waitedMs: number, background = false) =>
-  fold({ _tag: "finished", finishedAt: at(finishedAt), ending: "completed", waitedMs, background });
+const finished = (
+  finishedAt: string,
+  waitedMs: number,
+  background = false,
+  ending: "completed" | "interrupted" | "failed" = "completed",
+) => fold({ _tag: "finished", finishedAt: at(finishedAt), ending, waitedMs, background });
 
 describe("workFoldTitle", () => {
   it("gives no duration while the turn runs, nor while the work it handed off still runs", () => {
     expect(workFoldTitle(fold({ _tag: "running" }), ctx)).toBe("Working");
     const handedOff = workFoldTitle(finished("2026-11-20T14:05:00Z", 0, true), ctx);
     expect(handedOff).not.toMatch(/\d/);
+  });
+
+  it("keeps a failed or stopped turn's ending and time while the work it handed off runs", () => {
+    for (const ending of ["failed", "interrupted"] as const) {
+      const ended = plain(workFoldTitle(finished("2026-11-20T14:03:00Z", 0, false, ending), ctx));
+      const running = plain(workFoldTitle(finished("2026-11-20T14:03:00Z", 0, true, ending), ctx));
+      expect(running.startsWith(ended)).toBe(true);
+      expect(running).not.toBe(ended);
+    }
   });
 
   it("counts the turn's time less what it spent waiting on the operator", () => {

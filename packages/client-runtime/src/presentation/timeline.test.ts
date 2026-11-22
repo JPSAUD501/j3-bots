@@ -10,12 +10,19 @@ import {
 import type { OutgoingMessage } from "../stores/Conversations.ts";
 import { describe, expect, it } from "vite-plus/test";
 import { at, message } from "../../test/fixtures.ts";
-import { buildTimeline } from "./timeline.ts";
+import { buildTimeline, readThrough, rowOrder } from "./timeline.ts";
 
 const scout = { _tag: "bot", botId: BotId.make("scout") } as const;
 const wren = { _tag: "bot", botId: BotId.make("wren") } as const;
 const shape = (items: ReturnType<typeof buildTimeline>) =>
   items.map((i) => (i.kind === "message" ? i.position : i.kind));
+
+describe("readThrough", () => {
+  it("reads through the highest order seen, wherever its row stands", () => {
+    expect(readThrough([EntryOrder.make(3), null, EntryOrder.make(7), EntryOrder.make(5)])).toBe(7);
+    expect(readThrough([null])).toBeNull();
+  });
+});
 
 describe("buildTimeline", () => {
   it("groups one author's messages that follow closely", () => {
@@ -134,34 +141,63 @@ describe("buildTimeline", () => {
           : [],
       );
 
-    it("folds a run of changes to one routine into one card that shows the latest", () => {
+    it("folds edits that follow a routine's creation or edit into one card with the latest", () => {
       const items = buildTimeline([
         change("2026-11-20T10:00:00Z", "digest", "created"),
-        change("2026-11-20T10:00:10Z", "backup", "created"),
+        change("2026-11-20T10:00:10Z", "digest", "updated"),
         change("2026-11-20T10:00:20Z", "digest", "updated"),
-        change("2026-11-20T10:00:30Z", "digest", "updated"),
-        change("2026-11-20T10:00:40Z", "backup", "paused"),
+        change("2026-11-20T10:00:30Z", "backup", "updated"),
+        change("2026-11-20T10:00:40Z", "backup", "updated"),
       ]);
       expect(cards(items)).toEqual([
-        "change-1 digest created digest 4",
-        "change-2 backup paused backup 5",
+        "change-1 digest created digest 3",
+        "change-4 backup updated backup 5",
       ]);
     });
 
-    it("keeps changes apart that something else, an author or a pause separates", () => {
+    it("keeps a pause, a resume and a deletion on cards of their own", () => {
       const items = buildTimeline([
-        change("2026-11-20T11:00:00Z", "digest", "updated"),
-        message("2026-11-20T11:00:05Z", scout),
-        change("2026-11-20T11:00:10Z", "digest", "updated"),
-        change("2026-11-20T11:00:20Z", "digest", "paused", { _tag: "operator" }),
-        change("2026-11-20T11:30:00Z", "digest", "resumed", { _tag: "operator" }),
+        change("2026-11-20T10:30:00Z", "digest", "created"),
+        change("2026-11-20T10:30:10Z", "digest", "paused"),
+        change("2026-11-20T10:30:20Z", "digest", "updated"),
+        change("2026-11-20T10:30:30Z", "digest", "resumed"),
+        change("2026-11-20T10:30:40Z", "digest", "deleted"),
       ]);
       expect(cards(items).map((card) => card.split(" ")[2])).toEqual([
-        "updated",
-        "updated",
+        "created",
         "paused",
+        "updated",
         "resumed",
+        "deleted",
       ]);
+    });
+
+    it("keeps changes apart that anything, another routine, an author or a pause separates", () => {
+      const items = buildTimeline([
+        change("2026-11-20T11:00:00Z", "digest", "created"),
+        change("2026-11-20T11:00:05Z", "backup", "created"),
+        change("2026-11-20T11:00:10Z", "digest", "updated"),
+        message("2026-11-20T11:00:15Z", scout),
+        change("2026-11-20T11:00:20Z", "digest", "updated"),
+        change("2026-11-20T11:00:30Z", "digest", "updated", { _tag: "operator" }),
+        change("2026-11-20T11:30:00Z", "digest", "updated", { _tag: "operator" }),
+      ]);
+      expect(cards(items).map((card) => card.split(" ").slice(1, 3).join(" "))).toEqual([
+        "digest created",
+        "backup created",
+        "digest updated",
+        "digest updated",
+        "digest updated",
+        "digest updated",
+      ]);
+    });
+
+    it("lets the operator read through a folded card's latest change", () => {
+      const created = change("2026-11-20T12:00:10Z", "digest", "created");
+      const edited = change("2026-11-20T12:00:20Z", "digest", "updated");
+      const items = buildTimeline([created, edited]);
+      expect(items.map(rowOrder)).toEqual([null, edited.order]);
+      expect(readThrough(items.map(rowOrder))).toBe(edited.order);
     });
   });
 });

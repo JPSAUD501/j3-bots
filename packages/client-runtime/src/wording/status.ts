@@ -272,13 +272,16 @@ export function rosterLine(item: RosterItem, ctx: PresentationContext): StatusLi
 }
 
 /**
- * Whether a bot whose conversation is empty is about to speak first: its
- * opening is still to come or under way, or a turn runs. A new bot's state
+ * Whether a bot whose conversation is empty is about to speak first: a turn
+ * runs, or it is idle with its opening still to come. A new bot's state
  * passes through idle while its first turn is set up, so the state alone
- * would say "nothing yet" and then "getting ready" again.
+ * would say "nothing yet" and then "getting ready" again. A blocked bot is
+ * not getting ready, whatever its opening: it waits on what blocks it.
  */
 const speaksFirst = (bot: Bot) =>
-  bot.opening || bot.state._tag === "thinking" || bot.state._tag === "working";
+  bot.state._tag === "thinking" ||
+  bot.state._tag === "working" ||
+  (bot.state._tag === "idle" && bot.opening);
 
 /** What a bot's conversation says before anything is said in it. */
 export function quietConversationText(bot: Bot, ctx: PresentationContext): string {

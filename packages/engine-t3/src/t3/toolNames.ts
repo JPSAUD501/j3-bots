@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { WorkTool } from "@j3-bots/contracts";
+import type { WorkStep, WorkTool } from "@j3-bots/contracts";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 /**
  * The engine's own tool server, as the harnesses name its tools:
@@ -20,6 +22,9 @@ const split = (name: string): { readonly server: string | null; readonly tool: s
   return { server: null, tool: name };
 };
 
+/** A bare name compared as the engine compares Claude's: case, spaces, `_` and `-` aside. */
+const normalized = (tool: string) => tool.toLowerCase().replaceAll(/[\s_-]/g, "");
+
 /**
  * The engine's own tools, by their bare names as the engine offers them to
  * an agent (**Verified** on a running engine, 2026-11: its tool list).
@@ -30,7 +35,6 @@ const engineTool = (tool: string): WorkTool => {
   if (tool === "task_cancel") return "task-stop";
   if (tool === "request_secret") return "secret";
   if (/^(?:t3_)?preview_/.test(tool)) return "browser";
-  if (/^html_(?:render|preview)$/.test(tool)) return "page";
   if (/pull_request|^ci_/.test(tool)) return "pull-request";
   if (/issue/.test(tool)) return "issue";
   if (/schedul/.test(tool)) return "schedule";
@@ -38,17 +42,60 @@ const engineTool = (tool: string): WorkTool => {
   return "built-in";
 };
 
+const Inputs = Schema.Struct({
+  file_path: Schema.optional(Schema.String),
+  path: Schema.optional(Schema.String),
+  pattern: Schema.optional(Schema.String),
+  description: Schema.optional(Schema.String),
+});
+const decodeInputs = Schema.decodeUnknownOption(Inputs);
+
+/** The first of `keys` the call's input gives as a non-empty string. */
+const inputText = (
+  input: unknown,
+  keys: ReadonlyArray<keyof typeof Inputs.Type>,
+): string | null => {
+  const fields = decodeInputs(input);
+  if (Option.isNone(fields)) return null;
+  for (const key of keys) {
+    const value = fields.value[key]?.trim();
+    if (value !== undefined && value !== "") return value;
+  }
+  return null;
+};
+
+type Kind = Extract<WorkStep["kind"], "read" | "search" | "delegation" | "tool">;
+
+/**
+ * A harness's own tool: the kind of step it is, the tool when J3 Bots names
+ * it, and the input fields that say what it worked on.
+ */
+interface Native {
+  readonly kind: Kind;
+  readonly tool: WorkTool | null;
+  readonly about: ReadonlyArray<keyof typeof Inputs.Type>;
+}
+
 /**
  * The harnesses' own tools that reach the engine as plain tool calls, by
- * their names in Claude Code and Codex (**Assumed**: which of a harness's
- * tools the engine passes on this way).
+ * their bare names. Claude Code's are **Read** in T3 Code at `59651c17`
+ * (`ClaudeAdapterV2.ts`, `CLAUDE_KNOWN_TOOL_CLASSIFICATIONS`): `Read`, `Grep`,
+ * `Glob`, `LS`, `Task`, `Agent`, `TaskStop` and `TodoWrite` arrive as dynamic
+ * tools, with the call's input. Codex's `update_plan` and `view_image`, and
+ * `WebFetch` from an agent that reports it as a tool, are **Assumed**.
  */
-const harnessTools: ReadonlyMap<string, WorkTool> = new Map([
-  ["TodoWrite", "plan"],
-  ["update_plan", "plan"],
-  ["WebFetch", "web-page"],
-  ["web_fetch", "web-page"],
-  ["view_image", "image"],
+const nativeTools: ReadonlyMap<string, Native> = new Map([
+  ["read", { kind: "read", tool: null, about: ["file_path", "path"] }],
+  ["grep", { kind: "search", tool: null, about: ["pattern", "path"] }],
+  ["glob", { kind: "search", tool: null, about: ["pattern", "path"] }],
+  ["ls", { kind: "search", tool: null, about: ["path"] }],
+  ["task", { kind: "delegation", tool: null, about: ["description"] }],
+  ["agent", { kind: "delegation", tool: null, about: ["description"] }],
+  ["taskstop", { kind: "tool", tool: "task-stop", about: [] }],
+  ["todowrite", { kind: "tool", tool: "plan", about: [] }],
+  ["updateplan", { kind: "tool", tool: "plan", about: [] }],
+  ["webfetch", { kind: "tool", tool: "web-page", about: [] }],
+  ["viewimage", { kind: "tool", tool: "image", about: [] }],
 ]);
 
 /** English for a client that predates `tool`. */
@@ -62,40 +109,72 @@ const englishLabel: Record<WorkTool, string> = {
   issue: "Worked on an issue",
   schedule: "Managed a scheduled task",
   device: "Used a phone simulator",
-  page: "Drew a page",
   "web-page": "Read a web page",
   plan: "Updated its plan",
   image: "Looked at an image",
-  "built-in": "Used a built-in tool",
+  "built-in": "Used one of its tools",
 };
 
-/** A tool's own name made readable: no server, words apart. */
-const readable = (tool: string): string =>
-  tool
+/** A tool's own name made readable: no server, words apart, the first one capitalised. */
+const readable = (tool: string): string => {
+  const words = tool
     .replace(/[_-]+/g, " ")
     .replace(/([a-z])([A-Z])/g, "$1 $2")
     .toLowerCase()
     .trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+};
+
+/** What the engine titled a call, unless the title only repeats the tool's name. */
+const meaningfulTitle = (title: string | null, tool: string | null): string | null => {
+  const trimmed = title?.trim() ?? "";
+  if (trimmed === "") return null;
+  return tool !== null && normalized(split(trimmed).tool) === normalized(tool) ? null : trimmed;
+};
+
+/** A tool call as the engine reports it. */
+export interface ToolCall {
+  /** The tool's name; a harness may give only a title, which then carries it. */
+  readonly name: string | null;
+  /** What the engine made of the call, such as "Read src/app.ts". */
+  readonly title: string | null;
+  readonly input: unknown;
+  /** The call showed the agent an image. */
+  readonly viewsImage: boolean;
+}
 
 /**
- * How a tool call reads in a work step: the tool in J3 Bots' words when it is
- * one J3 Bots names, else none, with the tool's own name made readable. The
- * engine's name for itself never reaches a label.
+ * How a tool call reads as a work step: its kind, the tool in J3 Bots' words
+ * when J3 Bots names it, and a label. A harness's file and search tools read
+ * as what they worked on; a tool J3 Bots does not name keeps the engine's
+ * title, else its own name made readable. The engine's name for itself never
+ * reaches a label.
  */
 export const toolStep = (
-  name: string | null,
-  viewsImage: boolean,
-): { readonly tool: WorkTool | null; readonly label: string | null } => {
-  if (viewsImage) return { tool: "image", label: englishLabel.image };
-  if (name === null) return { tool: null, label: null };
-  const { server, tool } = split(name.trim());
-  const named =
-    server === ENGINE_TOOL_SERVER
-      ? engineTool(tool)
-      : server === null
-        ? harnessTools.get(tool)
-        : undefined;
-  if (named !== undefined) return { tool: named, label: englishLabel[named] };
+  call: ToolCall,
+): { readonly kind: Kind; readonly tool: WorkTool | null; readonly label: string | null } => {
+  if (call.viewsImage) return { kind: "tool", tool: "image", label: englishLabel.image };
+  if (call.name === null) return { kind: "tool", tool: null, label: call.title };
+  const { server, tool } = split(call.name.trim());
+  if (server === ENGINE_TOOL_SERVER) {
+    const named = engineTool(tool);
+    return { kind: "tool", tool: named, label: englishLabel[named] };
+  }
+  const native = server === null ? nativeTools.get(normalized(tool)) : undefined;
+  if (native !== undefined) {
+    return {
+      kind: native.kind,
+      tool: native.tool,
+      label:
+        native.tool !== null
+          ? englishLabel[native.tool]
+          : (inputText(call.input, native.about) ?? meaningfulTitle(call.title, tool)),
+    };
+  }
   const words = readable(tool);
-  return { tool: null, label: words === "" ? null : words };
+  return {
+    kind: "tool",
+    tool: null,
+    label: meaningfulTitle(call.title, tool) ?? (words === "" ? null : words),
+  };
 };

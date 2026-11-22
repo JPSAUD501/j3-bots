@@ -53,12 +53,19 @@ export const sessionRecords = (
   entries: Entries["Service"],
   workSteps: WorkSteps["Service"],
 ) => {
-  /** The cards the fold's turn waited on the operator for, from arrival until each closed. */
+  /**
+   * The cards the fold's turn waited on the operator for, from arrival until
+   * each closed. A card whose answer the engine refused leaves its turn
+   * waiting until it ends or is stopped, so it counts as open.
+   */
   const waitRows = SqlSchema.findAll({
     Request: EntryId,
     Result: WaitRow,
     execute: (foldId) => sql`
-      SELECT e.created_at AS opened_at, r.closed_at FROM turns t
+      SELECT e.created_at AS opened_at,
+        CASE WHEN json_extract(e.body_json, '$.status._tag') = 'refused' THEN NULL
+          ELSE r.closed_at END AS closed_at
+      FROM turns t
       JOIN engine_requests r ON r.session_id = t.session_id AND r.engine_turn_id = t.engine_turn_id
       JOIN entries e ON e.id = r.entry_id
       WHERE t.work_fold_entry_id = ${foldId}

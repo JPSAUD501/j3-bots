@@ -17,7 +17,6 @@ import { OpenLiterals } from "./base.ts";
  * - `pull-request`, `issue`: works on a code host's pull request or issue.
  * - `schedule`: the engine's own scheduled tasks.
  * - `device`: a phone or tablet simulator.
- * - `page`: draws a page for a client J3 Bots does not have.
  * - `web-page`: reads a web page.
  * - `plan`: keeps the harness's list of what is left to do.
  * - `image`: looks at an image.
@@ -33,7 +32,6 @@ export const WorkTool = Schema.Literals([
   "issue",
   "schedule",
   "device",
-  "page",
   "web-page",
   "plan",
   "image",

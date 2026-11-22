@@ -121,27 +121,54 @@ const sameAuthorOf = (a: RoutineChangeEntry, b: RoutineChangeEntry) =>
   (a.author._tag !== "bot" || (b.author._tag === "bot" && a.author.botId === b.author.botId));
 
 /**
- * A routine change, folded into the one before it when both change the same
- * routine, by the same author, in a run of routine changes nothing else
- * breaks: a bot setting up its routines leaves one card for each, not one
- * for every save. The card shows the latest change, with the routine's name
- * and trigger as that change saved them, except that one created in the run
- * and then only edited still reads as created. It stays where the run's first
- * change of that routine was, under that change's key, so it keeps its
- * element as the run grows.
+ * A routine change, folded into the card just before it when that card
+ * created or edited the same routine, by the same author, and this change
+ * only edits it: a bot setting up a routine leaves one card, not one for
+ * every save. The card shows the routine's name and trigger as the latest
+ * edit saved them, and keeps reading as created when the run began with its
+ * creation. A pause, a resume or a deletion keeps a card of its own, and so
+ * does a change that anything, even another routine's change, comes between.
+ * The folded card keeps its first key, so it keeps its element as the run
+ * grows, and carries the latest entry, so its order is the run's newest.
  */
 function placeRoutineChange(items: TimelineItem[], key: string, entry: RoutineChangeEntry) {
-  for (let index = items.length - 1; index >= 0; index--) {
-    const item = items[index];
-    if (item?.kind !== "card" || item.entry._tag !== "routine-change") break;
-    const earlier = item.entry;
-    if (earlier.routineId !== entry.routineId || !sameAuthorOf(earlier, entry)) continue;
-    const change =
-      earlier.change === "created" && entry.change === "updated" ? "created" : entry.change;
-    items[index] = { ...item, entry: { ...entry, change } };
-    return;
+  const last = items.at(-1);
+  const folds =
+    entry.change === "updated" &&
+    last?.kind === "card" &&
+    last.entry._tag === "routine-change" &&
+    (last.entry.change === "created" || last.entry.change === "updated") &&
+    last.entry.routineId === entry.routineId &&
+    sameAuthorOf(last.entry, entry);
+  if (folds) items[items.length - 1] = { ...last, entry: { ...entry, change: last.entry.change } };
+  else items.push({ kind: "card", key, entry });
+}
+
+/** The order of the entry a row shows; none for a divider or a message still on its way. */
+export function rowOrder(row: TimelineItem): EntryOrder | null {
+  switch (row.kind) {
+    case "divider":
+      return null;
+    case "message":
+      return row.message._tag === "message" ? row.message.order : null;
+    case "card":
+      return row.entry.order;
+    case "unknown":
+      return row.order;
   }
-  items.push({ kind: "card", key, entry });
+}
+
+/**
+ * The order a conversation is read through, given the orders of the entries
+ * the operator sees: the highest, wherever its row stands, so a row that
+ * carries a later entry than the rows below it, such as a folded routine
+ * card, still reads everything it shows.
+ */
+export function readThrough(seen: Iterable<EntryOrder | null>): EntryOrder | null {
+  let highest: EntryOrder | null = null;
+  for (const order of seen)
+    if (order !== null && (highest === null || order > highest)) highest = order;
+  return highest;
 }
 
 /** The other bot of a teammate message: the recipient of one sent, the sender of one received. */

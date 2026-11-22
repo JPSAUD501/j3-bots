@@ -6,9 +6,11 @@ import {
   buildTimeline,
   mentionedNames,
   mentionedWhoLeft,
+  readThrough,
   roomStopFailed,
   rosterKeyOf,
   rosterTarget,
+  rowOrder,
   type TimelineItem,
 } from "@j3-bots/client-runtime/presentation";
 import { useConversation, useDraft, useJ3Client, useSelected } from "@j3-bots/client-runtime/react";
@@ -77,20 +79,6 @@ function useInView(): boolean {
   return focused && active;
 }
 
-/** The order of the entry a row shows; none for a divider or a message still on its way. */
-const orderOf = (row: TimelineItem): EntryOrder | null => {
-  switch (row.kind) {
-    case "divider":
-      return null;
-    case "message":
-      return row.message._tag === "message" ? row.message.order : null;
-    case "card":
-      return row.entry.order;
-    case "unknown":
-      return row.order;
-  }
-};
-
 /**
  * An entry counts as seen once half of it shows or, taller than the
  * conversation, once it covers half of the conversation's height, as on the
@@ -99,7 +87,7 @@ const orderOf = (row: TimelineItem): EntryOrder | null => {
 const SEEN_PERCENT = 50;
 
 /**
- * Marks read the newest entry the operator can see, and tells the server the
+ * Marks read through the latest entry the operator can see, and tells the server the
  * conversation is in view, while it is `inView`. Otherwise what arrives
  * notifies and stays unread. Returns the list's viewability pairs, which
  * never change.
@@ -126,11 +114,9 @@ function useReadMark(
       const { inView: shown, rows: now, markRead: mark } = latest.current;
       if (!shown) return;
       const { half, covering } = seen;
-      // A divider or a message still on its way has no order: the newest seen row with one counts.
-      const newest = now.findLast(
-        (row) => (half.has(row.key) || covering.has(row.key)) && orderOf(row) !== null,
+      const order = readThrough(
+        now.filter((row) => half.has(row.key) || covering.has(row.key)).map(rowOrder),
       );
-      const order = newest === undefined ? null : orderOf(newest);
       if (order !== null) mark(order);
     };
     const follow =
