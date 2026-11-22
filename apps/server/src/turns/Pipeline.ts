@@ -77,6 +77,7 @@ import {
   TurnsInvariant,
   type WakePayload,
 } from "./model.ts";
+import { modeRefusedSql } from "./modeRefusals.ts";
 import { Sender, type SendOwner, type SendResult } from "./Sender.ts";
 import { notices } from "./notices.ts";
 import { isIdle, sessionWork } from "./sessionWork.ts";
@@ -687,11 +688,15 @@ export const layer = Layer.effect(
 
     /**
      * The bot's main session, if it can be planned into: live, opened in the
-     * engine, running its bot's settings (`EngineSessions`), taking new work
+     * engine, running its bot's settings (`EngineSessions`), whose permission
+     * mode the engine has not refused (`modeRefusedSql`), taking new work
      * (`takesNewWorkSql`), and past the deadline of a busy refusal, which its
      * next applied event ends sooner. A session due for any rotation but the
      * run limit's takes nothing new: its bot's wakes wait for the session that
-     * replaces it. One not aligned yet takes nothing until it is.
+     * replaces it. One not aligned yet takes nothing until it is, and one
+     * whose bot's mode the engine refused nothing until the bot's settings
+     * change or the engine is ready again, either of which nudges the
+     * dispatcher.
      */
     const mainSession = SqlSchema.findOneOption({
       Request: Schema.Struct({ botId: Schema.String, now: Schema.String }),
@@ -700,6 +705,7 @@ export const layer = Layer.effect(
         SELECT id, bot_id FROM sessions
         WHERE bot_id = ${botId} AND purpose = 'main' AND retired_at IS NULL
           AND lost_at IS NULL AND engine_session_id IS NOT NULL AND settings_pending = 0
+          AND NOT ${modeRefusedSql(sql, sql`sessions.bot_id`)}
           AND ${takesNewWorkSql(sql)} AND (busy_until IS NULL OR busy_until <= ${now})
       `,
     });
@@ -711,6 +717,7 @@ export const layer = Layer.effect(
       execute: (id) => sql`
         SELECT id FROM sessions
         WHERE id = ${id} AND retired_at IS NULL AND lost_at IS NULL AND settings_pending = 0
+          AND NOT ${modeRefusedSql(sql, sql`sessions.bot_id`)}
           AND ${takesNewWorkSql(sql)}
       `,
     });

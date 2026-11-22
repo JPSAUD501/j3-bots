@@ -270,7 +270,8 @@ const entry = (entryId: EntryId) =>
     return Option.getOrThrow(found).entry;
   });
 
-const delivery = (entryId: EntryId) =>
+/** The message's delivery as it stands, or `null` for an entry that is no message. */
+export const delivery = (entryId: EntryId) =>
   entry(entryId).pipe(
     Effect.map((found): MessageDelivery | null =>
       found._tag === "message" ? found.delivery : null,

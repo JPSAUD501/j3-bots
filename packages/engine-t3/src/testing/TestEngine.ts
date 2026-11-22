@@ -90,9 +90,10 @@ import { toolInputDigest } from "../toolCaller.ts";
 // speech; replies lost after a command was applied; staged files that expire;
 // calls held in flight, a Stop whose effects lag its acknowledgment, a Stop
 // refused while its work can still run, an opening refused for good under its
-// key, permission modes above an administrator's ceiling refused, a retirement
-// refused for now, a turn whose provider is slow to
-// start it, and a dispatch that waits in the startup queue and lands late;
+// key, permission modes above an administrator's ceiling refused, for a new
+// session, a change and a turn alike, a retirement refused for now, a turn
+// whose provider is slow to start it, and a dispatch that waits in the
+// startup queue and lands late;
 // synchronization markers; and resume by cursor with replay or a replacement
 // that repeats turns already seen end, as the real engine may. The adapter's
 // conformance suite runs the same scenarios against the real engine, which
@@ -230,13 +231,18 @@ export class TestEngineControl extends Context.Service<
      * permission mode above `ceiling`, applying nothing and keeping nothing
      * for the key, with `PermissionModeRefused` naming `ceiling`, as under an
      * administrator's policy. A model sent with a refused mode change stays
-     * applied. Sessions already in such a mode keep it. The real engine reads
-     * its policy when it starts, so a test that changes the ceiling later
-     * makes the engine unreachable around the change, as a restart does
-     * (`setReachable`).
+     * applied. A session already in such a mode keeps it, and every turn a
+     * dispatch would start or steer there is refused the same way, on a first
+     * send and on a resend alike, as long as the engine holds no receipt for
+     * the key. The real engine reads its policy when it starts, so a test that
+     * changes the ceiling later makes the engine unreachable around the
+     * change, as a restart does (`setReachable`).
      */
     readonly limitPermissionModes: (ceiling: PermissionMode) => Effect.Effect<void>;
-    /** How many openings and settings changes the engine refused for their permission mode. */
+    /**
+     * How many openings, settings changes and dispatches the engine refused
+     * for their permission mode.
+     */
     readonly modeRefusals: Effect.Effect<number>;
     /**
      * The next `count` calls of `retireSession` on a session still in use
@@ -1157,10 +1163,16 @@ const make = Effect.gen(function* () {
       keys.set(key, { command: "dispatch", sessionId, outcome: "rejected" });
     }).pipe(Effect.andThen(Effect.fail(new DispatchRejected({ key }))));
 
-  /** The engine applies a dispatch it holds no receipt for. */
+  /**
+   * The engine applies a dispatch it holds no receipt for, unless the turn it
+   * would start or steer runs in a mode above the ceiling, which it refuses
+   * keeping nothing for the key.
+   */
   const applyDispatch = (session: SessionRecord, input: DispatchInput) =>
     Effect.gen(function* () {
       const { key, text, attachments, delivery } = input;
+      const refusal = modeRefusal(session.permissionMode);
+      if (Option.isSome(refusal)) return yield* refusal.value;
       const at = yield* DateTime.now;
       let disposition: DispatchDisposition;
       if (delivery._tag === "start") {

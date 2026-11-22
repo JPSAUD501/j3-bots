@@ -6,9 +6,12 @@
 # T3 Code reads its policy only from /etc/t3code/policy.json, which applies to
 # every T3 Code on the machine. So the file is written in a private mount
 # namespace, on an overlay over /etc, and only the engine this run starts sees
-# it; nothing outside the namespace changes. Needs sudo, and unshare and
-# setpriv (util-linux). The suite itself runs as the calling user, with the
-# same engine home as `test:conformance`.
+# it; nothing outside the namespace changes. There the policy's folder and file
+# belong to the calling user, as no administrator's would, so a case can take
+# the policy away and put it back between two starts of the engine
+# (`J3_CONFORMANCE_POLICY_FILE`); the engine reads the file whoever owns it.
+# Needs sudo, and unshare and setpriv (util-linux). The suite itself runs as
+# the calling user, with the same engine home as `test:conformance`.
 set -euo pipefail
 
 package="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -32,9 +35,10 @@ sudo env \
     printf "%s\n" \
       "{\"schemaVersion\":1,\"organization\":\"J3 Conformance\",\"limits\":{\"maxRuntimeMode\":\"approval-required\"}}" \
       > /etc/t3code/policy.json
+    chown -R "$RUN_UID:$RUN_GID" /etc/t3code
     cd "$PACKAGE"
     exec setpriv --reuid="$RUN_UID" --regid="$RUN_GID" --init-groups \
       env HOME="$RUN_HOME" PATH="$RUN_PATH" J3_CONFORMANCE_HOME="$J3_CONFORMANCE_HOME" \
-      J3_CONFORMANCE_SUPERVISED_ONLY=1 \
+      J3_CONFORMANCE_SUPERVISED_ONLY=1 J3_CONFORMANCE_POLICY_FILE=/etc/t3code/policy.json \
       vp test run --config conformance/vite.config.ts --dir . -t "policy"
   '

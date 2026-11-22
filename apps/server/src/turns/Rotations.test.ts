@@ -20,6 +20,7 @@ import {
   conversation,
   createBot,
   createNewBot,
+  delivery,
   deliveryIs,
   engineSession,
   failedAs,
@@ -39,6 +40,7 @@ import {
 import { MAX_INDETERMINATE_ANSWERS, type SessionRowId } from "./model.ts";
 import { Observer } from "./Observer.ts";
 import { Pipeline } from "./Pipeline.ts";
+import { Readiness } from "./Readiness.ts";
 import { RETRY_TICK } from "./reconciler.ts";
 import { Rotations, ROTATE_AFTER_RUNS } from "./Rotations.ts";
 import { Stops } from "./Stops.ts";
@@ -138,7 +140,6 @@ const replacementUnopened = (botId: BotId) =>
     yield* (yield* Rotations).rotateDue;
   });
 
-/** How many notices of the kind the bot's conversation shows. */
 /**
  * What the bot's conversation was told of the engine's refusals of its
  * permission mode, oldest first: the mode refused, and the one allowed.
@@ -657,6 +658,100 @@ it.effect(
       assert.strictEqual(yield* control.sessionPermissionMode(session), "auto-accept-edits");
       assert.strictEqual(yield* timesSent(session, "Plan the launch."), 1);
       assert.strictEqual((yield* modeNotices(bot.id)).length, 1);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "keeps a message waiting while the engine refuses turns in its session's permission mode, telling the conversation once, and delivers it once when the bot's settings change",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      // A policy installed after the session was opened in Auto.
+      yield* engineRestarts("auto-accept-edits");
+
+      const first = yield* sendToBot(bot.id, "Plan the launch.");
+      yield* modeRefused(1);
+      const second = yield* sendToBot(bot.id, "Then the budget.");
+      yield* anHourOfPasses;
+      assert.deepStrictEqual(
+        [yield* delivery(first), yield* delivery(second), yield* control.modeRefusals],
+        [{ _tag: "pending" }, { _tag: "pending" }, 1],
+      );
+      assert.deepStrictEqual(yield* modeNotices(bot.id), [["auto", "auto-accept-edits"]]);
+
+      yield* (yield* Bots).update({
+        commandId: command(),
+        botId: bot.id,
+        changes: { permissionMode: "auto-accept-edits" },
+      });
+      yield* nextTurn(bot.id);
+      yield* deliveryIs(first, "delivered");
+      yield* deliveryIs(second, "delivered");
+      assert.deepStrictEqual(
+        [
+          yield* timesSent(session, "Plan the launch."),
+          yield* timesSent(session, "Then the budget."),
+          (yield* modeNotices(bot.id)).length,
+        ],
+        [1, 1, 1],
+      );
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "delivers a message the engine refused to run in its session's permission mode once, after the engine starts again under a policy that allows it",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      yield* engineRestarts("auto-accept-edits");
+      const waiting = yield* sendToBot(bot.id, "Plan the launch.");
+      yield* modeRefused(1);
+
+      // Started again under the same policy: asked once more, and refused as
+      // before, which the conversation was already told of.
+      yield* engineRestarts("auto-accept-edits");
+      yield* modeRefused(2);
+      yield* anHourOfPasses;
+      assert.strictEqual(yield* control.modeRefusals, 2);
+
+      yield* engineRestarts("full-access");
+      yield* nextTurn(bot.id);
+      yield* deliveryIs(waiting, "delivered");
+      assert.strictEqual(yield* timesSent(session, "Plan the launch."), 1);
+      assert.deepStrictEqual(yield* modeNotices(bot.id), [["auto", "auto-accept-edits"]]);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "records no refusal of a bot's permission mode the engine answered before it started again",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const readiness = yield* Readiness;
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      yield* engineRestarts("auto-accept-edits");
+
+      // The engine refuses the turn, and its answer is still on its way when
+      // the engine starts again under a policy that allows the bot's mode.
+      const answer = yield* control.holdNextAnswer("dispatch");
+      const waiting = yield* sendToBot(bot.id, "Plan the launch.");
+      yield* answer.entered;
+      const before = yield* readiness.generation;
+      yield* engineRestarts("full-access");
+      yield* until(Effect.map(readiness.generation, (generation) => generation > before));
+      yield* answer.release;
+
+      yield* nextTurn(bot.id);
+      yield* deliveryIs(waiting, "delivered");
+      assert.deepStrictEqual(
+        [yield* timesSent(session, "Plan the launch."), yield* modeNotices(bot.id)],
+        [1, []],
+      );
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 

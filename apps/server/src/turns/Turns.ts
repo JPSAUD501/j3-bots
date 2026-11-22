@@ -60,13 +60,16 @@ export const layer = Layer.effectDiscard(
     const start = Effect.gen(function* () {
       yield* step("Sessions could not be followed", observer.watchAll);
       yield* readiness.release;
+      // It may have started again under another policy. Cleared once the
+      // release moved the engine's start generation on, so no refusal met
+      // before is written after this, and before the workers are nudged, so
+      // they find the bots asked for again.
+      yield* step("Refused permission modes could not be cleared", sessions.engineStarted);
       yield* signals.stops.fire;
       yield* signals.recovery.fire;
       yield* signals.resumes.fire;
       yield* signals.responses.fire;
       yield* signals.dispatch.fire;
-      // It may have started again under another policy.
-      yield* step("Refused permission modes could not be cleared", sessions.engineStarted);
       yield* signals.rotations.fire;
       yield* signals.routines.fire;
       // A submission whose answer was lost, in the background: its card's

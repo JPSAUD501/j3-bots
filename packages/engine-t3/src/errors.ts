@@ -117,10 +117,9 @@ export class BackgroundWorkRunning extends Schema.TaggedError<BackgroundWorkRunn
  *   already reached, that waits behind another turn or that ended any way
  *   but completing (`dispatchSteerIntoRun`), a thread that is not active, a
  *   provider that cannot take it.
- * - `OrchestratorRuntimeModeAboveCeilingError`: the managed policy's
- *   runtime-mode ceiling refused it. It is checked after the receipt lookup,
- *   under the thread's lock, and leaves no receipt, so the key was not applied
- *   before either.
+ *
+ * A refusal for the mode the turn would run in is not this but
+ * `PermissionModeRefused`.
  *
  * Every other error is `EngineIndeterminate`. Two refusals come before the
  * receipt lookup and so say nothing about an earlier submission:
@@ -217,24 +216,30 @@ export class OpenRejected extends Schema.TaggedError<OpenRejected>()("OpenReject
 }
 
 /**
- * The engine refuses the permission mode a session was to be opened with or
- * changed to, and nothing was applied: an administrator's policy on the
- * engine's machine limits threads to a lower mode
- * (`OrchestratorRuntimeModeAboveCeilingError`). The engine checks it after
- * the receipt lookup and records no receipt for it, since the mode can be
- * changed, so the key is not spent (**Read** at `59651c1`, `Orchestrator.ts`
- * `dispatchWithReceiptEffect`, and `DispatchModeLimit.ts`
- * `runtimeModeCeilingRefusal`, which refuses a `thread.created` or a
- * `thread.runtime-mode-updated` above the ceiling). The engine reads the
- * policy once, when it starts, so the same mode is refused until the caller
- * asks for a lower one or the engine starts again under another policy
+ * The engine refuses a permission mode, and nothing was applied: an
+ * administrator's policy on the engine's machine limits threads to a lower
+ * mode (`OrchestratorRuntimeModeAboveCeilingError`). It refuses a session
+ * opened in such a mode, a change to one, and a turn in a session already in
+ * one, as a session opened before the policy was installed is: so
+ * `openSession`, `configureSession`, `dispatch` and `redispatch` can fail
+ * with it. The engine checks it after the receipt lookup and records no
+ * receipt for it, since the mode can be changed, so the key is not spent, and
+ * a refusal on a resend proves the key was not applied before either
+ * (**Read** at `59651c1`, `Orchestrator.ts` `dispatchWithReceiptEffect`, and
+ * `DispatchModeLimit.ts` `runtimeModeCeilingRefusal`, which refuses a
+ * `thread.created` or a `thread.runtime-mode-updated` above the ceiling, and
+ * a `run.created` or `run-attempt.created` in a thread above it). The engine
+ * reads the policy once, when it starts, so the same mode is refused until the
+ * caller asks for a lower one or the engine starts again under another policy
  * (**Verified** on `0.1.11`, in the conformance suite, under a policy that
  * limits threads to Supervised). The dispatch-mode limit
  * (`OrchestratorThreadAboveModeLimitError`) is refused the same way, and
  * binds only the engine's agent and MCP callers, never `/ws`.
  *
- * `allowed` is the highest mode the policy allows, as the engine reports its
- * policy, or `null` when it reports none the refusal can be put down to.
+ * `permissionMode` is the mode refused: the one asked for, or for a turn the
+ * one its session runs in. `allowed` is the highest mode the policy allows,
+ * as the engine reports its policy, or `null` when it reports none the
+ * refusal can be put down to.
  */
 export class PermissionModeRefused extends Schema.TaggedError<PermissionModeRefused>()(
   "PermissionModeRefused",
@@ -242,7 +247,7 @@ export class PermissionModeRefused extends Schema.TaggedError<PermissionModeRefu
 ) {
   override get message(): string {
     const allowed = this.allowed === null ? "" : `; it allows up to ${this.allowed}`;
-    return `The engine refuses sessions in the permission mode ${this.permissionMode}${allowed}.`;
+    return `The engine refuses the permission mode ${this.permissionMode}${allowed}.`;
   }
 }
 

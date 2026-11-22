@@ -1130,9 +1130,16 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
             },
           }),
     });
-    // A refusal for the turn's mode keeps no receipt; the server never sends
-    // the key again all the same.
-    if (sent !== "applied") return yield* new DispatchRejected({ key: input.key });
+    if (sent === "rejected") return yield* new DispatchRejected({ key: input.key });
+    if (sent === "mode-refused") {
+      // Refused for the mode its turn would run in: its session's. A session
+      // that cannot be read now leaves the refusal unnamed, for the recovery.
+      const { thread } = yield* projection(input.sessionId).pipe(
+        Effect.mapError(() => new EngineIndeterminate()),
+      );
+      if (thread === undefined) return yield* new EngineIndeterminate();
+      return yield* permissionModeRefused(PERMISSION_MODES[thread.runtimeMode]);
+    }
   });
 
   const dispatch = Effect.fn("Engine.dispatch")(function* (input: DispatchInput) {

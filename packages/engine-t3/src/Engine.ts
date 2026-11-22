@@ -291,8 +291,9 @@ export interface EngineOptions {
  *   and `EngineIncompatible` mean nothing was sent. `EngineIndeterminate` means
  *   a command was sent and no reply settled it: it may have been applied, and
  *   never counts as "not applied". Once a call has sent a command, any later
- *   failure of the call is `EngineIndeterminate`, except `DispatchRejected`
- *   and `BackgroundWorkRunning`, which the engine answered.
+ *   failure of the call is `EngineIndeterminate`, except `DispatchRejected`,
+ *   `PermissionModeRefused` and `BackgroundWorkRunning`, which the engine
+ *   answered.
  * - Methods that take a `key` apply it once, even across engine and server
  *   restarts: calling again with the same key and input applies nothing new.
  *   After `EngineIndeterminate`, that is how the caller learns what happened;
@@ -430,6 +431,13 @@ export class Engine extends Context.Service<
      * - `SessionBusy`, `SessionNotFound`: the adapter refused it before
      *   sending anything. The key was never sent.
      * - `DispatchRejected`: the engine refused it and applied nothing.
+     * - `PermissionModeRefused`: the engine refuses to run a turn in the
+     *   session's permission mode, as under a policy installed after the
+     *   session was opened in it: nothing was applied and the engine keeps
+     *   nothing for the key, so the message may go again once the session's
+     *   mode is lowered or the engine starts again under another policy. The
+     *   error names the session's mode, and the highest one the policy
+     *   allows, when the engine reports one.
      * - `EngineIndeterminate`: anything else, including an error the adapter
      *   cannot identify. Resolve it with `redispatch`, never with `dispatch`.
      *
@@ -440,7 +448,7 @@ export class Engine extends Context.Service<
       input: DispatchInput,
     ) => Effect.Effect<
       DispatchDisposition,
-      EngineDown | SessionNotFound | SessionBusy | DispatchRejected
+      EngineDown | SessionNotFound | SessionBusy | DispatchRejected | PermissionModeRefused
     >;
 
     /**
@@ -454,11 +462,14 @@ export class Engine extends Context.Service<
      * how: the engine answers a resend with `{sequence}` whether it applied
      * the key now or earlier, so the events say where it went, as for any
      * dispatch. `DispatchRejected` means it was refused and nothing was
-     * applied. `EngineIndeterminate` leaves it open, as before.
+     * applied. `PermissionModeRefused` means the engine refuses to run a turn
+     * in the session's permission mode, as `dispatch` says: it holds no
+     * receipt for the key, so no earlier send of it was applied either.
+     * `EngineIndeterminate` leaves it open, as before.
      */
     readonly redispatch: (
       input: DispatchInput,
-    ) => Effect.Effect<void, EngineDown | DispatchRejected>;
+    ) => Effect.Effect<void, EngineDown | DispatchRejected | PermissionModeRefused>;
 
     /**
      * Uploads a file for a later dispatch. The engine mints the id; the caller

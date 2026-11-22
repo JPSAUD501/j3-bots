@@ -6,7 +6,7 @@ import {
   ProviderId,
   RoutineId,
   RoutineInstruction,
-  RoutineRunFailure,
+  type RoutineRunFailure,
   RoutineRunId,
   RoutineTrigger,
 } from "@j3-bots/contracts";
@@ -56,15 +56,13 @@ import { isIdle, sessionWork } from "../turns/sessionWork.ts";
 import { Signals } from "../turns/Signals.ts";
 import { WorkSteps } from "../turns/WorkSteps.ts";
 import { RoutineRuns } from "./RoutineRuns.ts";
+import { recordRunFailure } from "./runFailure.ts";
 
 /** How many of a routine's earlier runs its envelope describes, newest first. */
 const RECENT_RUNS = 5;
 
 /** The most of what an earlier run said that its envelope repeats. */
 const RECENT_RUN_TEXT = 2_000;
-
-const encodeRunFailure = (failure: RoutineRunFailure) =>
-  Schema.encodeEffect(json(RoutineRunFailure))(failure).pipe(Effect.orDie);
 
 /** An attempt of a run whose wake waits for its side session. */
 const Attempt = Schema.Struct({
@@ -160,6 +158,7 @@ export const layer = Layer.effect(
   RoutineRunner,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const runFailed = recordRunFailure(sql);
     const transaction = transactional(sql);
     const ids = yield* Ids;
     const engine = yield* Engine;
@@ -483,10 +482,7 @@ export const layer = Layer.effect(
     ): Effect.fn.Return<Step> {
       const { wake, fits } = yield* envelopeOf(attempt);
       const failure = unopened !== null ? "unresolved" : fits ? null : "rejected";
-      const runFailure =
-        unopened === null || unopened.runFailure === null
-          ? null
-          : yield* encodeRunFailure(unopened.runFailure);
+      const runFailure = unopened?.runFailure ?? null;
       const envelope = yield* renderWake(wake).pipe(
         Effect.provideService(SecureRandom.SecureRandom, random),
       );
@@ -516,12 +512,7 @@ export const layer = Layer.effect(
             UPDATE wakes SET status = 'dispatched', dispatch_id = ${id}, updated_at = ${at}
             WHERE id = ${attempt.wake_id}
           `;
-          if (runFailure !== null) {
-            yield* sql`
-              UPDATE routine_runs SET failure_json = ${runFailure}
-              WHERE id = ${attempt.run_id} AND status = 'running'
-            `;
-          }
+          if (runFailure !== null) yield* runFailed(id, runFailure);
           if (failure !== null) {
             yield* ledger.fail(id, failure, { _tag: "failed", reason: failure });
             yield* sql.afterCommit(signals.routines.fire);

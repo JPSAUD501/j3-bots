@@ -14,10 +14,13 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { Engine, type EngineOptions } from "../src/Engine.ts";
+import { EngineUnavailable } from "../src/errors.ts";
 import { isBackgroundWorkPending, type SessionEvent } from "../src/events.ts";
 import { IdempotencyKey, SyncToken, type TurnId } from "../src/ids.ts";
 import { makeEngineRpc } from "../src/t3/Connection.ts";
@@ -43,11 +46,18 @@ const PROVIDER = ProviderId.make("scripted");
 /**
  * Set when the engine's machine has an administrator's policy that limits
  * threads to Supervised (`"limits": { "maxRuntimeMode": "approval-required" }`).
- * The engine reads it only from a file root owns, so only a run set up for it
- * has one (`with-policy.sh`, `pnpm test:conformance:policy`), and every other
- * run skips what needs it.
+ * The engine reads it only from a system path that only root can write, so
+ * only a run set up for it has one (`with-policy.sh`,
+ * `pnpm test:conformance:policy`), and every other run skips what needs it.
  */
 const SUPERVISED_ONLY = NodeProcess.env["J3_CONFORMANCE_SUPERVISED_ONLY"] === "1";
+
+/**
+ * The policy's file, which a policy run hands to the suite's user in its
+ * private mount namespace, so a case can take the policy away and put it back
+ * between two starts of the engine (`with-policy.sh`).
+ */
+const POLICY_FILE = Config.NonEmptyString("J3_CONFORMANCE_POLICY_FILE");
 
 const directive = (act: Act) => {
   switch (act._tag) {
@@ -189,6 +199,40 @@ const killEngine = Effect.fnUntraced(function* (home: string) {
   }
   return yield* Effect.die(new Error("No engine process to kill"));
 });
+
+/**
+ * Kills the engine, as a crash would, and waits until the adapter has started
+ * it again: its status leaves `ready`, then returns. Its connection may still
+ * be on its way back (`onceReachable`).
+ */
+const restartEngine = Effect.fnUntraced(function* (home: string) {
+  const engine = yield* Engine;
+  const ready = yield* engine.status.pipe(
+    Stream.map((status) => status.state._tag === "ready"),
+    Stream.toQueue({ capacity: "unbounded" }),
+  );
+  yield* killEngine(home);
+  let down = false;
+  while (true) {
+    const now = yield* Queue.take(ready).pipe(Effect.orDie);
+    if (!now) down = true;
+    else if (down) return;
+  }
+});
+
+/**
+ * `effect`, sent again while the engine is unreachable, which sends nothing:
+ * once the engine reports ready again after a restart, its connection may
+ * still be on its way back.
+ */
+const onceReachable = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(
+    Effect.retry({
+      while: Schema.is(EngineUnavailable),
+      schedule: Schedule.spaced("250 millis"),
+      times: 120,
+    }),
+  );
 
 const take = (queue: Queue.Dequeue<SessionEvent, Cause.Done>) =>
   Queue.take(queue).pipe(Effect.orDie);
@@ -410,6 +454,68 @@ describe("Engine conformance, real engine only", () => {
         Effect.provide(bench.pipe(Layer.provideMerge(realEngine), Layer.provideMerge(platform))),
       ),
     { timeout: 120_000 },
+  );
+
+  it.live.runIf(SUPERVISED_ONLY)(
+    "refuses a turn in a thread already above the policy's ceiling, naming both modes and keeping nothing for the key",
+    () =>
+      Effect.gen(function* () {
+        const engine = yield* Engine;
+        const bench = yield* Bench;
+        const fs = yield* FileSystem.FileSystem;
+        const { home } = yield* paths;
+        const policyFile = yield* POLICY_FILE;
+        const policy = yield* fs.readFileString(policyFile).pipe(Effect.orDie);
+        const sessionId = yield* Effect.gen(function* () {
+          // Opened in Full access while the engine runs under no policy.
+          yield* fs.remove(policyFile).pipe(Effect.orDie);
+          yield* restartEngine(home);
+          const projectId = yield* onceReachable(
+            engine.ensureProject({ workspacePath: bench.workspacePath, title: "turn-ceiling" }),
+          );
+          return yield* onceReachable(
+            engine.openSession({
+              key: bench.key("session-turn-ceiling"),
+              projectId,
+              title: "turn-ceiling",
+              model: bench.model,
+              permissionMode: "full-access",
+            }),
+          );
+        }).pipe(Effect.ensuring(fs.writeFileString(policyFile, policy).pipe(Effect.orDie)));
+        // The policy is installed, and the engine starts again under it.
+        yield* restartEngine(home);
+        const input = {
+          key: bench.key("turn-ceiling"),
+          sessionId,
+          text: directive({ _tag: "reply" }),
+          attachments: [],
+          delivery: { _tag: "start", freshContext: false },
+        } as const;
+
+        const first = yield* onceReachable(engine.dispatch(input)).pipe(Effect.flip);
+        const again = yield* engine.redispatch(input).pipe(Effect.flip);
+        // Lowered to the ceiling, which the policy lets a thread above it do,
+        // the session takes the same key: the refusals left no receipt.
+        yield* engine.configureSession({ sessionId, permissionMode: "supervised" });
+        yield* engine.redispatch(input);
+
+        assert.deepStrictEqual(
+          [first, again].map((error) =>
+            error._tag === "PermissionModeRefused"
+              ? [error.permissionMode, error.allowed]
+              : error._tag,
+          ),
+          [
+            ["full-access", "supervised"],
+            ["full-access", "supervised"],
+          ],
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(bench.pipe(Layer.provideMerge(realEngine), Layer.provideMerge(platform))),
+      ),
+    { timeout: 180_000 },
   );
 
   it.live(

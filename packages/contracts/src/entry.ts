@@ -354,8 +354,8 @@ const notices = <Failure extends Schema.Top>(failure: Failure) =>
     Schema.TaggedStruct("session-not-ready", {}),
     /**
      * The engine refuses the bot's permission mode, as an administrator's
-     * policy on its machine can, so the bot cannot start, or cannot take its
-     * new settings. `allowed` is the highest mode the policy allows, when the
+     * policy on its machine can, so the bot cannot start, cannot take its new
+     * settings, or cannot run a turn in the mode it has. `allowed` is the highest mode the policy allows, when the
      * engine names one. Messages wait until the operator chooses a lower
      * permission mode, or raises the policy's limit and restarts J3 Bots.
      */

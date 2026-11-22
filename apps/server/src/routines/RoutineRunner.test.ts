@@ -848,6 +848,49 @@ it.effect(
 );
 
 it.effect(
+  "names the refused permission mode on a run whose last attempt's turn the engine refused to run in it",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const bot = yield* createBot("Ana");
+      const routine = yield* routineOf(bot.id);
+      yield* control.limitPermissionModes("supervised");
+      yield* (yield* Routines).run({ commandId: command(), routineId: routine.id });
+      for (let attempt = 1; attempt < RUN_ATTEMPTS - 1; attempt++) {
+        yield* wakesRecorded(routine.id, attempt + 1);
+        yield* TestClock.adjust(retryDelay(attempt));
+      }
+      yield* wakesRecorded(routine.id, RUN_ATTEMPTS);
+
+      // The last attempt's side session opens, and its turn is refused under
+      // a policy the engine meets while the dispatch is on its way.
+      yield* control.setReachable(false);
+      yield* control.limitPermissionModes("full-access");
+      yield* control.setReachable(true);
+      const held = yield* control.holdNext("dispatch");
+      yield* TestClock.adjust(retryDelay(RUN_ATTEMPTS - 1));
+      yield* held.entered;
+      yield* control.limitPermissionModes("supervised");
+      yield* held.release;
+
+      const run = yield* settled(routine);
+      assert.deepStrictEqual(
+        [run.status, run.attempts, run.failure, yield* control.modeRefusals],
+        [
+          "failed",
+          RUN_ATTEMPTS,
+          {
+            _tag: "permission-mode-refused",
+            permissionMode: bot.permissionMode,
+            allowed: "supervised",
+          },
+          RUN_ATTEMPTS,
+        ],
+      );
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
   "names no refused permission mode on a run whose last attempt failed for another reason",
   () =>
     Effect.gen(function* () {
