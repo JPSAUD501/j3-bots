@@ -43,10 +43,10 @@ import type {
   ShellIntents,
 } from "../shell/data";
 import { cn } from "../lib/cn";
-import { activityTime } from "@j3-bots/client-runtime/wording";
+import { activityTime, engineProblem } from "@j3-bots/client-runtime/wording";
 import { AppUpdate } from "./AppUpdate";
 import { ShortcutSetting } from "./ShortcutSetting";
-import { ConnectProviders, engineProblem, ProviderRow } from "./EmptyStates";
+import { ConnectProviders, ProviderRow } from "./EmptyStates";
 import { ChangeServer } from "./ServerAddress";
 import { PairingQr } from "./PairingQr";
 import { Loading, Section } from "./SettingsSection";
@@ -213,7 +213,8 @@ const fieldClass =
  * Disconnected, it is what the server last reported, muted and said to be so.
  */
 function EngineSection({ engine, stale }: { engine: EngineStatus | null; stale: boolean }) {
-  const { t } = useI18n();
+  const i18n = useI18n();
+  const { t } = i18n;
   if (engine === null) {
     return (
       <Section title={t("settings.engine")}>
@@ -221,7 +222,7 @@ function EngineSection({ engine, stale }: { engine: EngineStatus | null; stale: 
       </Section>
     );
   }
-  const problem = engineProblem(engine, t);
+  const problem = engineProblem(engine, i18n);
   return (
     <Section title={t("settings.engine")}>
       {stale && <p className="text-xs text-muted-foreground">{t("settings.engine.lastKnown")}</p>}

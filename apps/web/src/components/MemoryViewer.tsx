@@ -1,20 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Dialog } from "@base-ui/react/dialog";
-import { MEMORY_TEXT_LIMIT, type MemoryDocument, MemoryText } from "@j3-bots/contracts";
-import * as Schema from "effect/Schema";
 import { XIcon } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef } from "react";
 import type { MemoryEdit, Save } from "@j3-bots/client-runtime";
-import { shownSaveProblem } from "@j3-bots/client-runtime/presentation";
+import { type MemoryReading, useMemoryEdit } from "@j3-bots/client-runtime/react";
+import { memoryEditProblemText } from "@j3-bots/client-runtime/wording";
 import { useI18n } from "../app/context";
 import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
 import { Button } from "./ui/button";
-
-/** A memory file as the viewer has it: still reading, read, or not readable. */
-export type MemoryReading =
-  | { readonly _tag: "reading" }
-  | { readonly _tag: "read"; readonly document: MemoryDocument }
-  | { readonly _tag: "failed" };
 
 /** The props of the file's view, whatever frames it: the dialog in the app, a pane in the gallery. */
 export interface MemoryFileProps {
@@ -43,8 +36,6 @@ export interface MemoryFileProps {
 
 const pre = "font-mono text-xs whitespace-pre-wrap wrap-anywhere";
 
-const fits = Schema.is(MemoryText);
-
 /**
  * One memory file as the bot wrote it, which the operator can correct. Save
  * writes over the revision the edit started from, so a file that changed on
@@ -64,62 +55,10 @@ export function MemoryFile({
   onEditingChange,
   titleId,
 }: MemoryFileProps) {
-  const { t } = useI18n();
-  const document = reading._tag === "read" ? reading.document : null;
-  const [editing, setEditing] = useState<MemoryEdit | null>(() =>
-    save?._tag === "failed" ? save.changes : null,
-  );
-  // A failure shows until the operator edits again.
-  const [failureShown, setFailureShown] = useState(save?._tag === "failed");
-  const [lastSave, setLastSave] = useState(save);
-  if (lastSave !== save) {
-    setLastSave(save);
-    if (save?._tag === "failed") {
-      setEditing((current) => current ?? save.changes);
-      setFailureShown(true);
-    }
-  }
-  // Loading the newer version takes one read at a time, and no edit meanwhile.
-  // A read that fails keeps the edit and offers to try again.
-  const [reloading, setReloading] = useState(false);
-  const [reloadFailed, setReloadFailed] = useState(false);
-  const endEdit = () => {
-    setEditing(null);
-    setFailureShown(false);
-    setReloadFailed(false);
-  };
-  // A new version of the file, saved or read again, ends the edit. The first
-  // read does not: an edit kept from a failed save waits for it. A read that
-  // fails in between keeps the edit.
-  const [lastRead, setLastRead] = useState(document);
-  if (document !== null && lastRead !== document) {
-    setLastRead(document);
-    if (lastRead !== null) endEdit();
-  }
-
-  const loadNewer = () => {
-    if (reloading || !connected) return;
-    setReloading(true);
-    void onLoadNewer().then((read) => {
-      setReloading(false);
-      // The operator asked for the newer version: it replaces the edit, even
-      // when it is the first version this view could read.
-      if (read) endEdit();
-      else setReloadFailed(true);
-    });
-  };
-
-  const saving = save?._tag === "saving";
-  const text = saving ? save.changes.text : editing?.text;
-  const problem = shownSaveProblem(save, !failureShown);
-  const tooLong = editing !== null && !fits(editing.text);
-  const canSave =
-    editing !== null &&
-    problem !== "stale" &&
-    !tooLong &&
-    !saving &&
-    connected &&
-    (document === null || editing.text !== document.text);
+  const i18n = useI18n();
+  const { t } = i18n;
+  const edit = useMemoryEdit({ reading, save, connected, onLoadNewer });
+  const { document, text, saving, reloading, problem } = edit;
 
   // The text takes focus when an edit starts, and Edit file gets it back when the edit ends.
   const isEditing = text !== undefined;
@@ -143,8 +82,7 @@ export function MemoryFile({
       className="flex h-full min-h-0 flex-col"
       onSubmit={(event) => {
         event.preventDefault();
-        if (editing === null || !canSave) return;
-        onSave(editing);
+        if (edit.toSave !== null) onSave(edit.toSave);
       }}
     >
       <header className="flex h-14 shrink-0 items-center gap-1 border-b border-border ps-4 pe-2">
@@ -152,12 +90,7 @@ export function MemoryFile({
           {title}
         </h2>
         {document !== null && text === undefined && (
-          <Button
-            ref={editButton}
-            size="sm"
-            className="ms-auto"
-            onClick={() => setEditing({ text: document.text, revision: document.revision })}
-          >
+          <Button ref={editButton} size="sm" className="ms-auto" onClick={edit.startEdit}>
             {t("memory.edit")}
           </Button>
         )}
@@ -178,13 +111,9 @@ export function MemoryFile({
             value={text}
             readOnly={saving || reloading}
             aria-label={t("memory.text", { file: title })}
-            aria-invalid={tooLong || undefined}
-            aria-describedby={tooLong ? alertId : undefined}
-            onChange={(event) => {
-              const value = event.currentTarget.value;
-              setEditing((current) => current && { ...current, text: value });
-              setFailureShown(false);
-            }}
+            aria-invalid={edit.tooLong || undefined}
+            aria-describedby={edit.tooLong ? alertId : undefined}
+            onChange={(event) => edit.changeText(event.currentTarget.value)}
             className={`${pre} min-h-0 flex-1 resize-none rounded-md border border-input bg-surface p-3 focus-visible:outline-2 focus-visible:outline-accent read-only:text-muted-foreground`}
           />
         ) : reading._tag === "reading" ? (
@@ -201,27 +130,21 @@ export function MemoryFile({
         <footer className="flex shrink-0 flex-col gap-2 border-t border-border px-4 py-3">
           {/* Exposed while empty, so a problem that arrives later is announced. */}
           <p id={alertId} role="alert" className="text-xs text-blocked empty:sr-only">
-            {tooLong
-              ? t("memory.tooLong", { max: MEMORY_TEXT_LIMIT })
-              : reloadFailed
-                ? t("memory.reloadFailed")
-                : problem === null
-                  ? null
-                  : t(problemText[problem])}
+            {problem === null ? null : memoryEditProblemText(problem, i18n)}
           </p>
           {!connected && (
             <p className="text-xs text-muted-foreground">{t("settings.save.offline")}</p>
           )}
           <div className="flex flex-wrap justify-end gap-2">
-            {problem === "stale" && (
+            {edit.stale && (
               <Button
                 className="me-auto"
-                onClick={loadNewer}
+                onClick={edit.loadNewer}
                 aria-disabled={reloading || !connected}
               >
                 {reloading
                   ? t("memory.loadNewer.loading")
-                  : reloadFailed
+                  : edit.reloadFailed
                     ? t("memory.loadNewer.retry")
                     : t("memory.loadNewer")}
               </Button>
@@ -229,14 +152,14 @@ export function MemoryFile({
             <Button
               onClick={() => {
                 if (saving) return;
-                endEdit();
+                edit.endEdit();
                 onDiscard();
               }}
               aria-disabled={saving}
             >
               {t("memory.cancel")}
             </Button>
-            <Button type="submit" variant="primary" aria-disabled={!canSave}>
+            <Button type="submit" variant="primary" aria-disabled={edit.toSave === null}>
               {saving ? t("memory.saving") : t("memory.save")}
             </Button>
           </div>
@@ -245,14 +168,6 @@ export function MemoryFile({
     </form>
   );
 }
-
-const problemText = {
-  stale: "memory.stale",
-  "private-location": "memory.privateLocation",
-  gone: "memory.gone",
-  model: "memory.saveFailed",
-  failed: "memory.saveFailed",
-} as const;
 
 interface MemoryViewerProps extends Omit<
   MemoryFileProps,

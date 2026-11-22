@@ -1,12 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type {
-  Bot,
-  EngineStatus,
-  Entry,
-  EntryId,
-  RosterItem,
-  RosterItemKey,
-} from "@j3-bots/contracts";
+import type { Entry, EntryId, RosterItem, RosterItemKey } from "@j3-bots/contracts";
 import { useEffect, useEffectEvent, useId, useRef, useState, type ReactElement } from "react";
 import {
   addressed,
@@ -38,7 +31,7 @@ import { Timeline } from "../components/Timeline";
 import type { ShellData, ShellIntents } from "./data";
 import { isCovered, useCovered } from "../lib/covered";
 import { useNewestSeen } from "../lib/useNewestSeen";
-import { addresseeLine } from "@j3-bots/client-runtime/wording";
+import { addresseeLine, botModelName } from "@j3-bots/client-runtime/wording";
 import { useShellLayout } from "./layout";
 import { onShellAction, type ShellAction } from "./commands";
 import { isEditable, shellShortcuts } from "./shortcuts";
@@ -50,12 +43,6 @@ interface ShellNavigation {
   readonly setDetailsOpen: (open: boolean) => void;
   /** The element a roster row renders as: a router link in the app, a button in a preview. */
   readonly rowLink: (item: RosterItem) => ReactElement;
-}
-
-function modelName(engine: EngineStatus | null, bot: Bot): string | null {
-  const provider = engine?.providers.find((p) => p.id === bot.model.providerId);
-  const model = provider?.models.find((m) => m.id === bot.model.modelId);
-  return provider && model ? `${provider.name} · ${model.name}` : null;
 }
 
 /** A touch screen, where a focused composer would raise the keyboard over the conversation. */
@@ -465,7 +452,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
             routines={data.routines(bot.id)}
             memory={data.memory(bot.id)}
             files={data.files(bot.id)}
-            modelName={modelName(data.engine, bot)}
+            modelName={botModelName(data.engine, bot)}
             onClose={close}
             headingRef={detailsHeadingRef}
             headingId={detailsHeadingId}

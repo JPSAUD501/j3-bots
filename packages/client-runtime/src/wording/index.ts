@@ -6,6 +6,15 @@
  */
 export { addresseeLine, resendLabel } from "./addressee.ts";
 export {
+  botModelName,
+  memoryEditProblemText,
+  memoryFileName,
+  permissionModeText,
+  type RoutineLines,
+  routineLines,
+} from "./details.ts";
+export { engineProblem, providerLine, type ProviderTone } from "./engine.ts";
+export {
   deliveryLine,
   draftFileDetail,
   fileDetail,

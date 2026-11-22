@@ -5,24 +5,14 @@ import { RadioGroup } from "@base-ui/react/radio-group";
 import { type Bot, type EngineStatus, PermissionMode, PROFILE_LIMITS } from "@j3-bots/contracts";
 import * as Schema from "effect/Schema";
 import { XIcon } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId } from "react";
 import type { BotChanges, Save } from "@j3-bots/client-runtime";
-import {
-  botPatch,
-  editsAfterFailedBotSave,
-  modelChoices,
-  noBotEdits,
-  sameModel,
-  shownSaveProblem,
-  withChanges,
-  withProfileEdit,
-  type BotEdits,
-  type ProfileField,
-} from "@j3-bots/client-runtime/presentation";
+import type { ProfileField } from "@j3-bots/client-runtime/presentation";
+import { useBotEdit } from "@j3-bots/client-runtime/react";
+import { permissionModeText } from "@j3-bots/client-runtime/wording";
 import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
 import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
-import { permissionText } from "./DetailsPanel";
 import { Button } from "./ui/button";
 import { ChoiceIndicator, choiceRow } from "./ui/choice";
 
@@ -70,7 +60,8 @@ export function EditBotForm({
   onUnsavedChange,
   titleId,
 }: EditBotFormProps) {
-  const { t } = useI18n();
+  const i18n = useI18n();
+  const { t } = i18n;
   const ids = {
     name: useId(),
     title: useId(),
@@ -80,78 +71,38 @@ export function EditBotForm({
     mode: useId(),
   };
   const errorIds = { name: useId(), title: useId(), job: useId(), model: useId() };
-  const [edits, setEdits] = useState<BotEdits>(() =>
-    save?._tag === "failed" ? editsAfterFailedBotSave(noBotEdits, save.changes) : noBotEdits,
-  );
-  // A failure shows until the operator edits again.
-  const [failureShown, setFailureShown] = useState(save?._tag === "failed");
-  const [lastSave, setLastSave] = useState(save);
-  if (lastSave !== save) {
-    setLastSave(save);
-    if (save?._tag === "failed") {
-      setEdits((current) => editsAfterFailedBotSave(current, save.changes));
-      setFailureShown(true);
-    }
-  }
-  const edit = (change: Partial<BotEdits>) => {
-    setEdits((current) => ({ ...current, ...change }));
-    setFailureShown(false);
-  };
-  // What each text field showed when its edit started: typing it back ends the edit.
-  const [startedFrom, setStartedFrom] = useState<Readonly<Record<ProfileField, string | null>>>({
-    name: null,
-    title: null,
-    job: null,
-  });
-  const editText = (field: ProfileField, value: string) => {
-    const from = startedFrom[field] ?? bot.profile[field];
-    setStartedFrom((current) => ({ ...current, [field]: value === from ? null : from }));
-    setEdits((current) => withProfileEdit(current, field, value, from));
-    setFailureShown(false);
-  };
+  const form = useBotEdit({ bot, engine, save, connected });
+  const { name, title, job, model, saving, problem, choices, unsaved } = form;
+  const mode = form.permissionMode;
+  const modelMessage = form.modelUnavailable ? t("editBot.model.unavailable") : null;
 
-  const saving = save?._tag === "saving";
-  const shown = saving ? withChanges(bot, save.changes) : bot;
-  const name = edits.name ?? shown.profile.name;
-  const title = edits.title ?? shown.profile.title;
-  const job = edits.job ?? shown.profile.job;
-  const model = edits.model ?? shown.model;
-  const mode = edits.permissionMode ?? shown.permissionMode;
-  const patch = botPatch(bot, edits);
-  const invalid = patch._tag === "invalid" ? patch.fields : new Set<ProfileField>();
-  const problem = shownSaveProblem(save, !failureShown);
-  const choices = modelChoices(engine, bot.model, edits.model);
-  const modelMessage =
-    problem === "model" || choices.pickUnavailable ? t("editBot.model.unavailable") : null;
-  const settingsChange = !sameModel(model, bot.model) || mode !== bot.permissionMode;
-  const providerChange = model.providerId !== bot.model.providerId;
-  const canSave = patch._tag === "changes" && !choices.pickUnavailable && !saving && connected;
-
-  const unsaved = patch._tag !== "unchanged";
   useEffect(() => {
     if (!unsaved || onUnsavedChange === undefined) return;
     onUnsavedChange(true);
     return () => onUnsavedChange(false);
   }, [unsaved, onUnsavedChange]);
 
-  const fieldError = (field: ProfileField) =>
-    invalid.has(field) ? (
+  const fieldError = (field: ProfileField) => {
+    const fieldProblem = form.fieldProblem(field);
+    return fieldProblem === null ? null : (
       <p id={errorIds[field]} className="text-xs text-blocked">
-        {field === "name" && name.trim() === ""
+        {fieldProblem === "required"
           ? t("editBot.name.required")
           : t("editBot.tooLong", { max: PROFILE_LIMITS[field] })}
       </p>
-    ) : null;
+    );
+  };
   const errorProps = (field: ProfileField) =>
-    invalid.has(field) ? { "aria-invalid": true, "aria-describedby": errorIds[field] } : {};
+    form.fieldProblem(field) === null
+      ? {}
+      : { "aria-invalid": true, "aria-describedby": errorIds[field] };
 
   return (
     <form
       className="flex h-full min-h-0 flex-col"
       onSubmit={(event) => {
         event.preventDefault();
-        if (patch._tag !== "changes" || !canSave) return;
-        onSave(patch.changes);
+        if (form.changes !== null) onSave(form.changes);
       }}
     >
       <header className="flex h-14 shrink-0 items-center border-b border-border ps-4 pe-2">
@@ -180,7 +131,7 @@ export function EditBotForm({
             maxLength={PROFILE_LIMITS.name}
             readOnly={saving}
             autoComplete="off"
-            onChange={(event) => editText("name", event.currentTarget.value)}
+            onChange={(event) => form.editText("name", event.currentTarget.value)}
             className={cn(fieldClass, "h-9 pointer-coarse:h-11")}
             {...errorProps("name")}
           />
@@ -198,7 +149,7 @@ export function EditBotForm({
             readOnly={saving}
             autoComplete="off"
             placeholder={t("editBot.titleField.placeholder")}
-            onChange={(event) => editText("title", event.currentTarget.value)}
+            onChange={(event) => form.editText("title", event.currentTarget.value)}
             className={cn(fieldClass, "h-9 pointer-coarse:h-11")}
             {...errorProps("title")}
           />
@@ -215,9 +166,11 @@ export function EditBotForm({
             maxLength={PROFILE_LIMITS.job}
             readOnly={saving}
             rows={4}
-            onChange={(event) => editText("job", event.currentTarget.value)}
-            aria-describedby={invalid.has("job") ? `${ids.jobHint} ${errorIds.job}` : ids.jobHint}
-            aria-invalid={invalid.has("job") || undefined}
+            onChange={(event) => form.editText("job", event.currentTarget.value)}
+            aria-describedby={
+              form.fieldProblem("job") === null ? ids.jobHint : `${ids.jobHint} ${errorIds.job}`
+            }
+            aria-invalid={form.fieldProblem("job") !== null || undefined}
             className={cn(fieldClass, "field-sizing-content min-h-24 resize-none py-2")}
           />
           <p id={ids.jobHint} className="text-2xs text-muted-foreground">
@@ -242,7 +195,7 @@ export function EditBotForm({
                 ...choices.unoffered,
                 ...choices.groups.flatMap((group) => group.models.map((option) => option.choice)),
               ].find((choice) => keyOf(choice) === key);
-              edit({ model: picked ?? bot.model });
+              form.edit({ model: picked ?? bot.model });
             }}
             className={cn(fieldClass, "h-9 pointer-coarse:h-11 disabled:text-muted-foreground")}
           >
@@ -280,13 +233,13 @@ export function EditBotForm({
             aria-labelledby={ids.mode}
             value={mode}
             onValueChange={(value: unknown) => {
-              if (isMode(value)) edit({ permissionMode: value });
+              if (isMode(value)) form.edit({ permissionMode: value });
             }}
             readOnly={saving}
             className="flex flex-col gap-1.5"
           >
             {modes.map((option) => {
-              const [label, description] = permissionText[option];
+              const text = permissionModeText(option, i18n);
               return (
                 <Radio.Root
                   key={option}
@@ -300,8 +253,8 @@ export function EditBotForm({
                     <Radio.Indicator className="size-2 rounded-pill bg-background" />
                   </ChoiceIndicator>
                   <span className="flex flex-col">
-                    <span>{t(label)}</span>
-                    <span className="text-xs text-muted-foreground">{t(description)}</span>
+                    <span>{text.name}</span>
+                    <span className="text-xs text-muted-foreground">{text.description}</span>
                   </span>
                 </Radio.Root>
               );
@@ -309,10 +262,11 @@ export function EditBotForm({
           </RadioGroup>
         </div>
 
-        {settingsChange && (
+        {form.settingsChange && (
           <p className="text-xs text-muted-foreground">
             {t("editBot.nextTurn", { name: bot.profile.name })}
-            {providerChange && ` ${t("editBot.providerChangeStops", { name: bot.profile.name })}`}
+            {form.providerChange &&
+              ` ${t("editBot.providerChangeStops", { name: bot.profile.name })}`}
           </p>
         )}
       </div>
@@ -330,7 +284,7 @@ export function EditBotForm({
         )}
         <div className="flex flex-wrap justify-end gap-2">
           <Button onClick={onClose}>{t("editBot.cancel")}</Button>
-          <Button type="submit" variant="primary" aria-disabled={!canSave}>
+          <Button type="submit" variant="primary" aria-disabled={form.changes === null}>
             {saving ? t("editBot.saving") : t("editBot.save")}
           </Button>
         </div>

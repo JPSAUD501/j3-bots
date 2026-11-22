@@ -7,7 +7,6 @@ import type {
   EntryTarget,
   MemoryFile,
   MemoryScope,
-  RosterItem,
   Routine,
 } from "@j3-bots/contracts";
 import {
@@ -16,7 +15,6 @@ import {
   type ReactNode,
   useContext,
   useEffect,
-  useMemo,
   useState,
   useSyncExternalStore,
 } from "react";
@@ -27,11 +25,12 @@ import { type ConversationState, targetKey } from "../stores/Conversations.ts";
 import type { Draft } from "../stores/Drafts.ts";
 import type { Loaded } from "../stores/reads.ts";
 import { type RecentTurnsState, turnsNotRead } from "../stores/Usage.ts";
-import { rosterRows } from "../stores/Roster.ts";
 import type { WorkStepsState } from "../stores/WorkSteps.ts";
 
 // Thin bindings: every decision lives in the runtime. A hook reads a
 // `Readable` and returns what it holds; intents are called on the client.
+// The form hooks hold one form's edit, deciding with the presentation's
+// helpers, so every client's form behaves the same.
 
 const ClientContext = createContext<J3Client | null>(null);
 
@@ -59,19 +58,6 @@ export const useConnection = () => useReadable(useJ3Client().connection);
 export const useEngineStatus = () => useReadable(useJ3Client().engine);
 export const useSettings = () => useReadable(useJ3Client().settings);
 export const useDevices = () => useReadable(useJ3Client().devices);
-
-/** The roster in display order, or `null` until it first loads. */
-export const useRoster = (): {
-  readonly rows: ReadonlyArray<RosterItem>;
-  readonly stale: boolean;
-} | null => {
-  const roster = useReadable(useJ3Client().roster);
-  return useMemo(
-    () =>
-      roster._tag === "ready" ? { rows: rosterRows(roster.value), stale: roster.stale } : null,
-    [roster],
-  );
-};
 
 /** Where an action on a card stands, to disable its buttons while it runs. */
 export const useCardAction = (entryId: EntryId): ActionState | undefined =>
@@ -195,3 +181,13 @@ export const useRecentTurns = (
     retry: handle?.retry ?? doNothing,
   };
 };
+
+export { type BotEdit, type ProfileFieldProblem, useBotEdit } from "./botEdit.ts";
+export { type MemoryEdit, type MemoryReading, useMemoryEdit } from "./memoryEdit.ts";
+export {
+  type RoomForm,
+  type RoomFormFailure,
+  type RoomFormSubmitted,
+  type RoomSubmission,
+  useRoomForm,
+} from "./roomForm.ts";

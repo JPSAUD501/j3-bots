@@ -14,6 +14,12 @@ export type SaveProblem =
   | "gone"
   | "failed";
 
+/**
+ * What a memory file's edit says is wrong: the text is over the limit, the
+ * newer version could not be read, or the latest save's problem.
+ */
+export type MemoryEditProblem = "too-long" | "reload-failed" | SaveProblem;
+
 function saveProblem(failure: IntentFailure): SaveProblem {
   if (failure._tag !== "refused") return "failed";
   const { error } = failure;

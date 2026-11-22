@@ -24,6 +24,7 @@
   --blocked-surface: oklch(0.975 0.015 20);
   --success: oklch(0.52 0.12 160);
   --control-off: #82828a;
+  --control-thumb: #ffffff;
   --avatar-ink: #ffffff;
   --scrim: oklch(0 0 0 / 0.32);
   --bot-red: oklch(0.441 0.179 29);
@@ -61,6 +62,7 @@
   --blocked-surface: oklch(0.2 0.05 25);
   --success: oklch(0.78 0.14 160);
   --control-off: #6b6b73;
+  --control-thumb: #f4f4f5;
   --avatar-ink: #0b0b0c;
   --scrim: oklch(0 0 0 / 0.6);
   --bot-red: oklch(0.555 0.193 33);
@@ -148,6 +150,7 @@
   --color-blocked-surface: var(--blocked-surface);
   --color-success: var(--success);
   --color-control-off: var(--control-off);
+  --color-control-thumb: var(--control-thumb);
   --color-avatar-ink: var(--avatar-ink);
   --color-scrim: var(--scrim);
   --color-bot-red: var(--bot-red);

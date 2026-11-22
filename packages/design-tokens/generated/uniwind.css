@@ -24,6 +24,7 @@
       --color-blocked-surface: oklch(0.975 0.015 20);
       --color-success: oklch(0.52 0.12 160);
       --color-control-off: #82828a;
+      --color-control-thumb: #ffffff;
       --color-avatar-ink: #ffffff;
       --color-scrim: oklch(0 0 0 / 0.32);
       --color-bot-red: oklch(0.441 0.179 29);
@@ -60,6 +61,7 @@
       --color-blocked-surface: oklch(0.2 0.05 25);
       --color-success: oklch(0.78 0.14 160);
       --color-control-off: #6b6b73;
+      --color-control-thumb: #f4f4f5;
       --color-avatar-ink: #0b0b0c;
       --color-scrim: oklch(0 0 0 / 0.6);
       --color-bot-red: oklch(0.555 0.193 33);
@@ -102,6 +104,7 @@
   --color-blocked-surface: unset;
   --color-success: unset;
   --color-control-off: unset;
+  --color-control-thumb: unset;
   --color-avatar-ink: unset;
   --color-scrim: unset;
   --color-bot-red: unset;

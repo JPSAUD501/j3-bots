@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { rosterRows } from "@j3-bots/client-runtime";
 import { rosterKeyOf, rosterKeyText, rosterTarget } from "@j3-bots/client-runtime/presentation";
-import { useRoster } from "@j3-bots/client-runtime/react";
+import { useJ3Client, useReadable } from "@j3-bots/client-runtime/react";
 import { fileProblemText } from "@j3-bots/client-runtime/wording";
 import type { RosterItemKey } from "@j3-bots/contracts";
 import type { NavigationContainerRefWithCurrent } from "@react-navigation/native";
@@ -44,7 +45,7 @@ export function ShareScreen({ navigation }: NativeStackScreenProps<Screens, "sha
   const i18n = useI18n();
   const { t } = i18n;
   const waiting = useWaitingShare();
-  const roster = useRoster();
+  const roster = useReadable(useJ3Client().roster);
   const say = useSay();
   const sideBySide = useSideBySide();
   const insets = useSafeAreaInsets();
@@ -88,7 +89,7 @@ export function ShareScreen({ navigation }: NativeStackScreenProps<Screens, "sha
   return (
     <View className="flex-1 bg-background">
       <Summary waiting={waiting} />
-      {roster === null ? (
+      {roster._tag === "loading" ? (
         <Centered>
           <Title>{t("firstRun.connecting.title")}</Title>
         </Centered>
@@ -96,7 +97,7 @@ export function ShareScreen({ navigation }: NativeStackScreenProps<Screens, "sha
         <FlatList
           className="flex-1"
           contentContainerStyle={{ paddingBottom: insets.bottom }}
-          data={roster.rows}
+          data={rosterRows(roster.value)}
           keyExtractor={(item) => rosterKeyText(rosterKeyOf(item))}
           ListEmptyComponent={
             <View className="items-center px-6 py-12">

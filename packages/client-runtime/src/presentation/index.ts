@@ -18,6 +18,7 @@ export {
 } from "./botEdit.ts";
 export { firstSeen, see } from "./changes.ts";
 export { type CodeLineTone, diffTones } from "./diff.ts";
+export { canRunBots, connectCommand } from "./engine.ts";
 export { draftFileName, draftReadiness, type DraftReadiness } from "./draft.ts";
 export { type FileIcon, fileIcon, fileKind } from "./files.ts";
 export { webAddress } from "./links.ts";
@@ -79,7 +80,6 @@ export {
 } from "./roster.ts";
 export { shownSaveProblem } from "./saves.ts";
 export { type Shared, sharedDraft, type SharedDraft, type SharedFile } from "./share.ts";
-export { minuteText, readCron, timeOfDayText, weekdayList, zoneName } from "./schedule.ts";
 export { editsAfterFailedSave, noEdits, type SettingsEdits, settingsPatch } from "./settings.ts";
 export {
   calendarDaysAgo,

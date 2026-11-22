@@ -5,7 +5,6 @@ import type {
   BotFile,
   MemoryFile,
   MemoryPath,
-  PermissionMode,
   Room,
   Routine,
   RoutineId,
@@ -21,13 +20,13 @@ import {
 } from "lucide-react";
 import { useState, type ReactElement, type ReactNode, type Ref } from "react";
 import { useBots, useI18n, usePresentation } from "../app/context";
-import type { KeyWith } from "@j3-bots/i18n";
 import { cn } from "../lib/cn";
 import {
   activityTime,
   fileSize,
-  scheduleInWords,
-  timeInSentence,
+  memoryFileName,
+  permissionModeText,
+  routineLines,
 } from "@j3-bots/client-runtime/wording";
 import { BotAvatar } from "./BotAvatar";
 import { FileCard } from "./FileCard";
@@ -102,14 +101,6 @@ function DetailsSection({
   );
 }
 
-/** Each permission mode's name and what it lets the bot do. */
-export const permissionText: Record<PermissionMode, readonly [KeyWith, KeyWith]> = {
-  supervised: ["permission.supervised", "permission.supervised.description"],
-  "auto-accept-edits": ["permission.autoAcceptEdits", "permission.autoAcceptEdits.description"],
-  auto: ["permission.auto", "permission.auto.description"],
-  "full-access": ["permission.fullAccess", "permission.fullAccess.description"],
-};
-
 export interface BotDetailsIntents {
   readonly setRoutineEnabled: (routineId: RoutineId, enabled: boolean) => void;
   /** Absent until a routine has a view of its own: its row then only shows it. */
@@ -149,9 +140,10 @@ export function BotDetails({
   headingRef,
   headingId,
 }: BotDetailsProps) {
-  const { t } = useI18n();
+  const i18n = useI18n();
+  const { t } = i18n;
   const { name, title, job, avatar } = bot.profile;
-  const [modeLabel, modeDescription] = permissionText[bot.permissionMode];
+  const mode = permissionModeText(bot.permissionMode, i18n);
   const { openRoutine } = intents;
   return (
     <PanelFrame
@@ -243,8 +235,8 @@ export function BotDetails({
           </div>
           <div>
             <dt className="text-2xs text-muted-foreground">{t("details.permissionMode")}</dt>
-            <dd>{t(modeLabel)}</dd>
-            <dd className="text-xs text-muted-foreground">{t(modeDescription)}</dd>
+            <dd>{mode.name}</dd>
+            <dd className="text-xs text-muted-foreground">{mode.description}</dd>
           </div>
         </dl>
       </DetailsSection>
@@ -293,15 +285,6 @@ function DeleteBot({ name, onDelete }: { name: string; onDelete: () => void }) {
   );
 }
 
-/** What a routine's last run did; the row adds the run count to make one sentence. */
-const lastRunText: Record<NonNullable<Routine["lastRun"]>["status"], KeyWith<"when">> = {
-  running: "routine.lastRun.running",
-  delivered: "routine.lastRun.delivered",
-  silent: "routine.lastRun.silent",
-  failed: "routine.lastRun.failed",
-  skipped: "routine.lastRun.skipped",
-};
-
 /** A routine: name, schedule in words, next run, last result, and a switch to pause it. */
 function RoutineRow({
   routine,
@@ -313,35 +296,22 @@ function RoutineRow({
   onOpen: (() => void) | undefined;
 }) {
   const ctx = usePresentation();
-  const { t, pluralParts } = ctx.i18n;
-  const schedule =
-    scheduleInWords(routine.trigger, ctx) ??
-    (routine.trigger._tag === "schedule" ? routine.trigger.cron : "");
+  const { pluralParts } = ctx.i18n;
+  const lines = routineLines(routine, ctx);
   const Icon = !routine.enabled
     ? CirclePauseIcon
     : routine.trigger._tag === "webhook"
       ? WebhookIcon
       : CalendarClockIcon;
-  const status = !routine.enabled
-    ? t("routine.paused")
-    : routine.nextRunAt
-      ? t("routine.next", { when: timeInSentence(routine.nextRunAt, ctx) })
-      : null;
-  const last = routine.lastRun;
   const summaryClass = "flex min-w-0 flex-1 flex-col text-start";
   const summary = (
     <>
       <span className="truncate text-sm">{routine.name}</span>
-      <span
-        className={cn(
-          "text-xs text-muted-foreground",
-          routine.trigger._tag === "schedule" && schedule === routine.trigger.cron && "font-mono",
-        )}
-      >
-        {schedule}
+      <span className={cn("text-xs text-muted-foreground", lines.expression && "font-mono")}>
+        {lines.schedule}
       </span>
-      {status && <span className="text-2xs text-muted-foreground">{status}</span>}
-      {last && (
+      {lines.status && <span className="text-2xs text-muted-foreground">{lines.status}</span>}
+      {lines.lastRun && (
         // Only what went wrong is drawn in the blocked color; the run count stays quiet.
         <span className="text-2xs text-muted-foreground">
           {pluralParts<"routine.lastRunWithCount", ReactElement>(
@@ -349,8 +319,8 @@ function RoutineRow({
             routine.runCount,
             {
               lastRun: (
-                <span key="lastRun" className={cn(last.status === "failed" && "text-blocked")}>
-                  {t(lastRunText[last.status], { when: timeInSentence(last.startedAt, ctx) })}
+                <span key="lastRun" className={cn(lines.lastRun.failed && "text-blocked")}>
+                  {lines.lastRun.text}
                 </span>
               ),
             },
@@ -380,12 +350,6 @@ function RoutineRow({
   );
 }
 
-export function memoryLabel(path: MemoryPath, t: ReturnType<typeof useI18n>["t"]): string {
-  if (path === "profile.md") return t("memory.profileNote");
-  const log = /^log\/(.+)\.md$/.exec(path);
-  return log?.[1] ? t("memory.log", { period: log[1] }) : path;
-}
-
 function MemoryList({
   files,
   onOpen,
@@ -412,7 +376,7 @@ function MemoryList({
               <FileTextIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
             )}
             <span className="min-w-0 flex-1 truncate text-sm">
-              {memoryLabel(file.path, ctx.i18n.t)}
+              {memoryFileName(file.path, ctx.i18n)}
             </span>
             <span className="shrink-0 text-2xs text-muted-foreground tabular-nums">
               {ctx.i18n.t("memory.sizeAndDate", {

@@ -37,6 +37,8 @@ import { AppState, Text, View } from "react-native";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BotAvatar } from "../components/Avatar.tsx";
+import { PendingButton } from "../components/form.tsx";
+import { useRoomActions } from "../details/actions.ts";
 import { useBots, usePresentation } from "../presentation.tsx";
 import { useSay } from "../toast.tsx";
 import { Body, Button, Centered, Title } from "../ui.tsx";
@@ -332,9 +334,7 @@ export function ConversationView({
             >
               <View className="w-full self-center" style={{ maxWidth: layout.textColumn }}>
                 {archived ? (
-                  <Text className="px-4 py-3 text-center text-xs text-muted-foreground">
-                    {t("room.composerArchived", { name: room.name })}
-                  </Text>
+                  <ArchivedLine room={room} />
                 ) : (
                   <Composer
                     target={target}
@@ -350,6 +350,23 @@ export function ConversationView({
           </KeyboardStickyView>
         </View>
       )}
+    </View>
+  );
+}
+
+/** Where an archived room's composer was: that it takes no messages, and the way back. */
+function ArchivedLine({ room }: { readonly room: Room }) {
+  const { t } = usePresentation().i18n;
+  const { unarchive } = useRoomActions();
+  return (
+    <View className="items-center gap-1 px-4 py-2">
+      <Text className="text-center text-xs text-muted-foreground">
+        {t("room.composerArchived", { name: room.name })}
+      </Text>
+      <PendingButton
+        label={t("room.unarchive", { name: room.name })}
+        onPress={() => unarchive(room)}
+      />
     </View>
   );
 }
