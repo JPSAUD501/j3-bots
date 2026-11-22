@@ -28,6 +28,11 @@ const home = Layout.layer.pipe(
 
 const digest = (text: string) => NodeCrypto.createHash("sha256").update(text).digest("hex");
 
+/** The record once every shipped skill's current text is installed. */
+const installedRecord = Object.fromEntries(
+  sharedSkills.map((skill) => [skill.name, [digest(skill.text)]]),
+);
+
 /** The first shipped skill, where its `SKILL.md` goes, and the server's record of what it wrote. */
 const shippedSkill = Effect.gen(function* () {
   const path = yield* Path.Path;
@@ -63,9 +68,7 @@ it.effect("installs each shipped skill, then replaces its copy with a later rele
     yield* SharedSkills.install();
     assert.strictEqual(yield* fs.readFileString(file), shipped.text);
     assert.strictEqual(yield* fs.readFileString(ownFile), "the operator's text");
-    assert.deepStrictEqual(JSON.parse(yield* fs.readFileString(record)), {
-      [shipped.name]: [digest(shipped.text)],
-    });
+    assert.deepStrictEqual(JSON.parse(yield* fs.readFileString(record)), installedRecord);
   }).pipe(Effect.provide(home)),
 );
 
@@ -116,9 +119,7 @@ it.effect("finishes an upgrade cut short between recording the new text and writ
     yield* SharedSkills.install();
 
     assert.strictEqual(yield* fs.readFileString(file), shipped.text);
-    assert.deepStrictEqual(JSON.parse(yield* fs.readFileString(record)), {
-      [shipped.name]: [digest(shipped.text)],
-    });
+    assert.deepStrictEqual(JSON.parse(yield* fs.readFileString(record)), installedRecord);
   }).pipe(Effect.provide(home)),
 );
 
@@ -131,9 +132,7 @@ it.effect("installs over a corrupt record, and writes a readable one", () =>
     yield* SharedSkills.install();
 
     assert.strictEqual(yield* fs.readFileString(file), shipped.text);
-    assert.deepStrictEqual(JSON.parse(yield* fs.readFileString(record)), {
-      [shipped.name]: [digest(shipped.text)],
-    });
+    assert.deepStrictEqual(JSON.parse(yield* fs.readFileString(record)), installedRecord);
   }).pipe(Effect.provide(home)),
 );
 

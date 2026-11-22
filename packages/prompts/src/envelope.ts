@@ -230,10 +230,10 @@ export type Wake = UserWake | RoomWake | BotWake | RoutineWake | SystemWake;
  * a room's depends on why the bot was woken ({@link ROOM_CLOSING_LINES}).
  */
 export const CLOSING_LINES: { readonly [K in Exclude<WakeKind, "room">]: string } = {
-  user: "Reply with `say`; nothing else reaches them. Your last call is a `say` with the result and `done: true`, or an `ask`.",
+  user: "Reply with `say`; nothing else reaches them. Your last call is a `say` with `done: true` (the result, or that delegated work is underway) or an `ask`.",
   bot: "`say` reaches your user, not the sender. Answer the sender with `message_bot`, and only if you were asked something or have a result.",
   routine:
-    "Nobody is waiting, so send no progress message. Only `say` reaches your user, never reply text: a message is one `say` with `done: true`, sent once, after the work; once it returns, never alongside it, the only calls left are the state-file update the instruction names, or one `pause` the instruction asks for, of this routine by the id above with no lookup, and no second `say`. A one-time routine is paused for you, so never pause it yourself. If the instruction asks you to pause after a message that a run in `recent-runs` already sent, pause once now with no `say`. Follow the instruction's delivery line: a reminder or a report asked for every time is sent when due; when a report's condition is not met, end with no `say` at all, not even to say all is well. If you could not do the work (access refused, a source gone): when a run in `recent-runs` already said what blocks it, end with no `say`; when none did, tell your user in one `say` of one sentence, whatever the delivery line says.",
+    "Nobody is waiting: send no progress message. After the work, follow the delivery line: one `say` with `done: true`, or none if its condition fails. Once it returns, write only the record the instruction names, then any `pause` it asks for, by the id above; no second `say`. Never pause a one-time routine. If the instruction pauses after a message a recent run already sent, just pause. If the work was blocked, say in one sentence what blocks it and what would fix it, unless `recent-runs` already says so.",
   system:
     "This is an event, not a message from your user. Respond only as your instructions say for it.",
 };

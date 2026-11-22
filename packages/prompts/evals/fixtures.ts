@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as DateTime from "effect/DateTime";
+import { type Mail, type MailEvent, mailProgram } from "./mail.ts";
 import {
   fail,
   ok,
@@ -50,7 +51,10 @@ export type GhEvent =
   /** One pull request was shown. */
   | { readonly type: "pull-request-read"; readonly number: number };
 
-export type FixtureEvent = GhEvent | ShellEvent;
+/** What a fixture's programs report: `gh`'s events and `mail`'s. */
+export type ProgramEvent = GhEvent | MailEvent;
+
+export type FixtureEvent = ProgramEvent | ShellEvent;
 
 interface Job {
   readonly id: number;
@@ -89,6 +93,11 @@ export interface GitHub {
   readonly pullRequests: ReadonlyArray<PullRequest>;
   /** `false` when the sign-in has expired: every call then meets a 401. */
   readonly signedIn: boolean;
+  /**
+   * A token that signs a command in when it is given as `GH_TOKEN` or
+   * `GITHUB_TOKEN`, as real `gh` takes one, whatever `signedIn` says.
+   */
+  readonly token?: string;
 }
 
 const REPO = "acme/docs";
@@ -247,7 +256,10 @@ const gh =
       return notHere(record, "help");
     }
     record({ type: "gh" });
-    if (!github.signedIn) {
+    const tokenGiven =
+      github.token !== undefined &&
+      (env.get("GH_TOKEN") === github.token || env.get("GITHUB_TOKEN") === github.token);
+    if (!github.signedIn && !tokenGiven) {
       return args[0] === "auth" && args[1] === "status"
         ? fail("You are not logged into any GitHub hosts. To log in, run: gh auth login")
         : fail(
@@ -815,3 +827,23 @@ export const githubWorkspace = (
   github: GitHub,
   files: ReadonlyMap<string, string> = new Map(),
 ): Workspace<GhEvent> => new Workspace({ programs: new Map([["gh", gh(github)]]), files });
+
+/**
+ * A workspace whose `gh` reaches `github`, with a `mail` reaching `mail` when
+ * given, `files` in it (absolute paths reach past the workspace), and
+ * `refused` programs the host's permission check refuses to run.
+ */
+export const fixtureWorkspace = (options: {
+  readonly github: GitHub;
+  readonly mail?: Mail;
+  readonly files?: ReadonlyMap<string, string>;
+  readonly refused?: ReadonlyMap<string, string>;
+}): Workspace<ProgramEvent> =>
+  new Workspace<ProgramEvent>({
+    programs: new Map<string, Program<ProgramEvent>>([
+      ["gh", gh(options.github)],
+      ...(options.mail === undefined ? [] : [["mail", mailProgram(options.mail)] as const]),
+    ]),
+    ...(options.files === undefined ? {} : { files: options.files }),
+    ...(options.refused === undefined ? {} : { refused: options.refused }),
+  });

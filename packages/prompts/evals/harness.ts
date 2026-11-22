@@ -20,7 +20,7 @@ import {
   tools,
   type Wake,
 } from "../src/index.ts";
-import type { FixtureEvent, GhEvent } from "./fixtures.ts";
+import type { FixtureEvent, ProgramEvent } from "./fixtures.ts";
 import { complete, type FunctionTool, type Message } from "./model.ts";
 import { localInstant, nextScheduled, plannedRun, type Trigger } from "./schedule.ts";
 import type { Workspace } from "./shell.ts";
@@ -42,25 +42,34 @@ import type { Workspace } from "./shell.ts";
  * the tool descriptions or the envelope.
  */
 
+/** What a scenario changes in the fictional bot: its title and job, and its own pinned memory. */
+export interface BotSetup {
+  readonly title: string;
+  readonly job: string;
+  readonly pinned: string;
+}
+
+/** Juniper, who looks after the docs, as most scenarios have it. */
+const JUNIPER: BotSetup = {
+  title: "Docs",
+  job: "Look after the Acme documentation site and its GitHub repository, acme/docs: watch its builds and pull requests, and tell Rui what needs his attention.",
+  pinned: "",
+};
+
 /** A fictional operator and bot. */
-const bot = (model: string): BotInstructionsInput => ({
+const bot = (model: string, setup: BotSetup): BotInstructionsInput => ({
   operator: { name: "Rui", timeZone: "Europe/Lisbon" },
-  profile: {
-    name: "Juniper",
-    title: "Docs",
-    job: "Look after the Acme documentation site and its GitHub repository, acme/docs: watch its builds and pull requests, and tell Rui what needs his attention.",
-    primary: false,
-  },
+  profile: { name: "Juniper", title: setup.title, job: setup.job, primary: false },
   runtime: { model, harness: model.startsWith("gpt") ? "Codex" : "Claude Code" },
-  pinned: { shared: "- Rui reads messages on his phone; keep them short.", bot: "" },
+  pinned: { shared: "- Rui reads messages on his phone; keep them short.", bot: setup.pinned },
 });
 
 /** Whether a turn has the shipped skills as already read. */
 export type Skills = "with the skill" | "without the skill";
 
-const systemPrompt = (model: string, skills: Skills): string =>
+const systemPrompt = (model: string, skills: Skills, setup: BotSetup): string =>
   [
-    renderSystemFile(bot(model)),
+    renderSystemFile(bot(model, setup)),
     ...(skills === "with the skill" ? sharedSkills : []).map(
       (skill) => `# You read the skill skills/${skill.name}/SKILL.md\n\n${skill.text}`,
     ),
@@ -68,8 +77,14 @@ const systemPrompt = (model: string, skills: Skills): string =>
 
 const HOST_TOOL = "run_command";
 
+/** What `run_command` says about the programs signed in, unless a scenario says otherwise. */
+const GH_SIGNED_IN = "The GitHub CLI, gh, is signed in.";
+
 /** The `j3` tools, and a `run_command` that names what the workspace has. */
-const functionTools = (commands: ReadonlyArray<string>): ReadonlyArray<FunctionTool> => [
+const functionTools = (
+  commands: ReadonlyArray<string>,
+  shell: string,
+): ReadonlyArray<FunctionTool> => [
   ...toolList.map((tool): FunctionTool => ({
     type: "function",
     function: { name: tool.name, description: tool.description, parameters: tool.inputSchema },
@@ -78,7 +93,7 @@ const functionTools = (commands: ReadonlyArray<string>): ReadonlyArray<FunctionT
     type: "function",
     function: {
       name: HOST_TOOL,
-      description: `Run a shell command in your workspace and return its output. The GitHub CLI, gh, is signed in. The workspace has only these commands: ${commands.join(", ")}.`,
+      description: `Run a shell command in your workspace and return its output. ${shell} The workspace has only these commands: ${commands.join(", ")}.`,
       parameters: {
         type: "object",
         properties: { command: { type: "string" } },
@@ -118,7 +133,7 @@ interface ReplyText {
 export interface Turn {
   readonly calls: ReadonlyArray<Call>;
   readonly text: ReadonlyArray<ReplyText>;
-  readonly workspace: Workspace<GhEvent>;
+  readonly workspace: Workspace<ProgramEvent>;
   readonly routines: HeldRoutines;
 }
 
@@ -152,10 +167,29 @@ class TurnUnfinished extends Schema.TaggedError<TurnUnfinished>()("TurnUnfinishe
 const unfinished = (reason: string, turn: Turn) =>
   new TurnUnfinished({ message: `The turn did not finish: ${reason}.\n${transcript(turn)}` });
 
+/** A call the bot made in an earlier turn, with what it answered. */
+interface EarlierCall {
+  readonly name: string;
+  readonly input: Schema.Json;
+  readonly output: string;
+}
+
+/** An earlier turn of the session: the wake that opened it and the calls the bot made, in order. */
+export interface EarlierTurn {
+  readonly wake: Wake;
+  readonly calls: ReadonlyArray<EarlierCall>;
+}
+
 export interface Scenario {
   readonly wake: Wake;
   /** A fresh workspace for each turn, so what one turn writes another never reads. */
-  readonly workspace: () => Workspace<GhEvent>;
+  readonly workspace: () => Workspace<ProgramEvent>;
+  /** Earlier turns of the same session, oldest first. None by default. */
+  readonly history?: ReadonlyArray<EarlierTurn>;
+  /** The bot, when it is not Juniper as most scenarios have it. */
+  readonly bot?: BotSetup;
+  /** What `run_command` says about the programs signed in, when not only `gh`. */
+  readonly shell?: string;
 }
 
 /** Model calls in one turn at most; a turn that needs more is a failure in itself. */
@@ -435,7 +469,7 @@ type Answer = Pick<Call, "output" | "events" | "refused">;
 /** What the server would answer, as far as these scenarios need, and what a command did. */
 const answer = (
   routines: HeldRoutines,
-  workspace: Workspace<GhEvent>,
+  workspace: Workspace<ProgramEvent>,
   request: Request,
 ): Answer => {
   const reply = (output: string): Answer => ({ output, events: [] });
@@ -471,6 +505,30 @@ const answer = (
   }
 };
 
+/**
+ * Earlier turns as the session holds them: each wake's envelope, then each
+ * call in a message of its own with what it answered.
+ */
+const earlierMessages = (
+  history: ReadonlyArray<{ readonly envelope: string; readonly calls: ReadonlyArray<EarlierCall> }>,
+): ReadonlyArray<Message> =>
+  history.flatMap(({ envelope, calls }, turn): ReadonlyArray<Message> => [
+    { role: "user", content: envelope },
+    ...calls.flatMap((call, index): ReadonlyArray<Message> => {
+      const id = `earlier-${turn + 1}-${index + 1}`;
+      return [
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            { id, type: "function", function: { name: call.name, arguments: json(call.input) } },
+          ],
+        },
+        { role: "tool", tool_call_id: id, content: call.output },
+      ];
+    }),
+  ]);
+
 const toRequest = (step: number, name: string, input: unknown): Request => {
   if (name !== "set_routine") return { step, name, input };
   const decoded = decodeSetRoutine(input);
@@ -490,9 +548,14 @@ export const runTurn = Effect.fn("evals.runTurn")(
     const envelope = yield* renderWake(scenario.wake);
     const workspace = scenario.workspace();
     const routines = new HeldRoutines(scenario.wake);
-    const tools = functionTools(workspace.commands);
+    const tools = functionTools(workspace.commands, scenario.shell ?? GH_SIGNED_IN);
     const messages: Array<Message> = [
-      { role: "system", content: systemPrompt(model, skills) },
+      { role: "system", content: systemPrompt(model, skills, scenario.bot ?? JUNIPER) },
+      ...earlierMessages(
+        yield* Effect.forEach(scenario.history ?? [], ({ wake, calls }) =>
+          Effect.map(renderWake(wake), (envelope) => ({ envelope, calls })),
+        ),
+      ),
       { role: "user", content: envelope },
     ];
     const calls: Array<Call> = [];

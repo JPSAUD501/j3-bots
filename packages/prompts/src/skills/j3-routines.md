@@ -36,7 +36,8 @@ Fill a gap with a sensible default and state it in your confirmation ("every wee
 **`schedule`: five-field cron** (minute, hour, day of month, month, weekday), read in your user's zone. J3 Bots stores that zone with the routine, so never convert to UTC.
 
 - Keep the times your user gave exactly: "at 8" is `0 8 * * *`.
-- Where they left the time open, choose the least frequent schedule that still does the job, inside their waking hours, and off the top of the hour: `7 8 * * 1-5` rather than `0 8 * * 1-5`.
+- Where they left the time open, choose the least frequent schedule that still does the job, at an hour when the result is useful, and off the top of the hour: `7 8 * * *` rather than `0 8 * * *`.
+- Where they left the days open, run a work subject (a build, a repository, a work inbox) on weekdays and a personal one (a reminder, a price, the weather) every day, and say which you chose. Words that already name the days, such as "every day" or "every morning", keep every day.
 - **The five-minute rule:** a schedule that would run twice within five minutes is refused, for example `*/2 * * * *` or `0,3 9 * * *`. Five minutes apart is the floor, and anything that frequent spends allowance all day. For "keep checking", use every 15 or 30 minutes within their waking hours unless the subject truly needs otherwise, and say what you chose.
 - A seconds field and dates that never occur (`0 9 31 2 *`) are refused too.
 
@@ -44,6 +45,7 @@ Fill a gap with a sensible default and state it in your confirmation ("every wee
 | --- | --- |
 | "every weekday at 8" | `0 8 * * 1-5` |
 | "every morning" | `7 8 * * *` |
+| "watch the docs build in the mornings" | `7 8 * * 1-5` (work, days left open) |
 | "Mondays and Thursdays around lunch" | `12 12 * * 1,4` |
 | "every half hour during work hours" | `4,34 9-16 * * 1-5` (9:04 to 16:34) |
 | "first of the month" | `17 9 1 * *` |
@@ -78,7 +80,7 @@ A note the run keeps for itself is no proof: when it is missing, the attempt may
 
 Leave out anything that points back at the conversation: "as discussed", "the repo above", "that PR", "this Friday". A run computes its own date; give dates absolutely when they matter.
 
-A run sees what the last few runs said, not what they saw, and a silent run leaves nothing behind. So when a run must know what it already looked at (the items it reported, a previous value), the instruction names a file under `files/` that each run reads first. The file is no proof of actions, and the instruction says which of two kinds each part of it is:
+A run's wake lists the last few runs and what each said, never what it saw: a silent run shows only that it stayed quiet. So when a run must know what it already looked at (the items it reported, a previous value), the instruction names a file under `files/` that each run reads first. The file is no proof of actions, and the instruction says which of two kinds each part of it is:
 
 - **An observation** the next run compares against, such as the last price seen: the run may save it whether or not it speaks, a silent run included.
 - **A record of what was reported,** such as the items already announced: the run writes it only after its `say` has returned, even one with `done: true`, in a later call; if the message could not be delivered, it leaves the record as it was. A later run may then repeat a report, but never lose one.
@@ -93,10 +95,10 @@ The delivery line decides whether a run speaks. Write it explicitly, because the
 
 - **Reminders:** always speak when due; the message is the point.
 - **Reports your user wants every time** (a daily summary, a morning all-clear they asked for): speak when due.
-- **Conditional reports** (watching, checks, "tell me if"): speak only when the condition holds. When it does not, the run ends without calling `say` at all: no "all clear", no summary of what it checked. This is the usual case, and a silent run is a successful run.
+- **Conditional reports** (watching, checks, "tell me if"): speak only when the condition holds. When it does not, the run ends without calling `say` at all: no "all clear", no summary of what it checked. This is the usual case, and a silent run is a successful run. A run judges "nothing new" against the state file its instruction names, otherwise against what the recent runs said; when it cannot tell, it does not claim nothing changed.
 - **Digests:** speak only when there is something to list, unless your user asked for one every time. Say which you chose in your confirmation.
-- **Blocked:** whatever the delivery line says, a run that could not do its work (access lost, a source gone) tells your user what blocked it in one `say` of one sentence; otherwise lost access would look like a quiet week. When one of the recent runs already said so, the run ends silently. A wake lists at most the five newest settled runs, so a lasting blocker is reported again about once every six runs. For a frequent check that is often, so the sentence also says the report will return until the blocker is fixed and that your user can pause the routine.
-- **Until an event:** for "let me know when X", a watch that checks on a schedule until X happens (not once at a guessed time) and then ends, the delivery line reads: "Once X has happened, tell your user in one short message, then pause this routine; if a recent run already told them, just pause." Such a watch needs no state file: the pause ends it, and the recent runs show what it said. The pause waits until the message has returned; during a run, `pause` of the current routine, by the id in the wake with no lookup, is the only `set_routine` action available.
+- **Blocked:** whatever the delivery line says, a run that could not do its work (access lost, a source gone) tells your user, in one `say` of one sentence, what blocked it and what would let the next run continue; otherwise lost access would look like a quiet week. When one of the recent runs already said so, the run ends silently. A wake lists at most the five newest settled runs, so a lasting blocker is reported again about once every six runs. For a frequent check that is often, so the sentence also says the report will return until the blocker is fixed and that your user can pause the routine.
+- **Until an event:** for "let me know when X", a watch checks on a schedule until X happens (not once at a guessed time) and then ends. It also gets an end date: the one your user named or implied ("before the release"), otherwise 14 days after you create it. The delivery line reads: "Once X has happened, tell your user in one short message, then pause this routine; if a recent run already told them, just pause. If X has not happened by <date>, tell your user once that you stopped watching, then pause this routine." Your confirmation names that date. Such a watch needs no state file: the pause ends it, and the recent runs show what it said. The pause waits until the message has returned; during a run, `pause` of the current routine, by the id in the wake with no lookup, is the only `set_routine` action available.
 
 When a run speaks, it sends one short `say` after the work, phrased the way you would mention something you took care of, not as an alert. It never opens with a progress note: nobody is waiting, and a run that has said anything counts as delivered and is not retried if it then fails. A run cannot use `ask`: a question goes inside its message, and the answer arrives in your main conversation.
 
@@ -112,7 +114,7 @@ A routine your user asked for needs nothing further, as long as its instruction 
 
 ## Steps
 
-1. Tell your user in a few words that you are setting it up (`say`).
+1. In your own conversation, tell your user in a few words that you are setting it up (`say`). In a room, skip this unless the setup will take minutes.
 2. Call `list_routines`, then decide:
    - an enabled routine that already does exactly this: reuse it and change nothing;
    - one that does exactly this but is paused, and your user wants it running again (asking for it again counts): `resume` it, and check in what the tool returns that it is enabled;
@@ -121,7 +123,7 @@ A routine your user asked for needs nothing further, as long as its instruction 
 3. Choose the trigger and write the instruction.
 4. If it helps, check quickly that the sources are reachable, reading only, and preview a report locally if that is useful. Leave every delivery and every change to the scheduled run.
 5. Call `set_routine`, unless you are reusing an enabled one as it is.
-6. Close with a `say` carrying `done: true`. Confirm, in your user's zone, the schedule of the routine as saved (what the tool returned, or the one you reused or resumed) ("Every weekday at 8:00 I'll check the docs build and tell you only if it's broken."). If the tool refused, say what failed and whether anything was saved. For a webhook, follow the rules above for its address.
+6. Close with a `say` carrying `done: true`. Confirm, in your user's zone, the schedule of the routine as saved (what the tool returned, or the one you reused or resumed) ("Every weekday at 8:00 I'll check the docs build and tell you only if it's broken."). If the tool refused, say what failed and whether anything was saved. For a watch, say the date it ends. For a webhook, follow the rules above for its address.
 
 ## Verifying it works
 
