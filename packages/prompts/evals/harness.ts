@@ -87,7 +87,8 @@ const HOST_TOOL = "run_command";
  * holding what they typed. `label` and `reason` must not be blank
  * (`packages/contracts/src/orchestratorMcp.ts`). The stand-in saves the file under
  * {@link SECRET_FOLDER} and answers a card with the scenario's
- * `secretAnswer`, or as a card left unanswered when it has none. The
+ * `secretAnswer`, or as a card left unanswered when it has none; with
+ * `pastedSecretFails`, saving a pasted `value` fails. The
  * description is this repository's own wording, not the engine's.
  */
 const SECRET_TOOL = "request_secret";
@@ -247,6 +248,12 @@ export interface Scenario {
   readonly shell?: string;
   /** What the user types into a `request_secret` card; none leaves the card unanswered. */
   readonly secretAnswer?: string;
+  /**
+   * When set, saving a pasted `value` fails, as a full disk or a locked
+   * folder would make it, so only a card can carry the secret. How the engine
+   * words such a failure is Assumed; the stand-in returns an error.
+   */
+  readonly pastedSecretFails?: boolean;
 }
 
 /** Model calls in one turn at most; a turn that needs more is a failure in itself. */
@@ -572,7 +579,9 @@ const answer = (
                 error: 'A pasted `value` is saved as a file. Leave out `delivery: "secretRef"`.',
               }),
             )
-          : reply(json({ status: "saved", file: saved(value) }));
+          : scenario.pastedSecretFails === true
+            ? reply(json({ error: "The pasted value could not be saved." }))
+            : reply(json({ status: "saved", file: saved(value) }));
       }
       if (scenario.secretAnswer === undefined) {
         return reply(json({ status: "timed_out", note: "Your user did not answer the card." }));

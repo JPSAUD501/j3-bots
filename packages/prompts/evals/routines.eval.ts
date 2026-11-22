@@ -324,6 +324,25 @@ const LOOSE = "can you keep an eye on the docs build and let me know if it break
 /** A request about work whose words name the days: every morning. */
 const EVERY_MORNING = "every morning, check the docs build and tell me if it's broken";
 
+/**
+ * For the loose request, which wants a standing check, not a watch for one
+ * event: asked of the saved instruction, whose answer must be no.
+ */
+const ENDS_ITSELF: Check = {
+  question:
+    "Does this routine instruction give the check an end date or cutoff, or tell a run to pause or stop the routine?",
+  what: "an end date, or a step that pauses or stops the routine",
+  asked: LOOSE,
+  accept: [
+    "Check the latest CI run on main in acme/docs. Once it has failed, tell your user once, then pause this routine.",
+    "Check the latest CI run on main in acme/docs and tell your user if it failed. After Friday, 4 December 2026 at 08:07, tell your user the check has ended and pause this routine.",
+  ],
+  reject: [
+    DOCS_CHECK,
+    "Check the latest CI run on main in acme/docs. If it failed, tell your user which job broke; if it passed, end without a message.",
+  ],
+};
+
 const EVERY_DAY: Check = {
   question: "Does this message tell its reader the check runs every day, weekends included?",
   what: "that the check runs every day",
@@ -366,13 +385,31 @@ const MERGE_ASKED =
 const longDate = (when: DateTime.Utc) =>
   local(when, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
-/** The default cutoff of a watch set up at `at`, the setup turn's time, and a date it is not. */
-const CUTOFF = longDate(DateTime.add(at, { days: 14 }));
-const NOT_THE_CUTOFF = longDate(DateTime.add(at, { days: 7 }));
+const clock = (when: DateTime.Utc) =>
+  local(when, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+
+/** `days` calendar days after `when`, at the same local time in the operator's zone. */
+const calendarDaysOn = (when: DateTime.Utc, days: number) =>
+  DateTime.toUtc(DateTime.add(DateTime.makeZonedUnsafe(when, { timeZone }), { days }));
+
+/** A cutoff as a watch holds it: weekday, date and local time. */
+const cutoffAt = (when: DateTime.Utc) => `${longDate(when)} at ${clock(when)}`;
+
+/**
+ * The default cutoff of a watch set up at `at`, the setup turn's time, and
+ * what it is not: the right day without its time, without its weekday or at
+ * another time, and another day.
+ */
+const CUTOFF_DAY = calendarDaysOn(at, 14);
+const CUTOFF = cutoffAt(CUTOFF_DAY);
+const CUTOFF_DATE_ONLY = longDate(CUTOFF_DAY);
+const CUTOFF_NO_WEEKDAY = `${local(CUTOFF_DAY, { day: "numeric", month: "long", year: "numeric" })} at ${clock(CUTOFF_DAY)}`;
+const CUTOFF_AT_NOON = `${longDate(CUTOFF_DAY)} at 12:00`;
+const NOT_THE_CUTOFF = cutoffAt(calendarDaysOn(at, 7));
 
 const CUTOFF_CONFIRMED: Check = {
-  question: `Does this message tell its reader that the watch ends on ${CUTOFF} if #12 has not merged by then?`,
-  what: `that the watch ends on ${CUTOFF}`,
+  question: `Does this message tell its reader that the watch ends at ${CUTOFF}, giving that weekday, that date and that time, if #12 has not merged by then?`,
+  what: `that the watch ends at ${CUTOFF}, with weekday, date and time`,
   asked: MERGE_ASKED,
   accept: [
     `I'll check #12 every 30 minutes and tell you once it merges. If it hasn't by ${CUTOFF}, I'll stop watching and let you know.`,
@@ -381,24 +418,30 @@ const CUTOFF_CONFIRMED: Check = {
   reject: [
     "I'll check #12 every 30 minutes and tell you once it merges.",
     `Watching #12 until it merges, or until ${NOT_THE_CUTOFF} at the latest.`,
+    `Watching #12 until it merges, or until ${CUTOFF_DATE_ONLY} at the latest.`,
+    `Watching #12 until it merges, or until ${CUTOFF_AT_NOON} at the latest.`,
+    `Watching #12 until it merges, or until ${CUTOFF_NO_WEEKDAY} at the latest.`,
     "I'll keep watching #12 until it merges, however long that takes.",
   ],
 };
 
 /** The watch's delivery line as `set_routine` gives it, with #12 and a cutoff filled in. */
 const watchInstruction = (cutoff: string) =>
-  `Check whether pull request #12 (Move the API reference to the new layout) on the GitHub repository acme/docs has merged into main. If a recent run already told your user that #12 merged or that the watch ended, pause this routine now, without a message. At or after ${cutoff}, the watch is over: if #12 merged before ${cutoff}, tell your user it did; otherwise tell them once that the watch has ended, saying in that message if the pull request could not be read; a merge at or after ${cutoff} does not count. Before ${cutoff}, once #12 has merged, tell your user in one short message; until then, end without a message. Once a message has returned, never alongside it, pause this routine; the pause is always the last call.`;
+  `Check whether pull request #12 (Move the API reference to the new layout) on the GitHub repository acme/docs has merged into main. If a recent run already told your user that #12 merged or that the watch ended, pause this routine now, without a message. At or after ${cutoff}, the watch is over: if #12 merged before ${cutoff}, tell your user it did; otherwise tell them once that the watch has ended, saying in that message if the pull request could not be read; a merge at or after ${cutoff} does not count. Before ${cutoff}, once #12 has merged, tell your user in one short message; until then, end without a message. Once the message that #12 merged, or that the watch has ended, has returned, pause this routine. Send that \`say\` alone and wait for its result; the pause is then your last call, never alongside it. A message before ${cutoff} about a source you could not reach does not end the watch.`;
 
 const CUTOFF_SAVED: Check = {
-  question: `Does this routine instruction make ${CUTOFF} the date on which the watch of #12 ends, telling the user it stopped and pausing itself if #12 has not merged by then?`,
-  what: `${CUTOFF} as the watch's cutoff`,
+  question: `Does this routine instruction make ${CUTOFF}, with that weekday, that date and that time, the moment at which the watch of #12 ends, telling the user it stopped and pausing itself if #12 has not merged by then?`,
+  what: `${CUTOFF}, with weekday, date and time, as the watch's cutoff`,
   asked: MERGE_ASKED,
   accept: [
     watchInstruction(CUTOFF),
-    `Check pull request #12 on acme/docs. When it has merged, tell your user once, then pause this routine. If it is still open on ${CUTOFF}, tell your user you stopped watching it and pause this routine.`,
+    `Check pull request #12 on acme/docs. When it has merged, tell your user once, then pause this routine. If it is still open at ${CUTOFF}, tell your user you stopped watching it and pause this routine.`,
   ],
   reject: [
     watchInstruction(NOT_THE_CUTOFF),
+    watchInstruction(CUTOFF_DATE_ONLY),
+    watchInstruction(CUTOFF_AT_NOON),
+    watchInstruction(CUTOFF_NO_WEEKDAY),
     "Check pull request #12 on acme/docs. When it has merged, tell your user once, then pause this routine; while it is open, end without saying anything.",
   ],
 };
@@ -407,7 +450,7 @@ const CUTOFF_SAVED: Check = {
  * The cutoff the execution replays run against: noon today, so every replay
  * falls on the real current date and only its time moves around the cutoff.
  */
-const NOON_TODAY = `${longDate(todayAt(12, 0))} at 12:00`;
+const NOON_TODAY = cutoffAt(todayAt(12, 0));
 const FIXED_WATCH = watchInstruction(NOON_TODAY);
 
 const WATCH_ENDED: Check = {
@@ -434,6 +477,7 @@ const SOURCE_UNREACHED: Check = {
   accept: [
     "The watch on #12 has ended; I couldn't reach GitHub to check it one last time.",
     "I've stopped watching #12. GitHub's sign-in had expired, so I couldn't see its final state.",
+    "I couldn't check #12: the GitHub sign-in has expired. Renew it and the next run picks the watch up again.",
   ],
   reject: [
     "#12 still hasn't merged, so I've stopped watching it as planned.",
@@ -474,6 +518,7 @@ const FIX_NAMED: Check = {
 
 const CHECKS: ReadonlyArray<Check> = [
   WEEKDAYS_ONLY,
+  ENDS_ITSELF,
   EVERY_DAY,
   CUTOFF_CONFIRMED,
   CUTOFF_SAVED,
@@ -1276,6 +1321,19 @@ const cases: ReadonlyArray<Case> = [
     problems: fromCalls(silentRun(beforeCutoffWake, TWELVE_LOOK)),
   },
   {
+    name: "watch execution: just before its cutoff, a run that cannot reach GitHub says once what blocks it and does not pause",
+    scenario: { wake: beforeCutoffWake, workspace: signedOutWorkspace(beforeCutoffWake) },
+    problems: Effect.fn("evals.blockedBeforeCutoffCase")(function* ({ calls }) {
+      const routineCalls = named(calls, "set_routine").map(
+        () => "called `set_routine`, though a blocked run before the cutoff keeps the watch going",
+      );
+      return [
+        ...routineCalls,
+        ...(yield* speaksOnce(beforeCutoffWake, SOURCE_UNREACHED, { look: GH_TRIED })(calls)),
+      ];
+    }),
+  },
+  {
     name: "watch execution: just before its cutoff, a run once #12 has merged says so once, then pauses",
     scenario: {
       wake: mergedBeforeCutoffWake,
@@ -1378,6 +1436,10 @@ const cases: ReadonlyArray<Case> = [
             closing === undefined
               ? Effect.succeed(["no closing `say` confirmed the routine"])
               : judged(WEEKDAYS_ONLY, LOOSE, closing),
+        },
+        {
+          name: "no end date, never pauses itself",
+          problems: judged(ENDS_ITSELF, LOOSE, created.creation.routine.instruction, false),
         },
       ];
     },

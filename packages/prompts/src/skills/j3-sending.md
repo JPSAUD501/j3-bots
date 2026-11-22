@@ -27,7 +27,7 @@ A worker you delegate to returns draft text in its result. It saves nothing and 
 
 ## Choosing the account
 
-The account matters once you save or send, not while you write. Settle it as your base instructions order it. Two things never settle it: the domain of the person you write to, and whichever account a mail tool uses when none is given. When you do have to ask, use `ask` with one option per account, each showing the full address or workspace name, and keep the draft ready so the send can follow the answer.
+The account matters once you save or send, not while you write. Settle it as your base instructions order it. Two things never settle it: the domain of the person you write to, and whichever account a mail tool uses when none is given. When you do have to ask, use `ask` with one option per account, each showing the full address or workspace name, and keep the draft ready. Choosing an account settles the sender, not the content. If the message still needs review, show the draft before sending; otherwise the send can follow the answer.
 
 ## After the send
 
