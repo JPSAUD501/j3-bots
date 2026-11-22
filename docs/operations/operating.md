@@ -1,6 +1,6 @@
 # Operating J3 Bots
 
-Day-to-day care of a J3 Bots server that [Installing J3 Bots](install.md) set up: its configuration, the service, logs, updates, backups and removal. Every command here runs on the server's machine, as the user that runs the service.
+Day-to-day care of a J3 Bots server that [Installing J3 Bots](install.md) set up: its configuration, the service, logs, updates, backups and removal. Every command here runs on the server's machine, as the user that runs the service. For a [dedicated user](install.md#choose-the-user-it-runs-as), that is a `sudo -iu` shell with `XDG_RUNTIME_DIR` set as shown there: without it, `update`, `--rollback` and `uninstall` find no systemd manager and refuse.
 
 ## Configuration
 
@@ -111,7 +111,7 @@ The release it fetched and the snapshot stay on disk until a later update succee
 j3-bots update --rollback
 ```
 
-It says when the snapshot was taken and what is lost, and asks first (`--yes` answers for a script). The databases go back to that moment: conversations, rooms, routines, settings, paired devices and the engine's threads since then are lost. Bots' files on disk, their memory included, are not in the snapshot and stay as they are. What the rollback replaced is kept in the snapshot's `replaced-*` folder until an update removes that snapshot. It starts the release the snapshot was taken from and points the command at it. `j3-bots doctor` names the snapshot it would put back.
+It says when the snapshot was taken and what is lost, and asks first (`--yes` answers for a script). The databases go back to that moment: conversations, rooms, routines, settings, paired devices and the engine's threads since then are lost. Bots' files on disk, their memory included, are not in the snapshot and stay as they are. Neither are provider keys, which stay in the engine's secret store: the providers' endpoints go back to the snapshot's, with the keys you have now, so run `j3-bots provider connect` again if you changed a provider since the update. What the rollback replaced is kept in the snapshot's `replaced-*` folder until an update removes that snapshot. It starts the release the snapshot was taken from and points the command at it. `j3-bots doctor` names the snapshot it would put back.
 
 **Keep `~/.j3-bots/backups/` on the data directory's filesystem**, not as a link to another disk, such as a USB drive on a Raspberry Pi. A rollback moves the data directory's files into it by renaming them, which cannot cross filesystems. An update and `--rollback` check this before they stop anything, refuse when it is elsewhere, and give the commands that put it back.
 
@@ -185,7 +185,7 @@ j3-bots uninstall --delete-data
 
 It asks before it deletes; `--yes` answers for a script. It deletes every entry the server writes in the data directory ([Server: data](../architecture/server.md#data)), and then the data directory if that leaves it empty. A folder no server has used, with no `server.lock` or `j3.sqlite`, is not touched. A web client you put in its `web/` is kept, and so is a file of yours in it. When the data directory is a link, the link and the folder it points to are kept.
 
-`uninstall` refuses, and removes nothing, while a server it does not stop runs for that data directory, such as one started with `j3-bots serve`, or while `j3-bots update` or `--rollback` runs. A unit that runs another J3 Bots, such as a checkout, is kept, and `uninstall` says so. A release you unpacked yourself, or a checkout, is not an install: `uninstall` refuses it; `j3-bots service uninstall` removes its service and keeps the data directory, and the rest is yours to delete.
+`uninstall` refuses, and removes nothing, while `j3-bots update` or `--rollback` runs. With `--delete-data`, it also refuses while a server it does not stop runs for that data directory, such as one started with `j3-bots serve`. A unit that runs another J3 Bots, such as a checkout, is kept, and `uninstall` says so. A release you unpacked yourself, or a checkout, is not an install: `uninstall` refuses it; `j3-bots service uninstall` removes its service and keeps the data directory, and the rest is yours to delete.
 
 If you made a [dedicated user](install.md#choose-the-user-it-runs-as) for J3 Bots, remove it afterwards, from your own account. Its systemd manager keeps running for a few seconds after lingering is turned off, and `userdel` refuses a user with running processes, so stop the manager first:
 

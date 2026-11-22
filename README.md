@@ -28,7 +28,7 @@ j3-bots provider connect
 j3-bots pair
 ```
 
-Then open one of the addresses `pair` prints in a browser and enter the code. [Installing J3 Bots](docs/operations/install.md) explains each step, the systems it supports, and how to run it on a machine that matters.
+If `j3-bots` is not found, `~/.local/bin` is not on your `PATH` until your next login: open a new login shell. Then open one of the addresses `pair` prints in a browser and enter the code. [Installing J3 Bots](docs/operations/install.md) explains each step, the systems it supports, and how to run it on a machine that matters.
 
 Later, `j3-bots update` moves to a newer release and puts the one before back by itself if the new one does not start; `j3-bots update --rollback` goes back on request ([Update and roll back](docs/operations/operating.md#update-and-roll-back)).
 
