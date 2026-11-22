@@ -12,6 +12,7 @@
     "dev": "vp run --filter @j3-bots/web build && vp pack && node node_modules/electron/install.js && node scripts/launch.ts",
     "typecheck": "effect-tsgo tsrs --noEmit",
     "test": "vp test run --config ../../vite.config.ts --dir src",
+    "every-surface": "vp run --filter @j3-bots/web build && vp pack && node node_modules/electron/install.js && vp test run --config ../../vite.config.ts --dir every-surface",
     "smoke": "vp run --filter @j3-bots/web build && vp pack && node node_modules/electron/install.js && vp test run --config ../../vite.config.ts --dir test",
     "package": "vp run --filter @j3-bots/web build && vp pack && electron-builder --publish never"
   },

@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- Electron's package answers its executable's path only to require(), and the redirecting address is a plain node:http server.
+// @effect-diagnostics nodeBuiltinImport:off -- the redirecting address is a plain node:http server.
 import * as NodeHttp from "node:http";
-import * as NodeModule from "node:module";
 import { BotId, CommandId, ServerOrigin } from "@j3-bots/contracts";
-import { AppLinkUrl, BRIDGE_KEY, OpenResult, TokenProtection } from "@j3-bots/desktop-bridge";
 import * as Server from "@j3-bots/server/testing";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -16,7 +14,18 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Schema from "effect/Schema";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import { _electron, type ElectronApplication, type Page } from "playwright-core";
+import type { Page } from "playwright-core";
+import {
+  ARGS,
+  electronPath,
+  environment,
+  launch,
+  linkTo,
+  openToken,
+  SealedRecord,
+  STEP,
+  storedCredential,
+} from "./electron.ts";
 
 // The development build, launched as the operator launches it, against the
 // server's testing layer (its real routes and socket over the in-memory
@@ -28,47 +37,6 @@ import { _electron, type ElectronApplication, type Page } from "playwright-core"
 // change server from Settings; and follow links to the app, given at launch
 // and handed over by a second launch. Needs the web client built and a display
 // (`xvfb-run`).
-
-/** How long one step may take before the smoke fails, a cold Electron start included. */
-const STEP = 30_000;
-
-const electronPath = (): string => {
-  const path: unknown = NodeModule.createRequire(import.meta.url)("electron");
-  if (typeof path !== "string") throw new Error("The electron package gave no executable path.");
-  return path;
-};
-
-// Linux CI runners do not allow the Chromium sandbox's user namespaces (as T3 Code's smoke).
-// The page's language follows the system's; the steps below read English.
-const ARGS = [`${import.meta.dirname}/..`, "--no-sandbox", "--lang=en-US"];
-
-/**
- * A fresh profile: Electron keeps userData under XDG_CONFIG_HOME on Linux. The
- * app's handler of its links, a desktop entry and the default it names, is
- * kept under the same folder, away from the session running the smoke.
- */
-const environment = (profile: string) => ({
-  ...process.env,
-  XDG_CONFIG_HOME: profile,
-  XDG_DATA_HOME: `${profile}/data`,
-  LANGUAGE: "en_US",
-  LC_ALL: "en_US.UTF-8",
-});
-
-/** The app on `profile`, started with `links` as a link to the app is handed to it. */
-const launch = (profile: string, links: ReadonlyArray<string> = []) =>
-  Effect.acquireRelease(
-    Effect.promise(() =>
-      _electron.launch({
-        executablePath: electronPath(),
-        args: [...ARGS, ...links],
-        env: environment(profile),
-        timeout: STEP,
-      }),
-    ),
-    // A no-op once the test has closed it.
-    (app: ElectronApplication) => Effect.promise(() => app.close()),
-  );
 
 /**
  * A second launch on `profile` with `link`, as the system starts the app for a
@@ -87,29 +55,6 @@ const launchAgainWith = (profile: string, link: string) =>
     );
     return Number(yield* handle.exitCode);
   }).pipe(Effect.scoped, Effect.timeout(STEP));
-
-const linkTo = Schema.encodeSync(AppLinkUrl("j3bots-dev"));
-
-/** The page's stored credential record, as JSON. */
-const storedCredential = (page: Page) =>
-  page.evaluate(
-    () =>
-      new Promise<unknown>((resolve, reject) => {
-        const opening = indexedDB.open("j3-bots");
-        opening.onerror = () => reject(opening.error);
-        opening.onsuccess = () => {
-          const read = opening.result
-            .transaction("credentials")
-            .objectStore("credentials")
-            .get("device");
-          read.onerror = () => reject(read.error);
-          read.onsuccess = () => {
-            opening.result.close();
-            resolve(read.result);
-          };
-        };
-      }),
-  );
 
 /** Replaces the page's stored credential record with `value`. */
 const storeCredential = (page: Page, value: string) =>
@@ -130,15 +75,6 @@ const storeCredential = (page: Page, value: string) =>
       }),
     value,
   );
-
-const SealedRecord = Schema.fromJsonString(
-  Schema.Struct({
-    deviceId: Schema.String,
-    server: Schema.String,
-    sealed: Schema.String,
-    protection: TokenProtection,
-  }),
-);
 
 /** Whether any file under `directory` holds `secret`, as UTF-8 or UTF-16. Never prints it. */
 const holdsAnywhere = (directory: string, secret: string) =>
@@ -287,24 +223,7 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
           yield* Effect.promise(() => storedCredential(page)),
         );
         assert.strictEqual(record.server, origin.origin);
-        const token = yield* Effect.promise(() =>
-          page.evaluate(
-            ({ key, sealed }) => {
-              const bridge: unknown = Reflect.get(window, key);
-              const open: unknown =
-                typeof bridge === "object" && bridge !== null
-                  ? Reflect.get(bridge, "openToken")
-                  : null;
-              return typeof open === "function" ? Promise.resolve(open(sealed)) : null;
-            },
-            { key: BRIDGE_KEY, sealed: record.sealed },
-          ),
-        );
-        const opened = Schema.decodeUnknownOption(OpenResult)(token).pipe(
-          Option.flatMap((answer) =>
-            answer._tag === "opened" ? Option.some(answer.token) : Option.none(),
-          ),
-        );
+        const opened = yield* openToken(page, record.sealed);
         assert.isTrue(Option.isSome(opened), "the stored token opens");
         yield* Effect.promise(() => app.close());
         // The scan reads what IndexedDB wrote: the sealed form is there.

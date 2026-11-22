@@ -4,5 +4,5 @@
     "types": ["node"],
     "lib": ["ESNext", "esnext.disposable", "DOM", "DOM.Iterable"]
   },
-  "include": ["src", "scripts", "test", "vite.config.ts"]
+  "include": ["src", "scripts", "test", "every-surface", "vite.config.ts"]
 }
